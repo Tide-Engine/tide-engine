@@ -35,6 +35,16 @@ texture's filter and wrap as the draw asks. The Sample's checked-in
 in Unity after the merge: the sampler path is the one the replay was checked
 with on OpenGL Core, now under one define instead of four.
 
+## Texture arrays: embed ABI 15 (2026-11-05)
+
+`TIDE_EMBED_RENDER_ARRAY` (id, format, width, height, layers, given, its depth array's id, then each layer's pixels)
+and `TIDE_EMBED_RENDER_ARRAY_LAYER` (target, array, layer), after SAMPLER. TideRender's `MakeArray` makes a
+`Texture2DArray` (mips made by `Apply(true)`) for an array of pixels, or a `RenderTexture` of `Tex2DArray` with
+`volumeDepth` and a depth one beside it (or as it, for depth alone), and `MakeArrayLayer` a target that draws into that
+layer of both (`RenderTargetIdentifier(rt, 0, CubemapFace.Unknown, layer)`); freeing the array frees its depth. The HLSL
+reads `Texture2DArray<float4>`/`<float>` with `float3(uv, layer)` (notes/shaders.md). `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 15. Not run in Unity.
+
 ## One image a texture: embed ABI 14 (2026-11-05)
 
 Textures and samplers are counted apart (notes/rendering.md, One image a texture). The recording's PIPELINE packet

@@ -195,6 +195,21 @@ tide_int2 tide_texture_size(const tide_texture_ref texture)
     return image.width > 0 && image.height > 0 ? tide_i2(image.width, image.height) : tide_i2(0, 0);
 }
 
+tide_int2 tide_texture_array_size(const tide_texture_array_ref array)
+{
+    if (!array.target.id) {
+        int32_t width, height;
+        uint32_t layers;
+        uint64_t version;
+        const uint8_t *const *pixels;
+        if (!array.named || !tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)) return tide_i2(0, 0);
+        return tide_i2(width, height);
+    }
+    const tide_render_target target = tide_render_target_resolve(array.target);
+    if (!tide_render_target_arrayed(target.id) || !tide_target_size_valid(target.size)) return tide_i2(0, 0);
+    return target_pixels ? target_pixels(target.size) : tide_i2(0, 0);
+}
+
 // What a chunk of a heap's grid holds, without reading it: the hash its heap
 // keeps of its page until the page changes. Other blocks in the page change it
 // too, where a chunk is under a page: such a chunk is then copied again, and

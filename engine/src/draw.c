@@ -79,7 +79,8 @@ _Static_assert(TIDE_RENDER_SAMPLES_SHIFT == TIDE_RENDER_IMAGE_SHIFT + 2 && (1 <<
 // A managed target's id: its state's address, and what it holds.
 static uint64_t managed_id(const tide_render_target_state *s)
 {
-    return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->holds | (s->cube ? TIDE_RENDER_CUBE : 0u);
+    return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->holds | (s->cube ? TIDE_RENDER_CUBE : 0u)
+         | (s->layers ? TIDE_RENDER_ARRAY : 0u);
 }
 
 // What a target of these color images holds, as its id's bits say it: for
@@ -291,6 +292,11 @@ void tide_render_target_resize(const tide_render_target target, const float widt
         fprintf(stderr, "RenderTarget.Resize: a cube's face has its cube's size: 'cube.Resize(size)' resizes all six\n");
         return;
     }
+    if (s && s->layers) {
+        fprintf(stderr, "RenderTarget.Resize: an array's layer has its array's size: 'array.Resize(width, height)' resizes "
+                        "them all\n");
+        return;
+    }
     if (s && s->alive && s->size.window > 0.0f) {
         fprintf(stderr, "RenderTarget.Resize: a target made with RenderTarget.Window follows the window's size, and "
                         "keeps it\n");
@@ -311,6 +317,7 @@ void tide_render_target_dispose(const tide_render_target target)
 {
     tide_render_target_state *s = tide_render_target_state_of(target.id);
     if (s && s->cube) fprintf(stderr, "RenderTarget.Dispose: a cube's face goes with its cube: 'cube.Dispose()' lets all six go\n");
+    else if (s && s->layers) fprintf(stderr, "RenderTarget.Dispose: an array's layer goes with its array: 'array.Dispose()'\n");
     else if (s) s->alive = false;
     else if (target.id) fprintf(stderr, "RenderTarget.Dispose requires an owned target\n");
 }
@@ -355,6 +362,96 @@ void tide_cubemap_dispose(const tide_cubemap_ref cube)
     else fprintf(stderr, "Cubemap.Dispose requires a cube made with Cubemap(size): an asset's is the pack's\n");
 }
 
+tide_texture_array_ref tide_texture_array_make(const tide_target_size size, const uint32_t layers, const tide_target_format format)
+{
+    const bool counted = layers >= 1u && layers <= TIDE_TEXTURE_ARRAY_LAYERS;
+    if (!counted) {
+        fprintf(stderr, "TextureArray(width, height, layers) requires 1 to %d layers, and this asked for %u\n",
+                TIDE_TEXTURE_ARRAY_LAYERS, (unsigned)layers);
+    }
+    const tide_render_target made = make_target(counted ? size : (tide_target_size){0}, one_format(format),
+                                                counted ? "TextureArray(width, height, layers) requires positive dimensions"
+                                                        : "TextureArray: no array of that many layers");
+    tide_render_target_state *s = tide_render_target_state_of(made.id);
+    if ((uint64_t)(uintptr_t)s & (TIDE_RENDER_ARRAY | TIDE_RENDER_LAYER)) { // Its id says which layer there
+        fprintf(stderr, "tide: an array's state is at an address past what its id has room for\n");
+        abort();
+    }
+    s->layers = (uint16_t)(counted ? layers : 1u);
+    return (tide_texture_array_ref){.target = {.id = managed_id(s), .size = s->size}, .layers = s->layers};
+}
+
+tide_render_target tide_texture_array_layer(const tide_texture_array_ref array, const int32_t layer)
+{
+    const tide_render_target resolved = tide_render_target_resolve(array.target);
+    const tide_render_target_state *s = tide_render_target_state_of(resolved.id);
+    if (!tide_render_target_arrayed(resolved.id) || !s || layer < 0 || layer >= (int32_t)s->layers)
+        return (tide_render_target){.id = TIDE_RENDER_INVALID};
+    return (tide_render_target){.id = tide_render_target_array_of(resolved.id) | (uint64_t)(layer + 1) << TIDE_RENDER_LAYER_SHIFT,
+                                .size = resolved.size};
+}
+
+tide_depth_ref tide_texture_array_depth(const tide_texture_array_ref array)
+{
+    const tide_render_target resolved = tide_render_target_resolve(array.target);
+    const uint64_t id = tide_render_target_arrayed(resolved.id) ? tide_render_target_array_of(resolved.id)
+                      : array.target.id ? TIDE_RENDER_INVALID : 0u;
+    return (tide_depth_ref){.target = {.id = id, .size = resolved.size}};
+}
+
+void tide_texture_array_resize(const tide_texture_array_ref array, const float width, const float height)
+{
+    tide_render_target_state *s = tide_render_target_state_of(array.target.id);
+    const tide_target_size sized = {.width = width, .height = height, .scale = s ? s->size.scale : 0.0f};
+    if (!s || !s->layers || !s->alive || !tide_target_size_valid(sized)) {
+        fprintf(stderr, "TextureArray.Resize requires a live array made with TextureArray(width, height, layers) and "
+                        "positive dimensions\n");
+        return;
+    }
+    s->size = sized;
+    s->version++;
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
+}
+
+void tide_texture_array_dispose(const tide_texture_array_ref array)
+{
+    tide_render_target_state *s = tide_render_target_state_of(array.target.id);
+    if (s && s->layers) s->alive = false;
+    else fprintf(stderr, "TextureArray.Dispose requires an array made with TextureArray(width, height, layers): an asset's "
+                         "is the pack's\n");
+}
+
+tide_texture_array_ref tide_texture_array_recreate(const tide_texture_array_ref previous)
+{
+    if (!previous.target.id) return previous; // The pack's: its name is the same in every build
+    tide_texture_array_ref next = {.target = tide_render_target_recreate(previous.target), .layers = previous.layers};
+    tide_render_target_state *s = tide_render_target_state_of(next.target.id);
+    if (s && previous.layers && previous.layers <= TIDE_TEXTURE_ARRAY_LAYERS) s->layers = (uint16_t)previous.layers;
+    if (s) next.layers = s->layers;
+    return next;
+}
+
+int32_t tide_depth_array_count(const tide_depth_ref depths)
+{
+    const tide_render_target_state *s = tide_render_target_state_of(depths.target.id);
+    return s && s->alive && tide_render_target_arrayed(depths.target.id) ? (int32_t)s->layers : 0;
+}
+
+int32_t tide_texture_array_count(const tide_texture_array_ref array)
+{
+    if (!array.target.id) {
+        int32_t width, height;
+        uint32_t layers;
+        uint64_t version;
+        const uint8_t *const *pixels;
+        return array.named && tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)
+            ? (int32_t)layers : 0;
+    }
+    const tide_render_target_state *s = tide_render_target_state_of(array.target.id);
+    return s && s->alive && tide_render_target_arrayed(array.target.id) ? (int32_t)s->layers : 0;
+}
+
 tide_cubemap_ref tide_cubemap_recreate(const tide_cubemap_ref previous)
 {
     if (!previous.target.id) return previous; // The pack's: its name is the same in every build
@@ -382,7 +479,7 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
         return (tide_render_target){0};
     // A texture's reference names one of its target's color images, and its new one names the same; a
     // cube's face is that face of the new cube
-    const uint64_t image = previous.id & (TIDE_RENDER_IMAGE | TIDE_RENDER_FACE), whole = previous.id & ~image;
+    const uint64_t image = previous.id & (TIDE_RENDER_IMAGE | TIDE_RENDER_FACE | TIDE_RENDER_LAYER), whole = previous.id & ~image;
     for (const tide_render_target_state *s = render_targets; s; s = s->next) {
         if (s->reload_id == whole) return (tide_render_target){.id = managed_id(s) | image, .size = s->size};
     }
@@ -393,6 +490,11 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
     tide_render_target_state *s = tide_render_target_state_of(next.id);
     s->reload_id = whole;
     s->cube = (whole & TIDE_RENDER_CUBE) != 0;
+    // An array's: as many layers as its value says (tide_texture_array_recreate), or as the layer a target names
+    if (whole & TIDE_RENDER_ARRAY) {
+        const uint32_t layer = (uint32_t)((image & TIDE_RENDER_LAYER) >> TIDE_RENDER_LAYER_SHIFT);
+        s->layers = (uint16_t)(layer > 1u ? layer : 1u);
+    }
     next.id = managed_id(s) | image;
     return next;
 }
@@ -2535,6 +2637,41 @@ static uint32_t pack_cube(tide_draw_list *d, const uint64_t version, const int32
     return (uint32_t)(t - d->textures) + 1u;
 }
 
+// The list's texture for an array of the pack's, whose layers' pixels are where the pack has them.
+static uint32_t pack_array(tide_draw_list *d, const uint64_t version, const int32_t width, const int32_t height,
+                           const uint32_t layers, const uint8_t *const *pixels)
+{
+    tide_draw_texture *t = find_texture(d, TIDE_PIXELS_PACK_ARRAY, version);
+    if (!t) t = add_texture(d, (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK_ARRAY, .epoch = d->epoch});
+    t->version = version;
+    t->format = TIDE_TEXELS_BYTES;
+    t->width = width;
+    t->height = height;
+    t->layers = layers;
+    t->frame = d->frame;
+    t->pixels = (uint8_t *)(uintptr_t)pixels; // The pack's pointers: `capacity` stays 0, and nothing here frees them
+    return (uint32_t)(t - d->textures) + 1u;
+}
+
+uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref array)
+{
+    if (!array.target.id) {
+        int32_t width, height;
+        uint32_t layers;
+        uint64_t version;
+        const uint8_t *const *pixels;
+        if (!tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)) return 0;
+        return pack_array(d, version, width, height, layers, pixels);
+    }
+    const tide_render_target target = tide_render_target_resolve(array.target);
+    const tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (!tide_render_target_arrayed(target.id) || !s) return 0;
+    const uint64_t id = tide_render_target_array_of(target.id);
+    const uint32_t at = target_texture_version(d, TIDE_PIXELS_TARGET_ARRAY, id, target.size, tide_render_target_version(id));
+    if (at) d->textures[at - 1u].layers = s->layers;
+    return at;
+}
+
 uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
 {
     if (!cube.target.id) {
@@ -4243,7 +4380,9 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
         const tide_draw_texture *t = &d->textures[slot - 1u];
         if (((t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH)
              && tide_render_target_whole(t->id) == d->targets[d->target - 1u].id) // Any of its color images, or its depth
-            || (t->space == TIDE_PIXELS_TARGET_CUBE && t->id == tide_render_target_cube_of(d->targets[d->target - 1u].id))) {
+            || (t->space == TIDE_PIXELS_TARGET_CUBE && t->id == tide_render_target_cube_of(d->targets[d->target - 1u].id))
+            || ((t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_TARGET_DEPTH) && tide_render_target_arrayed(t->id)
+                && t->id == tide_render_target_array_of(d->targets[d->target - 1u].id))) { // An array a layer of which it draws into
             fprintf(stderr, "Draw.Blit cannot sample its destination\n");
             return;
         }
@@ -4696,8 +4835,14 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
 {
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
-    if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH || t->space == TIDE_PIXELS_TARGET_CUBE) {
-        return target_texture_version(d, t->space, t->id, t->target, t->version);
+    if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH || t->space == TIDE_PIXELS_TARGET_CUBE
+        || t->space == TIDE_PIXELS_TARGET_ARRAY) {
+        const uint32_t slot = target_texture_version(d, t->space, t->id, t->target, t->version);
+        if (slot) d->textures[slot - 1u].layers = t->layers;
+        return slot;
+    }
+    if (t->space == TIDE_PIXELS_PACK_ARRAY) {
+        return pack_array(d, t->id, t->width, t->height, t->layers, (const uint8_t *const *)(uintptr_t)t->pixels);
     }
     if (t->space == TIDE_PIXELS_PACK) {
         const uint32_t slot = pack_texture(d, t->id, t->width, t->height, t->pixels);

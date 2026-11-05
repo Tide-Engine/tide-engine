@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 14u
+#define TIDE_EMBED_ABI 15u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -234,6 +234,11 @@ typedef enum tide_embed_render_op {
     // draw_indexed_indirect_count)
     TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT,
     TIDE_EMBED_RENDER_SAMPLER, // slot, filter (tide_gpu_filter), wrap (tide_gpu_wrap): how the pipeline's sampler `slot` samples
+    // id, format (tide_gpu_target_format; TIDE_GPU_TARGET_COLOR for one of pixels), width, height, layers, given, its
+    // depth array's id (0 for one of pixels), then if given each layer's pixels, 4 bytes each, rows from the top: a
+    // texture array, read by a uv and a layer (TIDE_GPU_READ_ARRAY), its depth TIDE_GPU_READ_DEPTH_ARRAY
+    TIDE_EMBED_RENDER_ARRAY,
+    TIDE_EMBED_RENDER_ARRAY_LAYER, // target id, array id, layer: a target whose color and depth are that layer of the array's
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);

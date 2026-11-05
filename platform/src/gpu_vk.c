@@ -136,7 +136,10 @@ typedef struct vk_texture {
     VkImageView view;   // What's sampled: all of it (a cube as a cube), its depth alone for a depth
     VkImageView attach; // What's drawn into: its first image (each face's, for a cube: faces[i])
     VkImageView faces[TIDE_GPU_CUBE_FACES];
-    VkImageView base; // A cube's first images alone, which it's sampled through until its smaller ones are made
+    VkImageView base; // A cube's or an array's first images alone, which it's sampled through until its smaller ones are made
+    bool arrayed;     // An array (tide_gpu.array): `layers` of them, viewed as one, and each its own to draw into...
+    VkImageView *layer_views; // ...through these, a view of each layer's first image (`layers` of them)
+    tide_gpu_id depth_array;  // An array that's drawn into: its depth array (array_depth), freed with it
     VkFormat format;
     tide_gpu_format pixels; // An uploaded texture's, as gpu.h has them
     int width, height;
@@ -192,9 +195,11 @@ typedef struct vk_target {
     VkImageView samples_view;
     bool samples_turned;
     bool bytes;       // Its first color image is 4 bytes a pixel: what's read back
-    bool face;        // A cube's face
-    tide_gpu_id cube; // ...of this cube
+    bool face;        // A cube's face, or an array's layer
+    tide_gpu_id cube; // ...of this cube or array
     uint32_t layer;   // ...this one
+    bool array;              // An array's layer: its depth is that layer of...
+    tide_gpu_id depth_layers; // ...this depth array
 } vk_target;
 
 // What's destroyed once the frame that let it go is done.
@@ -1489,6 +1494,49 @@ static tide_gpu_id make_texture(const VkFormat format, const int width, const in
     return id;
 }
 
+// An array of `layers` images, with `levels` each: viewed as one array to sample (and its first images alone, `base`),
+// and each layer's first image to draw into (layer_views). A depth array's views are of its depth.
+static tide_gpu_id make_layers(const VkFormat format, const int width, const int height, const uint32_t levels, const uint32_t layers,
+                               const VkImageUsageFlags usage, const VkImageLayout rest)
+{
+    const tide_gpu_id id = texture_place();
+    vk_texture *t = &vk.textures[id - 1u];
+    const bool depth = aspects_of(format) != VK_IMAGE_ASPECT_COLOR_BIT;
+    const VkImageCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = format,
+        .extent = {(uint32_t)width, (uint32_t)height, 1}, .mipLevels = levels, .arrayLayers = layers,
+        .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    *t = (vk_texture){.format = format, .width = width, .height = height, .levels = levels, .layers = layers, .rest = rest,
+                      .usage = usage, .depth = depth, .arrayed = true};
+    if (!make_image(&info, &t->memory, &t->image)) {
+        fprintf(stderr, "tide: Vulkan: no memory for an array of %u layers of %d by %d\n", (unsigned)layers, width, height);
+        abort();
+    }
+    const VkImageAspectFlags read = depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+    t->view = make_view(t->image, VK_IMAGE_VIEW_TYPE_2D_ARRAY, format, read, 0, levels, 0, layers);
+    t->base = levels > 1 ? make_view(t->image, VK_IMAGE_VIEW_TYPE_2D_ARRAY, format, read, 0, 1, 0, layers) : t->view;
+    t->attach = t->view;
+    t->layer_views = tide_alloc_zeroed(layers, sizeof *t->layer_views);
+    for (uint32_t layer = 0; layer < layers; layer++) {
+        t->layer_views[layer] = make_view(t->image, VK_IMAGE_VIEW_TYPE_2D, format, aspects_of(format), 0, 1, layer, 1);
+    }
+    // Black, or the far limit, until drawn into
+    const VkCommandBuffer cb = outside();
+    turn_texture(cb, t, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const VkImageSubresourceRange all = {aspects_of(format), 0, levels, 0, layers};
+    if (depth) {
+        const VkClearDepthStencilValue far = {1.0f, 0};
+        vkCmdClearDepthStencilImage(cb, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &all);
+    } else {
+        const VkClearColorValue zero = {{0}};
+        vkCmdClearColorImage(cb, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &all);
+    }
+    turn_texture(cb, t, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, rest);
+    return id;
+}
+
 static void forget_texture(vk_texture *t)
 {
     if (!t->shared) {
@@ -1496,8 +1544,10 @@ static void forget_texture(vk_texture *t)
         if (t->base && t->base != t->view) DISCARD(VK_OBJECT_TYPE_IMAGE_VIEW, t->base, NULL);
         DISCARD(VK_OBJECT_TYPE_IMAGE_VIEW, t->view, NULL);
         for (uint32_t face = 0; face < TIDE_GPU_CUBE_FACES; face++) DISCARD(VK_OBJECT_TYPE_IMAGE_VIEW, t->faces[face], NULL);
+        for (uint32_t layer = 0; t->layer_views && layer < t->layers; layer++) DISCARD(VK_OBJECT_TYPE_IMAGE_VIEW, t->layer_views[layer], NULL);
         DISCARD(VK_OBJECT_TYPE_IMAGE, t->image, &t->memory);
     }
+    free(t->layer_views);
     *t = (vk_texture){0};
 }
 
@@ -1584,7 +1634,10 @@ static tide_gpu_id vk_texture_blocks(const int width, const int height, const ti
 static void vk_texture_free(const tide_gpu_id id)
 {
     vk_texture *t = texture_of(id);
-    if (t) forget_texture(t);
+    if (!t) return;
+    vk_texture *depth = texture_of(t->depth_array);
+    if (depth) forget_texture(depth);
+    forget_texture(texture_of(id));
 }
 
 static bool blits(const VkFormat format)
@@ -1611,7 +1664,7 @@ static void vk_mipmaps(const tide_gpu_id id)
     vk_texture *t = texture_of(id);
     if (vk.lost || !t || t->depth || !blits(t->format)) return;
     const uint32_t levels = levels_for(t->width, t->height);
-    if (levels < 2) return;
+    if (levels < 2 || (t->arrayed && t->levels < levels)) return; // An array has its room from the start, where it blits
     const VkCommandBuffer cb = outside();
     if (t->levels < levels) {
         vk_texture old = *t;
@@ -1683,6 +1736,59 @@ static tide_gpu_id vk_cube(const tide_gpu_color color, const int size, const voi
 static VkFormat color_format(const tide_gpu_color color)
 {
     return color == TIDE_GPU_COLOR_FLOAT ? VK_FORMAT_R16G16B16A16_SFLOAT : vk.window_format;
+}
+
+// An array: of pixels, or drawn into a layer at a time, with a depth array beside it. One that holds depth alone is
+// its depth array. Colors have room for their smaller images from the start, where the device blits them.
+static tide_gpu_id vk_array(const tide_gpu_target_format format, const int width, const int height, const uint32_t layers,
+                            const void *const *pixels)
+{
+    if (vk.lost || layers == 0 || layers > TIDE_GPU_MAX_LAYERS || layers > vk.properties.limits.maxImageArrayLayers) return 0;
+    const VkImageUsageFlags depth_usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                        | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (!pixels && !tide_gpu_target_colors(format)) {
+        return make_layers(vk.depth_format, width, height, 1, layers, depth_usage, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    }
+    const VkFormat color = pixels ? VK_FORMAT_R8G8B8A8_UNORM : color_format(tide_gpu_target_color(format, 0));
+    const uint32_t levels = blits(color) ? levels_for(width, height) : 1u;
+    const tide_gpu_id id = make_layers(color, width, height, levels, layers,
+                                       VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                                           | (pixels ? 0u : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
+                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    vk_texture *t = &vk.textures[id - 1u];
+    t->pixels = TIDE_GPU_RGBA8;
+    if (pixels) {
+        for (uint32_t layer = 0; layer < layers; layer++) write_pixels(t, pixels[layer], 0, 0, width, height, width, layer);
+        return id;
+    }
+    const tide_gpu_id depth = make_layers(vk.depth_format, width, height, 1, layers, depth_usage,
+                                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    vk.textures[id - 1u].depth_array = depth;
+    return id;
+}
+
+static tide_gpu_id vk_array_depth(const tide_gpu_id id)
+{
+    const vk_texture *t = texture_of(id);
+    return !t || !t->arrayed ? 0 : t->depth ? id : t->depth_array;
+}
+
+// An array's layer as a target: that layer of its colors (none for depth alone) and of its depth array.
+static tide_gpu_id vk_array_layer(const tide_gpu_id array, const uint32_t layer)
+{
+    if (vk.lost) return 0;
+    const vk_texture *a = texture_of(array);
+    if (!a || !a->arrayed || layer >= a->layers) return 0;
+    const bool depth_alone = a->depth;
+    const bool floats = a->format == VK_FORMAT_R16G16B16A16_SFLOAT;
+    const tide_gpu_id id = target_place();
+    vk_target *t = &vk.targets[id - 1u];
+    *t = (vk_target){.used = true, .width = a->width, .height = a->height, .color_count = depth_alone ? 0u : 1u, .samples = 1,
+                     .face = true, .cube = array, .layer = layer, .array = true,
+                     .depth_layers = depth_alone ? array : a->depth_array, .bytes = !depth_alone && !floats,
+                     .format = depth_alone ? TIDE_GPU_TARGET_DEPTH
+                             : tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, floats ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES)};
+    return id;
 }
 
 static tide_gpu_id depth_texture(const int width, const int height)
@@ -2363,7 +2469,7 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
         width = t->width, height = t->height;
         for (uint32_t i = 0; i < t->color_count; i++) {
             const vk_texture *c = t->face ? texture_of(t->cube) : texture_of(t->colors[i]);
-            const VkImageView view = t->face ? c->faces[t->layer] : c->attach;
+            const VkImageView view = t->array ? c->layer_views[t->layer] : t->face ? c->faces[t->layer] : c->attach;
             turn_for_pass(c->image, c->format, t->face ? t->layer : 0u, c->rest, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             colors[i] = (VkRenderingAttachmentInfo){.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                                     .imageView = t->samples > 1u ? t->many_views[i] : view,
@@ -2378,6 +2484,10 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
         color_count = t->color_count;
         if (t->samples > 1u) {
             depth.imageView = t->many_depth_view;
+        } else if (t->array) { // That layer of its array's depth
+            const vk_texture *d = texture_of(t->depth_layers);
+            turn_for_pass(d->image, d->format, t->layer, d->rest, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+            depth.imageView = d->layer_views[t->layer];
         } else {
             const vk_texture *d = texture_of(t->depth);
             turn_for_pass(d->image, d->format, 0, d->rest, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
@@ -2528,7 +2638,7 @@ static bool bind(void)
         if (!t) continue;
         // Until its smaller images are made only its first is bound, so what's read between them is its own
         // pixels, as a texture with none is, through whichever of the pipeline's samplers reads it
-        const VkImageView first = t->cube ? t->base : t->attach;
+        const VkImageView first = t->cube || t->arrayed ? t->base : t->attach;
         const VkImageView view = t->mipped || t->levels < 2 || t->depth || !first ? t->view : first;
         images[i] = (VkDescriptorImageInfo){VK_NULL_HANDLE, view, t->rest};
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 1u + 2u * i, 0, 1,
@@ -3601,6 +3711,9 @@ const tide_gpu tide_gpu_vulkan = {
     .texture_free = vk_texture_free,
     .cube = vk_cube,
     .cube_face = vk_cube_face,
+    .array = vk_array,
+    .array_depth = vk_array_depth,
+    .array_layer = vk_array_layer,
     .mipmaps = vk_mipmaps,
     .pipeline = vk_pipeline_make,
     .pipeline_free = vk_pipeline_free,

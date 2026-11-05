@@ -229,6 +229,43 @@ static target_textures *find_target(const tide_gpu_id id)
     return NULL;
 }
 
+// An array: its depth array's id is given with it, kept as a target's depth is (array_depth).
+static tide_gpu_id record_array(const tide_gpu_target_format format, const int width, const int height, const uint32_t layers,
+                                const void *const *pixels)
+{
+    const uint32_t id = ++next_id;
+    const size_t layer = (size_t)width * (size_t)height * 4u;
+    target_textures *t = add_target(id);
+    if (!pixels) t->depth = ++next_id;
+    op(TIDE_EMBED_RENDER_ARRAY, 28u + (pixels ? layer * layers : 0u));
+    u32(id);
+    u32((uint32_t)format);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(layers);
+    u32(pixels != NULL);
+    u32(t->depth);
+    for (uint32_t i = 0; pixels && i < layers; i++) bytes(pixels[i], layer);
+    return id;
+}
+
+static tide_gpu_id record_array_depth(const tide_gpu_id array)
+{
+    const target_textures *t = find_target(array);
+    return t ? t->depth : 0;
+}
+
+static tide_gpu_id record_array_layer(const tide_gpu_id array, const uint32_t layer)
+{
+    const uint32_t id = ++next_id;
+    add_target(id); // Its color and its depth are the array's: neither is a texture by itself
+    op(TIDE_EMBED_RENDER_ARRAY_LAYER, 12u);
+    u32(id);
+    u32(array);
+    u32(layer);
+    return id;
+}
+
 static tide_gpu_id record_cube_face(const tide_gpu_id cube, const uint32_t face)
 {
     const uint32_t id = ++next_id;
@@ -633,6 +670,9 @@ const tide_gpu tide_gpu_record = {
     .texture_free = record_texture_free,
     .cube = record_cube,
     .cube_face = record_cube_face,
+    .array = record_array,
+    .array_depth = record_array_depth,
+    .array_layer = record_array_layer,
     .pipeline = record_pipeline,
     .pipeline_free = record_pipeline_free,
     .target = record_target,

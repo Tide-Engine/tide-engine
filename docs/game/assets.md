@@ -206,6 +206,17 @@ A PSD is at most 16384 pixels a side and 8192 × 8192 in all.
 
 Only the decoded pixels are packed, as with a PNG. The game needs no Photoshop files or decoder when it runs. [`grid.Decode(bytes)`](#decoding-a-png) still reads PNG only.
 
+## Texture arrays
+
+Images of one size, read by a uv and a layer (see [Texture arrays](./shaders.md#texture-arrays)), are a `TextureArray`: a glob's files, in their paths' order, or a list of paths in its own, each a file or a glob:
+
+```tide
+asset TextureArray ground = "art/ground/*.png";
+asset TextureArray picked = ["art/grass.png", "art/rock.png"];
+```
+
+Every image is the same size, 256 at the most. `[Filter]` and `[Wrap]` say how a `Sample` that says neither reads it.
+
 ## Cubemaps
 
 A sky or a room's surroundings is six images, the faces of a cube, which a frag reads by a direction (see [Skybox and reflections](./shaders.md#skybox-and-reflections)). That's a `Cubemap`, and its path is a glob that matches the six files:

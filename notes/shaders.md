@@ -1,5 +1,10 @@
 # Code the GPU runs: frags and verts
 
+## Texture arrays (2026-11-05)
+
+`READ_ARRAY`, `READ_DEPTH_ARRAY`, `READ_COMPARE_ARRAY`; `base_read`, `arrayed_read`, `put_layer`; the translators'
+`arrayed` image types. Details: notes/textures.md, Texture arrays: built.
+
 ## One image a texture, its samplers apart (2026-11-05)
 
 `shader.textures` are images now, one for each texture the code reads however it's read; `shader.ways` are each way

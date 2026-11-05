@@ -250,7 +250,9 @@ static void put_type(translation *x, hs *o, int t)
     case K_SAMPLER_CMP: hput(o, "uint"); return; // How it samples: see `_TideSampling`
     case K_TEXTURE: {
         const char *texel = ty.depth ? "float" : T(x, ty.elem)->kind == K_I32 ? "int4" : T(x, ty.elem)->kind == K_U32 ? "uint4" : "float4";
-        hprintf(o, "%s<%s>", ty.dim == DIM_CUBE ? "TextureCube" : ty.multisampled ? "Texture2DMS" : "Texture2D", texel);
+        hprintf(o, "%s<%s>",
+                ty.dim == DIM_CUBE ? "TextureCube" : ty.multisampled ? "Texture2DMS" : ty.arrayed ? "Texture2DArray" : "Texture2D",
+                texel);
         return;
     }
     default: fail(x, 0, 0, "a type HLSL has nothing for");
@@ -1086,27 +1088,53 @@ static int texture_call(translation *x, const expr *e, hs *o)
         snprintf(mode, sizeof mode, "tidehl_mode(%s, %du)", a.text[1], slot);
         how = mode;
     }
+    // An array texture's layer comes after where in it: sampled as one float3 (the layer rounded and clamped, as
+    // WebGPU's and Vulkan's are), loaded as an int
+    const int arrayed = tex.arrayed ? 1 : 0;
+    const bool sampling = same(n, len, "textureSample") || same(n, len, "textureSampleLevel")
+        || same(n, len, "textureSampleBias") || same(n, len, "textureSampleGrad") || same(n, len, "textureSampleCompare")
+        || same(n, len, "textureSampleCompareLevel");
+    hs where = {0};
+    if (sampling) {
+        if (a.n < 3 + arrayed) {
+            fail(x, line, col, "'%.*s' takes a texture, a sampler and where%s", len, n, arrayed ? " and a layer" : "");
+        }
+        if (arrayed) hprintf(&where, "float3(%s, float(%s))", a.text[2], a.text[3]);
+        else hput(&where, a.text[2]);
+    }
+    const char *at = where.s;
+    const int next = 3 + arrayed;
     if (same(n, len, "textureSample") || same(n, len, "textureSampleLevel") || same(n, len, "textureSampleBias")
         || same(n, len, "textureSampleGrad")) {
-        if (a.n < 3) fail(x, line, col, "'%.*s' takes a texture, a sampler and where", len, n);
         if (tex.depth) {
-            hprintf(o, "tidehl_depth(%s, %s, %s)", a.text[0], own, a.text[2]);
+            hprintf(o, "tidehl_depth(%s, %s, %s)", a.text[0], own, at);
         } else if (same(n, len, "textureSample")) {
-            hprintf(o, "tidehl_sample(%s, %s, %s, %s)", a.text[0], own, how, a.text[2]);
+            if (a.n != next) fail(x, line, col, "textureSample takes %d arguments here", next);
+            hprintf(o, "tidehl_sample(%s, %s, %s, %s)", a.text[0], own, how, at);
         } else if (same(n, len, "textureSampleGrad")) {
-            if (a.n != 5) fail(x, line, col, "textureSampleGrad takes 5 arguments");
-            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s, %s)", a.text[0], own, how, a.text[2], a.text[3], a.text[4]);
+            if (a.n != next + 2) fail(x, line, col, "textureSampleGrad takes %d arguments here", next + 2);
+            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s, %s)", a.text[0], own, how, at, a.text[next], a.text[next + 1]);
         } else {
-            if (a.n != 4) fail(x, line, col, "'%.*s' takes 4 arguments", len, n);
+            if (a.n != next + 1) fail(x, line, col, "'%.*s' takes %d arguments here", len, n, next + 1);
             hprintf(o, "tidehl_sample_%s(%s, %s, %s, %s, float(%s))", n[13] == 'L' ? "level" : "bias", a.text[0], own, how,
-                    a.text[2], a.text[3]);
+                    at, a.text[next]);
         }
     } else if (same(n, len, "textureSampleCompare") || same(n, len, "textureSampleCompareLevel")) {
-        if (a.n != 4 || !tex.depth) fail(x, line, col, "'%.*s' takes a depth texture, a sampler, where and a depth", len, n);
-        hprintf(o, "tidehl_compare(%s, %s, %s, %s)", a.text[0], own, a.text[2], a.text[3]);
+        if (a.n != next + 1 || !tex.depth) {
+            fail(x, line, col, "'%.*s' takes a depth texture, a sampler, where%s and a depth", len, n, arrayed ? ", a layer" : "");
+        }
+        hprintf(o, "tidehl_compare(%s, %s, %s, %s)", a.text[0], own, at, a.text[next]);
     } else if (same(n, len, "textureLoad")) {
-        if (a.n != 3) fail(x, line, col, "textureLoad takes a texture, where and a level or sample");
-        hprintf(o, "tidehl_load(%s, int2(%s), int(%s))", a.text[0], a.text[1], a.text[2]);
+        if (a.n != 3 + arrayed) {
+            fail(x, line, col, arrayed ? "textureLoad takes a texture, where, a layer and a level"
+                                       : "textureLoad takes a texture, where and a level or sample");
+        }
+        if (arrayed) hprintf(o, "tidehl_load(%s, int2(%s), int(%s), int(%s))", a.text[0], a.text[1], a.text[2], a.text[3]);
+        else hprintf(o, "tidehl_load(%s, int2(%s), int(%s))", a.text[0], a.text[1], a.text[2]);
+    } else if (same(n, len, "textureNumLayers")) {
+        if (!arrayed || a.n != 1) fail(x, line, col, "textureNumLayers takes an array texture");
+        t = u32;
+        hprintf(o, "tidehl_layers(%s)", a.text[0]);
     } else if (same(n, len, "textureDimensions")) {
         t = t_vec(x, u32, 2);
         if (tex.multisampled) hprintf(o, "tidehl_size(%s)", a.text[0]);
@@ -1120,6 +1148,7 @@ static int texture_call(translation *x, const expr *e, hs *o)
     } else {
         fail(x, line, col, "'%.*s' isn't a function", len, n);
     }
+    free(where.s);
     free_args(&a);
     return t;
 }
@@ -2544,8 +2573,8 @@ static const char *const prelude[] = {
     "\n",
     "// Sampling, as `mode` says (_TideSampling): nearest and linear read a texture's own pixels, mipmaps its smaller ones too\n"
     "#if TIDEHL_OWN_SAMPLERS\n"
-    "#define TIDEHL_SAMPLE(T, C)                                                                            \\\n"
-    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, C dx, C dy) {                        \\\n"
+    "#define TIDEHL_SAMPLE(T, C, D) /* D: a derivative, which an array coordinate's layer has none of */    \\\n"
+    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) {                        \\\n"
     "    float4 r;                                                                                          \\\n"
     "    if ((mode & 3u) == 2u) r = t.SampleGrad(own, at, dx, dy);                                          \\\n"
     "    else r = t.SampleLevel(own, at, 0.0);                                                              \\\n"
@@ -2555,8 +2584,8 @@ static const char *const prelude[] = {
     "    return t.SampleLevel(own, at, (mode & 3u) == 2u ? level : 0.0);                                    \\\n"
     "}\n"
     "#else\n"
-    "#define TIDEHL_SAMPLE(T, C)                                                                            \\\n"
-    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, C dx, C dy) {                        \\\n"
+    "#define TIDEHL_SAMPLE(T, C, D) /* D: a derivative, which an array coordinate's layer has none of */    \\\n"
+    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) {                        \\\n"
     "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
     "    float4 r;                                                                                          \\\n"
     "    if (filter == 2u) {                                                                                \\\n"
@@ -2577,7 +2606,7 @@ static const char *const prelude[] = {
     "float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \\\n"
     "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
     "    float4 r;                                                                                          \\\n"
-    "    if (filter != 2u) r = tidehl_sample_grad(t, own, mode, at, (C)0, (C)0);                            \\\n"
+    "    if (filter != 2u) r = tidehl_sample_grad(t, own, mode, at, (D)0, (D)0);                            \\\n"
     "    else if (wrap == 1u) r = t.SampleLevel(tidehl_trilinear_repeat_sampler, at, level);               \\\n"
     "    else if (wrap == 2u) r = t.SampleLevel(tidehl_trilinear_mirror_sampler, at, level);               \\\n"
     "    else r = t.SampleLevel(tidehl_trilinear_clamp_sampler, at, level);                                \\\n"
@@ -2585,16 +2614,18 @@ static const char *const prelude[] = {
     "}\n"
     "#endif\n"
     ,
-    "#define TIDEHL_SAMPLE_DERIVED(T, C)                                                                    \\\n"
-    "float4 tidehl_sample(T t, SamplerState own, uint mode, C at) { return tidehl_sample_grad(t, own, mode, at, ddx(at), ddy(at)); } \\\n"
+    "#define TIDEHL_SAMPLE_DERIVED(T, C, S) /* S: the part of the coordinate a derivative is of */           \\\n"
+    "float4 tidehl_sample(T t, SamplerState own, uint mode, C at) { return tidehl_sample_grad(t, own, mode, at, ddx(at.S), ddy(at.S)); } \\\n"
     "float4 tidehl_sample_bias(T t, SamplerState own, uint mode, C at, float bias) {                        \\\n"
     "    float scale = exp2(bias);                                                                          \\\n"
-    "    return tidehl_sample_grad(t, own, mode, at, ddx(at) * scale, ddy(at) * scale);                     \\\n"
+    "    return tidehl_sample_grad(t, own, mode, at, ddx(at.S) * scale, ddy(at.S) * scale);                 \\\n"
     "}\n"
-    "TIDEHL_SAMPLE(Texture2D<float4>, float2)\n"
-    "TIDEHL_SAMPLE(TextureCube<float4>, float3)\n"
-    "TIDEHL_SAMPLE_DERIVED(Texture2D<float4>, float2)\n"
-    "TIDEHL_SAMPLE_DERIVED(TextureCube<float4>, float3)\n"
+    "TIDEHL_SAMPLE(Texture2D<float4>, float2, float2)\n"
+    "TIDEHL_SAMPLE(TextureCube<float4>, float3, float3)\n"
+    "TIDEHL_SAMPLE(Texture2DArray<float4>, float3, float2)\n"
+    "TIDEHL_SAMPLE_DERIVED(Texture2D<float4>, float2, xy)\n"
+    "TIDEHL_SAMPLE_DERIVED(TextureCube<float4>, float3, xyz)\n"
+    "TIDEHL_SAMPLE_DERIVED(Texture2DArray<float4>, float3, xy)\n"
     "\n",
     "// Depth, 0 near and 1 far whichever way Unity keeps it: the nearest pixel's, or 1 where it isn't nearer than `d`\n"
     "#if TIDEHL_OWN_SAMPLERS\n"
@@ -2618,6 +2649,20 @@ static const char *const prelude[] = {
     "    return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);\n"
     "}\n"
     "float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return d <= tidehl_depth(t, own, at) ? 1.0 : 0.0; }\n"
+    "float tidehl_depth(Texture2DArray<float> t, SamplerState own, float3 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }\n"
+    "float tidehl_compare(Texture2DArray<float> t, SamplerState own, float3 at, float d) { // at.z: the layer\n"
+    "    uint w, h, n;\n"
+    "    t.GetDimensions(w, h, n);\n"
+    "    float2 size = float2(w, h);\n"
+    "    float2 p = at.xy * size - 0.5;\n"
+    "    float2 f = frac(p);\n"
+    "    float4 g = t.GatherRed(TIDEHL_NEAREST(own), float3((floor(p) + 1.0) / size, at.z));\n"
+    "#if TIDEHL_REVERSED_Z\n"
+    "    g = 1.0 - g;\n"
+    "#endif\n"
+    "    float4 lit = step(d.xxxx, g);\n"
+    "    return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);\n"
+    "}\n"
     "\n",
     "// Loads and sizes\n"
     "float4 tidehl_load(Texture2D<float4> t, int2 at, int level) { return t.Load(int3(at, level)); }\n"
@@ -2626,6 +2671,10 @@ static const char *const prelude[] = {
     "float tidehl_load(Texture2D<float> t, int2 at, int level) { return tidehl_depth_in(t.Load(int3(at, level))); }\n"
     "float4 tidehl_load(Texture2DMS<float4> t, int2 at, int s) { return t.Load(at, s); }\n"
     "float tidehl_load(Texture2DMS<float> t, int2 at, int s) { return tidehl_depth_in(t.Load(at, s)); }\n"
+    "float4 tidehl_load(Texture2DArray<float4> t, int2 at, int layer, int level) { return t.Load(int4(at, layer, level)); }\n"
+    "int4 tidehl_load(Texture2DArray<int4> t, int2 at, int layer, int level) { return t.Load(int4(at, layer, level)); }\n"
+    "uint4 tidehl_load(Texture2DArray<uint4> t, int2 at, int layer, int level) { return t.Load(int4(at, layer, level)); }\n"
+    "float tidehl_load(Texture2DArray<float> t, int2 at, int layer, int level) { return tidehl_depth_in(t.Load(int4(at, layer, level))); }\n"
     "#define TIDEHL_SIZE(T)                                                                                 \\\n"
     "uint2 tidehl_size(T t, uint level) { uint w, h, n; t.GetDimensions(level, w, h, n); return uint2(w, h); } \\\n"
     "uint tidehl_levels(T t) { uint w, h, n; t.GetDimensions(0, w, h, n); return n; }\n"
@@ -2635,6 +2684,14 @@ static const char *const prelude[] = {
     "TIDEHL_SIZE(Texture2D<float>)\n"
     "TIDEHL_SIZE(TextureCube<float4>)\n"
     "TIDEHL_SIZE(TextureCube<float>)\n"
+    "#define TIDEHL_SIZE_ARRAY(T)                                                                           \\\n"
+    "uint2 tidehl_size(T t, uint level) { uint w, h, e, n; t.GetDimensions(level, w, h, e, n); return uint2(w, h); } \\\n"
+    "uint tidehl_levels(T t) { uint w, h, e, n; t.GetDimensions(0, w, h, e, n); return n; }                \\\n"
+    "uint tidehl_layers(T t) { uint w, h, e, n; t.GetDimensions(0, w, h, e, n); return e; }\n"
+    "TIDEHL_SIZE_ARRAY(Texture2DArray<float4>)\n"
+    "TIDEHL_SIZE_ARRAY(Texture2DArray<int4>)\n"
+    "TIDEHL_SIZE_ARRAY(Texture2DArray<uint4>)\n"
+    "TIDEHL_SIZE_ARRAY(Texture2DArray<float>)\n"
     "#define TIDEHL_SIZE_MS(T)                                                                              \\\n"
     "uint2 tidehl_size(T t) { uint w, h, n; t.GetDimensions(w, h, n); return uint2(w, h); }                \\\n"
     "uint tidehl_samples(T t) { uint w, h, n; t.GetDimensions(w, h, n); return n; }\n"

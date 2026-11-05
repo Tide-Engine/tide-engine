@@ -1,0 +1,7 @@
+// expect: an array's layers are drawn into one at a time: 'layers[0]' is the first, as a RenderTarget
+scene Main { }
+local singleton Field { TextureArray layers; }
+view Show(Field field)
+{
+    var all = field.layers.layers;
+}

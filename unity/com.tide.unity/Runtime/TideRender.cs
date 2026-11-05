@@ -41,7 +41,7 @@ namespace Tide
             Buffer = 1, BufferWrite, BufferFree, Texture, TextureWrite, Mipmaps, TextureFree, Cube, CubeFace, Pipeline,
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Image, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
-            DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler,
+            DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler, Array, ArrayLayer,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -68,6 +68,8 @@ namespace Tide
             public int format, pixelBytes, width, height;
             public bool mips;  // Its smaller images are made
             public bool owned; // Destroyed when it's freed: a target's go with the target
+            public RenderTexture arrayDepth; // An array drawn into: its depth array, freed with it...
+            public uint arrayDepthId;        // ...which is read as this image
             public int used = -1;
         }
 
@@ -78,6 +80,8 @@ namespace Tide
             public RenderTexture resolved; // A multisampled one's depth, one sample a pixel, once asked for
             public RenderTexture cube; // A cube face's: the cube, and which face
             public CubemapFace face;
+            public RenderTexture layers, layersDepth; // An array's layer: the array and its depth array (either may be null)...
+            public int layer = -1;                    // ...and which layer
             public int width, height;
             public uint[] imageIds;
         }
@@ -550,9 +554,13 @@ namespace Tide
                     if (images.TryGetValue(W(0), out var image))
                     {
                         if (image.owned) Doom(image.texture);
+                        if (image.arrayDepth != null && image.arrayDepth != image.texture) Doom(image.arrayDepth);
+                        if (image.arrayDepthId != 0 && image.arrayDepthId != W(0)) images.Remove(image.arrayDepthId);
                         images.Remove(W(0));
                     }
                     break;
+                case Op.Array: MakeArray(W(0), W(1), (int)W(2), (int)W(3), (int)W(4), W(5) != 0 ? p + 28 : null, W(6)); break;
+                case Op.ArrayLayer: MakeArrayLayer(W(0), W(1), (int)W(2)); break;
                 case Op.Cube: MakeCube(W(0), (int)W(1), (int)W(2), W(3) != 0 ? p + 16 : null); break;
                 case Op.CubeFace: MakeCubeFace(W(0), W(1), (int)W(2), W(3)); break;
                 case Op.Pipeline: MakePipeline(p); break;
@@ -813,6 +821,64 @@ namespace Tide
             };
             rt.Create();
             images[id] = new Image { texture = rt, width = size, height = size, owned = true };
+        }
+
+// An array: of pixels (a Texture2DArray, its smaller images made), or drawn into a layer at a time (a RenderTexture of
+        // layers, with room for its smaller images, and a depth one beside it, read as `depthId`; one of depth alone is that)
+        void MakeArray(uint id, uint format, int width, int height, int layers, byte* pixels, uint depthId)
+        {
+            width = Math.Max(1, width);
+            height = Math.Max(1, height);
+            layers = Math.Max(1, layers);
+            if (pixels != null)
+            {
+                var array = new Texture2DArray(width, height, layers, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.MipChain)
+                {
+                    hideFlags = HideFlags.HideAndDontSave,
+                };
+                var layer = width * height * 4;
+                var bytes = new byte[layer];
+                for (var i = 0; i < layers; i++)
+                {
+                    Marshal.Copy((IntPtr)(pixels + (long)i * layer), bytes, 0, layer);
+                    array.SetPixelData(bytes, 0, i);
+                }
+                array.Apply(true, false);
+                images[id] = new Image { texture = array, width = width, height = height, owned = true, mips = true };
+                return;
+            }
+            var depth = new RenderTexture(width, height, GraphicsFormat.None, GraphicsFormat.D24_UNorm_S8_UInt)
+            {
+                dimension = TextureDimension.Tex2DArray, volumeDepth = layers, hideFlags = HideFlags.HideAndDontSave,
+            };
+            depth.Create();
+            if ((format & 15) == 0) // Depth alone: the array is its depth
+            {
+                images[id] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = width, height = height,
+                                         owned = true, arrayDepth = depth, arrayDepthId = id };
+                return;
+            }
+            var color = new RenderTexture(width, height, 0, (format & 15) == 2 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32,
+                                          RenderTextureReadWrite.Linear)
+            {
+                dimension = TextureDimension.Tex2DArray, volumeDepth = layers, useMipMap = true, autoGenerateMips = false,
+                hideFlags = HideFlags.HideAndDontSave,
+            };
+            color.Create();
+            images[id] = new Image { texture = color, width = width, height = height, owned = true, arrayDepth = depth, arrayDepthId = depthId };
+            images[depthId] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = width, height = height };
+        }
+
+        // An array's layer as a target: that layer of its colors and of its depth, neither its own to free
+        void MakeArrayLayer(uint id, uint array, int layer)
+        {
+            if (!images.TryGetValue(array, out var image)) return;
+            var depthAlone = image.arrayDepth == image.texture;
+            targets[id] = new Target
+            {
+                layers = depthAlone ? null : image.texture as RenderTexture, layersDepth = image.arrayDepth, layer = layer,
+                width = image.width, height = image.height, imageIds = Array.Empty<uint>(),
+            };
         }
 
         void MakeCubeFace(uint id, uint cube, int face, uint depthId)
@@ -1328,7 +1394,11 @@ namespace Tide
                         else
                         {
                             var t = c.target;
-                            if (t.cube != null) cb.SetRenderTarget(new RenderTargetIdentifier(t.cube, 0, t.face), new RenderTargetIdentifier(t.depth));
+                            if (t.layer >= 0 && t.layers != null)
+                                cb.SetRenderTarget(new RenderTargetIdentifier(t.layers, 0, CubemapFace.Unknown, t.layer),
+                                                   new RenderTargetIdentifier(t.layersDepth, 0, CubemapFace.Unknown, t.layer));
+                            else if (t.layer >= 0) cb.SetRenderTarget(new RenderTargetIdentifier(t.layersDepth, 0, CubemapFace.Unknown, t.layer));
+                            else if (t.cube != null) cb.SetRenderTarget(new RenderTargetIdentifier(t.cube, 0, t.face), new RenderTargetIdentifier(t.depth));
                             else if (t.colors.Length == 0) cb.SetRenderTarget(new RenderTargetIdentifier(t.depth));
                             else if (t.colors.Length == 1) cb.SetRenderTarget(new RenderTargetIdentifier(t.colors[0]), new RenderTargetIdentifier(t.depth));
                             else

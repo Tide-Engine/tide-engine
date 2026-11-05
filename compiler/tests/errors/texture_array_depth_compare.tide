@@ -1,0 +1,12 @@
+// expect: Compare takes where to read, a float2, which layer, an int, and the depth to compare what's stored there with, a number from 0 to 1: 'cascades.Compare(uv, layer, depth)'
+scene Main { }
+local singleton Lamp { DepthTextureArray cascades; List<Vertex> quad; List<int> faces; }
+frag Lit(Vertex vertex, out Color color, Lamp lamp)
+{
+    float lit = lamp.cascades.Compare(vertex.uv, 0.5);
+    color = Color(lit, lit, lit);
+}
+view Show(Lamp lamp)
+{
+    Draw.Mesh(lamp.quad, lamp.faces, Lit);
+}

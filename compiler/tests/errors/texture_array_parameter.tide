@@ -1,0 +1,11 @@
+// expect: a frag reads a TextureArray that's an asset by its name, or a field of a component or singleton it takes, not a parameter of its own
+scene Main { }
+local singleton Field { List<Vertex> quad; List<int> faces; }
+frag Shade(Vertex vertex, out Color color, TextureArray layers)
+{
+    color = layers.Sample(vertex.uv, 0);
+}
+view Show(Field field)
+{
+    Draw.Mesh(field.quad, field.faces, Shade);
+}

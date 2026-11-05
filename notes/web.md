@@ -1,5 +1,10 @@
 # Web builds
 
+## Texture arrays (2026-11-05)
+
+Imports `gpu_array`, `gpu_array_depth`, `gpu_array_layer`; reads 6 and 7 are `'2d-array'` in a layout. A cube's and an
+array's per-layer views are `layered`. Details: notes/textures.md, Texture arrays: built.
+
 ## Textures and samplers apart (2026-11-05)
 
 `gpu_image(slot, id)` and `gpu_sampler(slot, filter, wrap)` replace `gpu_sample`; `gpu_pipeline_samplers(count, low,

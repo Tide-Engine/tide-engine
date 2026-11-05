@@ -898,6 +898,54 @@ The scene below has both. The sky is the asset, drawn on a ball around the camer
 - **Six passes a frame is what a live reflection costs.** A cube that only holds what doesn't move is drawn once and kept: its images stay from frame to frame, like any target's.
 - **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. There's no choosing the level yet, so a rough surface's blurred reflection isn't there.
 
+## Texture arrays
+
+Images of one size in layers are a `TextureArray`, read by a uv and a layer. An asset's is a glob's files, in their paths' order, or a list of them in its own:
+
+```tide
+asset TextureArray ground = ["art/grass.png", "art/rock.png", "art/sand.png"];
+
+frag Ground(Vertex3 vertex, out Color color, Terrain terrain)
+{
+    int material = int(terrain.splat.Sample(vertex.uv).r * 2.99); // Any int, which can differ from pixel to pixel
+    color = ground.Sample(vertex.uv * 16, material, Filter.Trilinear, Wrap.Repeat);
+}
+```
+
+- The layer is an int. One past the layers reads the nearest one.
+- The filter and the wrap are written at the `Sample`, as a cube's filter is, or on the asset (`[Filter]`, `[Wrap]`). An array that says none is read blended and clamped. `SampleGrad(uv, dx, dy, layer)` takes its derivatives as a texture's does.
+- An array is one of a draw's [16 textures](#what-the-gpu-runs), however many layers it has.
+
+A view makes one to draw into, a layer at a time: `TextureArray(width, height, layers)`, sized as a [render target](./render-targets.md) is, with a `Format` last when a layer holds anything but `Format.Rgba8`. `array.layers[i]` is a `RenderTarget`, and `array.depth` is a `DepthTextureArray`, each layer's depth, which a frag reads as a [target's depth](#a-target-s-depth) with a layer: `Sample(uv, layer)` and `Compare(uv, layer, value)`. Shadow cascades are layers of depth alone:
+
+```tide
+local singleton Lamp { TextureArray maps; DepthTextureArray cascades; }
+
+view Shadows(mut Lamp lamp)
+{
+    if (lamp.maps.count == 0)
+    {
+        lamp.maps = TextureArray(2048, 2048, 3, 1, Format.Depth);
+        lamp.cascades = lamp.maps.depth;
+    }
+    for (int c = 0; c < 3; c++)
+    {
+        var into = lamp.maps.layers[c];
+        into.Clear(Color.white);
+        // ...each cascade's camera and casters
+    }
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp, Sun sun)
+{
+    int cascade = Cascade(this.world, sun); // Your own choice of cascade, per pixel
+    float lit = lamp.cascades.Compare(ToLamp(this.world, sun, cascade), cascade, Depth(this.world, sun, cascade));
+    color = Color(lit, lit, lit);
+}
+```
+
+`array.size` and `array.count` say a layer's pixels and how many there are, in a view. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
+
 ## Where the pixel is
 
 The engine supplies the draw's transform through `Instance instance`, and the pixel a frag runs for through `this`:

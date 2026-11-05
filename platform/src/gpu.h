@@ -116,10 +116,25 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // binding nothing names. TIDE_GPU_READ_SAMPLES reads a multisampled target's
 // depth as its samples are (depth_now): `texture_depth_multisampled_2d`, each
 // sample loaded; only the renderer's own kernels read one.
+// TIDE_GPU_READ_ARRAY reads an array's layers (tide_gpu.array) by a uv and a
+// layer, as colors: `texture_2d_array<f32>`, through a sampler of a color's;
+// TIDE_GPU_READ_DEPTH_ARRAY its depth (array_depth), `texture_depth_2d_array`,
+// through a depth's sampler or a compared one's. Only a texture reads so: a
+// sampler's read (sampler_reads) is COLOR, DEPTH or COMPARE for them.
 typedef enum tide_gpu_read {
     TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA,
-    TIDE_GPU_READ_SAMPLES
+    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY
 } tide_gpu_read;
+
+// The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.
+enum { TIDE_GPU_MAX_LAYERS = 256 };
+
+// How a sampler reads a texture that's read as `read`, where a pipeline's samplers are its textures' own.
+static inline uint8_t tide_gpu_sampler_read(const uint8_t read)
+{
+    return read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : read == TIDE_GPU_READ_ARRAY ? (uint8_t)TIDE_GPU_READ_COLOR
+         : read == TIDE_GPU_READ_DEPTH_ARRAY ? (uint8_t)TIDE_GPU_READ_DEPTH : read;
+}
 
 // A cube's six faces, in the order it has them: the one each axis points at,
 // +x, -x, +y, -y, +z, -z.
@@ -322,17 +337,11 @@ static inline uint32_t tide_gpu_samplers(const tide_gpu_pipeline_desc *desc, uin
 {
     if (desc->sampler_count) {
         const uint32_t count = desc->sampler_count < TIDE_GPU_MAX_TEXTURES ? desc->sampler_count : TIDE_GPU_MAX_TEXTURES;
-        for (uint32_t j = 0; j < count; j++) {
-            const uint8_t read = desc->sampler_reads[j];
-            reads[j] = read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : read;
-        }
+        for (uint32_t j = 0; j < count; j++) reads[j] = tide_gpu_sampler_read(desc->sampler_reads[j]);
         return count;
     }
     const uint32_t count = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
-    for (uint32_t i = 0; i < count; i++) {
-        const uint8_t read = desc->reads[i];
-        reads[i] = read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : read;
-    }
+    for (uint32_t i = 0; i < count; i++) reads[i] = tide_gpu_sampler_read(desc->reads[i]);
     return count;
 }
 
@@ -413,6 +422,21 @@ typedef struct tide_gpu {
     // across the edge. It's a texture to `sample` (whose wrap isn't read),
     // `mipmaps` and `texture_free`, and to nothing else.
     tide_gpu_id (*cube)(tide_gpu_color color, int size, const void *const *faces);
+    // An array: `layers` images of `width` by `height` pixels (1 to TIDE_GPU_MAX_LAYERS), read by a uv and a layer
+    // (TIDE_GPU_READ_ARRAY). With `layer_pixels` (each layer's, 4 bytes a pixel, rows from the top), it's an
+    // array of TIDE_GPU_RGBA8 images, and nothing draws into it. With NULL, it's drawn into a layer at a time
+    // (array_layer), its images as `format` says (tide_gpu_target_format: its colors' kind, one color at the most,
+    // or TIDE_GPU_TARGET_DEPTH for depth alone, whose color isn't read), starting black, with a depth array beside
+    // them (array_depth) that starts at the far limit. Its samples are 1. It's a texture to `image`, `mipmaps`
+    // (every layer's) and `texture_free` (with its depth array, after its layers' targets).
+    tide_gpu_id (*array)(tide_gpu_target_format format, int width, int height, uint32_t layers, const void *const *layer_pixels);
+    // The depth array of one that's drawn into, read as TIDE_GPU_READ_DEPTH_ARRAY: 0 for one of pixels.
+    tide_gpu_id (*array_depth)(tide_gpu_id array);
+    // A target whose color image is layer `layer` of an array that's drawn into and whose depth and stencil are
+    // that layer of its depth array: drawn into as any target is, its kind the array's format. Neither is a
+    // texture by itself (target_texture and target_depth are 0: the array is what's sampled), and target_read
+    // reads the layer. target_free frees it, and leaves the array.
+    tide_gpu_id (*array_layer)(tide_gpu_id array, uint32_t layer);
     // A target whose one color image is the face `face` (0 to 5: +x, -x, +y,
     // -y, +z, -z) of a cube that was made with no pixels, with depth and
     // stencil of its own. What a camera

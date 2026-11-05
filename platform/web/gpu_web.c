@@ -66,6 +66,10 @@ TIDE_WEB_IMPORT(gpu_use) void tide_web_gpu_use(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_stencil) void tide_web_gpu_stencil(uint32_t value);
 TIDE_WEB_IMPORT(gpu_uniforms) void tide_web_gpu_uniforms(const void *data, size_t size);
 TIDE_WEB_IMPORT(gpu_image) void tide_web_gpu_image(uint32_t slot, tide_gpu_id texture);
+TIDE_WEB_IMPORT(gpu_array)
+tide_gpu_id tide_web_gpu_array(tide_gpu_target_format format, int width, int height, uint32_t layers, const void *const *pixels);
+TIDE_WEB_IMPORT(gpu_array_depth) tide_gpu_id tide_web_gpu_array_depth(tide_gpu_id array);
+TIDE_WEB_IMPORT(gpu_array_layer) tide_gpu_id tide_web_gpu_array_layer(tide_gpu_id array, uint32_t layer);
 TIDE_WEB_IMPORT(gpu_sampler) void tide_web_gpu_sampler(uint32_t slot, tide_gpu_filter filter, tide_gpu_wrap wrap);
 TIDE_WEB_IMPORT(gpu_mipmaps) void tide_web_gpu_mipmaps(tide_gpu_id texture);
 TIDE_WEB_IMPORT(gpu_vertices) void tide_web_gpu_vertices(uint32_t slot, tide_gpu_id buffer, size_t offset);
@@ -184,6 +188,9 @@ const tide_gpu tide_gpu_webgpu = {
     .stencil = tide_web_gpu_stencil,
     .uniforms = tide_web_gpu_uniforms,
     .image = tide_web_gpu_image,
+    .array = tide_web_gpu_array,
+    .array_depth = tide_web_gpu_array_depth,
+    .array_layer = tide_web_gpu_array_layer,
     .sampler = tide_web_gpu_sampler,
     .vertices = tide_web_gpu_vertices,
     .indices = tide_web_gpu_indices,

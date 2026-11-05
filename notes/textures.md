@@ -1,6 +1,65 @@
 # Textures and how they are sampled
 
-## Texture arrays: a proposal (2026-11-05, awaiting the owner)
+## Texture arrays: built (2026-11-05)
+
+What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture arrays), the users' page is
+`docs/game/shaders.md` (Texture arrays) and `docs/game/assets.md`. Everything here is Claude's, Provisional.
+
+- **Runtime values** (`tide/draw.h`): `tide_texture_array_ref` (40 bytes: a target, a pack name, its layers) is Tide's
+  `TextureArray`; `DepthTextureArray` is a `tide_depth_ref` of the array's target. A drawn array is a managed target's
+  state with `layers` (1 to `TIDE_TEXTURE_ARRAY_LAYERS`, 256); its id has `TIDE_RENDER_ARRAY` (bit 52), and a layer as a
+  destination `TIDE_RENDER_LAYER` (bits 53 to 61, 1 + the layer): `tide_render_target_arrayed`, `_layer`, `_array_of`,
+  as a cube's faces. `tide_texture_array_make` (and the `_sized`/`_scaled` wrappers generated C calls), `_layer`,
+  `_depth`, `_resize`, `_dispose`, `_recreate` (a web reload: the layers come in the value), `_size`, `_count`,
+  `tide_depth_array_count`. `tide_render_target_recreate` keeps a layer's bits. Resizing or disposing a layer alone says
+  so and does nothing; a layer's color and depth name no image, as a face's don't.
+- **The draw list:** `TIDE_PIXELS_TARGET_ARRAY` (by the array's id) and `TIDE_PIXELS_PACK_ARRAY` (the pack's pointer to
+  each layer's pixels, as a pack cube's), with `tide_draw_texture.layers`; an array's depth is `TIDE_PIXELS_TARGET_DEPTH`
+  of the array's id. `tide_draw_array_source`. A blit refuses an array a layer of which it draws into; `append` carries
+  both.
+- **The pack:** `TIDE_PACK_TEXTURE_ARRAY` (19), a list block of texture handles, uncompressed (`pack_item` with no
+  compression, `[Raw]` as the declaration says). The loader notes each array whose layers are whole and of one size
+  (`note_arrays`, `tide_pack_texture_array_find`, `tide_pack_texture_array_of`); its version is a hash of its layers'.
+- **tidec:** `TY_TEXTURE_ARRAY`, `TY_DEPTH_TEXTURE_ARRAY`; `ASSET_TEXTURE_ARRAY`, read as Textures (each path a file or a
+  glob, a list of paths as an AnimationCatalog's, no layers merged), with the size and count checked;
+  `check_array_target`, `check_array_sample`, `check_depth_array_read`, `layers[i]` through `colors_indexed` as a cube's
+  `faces`. Shader reads `READ_ARRAY`, `READ_DEPTH_ARRAY` and the compiler-only `READ_COMPARE_ARRAY` (a depth array's
+  texture read, a compared sampler); a way's sampler reads its `base_read`, so arrays share samplers with textures read
+  alike. WGSL: `texture_2d_array<f32>`, `texture_depth_2d_array`, the layer after the uv as
+  `clamp(i32(layer), 0, i32(textureNumLayers(t)) - 1)` (`put_layer`). The SPIR-V and HLSL translators take both
+  (`arrayed` types; vec3/float3 coordinates; `tidehl_layers`; fixtures `compiler/tests/wgsl/texture_arrays*.wgsl`,
+  through spirv-val and fxc). A reload remakes a drawn array from its value (`gen_resource_value`).
+- **gpu.h:** `array(format, width, height, layers, layer_pixels)`, `array_depth`, `array_layer`; reads
+  `TIDE_GPU_READ_ARRAY` (6) and `_DEPTH_ARRAY` (7), whose samplers read COLOR and DEPTH/COMPARE
+  (`tide_gpu_sampler_read`). Vulkan: `make_layers` (one image of `layers`, a `2D_ARRAY` view, a base view, a 2D view a
+  layer to draw into, cleared), color arrays with room for their smaller images from the start where the format blits,
+  a depth array beside (or as) it; a layer's target is a face-like target that attaches that layer of both. WebGPU: the
+  same in `tide.js` (`gpu_array`, `layered` views, which cubes now share, `depthLayers`), its layouts `'2d-array'`.
+  The renderer: `gpu_array`, `array_for` (layers' targets cleared black and far as made), texture reads, sources made
+  before they're read, a layer's pass counted for the array's smaller images, fallbacks (`blank`, a white array of one
+  pixel; `far_array`, a depth array at the far limit). Memory is held as the array's whole.
+- **Unity** (embed ABI 15): notes/unity.md, Texture arrays.
+- **Tests:** `tidec_e2e_texture_arrays` (an asset's glob and list, a list's repeated file one image, counts, layers as
+  destinations, the run's textures and samplers, a reload in other memory, Resize and Dispose, natively and under
+  Node); `compiler/tests/shaders/texture_arrays` (golden, through spirv-val and fxc); `tidec_error_texture_array_*`
+  (7); pass 25 of `platform/tests/shaders.tide` (`run_array_checks`: an asset's six layers, a painted array's four,
+  layers past the last and before the first, a layer that differs across a square, a layer read between its smaller
+  images, a never-made array and depth, a depth array's three layers read and compared), on Vulkan (with the
+  validation layer) and WebGPU, again after device loss on the web; `embed`'s packet reader takes the new ops; LSP
+  (`lsp_texture_arrays`).
+- **Gaps:** layers aren't compressed (BC would need an array upload path on each backend); `size`/`count` aren't read
+  on the GPU; no `Grid3` to array conversion (the proposal's item 5, not built: a grid of layers would need the list's
+  layered copy and partial writes); a layer kept as a `RenderTarget` field and reloaded on the web before its array
+  comes back with as many layers as its index says; Unity's replay wasn't run (no Unity here); Linux, macOS, Android
+  are CI's.
+
+## Texture arrays: the proposal, agreed (2026-11-05)
+
+The owner picked the recommended option of each of the four questions asked (2026-11-05): types of their own
+(`TextureArray`, `DepthTextureArray`); an asset of a glob or a list of paths; one drawn into made by
+`TextureArray(width, height, layers, ...)` with `layers[i]` as targets and `.depth` the depth array; and
+`Sample(uv, layer)` with an int layer, clamped. The rest of the proposal below came with them; its details stay
+Claude's picks, Provisional.
 
 Asked for by the owner ("just cause nothing needs [it] isn't an excuse"), from Mount & Rifle's ground frag (9 material
 scans, two or three shadow cascades and a canopy texture, notes/gaps.md there). The language design is the owner's:

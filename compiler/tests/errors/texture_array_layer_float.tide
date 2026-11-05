@@ -1,0 +1,14 @@
+// expect: a TextureArray's Sample takes where to read, a float2 from (0, 0) to (1, 1), and which layer, an int, then how, a Filter and a Wrap: 'ground.Sample(uv, layer)' or 'ground.Sample(uv, layer, Filter.Trilinear, Wrap.Repeat)'
+// expect: the layer is a whole number: 'int(layer)' makes one, to its nearest below
+// A layer is an int
+asset TextureArray ground = "../e2e/cubes/sky/*.png";
+scene Main { }
+local singleton Field { List<Vertex> quad; List<int> faces; }
+frag Shade(Vertex vertex, out Color color)
+{
+    color = ground.Sample(vertex.uv, 1.5);
+}
+view Show(Field field)
+{
+    Draw.Mesh(field.quad, field.faces, Shade);
+}

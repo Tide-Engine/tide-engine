@@ -4829,3 +4829,133 @@ view Targets(mut Art art)
     }
     Draw.Blit(art.outputTarget.color, Draw.window, TargetInspect);
 }
+
+// Texture arrays (pass 25): images in layers read by a uv and a layer. An asset's of the sky's six files, in their
+// paths' order (nx, ny, nz, px, py, pz: cyan, magenta, yellow, red, green and blue, each with a white top left
+// quarter, 4 pixels a side); one a view paints, 4 layers of 32 pixels, each its own color with a white top left
+// quarter; and one of depth alone, 3 layers, each a plane drawn farther than the one before.
+asset TextureArray skyLayers = "sky/sky_??.png";
+
+local singleton Layers
+{
+    TextureArray painted;
+    TextureArray shadows;
+    DepthTextureArray depths;
+    TextureArray none;       // Never made: reads as white
+    DepthTextureArray noDepth; // ...and its depth as the far limit
+    List<Vertex> small;
+    List<Vertex3> plane;
+    bool made;
+}
+
+// Which layer a draw reads, and where: its values
+struct Pick
+{
+    float2 at;
+    int layer;
+}
+
+frag AssetLayer(Vertex vertex, out Color color, Pick pick)
+{
+    color = skyLayers.Sample(pick.at, pick.layer, Filter.Point);
+}
+
+frag PaintedLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
+{
+    color = layers.painted.Sample(pick.at, pick.layer, Filter.Point);
+}
+
+// The layer differs from pixel to pixel: a quarter of the square's width each
+frag LayerAcross(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.painted.Sample(float2(0.75, 0.75), int(vertex.uv.x * 4), Filter.Point);
+}
+
+// Between a layer's smaller images: a layer of one color is that color however small it's drawn
+frag LayerSmall(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.painted.Sample(vertex.uv * 0.5 + float2(0.5, 0.5), 1, Filter.Trilinear);
+}
+
+frag DepthLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
+{
+    color = Color(layers.depths.Compare(float2(0.5, 0.5), pick.layer, 0.4), layers.depths.Sample(float2(0.5, 0.5), pick.layer), 0);
+}
+
+frag NoLayers(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.none.Sample(float2(0.5, 0.5), 0) * Color(layers.noDepth.Sample(float2(0.5, 0.5), 0), 1, layers.noDepth.Compare(float2(0.5, 0.5), 0, 0.4));
+}
+
+Color LayerColor(int layer)
+{
+    if (layer == 0) return Color(1, 0, 0);
+    if (layer == 1) return Color(0, 1, 0);
+    if (layer == 2) return Color(0, 0, 1);
+    return Color(1, 1, 0);
+}
+
+[After(CubeReads)]
+view LayersPaint(Art art, mut Layers layers)
+{
+    if (art.targetPass != 25) return;
+    if (!layers.made)
+    {
+        layers.made = true;
+        layers.painted = TextureArray(32, 32, 4, 1);
+        layers.shadows = TextureArray(16, 16, 3, 1, Format.Depth);
+        layers.depths = layers.shadows.depth;
+        layers.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                        Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        layers.plane = [Vertex3 { position = float3(-2, -2, 0) }, Vertex3 { position = float3(2, -2, 0) },
+                        Vertex3 { position = float3(2, 2, 0) }, Vertex3 { position = float3(-2, 2, 0) }];
+    }
+    for (int layer = 0; layer < 4; layer++)
+    {
+        var into = layers.painted.layers[layer];
+        into.SetScreen();
+        into.Clear(LayerColor(layer));
+        into.Rect(float2(8, 8), float2(16, 16), Color.white);
+    }
+    // Each depth layer a plane 5, 10 and 15 from a camera with no perspective, near 0.1 and far 30
+    for (int layer = 0; layer < 3; layer++)
+    {
+        var into = layers.shadows.layers[layer];
+        into.Clear(Color.white);
+        into.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.LookRotation(float3(0, 0, 1), float3(0, 1, 0)), float3(1)),
+                       float4x4.Ortho(2, 2, 0.1, 30));
+        into.Cull(Cull.None)
+        {
+            into.Mesh(layers.plane, art.faces, float4x4.TRS(float3(0, 0, -10 + 5 * (layer + 1)), quaternion.identity, float3(1)));
+        }
+    }
+}
+
+[After(LayersPaint)]
+view LayersRead(Art art, Layers layers)
+{
+    if (art.targetPass != 25) return;
+    Draw.Clear(Color(0.5, 0.5, 0.5));
+    Draw.SetScreen();
+    Draw.SetClip();
+    for (int layer = 0; layer < 6; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 32, 8)) { Draw.Mesh(layers.small, art.faces, AssetLayer, Pick { at = float2(0.25, 0.25), layer = layer }); }
+        Draw.Transform(float2(24 + layer * 32, 8)) { Draw.Mesh(layers.small, art.faces, AssetLayer, Pick { at = float2(0.75, 0.75), layer = layer }); }
+    }
+    for (int layer = 0; layer < 4; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 32, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.25, 0.25), layer = layer }); }
+        Draw.Transform(float2(24 + layer * 32, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.75, 0.75), layer = layer }); }
+    }
+    // Past its layers, the nearest: the last and the first
+    Draw.Transform(float2(136, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.75, 0.75), layer = 9 }); }
+    Draw.Transform(float2(152, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.75, 0.75), layer = -2 }); }
+    Draw.Transform(float2(8, 40)) { Draw.Mesh(layers.small, art.faces, LayerAcross); }
+    Draw.Transform(float2(24, 40)) { Draw.Mesh(layers.small, art.faces, LayerSmall); }
+    Draw.Transform(float2(40, 40)) { Draw.Mesh(layers.small, art.faces, NoLayers); }
+    for (int layer = 0; layer < 3; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 16, 56)) { Draw.Mesh(layers.small, art.faces, DepthLayer, Pick { layer = layer }); }
+    }
+}

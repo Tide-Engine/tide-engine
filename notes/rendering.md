@@ -1,5 +1,10 @@
 # The platform layer and the renderer
 
+## Texture arrays (2026-11-05)
+
+`gpu.h`'s `array`, `array_depth`, `array_layer` and the reads `TIDE_GPU_READ_ARRAY`/`_DEPTH_ARRAY`, on Vulkan, WebGPU
+and the recorder; the renderer's `gpu_array`. Details: notes/textures.md, Texture arrays: built.
+
 ## One image a texture, its samplers apart (2026-11-05)
 
 The owner's direction for the follow-up to Sixteen textures (below): a texture read several ways is one image binding

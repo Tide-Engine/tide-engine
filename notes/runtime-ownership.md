@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## Texture arrays and samplers apart (2026-11-05)
+
+Within the drawing maintenance exception, with the owner's go-ahead for both pieces ("just cause nothing needs [it]
+isn't an excuse") and the texture-array design the owner picked. `tide_shader`'s `texture_samplers` (1 + another
+texture) became `sampler_count`, `sampler_reads` and `texture_samplers` (a mask a texture), with
+`tide_shader_samplers`, `tide_shader_texture_samplers` and `tide_shader_texture_filter`; a run's `sampling` is by
+sampler. New calls generated code makes: `tide_texture_array_make_sized[_as]`, `_make_scaled[_as]`, `_layer`,
+`_depth`, `_resize`, `_dispose`, `_recreate`, `_size`, `_count`, `tide_depth_array_count`, `tide_draw_array_source`
+and `tide_pack_texture_array_of` (`tide/draw.h`, `tide/pack.h`; engine/src/draw.c, mesh.c, pack_load.c), and the
+reads `TIDE_SHADER_READ_ARRAY`/`_DEPTH_ARRAY`. gpu.h: `image`/`sampler` in place of `sample`, `array`,
+`array_depth`, `array_layer`. Embed ABI 15. Contracts and tests: notes/rendering.md, One image a texture, and
+notes/textures.md, Texture arrays: built.
+
 ## Sixteen textures, shared samplers (2026-11-05)
 
 Within the drawing maintenance exception, with the owner's "not cap ourselves to arbitrary limits": `tide/draw.h`'s

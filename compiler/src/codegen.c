@@ -4506,6 +4506,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         gen_interp(g, o, e);
         break;
     case E_INDEX: // items[i], or its zero past the end
+        if (e->object->kind == E_MEMBER && e->object->target_colors && e->object->type.kind == TY_TEXTURE_ARRAY) {
+            sb_put(o, "tide_texture_array_layer("); // array.layers[2]: that layer, as a RenderTarget
+            gen_expr(g, o, e->object);
+            sb_put(o, ", ");
+            gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->kind == E_MEMBER && e->object->target_colors && e->object->type.kind == TY_CUBEMAP) {
             sb_put(o, "tide_cubemap_face("); // cube.faces[2]: that face, as a RenderTarget
             gen_expr(g, o, e->object);
@@ -4711,6 +4719,22 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (e->target_colors) { // target.colors: the target, of whose color images an index reads one (E_INDEX)
             gen_expr(g, o, e->object);
+            break;
+        }
+        if (e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY) {
+            // array.depth, array.size, array.count, and its depth's size and count
+            const bool depths = e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY;
+            const bool size = str_eq_c(e->member, "size"), count = str_eq_c(e->member, "count");
+            if (depths && size) {
+                sb_put(o, "tide_texture_size((tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (");
+                gen_expr(g, o, e->object);
+                sb_put(o, ").target})");
+                break;
+            }
+            sb_put(o, depths ? "tide_depth_array_count(" : size ? "tide_texture_array_size(" : count ? "tide_texture_array_count("
+                                                                    : "tide_texture_array_depth(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
             break;
         }
         if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
@@ -5327,7 +5351,8 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
     // target.Resize(...) runs on its receiver; RenderTarget.Window(...) has none
-    const bool receiver = e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP);
+    const bool receiver = e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
+                                                                || e->object->type.kind == TY_TEXTURE_ARRAY);
     if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
     else if (e->call == CALL_AUDIO) sb_put(o, "tide_l->tide_audio"); // The frame's audio list, which the host gave the local state
     else if (receiver) gen_expr(g, o, e->object);
@@ -6705,7 +6730,8 @@ static void call_operands(expr *e, operand_list *ops)
         case CALL_PARENT:
         case CALL_SEND: take(ops, e->object); break;
         default:
-            if (e->targeted || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
+            if (e->targeted || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
+                                                                || e->object->type.kind == TY_TEXTURE_ARRAY))) {
                 take(ops, e->object); // A render target
             }
             break; // Math, Scene, GUI and the like: a name, no value
@@ -6838,6 +6864,8 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         const int had = out->items.count;
         collect_ordered(e->object, out, later);
         if (((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size"))
+            || ((e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY)
+                && (str_eq_c(e->member, "size") || str_eq_c(e->member, "count")))
             || (e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "contentRevision"))) {
             const ordered_item item = {e, false, false};
             vec_push(out->items, item);
@@ -20654,6 +20682,7 @@ static uint32_t asset_pack_kind(const type t)
     if (t.kind == TY_GRID) return TIDE_PACK_GRID;
     if (t.kind == TY_TEXTURE) return TIDE_PACK_TEXTURE;
     if (t.kind == TY_CUBEMAP) return TIDE_PACK_CUBEMAP;
+    if (t.kind == TY_TEXTURE_ARRAY) return TIDE_PACK_TEXTURE_ARRAY;
     if (t.kind == TY_CLIP) return TIDE_PACK_CLIP;
     if (t.kind == TY_FONT) return TIDE_PACK_FONT;
     if (t.kind == TY_MAP) {
@@ -20675,7 +20704,8 @@ static uint32_t asset_decl_pack_kind(const decl *d)
 static const char *asset_ctype(const type t)
 {
     return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
-         : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_FONT ? "tide_font_ref"
+         : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_TEXTURE_ARRAY ? "tide_texture_array_ref"
+         : t.kind == TY_DEPTH_TEXTURE_ARRAY ? "tide_depth_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_FONT ? "tide_font_ref"
          : t.kind == TY_MAP ? "tide_map"
          : t.kind == TY_MESH ? "tide_mesh_lists" : t.kind == TY_STRUCT ? c_type(t) : "tide_list";
 }
@@ -21282,6 +21312,7 @@ static void gen_assets(gen *g)
         if (d->return_type.kind == TY_STRING) sb_printf(o, "    %s = tide_pack_text(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_TEXTURE) sb_printf(o, "    %s = tide_pack_texture_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CUBEMAP) sb_printf(o, "    %s = tide_pack_cubemap_of(e);\n", asset_cname(d));
+        else if (d->return_type.kind == TY_TEXTURE_ARRAY) sb_printf(o, "    %s = tide_pack_texture_array_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CLIP) sb_printf(o, "    %s = tide_pack_clip_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_FONT) sb_printf(o, "    %s = tide_pack_font_of(e);\n", asset_cname(d));
         else if (d->asset_kind == ASSET_ANIMATION)
@@ -21946,6 +21977,16 @@ static void build_pack(gen *g)
             }
             free(meshes);
             free(names);
+            continue;
+        }
+        if (v->kind == ASSET_TEXTURE_ARRAY) { // Its layers' images, each in the pack once, and a block that names them in order
+            uint64_t *layers = arena_alloc(sizeof *layers * (size_t)(v->count ? v->count : 1));
+            uint32_t extra;
+            for (int k = 0; k < v->count; k++) {
+                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, &extra, prog->game_folder, NULL);
+            }
+            tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
+                           (uint32_t)(v->count ? v->items[0].image.width : 0));
             continue;
         }
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
@@ -23700,7 +23741,7 @@ static bool resource_fields(const decl *d)
 static bool resource_type(const type t)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_GPU_LIST) return true;
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_GPU_LIST) return true;
     if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
         || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return resource_fields(t.decl);
     return false;
@@ -23750,6 +23791,22 @@ static void gen_resource_value(gen *g, const type t, const char *at, const char 
         const int stride = gpu_list_stride(t.decl);
         sb_printf(o, "%sif (%s.id) {\n%s    if (same_memory) tide_gpu_list_adopt(&%s, %du);\n%s    else %s = tide_gpu_list_recreate(%s, %du);\n%s}\n",
                   pad, at, pad, at, stride, pad, at, at, stride, pad);
+        return;
+    }
+    if (t.kind == TY_TEXTURE_ARRAY) { // One that's drawn into, with its layers: the pack's is a name, as a cube's is
+        sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
+        sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
+        sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s = tide_texture_array_recreate(%s);\n",
+                  pad, at, at, pad, at, at);
+        sb_printf(o, "%s}\n", pad);
+        return;
+    }
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) { // Its array's target, kept or made again
+        sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
+        sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
+        sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s.target = tide_render_target_recreate(%s.target);\n",
+                  pad, at, at, pad, at, at);
+        sb_printf(o, "%s} else memset(&%s, 0, sizeof %s);\n", pad, at, at);
         return;
     }
     if (t.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
@@ -25206,6 +25263,17 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       (unsigned)(floats + ints), layout, words, texture->count_at);
             continue;
         }
+        if (texture->read == READ_ARRAY) { // A TextureArray: an asset's by name, or a field's
+            if (texture->asset) {
+                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+            } else {
+                int b = 0;
+                while (sh->bound.items[b] != texture->source) b++;
+                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source(tide_draw, tide_%sb%d->%s);\n", t,
+                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            }
+            continue;
+        }
         if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
             if (texture->asset) {
                 sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
@@ -25244,7 +25312,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
             } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
                              texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         }
-        else if (texture->field->type.kind == TY_DEPTH_TEXTURE)
+        else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY)
             sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         else

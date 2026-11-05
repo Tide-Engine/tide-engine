@@ -1505,10 +1505,12 @@
     const READ_SAMPLES = 5;     // TIDE_GPU_READ_SAMPLES: a multisampled depth, each sample loaded
     const MAX_STORAGE = 7;      // TIDE_GPU_MAX_STORAGE
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
-    const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES;
+    const READ_ARRAY = 6, READ_DEPTH_ARRAY = 7; // TIDE_GPU_READ_ARRAY, _DEPTH_ARRAY: an array's colors, or its depth
+    const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES || read === READ_DEPTH_ARRAY;
     // A pipeline's samplers where it says none apart (gpu.h's tide_gpu_samplers): texture i that's sampled has sampler i,
     // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
-    const ownSamplers = reads => reads.map(read => read === READ_SAMPLES ? READ_DATA : read);
+    const ownSamplers = reads => reads.map(read => read === READ_SAMPLES ? READ_DATA : read === READ_ARRAY ? 0
+        : read === READ_DEPTH_ARRAY ? 1 : read);
     // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
     let layouts = null, samplers = null, mipPipelines = null, depthResolver = null;
@@ -1550,6 +1552,8 @@
             reads.forEach((read, i) => {
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
                     ? { sampleType: 'float', viewDimension: 'cube' }
+                    : read === READ_ARRAY || read === READ_DEPTH_ARRAY
+                    ? { sampleType: read === READ_ARRAY ? 'float' : 'depth', viewDimension: '2d-array' }
                     : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float',
                         multisampled: read === READ_SAMPLES } });
             });
@@ -1602,7 +1606,7 @@
                 const t = gpuTables.texture[textures[i]];
                 // A cube has room for its smaller images from the start: until they're made, only its first are
                 // bound, so what's read between them is its own pixels, through whichever sampler reads it
-                entries.push({ binding: 1 + 2 * i, resource: t.cube && !t.mipped ? t.base : t.view });
+                entries.push({ binding: 1 + 2 * i, resource: t.layered && !t.mipped ? t.base : t.view });
                 t.groups.add(key); // Which go when it does
             }
             p.samplers.forEach((read, j) => {
@@ -2014,12 +2018,73 @@
             }
             return gpuAdd('texture', { texture, view: texture.createView({ dimension: 'cube' }),
                 base: texture.createView({ dimension: 'cube', mipLevelCount: 1 }), width: size, height: size,
-                row: size * 4, format, cube: faces, bytes: color !== 2, groups: new Set() });
+                row: size * 4, format, layered: faces, bytes: color !== 2, groups: new Set() });
+        },
+        gpu_array(into, width, height, layers, pixelsPtr) {
+            // Layers of one size, with a view of them as an array, which is what's sampled, and of each layer's every
+            // image, which a pass on a layer draws into and its smaller images are made through: room for those from
+            // the start, as a cube's. One drawn into has a depth array beside it, or is one, holding depth alone
+            if (!pixelsPtr && !(into & 15)) {
+                const texture = device.createTexture({ size: [width, height, layers], format: depthFormat,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+                const whole = [];
+                for (let layer = 0; layer < layers; layer++) {
+                    whole.push(texture.createView({ dimension: '2d', baseArrayLayer: layer, arrayLayerCount: 1 }));
+                }
+                return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array', aspect: 'depth-only' }),
+                    depthLayers: whole, width, height, row: 0, groups: new Set() });
+            }
+            const format = pixelsPtr ? 'rgba8unorm' : (into & 15) === 2 ? 'rgba16float' : gpuFormat;
+            const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
+            const texture = device.createTexture({ size: [width, height, layers], format, mipLevelCount: levels,
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
+            const each = [];
+            for (let layer = 0; layer < layers; layer++) {
+                const images = [];
+                for (let level = 0; level < levels; level++) {
+                    images.push(texture.createView({ dimension: '2d', baseArrayLayer: layer, arrayLayerCount: 1,
+                        baseMipLevel: level, mipLevelCount: 1 }));
+                }
+                each.push(images);
+            }
+            if (pixelsPtr) {
+                const at = new Uint32Array(memory.buffer, pixelsPtr, layers);
+                for (let layer = 0; layer < layers; layer++) {
+                    const [data, offset] = memoryBytes(at[layer], width * height * 4);
+                    device.queue.writeTexture({ texture, origin: [0, 0, layer] }, data,
+                        { offset, bytesPerRow: width * 4, rowsPerImage: height }, [width, height]);
+                }
+            }
+            const made = { texture, view: texture.createView({ dimension: '2d-array' }),
+                base: texture.createView({ dimension: '2d-array', mipLevelCount: 1 }), width, height, row: width * 4, format,
+                layered: each, bytes: format !== 'rgba16float', groups: new Set(), depthArray: 0 };
+            const id = gpuAdd('texture', made);
+            if (!pixelsPtr) made.depthArray = platform.gpu_array(0, width, height, layers, 0);
+            return id;
+        },
+        gpu_array_depth(id) {
+            const t = gpuTables.texture[id];
+            return !t ? 0 : t.depthLayers ? id : t.depthArray || 0;
+        },
+        gpu_array_layer(array, layer) {
+            // What a pass draws into is the layer's own image and that layer of the depth array: both the array's to destroy
+            const of = gpuTables.texture[array];
+            const depthArray = of.depthLayers ? of : gpuTables.texture[of.depthArray];
+            const colors = [];
+            if (of.layered) {
+                const view = of.layered[layer][0];
+                colors.push(gpuAdd('texture', { texture: of.texture, view, first: view, layer, width: of.width,
+                    height: of.height, row: of.width * 4, groups: new Set() }));
+            }
+            const depth = gpuAdd('texture', { texture: depthArray.texture, view: depthArray.depthLayers[layer],
+                whole: depthArray.depthLayers[layer], width: of.width, height: of.height, row: 0, groups: new Set() });
+            return gpuAdd('target', { colors, bytes: !!of.layered && of.bytes, depth, width: of.width, height: of.height,
+                canvas: null, context: null, face: true, layerOf: true });
         },
         gpu_cube_face(cube, face) {
             // What a pass draws into is the face's own image; the texture is the cube's to destroy
             const of = gpuTables.texture[cube];
-            const view = of.cube[face < 6 ? face : 0][0];
+            const view = of.layered[face < 6 ? face : 0][0];
             const color = gpuAdd('texture', { texture: of.texture, view, first: view, layer: face, width: of.width,
                 height: of.height, row: of.width * 4, groups: new Set() });
             const texture = depthFor(of.width, of.height, true);
@@ -2030,18 +2095,19 @@
         },
         gpu_mipmaps(id) {
             const t = gpuTables.texture[id];
-            if (t.cube) { // Each face's, one from the other, as a texture's are
-                if (t.cube[0].length < 2) return;
+            if (t.depthLayers) return; // An array of depth alone has none
+            if (t.layered) { // Each face's or layer's, one from the other, as a texture's are
+                if (t.layered[0].length < 2) return;
                 const pipeline = mipPipeline(t.format);
                 if (!t.halving) {
-                    t.halving = t.cube.map(images => images.slice(0, -1).map(from => device.createBindGroup({
+                    t.halving = t.layered.map(images => images.slice(0, -1).map(from => device.createBindGroup({
                         layout: pipeline.getBindGroupLayout(0),
                         entries: [{ binding: 0, resource: from }, { binding: 1, resource: samplers[LINEAR] }] })));
                 }
                 const encoder = device.createCommandEncoder();
-                for (let face = 0; face < 6; face++) {
-                    for (let level = 1; level < t.cube[face].length; level++) {
-                        const halve = encoder.beginRenderPass({ colorAttachments: [{ view: t.cube[face][level], loadOp: 'clear', storeOp: 'store' }] });
+                for (let face = 0; face < t.layered.length; face++) {
+                    for (let level = 1; level < t.layered[face].length; level++) {
+                        const halve = encoder.beginRenderPass({ colorAttachments: [{ view: t.layered[face][level], loadOp: 'clear', storeOp: 'store' }] });
                         halve.setPipeline(pipeline);
                         halve.setBindGroup(0, t.halving[face][level - 1]);
                         halve.draw(3);
@@ -2090,6 +2156,7 @@
         },
         gpu_texture_free(id) {
             const t = gpuTables.texture[id];
+            if (t.depthArray) platform.gpu_texture_free(t.depthArray); // An array's depth goes with it
             t.texture.destroy();
             gpuRemove('texture', id);
             for (const key of t.groups) bindGroups.delete(key);
@@ -2271,6 +2338,9 @@
                     for (const key of gpuTables.texture[t.samples].groups) bindGroups.delete(key);
                     gpuRemove('texture', t.samples);
                 }
+            } else if (t.layerOf) { // An array's layer's depth is that layer of the array's, which stays
+                for (const key of gpuTables.texture[t.depth].groups) bindGroups.delete(key);
+                gpuRemove('texture', t.depth);
             } else {
                 platform.gpu_texture_free(t.depth);
             }
