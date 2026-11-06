@@ -1,5 +1,28 @@
 # `tide`, packages and the package
 
+## Aligned bars and asset build preparation (2026-11-06)
+
+Owner's terminal capture showed unaligned completed bars and repeated asset-build
+C-generation rows. Build summaries and the active bar now use the same 48-character
+label column. Nested generation/packing notifications stay within Preparing asset
+build program; compiling and running have separate rows. Failed rows keep the
+stage label in that column, with diagnostics providing failure detail.
+
+Inspection: build_code_run calls run_program once on a results-cache miss, then
+rechecks sources to apply its results. run_program calls codegen once, compiles
+its generated parts once, links once, and runs once. The repeated labels were
+callbacks within codegen, including pack creation before dependency fingerprints
+and the reduced build-input pack. No compiler caching or generated-C behavior was
+changed here; existing root-result and engine-object caches remain effective.
+
+Validation: Windows Clang 23.1.2 ASan CLI build, help, build_overlap and
+build_report pass. build_report initially exhausted ASan allocation while the
+docs build ran; it passes alone after that build completes. Production docs
+build passes. Scratch ASan feedback probe checks every retained bar starts at
+column 50, nested packing/generation adds no preparation rows, and failure and
+success retain correct percentages. Real terminal appearance remains manual
+coverage; compiler/runtime output and web execution are unchanged.
+
 ## Retained build progress stages (2026-11-06)
 
 Owner: `tide build`/`run` erased finished bars and repeated "Generating C"

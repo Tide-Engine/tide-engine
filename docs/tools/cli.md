@@ -38,7 +38,10 @@ Project build and package commands automatically use the version pinned with
 version cache. Exact project pins suppress automatic upgrade notices. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
 In a terminal, each build stage keeps a completed line with a full bar and its
-elapsed time. The active stage shows its current source or asset above a bar;
+elapsed time, with bars aligned in one column. Asset build program preparation
+(including its C generation and packing) stays in one row, followed by separate
+compiling and running rows. The program is compiled once when its cached results
+are missing or invalidated; unchanged build results are reused. The active stage shows its current source or asset above a bar;
 changing filenames updates that stage in place. Parsing and C/C++ compilation
 show file counts or percentages. Checking and importing assets, running the asset
 build program, generating game C, packing assets, and finalizing generated C

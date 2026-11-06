@@ -67,7 +67,7 @@ static void draw_feedback_locked(const bool finished, const bool retain)
     const int completed = feedback.completed, total = feedback.total;
     const bool percent_only = feedback.percent_only;
     const int64_t elapsed = sys_now_ms() - feedback.started;
-    enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER };
+    enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER, LABEL_WIDTH = 48 };
     char bar[WIDTH + 1];
     memset(bar, ' ', WIDTH);
     if (finished || total) {
@@ -86,12 +86,16 @@ static void draw_feedback_locked(const bool finished, const bool retain)
     else snprintf(text, sizeof text, "[%s] %.1fs", bar, (double)elapsed / 1000.0);
     if (finished || retain) {
         char summary[384];
-        if (finished) snprintf(summary, sizeof summary, "%s [%s] 100%%  in %.1fs", feedback.stage, bar, (double)elapsed / 1000.0);
-        else snprintf(summary, sizeof summary, "%s %s", label, text);
+        if (finished) snprintf(summary, sizeof summary, "%-*s [%s] 100%%  in %.1fs", LABEL_WIDTH, feedback.stage, bar, (double)elapsed / 1000.0);
+        else snprintf(summary, sizeof summary, "%-*s %s", LABEL_WIDTH, feedback.stage, text);
         line_clear();
         line_draw(summary);
         line_end();
-    } else line_draw_pair(label, text);
+    } else {
+        char aligned[160];
+        snprintf(aligned, sizeof aligned, "%*s %s", LABEL_WIDTH, "", text);
+        line_draw_pair(label, aligned);
+    }
 }
 
 static void draw_build_feedback(void *user, const bool done)
@@ -186,10 +190,17 @@ static void tide_progress(const char *stage, const char *detail, const int compl
               : ++feedback.game_generation == 1 ? "Generating game C" : "Generating asset data and finalizing game C";
     }
     const char *group = stage;
+    // codegen reports packing and generation several times within this one program build.
+    if (feedback.build_program) group = "Preparing asset build program";
+    if (strcmp(stage, "Running build code") == 0 && !feedback.build_program) {
+        group = detail ? "Compiling asset build program" : "Running asset build program";
+        stage = group;
+        detail = NULL;
+    }
     // Checking imports assets as declarations are visited: keep those interleaved notifications together.
     if (strcmp(stage, "Checking Tide") == 0 || strcmp(stage, "Importing asset") == 0)
         group = "Checking Tide and importing assets";
-    if (strcmp(stage, "Packing asset") == 0) group = "Packing assets";
+    if (!feedback.build_program && strcmp(stage, "Packing asset") == 0) group = "Packing assets";
     feedback_stage(group);
     snprintf(feedback.label, sizeof feedback.label, "%s%s%s", stage, detail && *detail ? ": " : "", detail ? detail : "");
     // Other compiler counts cover importing plus packing, rather than this stage alone.
