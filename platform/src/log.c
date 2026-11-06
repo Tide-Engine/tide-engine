@@ -909,9 +909,9 @@ static void crashed(const int signal, siginfo_t *info, void *context)
     write_fd(report, line.bytes, line.used);
     write_fd(log_fd, line.bytes, line.used);
     write_fd(STDERR_FILENO, line.bytes, line.used); // The original stderr again (end_tee): the thread closes its own copy
-    text context = {0};
-    put_crash_context(&context, signal == SIGABRT);
-    write_fd(report, context.bytes, context.used);
+    text about = {0};
+    put_crash_context(&about, signal == SIGABRT);
+    write_fd(report, about.bytes, about.used);
     void *frames[64];
     const int count = backtrace(frames, 64);
     if (report >= 0) backtrace_symbols_fd(frames, count, report);
