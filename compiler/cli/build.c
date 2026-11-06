@@ -107,12 +107,15 @@ static void end_build_feedback(void)
     sys_activity_end(activity);
 }
 
-static void build_step(const char *step)
+// A step of the build: `step` in its report and redirected output, and `shown` (or `step`) in the terminal's
+// display, a capital first, as its stages' labels are (tide_progress, build_progress).
+static void build_step_shown(const char *step, const char *shown)
 {
     build_report_stage(step);
     if (build_activity) {
         lock_feedback();
-        snprintf(feedback.label, sizeof feedback.label, "%s", step);
+        snprintf(feedback.label, sizeof feedback.label, "%s", shown ? shown : step);
+        feedback.label[0] = (char)toupper((unsigned char)feedback.label[0]);
         feedback.completed = feedback.total = 0;
         unlock_feedback();
         return;
@@ -120,6 +123,11 @@ static void build_step(const char *step)
     if (sys_is_terminal()) return;
     fprintf(stderr, "tide: %s\n", step);
     fflush(stderr);
+}
+
+static void build_step(const char *step)
+{
+    build_step_shown(step, NULL);
 }
 
 static void tide_progress(const char *stage, const char *detail, const int completed, const int total)
@@ -2139,7 +2147,9 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
         free(old);
         if (!same) sys_remove(stamp_path); // A link cut short leaves nothing that passes
     }
-    build_step(same ? "linked output is up to date" : "linking");
+    // A ThinLTO link optimizes the generated C's parts as a whole first, which is most of its time
+    build_step_shown(same ? "linked output is up to date" : "linking",
+                     !same && b->generated_lto ? "optimizing across files and linking" : NULL);
     const int code = same ? 0 : sys_run(a.items, NULL, false);
     if (code == 0 && stamp_path && !same) sys_write_text(stamp_path, stamp);
     free(stamp_path);
@@ -4538,9 +4548,10 @@ static int android_version_code(void)
 // CPU, and Android's own.
 static bool link_android(const build *b, const file_list *objects, const c_side *c, const char *output)
 {
-    char step[80];
+    char step[80], shown[96];
     snprintf(step, sizeof step, "linking Android %s", android_abis[b->abi]);
-    build_step(step);
+    snprintf(shown, sizeof shown, "optimizing across files and linking Android %s", android_abis[b->abi]);
+    build_step_shown(step, b->generated_lto ? shown : NULL);
     char *lib_dir = path_join(b->root, "lib/android");
     char *abi_dir = path_join(lib_dir, android_abis[b->abi]);
     char *platform_lib = path_join(abi_dir, "libtide_platform.a");
