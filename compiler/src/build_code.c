@@ -823,11 +823,13 @@ static bool run_program(program *prog, const codegen_options *opts, root_info *r
     engine_build engine;
     if (!engine_start(opts, folder.data, common.items, &objects, &engine)) return false;
     remove(pack.data);
+    compile_progress("Running build code", "making its program", 0, 0);
     if (!codegen(prog, &build) || diag_error_count()) {
         int failed;
         if (!engine.done) compile_finish(&engine.batch, &failed); // Leaves no compiler running
         return false;
     }
+    compile_progress("Running build code", "compiling its program", 0, 0);
     if (!engine_finish(opts, &engine)) return false;
     sb exe = {0}, log = {0};
 #ifdef _WIN32
@@ -901,6 +903,7 @@ static bool run_program(program *prog, const codegen_options *opts, root_info *r
     sb_printf(&run_log, "%s/run.log", folder.data);
     remove(results.data);
     const char *const run[] = {exe.data, pack.data, results.data, NULL};
+    compile_progress("Running build code", NULL, 0, 0);
     build_process p = start_process(run, run_log.data);
     const int code = wait_process(&p, BUILD_CODE_SECONDS);
     size_t size = 0;

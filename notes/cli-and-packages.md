@@ -70,7 +70,19 @@ sets it to twice the asset declarations and moves on as each is imported; build_
 were declared, whatever a release leaves out (it ends at the total). While it's set, every notification carries it,
 so labels still name the file or asset while the bar only goes forward, and holds through checking and generating
 C. Parsing keeps its files' count (it ends before); a game without assets keeps the old stage counts.
-`compile_inputs` clears it before and after; build code's own codegen doesn't move it. `tidec_recompile` checks that
+`compile_inputs` clears it before and after; build code's own codegen doesn't move it.
+Follow-up (same day, the owner: "did we ever rework the progress bars to make them clearer?"): build code said
+nothing for its seconds, so the label stayed on the last asset; it now says "Running build code: making its
+program", "...: compiling its program", then "Running build code" while it runs. The game compiled again after
+build code calls compile_progress_whole with the same total, which now keeps its place rather than starting the bar
+over. The terminal shows the Tide step's percentage without its count (`feedback.percent_only`: assets imported plus
+packed is no number to read); C/C++ keeps its files' count. Test: `compile_progress_whole_keeps_its_place_when_counted_again`.
+Not checked in a real terminal this time (the receiver's text only changed).
+Then (owner: "make capitalization consistent and rename linking to the optimization step"): `build_step_shown`
+puts a step's label in the terminal with a capital first, as the stages' labels are, and a ThinLTO link (and an
+Android one with generated_lto) shows "Optimizing across files and linking". The build report's stage names and
+redirected `tide: <step>` lines keep their lowercase words ("linking"), which build_report_test and docs/tools/cli.md
+name. CLI build report, overlap, help and run-exit tests pass under ASan. `tidec_recompile` checks that
 after parsing every count is the whole one (4 for two assets) and never goes back, reaching 2 before generating C
 and 4 after packing.
 

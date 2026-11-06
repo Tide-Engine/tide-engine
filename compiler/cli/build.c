@@ -42,6 +42,7 @@ static struct {
     atomic_flag lock;
     char label[1024];
     int completed, total;
+    bool percent_only; // Its count is no number of things to show (the Tide step's: compile_progress_whole)
     int64_t started;
 } feedback = {.lock = ATOMIC_FLAG_INIT};
 static sys_activity *build_activity;
@@ -64,6 +65,7 @@ static void draw_build_feedback(void *user, const bool done)
     char label[sizeof feedback.label];
     memcpy(label, feedback.label, sizeof label);
     const int completed = feedback.completed, total = feedback.total;
+    const bool percent_only = feedback.percent_only;
     const int64_t elapsed = sys_now_ms() - feedback.started;
     unlock_feedback();
     enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER };
@@ -79,7 +81,8 @@ static void draw_build_feedback(void *user, const bool done)
     }
     bar[WIDTH] = '\0';
     char text[96];
-    if (total) snprintf(text, sizeof text, "[%s] %3d%%  %d/%d  %.1fs", bar, completed * 100 / total,
+    if (total && percent_only) snprintf(text, sizeof text, "[%s] %3d%%  %.1fs", bar, completed * 100 / total, (double)elapsed / 1000.0);
+    else if (total) snprintf(text, sizeof text, "[%s] %3d%%  %d/%d  %.1fs", bar, completed * 100 / total,
                         completed, total, (double)elapsed / 1000.0);
     else snprintf(text, sizeof text, "[%s] %.1fs", bar, (double)elapsed / 1000.0);
     line_draw_pair(label, text);
@@ -104,12 +107,15 @@ static void end_build_feedback(void)
     sys_activity_end(activity);
 }
 
-static void build_step(const char *step)
+// A step of the build: `step` in its report and redirected output, and `shown` (or `step`) in the terminal's
+// display, a capital first, as its stages' labels are (tide_progress, build_progress).
+static void build_step_shown(const char *step, const char *shown)
 {
     build_report_stage(step);
     if (build_activity) {
         lock_feedback();
-        snprintf(feedback.label, sizeof feedback.label, "%s", step);
+        snprintf(feedback.label, sizeof feedback.label, "%s", shown ? shown : step);
+        feedback.label[0] = (char)toupper((unsigned char)feedback.label[0]);
         feedback.completed = feedback.total = 0;
         unlock_feedback();
         return;
@@ -117,6 +123,11 @@ static void build_step(const char *step)
     if (sys_is_terminal()) return;
     fprintf(stderr, "tide: %s\n", step);
     fflush(stderr);
+}
+
+static void build_step(const char *step)
+{
+    build_step_shown(step, NULL);
 }
 
 static void tide_progress(const char *stage, const char *detail, const int completed, const int total)
@@ -132,6 +143,7 @@ static void tide_progress(const char *stage, const char *detail, const int compl
     snprintf(feedback.label, sizeof feedback.label, "%s%s%s", stage, detail && *detail ? ": " : "", detail ? detail : "");
     feedback.completed = completed;
     feedback.total = total;
+    feedback.percent_only = true;
     unlock_feedback();
 }
 
@@ -141,6 +153,7 @@ static void build_progress(const int completed, const int total, const char *fil
     snprintf(feedback.label, sizeof feedback.label, "Compiling C/C++%s%s", *files ? ": " : "", files);
     feedback.completed = completed;
     feedback.total = total;
+    feedback.percent_only = false; // Files
     unlock_feedback();
 }
 
@@ -2134,7 +2147,9 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
         free(old);
         if (!same) sys_remove(stamp_path); // A link cut short leaves nothing that passes
     }
-    build_step(same ? "linked output is up to date" : "linking");
+    // A ThinLTO link optimizes the generated C's parts as a whole first, which is most of its time
+    build_step_shown(same ? "linked output is up to date" : "linking",
+                     !same && b->generated_lto ? "optimizing across files and linking" : NULL);
     const int code = same ? 0 : sys_run(a.items, NULL, false);
     if (code == 0 && stamp_path && !same) sys_write_text(stamp_path, stamp);
     free(stamp_path);
@@ -4533,9 +4548,10 @@ static int android_version_code(void)
 // CPU, and Android's own.
 static bool link_android(const build *b, const file_list *objects, const c_side *c, const char *output)
 {
-    char step[80];
+    char step[80], shown[96];
     snprintf(step, sizeof step, "linking Android %s", android_abis[b->abi]);
-    build_step(step);
+    snprintf(shown, sizeof shown, "optimizing across files and linking Android %s", android_abis[b->abi]);
+    build_step_shown(step, b->generated_lto ? shown : NULL);
     char *lib_dir = path_join(b->root, "lib/android");
     char *abi_dir = path_join(lib_dir, android_abis[b->abi]);
     char *platform_lib = path_join(abi_dir, "libtide_platform.a");

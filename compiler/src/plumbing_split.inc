@@ -55,6 +55,8 @@ typedef struct split_name {
     bool renamed;     // Written tide_split_<name> (above)
     bool field;       // Also a field's name somewhere: never renamed, as a struct declaring it would be
     bool data;        // A large constant SPLIT_DATA puts in the second file, whoever names it
+    int first_item;   // split_prune: the first item defining it (+1, 0 for none), the rest through its next list
+    bool reached;     // ...and whether what it keeps reaches it
 } split_name;
 
 typedef struct split_names {
@@ -851,5 +853,99 @@ static bool split_plumbing(const sb *c, const size_t *code_at, const int code_co
     *plumbing = (sb){.data = arena_alloc(count_plumbing.n + 1), .cap = count_plumbing.n + 1, .line = 1};
     split_out to_code = {code, 0, &names}, to_plumbing = {plumbing, 0, &names};
     split_emit(t, c->len, &items, &names, &to_code, &to_plumbing);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// What a program uses of its generated C: build code's program (build_code.c) runs its main alone, which calls the
+// roots' code and loads their assets, while the text has the whole game. split_prune keeps the functions and
+// variables `root` reaches, through function bodies, variables' initializers and macros' bodies, and everything
+// that defines no function or variable (types, prototypes, directives), so what's kept compiles as it did. A name
+// counts wherever it's written outside strings, comments and #line, but after `.` or `->` (a field's).
+
+typedef VEC(split_name *) split_reach;
+
+static void split_prune_uses(const char *t, const size_t from, const size_t to, split_names *names, split_reach *more)
+{
+    for (size_t i = from; i < to;) {
+        const char ch = t[i];
+        if (ch == '"' || ch == '\'') {
+            i++;
+            while (i < to && t[i] != ch) {
+                if (t[i] == '\\') i++;
+                i++;
+            }
+            i++;
+        } else if (ch == '/' && i + 1 < to && t[i + 1] == '/') {
+            while (i < to && t[i] != '\n') i++;
+        } else if (ch == '/' && i + 1 < to && t[i + 1] == '*') {
+            const char *close = strstr(t + i + 2, "*/");
+            i = close ? (size_t)(close - t) + 2 : to;
+        } else if (ch == '#' && (i == 0 || t[i - 1] == '\n') && !(to - i > 7 && memcmp(t + i, "#define", 7) == 0)) {
+            i = split_line_end(t, to, i);
+        } else if (split_ident_start(ch) && (i == 0 || !split_ident_char(t[i - 1]))) {
+            size_t e = i;
+            while (e < to && split_ident_char(t[e])) e++;
+            split_name *found = split_find(names, t + i, e - i);
+            if (found && !found->reached && !split_after_member(t, from, i)) {
+                found->reached = true;
+                vec_push(*more, found);
+            }
+            i = e;
+        } else if (ch >= '0' && ch <= '9') {
+            while (i < to && split_ident_char(t[i])) i++;
+        } else {
+            i++;
+        }
+    }
+}
+
+// `c` with only what `root` reaches, into `out`. False, writing nothing, where it can't be cut.
+static bool split_prune(const sb *c, const char *root, sb *out)
+{
+    const char *t = c->data ? c->data : "";
+    split_item_list items = {0};
+    split_why = NULL;
+    if (!split_items(t, c->len, &items)) return false;
+    // Each name's definitions: functions, variables and macros, in a list through `next`
+    split_names names = {0};
+    int *next = arena_alloc(sizeof(int) * (size_t)(items.count ? items.count : 1));
+    for (int i = items.count - 1; i >= 0; i--) {
+        const split_item *it = &items.items[i];
+        if (it->kind == SPLIT_BOTH && !it->define) continue;
+        split_name *e = split_add(&names, t + it->name, it->name_len);
+        next[i] = e->first_item;
+        e->first_item = i + 1;
+    }
+    split_reach more = {0};
+    split_name *start = split_find(&names, root, strlen(root));
+    if (!start) return split_fail("no function to start from", 0);
+    start->reached = true;
+    vec_push(more, start);
+    while (more.count) {
+        const split_name *e = more.items[--more.count];
+        for (int i = e->first_item; i; i = next[i - 1]) {
+            const split_item *it = &items.items[i - 1];
+            const size_t from = it->kind == SPLIT_FUNCTION ? it->start : it->define ? it->name + it->name_len : it->start;
+            split_prune_uses(t, from, it->end, &names, &more);
+        }
+    }
+    // What's kept, in its order; what isn't keeps its conditional directives, which may open or close around it
+    size_t size = 0, at = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        split_out o = {pass ? out : NULL, 0, NULL};
+        if (pass) *out = (sb){.data = arena_alloc(size + 1), .cap = size + 1, .line = 1};
+        at = 0;
+        for (int i = 0; i < items.count; i++) {
+            const split_item *it = &items.items[i];
+            split_write(&o, t + at, it->start - at);
+            at = it->end;
+            const split_name *e = it->kind == SPLIT_BOTH && !it->define ? NULL : split_find(&names, t + it->name, it->name_len);
+            if (!e || e->reached || it->define) split_write(&o, t + it->start, it->end - it->start);
+            else split_put_conditionals(&o, t, it->start, it->end);
+        }
+        split_write(&o, t + at, c->len - at);
+        size = o.n;
+    }
     return true;
 }
