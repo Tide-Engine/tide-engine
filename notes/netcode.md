@@ -1,5 +1,74 @@
 # Netcode: sessions, prediction, commands
 
+## Same-tick recipient repair comparison, protocol 24 (2026-11-06)
+
+Fixing compression locality alone still retransmitted legitimate evolution from
+the last confirmed tick, although the client had already computed most of it.
+Large recipient repairs now offer canonical 16 KiB block hashes for the pinned
+authoritative target. The client compares its own **same-tick** canonical bytes,
+pins them outside the mutable prediction ring, and answers a bounded missing-block
+mask. The server sends compressed permitted blocks only where the client differs.
+The reconstructed complete canonical hash and the existing frame logical hash
+must pass before the endpoint is adopted. A comparison never confirms a tick.
+
+The server retains one target world, its original acknowledged base/tick and its
+permitted lifecycle journal throughout both transfer phases. Stream targets stay
+coalesced to recent authoritative endpoints; they are not limited to advancing
+one mismatch tick per round trip. Snapshot number, target tick and authenticated
+connection attempt bind the response; PATCH must immediately follow the hash
+offer the client answered. No target is regenerated from a later world. Normal
+packet/chunk budgets, retransmission and early-chunk handling apply. Over 64 MiB
+of canonical bytes falls back to the ordinary codec because the fixed 512-byte
+mask cannot describe more blocks; this is a negotiation bound, not a world limit.
+Small canonical projections (under 128 KiB) avoid the extra round trip. When more
+than half the blocks are missing, the pinned acknowledged-base codec is used.
+For patches covering over 64 KiB of missing spans, both encodings are measured
+and the smaller complete payload wins. Counting missing blocks alone can choose
+poorly for a large mostly-static world. Tiny same-tick patches avoid this extra
+packing work and skip serialization of the unused acknowledged baseline.
+
+Delay clients have no predicted target world. While the hash transfer remains
+pending, complete authenticated frames can replay into a private comparison
+world, ignoring expected logical divergence but rejecting malformed frames or
+pending preparation. Work uses the same per-update catch-up allowance, capped at
+four quiet ticks; the server continues delivering frames during negotiation.
+Quiet work changes no verified/predicted ring endpoint, presentation clock,
+hearing record or download acknowledgement. It neither drops frames nor invents
+remote input. Incomplete comparison after one second safely requests all blocks,
+selecting the existing baseline codec. Adoption, new offers, reload, migration
+and destruction release comparison caches using the correct build's callbacks.
+Same-layout reload explicitly abandons a pending comparison and recovers through
+a full snapshot, preventing a response from waiting forever for discarded bytes.
+
+All negotiation data is derived from `client_state` for that recipient. Physical
+worlds, allocator/free lists, private commands and physics history remain private.
+The wire is protocol 24; raw protocol fixtures follow it. There is no new Tide
+syntax, generated callback or observable simulation policy. Allocator identity
+divergence remains a separate design limitation; the repair no longer needs to
+ship an entire evolving battle merely to correct a few differing handles.
+
+An actual first-battle mismatch at tick 1149 had four differing bytes in one
+16 KiB block: two newly spawned bullets had different entity handles, while their
+other gameplay values matched. Offline negotiation over those **same-tick**
+7,315,009-byte permitted projections needs 3,588 hash bytes, a 56-byte reply mask
+and a 7,698-byte patch (11,286 bytes down before session/journal/packet overhead),
+with exact reconstruction. This measures repair payloads, not live byte rate.
+
+New 512 KiB changing/shifted-state loopback fixtures activate the complete path
+over 40 ms/way, 10 ms jitter and 3% loss. Across twelve seconds, rollback confirms
+717 ticks with 33 repairs, zero resyncs and 1,079,676 world bytes; Delay confirms
+712 with 31 repairs, zero resyncs and 1,029,890 bytes. A 4.2-second receive pause
+crosses frame history and safely recovers through one full resync, reaching tick
+717 with 1,357,922 world bytes. The quiet-event fixture proves private comparison
+work occurs without delivering future or duplicate local events. Native ASan and
+WASI pass these fixtures and the existing visibility/session checks; final
+integration and actual game traffic results are recorded with their run below.
+The compatible-reload regression swaps and zeroes old game callback tables eleven
+times during large repairs, then verifies continued progress and state. A spread
+logical mismatch touches nine random comparison blocks but is cheaper as an
+acknowledged delta: the selection regression confirms tick 717 with 33 repairs,
+zero resyncs and 1,574,457 world bytes, below its 2 MiB transfer bound.
+
 ## Recipient delta locality, protocol 23 (2026-11-06)
 
 The battle investigation below established that fixed-offset XOR regions lose
@@ -1631,8 +1700,9 @@ cannot become the full authoritative server. Source-code hot reload remains a
 separate supported `tide_session_migrate` path; the hosting player's replacement
 world is projected before adoption.
 
-Hash/repair partitioning is currently internal and provisional: one canonical
-projection hash goes each tick, no hierarchical page-hash negotiation or inferred
+Hash/repair partitioning is internal and provisional: one canonical projection
+hash goes each tick. Protocol 24 adds on-demand canonical 16 KiB block-hash/need
+negotiation for large repairs; no hierarchical partition tree or inferred
 dependency graph is implemented. Steady corrections put a client's verified
 world up to 1.5 s behind at 133 ms round trips (`notes/benchmarks.md`, Earth
 under load).
