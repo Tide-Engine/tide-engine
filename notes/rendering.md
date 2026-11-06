@@ -34,6 +34,16 @@ internal, Provisional.
 - **Measured** (`dev` 7e6ee779e built as it was and with these changes, five alternating pairs, medians): render
   p50 1.68 -> 1.07 ms, p95 2.51 -> 1.40; `record` p50 1.31 -> 0.68, p95 1.98 -> 0.88; `cpu_work` p50 5.15 -> 4.63.
   Draw calls the same. The frame's thread waits ~35-45 µs a frame at present for the last passes' jobs.
+- **Checked against the game's report** (its thread, on nightly.111: views 15-20% slower, GPU +0.8 ms, from
+  alternating whole nightlies). Mount & Rifle at 84d7542, `FOREST_REVIEW OWNER_WOODS`, `--host`, E at frame 900,
+  frames 1551-1800, ~1,670 draws; one binary with two temporary switches (passes on jobs, wake one), four rounds of
+  each of the four in rotation, medians (cpu_work / views / render / record / GPU mean, ms): both on (111)
+  5.66 / 3.31 / 1.15 / 0.72 / 6.06; jobs off 6.50 / 3.31 / 1.83 / 1.40 / 6.02; wake all 5.89 / 3.23 / 1.49 /
+  1.06 / 6.06; both off (106's) 6.21 / 3.26 / 1.78 / 1.36 / 6.04. So the jobs don't touch the views (they can't
+  overlap them: the list's drawn after the views, and settled before submission) nor the GPU; waking one worker a
+  job costs the views ~2-3% (the game's own background jobs used to wake the whole pool, which then joined the
+  views' parallel loops sooner), against ~0.55 ms off the frame. The report's larger views change came with the
+  whole nightly (compiler and all) and a noisy machine. Hidden runs: a window's presenting isn't measured.
 - **Left on the frame's thread** in `record`: the renderer's steps and its uniforms, resolving descriptors and
   writing the commands down. Recording one big pass on several threads (secondary command buffers) isn't built:
   the scene pass here is ~670 of the 1,742 draws.
