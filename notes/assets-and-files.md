@@ -175,6 +175,9 @@ Threads are `build_threads_each` (build_threads.c: Windows threads or pthreads, 
 Threads::Threads off Windows); `asset_cache_write`'s temporary names take an atomic counter; `asset_cache_has` asks
 whether an entry's file is there without reading it. Diagnostics stay the pack loop's: an image that won't decode is
 skipped ahead and said when packed. With no game folder nothing's kept, so images aren't made ahead.
+WASI builds (the docs' playground tidec, which runs in a browser host without `wasi.thread-spawn`) do every item on
+the caller's thread, with no thread code compiled in: the docs workflow failed on the import from 17275e76e until
+2026-11-06 (`docs_playground` refuses tools with imports its host lacks).
 
 Images decoded ahead (2026-11-06, the owner: "try to improve asset imports next"). Of the cold first pass's 12.2 s
 of imports, 10.3 s was 334 texture declarations' files decoded one at a time by `read_item` (200-560 ms for each

@@ -6,7 +6,11 @@
 #include <stdatomic.h>
 #include <stddef.h>
 
-#ifdef _WIN32
+// tidec in a browser (the docs' playground, WASI) has no thread-spawn import, so there the caller's thread does
+// every item, as it does wherever no other thread starts
+#if defined(__wasi__)
+#define ONE_THREAD 1
+#elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
@@ -26,6 +30,16 @@ static void take(each *e)
     for (uint32_t i; (i = atomic_fetch_add(&e->next, 1u)) < e->count;) e->work(e->context, i);
 }
 
+#if defined(ONE_THREAD)
+void build_threads_each(const uint32_t count, const uint32_t most, void (*work)(void *context, uint32_t i), void *context)
+{
+    (void)most;
+    if (!count) return;
+    each e = {.count = count, .work = work, .context = context};
+    atomic_init(&e.next, 0u);
+    take(&e);
+}
+#else
 #ifdef _WIN32
 static DWORD WINAPI thread_main(LPVOID e)
 {
@@ -87,3 +101,4 @@ void build_threads_each(const uint32_t count, const uint32_t most, void (*work)(
 #endif
     }
 }
+#endif
