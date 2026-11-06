@@ -1,5 +1,26 @@
 # Language features, as tidec builds them
 
+## Mixed position widths in prediction lookup (2026-11-06)
+
+Mount & Rifle exposed `tide_shard_where` reading `.z` from a `[Position] float2`
+when the program's first position had three axes. This shared lookup used the
+program-wide shard dimension count for every field; C partitioning exposed it
+in a plumbing part but was not the cause. `gen_position_where` now bounds emitted
+axes by the individual field's width, as `gen_far_rows` already does. Double2
+uses the same guard. Sharded games retain their checker requirement that all
+positions have matching dimensions.
+
+No axis interpretation, selection priority, layout, runtime API or language
+semantics change: two-dimensional positions still use x/y with zero z. Mixing
+map x/z coordinates with world x/y/z coordinates needs a separate owner decision.
+The `predict_near` fixture now includes a three-axis position declared before
+its two-axis bodies, and a split-C variant compiles, links and executes the
+same network/prediction checks.
+
+Validation: both ordinary and split fixtures pass on Windows ASan (`sanitize`)
+and WASI (`web-debug`), four CTests total, with strict warnings. No browser/GPU
+coverage is needed for this coordinate emission repair; other native OSes are CI.
+
 ## Deterministic scene preparation (2026-11-05)
 
 Owner-approved syntax: `scene Campaign { prepare(mut Geography geography) { ... } }`, including mandatory

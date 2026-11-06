@@ -542,6 +542,10 @@ tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks k
 tide_e2e_test(guess) # Other players' inputs, guessed: their last ones for a while, then let go, but for [Absolute] fields
 tide_e2e_test(predict) # Per-tick custom guesses and immediate action resets
 tide_e2e_test(predict_near SOURCES e2e/predict_near.tide e2e/predict_near_c.c) # predictionRange: predicted ticks leave out what's far from the player, which ticks once confirmed
+tide_add_game(tidec_e2e_predict_near_split SPLIT_CODE SOURCES e2e/predict_near.tide e2e/predict_near_c.c NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/predict_near_test.c)
+target_include_directories(tidec_e2e_predict_near_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_predict_near_split COMMAND tidec_e2e_predict_near_split)
 tide_e2e_test(predict_kept) # ...and a confirmed tick that leaves what's near as predicted keeps the predicted ticks after it
 tide_e2e_test(predict_fields) # Attribute-only input: no custom method or repair path
 tide_e2e_test(predict_method) # Method-only input: no attribute defaults

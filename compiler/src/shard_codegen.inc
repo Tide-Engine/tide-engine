@@ -498,7 +498,8 @@ static void gen_position_where(gen *g)
         const char *comp = type_cname(d);
         const field *f = &d->fields.items[m->field];
         sb_printf(o, "    if (tide_has_%s(w, e)) {\n        const %s v = tide_get_%s(w, e);\n", comp, comp, comp);
-        for (uint32_t k = 0; k < shard_dims(prog); k++) sb_printf(o, "        p[%u] = (double)v.%s.%s;\n", k, field_cname(f), xyzw[k]);
+        const uint32_t dims = f->type.kind == TY_FLOAT2 || f->type.kind == TY_DOUBLE2 ? 2u : 3u;
+        for (uint32_t k = 0; k < dims && k < shard_dims(prog); k++) sb_printf(o, "        p[%u] = (double)v.%s.%s;\n", k, field_cname(f), xyzw[k]);
         sb_put(o, "        return true;\n    }\n");
     }
     if (shard_uses(prog, prog->transform)) {

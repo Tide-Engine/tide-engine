@@ -7,6 +7,13 @@ settings
     predictionRange = 10;
 }
 
+// The shared position lookup must respect each vector's width even when the
+// first position in the program has three axes (as in Mount & Rifle).
+component Marker3D
+{
+    [Position] float3 position;
+}
+
 component Body
 {
     [Position] float2 position;
@@ -30,6 +37,12 @@ event(Spawned) Setup(with Main)
 {
     Spawn(Body { position = float2(4, 0) }, Walker { id = 1 });   // Near the players
     Spawn(Body { position = float2(100, 0) }, Walker { id = 2 }); // Far from them
+    Spawn(Marker3D { position = float3(100, 0, 0) });
+}
+
+system NudgeMarker(mut Marker3D marker)
+{
+    marker.position.z += 0.001;
 }
 
 event(PlayerJoined joined) Join()
