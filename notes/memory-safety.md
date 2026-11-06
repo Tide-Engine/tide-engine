@@ -1,5 +1,18 @@
 # No Tide code can corrupt memory
 
+## Recipient copy-span deltas (2026-11-06)
+
+Protocol 23's private recipient codec accepts caller-bounded output, checking
+the expected decoded size and baseline hash before writing. Literal and baseline
+copy spans use subtraction bounds; 64-bit source tokens are checked before
+narrowing. Output copies require a strictly earlier source and support forward
+overlap within the output allocation. Every copy advances at least eight bytes;
+decoding costs output bytes plus encoded tokens, with no token-based allocation.
+Exact end/output hash checks precede loading a temporary projected world. Existing
+projection-size/allocation policy is retained. Encoder indexes have fixed 128 KiB
+size, no chains, and byte-compare every match. ASan/WASI malformed, truncation,
+wrong-base/hash and exact-copy regressions pass; details: netcode.md, protocol 23.
+
 ## Running out of memory (2026-11-06)
 
 The owner, after mount-and-rifle crashed natively with the scratch area's `malloc` failing (notes/ecs.md, Spares go once nothing takes them): "if instead of a crash we have a stutter i think thats more acceptable", and the message and crash report should say clearly what ran out. Code still can't fail an allocation and go on, so where there's none in the end the program ends, as before.

@@ -13,6 +13,7 @@
 #include "tide/shard_client.h"
 #include "tide/shards.h"
 #include "tide/preparation.h"
+#include "recipient_delta.h"
 
 // Every datagram starts with a header: "PU", the protocol version and a type.
 //
@@ -94,7 +95,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 22u
+#define PROTOCOL 23u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
@@ -129,7 +130,6 @@ enum { FRAME_EVENTS = 1, FRAME_INPUTS = 2, FRAME_LATE = 4, FRAME_COMMANDS = 8, F
 // match started: one of START_*, Time.dt's bits, the match's seed in a game
 // that has one (tide_game.seeded) and, for START_GIVEN, the game's tide_start.
 enum { SEND_WORLD = 0, SEND_HASHES = 1, SEND_CLIENT_WORLD = 2, SEND_CLIENT_REPAIR = 3 };
-#define CLIENT_REGION_BYTES 16384u
 enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define LACKS_BYTES 512u // The most a CLIENT says about what its world lacks: past that, it lacks the rest
 
@@ -385,14 +385,11 @@ static uint8_t *pack_client_state(const tide_game *g, const void *world, const v
     free(died);
     tide_delta_number(&d, events ? events->size : 0u);
     if (events) tide_write_bytes(&d.bytes, events->bytes, events->size);
-    for (uint32_t at = 0; at < count;) {
-        const uint32_t n = count - at < CLIENT_REGION_BYTES ? count - at : CLIENT_REGION_BYTES;
-        const uint32_t bn = at < previous_count
-            ? (previous_count - at < CLIENT_REGION_BYTES ? previous_count - at : CLIENT_REGION_BYTES) : 0u;
-        const uint8_t *old = bn ? previous + at : NULL;
-        tide_delta_region(&d, bytes + at, n, old, bn, n == bn && old && memcmp(bytes + at, old, n) == 0, 0);
-        at += n;
-    }
+    uint32_t packed_size = 0;
+    uint8_t *packed = tide_recipient_delta_pack(bytes, count, previous, previous_count, &packed_size);
+    tide_delta_number(&d, packed_size);
+    tide_write_bytes(&d.bytes, packed, packed_size);
+    free(packed);
     tide_delta_close(&d);
     free(bytes);
     free(previous);
@@ -431,15 +428,11 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
     }
     uint32_t previous_count = 0;
     uint8_t *previous = base ? g->client_state(base, player, &previous_count) : NULL;
-    uint8_t *bytes = calloc(count ? count : 1u, 1);
-    bool ok = bytes && (!base || previous);
-    for (uint32_t at = 0; ok && at < count;) {
-        const uint32_t n = count - at < CLIENT_REGION_BYTES ? count - at : CLIENT_REGION_BYTES;
-        const uint32_t bn = at < previous_count
-            ? (previous_count - at < CLIENT_REGION_BYTES ? previous_count - at : CLIENT_REGION_BYTES) : 0u;
-        ok = tide_delta_get(&d, bytes + at, n, bn ? previous + at : NULL, bn);
-        at += n;
-    }
+    const uint32_t packed_size = tide_delta_get_number(&d);
+    const uint8_t *packed = tide_read_bytes(&d.bytes, packed_size);
+    uint8_t *bytes = !d.bytes.failed ? calloc(count ? count : 1u, 1) : NULL;
+    bool ok = bytes && (!base || previous) && packed
+        && tide_recipient_delta_unpack(bytes, count, previous, previous_count, packed, packed_size);
     ok = ok && tide_delta_closed(&d) && d.bytes.at == size && tide_hash(bytes, count) == hash;
     // Loaded, the world says what it was sent: its projection is those bytes again (client_hash is another
     // hash, of its values, which frames check)

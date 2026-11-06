@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "tide/delta.h"
+#include "recipient_delta.h"
 #include "tide_test.h"
 
 // Regions of a delta (tide/delta.h), filtered by a stride: whichever the
@@ -115,8 +116,17 @@ TIDE_TEST(delta_recipient_shifted_records_round_trip)
     now[0] = 7;
     const uint32_t shifted = recipient_regions_round_trip(now, size + 1u, base, size);
     TIDE_CHECK(changed > 0 && shifted > 0);
+    uint32_t improved = 0;
+    uint8_t *packed = tide_recipient_delta_pack(now, size + 1u, base, size, &improved);
+    uint8_t *out = malloc(size + 1u);
+    TIDE_REQUIRE(packed && out);
+    TIDE_CHECK(tide_recipient_delta_unpack(out, size + 1u, base, size, packed, improved));
+    TIDE_CHECK(memcmp(out, now, size + 1u) == 0);
+    TIDE_CHECK(improved < 4096u && improved < shifted / 20u);
     if (getenv("TIDE_VISIBILITY_METRICS"))
-        printf("recipient 1000 x 512-byte records: one changed byte %u, prefix insertion %u bytes\n", changed, shifted);
+        printf("recipient 1000 x 512-byte records: one changed byte %u, prefix insertion %u -> %u bytes\n", changed, shifted, improved);
+    free(out);
+    free(packed);
     free(now);
     free(base);
 }

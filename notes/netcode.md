@@ -1,5 +1,53 @@
 # Netcode: sessions, prediction, commands
 
+## Recipient delta locality, protocol 23 (2026-11-06)
+
+The battle investigation below established that fixed-offset XOR regions lose
+almost all reuse when an earlier variable-size value grows. Session projection
+transfers now select an internal `recipient_delta` encoding over **only** the
+current and acknowledged baseline's permitted canonical bytes. Candidates are
+the old 16 KiB XOR regions, literal bytes, and LZ copy spans referencing either
+that permitted baseline or already reconstructed output. No private world,
+allocator metadata or physics history is transferred. Existing projection bytes,
+logical hashes, event journals, tick/repair policy and game semantics are unchanged.
+
+Two direct-mapped 16,384-entry indexes (128 KiB total), baseline anchors every
+32 bytes and one candidate per index per scan position bound encoder work. Every
+candidate is compared exactly; hash collisions only reduce compression. Output
+copies allow overlap. The actual smaller payload wins; XOR results of at most
+64 bytes or 1/32 of raw bytes skip LZ construction/scanning. This preserves the
+common sparse/unchanged path. The session wire is protocol 23; raw command,
+packet, view-time and voice fixtures follow it. Older peers are refused normally.
+No generated runtime callback/API or match-state layout changes.
+
+The private decoder checks baseline/output hashes, caller-provided decoded size,
+exact encoded end, literal/copy spans by subtraction, and strictly earlier
+output sources. Copies advance at least eight bytes, bounding token work;
+forward overlap copying is linear in decoded bytes. It allocates nothing from
+token lengths. Session decoded allocation follows the preexisting declared
+projection size/allocation-exhaustion policy, with no arbitrary small world cap
+(memory-safety.md, Recipient state decoding). Invalid output is never loaded as
+a world. XOR decoding clears its output rather than requiring a zeroed caller.
+
+Measured deterministic fixtures (1,000 records of 512 random bytes): a one-byte
+prefix insertion falls from **512,206 to 123 bytes**. Twelve changed bytes per
+record without shifting encode in 15,158 bytes; those changes plus the prefix
+insertion encode in 58,339 bytes. Exact round trips are required on native/WASI.
+Unsanitized optimized Windows pack+unpack measurements, 16 iterations each, are
+0.495 ms fixed and 1.625 ms shifted/changed, on a shared machine; these are codec
+microbenchmarks, not the real game's bandwidth or whole-frame performance.
+
+Windows ASan and WASI pass the three new codec cases, the shifted-record probe,
+nine visibility and fifteen session cases. Tests cover empty/incompressible
+payloads, insertion/deletion, shorter bases, overlapping distance-one copies,
+every truncation in representative modes, bad hashes/bases/sizes, trailing bytes,
+zero/small/overflowing spans and invalid 64-bit sources. Sixteen generated
+network/prediction/visibility/view-time/voice integration CTests pass on each
+platform. Independent decoder/encoder review found no remaining blocker.
+Real-game first-mismatch tracing and before/after traffic measurements continue
+separately; this fixes a demonstrated transfer amplification mechanism without
+claiming that all battle repairs or the allocator limitation below are gone.
+
 ## Mount & Rifle battle investigation and repair diagnostics (2026-11-06)
 
 `tide_client_status.repairs` counts successful authoritative recipient repair
@@ -27,7 +75,7 @@ Two mechanisms relevant to the report are established independently of timing:
   state; its rebuilt `Crowd` lists and grids can reject near reuse even when all
   near components match. FAR_STALE_SECONDS only bounds successful reuse to 0.25 s;
   increasing it cannot make those rejected comparisons pass.
-- Recipient repair compression splits flat variable-length projection bytes at
+- Before the protocol-23 fix above, recipient repair compression split flat variable-length projection bytes at
   fixed 16 KiB offsets. A prefix insertion shifts every later region against its
   base. `delta_recipient_shifted_records_round_trip` provides a repeatable
   1000-record probe (512 random bytes per record), using the same region codec:
@@ -72,9 +120,8 @@ after: entity server 1:3 client 1:1 hash equal 0
 Follow-up task, **recipient repair locality and battle divergence**: first trace
 the first differing logical fields/entity identities in the exact 1000-bot game,
 including Delay, and distinguish initial mismatches from repair-induced ones.
-Fix variable-length projection delta locality using stable permitted logical
-regions or bounded relocated spans, preserving all baseline/hash/privacy and
-hostile-input checks; a wire-format change needs matching protocol/version work.
+The protocol-23 implementation above addresses variable-length transfer locality;
+measure its exact-game effect before claiming the bandwidth issue resolved.
 In parallel, resolve recipient-safe predicted spawn identities and slot reuse
 without transferring hidden allocation metadata; confirm the probe's public
 post-load spawns agree, including hidden intervening allocations, without pinning
