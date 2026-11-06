@@ -17,8 +17,10 @@ suite made single runs 2-3x slower, those were discarded):
 | unchanged rebuild | 13.4 s | 7.4 s |
 | `tide run --release --frames 2` after an edit | ~30 s | 16.7 s |
 
-Cold builds are dominated by build code (75 s, cached after); a cold build went 126 s to ~76-80 s, a full
-recompile of the generated C (cached data part) to ~19 s. Starting the game adds ~3 s (its 742 MB pack).
+Truly cold (no .tide/): 126 s, then 98 s with the parts above, then 69 s with build code's program split and
+without shaders (assets-and-files.md, Build code). Of the 69 s: asset imports 11.5 s, build code 39 s (of which
+~24 s making levels of detail one mesh at a time, cached after), C 9 s. A full recompile of the generated C
+(cached data part) takes ~19 s. Starting the game adds ~3 s (its 742 MB pack).
 
 What changed:
 - **The data part.** 93 of the game's 106 MB of generated C were shaders' SPIR-V/WGSL arrays. `write_code_parts`

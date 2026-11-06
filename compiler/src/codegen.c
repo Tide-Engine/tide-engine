@@ -25352,9 +25352,10 @@ static void setting_text(char *out, const size_t size, const expr *setting)
 
 // A shader's source as an array of chars: C only promises string literals of
 // 4095.
-static void gen_shader_text(sb *o, const char *name, const char *text)
+static void gen_shader_text(const gen *g, sb *o, const char *name, const char *text)
 {
     sb_printf(o, "static const char %s[] = {", name);
+    if (g->opts->build_program) text = ""; // Build code draws nothing (gen_shader_spirv)
     // A big game's shaders are megabytes of these: written without a printf each. The same text as "%s%d,", a line
     // of 40 each
     char line[5 + 40 * 5];
@@ -25380,8 +25381,12 @@ static void gen_shader_text(sb *o, const char *name, const char *text)
 // The shader's WGSL as SPIR-V, for Vulkan: its words, as an array named
 // `name`, and how many there are; 0 for WGSL the translator didn't take, which
 // tidec wrote, so it's a bug of tidec's, said as an error.
-static size_t gen_shader_spirv(sb *o, const char *name, const shader *sh, const char *wgsl)
+static size_t gen_shader_spirv(const gen *g, sb *o, const char *name, const shader *sh, const char *wgsl)
 {
+    if (g->opts->build_program) { // Build code draws nothing: shaders' code would be most of its program's C
+        sb_printf(o, "static const uint32_t %s[1] = {0};\n", name);
+        return 0;
+    }
     char error[256];
     size_t count = 0;
     uint32_t *words = tide_wgsl_to_spirv(wgsl, &count, error, sizeof error);
@@ -25722,10 +25727,10 @@ static void gen_kernel(gen *g, const shader *sh, const int s)
     char name[64];
     sb_put(o, "#ifdef __wasm__\n");
     snprintf(name, sizeof name, "tide_shader_%d_wgsl", s);
-    gen_shader_text(o, name, sh->wgsl);
+    gen_shader_text(g, o, name, sh->wgsl);
     sb_put(o, "#endif\n#ifdef TIDE_SPIRV\n");
     snprintf(name, sizeof name, "tide_shader_%d_spirv", s);
-    const size_t spirv_words = gen_shader_spirv(o, name, sh, sh->wgsl);
+    const size_t spirv_words = gen_shader_spirv(g, o, name, sh, sh->wgsl);
     sb_put(o, "#endif\n");
     const decl *k = sh->kernel;
     const int numbers[] = {k->group[0], k->group[1], k->group[2], sh->uniform_floats, sh->uniform_ints, sh->textures.count,
@@ -25881,20 +25886,20 @@ static void gen_shaders(gen *g)
         char name[64];
         sb_put(o, "#ifdef __wasm__\n");
         snprintf(name, sizeof name, "tide_shader_%d_wgsl", s);
-        gen_shader_text(o, name, sh->wgsl);
+        gen_shader_text(g, o, name, sh->wgsl);
         sb_put(o, "#endif\n#ifdef TIDE_SPIRV\n");
         snprintf(name, sizeof name, "tide_shader_%d_spirv", s);
-        const size_t spirv_words = gen_shader_spirv(o, name, sh, sh->wgsl);
+        const size_t spirv_words = gen_shader_spirv(g, o, name, sh, sh->wgsl);
         sb_put(o, "#endif\n");
         // Its vertex stage for listed runs (tide_draw_mesh_shaded_list), each backend's
         size_t listed_words = 0;
         if (sh->listed) {
             sb_put(o, "#ifdef __wasm__\n");
             snprintf(name, sizeof name, "tide_shader_%d_listed_wgsl", s);
-            gen_shader_text(o, name, sh->wgsl_listed);
+            gen_shader_text(g, o, name, sh->wgsl_listed);
             sb_put(o, "#endif\n#ifdef TIDE_SPIRV\n");
             snprintf(name, sizeof name, "tide_shader_%d_listed_spirv", s);
-            listed_words = gen_shader_spirv(o, name, sh, sh->wgsl_listed);
+            listed_words = gen_shader_spirv(g, o, name, sh, sh->wgsl_listed);
             sb_put(o, "#endif\n");
         }
 
