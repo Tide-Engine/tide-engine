@@ -7,11 +7,12 @@
 
 static tide_world world;
 
-static const tide_entity THING = {1, 1};
+static tide_entity THING;
 
 TIDE_TEST(long_fields_and_arithmetic_wrap)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     TIDE_REQUIRE(tide_has_Tally(&world, THING));
     TIDE_CHECK(tide_get_Tally(&world, THING).bits == 4294967295LL);
     TIDE_CHECK(tide_get_Tally(&world, THING).ledger.balance == 500000000000LL);
@@ -28,6 +29,7 @@ TIDE_TEST(long_fields_and_arithmetic_wrap)
 TIDE_TEST(long_operators_and_conversions)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     for (int i = 0; i < 3; i++) tide_world_tick(&world);
     const Results r = tide_get_Results(&world, THING);
     TIDE_CHECK(r.sum == 3000000007LL);
@@ -66,6 +68,7 @@ TIDE_TEST(long_operators_and_conversions)
 TIDE_TEST(long_inputs_are_bounded_and_read)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     const Controls in = {.bid = 5000000000LL, .bounded = 2000000000000LL}; // bounded clamps to a trillion
     tide_world_set_input(&world, tide_player_from_index(0), in);
     tide_world_tick(&world);

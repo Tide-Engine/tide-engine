@@ -32,8 +32,8 @@ static uint64_t hash_world(void)
     for (uint32_t i = 0; i < world.arch0_Body.count; i++) {
         const Body b = TIDE_AT(&world, arch0_Body, Body, i);
         const tide_entity e = TIDE_ENTITY_AT(&world, arch0_Body, i);
-        h = hash_bits(h, e.index);
-        h = hash_bits(h, e.generation);
+        h = hash_bits(hash_bits(h, (uint32_t)e.birth), (uint32_t)(e.birth >> 32));
+        h = hash_bits(hash_bits(h, (uint32_t)e.lineage), (uint32_t)(e.lineage >> 32));
         h = hash_float(hash_float(hash_float(h, b.position.x), b.position.y), b.position.z);
         h = hash_float(hash_float(hash_float(h, b.velocity.x), b.velocity.y), b.velocity.z);
         h = hash_float(hash_float(hash_float(hash_float(h, b.rotation.value.x), b.rotation.value.y),
@@ -52,7 +52,7 @@ TIDE_TEST(crossplatform_simulation)
     TIDE_CHECK(world.arch0_Body.count > 0 && world.arch0_Body.count < 200); // Some were retired
 
     const uint64_t h = hash_world();
-    const uint64_t expected = 0x473341060AE593FDull;
+    const uint64_t expected = 0x54218E7819B343A8ull;
     if (h != expected) printf("    simulation: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);
     TIDE_CHECK(h == expected);
 }

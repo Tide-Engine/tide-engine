@@ -1,5 +1,67 @@
 # Shards: one world across servers
 
+## Logical keys, tagged dependencies and private slots (2026-11-06)
+
+The owner-approved Entity128 migration removes physical index ranges from shard
+allocation and routing. Every complete logical key enters the coordinator's owner
+directory when first advertised by an owning shard, and ARRIVE changes its owner.
+The agent compares current/previous live ownership sets and reports new keys,
+including births on a region, without retaining dead history or resending the
+whole directory. A death removes the directory key and releases matching private
+AWAY metadata on other shards. Exact-key hash maps preserve all 128 bits; root
+singleton hashes have separate storage, rather than a sentinel Entity key.
+
+Unknown is distinct from dead. An unknown ARRIVE returns to its sender. Other
+unknown requests are dropped and retried until an authoritative absence proof
+is available: the nonzero logical birth clock is strictly older than every
+live shard's reported clock, every live/recovering shard has reported, the key
+is absent from the owner directory and no pending ARRIVE protects it. Birth zero,
+same-clock and future keys never gain this proof. Restarting clears the report
+barrier until the recovered shard reports again. This lets an old destroyed key
+remain harmless after its private slot has been reused, without retaining global
+dead-key history or confusing a delayed birth with a death.
+
+Critical invariant: every step first collects complete keys from all pending
+ARRIVE trees into a bounded transient set, before carrying any sender. A newly
+spawned entity can move in its first tick, appearing in no owned-key report.
+Malformed tree framing disables absence proof for the whole step. Once an ARRIVE
+is carried, its directory entry remains through delayed injection; only explicit
+FREED removes it. The protected-key set is cleared each step and retains at most
+its high-water capacity, never lifetime history. Tests cover requester-before-
+sender ordering, delayed injection, missing/recovering reports, same/future/zero
+births, malformed trees and a destroyed key whose private slot has been reused.
+
+A shard keeps parked dependencies and retries outstanding requests after the
+existing 30-tick pin interval. Asked records carry the exact tagged reference and
+unsigned tick; subtraction is wrap-safe. Records no longer held by a waiting
+dependency or current handoff request are purged. Retrying can add about half a
+second at 60 Hz after a late ownership advertisement, without a forwarding loop
+or false GONE response. The request pass includes already parked commands, so
+an expired request is retried even when no new system run touched the key.
+
+Singleton dependencies use explicit `tide_shard_ref` tags, with zero Entity words
+for a singleton. No Entity bits are reserved for internal markers. Internal mixed
+records use 24-byte hidden words (full key plus tag, or a number and zero tail),
+retaining their logical record strides. The reader checks reference tags and
+canonical zeros; generated world validation checks complete list shapes and
+nonapplicable words before adoption. Parked/deferred references carry their tags.
+
+CONFIG carries the public 64-bit identity clock from the authoritative root, so
+new empty shards inherit that endpoint's birth clock. Per-entity causal identity
+excludes the current shard, preserving it through handoff. Checkpoint envelope 6
+uses full keys and no physical allocator ranges; hosts and generated games rebuild
+together. The status API exposes `identity_clock` instead of range counters.
+
+The shard protocol/horizon filter passes 10/10 on Windows ASan and WASI (nine
+new protocol cases and the existing private journal replay). All five generated
+shard integration targets pass on Windows ASan and WASI after the final horizon change:
+movement/checkpoint/recovery, players, visibility, Box2D and Box3D. New generated
+tests reject malformed
+word tags, nonzero inactive words and bad record shapes before raw adoption,
+and exercise retries across uint32 tick wrap plus unused-request reclamation.
+Final broad integration results are recorded with the completed migration.
+
+
 ## Journal recovery budget on hosted runners (2026-10-29)
 
 Nightly `40960903022` at `cfbb6d15d` failed only the journal test in its

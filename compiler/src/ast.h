@@ -549,6 +549,7 @@ typedef struct command_channel {
 } command_channel;
 
 typedef struct decl {
+    uint32_t causal_sites; // Generated per-invocation causal counter slots.
     decl_kind kind;
     const type_ref *alias_ref;
     type alias_type;
@@ -1163,6 +1164,7 @@ typedef struct prefab_instance {
 } prefab_instance;
 
 struct expr {
+    uint32_t causal_site;
     expr_kind kind;
     loc at;
     const unit *authored_unit; // A copied prefab value keeps its source namespace.
@@ -1380,6 +1382,7 @@ typedef struct switch_case {
 } switch_case;
 
 struct stmt {
+    uint32_t causal_site;
     stmt_kind kind;
     loc at;
 

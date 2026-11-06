@@ -1,12 +1,9 @@
-ordered: 6 systems each tick, 2 stages deep; 6 can run alongside others.
+ordered: 6 systems each tick, 3 stages deep; 6 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  SpawnRocks  (per entity)
          reads Rock
-         alongside SpawnSparks, RollDice, RollAgain, Fade
-stage 1  SpawnSparks  (per entity)
-         reads Rock
-         alongside SpawnRocks, RollDice, RollAgain, Fade
+         alongside RollDice, RollAgain, Fade
 stage 1  RollDice  (per entity)
          writes Dice
          alongside SpawnRocks, SpawnSparks, SpawnWave, RollAgain, Fade
@@ -18,9 +15,14 @@ stage 1  Fade  (per entity)
          writes Spark
          alongside SpawnRocks, SpawnSparks, SpawnWave, RollDice, RollAgain
 
-stage 2  SpawnWave  (once)
-         writes Wave
+stage 2  SpawnSparks  (per entity)
+         reads Rock
          after SpawnRocks: both spawn, and entities get their IDs in order
+         alongside RollDice, RollAgain, Fade
+
+stage 3  SpawnWave  (once)
+         writes Wave
+         after SpawnRocks: both spawn, and entities get their IDs in order (and through SpawnSparks)
          after SpawnSparks: both spawn, and entities get their IDs in order
          alongside RollDice, RollAgain, Fade
 

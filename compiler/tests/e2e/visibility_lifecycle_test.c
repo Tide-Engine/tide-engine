@@ -366,7 +366,7 @@ TIDE_TEST(visibility_lifecycle_bulk_duplicate_causes_and_cancelled_prediction)
         const tide_entity e = tide_entity_in_slot(&world.entities, i);
         if (tide_has_Ghost(&world, e) && tide_get_Ghost(&world, e).id >= 100) destroyed[count - ++found] = e;
     }
-    TIDE_REQUIRE(found == count && destroyed[0].index > destroyed[count - 1].index);
+    TIDE_REQUIRE(found == count && !tide_entity_equal(destroyed[0], destroyed[count - 1]));
     tide_local_init(&local);
     frame(&local, &world, &events);
     world.Actions.next = 20;
@@ -603,7 +603,7 @@ TIDE_TEST(visibility_lifecycle_destruction_cause_uses_event_time_visibility)
             uint32_t at = 0, causes = 0;
             for (const tide_heard *h; (h = tide_event_log_next(&events[player], &at));) {
                 if (h->event != TIDE_HEARD_DESTROYED_CAUSE) continue;
-                TIDE_CHECK(h->target.index == target.index && h->target.generation == target.generation
+                TIDE_CHECK(tide_entity_equal(h->target, target)
                            && h->handlers == 0 && h->wants == 0);
                 causes++;
             }

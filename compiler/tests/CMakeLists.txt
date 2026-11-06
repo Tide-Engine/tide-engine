@@ -104,6 +104,14 @@ tide_e2e_test(transforms) # Shared component placement, checked parenting and hi
 tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
 tide_e2e_test(visibility_lists) # A projection's lists read back in runs, the heap as element by element left it
+tide_e2e_test(stable_main)
+
+tide_e2e_test(stable_async)
+
+tide_e2e_test(canonical_rows SOURCES e2e/canonical_rows.tide e2e/canonical_rows_c.c)
+
+tide_e2e_test(stable_entities) # Stable causal IDs, canonical cross-archetype queries and private spawn omission
+
 tide_e2e_test(visibility_predicted) # A client's tick of its projection: its hidden spawns, groups and [Native] fields as the server's projection has them
 tide_e2e_test(visibility_hash_memo) # Projection hashes kept for what didn't change: every change shows
 # The same game and test with nothing kept from one projection hash to the next: the same hashes
@@ -170,10 +178,10 @@ tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
-target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=15404513570503856259ull)
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=2039807695083000941ull)
 tide_e2e_test(foreach_borrow) # A read-only foreach borrows elements that hold lists; one whose body could change them copies
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
-target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=15339636516785361681ull)
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=3858809984483344099ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
 tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
@@ -203,7 +211,7 @@ foreach(fixture crossplatform nested tasks compute)
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/${fixture}_test.c)
     target_include_directories(tidec_e2e_${fixture}_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     if(fixture STREQUAL "nested")
-        target_compile_definitions(tidec_e2e_${fixture}_split PRIVATE NESTED_HASH=15404513570503856259ull)
+        target_compile_definitions(tidec_e2e_${fixture}_split PRIVATE NESTED_HASH=2039807695083000941ull)
     endif()
     add_test(NAME tidec_e2e_${fixture}_split COMMAND tidec_e2e_${fixture}_split)
 endforeach()
@@ -321,7 +329,7 @@ tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, prese
 tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
 tide_e2e_test(blend_shapes) # FBX blend channels and GLB morph targets: lookup, Shaped in the match and views, snapshots
-target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=3743772153600442091ull)
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=7530372217346317286ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
 tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)
@@ -337,7 +345,7 @@ endif()
 # Stored decoded Animation bytes now use immutable model descriptors. Native
 # ASan and WASM agree on this intentional ownership/hash change; pose bits stay
 # unchanged and the fixture checks snapshot and serialized-value equivalence.
-target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=17482475804974733025ull)
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=1205875979790898075ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
@@ -466,7 +474,7 @@ tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch e
 tide_e2e_test(strings)
 # char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
 tide_e2e_test(chars)
-target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=124619335715164565ull)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=5532519303336847483ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
@@ -479,9 +487,9 @@ tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out`
 tide_e2e_test(generics) # Generic functions: inference, <> at calls, `has`, instantiations, a plain overload winning
 tide_e2e_test(loop_views) # Loops that keep a list's shape index it through a view: chunks, side by side, scratch, assets, snapshots
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
-target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=1814360554844410170ull)
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=6704482616308601063ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
-target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=17773546526439762167ull)
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=3237991937820221800ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(grid_values) # Grids code owns: locals, mut parameters, returns and Copy
 tide_e2e_test(parallel) # Parallel loops over grids and lists
@@ -523,7 +531,7 @@ tide_add_game(tidec_e2e_nested_split_debug SPLIT_CODE SPLIT_PLUMBING SOURCES e2e
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/nested_test.c)
 set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_nested_split_debug/game.c" APPEND PROPERTY COMPILE_OPTIONS -O0)
 target_include_directories(tidec_e2e_nested_split_debug PRIVATE "${PROJECT_SOURCE_DIR}/tests")
-target_compile_definitions(tidec_e2e_nested_split_debug PRIVATE NESTED_HASH=15404513570503856259ull)
+target_compile_definitions(tidec_e2e_nested_split_debug PRIVATE NESTED_HASH=2039807695083000941ull)
 add_test(NAME tidec_e2e_nested_split_debug COMMAND tidec_e2e_nested_split_debug)
 
 tide_e2e_test(crossplatform_text)

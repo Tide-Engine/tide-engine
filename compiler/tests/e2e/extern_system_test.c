@@ -10,6 +10,7 @@
 #include "game.h"
 #include "tide/jobs.h"
 #include "tide_test.h"
+#include "entity_order_test.h"
 
 #ifdef TIDE_EXTERN_SYSTEM_THREADS
 #include "tide/platform.h"
@@ -32,6 +33,43 @@ static tide_world kept;
 static tide_entity in_slot(const tide_world *w, const uint32_t slot)
 {
     return tide_entity_in_slot(&w->entities, slot);
+}
+
+typedef struct canonical_runs { int calls, least, most; } canonical_runs;
+
+static canonical_runs expected_runs(const tide_world *w, const bool wheels)
+{
+    const tide_columns *columns[] = {&tide_columns_arch0_Place_Speed, &tide_columns_arch1_Place_Speed_Heavy,
+        &tide_columns_arch2_Place_Speed_Frozen, &tide_columns_arch3_Place_Speed_Badge,
+        &tide_columns_arch4_Place_Dots, &tide_columns_arch5_Wheel};
+    entity_order_value *keys = malloc((size_t)w->entities.next_unused * sizeof *keys);
+    TIDE_CHECK(keys != NULL);
+    if (!keys) return (canonical_runs){0};
+    uint32_t count = 0;
+    for (uint32_t slot = 0; slot < w->entities.next_unused; slot++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, slot);
+        if (wheels ? tide_has_Wheel(w, e) : tide_has_Place(w, e)) keys[count++] = (entity_order_value){e, 0};
+    }
+    qsort(keys, count, sizeof *keys, entity_order_compare);
+    canonical_runs result = {0};
+    for (uint32_t at = 0; at < count;) {
+        const tide_location first = tide_entity_location(&w->entities, keys[at].key);
+        const uint32_t shift = columns[first.archetype]->shift;
+        uint32_t end = at + 1;
+        while (end < count) {
+            const tide_location next = tide_entity_location(&w->entities, keys[end].key);
+            if (next.archetype != first.archetype || next.row != first.row + end - at ||
+                (next.row >> shift) != (first.row >> shift)) break;
+            end++;
+        }
+        const int n = (int)(end - at);
+        result.calls++;
+        if (!result.least || n < result.least) result.least = n;
+        if (n > result.most) result.most = n;
+        at = end;
+    }
+    free(keys);
+    return result;
 }
 
 TIDE_TEST(extern_systems_read_and_write_their_rows)
@@ -81,8 +119,9 @@ TIDE_TEST(extern_systems_read_and_write_their_rows)
         TIDE_CHECK(dots.a == i + TICKS && dots.b == 2 && dots.c == i + TICKS + 2);
     }
     // Rows it only reads, in the order a system written in Tide goes through
-    // them: a call for each chunk of each archetype with a Place
-    TIDE_CHECK(world.Tally.runs == 7 * TICKS && world.Tally.rows == 5450 * TICKS);
+    // them: a call for each contiguous physical run in canonical full-key order.
+    const canonical_runs counted = expected_runs(&world, false);
+    TIDE_CHECK(world.Tally.runs == counted.calls * TICKS && world.Tally.rows == 5450 * TICKS);
     TIDE_CHECK(world.Tally.order == world.Tally.orderInTide && world.Tally.order != 0);
     TIDE_CHECK(world.Tally.bonus == 5);
     // Once a tick, with no rows
@@ -129,8 +168,9 @@ TIDE_TEST(extern_systems_leave_what_they_dont_write_shared)
     const tide_columns *plain = &tide_columns_arch0_Place_Speed;
     const uint32_t place = tide_column_arch0_Place_Speed_Place;
     const uint32_t speed = tide_column_arch0_Place_Speed_Speed;
-    TIDE_CHECK(world.arch0_Place_Speed.chunks == 3);
-    for (uint32_t chunk = 0; chunk < 3; chunk++) {
+    const uint32_t capacity = 1u << plain->shift;
+    TIDE_CHECK(world.arch0_Place_Speed.chunks == (5000u + capacity - 1u) / capacity);
+    for (uint32_t chunk = 0; chunk < world.arch0_Place_Speed.chunks; chunk++) {
         TIDE_CHECK(!shares(&world.arch0_Place_Speed, &kept.arch0_Place_Speed, plain, chunk, place));
         TIDE_CHECK(!shares(&world.arch0_Place_Speed, &kept.arch0_Place_Speed, plain, chunk, place + 1));
         TIDE_CHECK(shares(&world.arch0_Place_Speed, &kept.arch0_Place_Speed, plain, chunk, place + 2));
@@ -148,11 +188,13 @@ TIDE_TEST(extern_systems_leave_what_they_dont_write_shared)
     // the ones that changed aren't (the serial's low half, the bool's)
     const tide_columns *badged = &tide_columns_arch3_Place_Speed_Badge;
     const uint32_t badge = tide_column_arch3_Place_Speed_Badge_Badge;
-    TIDE_CHECK(!shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge));
-    TIDE_CHECK(shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge + 1));
-    TIDE_CHECK(shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge + 2));
-    TIDE_CHECK(shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge + 3));
-    TIDE_CHECK(!shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge + 4));
+    const uint32_t serial = (uint32_t)offsetof(Badge, serial) / 4u;
+    const uint32_t lit = (uint32_t)offsetof(Badge, lit) / 4u;
+    for (uint32_t lane = 0; lane < sizeof(Badge) / 4u; lane++) {
+        const bool changed = lane == serial || lane == lit;
+        TIDE_CHECK(shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge,
+                          badged, 0, badge + lane) == !changed);
+    }
     TIDE_CHECK(tide_world_hash(&kept) == before && tide_world_hash(&world) != before);
     float x = 0.0f;
     for (int t = 0; t < 3; t++) x += 1.0f * DT;
@@ -172,7 +214,7 @@ static void alone_run(void *self, void (*work)(void *context, uint32_t thread), 
 
 // A tick on `jobs` against one on this thread, tick by tick, each with a
 // snapshot of the tick before sharing its pages, as a client's does.
-static void compare(const tide_jobs *jobs, const int ticks, const bool pieces)
+static void compare(const tide_jobs *jobs, const int ticks)
 {
     tide_world_init(&world, DT);
     tide_world_init(&many, DT);
@@ -185,8 +227,10 @@ static void compare(const tide_jobs *jobs, const int ticks, const bool pieces)
         if (tide_world_hash(&world) != tide_world_hash(&many)) printf("    tick %d came out different\n", t);
         TIDE_REQUIRE(tide_world_hash(&world) == tide_world_hash(&many));
         TIDE_REQUIRE(tide_world_hash(&kept) == before); // Its pages stayed as they were
-        // Spin's two full chunks went in two pieces each, every row once
-        if (pieces) TIDE_REQUIRE(xs_spin_calls == 4 && xs_spin_least == 1024 && xs_spin_most == 1024);
+        // Trusted C observes canonical runs even on a pool. Every run is
+        // contiguous within its actual chunk, and every Wheel is visited once.
+        const canonical_runs spun = expected_runs(&many, true);
+        TIDE_REQUIRE(xs_spin_calls == spun.calls && xs_spin_least == spun.least && xs_spin_most == spun.most);
     }
     const Wheel wheel = tide_get_Wheel(&many, in_slot(&many, WHEELS + 3000));
     float angle = 3000.0f * 0.25f;
@@ -209,7 +253,7 @@ static void compare(const tide_jobs *jobs, const int ticks, const bool pieces)
 TIDE_TEST(extern_systems_in_pieces_come_out_as_whole)
 {
     const tide_jobs four = {.threads = 4, .run = alone_run};
-    compare(&four, 12, true);
+    compare(&four, 12);
 }
 
 #ifdef TIDE_EXTERN_SYSTEM_THREADS
@@ -220,7 +264,7 @@ TIDE_TEST(extern_systems_on_threads_come_out_as_on_one)
         printf("    one core: nothing to compare\n");
         return;
     }
-    compare(jobs, 60, jobs->threads > 2);
+    compare(jobs, 60);
     printf("    %u threads\n", (unsigned)jobs->threads);
 }
 #endif

@@ -129,6 +129,7 @@ if(TIDE_NODE AND NOT TIDE_EMBED_LLVM)
 endif()
 
 if(TIDE_NODE)
+    add_test(NAME tide_unity_entity_wire COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_entity_wire_test.mjs")
     add_executable(tide_cli_versions_driver tests/versions_driver.c versions.c upgrade.c release.c install.c line.c sys.c unzip.c
         ../lsp/json.c ../lsp/packages.c ../lsp/unity_names.c "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/platform/src/rtc/crypto.c")
     target_include_directories(tide_cli_versions_driver PRIVATE . ../lsp)

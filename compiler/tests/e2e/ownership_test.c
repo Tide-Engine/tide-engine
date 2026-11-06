@@ -8,13 +8,15 @@ static tide_draw_list draw;
 static tide_gui gui;
 
 // The Main scene is slot 0, and its Setup spawns these in order.
-static const tide_entity FIRST = {1, 1};  // A body owned by player 0, at x = 1
-static const tide_entity SECOND = {2, 1}; // A body owned by player 1, at x = 2
+static tide_entity FIRST;  // A body owned by player 0, at x = 1
+static tide_entity SECOND; // A body owned by player 1, at x = 2
 // x = 3: a body with no Owner. x = 4: one whose Owner is no player. Then player 0's flag.
 
 static void start(void)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
     tide_world_tick(&world);
     tide_local_init(&local);
 }

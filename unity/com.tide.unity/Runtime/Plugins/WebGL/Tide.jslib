@@ -165,12 +165,12 @@ var TideWebLibrary = {
     },
 
     TideWebCommand__deps: ['$TideWeb'],
-    TideWebCommand: function (type, index, generation, value, size) {
+    TideWebCommand: function (type, birthLow, birthHigh, lineageLow, lineageHigh, value, size) {
         var x = TideWeb.program();
         if (!x) return 0;
         var at = size ? TideWeb.copyIn(x, value, size) : 0;
         if (size && !at) return 0;
-        return x.tide_unity_command(type, index, generation, at, size);
+        return x.tide_unity_command(type, birthLow, birthHigh, lineageLow, lineageHigh, at, size);
     },
 
     // Time travel (tide/embed.h): the program's own match, recorded, paused and replayed

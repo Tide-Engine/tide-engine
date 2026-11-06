@@ -1185,7 +1185,7 @@ static void check_join_recovery(const bool applied)
     const tide_entity restored = walker_of(w, before.player);
     TIDE_CHECK(w->Roster.online == 1 && w->Roster.next == 1);
     TIDE_CHECK(!tide_entity_is_null(restored));
-    if (applied) TIDE_CHECK(restored.index == avatar.index && restored.generation == avatar.generation);
+    if (applied) TIDE_CHECK(tide_entity_equal(restored, avatar));
     TIDE_CHECK(after.state == TIDE_SESSION_CONNECTED && after.player.id == before.player.id && after.cookie == before.cookie);
     tide_shard_client_destroy(first.client); first.client = NULL;
     if (applied) {

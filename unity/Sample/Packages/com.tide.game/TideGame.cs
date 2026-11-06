@@ -492,13 +492,13 @@ namespace Tide.Game
 {
     // Tide's struct tide_hierarchy_node
     [global::Tide.TideType("tide_hierarchy_node")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
+    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 64)]
     public unsafe partial struct tide_hierarchy_node
     {
         [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideEntityId parent;
-        [global::System.Runtime.InteropServices.FieldOffset(8)] public global::Tide.TideEntityId first;
-        [global::System.Runtime.InteropServices.FieldOffset(16)] public global::Tide.TideEntityId next;
-        [global::System.Runtime.InteropServices.FieldOffset(24)] public global::Tide.TideEntityId previous;
+        [global::System.Runtime.InteropServices.FieldOffset(16)] public global::Tide.TideEntityId first;
+        [global::System.Runtime.InteropServices.FieldOffset(32)] public global::Tide.TideEntityId next;
+        [global::System.Runtime.InteropServices.FieldOffset(48)] public global::Tide.TideEntityId previous;
     }
 }
 namespace Tide.Game
@@ -664,15 +664,15 @@ namespace Tide.Game
 
         // Tide's singleton Extras, as the game's C lays it out
         [global::Tide.TideType("Extras")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 72)]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 96)]
         public unsafe partial struct Value
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideEntityId bonus;
-            [global::System.Runtime.InteropServices.FieldOffset(8)] public global::Tide.TideEntityId again;
-            [global::System.Runtime.InteropServices.FieldOffset(16)] public global::Tide.TideEntityId tossed;
-            [global::System.Runtime.InteropServices.FieldOffset(24)] public global::Tide.TideText said;
-            [global::System.Runtime.InteropServices.FieldOffset(32)] public global::Tide.TideMap speakers;
-            [global::System.Runtime.InteropServices.FieldOffset(64)] public global::Tide.TideGrid board;
+            [global::System.Runtime.InteropServices.FieldOffset(16)] public global::Tide.TideEntityId again;
+            [global::System.Runtime.InteropServices.FieldOffset(32)] public global::Tide.TideEntityId tossed;
+            [global::System.Runtime.InteropServices.FieldOffset(48)] public global::Tide.TideText said;
+            [global::System.Runtime.InteropServices.FieldOffset(56)] public global::Tide.TideMap speakers;
+            [global::System.Runtime.InteropServices.FieldOffset(88)] public global::Tide.TideGrid board;
         }
     }
 }

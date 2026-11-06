@@ -1,5 +1,39 @@
 # C: lists C makes, jobs, systems written in C
 
+## Logical Entity128 ABI (2026-11-06)
+
+Owner-approved projected-spawn identity repair: `tide_entity` is now the opaque
+16-byte `{ uint64_t birth, lineage; }` logical key. Trusted C receives the final
+key before deferred spawn application, and there are no temporary entity tokens
+or payload rewrites. Equality, ordering, hashing and wire values use both words.
+The words never size an allocation or index a component/attached-field array.
+`Entity` fields use four 4-byte lanes; C mirrors and retained physics records
+rebuild together. `tide_entity_slot_index` is a checked private-storage lookup;
+its result is local to one world and must never become an observable match ID.
+
+Jobs retain exact keys in task-owned pending lists, register them in deterministic
+source order at the existing system join, and return the exact key immediately.
+The former `tide_new_entities`, `tide_settled`, `tide_new_entity_by`, settlement
+callbacks and shard allocator callback were removed from the C runtime ABI.
+Unkeyed `tide_new_entity` remains only for local state and handwritten trusted C;
+generated match spawns supply their causal key to `tide_new_entity_key`.
+
+Validation so far: scoped Windows ASan and WASI jobs/attached/shard checks pass 20/20,
+including high identity words, full-key collisions/deletion, deferred registration,
+separate singleton tags, raw outbox roundtrip and every truncated outbox prefix.
+Layout metadata appends checked
+64-bit identity-clock and per-player lifecycle-counter offsets/counts. Migration
+preserves them across moved headers and player-count changes and rejects missing,
+zero or out-of-bounds clock metadata; old eight-byte Entity saves are unsupported.
+Broader generated/native/web validation is recorded with the completed migration.
+
+Hand-built global command fixtures carry a 16-bit command ID followed by four
+zero 32-bit target words (144 bits before fields). Towers, Sumo and both Two
+Forks helpers were migrated; the old two-word header rejects commands before
+their handlers. Two Forks' fifteen native ASan and WASI cases pass, including
+both progression/snapshot cases rebuilt after the second helper was corrected.
+
+
 ## Handles C sees are 64 bits (2026-10-30)
 
 A text, list or grid field is a `tide_handle` (8 bytes) and a map or set 32

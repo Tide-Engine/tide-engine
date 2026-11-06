@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -50,7 +51,9 @@ TIDE_TEST(visibility_projection_omits_secrets_and_uses_normal_component_presence
     TIDE_CHECK(tide_entity_alive(&client.entities, server.Control.player));
     TIDE_CHECK(tide_has_Secret(&client, server.Control.player));
     TIDE_CHECK(tide_get_Secret(&client, server.Control.card).code == 0);
-    TIDE_CHECK(tide_game_api.client_hash(&server, tide_player_from_index(1)) == UINT64_C(0xed6d2f60242f07d3));
+    const uint64_t permitted_hash = tide_game_api.client_hash(&server, tide_player_from_index(1));
+    if (permitted_hash != UINT64_C(0xd1253f8809e3ffcd)) printf("    permitted hash 0x%016llx\n", (unsigned long long)permitted_hash);
+    TIDE_CHECK(permitted_hash == UINT64_C(0xd1253f8809e3ffcd));
     TIDE_CHECK(tide_game_api.client_hash(&server, tide_player_from_index(1)) == tide_game_api.client_hash(&client, tide_player_from_index(1)));
     visibility_present_rows = visibility_absent_rows = 0;
     tide_world_tick(&client);
@@ -141,7 +144,7 @@ TIDE_TEST(visibility_projection_keeps_filtered_sibling_links_and_hidden_scenes_a
     tide_world_free(&server);
 }
 
-TIDE_TEST(visibility_projection_preserves_sparse_high_entity_ids_and_raw_roundtrips)
+TIDE_TEST(visibility_projection_keeps_large_logical_ids_in_dense_storage_and_raw_roundtrips)
 {
     tide_world server = {0}, client = {0}, restored = {0};
     tide_world_init(&server, 0.1f);
@@ -149,18 +152,24 @@ TIDE_TEST(visibility_projection_preserves_sparse_high_entity_ids_and_raw_roundtr
     uint32_t size;
     uint8_t *bytes = project(&server, 1, &size);
     const tide_entity card = server.Control.card;
-    const uint32_t pattern[] = {card.index, card.generation, 0, 0, 1};
+    uint8_t pattern[sizeof(tide_entity) * 2u + sizeof(uint32_t)];
+    tide_writer match = {pattern, sizeof pattern, 0, false, false};
+    tide_write_u64(&match, card.birth);
+    tide_write_u64(&match, card.lineage);
+    tide_write_u32(&match, 0);
+    const tide_entity main = tide_entity_in_slot(&server.entities, 0);
+    tide_write_u64(&match, main.birth);
+    tide_write_u64(&match, main.lineage);
     uint32_t offset = UINT32_MAX, found = 0;
     for (uint32_t i = 0; (uint64_t)i + sizeof pattern <= size; i++) if (!memcmp(bytes + i, pattern, sizeof pattern)) { offset = i; found++; }
-    TIDE_CHECK(found == 1);
-    const tide_entity high = {(1u << 20) + 19u, card.generation};
-    memcpy(bytes + offset, &high.index, sizeof high.index);
+    TIDE_REQUIRE(found == 1);
+    const tide_entity high = {card.birth, UINT64_MAX - 19u};
+    memcpy(bytes + offset, &high, sizeof high);
     TIDE_CHECK(tide_game_api.load_client_state(&client, bytes, size));
     TIDE_CHECK(tide_entity_alive(&client.entities, high));
     TIDE_CHECK(tide_has_PublicState(&client, high));
     TIDE_CHECK(!tide_has_Secret(&client, high));
-    TIDE_CHECK(client.entities.pages > 1024);
-    TIDE_CHECK(client.entities.page[100] == NULL);
+    TIDE_CHECK(client.entities.pages == 1 && client.entities.next_unused < 32);
     const uint64_t hash = tide_world_hash(&client);
     const uint32_t packed = tide_world_pack(&client, NULL, 0);
     uint8_t *raw = malloc(packed);
@@ -169,8 +178,9 @@ TIDE_TEST(visibility_projection_preserves_sparse_high_entity_ids_and_raw_roundtr
     TIDE_CHECK(tide_world_unpack(&restored, raw, packed));
     TIDE_CHECK(tide_world_hash(&restored) == hash);
     TIDE_CHECK(tide_has_PublicState(&restored, high));
-    const tide_entity predicted = tide_entity_create(&client.entities);
-    TIDE_CHECK(predicted.index > high.index);
+    const tide_entity predicted = tide_entity_create_key(&client.entities,
+        (tide_entity){client.tide_identity_clock, UINT64_C(0xf83c25aa7149d3eb)});
+    TIDE_CHECK(!tide_entity_equal(predicted, high) && tide_entity_alive(&client.entities, high));
     free(raw); free(bytes);
     tide_world_free(&restored);
     tide_world_free(&client);

@@ -62,7 +62,7 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
     TIDE_CHECK(lamp->shadow.target.id == lamp->map.id && lamp->sceneDepth.target.id == lamp->scene.id);
     TIDE_CHECK(lamp->light.map.id == lamp->exact.id && lamp->light.shadow.target.id == lamp->exact.id);
     const tide_entity entity = caster();
-    TIDE_REQUIRE(entity.generation != 0);
+    TIDE_REQUIRE(!tide_entity_is_null(entity));
     TIDE_CHECK(tide_get_Caster_local(&local, entity).seen.target.id == lamp->exact.id);
 
     // A frag's depths are textures of the list's, one for each depth however it's read, each way it's read (compared,

@@ -82,10 +82,10 @@ static void run(const double seconds)
 static void each_tree(void *context, const tide_entity e, const uint8_t *data, const uint32_t size)
 {
     tide_writer *found = context;
-    uint32_t index, generation;
-    memcpy(&index, data + 8, sizeof index); // The tree's count, the root's record's size, then its handle
-    memcpy(&generation, data + 12, sizeof generation);
-    if (found->size || e.index != index || e.generation != generation) return;
+    uint64_t birth, lineage;
+    memcpy(&birth, data + 8, sizeof birth); // The tree's count, the root's record's size, then its handle
+    memcpy(&lineage, data + 16, sizeof lineage);
+    if (found->size || e.birth != birth || e.lineage != lineage) return;
     tide_write_bytes(found, data, size);
 }
 
@@ -134,8 +134,8 @@ TIDE_TEST(shards_send_what_changed_of_a_ghost_against_what_it_was)
         tide_shard_header(&m, TIDE_SHARD_GHOSTS, 2u, 0u);
         tide_write_u32(&m, 1u);
         tide_write_u8(&m, 1u); // What changed of it: nothing
-        tide_write_u32(&m, near.index);
-        tide_write_u32(&m, near.generation);
+        tide_write_u64(&m, near.birth);
+        tide_write_u64(&m, near.lineage);
         tide_write_u64(&m, tide_hash(tree.data, tree.size) + (uint64_t)wrong);
         tide_write_u32(&m, 2u + (tree.size >= 128u) + (tree.size >= 16384u));
         tide_write_varint(&m, tree.size); // Bytes the same
@@ -447,7 +447,7 @@ TIDE_TEST(shards_repeated_crossings_and_a_four_region_corner_keep_one_visible_av
                 double_owner += owned > 1;
                 if (owned == 1) {
                     if (tide_entity_is_null(identity)) identity = e;
-                    TIDE_CHECK(e.index == identity.index && e.generation == identity.generation);
+                    TIDE_CHECK(tide_entity_equal(e, identity));
                 }
                 const Sight sight = frame();
                 if (now > 3) { missing += sight.avatars == 0; duplicate += sight.avatars > 1; }

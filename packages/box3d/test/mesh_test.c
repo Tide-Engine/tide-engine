@@ -10,7 +10,7 @@ void b3t_forget(void);
 _Static_assert(sizeof(Box3D_MeshCollider) == 56 && offsetof(Box3D_MeshCollider, vertices) == 0 &&
     offsetof(Box3D_MeshCollider, indices) == 8 && offsetof(Box3D_MeshCollider, scale) == 16 &&
     offsetof(Box3D_MeshCollider, offset) == 28 && offsetof(Box3D_MeshCollider, friction) == 40 &&
-    offsetof(Box3D_MeshCollider, bounce) == 44 && sizeof(Box3D_Part) == 64 && offsetof(Box3D_Part, mesh) == 32,
+    offsetof(Box3D_MeshCollider, bounce) == 44 && sizeof(Box3D_Part) == 72 && offsetof(Box3D_Part, mesh) == 40,
     "mesh bridge must match the generated component layout");
 
 static bool set_mesh(tide_world *w, tide_entity e, Box3D_MeshCollider mesh)
@@ -59,7 +59,7 @@ TIDE_TEST(box3d_mesh_queries_and_detached_history)
     TIDE_CHECK(w.Box3D_Physics.shapes == 4);
     queries(&w, &local);
     const tide_entity floor = tagged(&w, tide_has_Floor), ledge = tagged(&w, tide_has_Ledge);
-    TIDE_CHECK(probe(&w, &local)->partEntity.index == ledge.index);
+    TIDE_CHECK(tide_entity_equal(probe(&w, &local)->partEntity, ledge));
     Box3D_Body body = tide_get_Box3D_Body(&w, floor);
     body.position.y = 2;
     body.type = Box3D_BodyType_Kinematic;
@@ -128,7 +128,7 @@ TIDE_TEST(box3d_mesh_contacts_preserve_concavity_and_replay)
         TIDE_CHECK(tide_get_Falling(&w, e).gap ? b.position.y < -10 : b.position.y >= 0.24f && b.position.y <= 0.27f);
     }
     printf("  mesh simulation sequence: %016llx\n", (unsigned long long)sequence);
-    TIDE_CHECK(sequence == UINT64_C(0x271969b81c11eeb0));
+    TIDE_CHECK(sequence == UINT64_C(0xfed56d750e0440ce));
     tide_world_copy(&decoded, &saved);
     for (int i = 0; i < 110; i++) tide_world_tick(&decoded);
     TIDE_CHECK(tide_world_hash(&decoded) == tide_world_hash(&w));

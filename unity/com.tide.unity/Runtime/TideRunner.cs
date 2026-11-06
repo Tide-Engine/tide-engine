@@ -134,8 +134,8 @@ namespace Tide
         bool schemaWarned;
         bool quitHeard;
 
-        readonly Dictionary<ulong, TideEntity> shown = new Dictionary<ulong, TideEntity>();
-        readonly List<ulong> gone = new List<ulong>();
+        readonly Dictionary<TideEntityId, TideEntity> shown = new Dictionary<TideEntityId, TideEntity>();
+        readonly List<TideEntityId> gone = new List<TideEntityId>();
         TideEntity[] byRow = Array.Empty<TideEntity>();
 
         // Where each type's rows are: rows[type][entity] is the entity's row in that type's section, or -1, as of
@@ -685,7 +685,7 @@ namespace Tide
                 var e = (TideEvent)Activator.CreateInstance(kind);
                 e.Tick = record.Tick;
                 e.Verified = record.Verified;
-                e.TargetEntity = new TideEntityId { index = record.TargetIndex, generation = record.TargetGeneration };
+                e.TargetEntity = new TideEntityId { birth = record.TargetBirth, lineage = record.TargetLineage };
                 var view = record.HasTarget && record.TargetPlace < (uint)count ? byRow[record.TargetPlace] : null;
                 e.Target = view != null ? view.gameObject : null;
                 e.ReadLive(values, Packet, this);
@@ -705,7 +705,7 @@ namespace Tide
         // The GameObject an entity shows through this frame, for an entity field of a TideComponent: null for none.
         public GameObject GameObjectOf(TideEntityId entity)
         {
-            return !entity.IsNull && shown.TryGetValue(entity.Id, out var view) && view != null && view.Row >= 0 ? view.gameObject : null;
+            return !entity.IsNull && shown.TryGetValue(entity, out var view) && view != null && view.Row >= 0 ? view.gameObject : null;
         }
 
         // The view of the packet's entity `row`, made or found the first time it's seen: by its UnityEngine.Source if it
@@ -799,7 +799,7 @@ namespace Tide
                 }
             }
             if (made == null) made = Instantiate(prefab);
-            made.name = $"{prefab.name} ({entity.Index})";
+            made.name = $"{prefab.name} ({entity.Id})";
             return made;
         }
 
@@ -937,12 +937,12 @@ namespace Tide
         // The match's scenes are Tide's to load (owner, 2026-10-22). One loaded by hand while this runs, in the editor or
         // by the game's C#, is local: nothing of it goes to the match, and no entity shows through it. One of the match's
         // that something else unloads is loaded again, as the match still has it.
-        readonly Dictionary<ulong, int> sceneRoots = new Dictionary<ulong, int>(); // This frame's roots, and their assets
-        readonly Dictionary<ulong, UnityEngine.SceneManagement.Scene> sceneOf = new Dictionary<ulong, UnityEngine.SceneManagement.Scene>();
-        readonly List<(ulong root, string path)> sceneLoads = new List<(ulong, string)>(); // Begun, for roots, in order
+        readonly Dictionary<TideEntityId, int> sceneRoots = new Dictionary<TideEntityId, int>(); // This frame's roots, and their assets
+        readonly Dictionary<TideEntityId, UnityEngine.SceneManagement.Scene> sceneOf = new Dictionary<TideEntityId, UnityEngine.SceneManagement.Scene>();
+        readonly List<(TideEntityId root, string path)> sceneLoads = new List<(TideEntityId, string)>(); // Begun, for roots, in order
         readonly HashSet<UnityEngine.SceneManagement.Scene> sceneUnloads = new HashSet<UnityEngine.SceneManagement.Scene>(); // Scenes this unloads
         readonly HashSet<UnityEngine.SceneManagement.Scene> scenesStarted = new HashSet<UnityEngine.SceneManagement.Scene>(); // Open as this started
-        readonly List<ulong> scenesGone = new List<ulong>();
+        readonly List<TideEntityId> scenesGone = new List<TideEntityId>();
         bool openSent;
         readonly List<string> scenesOpen = new List<string>(); // What the editor has open as this started, till that's sent
 
@@ -983,7 +983,7 @@ namespace Tide
             OpenEditorScenes();
         }
 
-        bool Loading(ulong root)
+        bool Loading(TideEntityId root)
         {
             foreach (var load in sceneLoads)
             {
@@ -1317,7 +1317,7 @@ namespace Tide
             var bytes = writer.Bytes();
             if (bytes.Length < Schema.types[type].size) return false;
             var to = EntityOf(target);
-            fixed (byte* p = bytes) return library.Command(embed, (uint)type, to.index, to.generation, p, (uint)bytes.Length) != 0;
+            fixed (byte* p = bytes) return library.Command(embed, (uint)type, to.birth, to.lineage, p, (uint)bytes.Length) != 0;
         }
 
         // ...to a component's GameObject's entity
@@ -1336,15 +1336,15 @@ namespace Tide
         // ...sent to an entity, as local code's entity.Send: its handlers run for that entity.
         public bool Send<T>(T value, TideEntityRow target) where T : unmanaged
         {
-            return Send(value, target.Index, target.Generation);
+            return Send(value, target.Birth, target.Lineage);
         }
 
-        bool Send<T>(T value, uint index, uint generation) where T : unmanaged
+        bool Send<T>(T value, ulong birth, ulong lineage) where T : unmanaged
         {
             if (embed == IntPtr.Zero || Schema == null) return false;
             var type = TypeOf<T>.Index(Schema);
             if (type < 0) return false;
-            return library.Command(embed, (uint)type, index, generation, &value, (uint)sizeof(T)) != 0;
+            return library.Command(embed, (uint)type, birth, lineage, &value, (uint)sizeof(T)) != 0;
         }
 
         static string Utf8(byte* bytes, int capacity)

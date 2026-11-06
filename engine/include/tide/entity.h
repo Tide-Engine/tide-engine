@@ -19,9 +19,8 @@
 // as a whole, and when it grows, the old one stays until
 // tide_entities_settle, once only one thread runs.
 //
-// Beside its slots, a table can remember each entity's generated spawn identity
-// (tide_entity_set_born), so this machine can tell apart two entities a rollback
-// gave the same handle (a predicted spawn the server ordered otherwise). It's beside
+// Beside its slots, a table can remember optional presentation metadata
+// (tide_entity_set_born). Logical identity never depends on this sidecar. It is beside
 // the world, not in it: snapshots share it as they share the slots, but it's
 // outside the table's hash and packed bytes. Event journals can carry it, so
 // their sender must choose an identity containing only permitted information.
@@ -36,84 +35,105 @@
 #define TIDE_ARCHETYPE_NONE 0xFFFFFFFFu
 
 // A zeroed handle is the null entity; it is never alive.
-typedef struct tide_entity {
-    uint32_t index;
-    uint32_t generation;
+typedef struct tide_entity
+{
+    uint64_t birth;   // Public simulation identity clock; 0 is reserved for unkeyed C/local entities.
+    uint64_t lineage; // Stable causal key, never a physical storage index.
 } tide_entity;
 
-typedef struct tide_location {
+static inline bool tide_entity_is_null(const tide_entity e) { return e.birth == 0 && e.lineage == 0; }
+static inline bool tide_entity_equal(const tide_entity a, const tide_entity b)
+{
+    return a.birth == b.birth && a.lineage == b.lineage;
+}
+static inline int tide_entity_compare(const tide_entity a, const tide_entity b)
+{
+    return a.birth != b.birth       ? (a.birth < b.birth ? -1 : 1)
+           : a.lineage != b.lineage ? (a.lineage < b.lineage ? -1 : 1)
+                                    : 0;
+}
+static inline uint64_t tide_entity_hash(uint64_t h, const tide_entity e)
+{
+    uint8_t bytes[16];
+    for (uint32_t i = 0; i < 8; i++)
+    {
+        bytes[i] = (uint8_t)(e.birth >> (i * 8u));
+        bytes[8u + i] = (uint8_t)(e.lineage >> (i * 8u));
+    }
+    return tide_hash_more(h, bytes, sizeof bytes);
+}
+
+typedef struct tide_location
+{
     uint32_t archetype;
     uint32_t row;
 } tide_location;
 
-typedef struct tide_entity_slot {
-    uint32_t generation; // Odd while alive, even while free.
-    uint32_t archetype;
-    uint32_t row;        // While free: the next free slot plus one, or 0
-    uint32_t snaps;      // Times it jumped (entity.Snap()): views only blend it between ticks with the same count
+enum
+{
+    TIDE_ENTITY_FREE = 0,
+    TIDE_ENTITY_ALIVE = 1,
+    TIDE_ENTITY_AWAY = 2
+};
+typedef struct tide_entity_slot
+{
+    tide_entity entity;
+    uint32_t archetype, row, snaps, state;
 } tide_entity_slot;
 
-typedef struct tide_entities {
-    uint32_t next_unused; // Slots at or above this were never used.
-    uint32_t free_head;   // The last slot freed plus one, or 0: free slots are reused last freed first, so in a deterministic order
-    uint32_t pages;       // Page span; projected client tables may have absent pages
-    uint32_t room;        // Pages `page` has room for
-    // Before the first, page[-1] holds the table this one replaced, until it's
-    // settled. After its `room` pages of slots come as many of what their
-    // entities were born as: page[room + p] for page p, or NULL for none.
+struct tide_entity_index;
+struct tide_entity_order;
+struct tide_entity_filtered_order;
+typedef struct tide_entities
+{
+    uint32_t next_unused, free_head, pages, room; // Private dense storage only.
     tide_page **page;
+    struct tide_entity_index *index, *births;
+    uint64_t key_clock, unkeyed_next;
+    struct tide_entity_order *ordered, *retired_order;
+    struct tide_entity_filtered_order *filtered_order;
+    uint32_t order_lock;
 } tide_entities;
 
+// Trusted C/local allocation uses a separate monotonic namespace (birth 0).
+// Match code uses create_key; unkeyed allocation is not visibility-stable.
 tide_entity tide_entity_create(tide_entities *t);
-
-// Returns false if the entity wasn't alive.
+// A final match identity: duplicate keys (including destroyed keys this clock),
+// a zero clock, or a clock moving backwards terminate with a diagnostic.
+tide_entity tide_entity_create_key(tide_entities *t, tide_entity key);
 bool tide_entity_destroy(tide_entities *t, tide_entity e);
+uint32_t tide_entity_slot_index(const tide_entities *t, tide_entity e);
+bool tide_entity_alive(const tide_entities *t, tide_entity e);
 
 // Slot `index`, below next_unused, as it is: read atomically, as another
 // thread may be growing the table (see above).
 static inline const tide_entity_slot *tide_entity_slot_of(const tide_entities *t, const uint32_t index)
 {
     static const tide_entity_slot absent = {0};
+    if (index >= __atomic_load_n(&t->next_unused, __ATOMIC_ACQUIRE))
+        return &absent;
     tide_page *const *pages = __atomic_load_n(&t->page, __ATOMIC_ACQUIRE);
     const tide_page *page = __atomic_load_n(&pages[index >> TIDE_ENTITY_PAGE_SHIFT], __ATOMIC_ACQUIRE);
-    if (!page) return &absent;
-    const tide_entity_slot *slots = (const tide_entity_slot *)tide_page_data(page);
-    return &slots[index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u)];
-}
-
-static inline bool tide_entity_alive(const tide_entities *t, const tide_entity e)
-{
-    return e.index < t->next_unused && (e.generation & 1u) && tide_entity_slot_of(t, e.index)->generation == e.generation;
+    return page ? (const tide_entity_slot *)tide_page_data(page) + (index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u))
+                : &absent;
 }
 
 void tide_entity_set_location(tide_entities *t, tide_entity e, tide_location loc);
 
-// Shards (tide/shard.h): an entity's handle is the same on every shard, and
-// each shard makes new ones from ranges of indices its own.
-//
-// A free slot whose entity went to another shard, and lives on there: it's in
-// no free list, so its index isn't given to another entity here.
+// A shard preserves the logical identity while allocating its own private slot.
 #define TIDE_ARCHETYPE_AWAY 0xFFFFFFFEu
-// A new entity at `index`, a slot never used (the table grows to it), or the
-// null entity when it was.
-tide_entity tide_entity_create_at(tide_entities *t, uint32_t index);
-// Puts `e`, another shard's, in its slot, alive with its location still to
-// set: false, changing nothing, when another entity alive here has the slot.
+// Imports a permitted existing identity. False for null or an already alive identity.
+// Imported identities do not enter the local current-clock spawn registry.
 bool tide_entity_install(tide_entities *t, tide_entity e);
-// Frees `e`'s slot without listing it free: its index is another shard's to
-// give. `away`: it went to another shard, or was a copy of another shard's,
-// and lives on there (TIDE_ARCHETYPE_AWAY); else it was destroyed here.
+// Removes local data, retaining an away marker when it lives on another shard.
 void tide_entity_forget(tide_entities *t, tide_entity e, bool away);
-// Index `index`, whose entity (of `generation`) lived on elsewhere and was
-// destroyed there, is free here again: listed free, its next entity of a
-// later generation. False, changing nothing, unless the slot is that entity's
-// away (as tide_entity_forget left it).
-bool tide_entity_release(tide_entities *t, uint32_t index, uint32_t generation);
+// Releases the matching away marker after its owner reports destruction.
+bool tide_entity_release(tide_entities *t, tide_entity e);
 // Sets what views go by to tell that it jumped (tide_entity_snap): an entity
 // coming from another shard brings its own.
 void tide_entity_set_snaps(tide_entities *t, tide_entity e, uint32_t snaps);
-// Whether `e` was destroyed here: it isn't alive, and its slot's last entity
-// was it or later, freed here rather than gone elsewhere.
+// Exact retained destruction evidence, only until its private slot is reused.
+// Unknown, alive and away identities are false; shards keep explicit gone records.
 bool tide_entity_died_here(const tide_entities *t, tide_entity e);
 
 // It jumped: views draw it as it is, not blended from the tick before.
@@ -129,34 +149,32 @@ void tide_entity_set_born(tide_entities *t, tide_entity e, uint32_t born);
 // What it was spawned as, or 0 when that isn't known: it isn't alive, or it
 // came with a world another machine sent rather than a spawn this one ran.
 // Read where nothing changes the table: between ticks.
-static inline uint32_t tide_entity_born(const tide_entities *t, const tide_entity e)
-{
-    if (!tide_entity_alive(t, e)) return 0u;
-    const tide_page *page = t->page[t->room + (e.index >> TIDE_ENTITY_PAGE_SHIFT)];
-    return page ? ((const uint32_t *)tide_page_data(page))[e.index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u)] : 0u;
-}
+uint32_t tide_entity_born(const tide_entities *t, tide_entity e);
 
 // Whether two of those can be one entity's: the same, or one isn't known.
-static inline bool tide_born_same(const uint32_t a, const uint32_t b)
-{
-    return a == b || a == 0u || b == 0u;
-}
+static inline bool tide_born_same(const uint32_t a, const uint32_t b) { return a == b || a == 0u || b == 0u; }
 
 // Archetype is TIDE_ARCHETYPE_NONE for dead entities and for pending spawns.
-static inline tide_location tide_entity_location(const tide_entities *t, const tide_entity e)
-{
-    if (!tide_entity_alive(t, e)) return (tide_location){TIDE_ARCHETYPE_NONE, 0};
-    const tide_entity_slot *slot = tide_entity_slot_of(t, e.index);
-    return (tide_location){slot->archetype, slot->row};
-}
+tide_location tide_entity_location(const tide_entities *t, tide_entity e);
 
 // The entity in slot `index` (below next_unused), or the null entity when the
-// slot is free.
+// slot is free or away.
 tide_entity tide_entity_in_slot(const tide_entities *t, uint32_t index);
 
+// Borrowed sorted ALIVE logical keys, including pending spawns. The array remains
+// valid until settle even if structural changes invalidate this table's cache.
+// Location, snap and presentation metadata writes do not invalidate it.
+const tide_entity *tide_entities_ordered(const tide_entities *t, uint32_t *count);
+// Canonical ALIVE keys in an ascending unique set of archetype IDs. The cache
+// owns the IDs, so callers may replace generated/reloaded storage afterward.
+// Archetype changes invalidate this subset; row-only moves preserve it. The
+// same borrowed lifetime until settle applies to invalidated subset arrays.
+const tide_entity *tide_entities_ordered_archetypes(const tide_entities *t, const uint32_t *archetypes,
+                                                    uint32_t archetype_count, uint32_t *count);
+
 // For snapshots: `to` becomes `from`, sharing its pages (see tide/page.h),
-// those of what its entities were born as too. The hash covers what's in use
-// of the slots, the same for the same entities however the table got there.
+// including optional presentation metadata. The hash covers private allocation
+// state and the current-clock spawn registry; map capacity and pointers are excluded.
 void tide_entities_copy(tide_entities *to, const tide_entities *from);
 uint64_t tide_entities_hash(uint64_t h, const tide_entities *t);
 // The pages that hash would have to read again (tide/page.h), for whoever hashes them on threads first.
@@ -178,32 +196,10 @@ void tide_entities_pack(const tide_entities *t, tide_writer *w);
 bool tide_entities_unpack(tide_entities *t, tide_reader *r);
 
 // The same as part of a delta (tide/delta.h), from `base` (NULL for none):
-// its next_unused and free_head, then its pages of slots as regions.
+// its private allocation and identity-clock metadata, registered keys, and slot pages.
 // Unpacking `t` (empty) shares the pages that are the same as the base's.
 void tide_entities_pack_delta(const tide_entities *t, const tide_entities *base, tide_delta_writer *d);
 bool tide_entities_unpack_delta(tide_entities *t, const tide_entities *base, tide_delta_reader *d);
 // Its pages' hashes, and which of them `base` lacks (tide_needs).
 void tide_entities_hash_pages(const tide_entities *t, tide_writer *w);
 void tide_entities_need_pages(const tide_entities *base, tide_needs *n);
-
-static inline bool tide_entity_is_null(const tide_entity e)
-{
-    return e.generation == 0;
-}
-
-// A generation with this bit is a temporary handle: what Spawn gives in a
-// system that splits its entities across threads, until the system is done
-// and the entity gets its ID (see tide/jobs.h). Real generations never have it.
-#define TIDE_ENTITY_TEMPORARY 0x80000000u
-
-// Whether `e` is temporary: an entity spawned by the system running now, whose
-// ID it gets once that system is done. C code given an entity can tell this way.
-static inline bool tide_entity_is_temporary(const tide_entity e)
-{
-    return (e.generation & TIDE_ENTITY_TEMPORARY) != 0;
-}
-
-static inline bool tide_entity_equal(const tide_entity a, const tide_entity b)
-{
-    return a.index == b.index && a.generation == b.generation;
-}

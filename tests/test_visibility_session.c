@@ -238,7 +238,7 @@ static void visibility_hear(const void *world, const void *had, const tide_entit
     const visibility_world *now = world, *before = had;
     if (!before || !before->token_alive || now->token_alive) return;
     bool died = false;
-    for (uint32_t i = 0; i < count; i++) died |= destroyed[i].index == 75 && destroyed[i].generation == 1;
+    for (uint32_t i = 0; i < count; i++) died |= tide_entity_equal(destroyed[i], (tide_entity){75, 1});
     if (died) visibility_deaths++;
     else visibility_hides++;
 }
@@ -274,14 +274,14 @@ static bool visibility_check_events(const uint8_t *data, uint32_t size, uint32_t
         memcpy(&event, data + at, sizeof event);
         if (event.event == TIDE_HEARD_DESTROYED_CAUSE) {
             if (event.size != sizeof(tide_heard) || event.wants || event.as || event.handlers || event.same
-                || event.target.index != 75 || event.target.generation != 1) return false;
+                || !tide_entity_equal(event.target, (tide_entity){75, 1})) return false;
             at += event.size;
             (*count)++;
             continue;
         }
         if (event.size != sizeof(tide_heard) + 8u || event.size > size - at || event.event != 91
             || event.handlers != 1 || event.wants != (TIDE_HEARD_PREDICTED | TIDE_HEARD_VERIFIED | TIDE_HEARD_LIFECYCLE)
-            || event.target.index != 75 || event.target.generation != 1) return false;
+            || !tide_entity_equal(event.target, (tide_entity){75, 1})) return false;
         at += event.size;
         (*count)++;
     }
@@ -440,7 +440,7 @@ static void visibility_run_case(tide_net_conditions conditions, bool commands, b
             if (heard->event == TIDE_HEARD_DESTROYED_CAUSE) {
                 TIDE_CHECK(heard->size == sizeof *heard && heard->wants == 0 && heard->handlers == 0);
                 TIDE_CHECK(heard->as == (TIDE_HEARD_PREDICTED | TIDE_HEARD_VERIFIED));
-                TIDE_CHECK(heard->target.index == 75 && heard->target.generation == 1 && heard->tick == 259u);
+                TIDE_CHECK(tide_entity_equal(heard->target, (tide_entity){75, 1}) && heard->tick == 259u);
                 causes++;
                 continue;
             }
@@ -780,4 +780,80 @@ TIDE_TEST(visibility_large_repairs_choose_cheaper_acknowledged_delta)
     visibility_large_spread = true;
     visibility_large_repairs(TIDE_PREDICTION_ROLLBACK, false);
     visibility_large_spread = false;
+}
+
+
+// Destruction frame metadata is a full logical key, even when the caller only
+// skips it while applying an authenticated frame or replaying a journal record.
+static const tide_entity full_destroyed_key = {UINT64_C(0x123456789abcdef0), UINT64_C(0xfedcba9876543210)};
+static void full_destroyed_tick(void *world, const tide_jobs *jobs)
+{
+    (void)jobs;
+    visibility_world *w = world;
+    w->tick++;
+    if (w->tick == 180u) w->token_alive = 0;
+}
+static uint32_t full_destroyed(const void *world, const void *previous, tide_player_id player,
+                               tide_entity *out, uint32_t capacity)
+{
+    (void)player;
+    const visibility_world *w = world, *had = previous;
+    if (!had || !had->token_alive || w->token_alive) return 0;
+    if (out && capacity) out[0] = full_destroyed_key;
+    return 1;
+}
+
+TIDE_TEST(visibility_full_entity_destroyed_frames_verify_and_replay)
+{
+    tide_game game = visibility_game;
+    game.tick = full_destroyed_tick;
+    game.tick_client_events = NULL;
+    game.check_client_events = NULL;
+    game.hear_visibility = NULL;
+    game.client_destroyed = full_destroyed;
+    visibility_continuous = false;
+    tide_loopback *net = tide_loopback_create(6311);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &game,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &game,
+        .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1), .lead = 2}, 0);
+    TIDE_REQUIRE(server && client);
+    uint64_t repairs_before = 0;
+    for (uint32_t step = 1; step <= 720; step++) {
+        const double now = (double)step / 60.0;
+        tide_loopback_set_time(net, now);
+        tide_server_update(server, now);
+        tide_client_update(client, now);
+        if (step == 120u) repairs_before = tide_client_status_of(client).repairs;
+    }
+    const tide_client_status status = tide_client_status_of(client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.verified_tick > 650u);
+    TIDE_CHECK(status.repairs == repairs_before && status.resyncs == 0);
+    const visibility_world *verified = tide_client_verified_world(client);
+    TIDE_CHECK(verified && !verified->token_alive);
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+
+    visibility_world replay = {0}, expected = {0};
+    visibility_start(&replay, 1.0f / 60.0f, NULL, 0);
+    expected = replay;
+    full_destroyed_tick(&expected, NULL);
+    tide_writer frame = {.grows = true}, record = {.grows = true};
+    tide_write_u64(&frame, visibility_hash(&expected));
+    tide_write_u8(&frame, 16u); // FRAME_DESTROYED, with no input/command payload.
+    tide_write_varint(&frame, 1u);
+    tide_write_varint64(&frame, full_destroyed_key.birth);
+    tide_write_varint64(&frame, full_destroyed_key.lineage);
+    tide_write_u32(&record, 0u);
+    tide_write_u32(&record, frame.size);
+    tide_write_bytes(&record, frame.data, frame.size);
+    tide_write_u32(&record, 0u); // No downloads.
+    uint64_t wanted = 0, got = 0;
+    const tide_replay_result replay_result = tide_replay_check(&game, &replay, record.data, record.size, NULL, &wanted, &got);
+    if (replay_result != TIDE_REPLAY_SAME) printf("    destroyed replay: result%d tick%u frame%u record%u expected%llu got%llu\n", replay_result, replay.tick, frame.size, record.size, (unsigned long long)wanted, (unsigned long long)got);
+    TIDE_CHECK(replay_result == TIDE_REPLAY_SAME);
+    TIDE_CHECK(visibility_hash(&replay) == visibility_hash(&expected));
+    free(frame.data);
+    free(record.data);
 }

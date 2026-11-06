@@ -11,12 +11,35 @@ enum { FIRST = 4099, MORE = 17, COUNT = FIRST + MORE, TICKS = 13 };
 
 static tide_world world, kept;
 static tide_world *observed_world;
+static int32_t observed_ordinals[259];
+static uint32_t observed_at, observed_deaths;
+
+static int compare_entity(const void *a, const void *b)
+{
+    return tide_entity_compare(*(const tide_entity *)a, *(const tide_entity *)b);
+}
+
+static uint32_t canonical_entities(tide_entity out[259], bool (*has)(const tide_world *, tide_entity))
+{
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&world.entities, i);
+        if (!has(&world, e)) continue;
+        TIDE_CHECK(count < 259);
+        if (count == 259) return count;
+        out[count++] = e;
+    }
+    qsort(out, count, sizeof *out, compare_entity);
+    return count;
+}
 
 void CheckQueue(const int32_t ordinal)
 {
     TIDE_REQUIRE(observed_world);
     const tide_queue *queue = tide_recording(&observed_world->commands);
-    TIDE_REQUIRE(queue->count == (uint32_t)(ordinal + 1) / 2u);
+    TIDE_REQUIRE(observed_at < 259 && ordinal == observed_ordinals[observed_at++]);
+    TIDE_REQUIRE(queue->count == observed_deaths);
+    observed_deaths += ordinal % 2 == 0;
 }
 
 static void alone(void *self, void (*work)(void *context, uint32_t thread), void *context)
@@ -30,8 +53,8 @@ static const tide_jobs eight = {.threads = 8, .run = alone};
 typedef struct model {
     Bullet items[COUNT];
     tide_entity handles[COUNT];
-    uint32_t order[COUNT], row[COUNT], free_ids[COUNT], generations[COUNT + 16];
-    uint32_t live, holes, made, free_count, next; // live: the table's rows, holes among them
+    uint32_t order[COUNT], row[COUNT];
+    uint32_t live, holes, made; // live: the model's rows, holes among them
     int32_t gone[COUNT], values[COUNT * 4];
     tide_float2 positions[COUNT];
     uint32_t gone_count;
@@ -104,9 +127,9 @@ static void settle(model *m)
 static void birth(model *m, const uint32_t first, const uint32_t count)
 {
     for (uint32_t i = first; i < first + count; i++) {
-        const uint32_t index = m->free_count ? m->free_ids[--m->free_count] : m->next++;
-        TIDE_REQUIRE(index < COUNT + 16u);
-        m->handles[i] = (tide_entity){index, ++m->generations[index]};
+        const tide_entity *key = tide_list_read(&world.heap, world.Births.items, i, sizeof *key);
+        TIDE_REQUIRE(key && !tide_entity_is_null(*key));
+        m->handles[i] = *key;
         m->items[i] = (Bullet){.ordinal = (int32_t)i,
             .position = {(float)(i % 3u) * 0.125f, -0.0f},
             .velocity = {(float)((int32_t)(i % 17u) - 8) * 0.25f, (float)((int32_t)(i % 5u) - 2) * 0.125f},
@@ -116,9 +139,8 @@ static void birth(model *m, const uint32_t first, const uint32_t count)
     }
 }
 
-// Independent row/slot model: reserve births before the deferred deaths, leave
-// a hole for each (filled in the last chunk, settled from the end past a 32nd),
-// and reuse slots last-freed-first with generations.
+// Independent numerical/lifetime model. Logical keys are captured at birth;
+// deaths must be applied in their canonical order regardless of physical rows.
 static void model_tick(model *m, const uint32_t tick)
 {
     uint32_t died[COUNT], deaths = 0;
@@ -137,6 +159,15 @@ static void model_tick(model *m, const uint32_t tick)
     }
     if (tick == 0) birth(m, 0, FIRST);
     if (tick == 4) birth(m, FIRST, MORE);
+    for (uint32_t i = 1; i < deaths; i++) {
+        const uint32_t ordinal = died[i];
+        uint32_t j = i;
+        while (j && tide_entity_compare(m->handles[died[j - 1u]], m->handles[ordinal]) > 0) {
+            died[j] = died[j - 1u];
+            j--;
+        }
+        died[j] = ordinal;
+    }
     for (uint32_t i = 0; i < deaths; i++) {
         const uint32_t ordinal = died[i];
         const Bullet *b = &m->items[ordinal];
@@ -148,9 +179,6 @@ static void model_tick(model *m, const uint32_t tick)
         m->values[trace * 4u + 2u] = b->minimumDivided;
         m->values[trace * 4u + 3u] = b->shifted;
         remove_row(m, ordinal);
-        const tide_entity e = m->handles[ordinal];
-        m->generations[e.index]++;
-        m->free_ids[m->free_count++] = e.index;
     }
     settle(m);
 }
@@ -186,15 +214,14 @@ static void play(const bool snapshot, const tide_jobs *jobs, uint64_t hashes[TIC
     tide_world_init(&world, DT);
     model *m = calloc(1, sizeof *m);
     TIDE_REQUIRE(m);
-    m->next = world.entities.next_unused;
     for (uint32_t tick = 0; tick < TICKS; tick++) {
         uint64_t before = 0;
         if (snapshot) {
             tide_world_copy(&kept, &world);
             before = tide_world_hash(&kept);
         }
-        model_tick(m, tick);
         tide_world_tick_on(&world, jobs);
+        model_tick(m, tick);
         check_world(m);
         hashes[tick] = tide_world_hash(&world);
         if (snapshot) TIDE_REQUIRE(tide_world_hash(&kept) == before);
@@ -226,11 +253,15 @@ TIDE_TEST(destroy_rows_keep_math_order_reuse_and_snapshots)
     for (int i = 0; i < TICKS; i++) TIDE_REQUIRE(plain[i] == shared[i] && plain[i] == pieced[i] && plain[i] == pieced_shared[i]);
 }
 
-TIDE_TEST(destroy_rows_leave_c_observers_in_the_original_order)
+TIDE_TEST(destroy_rows_leave_c_observers_in_canonical_entity_order)
 {
     tide_world_init(&world, DT);
     world.Births.mode = 1;
     tide_world_tick(&world);
+    tide_entity keys[259];
+    TIDE_REQUIRE(canonical_entities(keys, tide_has_Observed) == 259);
+    for (uint32_t i = 0; i < 259; i++) observed_ordinals[i] = tide_get_Observed(&world, keys[i]).ordinal;
+    observed_at = observed_deaths = 0;
     observed_world = &world;
     tide_world_tick(&world);
     observed_world = NULL;
@@ -251,12 +282,16 @@ TIDE_TEST(destroy_rows_keep_helper_events_before_each_destroy)
     tide_world_init(&world, DT);
     world.Births.mode = 2;
     tide_world_tick(&world);
+    tide_entity keys[259];
+    int32_t ordinals[259];
+    TIDE_REQUIRE(canonical_entities(keys, tide_has_Custom) == 259);
+    for (uint32_t i = 0; i < 259; i++) ordinals[i] = tide_get_Custom(&world, keys[i]).counter.value;
     tide_world_tick(&world);
     TIDE_REQUIRE(tide_list_count(world.Trace.events) == 518);
     for (int32_t i = 0; i < 259; i++) {
         const int32_t *notice = tide_list_read(&world.heap, world.Trace.events, (uint32_t)i * 2u, sizeof *notice);
         const int32_t *destroyed = tide_list_read(&world.heap, world.Trace.events, (uint32_t)i * 2u + 1u, sizeof *destroyed);
-        TIDE_REQUIRE(notice && destroyed && *notice == i && *destroyed == -i - 1);
+        TIDE_REQUIRE(notice && destroyed && *notice == ordinals[i] && *destroyed == -ordinals[i] - 1);
     }
     tide_world_free(&world);
 }
@@ -268,12 +303,16 @@ TIDE_TEST(destroy_rows_preserve_filtered_fallback_and_skipped_rows)
     tide_world_tick(&world);
     tide_world_copy(&kept, &world);
     const uint64_t before = tide_world_hash(&kept);
+    tide_entity keys[259];
+    int32_t ordinals[259];
+    const uint32_t count = canonical_entities(keys, tide_has_Filtered);
+    for (uint32_t i = 0; i < count; i++) ordinals[i] = tide_get_Filtered(&world, keys[i]).ordinal;
     tide_world_tick(&world);
     int32_t at = 0;
-    for (int32_t i = 0; i < 259; i++) {
-        if (i % 3 == 0) continue;
+    for (uint32_t i = 0; i < count; i++) {
+        if (ordinals[i] % 3 == 0) continue;
         const int32_t *gone = tide_list_read(&world.heap, world.Trace.gone, (uint32_t)at++, sizeof *gone);
-        TIDE_REQUIRE(gone && *gone == i);
+        TIDE_REQUIRE(gone && *gone == ordinals[i]);
     }
     TIDE_REQUIRE(tide_list_count(world.Trace.gone) == at && tide_world_hash(&kept) == before);
     tide_world_free(&world);

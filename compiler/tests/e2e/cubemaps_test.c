@@ -151,7 +151,7 @@ TIDE_TEST(cubemaps_are_assets_of_six_files_and_cubes_a_view_draws_into)
     // ...through a function, in a struct, and in a match component's local field
     TIDE_CHECK(room->probe.cube.target.id == cube);
     const tide_entity entity = prop();
-    TIDE_REQUIRE(entity.generation != 0);
+    TIDE_REQUIRE(!tide_entity_is_null(entity));
     TIDE_CHECK(tide_get_Prop_local(&local, entity).around.target.id == cube);
 
     // A face is a RenderTarget: the cube's state, its size, and which face its id says. Each is a

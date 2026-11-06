@@ -583,7 +583,7 @@ static void gen_client_hashes(gen *g)
         }
         sb_printf(o, "TIDE_HELPER uint64_t tide_client_entity_hash%d(const tide_world *w, const tide_entity e, const uint64_t mask, tide_writer *out)\n{\n"
                      "    (void)mask;\n    out->size = 0;\n    tide_write_u32(out, %du);\n"
-                     "    tide_write_u32(out, e.index);\n    tide_write_u32(out, e.generation);\n"
+                     "    tide_write_u64(out, e.birth);\n    tide_write_u64(out, e.lineage);\n"
                      "    tide_write_u32(out, tide_entity_snaps(&w->entities, e));\n", a, (unsigned)a);
         if (arch_scene_column(g, a)) {
             sb_put(o, "    {\n        const tide_location loc = tide_entity_location(&w->entities, e);\n");
@@ -620,9 +620,9 @@ static void gen_client_hashes(gen *g)
     if (heapy) {
         sb_put(o, "    tide_client_hasher hasher = {.out = {.grows = true}, .heap = (tide_heap *)&w->heap, .memo = tide_client_memo_for(world)};\n"
                   "    tide_client_hasher *hs = &hasher;\n    const uint32_t depth = 0;\n"
-                  "    tide_write_u32(&hs->out, 0x33564954u);\n");
+                  "    tide_write_u32(&hs->out, 0x33564954u);\n    tide_write_u64(&hs->out, w->tide_identity_clock);\n    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) tide_write_u64(&hs->out, w->tide_lifecycle_occurrences[i]);\n    tide_write_u64(&hs->out, w->tide_main_occurrence);\n");
     } else {
-        sb_put(o, "    tide_write_u32(&scratch, 0x32564954u);\n");
+        sb_put(o, "    tide_write_u32(&scratch, 0x32564954u);\n    tide_write_u64(&scratch, w->tide_identity_clock);\n    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) tide_write_u64(&scratch, w->tide_lifecycle_occurrences[i]);\n    tide_write_u64(&scratch, w->tide_main_occurrence);\n");
     }
     const decl *commands = NULL;
     for (int i = 0; i < prog->singletons.count; i++) {
@@ -783,19 +783,18 @@ static void gen_client_load_rows(gen *g, const client_codec *codec, const int a)
     const program *prog = g->prog;
     sb *o = &g->c;
     sb_put(o, "    {\n        const uint32_t count = tide_read_varint(&in);\n"
-              "        if (count > (in.size - in.at) / 12u) goto invalid;\n"
+              "        if (count > (in.size - in.at) / 20u) goto invalid;\n"
               "        for (uint32_t i = 0; i < count; i++) {\n"
-              "            tide_entity e;\n            e.index = tide_read_u32(&in);\n            e.generation = tide_read_u32(&in);\n"
+              "            tide_entity e;\n            e.birth = tide_read_u64(&in);\n            e.lineage = tide_read_u64(&in);\n"
               "            const uint32_t snaps = tide_read_u32(&in);\n"
-              "            if (in.failed || !tide_client_reserve_entity(&next.entities, e, &budget)) goto invalid;\n");
-    sb_printf(o, "            const uint32_t row = tide_table_add(&next.%s, %s);\n", arch_name(g, a), arch_columns(g, a));
-    sb_printf(o, "            *%s = e;\n", arch_cell(g, "(&next)", a, 0, "tide_entity", "row", true));
-    sb_printf(o, "            tide_entity_set_location(&next.entities, e, (tide_location){%du, row});\n", a);
-    sb_put(o, "            tide_entity_slot *slot = (tide_entity_slot *)tide_page_data(next.entities.page[e.index >> TIDE_ENTITY_PAGE_SHIFT])\n"
-              "                + (e.index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u));\n            slot->snaps = snaps;\n");
+              "            if (in.failed || !tide_client_reserve_entity(&next->entities, e, &budget)) goto invalid;\n");
+    sb_printf(o, "            const uint32_t row = tide_table_add(&next->%s, %s);\n", arch_name(g, a), arch_columns(g, a));
+    sb_printf(o, "            *%s = e;\n", arch_cell(g, "next", a, 0, "tide_entity", "row", true));
+    sb_printf(o, "            tide_entity_set_location(&next->entities, e, (tide_location){%du, row});\n", a);
+    sb_put(o, "            tide_entity_set_snaps(&next->entities, e, snaps);\n");
     if (arch_scene_column(g, a)) {
         sb_put(o, "            const uint8_t *scene = tide_read_bytes(&in, sizeof(tide_entity));\n            if (!scene) goto invalid;\n");
-        sb_printf(o, "            memcpy(%s, scene, sizeof(tide_entity));\n", arch_cell(g, "(&next)", a, 1, "tide_entity", "row", true));
+        sb_printf(o, "            memcpy(%s, scene, sizeof(tide_entity));\n", arch_cell(g, "next", a, 1, "tide_entity", "row", true));
     }
     for (int c = 0; c < prog->components.count; c++) {
         if (!arch_stores(g, a, c)) continue;
@@ -803,13 +802,13 @@ static void gen_client_load_rows(gen *g, const client_codec *codec, const int a)
         sb_put(o, "            {\n");
         if (comp_sparse(g, c)) {
             sb_put(o, "                const uint8_t present = tide_read_u8(&in);\n                if (present > 1u) goto invalid;\n");
-            sb_printf(o, "                %s = present;\n", presence_cell(g, "(&next)", a, c, "row", true));
+            sb_printf(o, "                %s = present;\n", presence_cell(g, "next", a, c, "row", true));
             sb_put(o, "                if (present) {\n");
         }
         sb_printf(o, "                %s value = {0};\n", type_cname(d));
         sb_printf(o, "                if (!tide_client_get%d(&in, &value, TIDE_IN_MATCH, 0, &budget)) goto invalid;\n",
                   client_codec_id(codec, (type){TY_COMPONENT, (decl *)d}));
-        sb_printf(o, "                %s;\n", comp_put(g, "(&next)", a, c, "row", "value"));
+        sb_printf(o, "                %s;\n", comp_put(g, "next", a, c, "row", "value"));
         if (comp_sparse(g, c)) sb_put(o, "                }\n");
         sb_put(o, "            }\n");
     }
@@ -823,7 +822,7 @@ static void gen_client_load_rows(gen *g, const client_codec *codec, const int a)
 // them. The entity slots are made again: of a table kept, from its rows, with
 // their snaps as they were. The values come out as a fresh load's would; only
 // where the heap keeps them differs, which nothing reads.
-// Lets go of what a value of `d` at `value` (a place, "next.X" or "value")
+// Lets go of what a value of `d` at `value` (a place, "next->X" or "value")
 // holds in the match's heap, as tide_release_<d> does: built-in singletons
 // and components have no such function of their own.
 static void gen_client_release(gen *g, const decl *d, const char *value, const char *indent)
@@ -847,13 +846,13 @@ static void gen_client_reload_values(gen *g, const client_codec *codec)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    sb_put(o, "    tide_heap_flush(&next.heap);\n");
+    sb_put(o, "    tide_heap_flush(&next->heap);\n");
     int n = 0;
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
         if (!client_singleton(prog, d)) continue;
         sb_printf(o, "    if (!value_same[%d]) {\n        tide_reader in = {data, value_to[%d], value_from[%d], false};\n"
-                     "        if (!tide_client_get%d(&in, &next.%s, TIDE_IN_MATCH, 0, &budget) || in.at != value_to[%d]) goto invalid;\n    }\n",
+                     "        if (!tide_client_get%d(&in, &next->%s, TIDE_IN_MATCH, 0, &budget) || in.at != value_to[%d]) goto invalid;\n    }\n",
                   n, n, n, client_codec_id(codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d), n);
         n++;
     }
@@ -872,7 +871,7 @@ static void gen_client_reload(gen *g, const client_codec *codec)
                      "    const uint32_t count = tide_read_varint(in);\n"
                      "    if (count > (in->size - in->at) / 12u) return false;\n"
                      "    for (uint32_t i = 0; i < count; i++) {\n"
-                     "        if (!tide_client_read(in, 12u)) return false;\n", a);
+                     "        if (!tide_client_read(in, 20u)) return false;\n", a);
         if (arch_scene_column(g, a)) sb_put(o, "        if (!tide_client_read(in, sizeof(tide_entity))) return false;\n");
         for (int c = 0; c < prog->components.count; c++) {
             if (!arch_stores(g, a, c)) continue;
@@ -894,9 +893,9 @@ static void gen_client_reload(gen *g, const client_codec *codec)
               "    const uint32_t recipient = tide_read_u32(&whole);\n"
               "    if (!recipient || recipient > TIDE_GAME_PLAYERS || tide_read_u32(&old) != recipient\n"
               "        || w->tide_visibility_state.client != (int32_t)recipient) return false;\n"
-              "    tide_world next = {0};\n    tide_world_copy(&next, w);\n    tide_text_use(&next.heap, NULL);\n"
-              "    tide_entities kept = {0}; // The slots as they were, for the snaps of entities in tables kept\n"
-              "    bool kept_taken = false;\n");
+              "    const uint64_t clock = tide_read_u64(&whole);\n    if (!clock || tide_read_u64(&old) != w->tide_identity_clock) return false;\n"
+              "    tide_world *next = calloc(1, sizeof *next);\n    if (!next) tide_out_of_memory();\n    tide_entities kept = {0};\n    bool kept_taken = false;\n    tide_world_copy(next, w);\n    next->tide_identity_clock = clock;\n    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) {\n        next->tide_lifecycle_occurrences[i] = tide_read_u64(&whole);\n        if (tide_read_u64(&old) != w->tide_lifecycle_occurrences[i]) goto invalid;\n    }\n    next->tide_main_occurrence = tide_read_u64(&whole);\n    if (tide_read_u64(&old) != w->tide_main_occurrence) goto invalid;\n    tide_text_use(&next->heap, NULL);\n"
+              );
     // The singletons: which are alike, and what those that aren't held in the heap goes
     int singletons = 0;
     for (int i = 0; i < prog->singletons.count; i++) singletons += client_singleton(prog, prog->singletons.items[i]);
@@ -915,16 +914,16 @@ static void gen_client_reload(gen *g, const client_codec *codec)
                   n, id, id, n, n, n, n, n);
         sb_printf(o, "        if (!value_same[%d]) {\n", n);
         char place[256];
-        snprintf(place, sizeof place, "next.%s", name);
+        snprintf(place, sizeof place, "next->%s", name);
         if (decl_has_text(d)) gen_client_release(g, d, place, "            ");
-        sb_printf(o, "            memset(&next.%s, 0, sizeof next.%s);\n        }\n    }\n", name, name);
+        sb_printf(o, "            memset(&next->%s, 0, sizeof next->%s);\n        }\n    }\n", name, name);
         n++;
     }
     if (prog->input) {
         const int input = client_codec_id(codec, (type){TY_INPUT, prog->input});
         sb_printf(o, "    for (uint32_t slot = 0; slot <= TIDE_GAME_PLAYERS; slot++) {\n"
-                     "        if (!tide_client_get%d(&whole, &next.inputs[slot], TIDE_IN_MATCH, 0, &budget)\n"
-                     "            || !tide_client_get%d(&whole, &next.previous_inputs[slot], TIDE_IN_MATCH, 0, &budget)\n"
+                     "        if (!tide_client_get%d(&whole, &next->inputs[slot], TIDE_IN_MATCH, 0, &budget)\n"
+                     "            || !tide_client_get%d(&whole, &next->previous_inputs[slot], TIDE_IN_MATCH, 0, &budget)\n"
                      "            || !tide_client_skip%d(&old, 0) || !tide_client_skip%d(&old, 0)) goto invalid;\n    }\n",
                   input, input, input, input);
     }
@@ -950,37 +949,35 @@ static void gen_client_reload(gen *g, const client_codec *codec)
             for (int c = 0; c < prog->components.count; c++) heap |= arch_stores(g, a, c) && decl_has_text(prog->components.items[c]);
             sb_printf(o, "    if (!same[%d]) {\n", k);
             if (heap) {
-                sb_printf(o, "        for (uint32_t row = 0; row < next.%s.count; row++) {\n", arch_name(g, a));
-                sb_printf(o, "            if (tide_row_gone(%s)) continue;\n", arch_cell(g, "(&next)", a, 0, "tide_entity", "row", false));
-                sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "(&next)", a, 0, "tide_entity", "row", false));
+                sb_printf(o, "        for (uint32_t row = 0; row < next->%s.count; row++) {\n", arch_name(g, a));
+                sb_printf(o, "            if (tide_row_gone(%s)) continue;\n", arch_cell(g, "next", a, 0, "tide_entity", "row", false));
+                sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "next", a, 0, "tide_entity", "row", false));
                 for (int c = 0; c < prog->components.count; c++) {
                     const decl *d = prog->components.items[c];
                     if (!arch_stores(g, a, c) || !decl_has_text(d)) continue;
-                    sb_printf(o, "            if (tide_has_%s(&next, e)) {\n                %s value = tide_get_%s(&next, e);\n",
+                    sb_printf(o, "            if (tide_has_%s(next, e)) {\n                %s value = tide_get_%s(next, e);\n",
                               type_cname(d), type_cname(d), type_cname(d));
                     gen_client_release(g, d, "value", "                ");
                     sb_put(o, "            }\n");
                 }
                 sb_put(o, "        }\n");
             }
-            sb_printf(o, "        tide_table_free(&next.%s, %s);\n        memset(&next.%s, 0, sizeof next.%s);\n    }\n",
+            sb_printf(o, "        tide_table_free(&next->%s, %s);\n        memset(&next->%s, 0, sizeof next->%s);\n    }\n",
                       arch_name(g, a), arch_columns(g, a), arch_name(g, a), arch_name(g, a));
             k++;
         }
         gen_client_reload_values(g, codec);
-        sb_put(o, "    kept = next.entities;\n    kept_taken = true;\n    memset(&next.entities, 0, sizeof next.entities);\n");
+        sb_put(o, "    kept = next->entities;\n    kept_taken = true;\n    memset(&next->entities, 0, sizeof next->entities);\n");
         k = 0;
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a)) continue;
             sb_printf(o, "    if (same[%d]) {\n", k);
-            sb_printf(o, "        for (uint32_t row = 0; row < next.%s.count; row++) {\n", arch_name(g, a));
-            sb_printf(o, "            if (tide_row_gone(%s)) goto invalid;\n", arch_cell(g, "(&next)", a, 0, "tide_entity", "row", false));
-            sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "(&next)", a, 0, "tide_entity", "row", false));
-            sb_printf(o, "            if (!tide_client_reserve_entity(&next.entities, e, &budget)) goto invalid;\n"
-                         "            tide_entity_set_location(&next.entities, e, (tide_location){%du, row});\n"
-                         "            tide_entity_slot *slot = (tide_entity_slot *)tide_page_data(next.entities.page[e.index >> TIDE_ENTITY_PAGE_SHIFT])\n"
-                         "                + (e.index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u));\n"
-                         "            slot->snaps = tide_entity_snaps(&kept, e);\n        }\n", a);
+            sb_printf(o, "        for (uint32_t row = 0; row < next->%s.count; row++) {\n", arch_name(g, a));
+            sb_printf(o, "            if (tide_row_gone(%s)) goto invalid;\n", arch_cell(g, "next", a, 0, "tide_entity", "row", false));
+            sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "next", a, 0, "tide_entity", "row", false));
+            sb_printf(o, "            if (!tide_client_reserve_entity(&next->entities, e, &budget)) goto invalid;\n"
+                         "            tide_entity_set_location(&next->entities, e, (tide_location){%du, row});\n"
+                         "            tide_entity_set_snaps(&next->entities, e, tide_entity_snaps(&kept, e));\n        }\n", a);
             sb_printf(o, "    } else {\n        tide_reader in = {data, to[%d], from[%d], false};\n", k, k);
             gen_client_load_rows(g, codec, a);
             sb_printf(o, "        }\n    }\n        if (in.failed || in.at != to[%d]) goto invalid;\n    }\n", k);
@@ -991,9 +988,9 @@ static void gen_client_reload(gen *g, const client_codec *codec)
         gen_client_reload_values(g, codec);
     }
     sb_put(o, "    if (kept_taken) tide_entities_free(&kept);\n"
-              "    next.entities.free_head = 0; // Unseen slots are reserved, not available for prediction.\n"
-              "    tide_world_free(w);\n    *w = next;\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
-              "invalid:\n    if (kept_taken) tide_entities_free(&kept);\n    tide_world_free(&next);\n    tide_text_use(&w->heap, NULL);\n    return false;\n}\n\n");
+              "    next->entities.free_head = 0; // Unseen slots are reserved, not available for prediction.\n"
+              "    tide_world_free(w);\n    *w = *next;\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
+              "invalid:\n    if (kept_taken) tide_entities_free(&kept);\n    tide_world_free(next);\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return false;\n}\n\n");
 }
 
 static void gen_client_state(gen *g)
@@ -1008,7 +1005,7 @@ static void gen_client_state(gen *g)
     sb_put(o, "static uint8_t *tide_game_client_state(const void *world, tide_player_id recipient, uint32_t *size)\n{\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heap *)&w->heap, NULL);\n"
               "    tide_writer out = {.grows = true};\n"
-              "    tide_write_u32(&out, 0x31564954u);\n    tide_write_u32(&out, recipient.id);\n");
+              "    tide_write_u32(&out, 0x31564954u);\n    tide_write_u32(&out, recipient.id);\n    tide_write_u64(&out, w->tide_identity_clock);\n    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) tide_write_u64(&out, w->tide_lifecycle_occurrences[i]);\n    tide_write_u64(&out, w->tide_main_occurrence);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
         if (!client_singleton(prog, d)) continue;
@@ -1050,7 +1047,7 @@ static void gen_client_state(gen *g)
         sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "            if (!tide_visibility_entity(w, e, recipient)) continue;\n"
-                  "            tide_write_u32(&out, e.index);\n            tide_write_u32(&out, e.generation);\n"
+                  "            tide_write_u64(&out, e.birth);\n            tide_write_u64(&out, e.lineage);\n"
                   "            tide_write_u32(&out, tide_entity_snaps(&w->entities, e));\n");
         if (arch_scene_column(g, a)) {
             sb_printf(o, "            const tide_entity scene = *%s;\n", arch_cell(g, "w", a, 1, "tide_entity", "row", false));
@@ -1093,43 +1090,29 @@ static void gen_client_state(gen *g)
     }
 
     sb_put(o, "TIDE_HELPER bool tide_client_reserve_entity(tide_entities *entities, tide_entity e, uint64_t *budget)\n{\n"
-              "    if (!(e.generation & 1u) || (e.generation & TIDE_ENTITY_TEMPORARY) || e.index == UINT32_MAX) return false;\n"
-              "    const uint32_t pages = (e.index >> TIDE_ENTITY_PAGE_SHIFT) + 1u;\n"
-              "    if (pages > entities->room) {\n"
-              "        if (!tide_client_budget(budget, ((uint64_t)pages * 2u + 1u) * sizeof(tide_page *))) return false;\n"
-              "        tide_page **base = calloc((size_t)pages * 2u + 1u, sizeof *base);\n"
-              "        if (!base) tide_out_of_memory();\n    tide_page **list = base + 1;\n"
-              "        if (entities->pages) memcpy(list, entities->page, entities->pages * sizeof *list);\n"
-              "        if (entities->page) free(entities->page - 1);\n        entities->page = list;\n        entities->room = pages;\n"
-              "    }\n"
-              "    if (entities->pages < pages) entities->pages = pages;\n"
-              "    if (!entities->page[e.index >> TIDE_ENTITY_PAGE_SHIFT]) {\n"
-              "        if (!tide_client_budget(budget, (1u << TIDE_ENTITY_PAGE_SHIFT) * sizeof(tide_entity_slot))) return false;\n"
-              "        entities->page[e.index >> TIDE_ENTITY_PAGE_SHIFT] = tide_page_new((1u << TIDE_ENTITY_PAGE_SHIFT) * sizeof(tide_entity_slot));\n    }\n"
-              "    if (e.index >= entities->next_unused) entities->next_unused = e.index + 1u;\n"
-              "    tide_entity_slot *slot = (tide_entity_slot *)tide_page_data(entities->page[e.index >> TIDE_ENTITY_PAGE_SHIFT])\n"
-              "        + (e.index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u));\n"
-              "    if (slot->generation & 1u) return false;\n"
-              "    slot->generation = e.generation;\n    return true;\n}\n\n"
+              "    if (tide_entity_is_null(e) || !e.birth) return false;\n"
+              "    if (!tide_client_budget(budget, sizeof(tide_entity_slot) + 64u)) return false;\n"
+              "    return tide_entity_install(entities, e);\n}\n\n"
               "static bool tide_game_load_client_state(void *world, const uint8_t *data, uint32_t size)\n{\n"
-              "    tide_world *w = world;\n    tide_world next = {0};\n"
+              "    tide_world *w = world;\n"
               "    tide_reader in = {data, size, 0, false};\n"
               "    uint64_t budget = SIZE_MAX;\n"
               "    if (tide_read_u32(&in) != 0x31564954u) return false;\n"
               "    const uint32_t recipient = tide_read_u32(&in);\n"
               "    if (!recipient || recipient > TIDE_GAME_PLAYERS) return false;\n"
-              "    tide_text_use(&next.heap, NULL);\n    next.tide_visibility_state.client = (int32_t)recipient;\n");
+              "    tide_world *next = calloc(1, sizeof *next);\n    if (!next) tide_out_of_memory();\n"
+              "    tide_text_use(&next->heap, NULL);\n    next->tide_visibility_state.client = (int32_t)recipient;\n    next->tide_identity_clock = tide_read_u64(&in);\n    if (!next->tide_identity_clock) goto invalid;\n    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) next->tide_lifecycle_occurrences[i] = tide_read_u64(&in);\n    next->tide_main_occurrence = tide_read_u64(&in);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
         if (!client_singleton(prog, d)) continue;
-        sb_printf(o, "    if (!tide_client_get%d(&in, &next.%s, TIDE_IN_MATCH, 0, &budget)) goto invalid;\n",
+        sb_printf(o, "    if (!tide_client_get%d(&in, &next->%s, TIDE_IN_MATCH, 0, &budget)) goto invalid;\n",
                   client_codec_id(&codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d));
     }
     if (prog->input) {
         const int input = client_codec_id(&codec, (type){TY_INPUT, prog->input});
         sb_printf(o, "    for (uint32_t slot = 0; slot <= TIDE_GAME_PLAYERS; slot++) {\n"
-                     "        if (!tide_client_get%d(&in, &next.inputs[slot], TIDE_IN_MATCH, 0, &budget)\n"
-                     "            || !tide_client_get%d(&in, &next.previous_inputs[slot], TIDE_IN_MATCH, 0, &budget)) goto invalid;\n    }\n", input, input);
+                     "        if (!tide_client_get%d(&in, &next->inputs[slot], TIDE_IN_MATCH, 0, &budget)\n"
+                     "            || !tide_client_get%d(&in, &next->previous_inputs[slot], TIDE_IN_MATCH, 0, &budget)) goto invalid;\n    }\n", input, input);
     }
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
@@ -1138,7 +1121,7 @@ static void gen_client_state(gen *g)
             sb_put(o, "            const uint8_t *bytes = tide_read_bytes(&in, sizeof(tide_hierarchy_node));\n"
                       "            if (!bytes) goto invalid;\n"
                       "            tide_hierarchy_node node = {0};\n            memcpy(&node, bytes, sizeof node);\n"
-                      "            tide_hierarchy_put(&next, e, node);\n"
+                      "            tide_hierarchy_put(next, e, node);\n"
                       "            const uint8_t anchored = tide_read_u8(&in);\n"
                       "            if (anchored > 1u || (anchored && !tide_entity_is_null(node.parent))) goto invalid;\n"
                       "            if (anchored) {\n"
@@ -1149,16 +1132,17 @@ static void gen_client_state(gen *g)
                       "                if (!tide_matrix_finite(anchor.matrix) || !tide_is_finite_f(anchor.rotation.value.x)\n"
                       "                    || !tide_is_finite_f(anchor.rotation.value.y) || !tide_is_finite_f(anchor.rotation.value.z)\n"
                       "                    || !tide_is_finite_f(anchor.rotation.value.w)) goto invalid;\n");
-            sb_printf(o, "                tide_map%d_set(&next.tide_visibility_state.anchors, e, anchor, TIDE_IN_MATCH);\n            }\n",
+            sb_printf(o, "                tide_map%d_set(&next->tide_visibility_state.anchors, e, anchor, TIDE_IN_MATCH);\n            }\n",
                       prog->visibility_state->fields.items[3].type.decl->index);
         }
         sb_put(o, "        }\n    }\n");
     }
-    if (prog->hierarchy[0]) sb_put(o, "    if (!tide_client_hierarchy_valid(&next)) goto invalid;\n");
+    if (sharded(g)) sb_put(o, "    if (!tide_shard_words_valid(next)) goto invalid;\n");
+    if (prog->hierarchy[0]) sb_put(o, "    if (!tide_client_hierarchy_valid(next)) goto invalid;\n");
     sb_put(o, "    if (in.failed || in.at != in.size) goto invalid;\n"
-              "    next.entities.free_head = 0; // Unseen slots are reserved, not available for prediction.\n"
-              "    tide_world_free(w);\n    *w = next;\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
-              "invalid:\n    tide_world_free(&next);\n    tide_text_use(&w->heap, NULL);\n    return false;\n}\n\n"
+              "    next->entities.free_head = 0; // Unseen slots are reserved, not available for prediction.\n"
+              "    tide_world_free(w);\n    *w = *next;\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
+              "invalid:\n    tide_world_free(next);\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return false;\n}\n\n"
               "static uint32_t tide_game_client_destroyed(const void *world, const void *previous, tide_player_id recipient, tide_entity *out, uint32_t capacity)\n{\n"
               "    const tide_world *w = world, *had = previous;\n    if (!had) return 0;\n"
               "    tide_text_use((tide_heap *)&had->heap, NULL);\n    uint32_t count = 0;\n");

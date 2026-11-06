@@ -2006,7 +2006,7 @@ typedef struct collider {
     int32_t group;
     uint8_t filter_padding[4];
 } collider;
-_Static_assert(sizeof(collider) == 152 && offsetof(physics, pending) == 240, "historical scene ABI changed");
+_Static_assert(sizeof(collider) == 168 && offsetof(physics, pending) == 240, "historical scene ABI changed");
 
 static b2Vec2 scene_vec(const tide_float2 p) { return (b2Vec2){p.x, p.y}; }
 static tide_float2 scene_float(const b2Vec2 p) { return (tide_float2){p.x, p.y}; }

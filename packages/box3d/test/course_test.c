@@ -301,8 +301,8 @@ TIDE_TEST(box3d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box3D's image.
-#define SENSORS_HASH UINT64_C(0x51fe299be0ae7d50)
-#define SENSORS_IMAGES_HASH UINT64_C(0xc1a1c39623de65a6)
+#define SENSORS_HASH UINT64_C(0x3df7a8ab2f81dad3)
+#define SENSORS_IMAGES_HASH UINT64_C(0x9c1cd3e242784049)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 
@@ -453,7 +453,7 @@ static const tide_entity nobody = {0};
 // ---------------------------------------------------------------------------
 // Shapes on entities of their own
 
-#define PARTS_HASH UINT64_C(0x4d249a9c6df305fd)
+#define PARTS_HASH UINT64_C(0x0520d86255d5c58f)
 
 enum { PART_TICKS = 460, SAW = 200, CLEAR = 340 };
 
@@ -538,7 +538,7 @@ TIDE_TEST(box3d_parts_are_shapes_on_entities_of_their_own)
 // ---------------------------------------------------------------------------
 // A body's type, and how it's to be, written after it's made
 
-#define CHANGES_HASH UINT64_C(0xdb0bb102677be2f7)
+#define CHANGES_HASH UINT64_C(0x22427a914034e6f7)
 
 enum { CHANGE_TICKS = 900 };
 
@@ -672,7 +672,7 @@ TIDE_TEST(box3d_a_bodys_type_and_settings_change)
 // ---------------------------------------------------------------------------
 // How the world is tuned, and what meets hard
 
-#define TUNING_HASH UINT64_C(0x79edccf2a7afb035)
+#define TUNING_HASH UINT64_C(0x8bf60837983515bd)
 
 enum { TUNE_TICKS = 150 };
 
@@ -837,8 +837,8 @@ TIDE_TEST(box3d_the_world_is_tuned_by_its_fields)
 // ---------------------------------------------------------------------------
 // What code asks of the world
 
-#define ASKING_HASH UINT64_C(0x0c4b57c65a3619b0)
-#define ANSWERS_HASH UINT64_C(0xdc5da4ff7c55ceb8)
+#define ASKING_HASH UINT64_C(0x6dc2b62920d8644e)
+#define ANSWERS_HASH UINT64_C(0x02f4c7b1ee960e69)
 
 enum { ASK_TICKS = 260, DOOM = 120 };
 

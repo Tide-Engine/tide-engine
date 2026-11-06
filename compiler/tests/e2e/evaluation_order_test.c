@@ -9,7 +9,7 @@ static tide_gui gui;
 // The index-th entity Main's Setup spawns: the Main scene itself is the first entity.
 static tide_entity slot(const uint32_t index)
 {
-    return (tide_entity){index + 1, 1};
+    return tide_entity_in_slot(&world.entities, index + 1);
 }
 
 static int32_t thing_id(const uint32_t index)

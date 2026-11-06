@@ -21,7 +21,7 @@ TIDE_TEST(multi_file_order)
 TIDE_TEST(multi_file_namespaces)
 {
     tide_world_init(&world, 1.0f);
-    const tide_entity e = {1, 1};
+    const tide_entity e = tide_entity_in_slot(&world.entities, 1);
     TIDE_REQUIRE(tide_has_Physics_Body(&world, e));
     TIDE_REQUIRE(tide_has_Combat_Health(&world, e));
     TIDE_REQUIRE(tide_has_Items_Health(&world, e));

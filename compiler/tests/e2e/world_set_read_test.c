@@ -57,31 +57,72 @@ static void inputs(tide_world *w)
     tide_world_set_input(w, tide_player_from_index(1), (Controls){.value = 20});
 }
 
+typedef struct keyed_row { tide_entity key; int index; } keyed_row;
+
+static int compare_keyed_row(const void *a, const void *b)
+{
+    return tide_entity_compare(((const keyed_row *)a)->key, ((const keyed_row *)b)->key);
+}
+
 static void check_rows(tide_world *w, const int ticks)
 {
+    // Independent integer propagation in the defined logical Entity order.
+    // The source's ring links retain list order, which differs from query order.
+    typedef struct expected_rows {
+        keyed_row order[5000];
+        int direct[5000], entered[5000], filtered[5000], selected[5000];
+    } expected_rows;
+    expected_rows *expected = calloc(1, sizeof *expected);
+    TIDE_REQUIRE(expected != NULL);
+    for (int i = 0; i < 5000; i++) {
+        expected->order[i] = (keyed_row){at(w, w->Roster.links, i), i};
+        expected->direct[i] = expected->filtered[i] = 1;
+    }
+    qsort(expected->order, 5000, sizeof expected->order[0], compare_keyed_row);
+    keyed_row drivers[3];
+    int owner[3] = {0, 1, 1}, driven[3] = {0};
+    for (int i = 0; i < 3; i++) drivers[i] = (keyed_row){at(w, w->Roster.drivers, i), i};
+    qsort(drivers, 3, sizeof drivers[0], compare_keyed_row);
+    for (int tick = 0; tick < ticks; tick++) {
+        for (int k = 0; k < 5000; k++) {
+            const int i = expected->order[k].index;
+            expected->entered[i] = expected->direct[i];
+            expected->direct[(i + 1) % 5000] = expected->direct[i] + 1;
+        }
+        for (int k = 0; k < 5000; k++) {
+            const int i = expected->order[k].index;
+            if (i < 2048 && i % 2 != 0) continue;
+            expected->selected[i] = expected->filtered[i];
+            const int next = i + (i < 2048 ? 2 : 1);
+            expected->filtered[next % 5000] = expected->filtered[i] + 1;
+        }
+        for (int k = 0; k < 3; k++) {
+            const int i = drivers[k].index;
+            driven[i] = owner[i] == 0 ? 10 : 20;
+            owner[(i + 1) % 3] = owner[i];
+        }
+    }
     for (int i = 0; i < 5000; i++) {
         const tide_entity e = at(w, w->Roster.links, i);
         const Link link = tide_get_Link(w, e);
         const Seen seen = tide_get_Seen(w, e);
-        const int entered = (ticks - 1) * 5000 + i + 1;
-        TIDE_REQUIRE(link.direct == (i == 0 ? ticks * 5000 + 1 : entered));
+        TIDE_REQUIRE(link.direct == expected->direct[i]);
         TIDE_REQUIRE(link.helper == link.direct);
-        TIDE_REQUIRE(seen.direct == entered && seen.helper == entered);
+        TIDE_REQUIRE(seen.direct == expected->entered[i] && seen.helper == expected->entered[i]);
         const Filtered filtered = tide_get_Filtered(w, e);
         if (i >= 2048 || i % 2 == 0) {
-            const int index = i < 2048 ? i / 2 : i - 1024;
-            const int selected = (ticks - 1) * 3976 + index + 1;
-            TIDE_REQUIRE(filtered.value == (i == 0 ? ticks * 3976 + 1 : selected));
-            TIDE_REQUIRE(seen.filtered == selected);
+            TIDE_REQUIRE(filtered.value == expected->filtered[i]);
+            TIDE_REQUIRE(seen.filtered == expected->selected[i]);
         } else {
             TIDE_REQUIRE(filtered.value == 1 && seen.filtered == 0);
         }
     }
     for (int i = 0; i < 3; i++) {
         const tide_entity e = at(w, w->Roster.drivers, i);
-        TIDE_REQUIRE(tide_get_Driven(w, e).seen == 10);
-        TIDE_REQUIRE(tide_player_index(tide_get_Owner(w, e).player) == 0);
+        TIDE_REQUIRE(tide_get_Driven(w, e).seen == driven[i]);
+        TIDE_REQUIRE(tide_player_index(tide_get_Owner(w, e).player) == owner[i]);
     }
+    free(expected);
 }
 
 TIDE_TEST(world_set_reads_follow_other_rows_and_replaced_pages)

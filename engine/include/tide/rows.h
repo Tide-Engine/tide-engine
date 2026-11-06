@@ -117,7 +117,7 @@ float *tide_rows_floats_mut(tide_rows *rows, uint32_t component, size_t offset);
 int32_t *tide_rows_ints_mut(tide_rows *rows, uint32_t component, size_t offset);
 
 // One row's whole component, into `value` and from it: for fields that aren't
-// 4 bytes (a long or an entity is two lanes, a bool a byte of one), for a
+// 4 bytes (a long is two lanes and an entity four, a bool a byte of one), for a
 // component whose size isn't a multiple of 4, and for C that works a struct at
 // a time. tide_rows_set writes the lanes that differ from what's there, so
 // putting back what was read costs nothing.

@@ -69,7 +69,7 @@ static size_t correction_bytes(void)
 {
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
     const tide_attached *a = &local.tide_corrections_Pose;
-    size_t bytes = (size_t)a->indexed * sizeof(uint32_t) + (size_t)a->other_room * sizeof(uint32_t)
+    size_t bytes = (size_t)a->indexed * sizeof(uint32_t)
         + (size_t)a->rows.room * 3u * sizeof(tide_page *);
     for (uint32_t i = 0; i < a->rows.chunks * 3u; i++)
         bytes += sizeof(tide_page) + a->rows.pages[i]->size;

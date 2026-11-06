@@ -1,3 +1,119 @@
+## Stable causal entity identities and canonical match iteration (2026-11-06)
+
+Owner-approved implementation replaces physical slot/generation handles with an
+opaque 16-byte `Entity`/`LocalEntity` (`uint64_t birth, lineage`, alignment eight).
+The public simulation identity clock starts at one, survives snapshots, raw/delta
+world transfer, recipient projection loading and reload, and advances once after
+a completed tick. Physical dense slot indices and free lists remain private.
+The Entity type has no new Tide fields or operators; C equality, hash, physics,
+seeding and serialized references use the complete logical identity.
+
+Generated code records declaration-local causal sites and allocates a bounded
+counter array sized from that declaration's AST. Each site increments its own
+64-bit counter, so executing a different private site cannot advance a visible
+site's occurrence. Root contexts combine code identity and the source entity;
+helpers fork by their written call site and occurrence, query rows by their
+logical entity, prefabs by their source invocation and child ordinal, and events
+by their recorded causal send identity and handler. Task frames persist the path
+and counters across waits. Transient contexts keep pointers only on the C stack;
+frame counters are accessed through object-byte pointers and fixed-size memcpy,
+avoiding array arithmetic across individual scalar frame members. No component values or global allocation/handler turn
+counts are hashed into match identity. The old value-derived presentation birth
+hash is replaced by a hash of the logical identity alone.
+
+Query iteration executed by match/simulation code is now ascending
+`(birth, lineage)` across all admitted
+archetypes. Structural/event and otherwise serial per-entity systems
+use the same order, merging maximal physically contiguous same-archetype/chunk
+runs through the existing batching/COW/extern-row bridges. Independent row
+updates can retain physical parallel traversal because they expose no modelled
+cross-row ordering. Ordinary extern C function calls retain their prior parallel
+eligibility; determinism, external state and thread safety stay the game's
+responsibility, and their independent-row calls promise no global serial order.
+Presentation/view query traversal, local entity traversal and ordinary list/map
+insertion order retain their existing contracts. Spatial indexed-query searches remain enabled; candidate execution is
+sorted by logical identity, matching the canonical plain traversal. A public
+spawn's identity is independent of hidden allocations,
+but code that actually depends on absent hidden state can still need authority
+corrections. Static causal sites and observable behavior are not a new secrecy
+mechanism; no private payload, private allocator count or free-list metadata is
+published to obtain stable IDs.
+
+The only new generated runtime allocation calls are the agreed
+`tide_new_entity_key` / `tide_entity_create_key` boundary, plus the approved
+`tide_entities_ordered` / `tide_entities_ordered_archetypes` borrowed-order lookups.
+Their immutable derived key arrays stay valid through structural changes until
+entity settle. Plain match queries and canonical system wrappers cache only keys
+in their statically admitted archetypes, so a per-row query over two fighters does not scan thousands of
+unrelated entities. Empty admitted sets emit no walk. The runtime copies the
+archetype set values, invalidates filtered arrays when logical membership or an
+entity's archetype changes, and drops derived caches on snapshot copy. Sparse
+presence filters and current component values remain live reads in the loop.
+Spatial indexes sort only their candidate hits (notes/indexed-loops.md).
+Canonical writable component lanes are prepared once per physical chunk before
+logical-order runs and finalized once afterward. Each run reads the current
+published pages, never a saved pre-system image. The prepared pages preserve all
+rows and untouched bytes, and unchanged pages regain the prior shared page/hash
+at finalization. Same-component World reads/writes keep their existing dynamic
+in-place path; different-component World.Set does not force every logical row to
+copy its whole component chunk again.
+
+Projection load/reload stages its transactional world on the heap, frees that
+shell after successful ownership adoption, and destroys/frees it on invalid data.
+The 65,536-player fixture exceeds the WASI stack once public lifecycle counters
+join its input arrays; staging the complete world as a C stack value is unsafe.
+Envelope validation precedes allocation, and failed decoding preserves the old
+world and restores heap binding. `players_ceiling`, projection truncation and
+reload fixtures validate the boundary on native ASan and WASI.
+Logical-key duplicates,
+including a spawn destroyed earlier in the same clock, fail closed rather than
+probe for another logical ID or alias existing references. Physical lookup may
+probe hash buckets with exact full-key equality. Unkeyed C/local allocation stays
+separate and does not promise recipient-stable match identity.
+
+Focused compiler fixture `stable_entities` combines public spawners in different
+archetypes, an omitted hidden spawner, two helper call sites, queued targeted
+events, expiry/reuse and repeated projection loading. It checks permitted hashes,
+canonical query order and exact public projectile identities/gameplay values.
+`canonical_rows` covers 3000 rows across two archetypes, canonical C runs,
+partial-chunk writes against shared snapshots and preservation of untouched
+fields. Whole-chunk replacement pages are used only for a canonical run that
+covers the whole physical chunk; a partial run must preserve other rows.
+`stable_async` separates causal provenance from hidden Task slot allocation and
+checks persisted counters through raw-world resume. Player membership is public
+in authenticated frame events (before input filtering); per-player clock-local
+Joined/Left counters distinguish repeated lifecycle events in one tick. The
+public array costs eight bytes per configured maximum player in the world and
+projection, resets after the tick, and participates in copy/hash/raw/delta/reload.
+A separate public per-clock Main-root occurrence scalar permits initialization
+and implicit Main recreation in the same clock without aliasing. It has the same
+persistence/reset contract, covered by `stable_main`.
+
+Task handles themselves still use the existing global task serial and physical
+registry slot. Stable Entity IDs do not make a public stored Task handle
+recipient-independent when an absent hidden execution starts another task first;
+that separate design gap is not changed here. Waiting tasks' Entity birth
+provenance never derives from that Task serial/slot.
+
+Focused validation: Windows ASan and WASI pass `stable_entities`, `stable_main`,
+`stable_async`, `canonical_rows` and the existing `destroy_rows` regression.
+The latter includes a trusted C observer followed by a direct queued Destroy,
+which must still traverse canonical sources. Direct system AST effects participate
+in split eligibility, independently of helper capability summaries. Both targets
+produce the same `queries` semantic hash (`8FA74C3B18C86E22`). Filtering the cached
+order restores the 4096-row per-entity query fixture from scanning all unrelated
+keys: its isolated 16-tick test drops from 11.629 seconds to 253 milliseconds on
+Windows ASan; WASI takes 356 milliseconds after the fix. These correctness-test
+timings are diagnostic, not release game performance measurements. The indexed,
+plain and differential indexed-loop fixtures also pass on WASI.
+Entity-dependent simulation/random, asset, text and raw/wire regression pins are
+updated only after matching native/WASI outputs. Local-field/local-event and
+plain variants agree on semantic hashes and portable delta bytes; raw save header
+pins remain pointer-width specific. The ordered-schedule golden now records the
+canonical source-order dependency between the two per-entity spawning systems.
+The demo simulation hash changes with logical identity while its pixel assertions
+remain intact.
+
 # Language features, as tidec builds them
 
 ## Mixed position widths in prediction lookup (2026-11-06)

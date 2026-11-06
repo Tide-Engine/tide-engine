@@ -62,11 +62,15 @@
 // A system's pages for chunks that go in pieces (system_state.owned)
 enum { OWNING = 1, OWNED };
 
+typedef struct pending_entities {
+    tide_entity *keys;
+    uint32_t count, room;
+} pending_entities;
+
 typedef struct task_context {
-    tide_queue *queue; // Its own, on threads; NULL: the world's
-    uint32_t task;
-    uint32_t spawned;
-    bool settles;      // Its system's spawns give temporary handles
+    tide_queue *queue;
+    pending_entities *pending; // Exact final keys; registered when this system joins
+    bool settles;
 } task_context;
 
 // The pieces each of a system's chunks runs in, from how many there are
@@ -101,24 +105,24 @@ static void note_most(_Atomic uint64_t *most, const uint64_t t)
     }
 }
 
+tide_entity tide_new_entity_key(tide_entities *t, const tide_entity key)
+{
+    if (!running || !running->settles) return tide_entity_create_key(t, key);
+    pending_entities *pending = running->pending;
+    if (pending->count == pending->room) {
+        if (pending->room > UINT32_MAX / 2u) tide_out_of_memory();
+        const uint32_t room = pending->room ? pending->room * 2u : 8u;
+        pending->keys = tide_realloc(pending->keys, (size_t)pending->room * sizeof *pending->keys,
+                                    (size_t)room * sizeof *pending->keys);
+        pending->room = room;
+    }
+    pending->keys[pending->count++] = key;
+    return key;
+}
+
 tide_entity tide_new_entity(tide_entities *t)
 {
-    if (!running || !running->settles) return tide_entity_create(t);
-    return (tide_entity){running->spawned++, TIDE_ENTITY_TEMPORARY | running->task};
-}
-
-tide_entity tide_new_entity_by(tide_entities *t, tide_entity (*create)(void *world), void *world)
-{
-    if (!running || !running->settles) return create ? create(world) : tide_entity_create(t);
-    return (tide_entity){running->spawned++, TIDE_ENTITY_TEMPORARY | running->task};
-}
-
-tide_entity tide_settled(const tide_new_entities *settled, const tide_entity e)
-{
-    if (!tide_entity_is_temporary(e)) return e;
-    const uint32_t task = (e.generation & ~TIDE_ENTITY_TEMPORARY) - settled->first_task;
-    if (task >= settled->task_count || e.index >= settled->start[task + 1u] - settled->start[task]) return e;
-    return settled->entities[settled->start[task] + e.index];
+    return tide_entity_create(t);
 }
 
 static void *zeroed(const size_t count, const size_t size)
@@ -137,33 +141,16 @@ static void run_task(void *world, const tide_system_tasks *system, task_context 
     tide_task_queue = NULL;
 }
 
-// A system's spawns get their IDs, in the order one thread would have given
-// them (task by task, spawn by spawn), and its tasks' data and what they
-// recorded get the real handles: `queues` holds each task's, or with NULL,
-// they're in the world's from `from` on.
-static void settle_system(void *world, const tide_tick_systems *tick, const tide_system_tasks *system,
-                          const uint32_t first_task, const uint32_t tasks, const uint32_t pieces, const uint32_t *spawned,
-                          tide_queue *queues, tide_queue_place from)
+// Register exact logical identities in canonical task/source order. No Entity
+// value or payload changes at this join: callers already received final keys.
+static void settle_system(const tide_tick_systems *tick, const uint32_t tasks, pending_entities *pending)
 {
-    uint32_t *start = zeroed(tasks + 1u, sizeof *start);
-    for (uint32_t k = 0; k < tasks; k++) start[k + 1u] = start[k] + spawned[k];
-    if (start[tasks] == 0) {
-        free(start);
-        return;
+    for (uint32_t task = 0; task < tasks; task++) {
+        for (uint32_t i = 0; i < pending[task].count; i++)
+            tide_entity_create_key(tick->entities, pending[task].keys[i]);
+        free(pending[task].keys);
+        memset(&pending[task], 0, sizeof pending[task]);
     }
-    tide_entity *entities = zeroed(start[tasks], sizeof *entities);
-    for (uint32_t i = 0; i < start[tasks]; i++) entities[i] = tick->create ? tick->create(world) : tide_entity_create(tick->entities);
-    const tide_new_entities settled = {first_task, tasks, start, entities};
-    for (uint32_t k = 0; k < tasks; k++) {
-        if (!spawned[k]) continue;
-        if (system->settle) system->settle(world, k, pieces, &settled);
-        if (!queues) continue;
-        tide_queue_place at = {0, 0};
-        for (void *item; (item = tide_queue_next(&queues[k], &at));) tick->settle_item(item, &settled);
-    }
-    for (void *item; !queues && (item = tide_queue_next(tick->queue, &from));) tick->settle_item(item, &settled);
-    free(entities);
-    free(start);
 }
 
 // ---------------------------------------------------------------------------
@@ -231,7 +218,7 @@ typedef struct tick_run {
     uint32_t *dependents;      // The systems that wait for each: system s's from first_dependent[s] to first_dependent[s + 1]
     uint32_t *first_dependent;
     tide_queue *queues;
-    uint32_t *spawned;
+    pending_entities *spawned;
     atomic_uint finished;
     // The first system that may have something left to give out: every one
     // before it has given out all its tasks and its settling, so a thread
@@ -296,8 +283,7 @@ static bool work_once(tick_run *r)
         const tide_system_tasks *system = &tick->systems[s];
         if (system->settles && atomic_load(&st->settle_waiting) == 0 && !atomic_exchange(&st->settle_claimed, 1u)) {
             tide_memory_sync(); // What its tasks made on other threads (see tide/page.h)
-            settle_system(r->world, tick, system, st->first, st->tasks, st->pieces, &r->spawned[st->first], &r->queues[st->first],
-                          (tide_queue_place){0, 0});
+            settle_system(tick, st->tasks, &r->spawned[st->first]);
             finish_system(r, s);
             return true;
         }
@@ -332,9 +318,8 @@ static bool work_once(tick_run *r)
         tide_memory_sync(); // What the systems before it made on other threads
         if (r->profile) note_least(&st->began, tide_time_now_ns());
         for (uint32_t task = first; task < end; task++) { // Each with its own queue and handles, as on its own
-            task_context context = {&r->queues[st->first + task], st->first + task, 0, system->settles};
+            task_context context = {&r->queues[st->first + task], &r->spawned[st->first + task], system->settles};
             run_task(r->world, system, &context, task, st->pieces);
-            r->spawned[st->first + task] = context.spawned;
         }
         if (r->profile) note_most(&st->ended, tide_time_now_ns());
         finish_tasks(r, s, end - first);
@@ -698,7 +683,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
     }
     free(filled);
     r.queues = task_queues(tasks);
-    r.spawned = zeroed(tasks, sizeof(uint32_t));
+    r.spawned = zeroed(tasks, sizeof *r.spawned);
     atomic_init(&r.finished, 0u);
     atomic_init(&r.front, 0u);
 
@@ -747,27 +732,23 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
     serial_world = world;
 
     // One thread, in order, recording straight into the world's queue, with
-    // the same tasks, temporary handles and settling as on threads
+    // the same tasks and keyed registration joins as on threads
     if (tick->prepare) tick->prepare(world);
     tide_profile *profile = jobs ? jobs->profile : NULL;
     if (profile) tide_profile_count(&profile->systems, tick->count);
-    uint32_t first = 0;
     for (uint32_t s = 0; s < tick->count; s++) {
         const tide_system_tasks *system = &tick->systems[s];
         uint64_t work;
         const uint32_t tasks = system->count(world, &work);
-        uint32_t *spawned = system->settles ? zeroed(tasks, sizeof(uint32_t)) : NULL;
-        const tide_queue_place from = tide_queue_end(tick->queue);
+        pending_entities *spawned = system->settles ? zeroed(tasks, sizeof *spawned) : NULL;
         const uint64_t began = profile ? tide_time_now_ns() : 0u;
         for (uint32_t task = 0; task < tasks; task++) {
-            task_context context = {NULL, first + task, 0, system->settles};
+            task_context context = {NULL, spawned ? &spawned[task] : NULL, system->settles};
             run_task(world, system, &context, task, 1u);
-            if (spawned) spawned[task] = context.spawned;
         }
-        if (spawned) settle_system(world, tick, system, first, tasks, 1u, spawned, NULL, from);
+        if (spawned) settle_system(tick, tasks, spawned);
         if (profile) tide_profile_add(&profile->systems, s, system->name, began, tide_time_now_ns());
         free(spawned);
-        first += tasks;
     }
     serial_threads = 0;
     serial_jobs = NULL;

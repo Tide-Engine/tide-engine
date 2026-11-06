@@ -1321,7 +1321,7 @@ typedef struct mesh_collider {
     uint8_t padding[4];
 } mesh_collider;
 typedef struct part { tide_entity of; int64_t box, sphere, capsule, mesh, hull, height_field, body; } part;
-_Static_assert(sizeof(mesh_collider) == 56 && sizeof(part) == 64, "mesh component ABI changed");
+_Static_assert(sizeof(mesh_collider) == 56 && sizeof(part) == 72, "mesh component ABI changed");
 
 static int64_t attach_mesh_component(const int64_t on, const mesh_collider *m)
 {
@@ -2418,7 +2418,7 @@ typedef struct collider {
     int64_t category, mask;
 } collider;
 typedef struct hull_geometry { tide_float3 points[128]; tide_float4 planes[128]; int32_t count, faces; } hull_geometry;
-_Static_assert(sizeof(collider) == 192 && offsetof(physics, pending) == 288, "historical scene ABI changed");
+_Static_assert(sizeof(collider) == 208 && offsetof(physics, pending) == 288, "historical scene ABI changed");
 
 static b3Vec3 scene_vec(const tide_float3 p) { return vec(p); }
 static tide_float3 scene_float(const b3Vec3 p) { return float3(p); }

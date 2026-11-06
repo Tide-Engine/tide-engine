@@ -421,7 +421,7 @@ static ctype *parse_ctype(game *g, const char *s, size_t n)
         t->size = 8;
     } else if ((n == 6 && strncmp(s, "Entity", 6) == 0) || (n == 11 && strncmp(s, "LocalEntity", 11) == 0)) {
         t->kind = CK_ENTITY;
-        t->size = 8;
+        t->size = 16;
     } else {
         for (int i = 0; i < g->enum_count; i++) {
             if (strlen(g->enums[i].name) == n && strncmp(g->enums[i].name, s, n) == 0) {

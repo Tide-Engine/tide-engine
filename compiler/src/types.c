@@ -204,7 +204,7 @@ layout type_layout(const type t)
     if (matrix_dim(t) > 0) return (layout){4 * matrix_dim(t) * matrix_dim(t), 4};
     switch (t.kind) {
     case TY_QUATERNION: case TY_COLOR: case TY_RECT: return (layout){16, 4};
-    case TY_ENTITY: case TY_LOCAL_ENTITY: return (layout){8, 4};
+    case TY_ENTITY: case TY_LOCAL_ENTITY: return (layout){16, 8};
     case TY_PLAYER: return (layout){4, 4};
     case TY_ENUM: { // A byte or a ushort, as `enum Voxel : byte` says, or an int
         const int width = t.decl->width == 1 || t.decl->width == 2 ? t.decl->width : 4;

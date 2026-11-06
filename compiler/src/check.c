@@ -3435,8 +3435,8 @@ static void ensure_shards(program *prog)
         vec_push(state->fields, f);
     }
     // moves: how many times an entity came to this shard or left it (tide_shard_moves_now, for C libraries)
-    static const char *const longs[] = {"next", "end", "singletons", "moves"};
-    for (int i = 0; i < 4; i++) {
+    static const char *const longs[] = {"singletons", "moves"};
+    for (int i = 0; i < 2; i++) {
         f.name = str_from(longs[i]);
         f.type = (type){TY_LONG, NULL};
         vec_push(state->fields, f);
@@ -3449,11 +3449,25 @@ static void ensure_shards(program *prog)
     // matches: the match each region's host knows its shard by, beside `regions`
     // touching: entities that act on each other (Shards.Together), each pair its two keys, lower first, and a count
     // spanned: entities reaching past their position (Shards.Spans) this tick, by key, and spans their boxes, 6 doubles each
-    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes", "matches", "touching",
+    // Fixed-width internal words preserve mixed-record strides while keeping
+    // complete logical Entity keys and separately tagged singleton references.
+    decl *word = NEW(decl);
+    word->kind = DECL_STRUCT;
+    word->builtin = true;
+    word->name = word->qualified = str_from("tide_shard_word");
+    word->c_name = "tide_shard_word";
+    static const char *const words[] = {"a", "b", "c"};
+    for (int i = 0; i < 3; i++) {
+        f.name = str_from(words[i]);
+        f.type = (type){TY_LONG, NULL};
+        vec_push(word->fields, f);
+    }
+    vec_push(prog->structs, word);
+    static const char *const long_lists[] = {"heard", "pins", "asked", "gone", "held", "routes", "matches", "touching",
                                              "spanned", "members"};
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < 10; i++) {
         f.name = str_from(long_lists[i]);
-        f.type = list_of(prog, (type){TY_LONG, NULL});
+        f.type = list_of(prog, (type){TY_STRUCT, word});
         vec_push(state->fields, f);
     }
     // shared: the root's fields of singletons with [Native] state, as they last came (tide_shard_apply_shared)

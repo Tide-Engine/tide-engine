@@ -94,7 +94,7 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
         const tide_entity e = tide_entity_in_slot(&world.entities, i);
         if (tide_has_Object(&world, e)) { object = e; break; }
     }
-    TIDE_REQUIRE(object.generation != 0);
+    TIDE_REQUIRE(!tide_entity_is_null(object));
     tide_set_Object_local(&local, object, (Object_local){.resources = local.Buffers.nested});
 
     // The generated queue's first spawn is Graphic: reset references without

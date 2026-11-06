@@ -25,7 +25,7 @@
 
 #define SMOKE_TICKS 240
 // Update when the demo's simulation changes on purpose. Every platform must agree.
-#define SMOKE_HASH 0x1D9D22B70969DF47ull
+#define SMOKE_HASH 0xED729D7B7D0F5A84ull
 
 // Colors demo.tide's views use, as 0xRRGGBBAA: the player's and the background.
 #define SMOKE_PLAYER_COLOR 0xFFC43DFFu

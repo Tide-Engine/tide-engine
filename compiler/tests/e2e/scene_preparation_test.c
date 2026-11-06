@@ -68,7 +68,7 @@ TIDE_TEST(scene_preparation_background_work_owns_its_world)
     TIDE_CHECK(world.Generation.started == 0);
     TIDE_REQUIRE(tide_preparation_update(&state, &tide_game_api, &world, &jobs, &events));
     TIDE_CHECK(state == NULL && world.Generation.started == 1 && world.Time.tick == 0);
-    TIDE_CHECK(tide_world_scene_prepared(&world, (tide_entity){0, 1}, (tide_player_id){0}));
+    TIDE_CHECK(tide_world_scene_prepared(&world, tide_entity_in_slot(&world.entities, 0), (tide_player_id){0}));
     TIDE_CHECK(events.count == 2);
     tide_local local = {0};
     tide_local_init(&local);
@@ -84,7 +84,7 @@ TIDE_TEST(scene_preparation_readiness_survives_values_snapshots_and_packing)
 {
     tide_world world = {0}, restored = {0};
     tide_world_init(&world, 1.0f / 60.0f);
-    const tide_entity scene = {0, 1};
+    const tide_entity scene = tide_entity_in_slot(&world.entities, 0);
     const tide_player_id player = tide_player_from_index(64);
     uint8_t bytes[TIDE_COMMAND_BYTES];
     const uint32_t size = tide_game_api.prepared_command(scene, bytes, sizeof bytes);
@@ -235,7 +235,7 @@ static void network_preparation(bool transition)
     TIDE_CHECK(authoritative->Generation.started == (transition ? 2 : 1));
     TIDE_CHECK(verified->Generation.started == authoritative->Generation.started);
     TIDE_CHECK(verified->Generation.value == (transition ? 57 : 42));
-    const tide_entity scene = transition ? authoritative->Generation.destination : (tide_entity){0, 1};
+    const tide_entity scene = transition ? authoritative->Generation.destination : tide_entity_in_slot(&authoritative->entities, 0);
     TIDE_CHECK(tide_world_scene_prepared(authoritative, scene, status.player));
     tide_client_destroy(client);
     tide_server_destroy(server);

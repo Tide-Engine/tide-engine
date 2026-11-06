@@ -19,7 +19,8 @@ static void gen_editor_preview(gen *g)
     bool comma = false;
     if (takes_world(factory)) { sb_put(o, "&p->world"); comma = true; }
     if (takes_local(factory)) { sb_printf(o, "%s&p->local", comma ? ", " : ""); comma = true; }
-    if (takes_scene(g->prog, factory)) sb_printf(o, "%s(tide_entity){0}", comma ? ", " : "");
+    if (takes_scene(g->prog, factory)) { sb_printf(o, "%s(tide_entity){0}", comma ? ", " : ""); comma = true; }
+    if (takes_cause(factory)) sb_printf(o, "%sUINT64_C(%llu)", comma ? ", " : "", (unsigned long long)causal_code(factory));
     sb_put(o, ");\n    tide_apply_commands(&p->world);\n    tide_local_apply_commands(&p->local);\n    return p;\n}\n\n"
         "static const tide_draw_list *tide_editor_frame(void *context, float seconds, tide_rect r,\n"
         "    tide_float4x4 camera, tide_float4x4 projection, tide_measure_fn measure)\n{\n"

@@ -24,7 +24,7 @@ TIDE_TEST(events_lookup_validates_handles_and_other_archetypes)
     operation(&w, 7, (tide_entity){0}); // World event: global handler still runs.
     TIDE_CHECK(w.Cases.hits == 5);
     operation(&w, 1, (tide_entity){UINT32_MAX, 1});
-    operation(&w, 1, (tide_entity){w.Cases.first.index, w.Cases.first.generation + 2u});
+    operation(&w, 1, (tide_entity){w.Cases.first.birth, w.Cases.first.lineage ^ UINT64_C(2)});
     TIDE_CHECK(w.Cases.hits == 5);
     tide_world_free(&w);
 }
@@ -52,8 +52,8 @@ TIDE_TEST(events_lookup_checks_reused_generations_and_pending_spawns)
     operation(&w, 9, (tide_entity){0}); // Remove the gapped last row first.
     operation(&w, 3, (tide_entity){0});
     operation(&w, 4, (tide_entity){0}); // Spawn and Hit are applied in queue order.
-    TIDE_REQUIRE(w.Cases.fresh.index == gone.index);
-    TIDE_REQUIRE(w.Cases.fresh.generation != gone.generation);
+    TIDE_REQUIRE(!tide_entity_equal(w.Cases.fresh, gone));
+    TIDE_REQUIRE(!tide_entity_alive(&w.entities, gone));
     TIDE_CHECK(tide_get_Health(&w, w.Cases.fresh).value == 97);
     operation(&w, 1, gone);
     TIDE_CHECK(w.Cases.hits == 1);

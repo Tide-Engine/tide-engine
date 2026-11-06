@@ -14,11 +14,12 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
-static const tide_entity first = {1u, 1u};
+static tide_entity first;
 
 static void start(void)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    first = tide_entity_in_slot(&world.entities, 1);
     tide_local_init(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(0), 0, false, false, "");
     local.UI.target = first;
@@ -143,6 +144,8 @@ static uint32_t hand_written(uint8_t *out, const uint32_t capacity, const uint32
     tide_bits_put(&b, type, 16);
     tide_bits_put(&b, 0, 32);
     tide_bits_put(&b, 0, 32);
+    tide_bits_put(&b, 0, 32);
+    tide_bits_put(&b, 0, 32);
     tide_bits_put_varint(&b, count); // attributes
     for (uint32_t i = 0; i < count && !b.overflow; i++) tide_bits_put_varint(&b, tide_zigzag(value));
     tide_bits_put_varint(&b, 1); // slots: one
@@ -216,6 +219,8 @@ TIDE_TEST(command_lists_refuse_counts_their_bits_cant_hold)
     tide_bits_put(&b, type, 16);
     tide_bits_put(&b, 0, 32);
     tide_bits_put(&b, 0, 32);
+    tide_bits_put(&b, 0, 32);
+    tide_bits_put(&b, 0, 32);
     tide_bits_put_varint(&b, 1000000);
     for (int i = 0; i < 8; i++) tide_bits_put_varint(&b, 1);
     uint32_t size = tide_bits_end(&b);
@@ -223,6 +228,8 @@ TIDE_TEST(command_lists_refuse_counts_their_bits_cant_hold)
     // ...past the limit, and the most a varint says
     b = (tide_bits){bytes, sizeof bytes, 0, false};
     tide_bits_put(&b, type, 16);
+    tide_bits_put(&b, 0, 32);
+    tide_bits_put(&b, 0, 32);
     tide_bits_put(&b, 0, 32);
     tide_bits_put(&b, 0, 32);
     tide_bits_put_varint(&b, UINT32_MAX);

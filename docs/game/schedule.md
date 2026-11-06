@@ -111,7 +111,7 @@ Some things never make systems wait:
 Some things are the whole match's, so systems wait for each other over them whatever entities they run for:
 
 - **Text, lists and grids.** Two systems that change the match's text, lists or grids conflict, since they share its heap. Reading them alongside is fine.
-- **Spawns.** Entities get their IDs in order. A system that runs on one thread gives a new entity its ID as it spawns, so it waits for the systems before it that spawn. A system that splits its entities across threads doesn't wait: see below.
+- **Spawns and queued effects.** Spawn identities come from causal execution, independently of physical allocation. Structural and event effects retain deterministic system order, then logical source-entity order; systems with those effects currently run their entities serially. Independent row updates can still split.
 - **Tasks.** A system that starts [tasks](./tasks.md) runs their code until they first wait, which can spawn and change text, and the match keeps its tasks in the order they start. So it runs on one thread, and waits for the systems before it that start tasks, spawn or change text. Tasks that go on later do so after the tick's changes, one at a time, in the order they started: `tide schedule` says so at its end.
 
 ## Keeping it wide
@@ -125,7 +125,7 @@ Some things are the whole match's, so systems wait for each other over them what
 
 The other kind of parallelism is a system splitting its entities across threads: each thread takes a chunk of them, up to 2,048. It doesn't change results either, and needs nothing from you, but a system only splits when nothing it does has to happen in order across its entities. One that changes text, lists or grids, or changes a singleton, runs on one thread, alongside the others. So does one that calls its `World`'s `Set`, which may change any entity, or that reads through its `World` or a query a component it also changes: it then sees the entities it already ran for as it left them, the same on every machine. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it.
 
-A system that splits can spawn. Its `Spawn` gives a temporary handle, which works like any other: store it in the entity's components, `Add` to it, `Send` to it or put it in an event. Once the system is done, its new entities get their IDs, in the order one thread would have given them, and every handle it kept (in the components it changes, the changes it recorded and its events) becomes the real one, before any system that waits for it starts. Only while the system runs does the difference show: text shows a temporary handle as `Entity(new)`, and C can tell with `tide_entity_is_temporary` (see [Calling C](../c/functions.md)).
+A spawn returns its final logical identity immediately; there is no temporary handle or later identity rewrite. Structural installation remains deferred. Queries executed by match/simulation code traverse ascending logical entity identity across archetypes. Presentation/view queries retain their existing traversal order. Extern systems receive contiguous runs in that same global order, while ordinary C function calls from otherwise independent parallel rows retain the game's existing determinism and thread-safety responsibility.
 
 ## Parallel loops
 

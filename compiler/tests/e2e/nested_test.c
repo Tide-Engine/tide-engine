@@ -25,11 +25,12 @@ static bool same(const tide_world *a, const tide_world *b)
     return equal && tide_world_hash(a) == tide_world_hash(b);
 }
 
-static const tide_entity grid_entity = {1, 1};
+static tide_entity grid_entity;
 
 TIDE_TEST(nested_all_checks_pass)
 {
     tide_world_init(&world, 1.0f);
+    grid_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_tick(&world); // The event's handler runs at the end of the tick it's sent in: the first; a second tick settles it
     TIDE_REQUIRE(tide_has_Results(&world, grid_entity));
@@ -48,6 +49,7 @@ TIDE_TEST(nested_all_checks_pass)
 TIDE_TEST(nested_lists_reuse_their_memory)
 {
     tide_world_init(&world, 1.0f);
+    grid_entity = tide_entity_in_slot(&world.entities, 1);
     for (int i = 0; i < 60; i++) tide_world_tick(&world);
     const uint64_t used = world.heap.used;
     for (int i = 0; i < 400; i++) tide_world_tick(&world);
@@ -57,6 +59,7 @@ TIDE_TEST(nested_lists_reuse_their_memory)
 TIDE_TEST(nested_snapshot_and_repeat)
 {
     tide_world_init(&world, 1.0f);
+    grid_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_copy(&copy, &world);
     for (int i = 0; i < 12; i++) {
@@ -71,6 +74,7 @@ TIDE_TEST(nested_snapshot_and_repeat)
 TIDE_TEST(nested_pack_and_unpack)
 {
     tide_world_init(&world, 1.0f);
+    grid_entity = tide_entity_in_slot(&world.entities, 1);
     for (int i = 0; i < 9; i++) tide_world_tick(&world);
     const uint32_t size = tide_world_pack(&world, NULL, 0);
     uint8_t *bytes = malloc(size);
@@ -91,6 +95,7 @@ TIDE_TEST(nested_pack_and_unpack)
 TIDE_TEST(nested_crossplatform_hash)
 {
     tide_world_init(&world, 1.0f);
+    grid_entity = tide_entity_in_slot(&world.entities, 1);
     for (int i = 0; i < 30; i++) tide_world_tick(&world);
     const uint64_t hash = tide_world_hash(&world);
     printf("    hash: %llu\n", (unsigned long long)hash);
@@ -103,6 +108,7 @@ TIDE_TEST(nested_crossplatform_hash)
 TIDE_TEST(nested_views_read_both_worlds)
 {
     tide_world_init(&world, 1.0f);
+    grid_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_tick(&world); // Checks it: [[0, 2], [1, 3, 9]], and two bags of 3 and 1 parts
     tide_world_copy(&copy, &world);

@@ -291,7 +291,7 @@ TIDE_TEST(jobs_threads_change_nothing)
 
     TIDE_CHECK(tide_world_entity_count(&one) == tide_world_entity_count(&many));
 
-    // Entities spawned on many threads: every handle kept is the real one
+    // Match spawns in a threaded tick retain their final full logical keys
     TIDE_CHECK(many.Stats.chipped > 1000 && many.Stats.matched == many.Stats.chipped);
     int trails = 0;
     int shards = 0;
@@ -300,13 +300,13 @@ TIDE_TEST(jobs_threads_change_nothing)
         const Trail trail = tide_get_Trail(&many, e);
         if (tide_has_Trail(&many, e) && trail.count) {
             const Debris debris = tide_get_Debris(&many, trail.last);
-            TIDE_CHECK(!tide_entity_is_temporary(trail.last) && tide_entity_equal(trail.last, trail.link.target));
+            TIDE_CHECK(trail.last.birth != 0 && tide_entity_equal(trail.last, trail.link.target));
             TIDE_CHECK(tide_has_Debris(&many, trail.last) && tide_entity_equal(debris.from, e) && tide_has_Size(&many, trail.last));
             trails++;
         }
         const Shard shard = tide_get_Shard(&many, e);
         if (tide_has_Shard(&many, e)) {
-            TIDE_CHECK(!tide_entity_is_null(shard.of) && !tide_entity_is_temporary(shard.of));
+            TIDE_CHECK(!tide_entity_is_null(shard.of) && shard.of.birth != 0);
             if (shard.debris) TIDE_CHECK(tide_has_Debris(&many, shard.of)); // Rocks burn up, but debris stays
             shards += shard.debris;
         }
@@ -471,7 +471,7 @@ TIDE_TEST(jobs_threads_come_back)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities};
     const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL, NULL, NULL};
     int ticks = 0;
     // A worker has to have joined the tick while its first system ran to have
@@ -690,7 +690,7 @@ TIDE_TEST(jobs_thousands_of_systems)
     }
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities};
     const tide_jobs *jobs = tide_platform_jobs();
     for (int pass = 0; pass < (jobs ? 4 : 2); pass++) {
         const tide_jobs *with = pass >= 2 ? jobs : NULL; // On one thread, then on every core

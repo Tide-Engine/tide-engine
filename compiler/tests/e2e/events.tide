@@ -11,6 +11,7 @@ singleton Stats
     int order;     // A digit from each of Order's handlers, in the order they ran
     int joined;
     PlayerID lastJoined;
+    Entity armedPlayer;
 }
 
 component Health
@@ -160,8 +161,9 @@ event(Spawned) CountSpawns(mut Stats stats)
 }
 
 // A player gets a weapon as it's spawned, within the same tick.
-event(Spawned) Arm(with Player)
+event(Spawned) Arm(with Player, mut Stats stats)
 {
+    stats.armedPlayer = this;
     Spawn(Weapon { owner = this });
 }
 

@@ -427,8 +427,8 @@ TIDE_TEST(box3d_gravity_wakes_what_sleeps_and_not_what_is_put_to_sleep_with_it)
 // The scripted match after its ticks, on every platform and in every
 // configuration: whether a body is asleep is in its component and in Box3D's
 // image.
-#define SCRIPT_HASH UINT64_C(0x0d1b3dc75c280bbd)
-#define SCRIPT_IMAGES_HASH UINT64_C(0x5b306dbf08441919)
+#define SCRIPT_HASH UINT64_C(0x53787cff09dd01dc)
+#define SCRIPT_IMAGES_HASH UINT64_C(0xc4ebeccec436d95b)
 
 enum { SCRIPT_TICKS = 320, KEPT_AT = 95 };
 

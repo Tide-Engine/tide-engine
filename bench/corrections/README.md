@@ -72,7 +72,7 @@ arrays, table page-pointer capacity, live page payloads and page headers.
 They exclude allocator overhead/pool retention, the fixed local struct, and
 birth-identity metadata in the world. An active row currently keeps the whole
 40-byte Pose error, snaps/valid/padding, an entity handle and birth identity
-(60 payload bytes before pages and the handle index). Position-only and both
+(68 payload bytes with the 16-byte logical entity key, before pages and the full-key index). Position-only and both
 therefore have the same row size. No rows or index allocation are created for
 the fresh steady/unchanged workloads; table capacity can remain after past
 errors. These offsets are machine-local and add no network payload or hashed

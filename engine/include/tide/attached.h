@@ -18,18 +18,15 @@
 // row, so what's kept costs nothing for the others.
 //
 // The entities are another world's, so nothing here says whether they're
-// alive: whoever keeps the rows takes out the ones whose entities are gone,
-// and those whose handle is another entity's now, born as something else.
-// Two generations of one index can both have a row, as the world views draw
-// and the last one the server confirmed can each have another entity there.
+// alive: whoever keeps the rows takes out the ones whose entities are gone.
+// The legacy born column is presentation metadata, never an alternate key.
+// Distinct logical entities can both have rows, even when their worlds use
+// different private storage slots.
 
 typedef struct tide_attached {
     tide_table rows;     // Column 0: the entity each row is of. Column 1: its value. Column 2: what it was born as
-    uint32_t *by_index;  // By an entity's index: a row of one with that index, plus one, or 0
-    uint32_t indexed;    // Entries `by_index` has
-    uint32_t *others;    // Rows of entities whose index's place in `by_index` another generation has
-    uint32_t other_count;
-    uint32_t other_room;
+    uint32_t *index;     // Open-addressed exact logical keys, storing row + 1
+    uint32_t indexed;    // Power-of-two index capacity
 } tide_attached;
 
 #define TIDE_ATTACHED_NONE 0xFFFFFFFFu
@@ -40,18 +37,8 @@ static inline tide_entity tide_attached_entity(const tide_attached *a, const tid
     return *(const tide_entity *)tide_table_get(&a->rows, c, row, 0);
 }
 
-// The row of an entity that shares its index with another's (see `others`).
-uint32_t tide_attached_find_other(const tide_attached *a, const tide_columns *c, tide_entity e);
-
 // An entity's row, or TIDE_ATTACHED_NONE when nothing is kept for it.
-static inline uint32_t tide_attached_find(const tide_attached *a, const tide_columns *c, const tide_entity e)
-{
-    if (e.index >= a->indexed) return TIDE_ATTACHED_NONE;
-    const uint32_t row = a->by_index[e.index];
-    if (!row) return TIDE_ATTACHED_NONE; // `others` only has entities whose index has a row here
-    if (tide_entity_equal(tide_attached_entity(a, c, row - 1u), e)) return row - 1u;
-    return a->other_count ? tide_attached_find_other(a, c, e) : TIDE_ATTACHED_NONE;
-}
+uint32_t tide_attached_find(const tide_attached *a, const tide_columns *c, tide_entity e);
 
 // A row's value, to read, and to change.
 static inline const void *tide_attached_get(const tide_attached *a, const tide_columns *c, const uint32_t row)

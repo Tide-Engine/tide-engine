@@ -96,7 +96,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 24u
+#define PROTOCOL 25u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
@@ -382,8 +382,8 @@ static uint8_t *pack_client_state(const tide_game *g, const void *world, const v
         : g->client_destroyed(world, had, player, died, died_count);
     tide_delta_number(&d, died_count);
     for (uint32_t i = 0; i < died_count; i++) {
-        tide_delta_number(&d, died[i].index);
-        tide_delta_number(&d, died[i].generation);
+        tide_delta_number64(&d, died[i].birth);
+        tide_delta_number64(&d, died[i].lineage);
     }
     free(died);
     tide_delta_number(&d, events ? events->size : 0u);
@@ -417,12 +417,13 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
     const uint32_t count = tide_delta_get_number(&d);
     if (d.bytes.failed || from != (base ? base_tick : UINT32_MAX)) return false;
     const uint32_t died_count = tide_delta_get_number(&d);
-    if (d.bytes.failed || died_count > (d.bytes.size - d.bytes.at) / 2u) return false;
+    if (d.bytes.failed || died_count > (d.bytes.size - d.bytes.at) / 2u
+        || (uint64_t)died_count * sizeof(tide_entity) > SIZE_MAX) return false;
     tide_entity *died = died_count ? malloc((size_t)died_count * sizeof *died) : NULL;
     if (died_count && !died) return false;
     for (uint32_t i = 0; i < died_count; i++) {
-        died[i].index = tide_delta_get_number(&d);
-        died[i].generation = tide_delta_get_number(&d);
+        died[i].birth = tide_delta_get_number64(&d);
+        died[i].lineage = tide_delta_get_number64(&d);
     }
     if (d.bytes.failed) { free(died); return false; }
     const uint32_t event_size = tide_delta_get_number(&d);
@@ -2602,8 +2603,8 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
     if (destroyed_count) {
         tide_write_varint(&out, destroyed_count);
         for (uint32_t i = 0; i < destroyed_count; i++) {
-            tide_write_varint(&out, destroyed[i].index);
-            tide_write_varint(&out, destroyed[i].generation);
+            tide_write_varint64(&out, destroyed[i].birth);
+            tide_write_varint64(&out, destroyed[i].lineage);
         }
     }
     if (parts & FRAME_LOCAL_EVENTS) {
@@ -3011,8 +3012,8 @@ static bool replay_record(const tide_game *g, void *world, const uint8_t *record
         const uint32_t destroyed = tide_read_varint(&r);
         if (r.failed || destroyed > (r.size - r.at) / 2u) return false;
         for (uint32_t i = 0; i < destroyed; i++) {
-            tide_read_varint(&r);
-            tide_read_varint(&r);
+            tide_read_varint64(&r);
+            tide_read_varint64(&r);
         }
     }
     if (parts & FRAME_LOCAL_EVENTS) tide_read_bytes(&r, tide_read_varint(&r));
@@ -4829,12 +4830,13 @@ static void read_frame_names(const tide_client *c, pending_frame *f)
     }
     if (parts & FRAME_DESTROYED) {
         const uint32_t count_destroyed = tide_read_varint(&r);
-        if (r.failed || count_destroyed > (r.size - r.at) / 2u) return;
+        if (r.failed || count_destroyed > (r.size - r.at) / 2u
+            || (uint64_t)count_destroyed * sizeof(tide_entity) > SIZE_MAX) return;
         f->destroyed = count_destroyed ? malloc((size_t)count_destroyed * sizeof *f->destroyed) : NULL;
         if (count_destroyed && !f->destroyed) return;
         for (uint32_t i = 0; i < count_destroyed; i++) {
-            f->destroyed[i].index = tide_read_varint(&r);
-            f->destroyed[i].generation = tide_read_varint(&r);
+            f->destroyed[i].birth = tide_read_varint64(&r);
+            f->destroyed[i].lineage = tide_read_varint64(&r);
         }
         if (!r.failed) f->destroyed_count = count_destroyed;
     }
@@ -5146,10 +5148,11 @@ static int apply_frame_to(tide_client *c, void *world, const pending_frame *f, c
     }
     if (parts & FRAME_DESTROYED) {
         const uint32_t count_destroyed = tide_read_varint(&r);
-        if (r.failed || count_destroyed > (r.size - r.at) / 2u) return -1;
+        if (r.failed || count_destroyed > (r.size - r.at) / 2u
+            || (uint64_t)count_destroyed * sizeof(tide_entity) > SIZE_MAX) return -1;
         for (uint32_t i = 0; i < count_destroyed; i++) {
-            tide_read_varint(&r);
-            tide_read_varint(&r);
+            tide_read_varint64(&r);
+            tide_read_varint64(&r);
         }
     }
     if (parts & FRAME_LOCAL_EVENTS) tide_read_bytes(&r, tide_read_varint(&r));
@@ -6695,7 +6698,7 @@ static void report_prepared(tide_client *c)
         bool alive = false;
         for (uint32_t ordinal = 0;; ordinal++) {
             const tide_entity scene = g->prepared_scene(world, ordinal);
-            if (!scene.generation) break;
+            if (tide_entity_is_null(scene)) break;
             if (tide_entity_equal(scene, c->prepared_reported[i])) { alive = true; break; }
             if (ordinal == UINT32_MAX) break;
         }
@@ -6705,7 +6708,7 @@ static void report_prepared(tide_client *c)
     uint32_t sent = 0;
     for (uint32_t ordinal = 0;; ordinal++) {
         const tide_entity scene = g->prepared_scene(world, ordinal);
-        if (!scene.generation) break;
+        if (tide_entity_is_null(scene)) break;
         bool known = false;
         for (uint32_t i = 0; i < c->prepared_count; i++)
             known |= tide_entity_equal(c->prepared_reported[i], scene);

@@ -35,7 +35,7 @@ namespace Tide.Editor
         {
             if (!Application.isPlaying || !view.Showing) return;
             var e = view.Entity;
-            var label = $"Tide #{e.Index}:{e.Generation}{(e.Mine ? " (mine)" : e.Owned ? " (owned)" : "")}";
+            var label = $"Tide {e.Id}{(e.Mine ? " (mine)" : e.Owned ? " (owned)" : "")}";
             if ((type & GizmoType.Selected) == 0 && SceneView.lastActiveSceneView != null
                 && Vector3.Distance(SceneView.lastActiveSceneView.camera.transform.position, view.transform.position) > 40f)
             {

@@ -41,17 +41,17 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box3D's own math, SIMD or not, and its resident stamp and digest.
-#define SETTLED_HASH UINT64_C(0x23c056cfd06b9feb)
-#define IMAGES_HASH UINT64_C(0x04034696f464dd7e)
+#define SETTLED_HASH UINT64_C(0x68d262eca0d98dfa)
+#define IMAGES_HASH UINT64_C(0x814ac487e3eb7db3)
 // Box3D's own digest at each of the 300 ticks, apart from everything else the
 // match holds. A change to what the match keeps
 // beside it (a field of Physics, a component of the package's) moves the two
 // above and leaves this one.
-#define OWN_HASH UINT64_C(0x2c0f0b8554356083)
+#define OWN_HASH UINT64_C(0xb807142e61445e30)
 // Where the crates are and how fast, at each of the 300 ticks: the simulation
 // alone. A change to the resident stamp or digest moves the three above and
 // leaves this one; a change to how the world steps moves all four.
-#define BODIES_HASH UINT64_C(0xace1f5d330399dd5)
+#define BODIES_HASH UINT64_C(0x7c549688cd55938f)
 
 static tide_world a;
 static tide_world b;

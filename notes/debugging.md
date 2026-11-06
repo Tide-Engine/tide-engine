@@ -1,5 +1,21 @@
 # Debugging Tide code in native debuggers
 
+## Logical Entity keys (2026-11-06)
+
+Entity's owner-approved 128-bit identity is shown from its `birth` and `lineage`
+words, never from a physical slot. Natvis displays both native 64-bit fields;
+LLDB reads both with GetValueAsUnsigned and formats the full values. Only both
+words zero displays `none`, so trusted-C/local identities with birth zero remain
+visible. The debugger fixture includes full-width high-bit sentinel values, a
+zero-birth nonnull identity and null, with assertions in the native natvis and
+Linux LLDB scripts. This supersedes historical `Entity(index:generation)`
+examples below. The source line/stepping and ordinary typed-container assertions
+remain in the same fixture; Windows ASan natvis passes the complete real dbgeng fixture, including the three
+new full-key assertions. Canonical iteration intentionally changes the first Pair
+from 2 to 11, reflected in both scripts. LLDB source passes Python syntax compilation locally;
+actual LLDB sessions remain Linux CI coverage on this Windows machine.
+
+
 ## The natvis test's step, and other threads (2026-11-05)
 
 `tidec_debugger_natvis` stops at the `[gained]` line, steps once and expects the next line. It failed now and then on CI's Windows runner, still on the `[gained]` line: the fixture's systems run on several threads, and after the step another thread hit the same breakpoint first. The script now clears breakpoints (`bc *`) before the step, so only the step can stop it. Eight repeated local runs passed.

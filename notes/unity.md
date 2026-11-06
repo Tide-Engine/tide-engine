@@ -1,5 +1,39 @@
 # Unity as a front end
 
+## Logical Entity keys: packet 5 and embed ABI 18 (2026-11-06)
+
+Owner-approved Entity128 changes the C/native command boundary to two uint64
+words (`birth`, `lineage`), and the generated embed callback matches it. The web
+export/jslib/PInvoke path passes four uint32 halves unchanged; no JavaScript
+Number combines a 64-bit identity. The C wrapper reconstructs each word with
+uint64 shifts. `TideEntityId` is 16 bytes, two ulongs with full-key equality/hash;
+view/scene dictionaries retain that value directly. Packet entity rows are 32 bytes
+(key 16, flags/prefab/parent/presentation-born 16); event headers are 40 bytes,
+including the complete target key. Both-zero is null; a zero birth alone is not.
+
+The packet builder's former global-index lookup is an exact logical-key hash
+map reused between frames. This matters for sharded views: separate worlds can
+put distinct keys in private slot 0. Null and NONE registrations are ignored;
+registering an existing full key replaces only its place, retaining the existing
+selected authoritative/ghost view behavior. Allocation arithmetic widens before
+growth; begin clears retained entries and free releases the map. Generated
+component/parent/event references use it instead of physical indices.
+
+The checked-in Sample and physics schema fixtures were relaid out for 16-byte
+Entity fields, moving later fields/default bytes without changing their values.
+Their old schema hash is retained until the next real game build, which writes
+its actual new hash. Sample C# was regenerated with this checkout's writer.
+Native ASan CLI unity_code 6/6 and packet-map 1/1 pass; generated embed game C
+compiles strictly. The checked-in JS fakeinterop test forwards all four high-bit
+halves exactly and passes. In build/unity-identity-check, this checkout's Sample
+and package compile under Unity 6000.6.0f1, hidden batchmode/nographics/noAudio,
+with automatic Tide builds disabled. New EntityPacketTests 2/2 pass: layout/offset,
+complete key dictionary identity, null behavior, packet 5/event targets and all
+packet truncations. Native/web platform embed validation is recorded with the
+coordinated identity change. Historical index/generation packet entries below
+are superseded.
+
+
 ## One Unity entity component (2026-11-06)
 
 Owner decision: combine `TideEntityView` into `TideEntity`. `TideEntity` retains

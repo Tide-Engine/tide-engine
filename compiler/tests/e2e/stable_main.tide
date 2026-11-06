@@ -1,0 +1,7 @@
+singleton Reset { int starts; }
+scene Main { }
+event(Spawned) Setup(with Main, mut Reset reset)
+{
+    reset.starts += 1;
+    if (reset.starts == 1) this.Destroy();
+}

@@ -5,7 +5,7 @@ static tide_world world;
 static tide_local local;
 
 // Main's Setup loads an arena and a lobby and spawns a counter of Main's own; the arena's spawns two counters and
-// the lobby's one. Counters are found by trying the first handles, as each is a first generation's.
+// the lobby's one. Counters are found by enumerating private entity slots.
 typedef struct counted {
     int arena, other;           // Counters by whether Born marked them
     int lobby_poked, arena_waited, wrong; // Poked's and Waited's counters, and any that ran for the wrong one
@@ -15,8 +15,8 @@ typedef struct counted {
 static counted count_counters(const int ticks)
 {
     counted c = {0, 0, 0, 0, 0, true, true};
-    for (uint32_t i = 0; i < 16; i++) {
-        const tide_entity e = {i, 1};
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&world.entities, i);
         if (!tide_entity_alive(&world.entities, e) || !tide_has_Counter(&world, e)) continue;
         const Counter counter = tide_get_Counter(&world, e);
         if (counter.poked) c.lobby_poked++;

@@ -16,7 +16,7 @@ typedef struct shape_change {
     bool sensor;
     uint8_t padding[3];
 } shape_change;
-_Static_assert(sizeof(shape_record) == 40 && sizeof(shape_entry) == 40 && sizeof(shape_change) == 40,
+_Static_assert(sizeof(shape_record) == 48 && sizeof(shape_entry) == 48 && sizeof(shape_change) == 48,
                "live collider ABI changed");
 static physics *shape_physics; // Only between BeginShapes and the end of this tick
 static shape_change *shape_changes;

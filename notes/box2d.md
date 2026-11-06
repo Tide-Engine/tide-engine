@@ -348,3 +348,25 @@ Current queries are Physics singleton methods (`physics.Raycast/Cast/Overlap/Ins
 `rewind` covers current moving walls, interpolated boxes/circles and parts, all cast/overlap forms, sensors, ignore, queued Snap/despawn endpoints, opt-out, saved contexts, malformed/unavailable times, expiry, pack/unpack, snapshots and readonly world hashes. Its 1,024-collider/1,000-ray batch compares current native queries with historical queries. Release on this Windows machine: prepare 0.93 ms; batch historical 0.22 ms versus current 0.12 ms (one measured run, timing informational). Existing world/sequence pins changed for the added Body/Physics/Time schema; native body results, answer hashes and Box2D image bytes are unchanged.
 
 rewind_network adds 28 end-to-end two-client profiles shared with Box3D (packages/test/rewind_network_test.c). The oracle is the last verified view's actual rectangle draw position, retained before Sample; normal engine stamps, input packing, lossy loopback delivery and server validation precede the query. It checks moving player-owned boxes, reversals, both hits and misses, exact presented stamp equality, hit-point/fraction error below 0.0001, and per-shot age-based rejection beyond the 250 ms window. Independent server/client/update/render rates, stalls and network conditions are detailed in notes/netcode.md. Accuracy here is for translating axis-aligned boxes; existing rewind tests cover other shapes/rotations. This does not measure GPU/display scanout or real Internet traffic.
+## Logical Entity bridge layout (2026-11-06)
+
+The owner-approved separation of logical Entity identity from ECS storage widens
+`tide_entity` to two 64-bit words. Box2D's native body/shape/joint handles remain
+their existing independent 64-bit values. The bridge carries complete logical
+keys in its existing maps, deferred fixture changes and rewind collider records;
+it does not truncate a key into native user data.
+
+The C mirrors now assert Joint = 104 bytes (id at 72), fixture map entry = 32,
+FixtureChange = 56 and historical Collider = 168. Physics remains 440 bytes;
+its list/map handles and existing pending offset are unchanged. Tests compare
+whole logical keys and resolve storage slots explicitly where testing metadata.
+Both bridge translation units pass strict C17 syntax checks; integrated native
+and web package validation is recorded with the completed identity change.
+
+Canonical match order intentionally changes physics insertion/solver order and
+entity-derived seeds. The complete, course, sleep, stack, joints/mesh where
+present, and all-hit output pins were updated only after native ASan and WASI
+agreed on every new exact value. Gameplay, native-vs-threaded equality, raw
+restore, packed restore and replay assertions remain enabled. The native ASan
+and WASI package reruns pass with the widened ABI (all thirteen affected
+physics targets); the all-hit filters and ordering assertions are unchanged.

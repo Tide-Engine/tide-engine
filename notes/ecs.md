@@ -1,5 +1,114 @@
 # ECS and simulation state
 
+## Logical entity identities and private slots (2026-11-06)
+
+Owner-approved in response to mount-and-rifle's projected client divergence:
+Entity is now the opaque 16-byte `{uint64_t birth, lineage}`. `birth` is the
+public 64-bit simulation identity clock (starting at 1), not Time's wrapping
+32-bit tick; `lineage` is the generated causal hash. Both zero is null. Generated
+match spawning supplies the complete permanent key before Spawn returns; physical
+slot reuse, hidden allocations and row compaction cannot choose it. The compiler
+records the causal-key construction and canonical iteration contract in
+language.md and schedule-and-threads.md. This intentionally changes Entity's C
+ABI, packed worlds, seeds and world hashes; session protocol is 25.
+
+`entity.c` separates that key from dense private slots. A full-key open-addressed
+map resolves locations, and slot enumeration remains physical for implementation
+walks. Lookup capacity follows live population: tombstone pressure rehashes at the
+same capacity rather than growing with lifetime spawn/despawn count.
+`tide_entities_ordered` caches sorted ALIVE logical keys (including pending
+spawns). Short per-table atomic locking serializes lazy publication against
+structural registration/destruction; queries borrow immutable arrays. A changed
+keyset retires its prior array until `tide_entities_settle`, keeping an outer
+query valid when it spawns, destroys or triggers a nested query. Location, snap-
+count and presentation writes preserve the cache. Snapshots retain no cache
+pointer and build their own on demand. `tide_entities_ordered_archetypes` owns
+ascending unique archetype-ID sets and caches only their ALIVE keys; repeated
+nested queries therefore traverse matching archetypes rather than every entity
+in the world. Actual archetype changes invalidate these subsets, row-only moves
+preserve them, and the global keyset cache survives both. Sparse presence remains
+checked live by generated traversal. Subset arrays have the same retirement and
+snapshot ownership rules; caller/code-reload pointers are never retained. Cache
+pointers/locks and capacities never enter hashes or packed bytes. Native ASan tests
+exercise four real Windows reader threads against 500 structural changes, retained nested-query arrays, snapshot
+isolation and unchanged hashes. Map pages are COW snapshots; grown descriptors
+stay until systems settle, so concurrent lookup does not follow freed index
+storage. Capacity and addresses are derived metadata, excluded from hashing and
+packing. The key never contains a slot, generation, worker number or hidden
+allocation counter. Unkeyed trusted-C and LocalEntity allocation uses the separate
+`{0, monotonic_counter}` namespace; it is not an interface for visibility-stable
+match spawning.
+
+The current-clock key registry includes destroyed spawns. A repeated full key,
+backwards clock, zero match clock or exhausted identity namespace ends with an
+explicit diagnostic; the allocator never probes for a different ID based on
+occupancy. The registry is copied and serialized in sorted-key order with private
+allocator state. Recipient projections import only permitted existing IDs with
+`install`, reconstruct private dense storage and do not transmit hidden allocator
+or collision-registry entries. The public world identity clock is transferred by
+the generated canonical codec. Shard away markers retain the exact key while using
+their own private slots; release takes the full key.
+
+Full-key equality and lexicographic ordering are shared inline helpers; entity
+hashing feeds all sixteen little-endian bytes. Random field seeds use that full
+key. Event deduplication uses the permanent target key, never the older 32-bit
+presentation `born` sidecar. Text prints both words as fixed hexadecimal values.
+The old presentation sidecar remains outside match hashing/wire state.
+
+Focused Windows ASan validation: 35 entity/table tests, 27 text/random/events
+tests and 9 page/rows tests pass. New cases give server/client different hidden
+allocation and recycled-slot histories, then verify identical public spawn IDs;
+exercise high 64-bit key halves, COW snapshots and raw/delta reconstruction; and
+reject every truncated keyed table and duplicate imported storage without changing
+the destination. The complete WASI engine unit binary passed 679/680 initially;
+the sole failure was the intentional `crossplatform_random` pin after full-key
+field seeding. Native ASan independently produced the same new 0xEA0690516561A349
+value, then that expected pin was updated. The 36 focused protocol25
+command/session/ visibility/view-time native ASan tests also passed. Broader
+generated-game validation accompanies the coordinated compiler ABI change. Earlier
+index/generation and sparse global-slot entries below describe the superseded
+representation.
+
+The full-world delta now carries the current-clock collision registry as an
+exact set edit against same-clock XOR baselines, or as separately negotiated
+1024-key (16KB) hash/need regions. Full literal serialization remains bounded by
+remaining input bytes. This avoids retransmitting all 20,000 seeded Stone keys
+when the joiner already regenerated them. Native ASan and WASI both send 1,089
+bytes in random_net's seeded-join regression (previously 320,943), preserving its
+existing 16KB bound. Two new tests cover large unchanged registries, prefix
+insertion and same-clock replacement, truncated transfers, cross-region repeated
+or backwards keys and wrong clocks, preserving the destination on rejection.
+The raw registry representation, logical hashes and projected privacy are unchanged.
+
+The sparse rows/masks/cache and function-acts fixtures derive expected traversal
+from an independent lexicographic full-key sort, retaining their ordinal-based
+filter/value models and the cache fixture's physical-hole model. Initializer ordinal
+and private row order are no longer traversal or event-delivery order oracles.
+The refreshed WASI entity filter passes 31/31 including subset membership,
+borrowed lifetime and snapshot tests; sparse rows/masks/cache, function-acts,
+destroy-rows and stable-async pass 6/6. The existing 4096-Work/two-Fighter query
+fixture now finishes in 1.63 seconds total (355.6 ms for its 16-tick match case),
+where the first full-suite run exceeded its unchanged 120-second timeout while
+walking every world key per inner query. Remaining query assertions/hash pins
+are updated separately against canonical order and cross-platform results.
+The browser's full threaded240-tick fixture initially exceeded its unchanged
+45-second bound: profiling showed canonical system wrappers scanning every world
+key, including thousands of irrelevant entities, rather than a worker failure.
+Using the same admitted-archetype cache for systems and preparing their component
+lanes once per chunk restores the fixture to 19.61 seconds on this machine. All
+240 serial/pooled tick hashes, background-worker completion and sleeping-worker
+assertions remain enabled. Temporary profiling was removed; failures now print
+existing timing/progress counters to distinguish stalled work from CPU cost.
+
+The final rows fixture derives chunk capacity from generated column metadata,
+checks its original COW lane contracts across every actual chunk, and validates
+Cargo's frozen/unfrozen value changes on every row. Extern-system batching
+expectations come from an independent full-key sort and contiguous physical-run
+model; Badge lane offsets come from offsetof/sizeof. Big-world snapshot lookups
+use the snapshot's own logical key rather than a possibly destroyed current-world
+slot. All three fixtures pass native ASan and WASI. Fresh canonical row/query,
+World.Set/read/helper, destroy-rows and seeded-network tests pass WASI (10/10).
+
 ## Loop views: lists indexed through a view found before the loop (2026-11-02)
 
 The owner, of the 14x gap between a mesh's normals over a world list and the same loop over C arrays: "im ok with redesigning things, if it doesnt touch language and is a net position = do it". No language or ordering change; generated code and `tide/list.h` only.

@@ -8,12 +8,13 @@ static void gen_prefab_recorders(gen *g)
         const prefab_instance *p = site->prefab;
         const bool local = site->local_world;
         const char *prefix = world_prefix(local);
-        sb_printf(o, "TIDE_HELPER tide_entity tide_prefab%d(%s *w, tide_entity scene", s, world_type(local));
+        sb_printf(o, "TIDE_HELPER tide_entity tide_prefab%d(%s *w, tide_entity scene%s", s, world_type(local), local ? "" : ", uint64_t cause");
         for (int j = 0; j < p->overrides.count; j++) sb_printf(o, ", %s override%d", type_cname(p->overrides.items[j]->type_decl), j);
         sb_put(o, ")\n{\n    (void)scene;\n");
         for (int j = 0; j < p->overrides.count; j++) sb_printf(o, "    (void)override%d;\n", j);
         sb_printf(o, "    tide_entity tide_nodes[%d];\n", p->entities.count);
-        sb_printf(o, "    for (int i = 0; i < %d; i++) tide_nodes[i] = %s(&w->entities);\n", p->entities.count, local ? "tide_entity_create" : "tide_new_entity");
+        if (local) sb_printf(o, "    for (int i = 0; i < %d; i++) tide_nodes[i] = tide_entity_create(&w->entities);\n", p->entities.count);
+        else sb_printf(o, "    for (int i = 0; i < %d; i++) tide_nodes[i] = tide_new_entity_key(&w->entities, (tide_entity){w->tide_identity_clock, tide_causal_mix(cause, (uint64_t)i)});\n", p->entities.count);
         if (p->load) sb_put(o, "    scene = tide_nodes[0];\n");
         for (int n = 0; n < p->entities.count; n++) {
             const expr *spawn = p->entities.items[n].spawn;

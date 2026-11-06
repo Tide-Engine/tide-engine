@@ -767,10 +767,14 @@ tide_str tide_str_add_entity(tide_str a, const tide_entity e, const bool local)
 {
     a = add_ascii(a, local ? "LocalEntity(" : "Entity(", local ? 12 : 7);
     if (tide_entity_is_null(e)) return add_ascii(a, "none)", 5);
-    if (tide_entity_is_temporary(e)) return add_ascii(a, "new)", 4); // Its ID comes once its system is done
-    a = tide_str_add_int(a, (int32_t)e.index, 0);
-    a = add_ascii(a, ":", 1);
-    a = tide_str_add_int(a, (int32_t)e.generation, 0);
+    char identity[33];
+    static const char hex[] = "0123456789abcdef";
+    for (uint32_t i = 0; i < 16; i++) {
+        identity[i] = hex[(e.birth >> ((15u - i) * 4u)) & 15u];
+        identity[17u + i] = hex[(e.lineage >> ((15u - i) * 4u)) & 15u];
+    }
+    identity[16] = ':';
+    a = add_ascii(a, identity, sizeof identity);
     return add_ascii(a, ")", 1);
 }
 
@@ -1274,7 +1278,7 @@ tide_list tide_str_split(const tide_str a, const tide_str separator)
 tide_list tide_str_split_char(const tide_str a, const int32_t separator)
 {
     char bytes[4];
-    return tide_str_split(a, separator ? char_text(separator, bytes) : TIDE_STR_EMPTY); // ' ' is no character
+    return tide_str_split(a, separator ? char_text(separator, bytes) : TIDE_STR_EMPTY); // '\0' is no character
 }
 
 // ---------------------------------------------------------------------------

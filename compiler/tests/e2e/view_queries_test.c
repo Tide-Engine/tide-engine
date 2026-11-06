@@ -122,8 +122,8 @@ TIDE_TEST(view_queries_two_worlds)
     tide_local_init(&local);
     const tide_entity seven = body(&confirmed, 7);
     TIDE_REQUIRE(!tide_entity_is_null(seven) && tide_entity_is_null(body(&confirmed, 6)) && tide_entity_is_null(body(&confirmed, 8)));
-    // One handle, two entities
-    TIDE_REQUIRE(tide_entity_equal(body(&drawn, 6), seven) || tide_entity_equal(body(&drawn, 8), seven));
+    // One causal spawn with corrected initializer values; the later spawn is separate.
+    TIDE_REQUIRE(tide_entity_equal(body(&drawn, 6), seven) && !tide_entity_equal(body(&drawn, 8), seven));
     TIDE_REQUIRE(tide_entity_is_null(body(&drawn, 3)) && !tide_entity_is_null(body(&confirmed, 3)));
     frame(&drawn, NULL, 1.0f, &confirmed, &local);
     const Seen *seen = &local.Seen;
@@ -131,12 +131,12 @@ TIDE_TEST(view_queries_two_worlds)
     TIDE_CHECK(seen->fighters == bits(1, 2, 5, 0, 0) && seen->standing == 2); // Body 2 is Dead, as drawn
     // The confirmed world's own entities, whatever the drawn one has
     TIDE_CHECK(seen->confirmed == bits(1, 2, 3, 5, 7) && seen->sureHealth == 25);
-    // In both, and the same entity: not 3 (gone from the drawn one), nor 6, 7 and 8
-    TIDE_CHECK(seen->both == bits(1, 2, 5, 0, 0) && seen->mismatched == 0);
+    // In both: 6/7 share their causal identity; 3 and 8 have no drawn/confirmed counterpart.
+    TIDE_CHECK(seen->both == bits(1, 2, 5, 6, 0) && seen->mismatched == 1);
     TIDE_CHECK(seen->behind == 1); // Body 1 took a hit only the drawn world had
     // ...and a mark: each world's list is read from its own heap
     TIDE_CHECK(seen->named == 1 && seen->marks == 12 && seen->sureNamed == 1 && seen->sureMarks == 7 && seen->sureWords == 1);
-    TIDE_CHECK(seen->undead == bits(1, 2, 5, 0, 0) && seen->corpses == 1 << 2 && seen->sureCorpses == 0);
+    TIDE_CHECK(seen->undead == bits(1, 2, 5, 6, 0) && seen->corpses == 1 << 2 && seen->sureCorpses == 0);
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_local_free(&local);
     tide_world_free(&drawn);

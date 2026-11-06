@@ -56,7 +56,8 @@ system Check(mut Results r)
     Expect(r, "cat".Contains("at") && "cat".StartsWith("c") && "cat".EndsWith("t"));
     Expect(r, "x" != "y");
     Expect(r, $"{(r.checks > 0 ? 1 : 2)}" == "1");
-    Expect(r, $"{this}" == "Entity(1:1)");
+    var identity = $"{this}";
+    Expect(r, identity.length == 41 && identity.StartsWith("Entity(0000000000000001:") && identity.EndsWith(")"));
     Expect(r, Greet("cat") == "hi cat");
     Expect(r, "".length == 0);
 

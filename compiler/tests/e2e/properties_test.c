@@ -17,7 +17,7 @@ TIDE_TEST(properties_get_set_compound_and_steps)
     TIDE_CHECK(world.Results.before == 8);
     TIDE_CHECK(world.Results.after == 9);
     TIDE_CHECK(world.Results.sum == 17);
-    TIDE_CHECK(world.Results.identity.index == 2);
+    TIDE_CHECK(tide_has_Meter(&world, world.Results.identity));
     TIDE_CHECK(world.Results.position.x == 14 && world.Results.position.y == 9 && world.Results.position.z == 16);
     TIDE_CHECK(world.Results.queried.x == 14 && world.Results.queried.y == 9 && world.Results.queried.z == 16);
     TIDE_CHECK(world.Results.direct.x == 6 && tide_abs_f(world.Results.direct.y - 8) < 0.00001f && world.Results.direct.z == 10);

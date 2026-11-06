@@ -11,11 +11,12 @@ static tide_draw_list draw;
 static tide_gui gui;
 
 // The Main scene is slot 0, and its Setup spawns the unit first.
-static const tide_entity UNIT = {1, 1};
+static tide_entity UNIT;
 
 TIDE_TEST(default_value_all_checks_pass)
 {
     tide_world_init(&world, 1.0f);
+    UNIT = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     const Results r = tide_get_Results(&world, UNIT);
     TIDE_REQUIRE(tide_has_Results(&world, UNIT));
@@ -27,6 +28,7 @@ TIDE_TEST(default_value_all_checks_pass)
 TIDE_TEST(default_value_field_defaults)
 {
     tide_world_init(&world, 1.0f);
+    UNIT = tide_entity_in_slot(&world.entities, 1);
     const Unit u = tide_get_Unit(&world, UNIT);
     TIDE_REQUIRE(tide_has_Unit(&world, UNIT));
     TIDE_CHECK(u.level == 5);
@@ -39,6 +41,7 @@ TIDE_TEST(default_value_field_defaults)
 TIDE_TEST(default_value_draw_arguments)
 {
     tide_world_init(&world, 1.0f);
+    UNIT = tide_entity_in_slot(&world.entities, 1);
     tide_local_init(&local);
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);

@@ -1,8 +1,6 @@
-// What every system shares, whatever entities it runs for: entities get their
-// IDs in order, so a system that spawns as it runs on one thread waits for the
-// others that spawn. Systems that split their entities across threads don't:
-// their spawns get IDs once they're done. C is trusted, so systems that call it
-// run alongside each other like any others.
+// Spawning systems retain deterministic schedule order for deferred entity
+// changes. Final logical identities are causal, independent of private storage.
+// C is trusted, so otherwise independent C calls retain parallel eligibility.
 
 extern int Roll();
 

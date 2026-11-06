@@ -1,5 +1,30 @@
 # Benchmarks
 
+The stable-identity change intentionally updates the quick benchmark world-hash
+pins, independently matching fresh Windows ASan and WASI runs: sand tick181
+`8aef90b836a56b9e`, gallery tick272 `017398d3dd004471`, earth and deliberate
+client-divergence tick273 `85668de38fe81a0e`, earth two-shard tick273
+`8d08d2811257262c`. Other convergence/transport checks passed. The deliberate
+divergence variant reports mismatches by design and finishes at the same server
+hash as ordinary earth; no measured timings or old saved results were repinned.
+After the deliberate identity-pin update, all five quick cases pass on native
+ASan and WASI.
+
+
+## Logical Entity diagnostic and accounting migration (2026-11-06)
+
+Earth's divergence report now compares complete logical keys, looking up each
+server key in the client rather than pairing private slot numbers. A second
+walk reports client-only keys too, with the same diagnostic limit and component/
+field comparisons. Displayed identities include both 64-bit words. The correction
+benchmark's requested allocation count follows the attached table's single
+full-key hash index; the removed auxiliary generation index is no longer counted.
+Its three row columns and page allocations remain included. These are correctness
+and bookkeeping changes for Entity's approved ABI change; saved measurements and
+workloads are unchanged, and no performance comparison is claimed. Validation
+accompanies the full native/web logical-identity integration.
+
+
 ## A depth pre-pass: bench_prepass (2026-11-06)
 
 `bench/prepass` (native only; its CTest, `--quick`, checks the picture alone): N full-screen cards, each cut out in

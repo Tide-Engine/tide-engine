@@ -1,0 +1,47 @@
+settings { maxPlayers = 2; }
+component Gun { bool shown; VisibilityGroup group; }
+component Alternate { }
+component Shot { Entity shooter; int tick; int kind; }
+singleton Order { List<Entity> query; List<Entity> events; }
+scene Main { }
+event Fire { }
+
+void MakeShot(Entity shooter, VisibilityGroup group, int kind, Time time)
+{
+    Spawn(Shot { shooter = shooter, tick = time.tick, kind = kind }, Visibility { group = group });
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Gun { shown = true });
+    var hidden = Visibility.CreateGroup(Audience.None);
+    Spawn(Gun { group = hidden }, Visibility { group = hidden });
+    Spawn(Gun { shown = true }, Alternate);
+}
+
+system QueryFire(query (Gun gun) guns, mut Order order, Time time)
+{
+    order.query.Clear();
+    order.events.Clear();
+    foreach (var gun in guns)
+    {
+        if (gun.gun.shown) order.query.Add(gun.entity);
+        MakeShot(gun.entity, gun.gun.group, 1, time);
+        MakeShot(gun.entity, gun.gun.group, 2, time);
+        gun.entity.Send(Fire { });
+    }
+}
+
+event(Fire) OnFire(Gun gun, mut Order order, Time time)
+{
+    if (gun.shown) order.events.Add(this);
+    MakeShot(this, gun.group, 3, time);
+}
+
+system Expire(Shot shot, Time time)
+{
+    if (shot.tick < time.tick) this.Destroy();
+}
+
+component Ticket { PlayerID player; }
+event(PlayerJoined joined) Joined() { Spawn(Ticket { player = joined.player }); }

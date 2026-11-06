@@ -441,7 +441,7 @@ typedef struct fixture_record { fixture state; tide_list shapes, source; } fixtu
 typedef struct fixture_entry { int64_t order; tide_entity key; tide_list shapes; } fixture_entry;
 typedef struct fixture_change { tide_entity entity; fixture state; int32_t kind; bool sensor; uint8_t padding[3]; } fixture_change;
 typedef struct pending_fixture { fixture_change change; uint8_t source[64]; uint32_t size; } pending_fixture;
-_Static_assert(sizeof(fixture_record) == 48 && sizeof(fixture_entry) == 24 && sizeof(fixture_change) == 48, "fixture record ABI changed");
+_Static_assert(sizeof(fixture_record) == 48 && sizeof(fixture_entry) == 32 && sizeof(fixture_change) == 56, "fixture record ABI changed");
 static uint32_t fixture_entity_hash(const void *key) { return tide_map_hash_bytes(key, sizeof(tide_entity)); }
 static bool fixture_entity_equal(const void *a, const void *b) { return memcmp(a, b, sizeof(tide_entity)) == 0; }
 static const tide_map_kind fixture_map_kind = {sizeof(fixture_entry), offsetof(fixture_entry, key), fixture_entity_hash, fixture_entity_hash, fixture_entity_equal};

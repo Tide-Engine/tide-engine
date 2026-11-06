@@ -298,8 +298,8 @@ static void write_natvis(const gen *g, sb *o)
     sb_put(o, "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\">\n");
     // The engine's values
     sb_put(o, "  <Type Name=\"tide_entity\">\n"
-              "    <DisplayString Condition=\"generation == 0\">none</DisplayString>\n"
-              "    <DisplayString>Entity({index}:{generation})</DisplayString>\n"
+              "    <DisplayString Condition=\"birth == 0 &amp;&amp; lineage == 0\">none</DisplayString>\n"
+              "    <DisplayString>Entity({birth}:{lineage})</DisplayString>\n"
               "  </Type>\n"
               "  <Type Name=\"tide_str\">\n"
               "    <DisplayString>{ptr,[bytes]s8}</DisplayString>\n"

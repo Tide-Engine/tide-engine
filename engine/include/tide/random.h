@@ -58,7 +58,7 @@ static inline tide_random tide_random_seeded(const int64_t seed)
 static inline tide_random tide_random_place(const uint32_t seed, const uint32_t tick, const tide_entity entity, const uint32_t place)
 {
     uint64_t state = tide_random_mix((((uint64_t)seed << 32) | tick) + TIDE_RANDOM_GOLDEN);
-    state = tide_random_mix(state ^ (((uint64_t)entity.generation << 32) | entity.index));
+    state = tide_random_mix(tide_entity_hash(state, entity));
     state = tide_random_mix(state + ((uint64_t)place + 1u) * TIDE_RANDOM_GOLDEN);
     return (tide_random){(int64_t)(state ? state : TIDE_RANDOM_GOLDEN)};
 }

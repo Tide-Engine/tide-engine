@@ -97,6 +97,8 @@ static int frame(void *user, const float seconds)
     }
     const bool slept = atomic_load(&jobs_tasks_slept) > 0;
     if (now > 45.0) {
+        printf("progress: %d ticks, %d timed; %.3f s serial, %.3f s pooled; background %d; slept %d\n",
+               ticks, timed, one_seconds, many_seconds, background_done, atomic_load(&jobs_tasks_slept));
         return fail(!(threads_seen & ~1u) ? "no worker joined in 45 seconds"
                     : ticks < TICKS       ? "the ticks took over 45 seconds"
                     : !background_done   ? "background worker did not finish in 45 seconds"

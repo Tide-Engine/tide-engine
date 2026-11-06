@@ -135,9 +135,9 @@ def _handle(valobj):
 
 
 def entity_summary(valobj, internal_dict):
-    index = valobj.GetChildMemberWithName("index").GetValueAsUnsigned()
-    generation = valobj.GetChildMemberWithName("generation").GetValueAsUnsigned()
-    return "none" if generation == 0 else "Entity(%d:%d)" % (index, generation)
+    birth = valobj.GetChildMemberWithName("birth").GetValueAsUnsigned()
+    lineage = valobj.GetChildMemberWithName("lineage").GetValueAsUnsigned()
+    return "none" if birth == 0 and lineage == 0 else "Entity(%d:%d)" % (birth, lineage)
 
 
 def _quote(data):

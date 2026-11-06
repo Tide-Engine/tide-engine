@@ -8,8 +8,8 @@ static tide_world before, previous, after, after_previous, verified;
 static tide_local local, other_local;
 static tide_draw_list draw;
 static tide_gui gui;
-static const tide_entity BODY = {1, 1};
-static const tide_entity BODY64 = {2, 1};
+static tide_entity BODY;
+static tide_entity BODY64;
 
 static bool near(float a, float b) { return tide_abs_f(a - b) < 0.00002f; }
 static bool same_rotation(tide_quaternion a, tide_quaternion b)
@@ -22,6 +22,8 @@ static void start(void)
     tide_local_init(&local);
     tide_local_init(&other_local);
     tide_world_init(&before, 1.0f / 60.0f);
+    BODY = tide_entity_in_slot(&before.entities, 1);
+    BODY64 = tide_entity_in_slot(&before.entities, 2);
     tide_world_copy(&previous, &before);
     tide_world_copy(&after, &before);
     tide_world_copy(&after_previous, &before);

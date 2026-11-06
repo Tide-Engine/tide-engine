@@ -117,68 +117,77 @@ static uint32_t tick_of(const void *world)
 
 // What differs between two worlds, entity by entity: which components each
 // has, and the fields of those both have that differ
-static void differ(const void *server_world, const void *client_world, const uint32_t most)
-{
+static void differ(const void *server_world, const void *client_world, const uint32_t most) {
     const tide_world *s = server_world, *c = client_world;
-    const uint32_t slots = s->entities.next_unused > c->entities.next_unused ? s->entities.next_unused : c->entities.next_unused;
     uint32_t said = 0;
-    for (uint32_t i = 0; i < slots && said < most; i++) {
-        const tide_entity a = i < s->entities.next_unused ? tide_entity_in_slot(&s->entities, i) : (tide_entity){0};
-        const tide_entity b = i < c->entities.next_unused ? tide_entity_in_slot(&c->entities, i) : (tide_entity){0};
-        if (tide_entity_is_null(a) && tide_entity_is_null(b)) continue;
-        if (tide_entity_is_null(a) || tide_entity_is_null(b) || a.generation != b.generation) {
-            printf("    entity %u: the server's %s, the machine's %s\n", i, tide_entity_is_null(a) ? "has none" : "is there",
-                   tide_entity_is_null(b) ? "has none" : "is there");
-            said++;
-            continue;
-        }
+    for (uint32_t side = 0; side < 2 && said < most; side++) {
+        const tide_entities *entities = side ? &c->entities : &s->entities;
+        for (uint32_t i = 0; i < entities->next_unused && said < most; i++) {
+            const tide_entity a = tide_entity_in_slot(entities, i), b = a;
+            if (tide_entity_is_null(a))
+                continue;
+            const bool server_has = tide_entity_alive(&s->entities, a);
+            const bool client_has = tide_entity_alive(&c->entities, a);
+            if (side && server_has)
+                continue; // Already compared from the server's key set.
+            if (!server_has || !client_has) {
+                printf("    entity %016llx:%016llx: the server's %s, the machine's %s\n", (unsigned long long)a.birth,
+                       (unsigned long long)a.lineage, server_has ? "is there" : "has none",
+                       client_has ? "is there" : "has none");
+                said++;
+                continue;
+            }
 #define PRESENCE(T)                                                                                                    \
-    if (tide_has_##T(s, a) != tide_has_##T(c, b)) {                                                                   \
-        printf("    entity %u: %s " #T " on the server, %s on the machine\n", i, tide_has_##T(s, a) ? "a" : "no",      \
-               tide_has_##T(c, b) ? "one" : "none");                                                                  \
-        said++;                                                                                                       \
+    if (tide_has_##T(s, a) != tide_has_##T(c, b)) {                                                                    \
+        printf("    entity %016llx:%016llx: %s " #T " on the server, %s on the machine\n",                             \
+               (unsigned long long)a.birth, (unsigned long long)a.lineage, tide_has_##T(s, a) ? "a" : "no",            \
+               tide_has_##T(c, b) ? "one" : "none");                                                                   \
+        said++;                                                                                                        \
     }
-        PRESENCE(Walker) PRESENCE(Person) PRESENCE(Car) PRESENCE(Beacon) PRESENCE(Owner) PRESENCE(Seen)
+            PRESENCE(Walker)
+            PRESENCE(Person) PRESENCE(Car) PRESENCE(Beacon) PRESENCE(Owner) PRESENCE(Seen)
 #undef PRESENCE
 #define FIELD(T, f, fmt, ...)                                                                                          \
-    if (memcmp(&x.f, &y.f, sizeof x.f) != 0) {                                                                        \
-        printf("    entity %u " #T "." #f ": server " fmt ", machine " fmt "\n", i, __VA_ARGS__);                     \
-        said++;                                                                                                       \
+    if (memcmp(&x.f, &y.f, sizeof x.f) != 0) {                                                                         \
+        printf("    entity %016llx:%016llx " #T "." #f ": server " fmt ", machine " fmt "\n",                          \
+               (unsigned long long)a.birth, (unsigned long long)a.lineage, __VA_ARGS__);                               \
+        said++;                                                                                                        \
     }
 #define V3(v) (double)(v).x, (double)(v).y, (double)(v).z
-        if (tide_has_Walker(s, a) && tide_has_Walker(c, b)) {
-            const Walker x = tide_get_Walker(s, a), y = tide_get_Walker(c, b);
-            FIELD(Walker, position, "(%.3f %.3f %.3f)", V3(x.position), V3(y.position))
-            FIELD(Walker, forward, "(%.3f %.3f %.3f)", V3(x.forward), V3(y.forward))
-            FIELD(Walker, velocity, "(%.3f %.3f %.3f)", V3(x.velocity), V3(y.velocity))
-            FIELD(Walker, height, "%.3f", (double)x.height, (double)y.height)
-            FIELD(Walker, speed, "%.3f", (double)x.speed, (double)y.speed)
-            FIELD(Walker, waving, "%d", x.waving, y.waving)
-            FIELD(Walker, moves, "%d", x.moves, y.moves)
-            FIELD(Walker, fives, "%d", x.fives, y.fives)
-            FIELD(Walker, fived, "%d", x.fived, y.fived)
-            FIELD(Walker, placed, "%d", x.placed, y.placed)
-            FIELD(Walker, driving, "%d", x.driving, y.driving)
-        }
-        if (tide_has_Person(s, a) && tide_has_Person(c, b)) {
-            const Person x = tide_get_Person(s, a), y = tide_get_Person(c, b);
-            FIELD(Person, goal, "(%.3f %.3f %.3f)", V3(x.goal), V3(y.goal))
-            FIELD(Person, rest, "%.3f", (double)x.rest, (double)y.rest)
-            FIELD(Person, stuck, "%.3f", (double)x.stuck, (double)y.stuck)
-        }
-        if (tide_has_Car(s, a) && tide_has_Car(c, b)) {
-            const Car x = tide_get_Car(s, a), y = tide_get_Car(c, b);
-            FIELD(Car, position, "(%.3f %.3f %.3f)", V3(x.position), V3(y.position))
-            FIELD(Car, along, "%.3f", (double)x.along, (double)y.along)
-            FIELD(Car, way, "%.3f", (double)x.way, (double)y.way)
-            FIELD(Car, speed, "%.3f", (double)x.speed, (double)y.speed)
-        }
-        if (tide_has_Beacon(s, a) && tide_has_Beacon(c, b)) {
-            const Beacon x = tide_get_Beacon(s, a), y = tide_get_Beacon(c, b);
-            FIELD(Beacon, at, "(%.3f %.3f %.3f)", V3(x.at), V3(y.at))
-        }
+            if (tide_has_Walker(s, a) && tide_has_Walker(c, b)) {
+                const Walker x = tide_get_Walker(s, a), y = tide_get_Walker(c, b);
+                FIELD(Walker, position, "(%.3f %.3f %.3f)", V3(x.position), V3(y.position))
+                FIELD(Walker, forward, "(%.3f %.3f %.3f)", V3(x.forward), V3(y.forward))
+                FIELD(Walker, velocity, "(%.3f %.3f %.3f)", V3(x.velocity), V3(y.velocity))
+                FIELD(Walker, height, "%.3f", (double)x.height, (double)y.height)
+                FIELD(Walker, speed, "%.3f", (double)x.speed, (double)y.speed)
+                FIELD(Walker, waving, "%d", x.waving, y.waving)
+                FIELD(Walker, moves, "%d", x.moves, y.moves)
+                FIELD(Walker, fives, "%d", x.fives, y.fives)
+                FIELD(Walker, fived, "%d", x.fived, y.fived)
+                FIELD(Walker, placed, "%d", x.placed, y.placed)
+                FIELD(Walker, driving, "%d", x.driving, y.driving)
+            }
+            if (tide_has_Person(s, a) && tide_has_Person(c, b)) {
+                const Person x = tide_get_Person(s, a), y = tide_get_Person(c, b);
+                FIELD(Person, goal, "(%.3f %.3f %.3f)", V3(x.goal), V3(y.goal))
+                FIELD(Person, rest, "%.3f", (double)x.rest, (double)y.rest)
+                FIELD(Person, stuck, "%.3f", (double)x.stuck, (double)y.stuck)
+            }
+            if (tide_has_Car(s, a) && tide_has_Car(c, b)) {
+                const Car x = tide_get_Car(s, a), y = tide_get_Car(c, b);
+                FIELD(Car, position, "(%.3f %.3f %.3f)", V3(x.position), V3(y.position))
+                FIELD(Car, along, "%.3f", (double)x.along, (double)y.along)
+                FIELD(Car, way, "%.3f", (double)x.way, (double)y.way)
+                FIELD(Car, speed, "%.3f", (double)x.speed, (double)y.speed)
+            }
+            if (tide_has_Beacon(s, a) && tide_has_Beacon(c, b)) {
+                const Beacon x = tide_get_Beacon(s, a), y = tide_get_Beacon(c, b);
+                FIELD(Beacon, at, "(%.3f %.3f %.3f)", V3(x.at), V3(y.at))
+            }
 #undef V3
 #undef FIELD
+        }
     }
     // The singletons the match keeps
     if (s->Roster.online != c->Roster.online || s->Roster.next != c->Roster.next) {
@@ -186,7 +195,8 @@ static void differ(const void *server_world, const void *client_world, const uin
                c->Roster.online, c->Roster.next);
         said++;
     }
-    if (!said) printf("    (nothing this compares: something else)\n");
+    if (!said)
+        printf("    (nothing this compares: something else)\n");
 }
 
 int main(int argc, char **argv)

@@ -5,7 +5,7 @@ static tide_world world;
 
 // The Main scene is slot 0; its Setup loads the arena (1) and the hand (2); the
 // arena's Setup spawns a floor (3) and two enemies (4 and 5).
-static const tide_entity FLOOR = {3, 1};
+static tide_entity FLOOR;
 
 static void ticks(int n)
 {
@@ -15,6 +15,7 @@ static void ticks(int n)
 TIDE_TEST(scenes_load_and_set_up)
 {
     tide_world_init(&world, 1.0f);
+    FLOOR = tide_entity_in_slot(&world.entities, 3);
     TIDE_CHECK(tide_world_entity_count(&world) == 6);
     TIDE_CHECK(world.Stats.arenasSetUp == 1);
     TIDE_CHECK(world.Stats.argumentOrder == 37);
@@ -29,6 +30,7 @@ TIDE_TEST(scenes_load_and_set_up)
 TIDE_TEST(scenes_remember_who_sees_them)
 {
     tide_world_init(&world, 1.0f);
+    FLOOR = tide_entity_in_slot(&world.entities, 3);
     TIDE_REQUIRE(tide_has_Hand(&world, world.Stats.hand));
     TIDE_CHECK(tide_has_Visibility(&world, world.Stats.hand));
     TIDE_CHECK(tide_world_visible(&world, world.Stats.hand, tide_player_from_index(1)));
@@ -39,6 +41,7 @@ TIDE_TEST(scenes_remember_who_sees_them)
 TIDE_TEST(scenes_unload_everything_in_them)
 {
     tide_world_init(&world, 1.0f);
+    FLOOR = tide_entity_in_slot(&world.entities, 3);
     ticks(1);
     TIDE_CHECK(tide_world_entity_count(&world) == 8); // Each enemy dropped loot into the arena
     ticks(2);

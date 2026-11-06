@@ -25,17 +25,18 @@ struct tide_shard_agent {
     uint32_t applied;  // The last batch of instructions applied
     uint32_t reported; // Its world's messages reported, through this number
     // Where its ghosts go, and what it last sent each: by tree root, its bytes' hash
-    // (UINT64_MAX: the root's singletons)
     target *targets;
     uint32_t target_count;
     map64 *sent; // By shard
     map64 *bases; // ...and the bytes it last sent of each tree (a `base *`), what it sends what changed against
     uint32_t sent_room;
+    uint64_t *singleton_hashes; // Separate from the complete Entity key domain
     uint64_t ghost_bytes; // Of the GHOSTS it reported
     // Trees whose ARRIVE it handed its server and the server may not have
     // applied yet: not in its world, and not to be dropped from the ghosts
     // their senders keep of them
     map64 arriving;
+    map64 owned; // Previous report's live owned keys
     uint32_t sample_stride; // Asked to report where its entities are, every this many: 0 not
     bool fresh;             // Its first report says what it owns and holds
     uint8_t *checkpoint;    // Its world, packed, for the next report
@@ -50,7 +51,10 @@ static map64 *sent_to(tide_shard_agent *a, const uint32_t to)
         const uint32_t room = to + 8u;
         map64 *grown = realloc(a->sent, room * sizeof *grown);
         map64 *bases = realloc(a->bases, room * sizeof *bases);
-        if (!grown || !bases) tide_out_of_memory();
+        uint64_t *singletons = realloc(a->singleton_hashes, room * sizeof *singletons);
+        if (!grown || !bases || !singletons) tide_out_of_memory();
+        memset(singletons + a->sent_room, 0, (room - a->sent_room) * sizeof *singletons);
+        a->singleton_hashes = singletons;
         memset(grown + a->sent_room, 0, (room - a->sent_room) * sizeof *grown);
         memset(bases + a->sent_room, 0, (room - a->sent_room) * sizeof *bases);
         a->sent = grown;
@@ -66,7 +70,7 @@ typedef struct base {
     uint8_t data[];
 } base;
 
-static void forget_base(map64 *bases, const uint64_t key)
+static void forget_base(map64 *bases, const tide_entity key)
 {
     const uint64_t *kept = map_find(bases, key);
     if (!kept) return;
@@ -77,7 +81,7 @@ static void forget_base(map64 *bases, const uint64_t key)
 static void free_bases(map64 *bases)
 {
     for (uint32_t k = 0; k < bases->room; k++) {
-        if (bases->keys[k] && bases->keys[k] != UINT64_MAX) free((void *)(uintptr_t)bases->values[k]);
+        if (!tide_entity_is_null(bases->keys[k])) free((void *)(uintptr_t)bases->values[k]);
     }
     map_free(bases);
 }
@@ -107,7 +111,9 @@ void tide_shard_agent_destroy(tide_shard_agent *a)
     }
     free(a->sent);
     free(a->bases);
+    free(a->singleton_hashes);
     map_free(&a->arriving);
+    map_free(&a->owned);
     free(a->targets);
     free(a->checkpoint);
     free(a);
@@ -139,8 +145,8 @@ static void note_arrival(tide_shard_agent *a, const uint8_t *data, const uint32_
     tide_read_u32(&r); // The tree's count
     tide_read_u32(&r); // Its root's record's size
     tide_entity root;
-    root.index = tide_read_u32(&r);
-    root.generation = tide_read_u32(&r);
+    root.birth = tide_read_u64(&r);
+    root.lineage = tide_read_u64(&r);
     if (r.failed || from == a->shard || from == TIDE_SHARD_ORCHESTRATOR) return;
     map_put(sent_to(a, from), key_of(root), 1u); // Sent, with bytes it doesn't know
     map_put(&a->arriving, key_of(root), 1u);
@@ -154,8 +160,8 @@ static void note_stale(tide_shard_agent *a, const uint8_t *data, const uint32_t 
     const uint32_t from = tide_read_u32(&r);
     tide_read_u32(&r);
     tide_entity root;
-    root.index = tide_read_u32(&r);
-    root.generation = tide_read_u32(&r);
+    root.birth = tide_read_u64(&r);
+    root.lineage = tide_read_u64(&r);
     if (r.failed || from == a->shard || from == TIDE_SHARD_ORCHESTRATOR) return;
     uint64_t *had = map_find(sent_to(a, from), key_of(root));
     if (had) *had = 1u; // Sent, with bytes it doesn't know
@@ -190,11 +196,11 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
     uint32_t held = 0, held_at = 0;
     if (flags & TIDE_SHARD_DO_HELD) {
         held = tide_read_u32(&r);
-        if (r.failed || held > (r.size - r.at) / 12u) return false;
+        if (r.failed || held > (r.size - r.at) / 20u) return false;
         held_at = r.at;
         for (uint32_t i = 0; i < held; i++) {
             tide_read_u32(&r);
-            tide_read_u64(&r);
+            read_entity(&r);
         }
     }
     if (r.failed || r.at != r.size) return false;
@@ -249,9 +255,10 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
                 continue;
             }
             for (uint32_t k = 0; k < a->sent[s].room; k++) {
-                if (a->sent[s].keys[k]) a->sent[s].values[k] = 1u; // Sent, with bytes it doesn't know
+                if (!tide_entity_is_null(a->sent[s].keys[k])) a->sent[s].values[k] = 1u; // Sent, with bytes it doesn't know
             }
         }
+        for (uint32_t s = 0; s < a->sent_room; s++) a->singleton_hashes[s] = 0;
         free(a->targets);
         a->targets = kept;
         a->target_count = targets;
@@ -260,7 +267,7 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
     r.at = held_at;
     for (uint32_t i = 0; i < held; i++) {
         const uint32_t holder = tide_read_u32(&r);
-        const uint64_t key = tide_read_u64(&r);
+        const tide_entity key = read_entity(&r);
         if (holder != a->shard) map_put(sent_to(a, holder), key, 1u);
     }
     return true;
@@ -270,7 +277,7 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
 // Ghosts: what it owns near a target's region, against what it last sent
 
 typedef struct border {
-    uint64_t *keys;
+    tide_entity *keys;
     uint64_t *hashes;
     uint32_t *at; // Where each tree's bytes are in `bytes`
     uint32_t *sizes;
@@ -355,8 +362,8 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
         if (had && *had > 1u && was && was->size == size) {
             const tide_entity root = entity_of(b.keys[i]);
             tide_write_u8(&m, 1u);
-            tide_write_u32(&m, root.index);
-            tide_write_u32(&m, root.generation);
+            tide_write_u64(&m, root.birth);
+            tide_write_u64(&m, root.lineage);
             tide_write_u64(&m, tide_hash(was->data, size));
             const uint32_t at = m.size;
             tide_write_u32(&m, 0u);
@@ -381,19 +388,19 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
     const uint32_t drops_at = m.size;
     tide_write_u32(&m, 0u);
     for (uint32_t i = 0; i < sent->room; i++) {
-        const uint64_t key = sent->keys[i];
-        if (!key || key == UINT64_MAX || map_find(&now, key)) continue; // UINT64_MAX: the singletons
+        const tide_entity key = sent->keys[i];
+        if (tide_entity_is_null(key) || map_find(&now, key)) continue;
         if (map_find(&a->arriving, key)) continue; // Here once the server's next tick takes it
         const tide_entity e = entity_of(key);
-        tide_write_u32(&m, e.index);
-        tide_write_u32(&m, e.generation);
+        tide_write_u64(&m, e.birth);
+        tide_write_u64(&m, e.lineage);
         drops++;
     }
-    for (uint32_t i = drops_at + 4u; i < m.size; i += 8u) { // Forgotten as sent, now that they're dropped
-        tide_reader e = {m.data + i, 8u, 0, false};
+    for (uint32_t i = drops_at + 4u; i < m.size; i += 16u) { // Forgotten as sent, now that they're dropped
+        tide_reader e = {m.data + i, 16u, 0, false};
         tide_entity dropped;
-        dropped.index = tide_read_u32(&e);
-        dropped.generation = tide_read_u32(&e);
+        dropped.birth = tide_read_u64(&e);
+        dropped.lineage = tide_read_u64(&e);
         map_remove(sent, key_of(dropped));
         forget_base(bases, key_of(dropped));
     }
@@ -403,11 +410,11 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
         uint32_t size = 0;
         uint8_t *values = a->api->singletons(world, &size);
         const uint64_t hash = values ? tide_hash(values, size) : 0u;
-        const uint64_t *had = map_find(sent, UINT64_MAX);
-        if (values && (!had || *had != hash)) {
+        const uint64_t had = a->singleton_hashes[t->shard];
+        if (values && (!had || had != hash)) {
             tide_write_u8(&m, 1u);
             tide_write_bytes(&m, values, size);
-            map_put(sent, UINT64_MAX, hash);
+            a->singleton_hashes[t->shard] = hash;
             singletons = true;
         }
         free(values);
@@ -436,19 +443,23 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
 typedef struct listed {
     tide_writer *out;
     uint32_t count;
+    const map64 *previous;
+    map64 *now;
 } listed;
 
 static void list_owned(void *context, const tide_entity e)
 {
     listed *l = context;
-    tide_write_u64(l->out, key_of(e));
+    map_put(l->now, e, 1u);
+    if (l->previous && map_find(l->previous, e)) return;
+    write_entity(l->out, e);
     l->count++;
 }
 
 static void list_ghost(void *context, const tide_entity e, const int32_t source)
 {
     listed *l = context;
-    tide_write_u64(l->out, key_of(e));
+    write_entity(l->out, e);
     tide_write_u32(l->out, (uint32_t)source);
     l->count++;
 }
@@ -462,7 +473,7 @@ void tide_shard_agent_rebuilt(tide_shard_agent *a, const tide_game *game)
     // anew, and the ghosts on their way were dropped
     for (uint32_t s = 0; s < a->sent_room; s++) {
         for (uint32_t k = 0; k < a->sent[s].room; k++) {
-            if (a->sent[s].keys[k]) a->sent[s].values[k] = 1u; // Sent, with bytes it doesn't know
+            if (!tide_entity_is_null(a->sent[s].keys[k])) a->sent[s].values[k] = 1u; // Sent, with bytes it doesn't know
         }
     }
 }
@@ -498,8 +509,7 @@ uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size)
     tide_write_u32(&w, status.waiting);
     tide_write_u32(&w, status.outbox);
     tide_write_u32(&w, status.lent);
-    tide_write_u64(&w, status.indices);
-    tide_write_u64(&w, status.ranges_end);
+    tide_write_u64(&w, status.identity_clock);
     // The players connected here
     uint32_t at = w.size, count = 0;
     tide_write_u32(&w, 0u);
@@ -542,8 +552,8 @@ uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size)
         through = m.number > through ? m.number : through;
         tide_write_u32(&w, m.route);
         tide_write_u32(&w, m.target);
-        tide_write_u32(&w, m.entity.index);
-        tide_write_u32(&w, m.entity.generation);
+        tide_write_u64(&w, m.entity.birth);
+        tide_write_u64(&w, m.entity.lineage);
         tide_write_u32(&w, m.number);
         tide_write_u32(&w, m.size);
         tide_write_bytes(&w, m.data, m.size);
@@ -575,20 +585,23 @@ uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size)
         free(points);
         a->sample_stride = 0;
     }
-    // What it owns and holds, once it went on from a checkpoint
-    tide_write_u8(&w, a->fresh && a->api->owned ? 1u : 0u);
-    if (a->fresh && a->api->owned) {
+    // Newly owned keys; all of them after a checkpoint, and current ghosts once.
+    tide_write_u8(&w, a->api->owned ? 1u : 0u);
+    if (a->api->owned) {
         at = w.size;
         tide_write_u32(&w, 0u);
-        listed l = {&w, 0u};
+        map64 now = {0};
+        listed l = {&w, 0u, a->fresh ? NULL : &a->owned, &now};
         a->api->owned(world, list_owned, &l);
+        map_free(&a->owned);
+        a->owned = now;
         if (!w.overflow) tide_shard_patch_u32(w.data + at, l.count);
     }
     tide_write_u8(&w, a->fresh && a->api->ghosts ? 1u : 0u);
     if (a->fresh && a->api->ghosts) {
         at = w.size;
         tide_write_u32(&w, 0u);
-        listed l = {&w, 0u};
+        listed l = {&w, 0u, NULL, NULL};
         a->api->ghosts(world, list_ghost, &l);
         if (!w.overflow) tide_shard_patch_u32(w.data + at, l.count);
     }

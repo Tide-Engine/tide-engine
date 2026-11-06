@@ -333,8 +333,8 @@ static void gen_embed_heard(gen *g)
                          "    tide_scratch_reset(mark);\n", name);
         }
         sb_printf(o, "    const uint32_t value_bytes = ((uint32_t)sizeof v + 7u) & ~7u;\n"
-                     "    const uint32_t head[8] = {TIDE_PACKET_EVENT + value_bytes, %du, verified ? 2u : 1u, tick, target.index,\n"
-                     "                              target.generation, TIDE_PACKET_NONE, 0u};\n"
+                     "    const uint32_t head[10] = {TIDE_PACKET_EVENT + value_bytes, %du, verified ? 2u : 1u, tick, (uint32_t)target.birth, (uint32_t)(target.birth >> 32),\n"
+                     "                              (uint32_t)target.lineage, (uint32_t)(target.lineage >> 32), TIDE_PACKET_NONE, 0u};\n"
                      "    uint8_t *at = tide_packet_grow(&tide_embed_heard_store, TIDE_PACKET_EVENT + value_bytes, true);\n"
                      "    memcpy(at, head, sizeof head);\n    memcpy(at + TIDE_PACKET_EVENT, &v, sizeof v);\n"
                      "    tide_embed_heard_count++;\n}\n\n",
@@ -349,7 +349,7 @@ static void gen_embed_heard(gen *g)
               "        const uint32_t *entry = tide_embed_heard_store.entries + (size_t)i * 2u;\n"
               "        tide_packet_text(out, tide_embed_heard_store.text + entry[0], entry[1]);\n    }\n}\n\n"
               "// The records, each with where its entity is among the packet's while it's the same one\n"
-              "static void tide_embed_heard_write(tide_packet *out, const uint32_t *place, const uint32_t places)\n{\n"
+              "static void tide_embed_heard_write(tide_packet *out)\n{\n"
               "    if (!tide_embed_heard_count) return;\n"
               "    const uint32_t size = tide_embed_heard_store.size;\n"
               "    const uint32_t section[6] = {TIDE_PACKET_EVENTS, 0u, tide_embed_heard_count, 0u, size, 0u};\n"
@@ -357,11 +357,9 @@ static void gen_embed_heard(gen *g)
               "    memcpy(records, section, sizeof section);\n    out->sections++;\n    records += TIDE_PACKET_SECTION;\n"
               "    memcpy(records, tide_embed_heard_store.bytes, size);\n"
               "    for (uint32_t at = 0; at + TIDE_PACKET_EVENT <= size;) {\n"
-              "        uint32_t head[8];\n        memcpy(head, records + at, sizeof head);\n"
-              "        if (head[4] < places && place[head[4]] != TIDE_PACKET_NONE) {\n"
-              "            uint32_t row[2];\n"
-              "            memcpy(row, out->bytes + TIDE_PACKET_HEADER + (size_t)place[head[4]] * TIDE_PACKET_ENTITY, sizeof row);\n"
-              "            if (row[1] == head[5]) head[6] = place[head[4]];\n        }\n"
+              "        uint32_t head[10];\n        memcpy(head, records + at, sizeof head);\n"
+              "        const tide_entity target = {(uint64_t)head[4] | (uint64_t)head[5] << 32, (uint64_t)head[6] | (uint64_t)head[7] << 32};\n"
+              "        head[8] = tide_packet_find_entity(out, target);\n"
               "        memcpy(records + at, head, sizeof head);\n"
               "        at += head[0] ? head[0] : size;\n    }\n"
               "    tide_embed_heard_drop();\n}\n\n");
@@ -389,16 +387,13 @@ static void gen_embed(gen *g)
         sb_printf(o, "    tide_text_use(%s, %s);\n", world_heap(prog, false) ? "(tide_heap *)(uintptr_t)&w->heap" : "NULL",
                   world_heap(prog, true) ? "(tide_heap *)(uintptr_t)&l->heap" : "NULL");
     }
-    sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n    uint32_t places = w->entities.next_unused;\n");
+    sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n");
     if (sharded(g)) { // Every world the frame drew: the host gave the others again (tide_frame_shards)
         sb_put(o, "    const float home_alpha = alpha;\n"
                   "    tide_view_home = (tide_view_worlds){.current = w, .previous = previous, .alpha = alpha};\n"
-                  "    for (uint32_t k = 0; k < tide_view_more_count; k++) {\n"
-                  "        const tide_world *o = tide_view_more[k].current;\n"
-                  "        if (o && o->entities.next_unused > places) places = o->entities.next_unused;\n    }\n");
+                  "");
     }
-    sb_put(o, "    uint32_t *place = tide_packet_places(out, places);\n"
-              "    (void)place;\n    uint32_t n = 0;\n");
+    sb_put(o, "    uint32_t n = 0;\n");
     const int owner = prog->owner ? prog->owner->index : -1;
     if (owner >= 0) {
         sb_printf(o, "    const tide_player_id me = l->%s.%s;\n    (void)me;\n", type_cname(prog->session),
@@ -424,21 +419,20 @@ static void gen_embed(gen *g)
         }
         // ...and what it was spawned as, which tells another program's object for it from one for another entity a
         // rollback gave its handle
-        sb_put(o, "        const uint32_t row[6] = {e.index, e.generation, flags, TIDE_PACKET_NONE, TIDE_PACKET_NONE,\n"
+        sb_put(o, "        const uint32_t row[8] = {(uint32_t)e.birth, (uint32_t)(e.birth >> 32), (uint32_t)e.lineage, (uint32_t)(e.lineage >> 32), flags, TIDE_PACKET_NONE, TIDE_PACKET_NONE,\n"
                   "                                 tide_entity_born(&w->entities, e)};\n"
                   "        memcpy(tide_packet_grow(out, TIDE_PACKET_ENTITY, false), row, sizeof row);\n"
-                  "        if (e.index < places) place[e.index] = n;\n        n++;\n    }\n");
+                  "        tide_packet_entity_place(out, e, n);\n        n++;\n    }\n");
     }
     gen_embed_worlds_end(g);
     // Parents, now every entity has its place
     if (prog->hierarchy[0]) {
         // In a sharded game, as the world that owns each has it (tide_view_parent_of)
         sb_printf(o, "    for (uint32_t k = 0; k < n; k++) {\n"
-                     "        uint32_t row[6];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
+                     "        uint32_t row[8];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
                      "        memcpy(row, at, sizeof row);\n"
-                     "        const tide_entity parent = tide_%sparent_of(w, (tide_entity){row[0], row[1]});\n"
-                     "        if (tide_entity_is_null(parent) || parent.index >= places) continue;\n"
-                     "        row[4] = place[parent.index];\n        memcpy(at, row, sizeof row);\n    }\n",
+                     "        const tide_entity parent = tide_%sparent_of(w, (tide_entity){(uint64_t)row[0] | (uint64_t)row[1] << 32, (uint64_t)row[2] | (uint64_t)row[3] << 32});\n"
+                     "        row[6] = tide_packet_find_entity(out, parent);\n        memcpy(at, row, sizeof row);\n    }\n",
                   sharded(g) ? "view_" : "");
     }
     // Each component's rows and values, blended as views see them; then its local fields
@@ -461,7 +455,7 @@ static void gen_embed(gen *g)
             else sb_printf(&body, "            tide_blend_%s(&value, before, alpha);\n", name);
         }
         if (embed_has_fix(d)) sb_printf(&body, "            tide_embed_fix_%s(&value, out);\n", name);
-        sb_printf(&body, "            rows[k] = e.index < places ? place[e.index] : 0u;\n"
+        sb_printf(&body, "            rows[k] = tide_packet_find_entity(out, e);\n"
                          "            memcpy(values + (size_t)k * sizeof value, &value, sizeof value);\n            k++;\n");
         gen_embed_rows(g, c, body.data);
         sb_put(o, "    }\n");
@@ -476,7 +470,7 @@ static void gen_embed(gen *g)
             sb local_body = {0};
             sb_printf(&local_body, "            %s value = tide_get_%s_local(l, e);\n", part_name, name);
             if (embed_has_fix(part)) sb_printf(&local_body, "            tide_embed_fix_%s(&value, out);\n", part_name);
-            sb_put(&local_body, "            rows[k] = e.index < places ? place[e.index] : 0u;\n"
+            sb_put(&local_body, "            rows[k] = tide_packet_find_entity(out, e);\n"
                                 "            memcpy(values + (size_t)k * sizeof value, &value, sizeof value);\n            k++;\n");
             gen_embed_rows(g, c, local_body.data);
             sb_put(o, "    }\n");
@@ -504,7 +498,7 @@ static void gen_embed(gen *g)
         }
     }
     // What this machine heard since the last packet
-    if (heard) sb_put(o, "    tide_embed_heard_write(out, place, places);\n");
+    if (heard) sb_put(o, "    tide_embed_heard_write(out);\n");
     // The other worlds were for this packet alone, as for a frame
     if (sharded(g)) sb_put(o, "    tide_view_more_count = 0u;\n    tide_view_home = (tide_view_worlds){0};\n    tide_view_drop_grids();\n");
     sb_printf(o, "    tide_scratch_reset(mark);\n"
@@ -578,9 +572,9 @@ static void gen_embed(gen *g)
                   "    *field = length ? tide_list_from(bytes, (int32_t)(length / element), element) : (tide_list){0};\n"
                   "    return true;\n}\n\n");
     }
-    sb_put(o, "static bool tide_embed_command(void *local_state, int32_t type, uint32_t target_index, uint32_t target_generation,\n"
+    sb_put(o, "static bool tide_embed_command(void *local_state, int32_t type, uint64_t target_birth, uint64_t target_lineage,\n"
               "                               const void *value, uint32_t size)\n{\n"
-              "    tide_local *l = local_state;\n    const tide_entity target = {target_index, target_generation};\n"
+              "    tide_local *l = local_state;\n    const tide_entity target = {target_birth, target_lineage};\n"
               "    (void)l;\n    (void)target;\n    (void)value;\n    (void)size;\n    switch (type) {\n");
     for (int k = 0; k < prog->command_types.count; k++) {
         const decl *d = prog->command_types.items[k];

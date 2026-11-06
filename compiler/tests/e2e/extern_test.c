@@ -21,7 +21,7 @@ static Result result(void)
         tide_world_tick(&world);
         ticked = true;
     }
-    return tide_get_Result(&world, (tide_entity){1, 1});
+    return tide_get_Result(&world, tide_entity_in_slot(&world.entities, 1));
 }
 
 // Starting a match calls C: a machine joining one never starts it itself
@@ -34,7 +34,7 @@ TIDE_TEST(extern_starting_a_match_that_calls_c_isnt_pure)
 TIDE_TEST(extern_functions_call_c)
 {
     const Result r = result();
-    TIDE_REQUIRE(tide_has_Result(&world, (tide_entity){1, 1}));
+    TIDE_REQUIRE(tide_has_Result(&world, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(r.sum == 4.5f);
     TIDE_CHECK(r.twice == 42);
     TIDE_CHECK(r.scaled.x == 2.0f && r.scaled.y == 4.0f && r.scaled.z == 6.0f);
@@ -51,7 +51,7 @@ TIDE_TEST(extern_functions_call_c)
 TIDE_TEST(extern_functions_take_pointers)
 {
     const Result r = result();
-    TIDE_REQUIRE(tide_has_Result(&world, (tide_entity){1, 1}));
+    TIDE_REQUIRE(tide_has_Result(&world, tide_entity_in_slot(&world.entities, 1)));
     // `in`: a field by address, a computed value and a converted one through copies
     TIDE_CHECK(r.length == 5.0f);
     TIDE_CHECK(r.computedLength == 10.0f);
@@ -67,7 +67,7 @@ TIDE_TEST(extern_functions_take_pointers)
 TIDE_TEST(extern_functions_take_and_return_text)
 {
     const Result r = result();
-    TIDE_REQUIRE(tide_has_Result(&world, (tide_entity){1, 1}));
+    TIDE_REQUIRE(tide_has_Result(&world, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(r.bytes == 6); // UTF-8: é is two bytes
     TIDE_CHECK(r.formattedBytes == 3);
     TIDE_CHECK(text_is(r.greeting, "hello, cat")); // Copied out of C's buffer
@@ -78,7 +78,7 @@ TIDE_TEST(extern_functions_take_and_return_text)
 TIDE_TEST(extern_calls_run_left_to_right)
 {
     const Result r = result();
-    TIDE_REQUIRE(tide_has_Result(&world, (tide_entity){1, 1}));
+    TIDE_REQUIRE(tide_has_Result(&world, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(r.order == 12);       // Not 21, where C takes arguments right to left
     TIDE_CHECK(r.viaFunction == 34); // Through a function that calls C
     TIDE_CHECK(r.rounds == 3);       // 12, 34, 56, then 78: a loop's condition, each round
@@ -88,7 +88,7 @@ TIDE_TEST(extern_calls_run_left_to_right)
 TIDE_TEST(extern_calls_in_parts_that_run_sometimes)
 {
     const Result r = result();
-    TIDE_REQUIRE(tide_has_Result(&world, (tide_entity){1, 1}));
+    TIDE_REQUIRE(tide_has_Result(&world, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(r.picked);            // 12 on the right of &&
     TIDE_CHECK(r.mixed == 34);       // Not 43: the ?: side runs after the call before it
     TIDE_CHECK(!r.never);            // Its right side never ran...

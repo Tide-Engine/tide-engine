@@ -23,7 +23,7 @@ TIDE_TEST(world_views_read_the_match)
     start();
     frame(&world);
     TIDE_CHECK(local.Seen.leaderHealth == 42);
-    TIDE_CHECK(tide_entity_equal(local.Seen.picked, (tide_entity){1, 1}));
+    TIDE_CHECK(tide_entity_equal(local.Seen.picked, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(local.Seen.pickedFrames == 1);
     frame(&world);
     TIDE_CHECK(local.Seen.pickedFrames == 2);

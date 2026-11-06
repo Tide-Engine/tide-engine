@@ -28,8 +28,8 @@ TIDE_TEST(lists_all_checks_pass)
 {
     tide_world_init(&world, 1.0f);
     tide_world_tick(&world);
-    const Results r = tide_get_Results(&world, (tide_entity){1, 1});
-    TIDE_REQUIRE(tide_has_Results(&world, (tide_entity){1, 1}));
+    const Results r = tide_get_Results(&world, tide_entity_in_slot(&world.entities, 1));
+    TIDE_REQUIRE(tide_has_Results(&world, tide_entity_in_slot(&world.entities, 1)));
     if (r.firstFailure) printf("    check %d failed\n", (int)r.firstFailure);
     TIDE_CHECK(r.checks == 18);
     TIDE_CHECK(r.passed == r.checks);

@@ -112,7 +112,7 @@ TIDE_TEST(render_colors_targets_hold_several_and_frags_write_them_in_order)
     TIDE_CHECK(stage->pass.into.id == stage->exact.id && tide_render_target_whole(stage->pass.read.target.id) == stage->exact.id
                && tide_render_target_image(stage->pass.read.target.id) == 1);
     const tide_entity entity = prop();
-    TIDE_REQUIRE(entity.generation != 0);
+    TIDE_REQUIRE(!tide_entity_is_null(entity));
     const uint64_t seen = tide_get_Prop_local(&local, entity).seen.target.id;
     TIDE_CHECK(tide_render_target_whole(seen) == stage->exact.id && tide_render_target_image(seen) == 1);
 

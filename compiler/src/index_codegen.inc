@@ -611,6 +611,9 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     const char *name = local_cname(g, s->name);
     const char *end = made_up(g, "query_end");
     const char *hits = made_up(g, "xh");
+    const bool canonical = !x.selection->query_local;
+    const decl *cause_code = g->routine ? g->routine : g->code;
+    const bool causes = cause_code && (takes_cause(cause_code) || (cause_code->kind == DECL_SYSTEM && !cause_code->is_view && !cause_code->is_local));
     line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
     g->indent++;
     indent(g, o);
@@ -628,6 +631,7 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     line(g, o, "} else {");
     g->indent++;
     gen_query_fresh(g, x.q, name);
+    if (causes && !gather) line(g, o, "const uint64_t tide_query_cause = tide_causal_next(&tide_causal, %uu); (void)tide_query_cause;", s->causal_site);
     gen_ix_bounds(g, plan, "tide_xlo", "tide_xhi");
     line(g, o, "tide_index_hits %s;", hits);
     line(g, o, "tide_index_hits_init(&%s);", hits);
@@ -663,9 +667,28 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     line(g, o, "const uint32_t tide_xn = %s.count;", hits);
     sb cleanup = {0};
     const int containers = ix_hits_open(g, hits, &cleanup);
+    if (canonical) {
+        line(g, o, "tide_canonical_candidate tide_xinline[64];");
+        line(g, o, "tide_canonical_candidate *const tide_xsorted = tide_xn <= 64u ? tide_xinline : tide_alloc_zeroed(tide_xn, sizeof *tide_xsorted);");
+        line(g, o, "for (uint32_t k = 0; k < tide_xn; k++) {"); g->indent++;
+        line(g, o, "tide_xsorted[k].ordinal = tide_xo[k]; tide_xsorted[k].entity = (tide_entity){0};");
+        line(g, o, "const uint32_t a = (uint32_t)(tide_xo[k] >> 32), r = (uint32_t)tide_xo[k];");
+        line(g, o, "switch (a) {"); g->indent++;
+        for (int a = 0; a < g->prog->archetypes.count; a++) {
+            if (!query_admits(g, x.selection, a)) continue;
+            line(g, o, "case %d: if (r < %s->%s.count) tide_xsorted[k].entity = *(const tide_entity *)tide_table_get(&%s->%s, %s, r, 0); break;", a, x.world, arch_name(g, a), x.world, arch_name(g, a), arch_columns(g, a));
+        }
+        line(g, o, "default: break;"); g->indent--; line(g, o, "}");
+        g->indent--; line(g, o, "}");
+        line(g, o, "if (tide_xn > 1u) qsort(tide_xsorted, tide_xn, sizeof *tide_xsorted, tide_canonical_compare);");
+        sb_put(&cleanup, " if (tide_xsorted != tide_xinline) free(tide_xsorted);");
+        g->containers.items[g->containers.count - 1].cleanup = cleanup.data;
+    }
     line(g, o, "for (uint32_t tide_xk = 0; tide_xk < tide_xn; tide_xk++) {");
     g->indent++;
-    line(g, o, "const uint32_t tide_xa = (uint32_t)(tide_xo[tide_xk] >> 32), tide_xr = (uint32_t)tide_xo[tide_xk];");
+    if (canonical) line(g, o, "const uint64_t tide_xordinal = tide_xsorted[tide_xk].ordinal;");
+    else line(g, o, "const uint64_t tide_xordinal = tide_xo[tide_xk];");
+    line(g, o, "const uint32_t tide_xa = (uint32_t)(tide_xordinal >> 32), tide_xr = (uint32_t)tide_xordinal;");
     line(g, o, "(void)tide_xr;");
     if (gather) {
         line(g, o, "%s %s;", gather, name);
@@ -728,6 +751,10 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
         gen_query_field_refs(g, x.q, name);
         const gen_target loop = {g->frame, containers, true, true, end, false, made_up(g, "next"), false, true};
         vec_push(g->targets, loop);
+        if (causes) {
+            line(g, o, "const uint64_t tide_row_cause = tide_causal_entity(tide_query_cause, %s.%s);", name, field_cname(&x.row->fields.items[0]));
+            gen_causal_local(g, cause_code, "tide_row_cause");
+        }
         gen_body_stmt(g, s->then_stmt);
         const gen_target done = g->targets.items[--g->targets.count];
         if (done.next_used) line(g, o, "%s:;", done.next);

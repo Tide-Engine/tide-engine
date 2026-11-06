@@ -4,7 +4,11 @@ scene Main { }
 event(Spawned) Setup(with Main, mut State state)
 {
     state.object = Spawn(Dot);
+#if ALL_VISIBLE
+    Spawn(Visibility { group = Visibility.CreateGroup(Audience.All) });
+#else
     Spawn(Visibility { group = Visibility.CreateGroup(Audience.None) });
+#endif
 }
 system Step(mut State state)
 {

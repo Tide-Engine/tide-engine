@@ -1,5 +1,30 @@
 # The schedule and the tick on threads
 
+## Final logical spawn keys and canonical row ranges (2026-11-06)
+
+Owner-approved Entity128 migration supersedes temporary handles and their
+settlement below. A spawn returns its complete causal key immediately. Runtime
+split tasks record those exact keys and register private storage in deterministic
+source order when the system joins; Entity fields and queued values are never
+rewritten. Generated match systems with ordered effects traverse admitted entities
+in canonical logical-key order across archetypes. Independent numeric row work
+retains its existing chunk/piece execution. C retains the complete final key.
+
+Canonical traversal can visit a small run inside a physical chunk. Such a run
+must use ordinary in-place copy-on-write, preserving the untouched rows; the
+uninitialized apart-page optimization applies only when the run fills the whole
+chunk. Otherwise each partial run erased other rows, repeatedly resetting a
+Pack component and spawning another bag every tick. The shard movement test
+exposed this; the canonical_rows fixture also checks untouched wide fields and
+C writes across archetypes and retained snapshots.
+
+Validation so far: scoped Windows ASan jobs/attached/protocol tests, the nine
+existing shard movement/checkpoint/recovery cases, canonical_rows, stable_entities,
+stable_async, handler_queries and visibility_predicted pass. Final native/web
+coverage is recorded with the completed migration. Tagged shard borrowing and
+its retry/clock contracts are in sharding.md.
+
+
 ## Scene preparation outside ticks (2026-11-05)
 
 The approved prepare block (language.md) runs on the existing owned background worker provider, on one private match

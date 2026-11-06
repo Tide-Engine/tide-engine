@@ -89,7 +89,7 @@ TIDE_TEST(jobs_pieces_are_begun_and_ended_around_their_system)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities};
     const tide_jobs eight = {.threads = 8, .run = alone_run, .more = count_more};
     memset(happened, 0, sizeof happened);
     memset(pieces_seen, 0, sizeof pieces_seen);
@@ -132,7 +132,7 @@ TIDE_TEST(jobs_cheap_tasks_are_taken_a_few_at_a_time)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities};
     const tide_jobs eight = {.threads = 8, .run = alone_run, .more = count_more};
     memset(pieces_seen, 0, sizeof pieces_seen);
     memset(tasks_run, 0, sizeof tasks_run);
@@ -203,7 +203,7 @@ TIDE_TEST(jobs_costly_loops_in_a_tick_on_one_thread_call_threads_in)
     const tide_system_tasks systems[1] = {{.count = light_count, .run = run_loops, .name = "loops"}};
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 1, prepare_thread, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {systems, 1, prepare_thread, &queue, &entities};
     const tide_jobs eight = {.threads = 8, .run = counted_round};
     rounds = 0;
     prepared = 0;
@@ -234,7 +234,7 @@ TIDE_TEST(jobs_on_one_thread_make_no_pieces)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities};
     memset(happened, 0, sizeof happened);
     memset(pieces_seen, 0, sizeof pieces_seen);
     memset(tasks_run, 0, sizeof tasks_run);
@@ -243,4 +243,39 @@ TIDE_TEST(jobs_on_one_thread_make_no_pieces)
     TIDE_CHECK(strcmp(happened, "aabb") == 0);
     tide_queue_free(&queue);
     tide_entities_free(&entities);
+}
+
+// Final keys are available inside each split task before physical registration.
+typedef struct keyed_world {
+    tide_entities entities;
+    tide_entity observed[16];
+    bool premature;
+} keyed_world;
+static void run_keyed(void *world, const uint32_t task, const uint32_t pieces)
+{
+    keyed_world *w = world;
+    (void)pieces;
+    const tide_entity key = {UINT64_C(0x123456789abcdef0), UINT64_C(0xfedcba9876543210) + task};
+    w->observed[task] = tide_new_entity_key(&w->entities, key);
+    if (tide_entity_alive(&w->entities, key)) w->premature = true;
+}
+TIDE_TEST(jobs_split_spawns_return_final_full_keys)
+{
+    const tide_system_tasks systems[] = {
+        {.count = heavy_count, .run = run_keyed, .splits = true, .spawns = true, .settles = true, .name = "keys"},
+    };
+    const tide_jobs eight = {.threads = 8, .run = alone_run};
+    keyed_world w = {0};
+    tide_queue queue = {0};
+    const tide_tick_systems tick = {systems, 1, NULL, &queue, &w.entities};
+    tide_run_systems(&w, &tick, &eight);
+    TIDE_CHECK(!w.premature && w.entities.next_unused == 16u);
+    for (uint32_t i = 0; i < 16u; i++) {
+        const tide_entity key = {UINT64_C(0x123456789abcdef0), UINT64_C(0xfedcba9876543210) + i};
+        TIDE_CHECK(tide_entity_equal(w.observed[i], key));
+        TIDE_CHECK(tide_entity_alive(&w.entities, key));
+        TIDE_CHECK(tide_entity_slot_index(&w.entities, key) == i);
+    }
+    tide_entities_free(&w.entities);
+    tide_queue_free(&queue);
 }

@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 17u
+#define TIDE_EMBED_ABI 18u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -282,13 +282,13 @@ const uint8_t *tide_embed_render_view(tide_embed *e, const float *transform, con
 void tide_embed_render_reset(tide_embed *e);
 
 // A command from the other program, as local code's Send: `type` its type's
-// place in the schema, sent to the entity `target_index`/`target_generation`
+// place in the schema, sent to the entity `target_birth`/`target_lineage`
 // (zeros for none: entity.Send against Send), `value` its bytes as the schema
 // lays them out; a command's text and lists follow its value, as the view
 // packet's STRINGS lays them out (tide/embed_game.h), each field holding its
 // entry's place + 1. False for a type that's no command, bytes that aren't its,
 // text that isn't UTF-8, or a command too big to send.
-bool tide_embed_command(tide_embed *e, uint32_t type, uint32_t target_index, uint32_t target_generation, const void *value,
+bool tide_embed_command(tide_embed *e, uint32_t type, uint64_t target_birth, uint64_t target_lineage, const void *value,
                         uint32_t size);
 
 // What local code's Session calls do: TIDE_REQUEST_START (`text` a scene's

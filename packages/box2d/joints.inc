@@ -13,7 +13,7 @@ typedef struct joint_component
     uint8_t tail[4];
     int64_t configuration;
 } joint_component;
-_Static_assert(sizeof(joint_component) == 88 && offsetof(joint_component, id) == 56,
+_Static_assert(sizeof(joint_component) == 104 && offsetof(joint_component, id) == 72,
                "Joint must match its generated layout");
 
 static b2JointId joint_of(int64_t id)

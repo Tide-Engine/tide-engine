@@ -459,6 +459,14 @@ static bool read_old(const tide_layout *l, const tide_layout_world *fw, const ui
     return true;
 }
 
+static bool identity_layout_fits(const tide_layout_world *w)
+{
+    if (w->identity_clock && (w->identity_clock > w->size || sizeof(uint64_t) > w->size - w->identity_clock)) return false;
+    if (w->main_occurrence && (w->main_occurrence > w->size || sizeof(uint64_t) > w->size - w->main_occurrence)) return false;
+    if ((!w->lifecycle_occurrences) != (!w->lifecycle_count)) return false;
+    return !w->lifecycle_count || (uint64_t)w->lifecycle_occurrences + (uint64_t)w->lifecycle_count * sizeof(uint64_t) <= w->size;
+}
+
 bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world *fw, const void *from_bytes,
                         const uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *tw, void **to_bytes,
                         uint32_t *to_size, tide_migration *m)
@@ -467,6 +475,12 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     *m = (tide_migration){0};
     *to_bytes = NULL;
     *to_size = 0;
+    if (!identity_layout_fits(fw) || !identity_layout_fits(tw)
+        || (tw->identity_clock && !fw->identity_clock) || (tw->lifecycle_count && !fw->lifecycle_count)
+        || (tw->main_occurrence && !fw->main_occurrence)) {
+        snprintf(m->failed, sizeof m->failed, "the logical Entity clock layout is incompatible");
+        return false;
+    }
     old_world old = {0};
     carry c = {from_layout, to_layout, calloc(to_layout->type_count ? to_layout->type_count : 1u, sizeof(int32_t))};
     uint32_t *counts = calloc(tw->archetype_count ? tw->archetype_count : 1u, sizeof *counts);
@@ -479,6 +493,14 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     bool ok = c.types && counts && goes && old_value && new_value;
     if (!ok) snprintf(m->failed, sizeof m->failed, "there wasn't enough memory");
     ok = ok && read_old(from_layout, fw, from, from_size, &old, m);
+    uint64_t identity_clock = 0;
+    if (ok && tw->identity_clock) {
+        memcpy(&identity_clock, from + fw->identity_clock, sizeof identity_clock);
+        if (!identity_clock) {
+            snprintf(m->failed, sizeof m->failed, "the logical Entity clock is zero");
+            ok = false;
+        }
+    }
     for (uint32_t i = 0; ok && i < to_layout->type_count; i++) c.types[i] = find_type(from_layout, to_layout->types[i].name);
 
     // A scene that's gone takes the match with it
@@ -550,6 +572,12 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         return false;
     }
     tide_writer w = {to, (uint32_t)size, tw->size, false, false};
+    if (tw->identity_clock) memcpy(to + tw->identity_clock, &identity_clock, sizeof identity_clock);
+    if (tw->main_occurrence) memcpy(to + tw->main_occurrence, from + fw->main_occurrence, sizeof(uint64_t));
+    if (tw->lifecycle_count) {
+        const uint32_t count = fw->lifecycle_count < tw->lifecycle_count ? fw->lifecycle_count : tw->lifecycle_count;
+        memcpy(to + tw->lifecycle_occurrences, from + fw->lifecycle_occurrences, (size_t)count * sizeof(uint64_t));
+    }
 
     for (uint32_t i = 0; i < tw->singleton_count; i++) {
         const tide_layout_place *ts = &tw->singletons[i];
@@ -829,6 +857,7 @@ static bool unpack_string(uint8_t *block, const uint32_t block_size, const char 
 
 static bool unpack_world(uint8_t *b, const uint32_t size, tide_layout_world *w)
 {
+    if (!identity_layout_fits(w)) return false;
     if (!unpack_pointer(b, size, (void *)&w->singletons, w->singleton_count, sizeof *w->singletons)) return false;
     if (!unpack_pointer(b, size, (void *)&w->archetypes, w->archetype_count, sizeof *w->archetypes)) return false;
     tide_layout_archetype *archetypes = (tide_layout_archetype *)w->archetypes;

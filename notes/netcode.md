@@ -1,5 +1,193 @@
 # Netcode: sessions, prediction, commands
 
+## Logical spawn identity and canonical execution, protocol 25 (2026-11-06)
+
+The owner selected stable logical Entity IDs separate from storage, and ascending
+logical Entity order for match queries and deferred changes. An Entity is now
+two opaque 64-bit words, birth and lineage. Birth is a public simulation identity
+clock (initially one, advancing after each tick), independent of 32-bit Time.tick
+and every private allocation/free list. Lineage follows the declaration/call
+site, causal parent/row/event and that origin's per-site occurrence. Hidden
+allocations at other origins do not advance a visible spawn's sequence. No
+component initializer bytes, private allocator counts or transport cookies seed
+the key. The final key exists before Spawn returns, including worker execution;
+queued changes install that exact key rather than settling temporary handles.
+
+Repeated public player lifecycle events have per-player clock-local occurrence
+counters; implicit Main starts have their own counter. Snapshots, raw/delta
+state, recipient projections and layout migration preserve these public values.
+Async frames retain causal paths/counters across waits. Duplicate/colliding keys
+fail explicitly before publication; the allocator never probes for a different
+logical key based on hidden occupancy. Dense private slots and exact-key lookup
+remain storage details. A per-clock birth registry also catches a duplicate key
+whose first entity has already been destroyed that clock.
+
+Canonical traversal spans admitted archetypes and survives holes, compaction
+and different projection layouts. Indexed queries sort their candidate keys
+before applying the ordinary guards/body. A cached immutable ordered-key array
+avoids sorting/allocating on every repeated query; borrowed arrays survive
+structural changes until settle. Independent row-local work may remain parallel;
+modelled structural/event effects retain canonical source order. Extern systems
+receive canonical contiguous runs through their existing rows/COW adapter.
+Ordinary list/map insertion order is unchanged, and trusted C retains its existing
+determinism, external-state and thread-safety responsibilities.
+
+Protocol 25 carries complete keys in lifecycle journals and command values.
+Generated C, physics bridge records, embed packet version 5 / ABI 18, Unity,
+debuggers and hot-reload metadata rebuild together. The recipient block/delta
+repair scheme below remains in use; no private allocator or native physics
+history is added to recipient state. Older Entity8 saves/wire formats are not
+reinterpreted.
+
+Focused native regressions cover forty projected/replayed cycles with unrelated
+hidden spawns and targeted events, repeated same-clock membership and Main
+starts, async spawning with different private task slots, and 3,000 permuted
+entities across archetypes/chunks under snapshots with Tide and C writes. The
+allocator diagnostic below now asserts matching public IDs and hashes, both
+with a hidden entity and with ALL_VISIBLE. Its physical free lists still differ.
+Runtime cache tests cover retained borrows, concurrent readers, COW snapshots
+and bounded allocation under 20,000 spawn/despawn operations. Whole engine
+unit/migration targets pass native ASan and WASI. After the initial broad suites,
+all repaired targets pass the final 70-test native and 72-test web batches,
+including deterministic pins, safety churn, physics, networking and demo pixels.
+Browser threaded simulation retains its 240-tick/45-second bound (19.61 seconds).
+Debugger, CLI/Unity packet tests and docs build also pass. Exact-game runs and
+remaining CPU costs are recorded in the linked measurement artifact below.
+
+This removes allocation/row-order coupling between otherwise independent visible
+pieces. It does not supply hidden values needed by a coupled public calculation,
+restore opaque native physics warm state after projection, or make public Task
+handles independent of the task registry's allocation order. Those remain
+separate boundaries; stable async spawn causes do not redesign Task identity.
+
+### Measured battle outcome
+
+The final exact-game results and commands are in
+[the four-run summary](repro/mount-rifle-logical-identity-20261106-summary.json),
+with intermediate failures and the late correction trace in
+[the investigation](repro/mount-rifle-logical-identity-investigation.md).
+These are native Windows optimized, unsanitized, hidden 2100-frame runs from
+Mount & Rifle `349c35a`, two players, latency option 40 (reported ping 123 ms).
+Rates use simulation seconds 20–34, not the slower wall clock.
+
+| Configuration | Total received kB/s | World kB/s |
+| --- | ---: | ---: |
+| Public 1000-bot battle | 48.11 | 27.72 |
+| Prediction.Delay | 34.27 | 15.69 |
+| TROOPER_SIGHT | 786.06 | 734.45 |
+| 10-bot control | 58.51 | 28.05 |
+
+All four runs finish without resyncs. Across the complete bandwidth work, the
+public case falls from 3113.23 kB/s total (protocol 22), through 128.31 kB/s after
+protocol 24 repair compression/comparison, to 48.11 kB/s with logical identity.
+It is not a zero-correction campaign: public repairs stay at three through 20
+seconds, then reach 26 at 34 seconds. The next first-difference probe parses both
+7,093,074-byte projections completely at endpoint 1301, with the same identity
+clock 1302 and exactly one differing float: Brevno ammo depot's Works.stock is
+0 on the server and 18.416666 on the client. Its hauler has no permitted Party
+row. economy.tide's hidden Haul system consumes public depot stock when the
+convoy arrives; the client cannot execute that hidden work. These authority
+updates are expected. The first residual is not evidence of physics divergence.
+TROOPER_SIGHT still couples public Crowd data to hidden troops and is not fixed
+by making allocation and query order independent.
+
+CPU is explicitly unresolved: public match work averages 123.90 ms/frame and
+systems 15.64 ms/tick, with 15,977 ticks over 2100 frames. The canonical chunk
+preparation correction removes a large introduced copy cost, but remaining
+query lowering and changing remote action inputs still cost substantial work.
+No return to the original reported 6.1 ms client tick is claimed.
+
+### Full-width destruction journals
+
+The instrumented battle caught a migration error before delivery: the first
+post-startup endpoint difference at tick 413 was public clock 414 on the server
+versus 413 on the client. The client had not run that tick. FRAME_DESTROYED
+encoded two varint64 key words, but apply_frame_to's skip loop still consumed
+varint32 and rejected the frame before simulation. The journal replay skip
+loop had the same error. Both now consume full-width words. This was a frame
+parsing failure, not evidence of native physics divergence.
+
+`visibility_full_entity_destroyed_frames_verify_and_replay` uses both key words
+above 32 bits, checks verification advances beyond 650 without another repair
+across the destruction, and checks journal replay reaches the same hash. It
+passes native ASan and WASI; all sixteen native visibility cases pass.
+
+## Remaining scoped tasks after logical Entity identity
+
+- **Recipient simulation completeness:** native physics resident/warm state is
+  intentionally absent from permitted projections. Do not attribute a repair
+  to physics without tracing its first differing logical value, or send private
+  bodies/histories wholesale. Public Task handles still follow private task
+  registry allocation order and need their own identity design if exposed to
+  otherwise independent visible gameplay.
+- **Canonical query CPU lowering:** remaining per-row overhead is measurable.
+  BuildKitBodies scans all troopers for every walled place but only consumes
+  position. Its canonical query performs exact-key lookup, reconstructs 88 lane
+  pointers and gathers a full 352-byte Trooper per visit; the current optimized
+  variant retains that gather call. The public profile averages 4.76 ms per
+  BuildKitBodies call. Key caching avoids repeated sorting. Specialize narrow
+  reads/reuse safe chunk metadata while preserving canonical order and immediate
+  World.Set visibility; validate equivalent seeded work and snapshot/COW cases.
+  This is a compiler performance follow-up, not a demonstrated random-gear cause
+  or a measured attribution of the entire tick-time regression.
+- **Owned prediction:** a first-class owned-and-descendant prediction mode and
+  ping-aware far-state freshness remain unimplemented. Re-measure replay work
+  after identity/order fixes before changing the stale interval. A small
+  predictionRange still runs singleton/query work unless the game filters Far.
+- **Server AI input:** match-derived authoritative input sampling remains Open
+  in the spec; this change does not give server Sample match-state access.
+- **Game coordinates/privacy:** Position float2 has ordinary XY coordinates.
+  A 3D game's ground XZ point should use float3(x, 0, z), or omit Position when
+  it describes a separate campaign abstraction. The engine cannot infer that
+  mapping from float2. A public Crowd built from hidden fighters still couples
+  public results to unavailable state and exposes their positions; partition it
+  by permitted battle/group or keep presentation-only data local.
+
+### Why an idle player still causes rollback in Mount & Rifle
+
+In game commit `349c35a`, `controls.tide:32–57` samples `Look.barrel` and
+`Look.muzzle` into `[Absolute]` input fields; an animated pose need not keep those
+values constant while no key is pressed. With `maxRewind = 0.5`, the compiler also
+adds the read-only `Controls.viewTime` field. Session input sampling stamps the
+last presented tick/fraction after Sample (`session.c`, `sample_input`), so that
+field advances even for an idle player. `infantry/body.tide:165–169` unconditionally
+copies it into `Orders.seen`, and `infantry/fire.tide:149,173–181` uses the saved
+value for the game's own shooter-lag capsule query. This revision does not call
+Physics.Rewind, but it does consume the engine-stamped view time.
+
+Input prediction holds the last remote values, and the let-go callback defaults
+non-Absolute fields after the guess window; viewTime has no Absolute attribute.
+Changed authoritative input therefore requires replay even when the other player
+stands still. At final public frame 900, repairs were still the three startup
+repairs, while stats showed ten ticks per frame, eight run again. This separates
+input rollback from correction traffic. The 0.25-second far-state stale limit
+cannot make a changed remote input or differing near singleton/heap compare equal.
+These are source-level reasons for changing input; no isolated field-by-field
+experiment measured their relative contribution.
+
+Game-authored action fields can stay unchanged while unused, or derive from
+deterministic match pose where that suits the game's aiming model. Stamp action
+metadata when the action consumes it rather than changing unrelated persistent
+input every frame. The built-in viewTime is engine-owned and Sample cannot
+conditionally overwrite it; changing its stamping/prediction policy needs a
+separate agreed input/rewind contract. A wider stale interval is not that fix.
+
+The measured canonical traversal is not a CPU improvement claim: after eliminating
+repeated whole-chunk COW copies, the public frame-900 tick is about 16 ms versus
+the report's 6.1 ms reference, and rollback still multiplies that work. Singleton
+systems such as BuildKitBodies still query every troop unless the game explicitly
+excludes Far. Exact final profiles and remaining costs are recorded with the
+logical-identity measurement artifact.
+
+Read-only inspection of `campaign/compound_kit.tide:581–589` identifies a remaining
+cost in BuildKitBodies: every walled Place scans every Trooper for nearest distance,
+using only `t.position.xz`. The generated canonical walk resolves each logical key
+to its current location and sets up the 88-lane Trooper row per candidate; the old
+physical walk set up column pointers once per chunk. This is concrete additional
+row setup/lookup work, not a measurement assigning the whole observed cost increase
+to one operation. Narrower query reads and reuse of chunk setup are follow-up
+optimizations; no further traversal redesign accompanies these measurements.
+
 ## Same-tick recipient repair comparison, protocol 24 (2026-11-06)
 
 Fixing compression locality alone still retransmitted legitimate evolution from
@@ -42,10 +230,10 @@ a full snapshot, preventing a response from waiting forever for discarded bytes.
 
 All negotiation data is derived from `client_state` for that recipient. Physical
 worlds, allocator/free lists, private commands and physics history remain private.
-The wire is protocol 24; raw protocol fixtures follow it. There is no new Tide
-syntax, generated callback or observable simulation policy. Allocator identity
-divergence remains a separate design limitation; the repair no longer needs to
-ship an entire evolving battle merely to correct a few differing handles.
+This stage used protocol 24; protocol 25 above adds logical identities. There
+was no new Tide syntax, generated callback or observable simulation policy in
+the transfer change. It reduced repairs before the identity fix, without
+requiring an entire evolving battle to correct a few differing handles.
 
 An actual first-battle mismatch at tick 1149 had four differing bytes in one
 16 KiB block: two newly spawned bullets had different entity handles, while their
@@ -255,7 +443,7 @@ Two mechanisms relevant to the report are established independently of timing:
   The existing maximum repair backoff with maxRewind 0.5 is seven ticks at 60 Hz;
   512 KB repairs at that rate already exceed 4 MB/s before packet overhead.
 
-The separate allocator probe (`notes/repro/recipient_allocator.tide` and `.c`)
+The original allocator probe (`notes/repro/recipient_allocator.tide` and `.c`)
 shows a public-spawn mismatch after loading a valid projection: create a public
 Dot and a hidden entity, destroy Dot, project/load, then both sides spawn Dot.
 Their hashes agree immediately after load; the next public entity is server
@@ -274,21 +462,27 @@ Reproduce with this checkout's built tools (PowerShell, TIDE_HIDDEN=1):
 ```powershell
 New-Item -ItemType Directory -Force build/recipient-allocator | Out-Null
 build/sanitize/bin/tidec.exe notes/repro/recipient_allocator.tide -o build/recipient-allocator --name game
-& 'C:/Program Files/LLVM/bin/clang.exe' -std=c17 -O2 -g -fsanitize=address -D_DLL -D_MT -Xclang --dependent-lib=msvcrt -Iengine/include -Ibuild/recipient-allocator notes/repro/recipient_allocator.c build/recipient-allocator/game.c build/sanitize/engine/tide.lib build/sanitize/tide_font_bold.lib -o build/recipient-allocator/probe.exe
+& 'C:/Program Files/LLVM/bin/clang.exe' -std=c17 -O2 -g -fsanitize=address -D_DLL -D_MT -Xclang --dependent-lib=msvcrt -Iengine/include -Ibuild/recipient-allocator notes/repro/recipient_allocator.c build/recipient-allocator/game.c build/sanitize/engine/tide.lib -o build/recipient-allocator/probe.exe
 Copy-Item 'C:/Program Files/LLVM/lib/clang/23/lib/windows/clang_rt.asan_dynamic-x86_64.dll' build/recipient-allocator
 build/recipient-allocator/probe.exe
 ```
 
 The compiler/ASan paths above describe the measured Windows installation. The
-probe prints allocator/hash observations rather than treating divergence as an
-approved behavior to pin. Output from the ASan run:
+probe now asserts equality with logical Entity IDs; add --define ALL_VISIBLE to
+tidec for the public-only control. Historical output before the identity fix:
 
 ```text
 before: free server 2 client 0 next server 3 client 1 hash equal 1
 after: entity server 1:3 client 1:1 hash equal 0
 ```
 
-Follow-up task, **recipient repair locality and battle divergence**: first trace
+After the logical identity change both Windows ASan variants exit successfully.
+Despite server/client free heads 2/0 and next slots 3/1 (hidden) or 3/2 (all
+visible), the new public Entity is identical on both sides and both before/after
+recipient hashes agree. Exact key bits are diagnostic, not a public ID guarantee.
+
+Historical follow-up scope, **recipient repair locality and battle divergence**
+(addressed by the protocol 23–25 work above): first trace
 the first differing logical fields/entity identities in the exact 1000-bot game,
 including Delay, and distinguish initial mismatches from repair-induced ones.
 The protocol-23 implementation above addresses variable-length transfer locality;
@@ -296,8 +490,8 @@ measure its exact-game effect before claiming the bandwidth issue resolved.
 In parallel, resolve recipient-safe predicted spawn identities and slot reuse
 without transferring hidden allocation metadata; confirm the probe's public
 post-load spawns agree, including hidden intervening allocations, without pinning
-private counts or histories. This is an ownership/design decision already Open,
-not permission to publish full allocator state as a quick repair.
+private counts or histories. This required an owner decision; the owner selected
+logical IDs and canonical traversal above, retaining the privacy boundary.
 Measure bytes per recipient, repairs, resyncs, tick work and confirmation age
 before/after for no-switch, Delay and TROOPER_SIGHT, plus the 10-bot control.
 Acceptance includes native/WASI correction/lifecycle/view-time tests, lossy
@@ -746,13 +940,12 @@ packed 1,338 / 1,346 before, 401 / 424 after; pack and load 12.9 / 15.5 s over t
 route before, 5.3 / 4.7 s after; match phase 8.96 / 10.56 ms a frame before,
 7.89 / 6.55 after.
 
+The former “after the last entity” spawn rule was resolved on 2026-11-06 by
+logical identity above, without transferring private counts or histories.
+
 Still open (the owner's):
 - A repair base that doesn't depend on row order (above), which would let streams
   stop as soon as a client's ticks go as the server's.
-- A client's own spawns go after the last entity it was sent, the server's after
-  the last it has, hidden ones too, so a client's visible spawn after the server
-  made a hidden one has another handle until repaired. Sending the entity count
-  would fix it and tell clients how much hidden spawning goes on.
 - Physics queries from views of a world just loaded find nothing until the client
   ticks it (`Physics.Ready` is false at stamp 0). No game hits this today.
 - Moving Box3D/Box2D bodies start again without warm starts or sleep state on a

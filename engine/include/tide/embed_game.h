@@ -12,13 +12,12 @@
 //                      (tide_game.hash), u32 size, u32 flags (1: in a
 //                      match), u32 tick, u32 verified tick, f32 alpha,
 //                      u32 entities, u32 sections, u32 0
-//   entities, 24 bytes each: u32 index, u32 generation, u32 flags (1: this
+//   entities, 32 bytes each: u64 birth, u64 lineage, u32 flags (1: this
 //                      machine's player owns it, 2: a player owns it),
 //                      u32 prefab (UINT32_MAX: none), u32 parent (its place
 //                      among the entities, UINT32_MAX: a root), u32 born
-//                      (what it was spawned as, tide_entity_born: another
-//                      value on the same handle is another entity, which a
-//                      rollback gave the handle; 0: not known)
+//                      (optional presentation metadata; logical identity is
+//                      solely the complete birth/lineage key)
 //   sections, each from an 8-byte boundary, a 24-byte header first:
 //                      u32 kind, u32 type (the layout's type), u32 count,
 //                      u32 stride, u32 bytes (after the header), u32 0
@@ -41,12 +40,12 @@
 //     EVENTS:          count records, in the order they were heard (stride
 //                      0): the match's events this machine heard since the
 //                      last packet, as its local handlers hear them, each a
-//                      32-byte header: u32 size (the record's, a multiple of
+//                      40-byte header: u32 size (the record's, a multiple of
 //                      8), u32 type (the schema's), u32 flags (1: heard as
 //                      predicted, as `local event(Hit hit)` hears it; 2: once
 //                      the server confirmed its tick, as `local event(verified
-//                      Hit hit)`), u32 tick, u32 target index, u32 target
-//                      generation (zeros: the world), u32 target place (among
+//                      Hit hit)`), u32 tick, u64 target birth, u64 target
+//                      lineage (zeros: the world), u32 target place (among
 //                      the entities, UINT32_MAX: none, or not the same entity
 //                      now), u32 0; then its value, its text and lists in
 //                      STRINGS.
@@ -55,14 +54,15 @@
 #include <stdint.h>
 
 #include "tide/layout.h"
+#include "tide/entity.h"
 #include "tide/list.h"
 
 #define TIDE_PACKET_MAGIC 0x56444954u // "TIDV"
-#define TIDE_PACKET_VERSION 4u
+#define TIDE_PACKET_VERSION 5u
 #define TIDE_PACKET_HEADER 48u
-#define TIDE_PACKET_ENTITY 24u
+#define TIDE_PACKET_ENTITY 32u
 #define TIDE_PACKET_SECTION 24u
-#define TIDE_PACKET_EVENT 32u // An EVENTS record's header
+#define TIDE_PACKET_EVENT 40u // An EVENTS record's header
 #define TIDE_PACKET_NONE 0xFFFFFFFFu
 
 typedef enum tide_packet_kind {
@@ -85,8 +85,8 @@ typedef struct tide_packet {
     uint32_t text_size, text_capacity;
     uint32_t *entries;
     uint32_t entry_count, entry_capacity;
-    uint32_t *place;  // Each entity index's place among the packet's entities, as of this frame
-    uint32_t place_capacity;
+    struct tide_packet_entity_entry *entity_places;
+    uint32_t entity_place_capacity, entity_place_count;
 } tide_packet;
 
 // Starts the frame's packet: an empty one with room for the header.
@@ -100,8 +100,10 @@ uint8_t *tide_packet_section(tide_packet *p, tide_packet_kind kind, uint32_t typ
 uint32_t tide_packet_text(tide_packet *p, const void *bytes, uint32_t size);
 // A list's elements of `element` bytes each, side by side, kept in STRINGS: what its field holds (0 for none).
 uint32_t tide_packet_list(tide_packet *p, tide_list list, uint32_t element);
-// Room for the places of entity indices below `count`, every one UINT32_MAX.
-uint32_t *tide_packet_places(tide_packet *p, uint32_t count);
+// This frame's exact logical-key map. Null is ignored/missing; registering the
+// same key again replaces its place (the selected authoritative view wins).
+void tide_packet_entity_place(tide_packet *p, tide_entity entity, uint32_t place);
+uint32_t tide_packet_find_entity(const tide_packet *p, tide_entity entity);
 // Ends the packet: STRINGS, then the header's counts.
 void tide_packet_end(tide_packet *p, uint64_t hash, bool in_match, uint32_t tick, uint32_t verified_tick, float alpha,
                      uint32_t entities);
@@ -113,7 +115,7 @@ typedef enum tide_embed_field_kind {
     TIDE_EMBED_LIST = 2,   // ...of `element` bytes each, `element_type` the layout's type of them, or -1
     TIDE_EMBED_MAP = 3,    // Not in the packet: 0
     TIDE_EMBED_GRID = 4,   // Not in the packet: 0
-    TIDE_EMBED_ENTITY = 5, // tide_entity: index, generation
+    TIDE_EMBED_ENTITY = 5, // tide_entity: 64-bit birth and lineage
 } tide_embed_field_kind;
 
 typedef struct tide_embed_field {
@@ -153,12 +155,12 @@ typedef struct tide_embed_game {
     // `local` state. `world` NULL outside a match.
     void (*view)(const void *world, const void *previous, float alpha, const void *local, uint32_t verified_tick,
                  tide_packet *out);
-    // Sends a command from another program, as local code's Send: `type` the schema's, to the entity `target` (index,
-    // generation; zeros for none), `value` its bytes, and for one holding text or lists, theirs after them as STRINGS
+    // Sends a command from another program, as local code's Send: `type` the schema's, to the entity `target` (birth and
+    // lineage; zeros for none), `value` its bytes, and for one holding text or lists, theirs after them as STRINGS
     // lays them out (u32 count, its {offset, length} entries, the bytes), each field holding its entry's place + 1, 0
     // for empty. False for a type that's no command, bytes that aren't its, text that isn't UTF-8, a list of what
     // holds text, or one too big for a command, which local code's Send would end the program for.
-    bool (*command)(void *local, int32_t type, uint32_t target_index, uint32_t target_generation, const void *value,
+    bool (*command)(void *local, int32_t type, uint64_t target_birth, uint64_t target_lineage, const void *value,
                     uint32_t size);
     // A tide_start for the scene named `scene`: false for none of that name.
     bool (*start)(void *start, const char *scene);

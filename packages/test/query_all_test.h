@@ -25,7 +25,7 @@ extern void forget_queries(void);
 
 static bool same_entity(const tide_entity a, const tide_entity b)
 {
-    return a.index == b.index && a.generation == b.generation;
+    return tide_entity_equal(a, b);
 }
 
 static tide_entity marked(const tide_world *w, const int kind)
@@ -153,9 +153,9 @@ TIDE_TEST(all_queries_sort_filter_and_preserve_individual_colliders)
     }
     printf("    all-hit output bits: %016llx\n", (unsigned long long)hash);
 #ifdef QUERY_ALL_3D
-    TIDE_CHECK(hash == UINT64_C(0xf8d8985883f8ec9f));
+    TIDE_CHECK(hash == UINT64_C(0xb91fa1bde2dfd707));
 #else
-    TIDE_CHECK(hash == UINT64_C(0x7533602157f73627));
+    TIDE_CHECK(hash == UINT64_C(0xfcfd84f736b6bd93));
 #endif
     local.Controls.ignore = body_of(&w, near).id;
     const Observed *o = probe(&w, &local, 0);

@@ -66,8 +66,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its resident stamp and digest, and the netcode.
 // Once in the middle of a round, and once after a new game was asked for.
-#define BRAWL_HASH UINT64_C(0x98f8b3699693166f)
-#define MATCH_HASH UINT64_C(0xa85db81f5413c2cf)
+#define BRAWL_HASH UINT64_C(0x52005651708181ca)
+#define MATCH_HASH UINT64_C(0x7339b3d0f18243b4)
 
 // Timings of a build that isn't optimized say nothing, so there the test that
 // measures does a tenth of it: enough to show that it runs.
@@ -230,6 +230,8 @@ static uint32_t plain_command(const uint32_t id, uint8_t bytes[TIDE_COMMAND_BYTE
     tide_bits_put(&bits, id, 16);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
     return tide_bits_end(&bits);
 }
 
@@ -294,7 +296,7 @@ TIDE_TEST(sumo_seats_its_players_and_fills_the_ring_with_bots)
     tide_world_player_joined(&world, player(5));
     tick(2);
     TIDE_CHECK(world.Ring.manned == 3 && count(&world, tide_has_Ball) == 4);
-    TIDE_CHECK(ball_of(&world, 1).index == bots.index && tide_get_Owner(&world, bots).player.id == player(5).id);
+    TIDE_CHECK(tide_entity_equal(ball_of(&world, 1), bots) && tide_get_Owner(&world, bots).player.id == player(5).id);
     for (int i = 1; i <= 3; i++) tide_world_player_joined(&world, player(i));
     tick(RESPAWN + 4);
     TIDE_CHECK(world.Ring.manned == 31 && count(&world, tide_has_Ball) == 5);

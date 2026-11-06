@@ -9,7 +9,7 @@ static tide_world world;
 TIDE_TEST(using_own_names_come_first)
 {
     tide_world_init(&world, 1.0f);
-    const tide_entity e = {1, 1};
+    const tide_entity e = tide_entity_in_slot(&world.entities, 1);
     TIDE_REQUIRE(tide_has_Body(&world, e) && tide_has_Lib_Body(&world, e) && tide_has_Lib_Hit(&world, e));
     TIDE_CHECK(tide_get_Body(&world, e).at.x == 1.0f && tide_get_Body(&world, e).at.y == 2.0f);
     TIDE_CHECK(tide_get_Lib_Body(&world, e).mass == 5);

@@ -153,7 +153,7 @@ Extern functions take and return plain data, by value:
 | an enum | `int32_t`, or `uint8_t` and `uint16_t` for `: byte` and `: ushort` |
 | a struct or component | a struct with the same fields, in the same order |
 
-A system that splits its entities across threads gives the entities it spawns temporary handles until it's done (see [The schedule](../game/schedule.md#splitting-across-threads)), so an `Entity` C gets from one may be temporary: `tide_entity_is_temporary(e)`, from `tide/entity.h`, tells. Tide gives the real handle to what the system kept, but not to C, so C that keeps entities should keep real ones.
+`tide_entity` is a 16-byte opaque logical identity, with two `uint64_t` words named `birth` and `lineage`. Compare complete values with `tide_entity_equal`; test null with `tide_entity_is_null`. Its bits do not name a storage slot. A spawn returns its final identity immediately, including when C observes it before deferred component installation; no temporary handle or later identity rewrite exists. C may retain that value, but must check its lifetime through the relevant world's entity API before reading state. Hosts and C libraries must rebuild for this ABI change.
 
 C often takes pointers. Tide has none, and no pointer arithmetic: the parameter says how a value goes to C, and the call takes its address by itself. Every pointer is only good until C returns.
 
@@ -374,13 +374,13 @@ The match keeps a component 4 bytes at a time, each a column of its own, so a fi
 | Call | Gives |
 | --- | --- |
 | `tide_rows_floats(rows, component, offset)` | `const float *`: a `float` field, or one part of a vector (`offsetof(Position, at.y)`) |
-| `tide_rows_ints(rows, component, offset)` | `const int32_t *`: an `int` field, an enum stored as an int, half of a `long` or of an `Entity` |
+| `tide_rows_ints(rows, component, offset)` | `const int32_t *`: an `int` field, an enum stored as an int, half of a `long`, or one of the four words of an `Entity` |
 | `tide_rows_floats_mut`, `tide_rows_ints_mut` | The same to write, for a component the system takes as `mut` |
 | `tide_rows_entities(rows)` | `const tide_entity *`: each row's entity |
 | `tide_rows_get(rows, component, row, &value)` | One row's whole component, copied into a struct |
 | `tide_rows_set(rows, component, row, &value)` | The same back, for a `mut` component |
 
-`tide_rows_get` and `tide_rows_set` are for the fields that aren't arrays of 4 bytes (a `bool` or a `byte` is one byte of a column, a `long` and an `Entity` are two columns), for a component whose size isn't a multiple of 4, which is kept otherwise, and for C that would rather work with a struct at a time.
+`tide_rows_get` and `tide_rows_set` are for the fields that aren't arrays of 4 bytes (a `bool` or a `byte` is one byte of a column, a `long` is two columns and an `Entity` four), for a component whose size isn't a multiple of 4, which is kept otherwise, and for C that would rather work with a struct at a time.
 
 Nothing is copied to read: an array is the match's own memory. Writing is asked for a field at a time, and costs what's written:
 

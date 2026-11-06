@@ -116,8 +116,10 @@ static bool choose(tide_entity target, int sender, int round, int slot)
     uint8_t bytes[TIDE_COMMAND_BYTES];
     tide_bits bits = {bytes, sizeof bytes, 0, false};
     tide_bits_put(&bits, TIDE_COMMAND_ID_ChooseCard, 16);
-    tide_bits_put(&bits, target.index, 32);
-    tide_bits_put(&bits, target.generation, 32);
+    tide_bits_put(&bits, (uint32_t)target.birth, 32);
+    tide_bits_put(&bits, (uint32_t)(target.birth >> 32), 32);
+    tide_bits_put(&bits, (uint32_t)target.lineage, 32);
+    tide_bits_put(&bits, (uint32_t)(target.lineage >> 32), 32);
     tide_bits_put_varint(&bits, tide_zigzag(round));
     tide_bits_put_varint(&bits, tide_zigzag(slot));
     const uint32_t size = tide_bits_end(&bits);
@@ -131,6 +133,8 @@ static bool match_command(uint32_t id, int sender, int match)
     uint8_t bytes[TIDE_COMMAND_BYTES];
     tide_bits bits = {bytes, sizeof bytes, 0, false};
     tide_bits_put(&bits, id, 16);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put_varint(&bits, tide_zigzag(match));

@@ -7,14 +7,9 @@
 static tide_entities projected_entities(const tide_entity e)
 {
     tide_entities t = {0};
-    const uint32_t page = e.index >> TIDE_ENTITY_PAGE_SHIFT;
-    t.next_unused = e.index + 1u;
-    t.pages = t.room = page + 1u;
-    tide_page **allocation = tide_alloc_zeroed((size_t)t.room * 2u + 1u, sizeof *allocation);
-    t.page = allocation + 1;
-    t.page[page] = tide_page_new((1u << TIDE_ENTITY_PAGE_SHIFT) * sizeof(tide_entity_slot));
-    tide_entity_slot *slots = tide_page_data(t.page[page]);
-    slots[e.index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u)] = (tide_entity_slot){e.generation, 3, 7, 2};
+    tide_entity_install(&t, e);
+    tide_entity_set_location(&t, e, (tide_location){3, 7});
+    tide_entity_set_snaps(&t, e, 2);
     return t;
 }
 
@@ -38,11 +33,11 @@ TIDE_TEST(entity_projection_reserves_only_known_pages)
     TIDE_CHECK(tide_entity_snaps(&t, e) == 3);
     TIDE_CHECK(tide_entity_born(&t, e) == 12345);
     const tide_entity predicted = tide_entity_create(&t);
-    TIDE_CHECK(predicted.index == e.index + 1u);
+    TIDE_CHECK(tide_entity_slot_index(&t, predicted) == 1);
     TIDE_CHECK(!tide_entity_alive(&snapshot, predicted));
     TIDE_CHECK(tide_entity_destroy(&t, e));
     TIDE_CHECK(tide_entity_alive(&snapshot, e));
-    TIDE_CHECK(tide_entity_create(&t).index == e.index);
+    TIDE_CHECK(tide_entity_slot_index(&t, tide_entity_create(&t)) == 0);
     tide_entities_free(&snapshot);
     tide_entities_free(&t);
 }
@@ -62,7 +57,7 @@ TIDE_TEST(entity_projection_roundtrips_sparse_pages_and_deltas)
     tide_reader in = {bytes, size, 0, false};
     TIDE_REQUIRE(tide_entities_unpack(&loaded, &in));
     TIDE_CHECK(in.at == size && tide_entities_hash(123, &loaded) == expected);
-    TIDE_CHECK(loaded.page[0] == NULL);
+    TIDE_CHECK(loaded.pages == 1 && loaded.next_unused == 1);
 
     const uint32_t cuts[] = {0, 4, 8, 12, 16, 20, size - 1u};
     for (uint32_t i = 0; i < sizeof cuts / sizeof cuts[0]; i++) {
@@ -112,4 +107,114 @@ TIDE_TEST(entity_projection_roundtrips_sparse_pages_and_deltas)
     tide_entities_free(&repaired);
     tide_entities_free(&loaded);
     tide_entities_free(&t);
+}
+
+TIDE_TEST(entity_clock_registry_delta_preserves_large_seeded_baselines)
+{
+    tide_entities base = {0}, current = {0}, loaded = {0};
+    for (uint32_t i = 0; i < 20000; i++) tide_entity_create_key(&base, (tide_entity){1, 2u + i * 2u});
+    tide_writer hashes = {.grows = true};
+    tide_entities_hash_pages(&base, &hashes);
+    uint8_t needs_bytes[256];
+    tide_needs needs;
+    tide_needs_begin(&needs, hashes.data, hashes.size, needs_bytes, sizeof needs_bytes);
+    tide_entities_need_pages(&base, &needs);
+    const uint32_t need_size = tide_needs_end(&needs);
+    tide_delta_writer by_need;
+    tide_delta_begin(&by_need, false, needs_bytes, need_size, 36);
+    tide_entities_pack_delta(&base, NULL, &by_need);
+    uint32_t need_packet_size;
+    uint8_t *need_packet = tide_delta_end(&by_need, &need_packet_size);
+    TIDE_REQUIRE(need_packet_size < 256); // The receiver already has all 320KB of keys.
+    tide_delta_reader need_reader;
+    uint64_t need_hash;
+    TIDE_REQUIRE(tide_delta_open(&need_reader, need_packet, need_packet_size, true, &need_hash));
+    TIDE_REQUIRE(tide_entities_unpack_delta(&loaded, &base, &need_reader));
+    TIDE_CHECK(tide_entities_hash(5, &loaded) == tide_entities_hash(5, &base));
+    const uint64_t before = tide_entities_hash(5, &loaded);
+    TIDE_REQUIRE(tide_delta_open(&need_reader, need_packet, need_packet_size - 1u, true, &need_hash));
+    TIDE_CHECK(!tide_entities_unpack_delta(&loaded, &base, &need_reader));
+    TIDE_CHECK(tide_entities_hash(5, &loaded) == before);
+    free(need_packet);
+    free(hashes.data);
+    tide_entities_free(&loaded);
+    tide_entities_copy(&current, &base);
+    // A sorted-prefix insertion used to retransmit all 320KB of registry keys.
+    tide_entity_create_key(&current, (tide_entity){1, 1});
+    tide_delta_writer writer;
+    tide_delta_begin(&writer, true, NULL, 0, 37);
+    tide_entities_pack_delta(&current, &base, &writer);
+    uint32_t size;
+    uint8_t *bytes = tide_delta_end(&writer, &size);
+    TIDE_REQUIRE(size < 1024);
+    tide_delta_reader reader;
+    uint64_t hash;
+    TIDE_REQUIRE(tide_delta_open(&reader, bytes, size, true, &hash));
+    TIDE_REQUIRE(tide_entities_unpack_delta(&loaded, &base, &reader));
+    TIDE_CHECK(hash == 37 && tide_entities_hash(5, &loaded) == tide_entities_hash(5, &current));
+    const uint32_t cuts[] = {0, 3, 8, size - 1u};
+    for (uint32_t i = 0; i < sizeof cuts / sizeof *cuts; i++) {
+        tide_entities broken = {0};
+        if (tide_delta_open(&reader, bytes, cuts[i], true, &hash))
+            TIDE_CHECK(!tide_entities_unpack_delta(&broken, &base, &reader));
+        tide_entities_free(&broken);
+    }
+    free(bytes);
+    tide_entities_free(&loaded);
+    tide_entities_free(&current);
+    // An independently constructed same-clock fork removes one key and adds
+    // another; edits must preserve the exact set, not merely append a suffix.
+    for (uint32_t i = 0; i < 20000; i++)
+        tide_entity_create_key(&current, (tide_entity){1, i == 1u ? 3u : 2u + i * 2u});
+    tide_delta_begin(&writer, true, NULL, 0, 38);
+    tide_entities_pack_delta(&current, &base, &writer);
+    bytes = tide_delta_end(&writer, &size);
+    TIDE_REQUIRE(size < 1024);
+    TIDE_REQUIRE(tide_delta_open(&reader, bytes, size, true, &hash));
+    TIDE_REQUIRE(tide_entities_unpack_delta(&loaded, &base, &reader));
+    TIDE_CHECK(tide_entities_hash(5, &loaded) == tide_entities_hash(5, &current));
+    tide_entities wrong_clock = {0};
+    tide_entity_create_key(&wrong_clock, (tide_entity){2, 1});
+    tide_entities rejected = {0};
+    TIDE_REQUIRE(tide_delta_open(&reader, bytes, size, true, &hash));
+    TIDE_CHECK(!tide_entities_unpack_delta(&rejected, &wrong_clock, &reader));
+    tide_entities_free(&rejected);
+    tide_entities_free(&wrong_clock);
+    free(bytes);
+    tide_entities_free(&loaded);
+    tide_entities_free(&current);
+    tide_entities_free(&base);
+}
+
+TIDE_TEST(entity_clock_registry_regions_reject_cross_boundary_duplicates_and_clocks)
+{
+    tide_entities target = {0};
+    tide_entity_create_key(&target, (tide_entity){7, 8});
+    const uint64_t before = tide_entities_hash(13, &target);
+    tide_entity first[1024];
+    for (uint32_t i = 0; i < 1024; i++) first[i] = (tide_entity){1, i + 1u};
+    const tide_entity endings[] = {{1, 1024}, {1, 0}, {2, 1025}};
+    for (uint32_t attempt = 0; attempt < sizeof endings / sizeof *endings; attempt++) {
+        tide_delta_writer writer;
+        tide_delta_begin(&writer, false, NULL, 0, 9);
+        tide_delta_number(&writer, 0); // No physical slots; all births already destroyed.
+        tide_delta_number(&writer, 0);
+        tide_delta_number64(&writer, 1);
+        tide_delta_number64(&writer, 0);
+        tide_delta_number(&writer, 1025);
+        tide_delta_number(&writer, 2); // Registry hash/need regions.
+        tide_delta_region(&writer, first, sizeof first, NULL, 0, false, 16);
+        tide_delta_region(&writer, &endings[attempt], sizeof(tide_entity), NULL, 0, false, 16);
+        tide_delta_close(&writer);
+        tide_delta_close(&writer);
+        uint32_t size;
+        uint8_t *bytes = tide_delta_end(&writer, &size);
+        tide_delta_reader reader;
+        uint64_t hash;
+        TIDE_REQUIRE(tide_delta_open(&reader, bytes, size, false, &hash));
+        TIDE_CHECK(!tide_entities_unpack_delta(&target, NULL, &reader));
+        TIDE_CHECK(tide_entities_hash(13, &target) == before);
+        free(bytes);
+    }
+    tide_entities_free(&target);
 }

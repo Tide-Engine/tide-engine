@@ -7,10 +7,10 @@ static tide_world world;
 
 // Main is slot 0; Setup spawns the stunned rock, the rock, the wet body and
 // the body stunned through Add, in that order.
-static const tide_entity STUNNED_ROCK = {1, 1};
-static const tide_entity ROCK = {2, 1};
-static const tide_entity WET = {3, 1};
-static const tide_entity ADDED = {4, 1};
+static tide_entity STUNNED_ROCK;
+static tide_entity ROCK;
+static tide_entity WET;
+static tide_entity ADDED;
 
 static void ticks(const int n)
 {
@@ -20,6 +20,10 @@ static void ticks(const int n)
 TIDE_TEST(sparse_components_come_and_go_in_place)
 {
     tide_world_init(&world, 1.0f);
+    STUNNED_ROCK = tide_entity_in_slot(&world.entities, 1);
+    ROCK = tide_entity_in_slot(&world.entities, 2);
+    WET = tide_entity_in_slot(&world.entities, 3);
+    ADDED = tide_entity_in_slot(&world.entities, 4);
     // Both rocks are one archetype (Body, Rock): Stunned and Burning are rows' own
     TIDE_CHECK(tide_world_entity_count(&world) == 5);
     TIDE_CHECK(tide_has_Stunned(&world, STUNNED_ROCK) && !tide_has_Stunned(&world, ROCK));
@@ -64,6 +68,10 @@ TIDE_TEST(sparse_components_come_and_go_in_place)
 TIDE_TEST(sparse_set_and_get_follow_presence)
 {
     tide_world_init(&world, 1.0f);
+    STUNNED_ROCK = tide_entity_in_slot(&world.entities, 1);
+    ROCK = tide_entity_in_slot(&world.entities, 2);
+    WET = tide_entity_in_slot(&world.entities, 3);
+    ADDED = tide_entity_in_slot(&world.entities, 4);
     TIDE_CHECK(tide_set_Stunned(&world, ROCK, (Stunned){.left = 9}) == false);
     TIDE_CHECK(tide_get_Stunned(&world, ROCK).left == 0);
     TIDE_CHECK(tide_set_Stunned(&world, STUNNED_ROCK, (Stunned){.left = 9, .by = tide_get_Stunned(&world, STUNNED_ROCK).by}));

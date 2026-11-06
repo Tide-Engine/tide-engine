@@ -21,7 +21,7 @@ namespace Tide
         public uint Type;   // The schema's type index
         public uint Flags;  // 1: heard as predicted; 2: once the server confirmed its tick
         public uint Tick;   // The tick that sent it
-        public uint TargetIndex, TargetGeneration; // The entity it was sent to (zeros: the world)
+        public ulong TargetBirth, TargetLineage; // The entity it was sent to (zeros: the world)
         public uint TargetPlace;                   // ...its index among the packet's entities, uint.MaxValue for none
         public uint Value;  // Where its value is in the packet
         public uint Size;   // ...and its bytes
@@ -33,20 +33,19 @@ namespace Tide
     // One entity the view packet holds.
     public struct TideEntityRow
     {
-        public uint Index;
-        public uint Generation;
+        public ulong Birth;
+        public ulong Lineage;
         public uint Flags;  // TideEntityFlags
         public uint Prefab; // The schema's prefab index, or uint.MaxValue for none
         public uint Parent; // Its parent's index among the packet's entities, or uint.MaxValue for a root
-        // What it was spawned as: another value on the same handle is another entity, which a rollback gave the
-        // handle. 0: not known (it came in a world another machine sent)
+        // Optional presentation metadata; identity is solely the complete Birth/Lineage key.
         public uint Born;
 
         public bool Mine => (Flags & 1u) != 0;  // This machine owns it
         public bool Owned => (Flags & 2u) != 0; // Some player owns it
         public bool HasPrefab => Prefab != uint.MaxValue;
         public bool HasParent => Parent != uint.MaxValue;
-        public ulong Id => ((ulong)Generation << 32) | Index;
+        public TideEntityId Id => new TideEntityId { birth = Birth, lineage = Lineage };
     }
 
     // A frame's view packet, read in place: what Tide's views would see this
@@ -55,9 +54,9 @@ namespace Tide
     public sealed unsafe class TidePacket
     {
         public const uint Magic = 0x56444954; // "TIDV"
-        public const uint Version = 4;
+        public const uint Version = 5;
         const int HeaderSize = 48;
-        const int EntitySize = 24;
+        const int EntitySize = 32;
         const int SectionHeaderSize = 24;
 
         byte* bytes;
@@ -126,10 +125,10 @@ namespace Tide
             return true;
         }
 
-        // An EVENTS section's records, each a 32-byte header and its value: false where one isn't whole.
+        // An EVENTS section's records, each a 40-byte header and its value: false where one isn't whole.
         bool ReadHeard(byte* data, Section s, uint entityCount)
         {
-            const uint head = 32;
+            const uint head = 40;
             uint at = 0;
             for (uint i = 0; i < s.Count; i++)
             {
@@ -139,8 +138,8 @@ namespace Tide
                 if (record < head || (record & 7u) != 0 || (ulong)at + record > s.Bytes) return false;
                 heard.Add(new TideHeard
                 {
-                    Type = p[1], Flags = p[2], Tick = p[3], TargetIndex = p[4], TargetGeneration = p[5],
-                    TargetPlace = p[6] < entityCount ? p[6] : uint.MaxValue, Value = s.Data + at + head, Size = record - head,
+                    Type = p[1], Flags = p[2], Tick = p[3], TargetBirth = (ulong)p[4] | (ulong)p[5] << 32, TargetLineage = (ulong)p[6] | (ulong)p[7] << 32,
+                    TargetPlace = p[8] < entityCount ? p[8] : uint.MaxValue, Value = s.Data + at + head, Size = record - head,
                 });
                 at += record;
             }
@@ -186,7 +185,7 @@ namespace Tide
         {
             if ((uint)i >= (uint)EntityCount) throw new ArgumentOutOfRangeException(nameof(i));
             var p = (uint*)(bytes + entities + (uint)i * EntitySize);
-            return new TideEntityRow { Index = p[0], Generation = p[1], Flags = p[2], Prefab = p[3], Parent = p[4], Born = p[5] };
+            return new TideEntityRow { Birth = (ulong)p[0] | (ulong)p[1] << 32, Lineage = (ulong)p[2] | (ulong)p[3] << 32, Flags = p[4], Prefab = p[5], Parent = p[6], Born = p[7] };
         }
 
         int Find(TideSectionKind kind, uint type)

@@ -7,9 +7,9 @@
 static tide_world world;
 
 // The Main scene is slot 0, and its Setup spawns these in order.
-static const tide_entity FIRST = {1, 1};  // Owned by player 0
-static const tide_entity SECOND = {2, 1}; // Owned by player 1
-static const tide_entity SERVER = {3, 1}; // No owner
+static tide_entity FIRST;  // Owned by player 0
+static tide_entity SECOND; // Owned by player 1
+static tide_entity SERVER; // No owner
 
 TIDE_TEST(devices_input_sends_what_systems_read)
 {
@@ -52,6 +52,9 @@ TIDE_TEST(devices_are_repaired)
     in.tide_dev.gamepad.leftStick = tide_f2(INFINITY, -2.0f);
     in.tide_dev.gamepad.rightTrigger = NAN;
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    SERVER = tide_entity_in_slot(&world.entities, 3);
     tide_world_set_input(&world, tide_player_from_index(0), in);
     const tide_devices *got = &world.inputs[0].tide_dev;
     TIDE_CHECK(got->gamepad.leftStick.x == 1.0f && got->gamepad.leftStick.y == -1.0f);
@@ -63,6 +66,9 @@ TIDE_TEST(devices_are_repaired)
 TIDE_TEST(devices_are_the_owners)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    SERVER = tide_entity_in_slot(&world.entities, 3);
     tide_devices first = {0};
     first.gamepad.leftStick = tide_f2(1.0f, 0.0f);
     first.gamepad.connected = true;
@@ -85,6 +91,9 @@ TIDE_TEST(devices_are_the_owners)
 TIDE_TEST(devices_views_receive_this_machines_frame)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    SERVER = tide_entity_in_slot(&world.entities, 3);
     tide_world_tick(&world);
     // Every owner's networked input remains empty. The view sees the local
     // frame for all three entities, including the server's unowned one.
@@ -124,6 +133,9 @@ TIDE_TEST(devices_touches_send_what_systems_read)
     TIDE_CHECK(!s->touches.at[0].press.held && s->touches.at[0].source == 0); // The platform's own
 
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    SERVER = tide_entity_in_slot(&world.entities, 3);
     tide_world_set_input(&world, tide_player_from_index(0), in);
     tide_world_tick(&world);
     const Walker a = tide_get_Walker(&world, FIRST);
@@ -137,6 +149,9 @@ TIDE_TEST(devices_touches_send_what_systems_read)
 TIDE_TEST(devices_buttons_go_down_once)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    SERVER = tide_entity_in_slot(&world.entities, 3);
     tide_devices d = {0};
     tide_button_set(&d.keyboard.space, true);
     tide_world_set_input(&world, tide_player_from_index(0), tide_input_sample(&d, NULL));

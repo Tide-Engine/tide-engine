@@ -1,5 +1,35 @@
 # Hot reloading
 
+## Logical Entity clock across migration (2026-11-06)
+
+`tide_layout_world.identity_clock` is an appended offset to the match's public
+64-bit causal identity clock; zero denotes a world without that field, including
+local state. Generated layouts include the offset and migration carries all
+eight bytes to the destination offset independently of named singleton fields.
+Both offsets are checked against their header sizes. Migrating into a clocked
+world from metadata without a clock, or from a zero clock, fails with a clear
+message rather than silently reusing old spawn identities. Layout unpacking
+also rejects an out-of-bounds clock offset. The host and game rebuild together
+for the metadata ABI change; older Entity8 raw saves are not reinterpreted.
+
+The handwritten migration regression moves a clock above 2^40 between different
+header offsets and checks missing, zero and out-of-bounds clocks are refused.
+Integration validation is recorded with the complete logical Entity change.
+
+The appended lifecycle_occurrences/lifecycle_count metadata similarly carries
+clock-local public player lifecycle counters. Migration copies the common player
+prefix and zeros new slots. Count/offset spans are checked with widened arithmetic;
+missing source metadata cannot silently restart queued lifecycle identities.
+The regression moves nonzero counters, including one above 2^38, while increasing
+the configured player count, and rejects a forged UINT32_MAX count.
+
+The appended main_occurrence offset independently preserves implicit Main's
+clock-local root occurrence, whose location must not depend on the configured
+player count. Its source/destination span and presence are checked too. The
+regression carries a value above 2^34, rejects missing/out-of-bounds metadata,
+and checks packed layout validation rejects an invalid offset. The complete generated-world migration target passes on Windows ASan and
+WASI, including the combined clock/counter case and malformed packed metadata.
+
 ## Preparation jobs across reload (2026-11-05)
 
 Sessions drain/discard in-flight preparation jobs and their logs before set_game/migrate/rewind or world destruction.

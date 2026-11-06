@@ -239,7 +239,7 @@ TIDE_TEST(crossplatform_random)
     h = hash_bits(hash_bits(h, (uint32_t)seeded.state), (uint32_t)((uint64_t)seeded.state >> 32));
     h = hash_bits(hash_bits(h, (uint32_t)unseeded.state), (uint32_t)((uint64_t)unseeded.state >> 32));
     h = hash_bits(hash_bits(h, (uint32_t)placed.state), (uint32_t)((uint64_t)placed.state >> 32));
-    expect_hash("random", h, 0xBD6BDD2B157C28BCull);
+    expect_hash("random", h, 0xEA0690516561A349ull);
 }
 
 // Numbers out of text (tide_str_parse_float, which Json.Read reads floats with):

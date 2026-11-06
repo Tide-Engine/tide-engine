@@ -28,7 +28,7 @@ A debug build leaves your code unoptimized and optimizes what the engine generat
   - lists: their count and their elements, each as its type, structs with their fields: in locals, parameters and fields alike. A list local's type says which list it is, `tide_local_list3`, the list inside it as `list`. Visual Studio, VS Code and CLion show only the count of a list in async code, in a `mut` parameter, or in a function that takes an `Action`; LLDB shows those too.
   - maps and sets: their count and entries, `["ann"] = 3`.
   - enums: the member's name, in a field (LLDB: everywhere).
-  - entities: `Entity(3:1)`, or `none`.
+  - entities: their complete opaque identity, `Entity(birth:lineage)`, or `none` when both words are zero. Each word is 64 bits; neither is a storage index.
   - `T?`: the value, or `none`; `T fails E` its error; vectors `(1, 2, 3)`; `Color(1, 0, 0, 1)`.
 
 Grids show their handle, and C's own view of anything else.

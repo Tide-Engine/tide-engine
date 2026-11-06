@@ -312,10 +312,10 @@ TIDE_TEST(embed_view_packet)
     const uint8_t *values = section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows);
     TIDE_CHECK(values != NULL && count == 1u && u32_at(rows, 0) < 2u);
     const uint32_t entity = TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY;
-    TIDE_CHECK(u32_at(p, entity + 8) == 3u); // Owned, and by this machine's player
-    TIDE_CHECK(u32_at(p, entity + 16) == TIDE_PACKET_NONE); // A root
+    TIDE_CHECK(u32_at(p, entity + 16) == 3u); // Owned, and by this machine's player
+    TIDE_CHECK(u32_at(p, entity + 24) == TIDE_PACKET_NONE); // A root
     // What it was spawned as: known, as this machine spawned it, and the same frame after frame
-    const uint32_t born = u32_at(p, entity + 20);
+    const uint32_t born = u32_at(p, entity + 28);
     TIDE_CHECK(born != 0u);
     Counter counter;
     memcpy(&counter, values, sizeof counter);
@@ -338,7 +338,7 @@ TIDE_TEST(embed_view_packet)
     TIDE_REQUIRE(p != NULL && u32_at(p, 36) == 2u);
     values = section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows);
     TIDE_REQUIRE(values != NULL && count == 1u);
-    TIDE_CHECK(u32_at(p, TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY + 20) == born);
+    TIDE_CHECK(u32_at(p, TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY + 28) == born);
     tide_embed_destroy(e);
 }
 
@@ -927,7 +927,7 @@ TIDE_TEST(embed_heard_events)
         uint32_t at = 0;
         for (uint32_t i = 0; i < count; i++) {
             const uint32_t record = u32_at(records, at), type = u32_at(records, at + 4), flags = u32_at(records, at + 8);
-            const uint32_t tick = u32_at(records, at + 12), place = u32_at(records, at + 24);
+            const uint32_t tick = u32_at(records, at + 12), place = u32_at(records, at + 32);
             TIDE_REQUIRE(record >= TIDE_PACKET_EVENT && record % 8u == 0u);
             if (type == ticked) {
                 Ticked heard;
@@ -941,7 +941,7 @@ TIDE_TEST(embed_heard_events)
                 }
                 // Sent to the counter, which is among the packet's entities, at its handle
                 targets &= place < u32_at(p, 36)
-                           && u32_at(p, TIDE_PACKET_HEADER + place * TIDE_PACKET_ENTITY) == u32_at(records, at + 16);
+                           && memcmp(p + TIDE_PACKET_HEADER + place * TIDE_PACKET_ENTITY, records + at + 16, sizeof(tide_entity)) == 0;
                 uint32_t length = 0;
                 const uint8_t *label = strings_entry(p, size, heard.label.at, &length);
                 labels &= label && length == 7u && memcmp(label, "counted", 7) == 0 && heard.ticks % 10 == 0;

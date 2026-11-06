@@ -93,7 +93,9 @@ e.Destroy();
 
 These are **structural changes**, and they don't happen right away. They're recorded, and applied together at the end of the tick, in the order they were made. The handle `Spawn` returns can be used at once, for example to store in a component, but the entity's data can only be read once the changes apply.
 
-In a system that splits its entities across threads, the handle is temporary until the system is done, when the entity gets its ID and every handle the system kept becomes the real one (see [The schedule](./schedule.md#splitting-across-threads)). Text shows it as `Entity(new)` meanwhile.
+`Spawn` returns its final opaque logical identity immediately. It stays the same across rollback and recipient projection loading for the same causal spawn, independently of physical slots, row order or hidden allocations. Helpers, query rows, events and waiting tasks retain that causal origin. Authority correcting the initializer values alone does not reset the entity's local fields. The components still become readable only when the recorded spawn applies.
+
+Code that depends on hidden state can still need authority corrections: stable identities do not simulate missing private entities. C uses the same identity; see [Calling C](../c/functions.md).
 
 That's what lets systems run side by side: nothing they do changes which entities exist until they're all done.
 

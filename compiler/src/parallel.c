@@ -87,9 +87,39 @@ bool world_reads_own_writes(const decl *sys)
     return false;
 }
 
+// Direct system effects are not the routine-capability `acts` summary. Every
+// modelled queued effect must commit sources in logical identity order.
+static bool queued_stmt(const stmt *s);
+static bool queued_expr(const expr *e)
+{
+    if (!e) return false;
+    switch (e->call) {
+    case CALL_SPAWN: case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY:
+    case CALL_PARENT: case CALL_SEND: case CALL_LOAD: case CALL_UNLOAD: case CALL_SNAP: return true;
+    default: break;
+    }
+    if (e->method && !e->method->is_extern && e->method->acts[0]) return true;
+    if (queued_expr(e->object) || queued_expr(e->lhs) || queued_expr(e->rhs) || queued_expr(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) if (queued_expr(e->args.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (queued_expr(e->inits.items[i].value)) return true;
+    return queued_stmt(e->block);
+}
+static bool queued_stmt(const stmt *s)
+{
+    if (!s) return false;
+    if (queued_expr(s->cond) || queued_expr(s->value) || queued_expr(s->target)
+        || queued_stmt(s->init) || queued_stmt(s->step) || queued_stmt(s->then_stmt) || queued_stmt(s->else_stmt)) return true;
+    for (int i = 0; i < s->stmts.count; i++) if (queued_stmt(s->stmts.items[i])) return true;
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) if (queued_expr(s->cases.items[i].labels.items[k])) return true;
+        for (int k = 0; k < s->cases.items[i].body.count; k++) if (queued_stmt(s->cases.items[i].body.items[k])) return true;
+    }
+    return false;
+}
+
 bool system_splits(const decl *sys)
 {
-    if (sys->is_view || !sys->per_entity || sys->writes_text) return false;
+    if (sys->is_view || !sys->per_entity || sys->writes_text || sys->extern_system || sys->acts[0] || sys->spawns || queued_stmt(sys->body)) return false;
     if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];

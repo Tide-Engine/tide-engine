@@ -937,13 +937,13 @@ bool tide_embed_request(tide_embed *e, const tide_session_request_kind kind, con
     return true;
 }
 
-bool tide_embed_command(tide_embed *e, const uint32_t type, const uint32_t target_index, const uint32_t target_generation,
+bool tide_embed_command(tide_embed *e, const uint32_t type, const uint64_t target_birth, const uint64_t target_lineage,
                         const void *value, const uint32_t size)
 {
     if (e != &the_embed || !running || !tide_run_game || !value || type > INT32_MAX) return false;
     const tide_embed_game *embed = tide_run_game->embed;
     return embed && embed->command
-        && embed->command(tide_run_local, (int32_t)type, target_index, target_generation, value, size);
+        && embed->command(tide_run_local, (int32_t)type, target_birth, target_lineage, value, size);
 }
 
 void tide_embed_camera(tide_embed *e, const float *transform, const float *projection)

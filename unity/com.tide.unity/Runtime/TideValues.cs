@@ -1,3 +1,4 @@
+using System;
 using System.Runtime.InteropServices;
 
 namespace Tide
@@ -85,17 +86,17 @@ namespace Tide
 
     // An entity field: Tide's handle of one, which the packet's entities have too (TideEntityRow).
     [StructLayout(LayoutKind.Sequential)]
-    public struct TideEntityId
+    public struct TideEntityId : IEquatable<TideEntityId>
     {
-        public uint index;
-        public uint generation;
-
-        public bool IsNull => generation == 0;
-        public ulong Id => ((ulong)generation << 32) | index;
-
-        public static implicit operator TideEntityId(TideEntityRow row)
-        {
-            return new TideEntityId { index = row.Index, generation = row.Generation };
-        }
+        public ulong birth;
+        public ulong lineage;
+        public bool IsNull => birth == 0 && lineage == 0;
+        public bool Equals(TideEntityId other) => birth == other.birth && lineage == other.lineage;
+        public override bool Equals(object value) => value is TideEntityId other && Equals(other);
+        public override int GetHashCode() => unchecked(birth.GetHashCode() * 397 ^ lineage.GetHashCode());
+        public static bool operator ==(TideEntityId a, TideEntityId b) => a.Equals(b);
+        public static bool operator !=(TideEntityId a, TideEntityId b) => !a.Equals(b);
+        public override string ToString() => IsNull ? "none" : $"Entity({birth:x16}:{lineage:x16})";
+        public static implicit operator TideEntityId(TideEntityRow row) => row.Id;
     }
 }

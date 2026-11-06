@@ -13,7 +13,7 @@ static Result result(void)
         tide_world_tick(&world);
         ticked = true;
     }
-    return tide_get_Result(&world, (tide_entity){1, 1});
+    return tide_get_Result(&world, tide_entity_in_slot(&world.entities, 1));
 }
 
 TIDE_TEST(cpp_a_global_is_constructed_before_the_game_runs)

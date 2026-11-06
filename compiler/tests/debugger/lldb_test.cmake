@@ -33,6 +33,9 @@ bt 3
 frame variable
 frame variable *player
 frame variable *totals
+target variable tide_debug_identity
+target variable tide_debug_half
+target variable tide_debug_null
 breakpoint delete --force
 breakpoint set --file fixture.tide --line ${at_gained}
 continue
@@ -92,12 +95,17 @@ expect("frame variable *player" 1 "buddy = (none|Entity\\([0-9]+:[0-9]+\\))" "an
 expect("frame variable *player" 1 "scores = count = 1 {\n *\\[\"ann\"\\] = [0-9]+" "a map's entries are its values by key")
 expect("frame variable *player" 1 "seen = count = [1-9]" "a set says its count")
 expect("frame variable *player" 1 "facing = \\(0, 0, 0, 1\\)" "a quaternion is its x, y, z and w")
-expect("frame variable *totals" 1 "pairs = count = [1-9][0-9]* {\n *\\[0\\] = [({][^)}]*a = 2[^)}]*b = 0\\.5" "a list of structs shows their fields")
+expect("frame variable *totals" 1 "pairs = count = [1-9][0-9]* {\n *\\[0\\] = [({][^)}]*a = 11[^)}]*b = 0\\.5" "a list of structs shows their fields")
 expect("bt 1" 1 "frame #0: [^\n]*tide_system_Score[^\n]* at fixture\\.tide:${at_recent}"
     "a step from a statement lands on the next Tide line, not on generated C")
 expect("bt 2" 1 "frame #0: [^\n]*tide_function_Sum[^\n]* at fixture\\.tide:${at_sum}\n[^\n]*frame #1: [^\n]*tide_system_Score[^\n]* at fixture\\.tide:${at_call}(\n|$)"
     "the stack is the Tide function at its line, then its caller at the call")
 expect("frame variable" 2 "values = count = 3 {\n *\\[0\\] = 1" "a list parameter shows its elements")
+
+expect("target variable tide_debug_identity" 1 "Entity\\(1311768467750121217:18364758544493064720\\)" "an entity displays both complete logical words")
+expect("target variable tide_debug_half" 1 "Entity\\(0:18364758544493064720\\)" "a zero birth word alone is not null")
+expect("target variable tide_debug_null" 1 "none" "both zero words are null")
+
 if(failures)
     message(FATAL_ERROR "LLDB didn't show the game as Tide:${failures}\n\nAll it said is in ${WORK}/said.txt")
 endif()

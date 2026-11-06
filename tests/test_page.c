@@ -131,14 +131,14 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
 
     uint64_t bytes = 0;
     const uint32_t pages = stale_in(&a, &bytes);
-    TIDE_CHECK(pages == a.chunks * wide.count && bytes == 60000u * 24u);
+    TIDE_CHECK(pages == a.chunks * wide.count && bytes == 60000u * 32u);
 
     turns pool = {0};
     const tide_jobs jobs = {.self = &pool, .threads = 12, .run_some = take_turns};
     tide_stale_pages stale = {0};
     tide_table_stale(&a, &wide, &stale);
     TIDE_CHECK(tide_pages_hash(&stale, &jobs) == pages && stale.pages == NULL && stale.count == 0);
-    TIDE_CHECK(pool.rounds == 1 && pool.others == 2);
+    TIDE_CHECK(pool.rounds == 1 && pool.others == 3);
     TIDE_CHECK(stale_in(&a, NULL) == 0);
     TIDE_CHECK(tide_table_hash(TIDE_HASH_START, &a, &wide) == alone);
 
@@ -156,13 +156,13 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
     const tide_jobs one = {.self = &pool, .threads = 1, .run_some = take_turns};
     for (int kind = 0; kind < 3; kind++) {
         for (uint32_t row = 0; row < 60000u; row += 2048u) {
-            ((tide_entity *)tide_table_cell(&a, &wide, row, 0))->generation += 1;
-            ((tide_entity *)tide_table_cell(&b, &wide, row, 0))->generation += 1;
+            ((tide_entity *)tide_table_cell(&a, &wide, row, 0))->lineage += 1;
+            ((tide_entity *)tide_table_cell(&b, &wide, row, 0))->lineage += 1;
             *(uint32_t *)tide_table_cell(&a, &wide, row, 1) ^= 0x5Au;
             *(uint32_t *)tide_table_cell(&b, &wide, row, 1) ^= 0x5Au;
         }
         tide_table_stale(&a, &wide, &stale);
-        TIDE_CHECK(stale.count == 2u * a.chunks && stale.bytes == 60000u * 12u);
+        TIDE_CHECK(stale.count == 2u * a.chunks && stale.bytes == 60000u * 20u);
         const uint32_t rounds = pool.rounds;
         const uint32_t hashed = tide_pages_hash(&stale, kind == 0 ? &two : kind == 1 ? &every : &one);
         TIDE_CHECK(hashed == (kind == 0 ? 2u * a.chunks : 0u));

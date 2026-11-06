@@ -1,5 +1,20 @@
 # Indexed loops
 
+## Canonical logical entity order (2026-11-06)
+
+Match query indexes retain their spatial/key search and existing page proofs.
+Their internal ordinals still locate physical archetype rows, but candidate
+execution order now follows opaque logical Entity identity across archetypes.
+Generated code attaches full keys to hits, sorts those candidates with exact
+128-bit comparison, then runs the existing guard and current-row checks. Up to
+64 candidates use inline storage; larger searches use bounded checked allocation
+released through existing early-return cleanup. The plain small-set fallback uses
+the shared cached logical order. Indexed parallel query rows are gathered in the
+same order and each step's causal origin and Random seed use its row identity,
+not the candidate ordinal. Local-entity queries and ordinary lists retain their
+previous order. The differential indexed/plain fixture must remain bit-identical.
+
+
 Agreed with the owner on 2026-11-05: a loop over a query's rows or a list's elements visits only the rows that can pass the loop's own guard, whenever the compiler can prove which ones those are. Nothing is declared: the compiler reads the guard. `indexed foreach` and `indexed parallel` promise it, and are an error when the loop can't be indexed. The spec section is "Indexed loops" in `docs/spec.md`; it says what is decided and what is Provisional.
 
 ## Decided (owner)

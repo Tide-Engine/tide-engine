@@ -45,8 +45,8 @@ TIDE_TEST(chars_all_checks_pass)
 {
     start();
     tide_world_tick(&world);
-    const Results r = tide_get_Results(&world, (tide_entity){1, 1});
-    TIDE_REQUIRE(tide_has_Results(&world, (tide_entity){1, 1}));
+    const Results r = tide_get_Results(&world, tide_entity_in_slot(&world.entities, 1));
+    TIDE_REQUIRE(tide_has_Results(&world, tide_entity_in_slot(&world.entities, 1)));
     if (r.firstFailure) printf("    check %d failed\n", (int)r.firstFailure);
     TIDE_CHECK(r.checks == 41);
     TIDE_CHECK(r.passed == r.checks);
@@ -61,7 +61,7 @@ TIDE_TEST(chars_are_the_same_bytes_everywhere)
 {
     start();
     tide_world_tick(&world);
-    const Board board = tide_get_Board(&world, (tide_entity){1, 1});
+    const Board board = tide_get_Board(&world, tide_entity_in_slot(&world.entities, 1));
     TIDE_CHECK(sizeof board.first == 4 && board.first == 0xE9); // 'é'
     TIDE_CHECK(board.row.at[0] == 'a' && board.row.at[1] == 0 && board.row.at[3] == 'd');
     TIDE_CHECK(board.glyph.mark == '!');
@@ -76,7 +76,7 @@ TIDE_TEST(chars_are_the_same_bytes_everywhere)
     TIDE_REQUIRE(tide_world_unpack(&restored, bytes, size));
     free(bytes);
     TIDE_CHECK(tide_world_hash(&restored) == tide_world_hash(&world));
-    TIDE_CHECK(tide_get_Board(&restored, (tide_entity){1, 1}).first == 0xE9);
+    TIDE_CHECK(tide_get_Board(&restored, tide_entity_in_slot(&world.entities, 1)).first == 0xE9);
     printf("    hash: %llu\n", (unsigned long long)tide_world_hash(&world));
     TIDE_CHECK(tide_world_hash(&world) == CHARS_HASH);
     tide_world_free(&copy);

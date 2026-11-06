@@ -111,6 +111,10 @@ typedef struct tide_layout_world {
     // "Namespace.Singleton.field", which carries over by that name.
     uint32_t resident_count;
     const char *const *residents;
+    uint32_t identity_clock; // Match's uint64 logical Entity clock offset; 0 for local/handwritten worlds without one.
+    uint32_t lifecycle_occurrences; // Clock-local uint64 occurrence counters, one per public player identity.
+    uint32_t lifecycle_count;
+    uint32_t main_occurrence; // Clock-local uint64 occurrence of implicit Main roots; 0 when absent.
 } tide_layout_world;
 
 typedef struct tide_layout {

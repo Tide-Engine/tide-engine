@@ -59,7 +59,7 @@ static uint32_t whole_size(const tide_world *w)
 // Moves mover `i` up by `dy`, as a world's own code wouldn't.
 static void nudge(tide_world *w, const uint32_t i, const float dy)
 {
-    const tide_entity e = {3001u + i, 1};
+    const tide_entity e = tide_entity_in_slot(&w->entities, 3001u + i);
     Mover m = tide_get_Mover(w, e);
     m.position.y += dy;
     tide_set_Mover(w, e, m);
@@ -181,9 +181,10 @@ TIDE_TEST(delta_needs_the_base_it_was_made_from)
     uint8_t lacks[512];
     const uint32_t lacks_size = tide_world_need_pages(&base, hashes, hashes_size, lacks, sizeof lacks);
     delta = tide_world_pack_delta(&world, NULL, lacks, lacks_size, &size);
-    Ground ground = tide_get_Ground(&other, (tide_entity){1, 1});
+    const tide_entity ground_entity = tide_entity_in_slot(&other.entities, 1);
+    Ground ground = tide_get_Ground(&other, ground_entity);
     ground.height += 1.0f;
-    tide_set_Ground(&other, (tide_entity){1, 1}, ground);
+    tide_set_Ground(&other, ground_entity, ground);
     TIDE_CHECK(!tide_world_unpack_delta(&made, &other, delta, size));
     TIDE_CHECK(tide_world_unpack_delta(&made, &base, delta, size));
     TIDE_CHECK(same(&made, &world));

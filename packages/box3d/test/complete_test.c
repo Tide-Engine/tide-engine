@@ -13,8 +13,8 @@
 void b3t_check(bool on, bool whenever);
 void b3t_forget(void);
 
-_Static_assert(sizeof(Box3D_Physics) == 480 && sizeof(Box3D_Collider) == 192 &&
-    sizeof(Box3D_HullGeometry) == 3592 && sizeof(Box3D_ShapeRecord) == 40 && sizeof(Box3D_Part) == 64,
+_Static_assert(sizeof(Box3D_Physics) == 480 && sizeof(Box3D_Collider) == 208 &&
+    sizeof(Box3D_HullGeometry) == 3592 && sizeof(Box3D_ShapeRecord) == 48 && sizeof(Box3D_Part) == 72,
     "live collider, history and native bookkeeping ABIs must agree");
 
 static const Observed_local *probe(tide_world *w, tide_local *local)
@@ -85,11 +85,12 @@ TIDE_TEST(box3d_body_remove_and_readd_does_not_leave_an_orphan_native_body)
     tide_world w={0}; start(&w);
     const int count=tide_map_count(w.Box3D_Physics.owners);
     const int64_t old=tide_get_Box3D_Body(&w,w.Objects.controlled).id;
-    const tide_entity_slot before=*tide_entity_slot_of(&w.entities,w.Objects.controlled.index);
+    const uint32_t slot=tide_entity_slot_index(&w.entities,w.Objects.controlled);
+    const tide_entity_slot before=*tide_entity_slot_of(&w.entities,slot);
     w.Request.replaceBody=w.Objects.controlled;
     tide_world_tick(&w); // Deferred remove/add returns to the same archetype/row.
     TIDE_CHECK(tide_get_Box3D_Body(&w,w.Objects.controlled).id==0);
-    TIDE_CHECK(memcmp(&before,tide_entity_slot_of(&w.entities,w.Objects.controlled.index),sizeof before)==0);
+    TIDE_CHECK(memcmp(&before,tide_entity_slot_of(&w.entities,slot),sizeof before)==0);
     tide_world_tick(&w);
     const int64_t fresh=tide_get_Box3D_Body(&w,w.Objects.controlled).id;
     TIDE_CHECK(fresh!=0 && fresh!=old);
@@ -227,7 +228,7 @@ TIDE_TEST(box3d_complete_snapshot_replay)
     tide_world w={0}, saved={0}; start(&w); tide_world_copy(&saved,&w);
     uint64_t sequence=0;
     for (int i=0;i<100;i++) { tide_world_tick(&w); const uint64_t h=tide_world_hash(&w); sequence=tide_hash_more(sequence,&h,sizeof h); }
-    TIDE_CHECK(sequence==UINT64_C(0xbea54f757805175b));
+    TIDE_CHECK(sequence==UINT64_C(0x6ddfa42e0c4e63e7));
     printf("  complete sequence: %016llx\n",(unsigned long long)sequence);
     for (int i=0;i<100;i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved)==tide_world_hash(&w));

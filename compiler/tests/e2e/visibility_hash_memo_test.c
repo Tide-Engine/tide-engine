@@ -9,7 +9,7 @@
 // Every tick's projection hash, over 150 ticks, hashed together. Built with
 // TIDE_CLIENT_MEMO_OFF (tidec_e2e_visibility_hash_memo_off) nothing is kept
 // from one hash to the next, and the hashes must be these too.
-#define HASHES UINT64_C(0x80b9f7750afd02b9)
+#define HASHES UINT64_C(0x39762c109845c3ae)
 
 static uint64_t hash_of(const tide_world *w)
 {

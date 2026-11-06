@@ -11,7 +11,7 @@ static tide_gui gui;
 // The index-th entity Main's Setup spawns: the Main scene itself is the first entity.
 static tide_entity slot(const uint32_t index)
 {
-    return (tide_entity){index + 1, 1};
+    return tide_entity_in_slot(&world.entities, index + 1);
 }
 
 enum { A, B, C, PROBE, HEALER, NOBODY, ROSTER, MEDIC, COPY, FIRST, SECOND, CALLER };
@@ -64,7 +64,7 @@ TIDE_TEST(world_functions_compare_through_it)
     const tide_entity *lowest = tide_list_read(&world.heap, roster.all, 0, sizeof(tide_entity));
     const tide_entity *middle = tide_list_read(&world.heap, roster.all, 1, sizeof(tide_entity));
     const tide_entity *highest = tide_list_read(&world.heap, roster.all, 2, sizeof(tide_entity));
-    TIDE_CHECK(lowest->index == slot(A).index && middle->index == slot(C).index && highest->index == slot(B).index);
+    TIDE_CHECK(tide_entity_equal(*lowest, slot(A)) && tide_entity_equal(*middle, slot(C)) && tide_entity_equal(*highest, slot(B)));
     TIDE_CHECK(roster.lowest == 7);
     TIDE_CHECK(roster.highest == 22);
 }
@@ -77,7 +77,8 @@ TIDE_TEST(world_functions_count_as_the_systems_own_reads)
     const Score first = tide_get_Score(&world, slot(FIRST));
     const Score second = tide_get_Score(&world, slot(SECOND));
     TIDE_CHECK(first.value == 6 && first.seen == 0);
-    TIDE_CHECK(second.value == 9 && second.seen == 6);
+    const bool rival_was_visited = tide_entity_compare(slot(FIRST), slot(SECOND)) < 0;
+    TIDE_CHECK(second.value == 9 && second.seen == (rival_was_visited ? 6 : 5));
 }
 
 TIDE_TEST(world_functions_in_parallel_steps_and_in_their_turn)

@@ -1,5 +1,41 @@
 # No Tide code can corrupt memory
 
+## Logical Entity lookup and decoding (2026-11-06)
+
+Entity's two 64-bit words are values, never offsets. Every lookup hashes and
+compares the complete key, then validates the resolved private slot's bounds,
+state and complete key before returning its location. Null cannot resolve.
+Ordered-key arrays are immutable after publication and remain owned until
+settlement after invalidation, so nested queries and concurrent readers do not
+follow freed arrays. Their allocation sizing widens before adding the header;
+a short per-table lock protects building/publication against structural changes.
+Copies discard this derived cache rather than aliasing source ownership.
+The filtered cache owns copied archetype-ID arrays, never borrowed generated-code
+pointers. Actual archetype membership changes invalidate subsets under the same
+lock; row-only moves preserve them. Retired arrays share the settlement lifetime.
+Registry hash/need decoding uses fixed 16KB scratch regions; region count is
+admitted against the existing base plus remaining wire bytes before work. Each
+region validates exact clock and ascending full keys against the preceding region,
+so boundary duplicates/backwards keys are rejected. Same-clock set edits check
+literal payload lengths before copying base metadata, validate deletion membership
+and addition disjointness, and adopt only after both part terminators and the
+physical index validate. Hostile/truncated cases leave the destination intact.
+Private slot and hash-index sizing widens arithmetic before allocation, checks
+namespace/capacity exhaustion, and retains grown lookup descriptors until system
+settlement. COW copies retain slot, optional presentation and index pages.
+
+Raw entity state is decoded into an independent table. Counts must fit the
+remaining bytes before allocating slot pages or reading sorted registry keys;
+active/away keys must be nonnull and unique; state flags, away fields, free-list
+links/counts/cycles and current-clock registry ordering are validated. Delta
+pages have the existing base-plus-remaining-bytes admission bound. Failed reads
+release partially allocated pages/indexes and leave the existing table unchanged.
+Full logical keys, not generations, now guard stale entity accesses. The sparse
+page decoder discussion below is historical; projections use dense private slots
+for their permitted keys. Entity/table native ASan tests include raw truncation,
+malformed duplicate storage, snapshots and delta/need-base combinations.
+
+
 ## Recipient copy-span deltas (2026-11-06)
 
 Protocol 23's private recipient codec accepts caller-bounded output, checking

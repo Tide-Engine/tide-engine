@@ -1,5 +1,37 @@
 # Runtime written by Claude for now
 
+## Stable logical Entity boundary (2026-11-06)
+
+Owner-approved implementation: Entity is opaque 16-byte `{uint64_t birth,
+lineage}`, independently mapped to private dense slots. Generated match spawns
+call `tide_new_entity_key(tide_entities*, tide_entity)` with a final causal key;
+serial execution registers it immediately and workers retain exact keys until
+canonical task settlement registers them with `tide_entity_create_key`. There
+are no temporary IDs or payload rewrites. Unkeyed create remains trusted-C/local
+only. Shared equality/order/hash cover the full key. `tide_entities_ordered`
+returns a cached borrowed sorted ALIVE array; invalidated arrays survive until
+settlement, and snapshots do not share mutable cache ownership. The approved
+`tide_entities_ordered_archetypes` completion caches copied ascending archetype-ID
+sets, invalidating subsets on actual membership changes while preserving them
+for row-only moves. Contracts and
+focused validation: ecs.md and memory-safety.md.
+
+Attached local fields use a full-key hash index. Shard references carry their
+full 16-byte entity key plus an 8-byte shard location; world-clock/status/checkpoint
+metadata preserves identity clocks (checkpoint 6). `tide_layout_world` appends
+identity_clock/lifecycle_occurrences/lifecycle_count/main_occurrence offsets; migration
+validates and preserves the 64-bit clock and occurrence counters across moved offsets and
+player-count changes, rejecting missing/zero/bad spans. Old Entity8 saves are not
+supported. Session protocol 25 gates the changed simulation/wire representation.
+
+The approved embed completion uses native 64-bit birth/lineage command words,
+exact four-u32 web transport, packet 5 and embed ABI 18. New generated/runtime calls
+`tide_packet_entity_place` and `tide_packet_find_entity` resolve full logical keys
+in a reused packet map, including distinct private slot 0 entries from different
+shard worlds. Null/NONE is absent; a duplicate exact key replaces its place.
+Reset/free ownership, bounds and validation are recorded in unity.md.
+
+
 ## Deterministic scene preparation (2026-11-05)
 
 Owner-requested implementation, agent-maintained: `tide/preparation.h` and `engine/src/preparation.c`, including

@@ -176,15 +176,14 @@ TIDE_TEST(local_fields_net_outlast_wrong_predictions)
     TIDE_CHECK(!tide_has_Target_local(&late, one) && late.Seen.forgotten == 1 && late.Seen.forgot == 1 << 1);
 
     // Past tick 240: it predicted target 4, baked it, and the server had target
-    // 5 there, on the same handle. What it baked for 4 went with 4, and 5 is
-    // baked as itself: a handle a replay gave to another entity is another
-    // entity's, by what each was born as
+    // 5 at a different spawn site. Their logical identities differ even when
+    // they occupy the same private slot. What was baked for 4 is not 5's.
     run(4.6);
     match = tide_server_world(server);
     const tide_entity five = target(match, 5);
     TIDE_REQUIRE(match->Time.tick > 250 && !tide_entity_is_null(five) && tide_entity_is_null(target(match, 4)));
     TIDE_CHECK(wrong_swap_frames > 0);
-    TIDE_REQUIRE(tide_entity_equal(five, predicted_swap));
+    TIDE_REQUIRE(!tide_entity_equal(five, predicted_swap));
     const tide_world *mine = tide_client_world(clients[0]);
     TIDE_CHECK(predicted_born != 0u && tide_entity_born(&mine->entities, five) != 0u);
     TIDE_CHECK(tide_entity_born(&mine->entities, five) != predicted_born);
