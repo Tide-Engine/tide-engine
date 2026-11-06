@@ -11,6 +11,7 @@
 #include "tide/io.h"
 #include "tide/jobs.h"
 #include "tide/net.h"
+#include "tide/profiler.h"
 
 // The platform layer: a window, the frame loop, input devices and a renderer
 // for draw lists, on Vulkan 1.3 (desktop and Android) or, on the web, WebGPU.
@@ -383,6 +384,10 @@ uint32_t tide_platform_draws(void);
 // after a kernel's run or a GPU list's Set, Clear or SetCount that a draw
 // after it waits for (one nothing drawn before it reads goes before them).
 uint32_t tide_platform_render_passes(void);
+
+// The CPU's time in milliseconds in each part of drawing the last list (tide_render_part), the host's overlays
+// aside: what --profile's render_phases are. All zero before a list is drawn, or while the window is unseen.
+void tide_platform_render_parts(double ms[TIDE_RENDER_PARTS]);
 
 // Vertices submitted by the last list drawn, with the same scope as draw
 // calls above: all render-target passes, without the host's overlays. Each

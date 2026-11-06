@@ -1650,7 +1650,14 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_platform_audio(&tide_run_audio); // Embedded, for the other program to play (tide_embed_audio)
     const uint64_t rendered = timing ? tide_time_now_ns() : 0;
     tide_profiler_mark(profiler, TIDE_FRAME_RENDER);
-    if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_RENDER);
+    if (tide_run_reporting) {
+        tide_profile_report_mark(&tide_run_report, TIDE_FRAME_RENDER);
+        if (!tide_run_embedded) { // The renderer's parts of it
+            double parts[TIDE_RENDER_PARTS];
+            tide_platform_render_parts(parts);
+            tide_profile_report_render(&tide_run_report, parts);
+        }
+    }
     if (measured_netcode) tide_run_netcode(&status, update_ns, tide_time_now_ns() - frame_began);
 
     if (tide_run_reporting) tide_platform_gpu_profile_read();

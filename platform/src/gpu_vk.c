@@ -254,6 +254,8 @@ typedef struct vk_read {
 enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1, FILTERS = TIDE_GPU_FILTER_MIPMAPS + 1 };
 enum { SAMPLER_COMPARE = WRAPS * FILTERS, SAMPLER_COUNT };
 
+#define NO_PUSH UINT32_MAX // vk.pushed before a command buffer's first push
+
 static struct {
     bool open;
     tide_vk_window window;
@@ -341,6 +343,17 @@ static struct {
     VkDeviceSize uniforms_at;
     tide_gpu_id textures_bound[TIDE_GPU_MAX_TEXTURES];
     uint8_t sampled[TIDE_GPU_MAX_TEXTURES];
+    // What the pass's command buffer was last pushed, through the layout `pushed` (NO_PUSH: nothing yet). Push
+    // descriptors are updated incrementally while the layout stays, so a draw pushes only what changed: its uniforms'
+    // place, usually, and the textures, samplers and storage that aren't the last draw's.
+    uint32_t pushed;
+    VkBuffer pushed_uniforms;
+    VkDeviceSize pushed_uniforms_at;
+    VkImageView pushed_views[TIDE_GPU_MAX_TEXTURES];
+    VkImageLayout pushed_view_layouts[TIDE_GPU_MAX_TEXTURES];
+    VkSampler pushed_samplers[TIDE_GPU_MAX_TEXTURES];
+    VkBuffer pushed_storage[TIDE_GPU_MAX_STORAGE];
+    VkDeviceSize pushed_storage_range[TIDE_GPU_MAX_STORAGE];
 
     // Timing
     VkQueryPool pass_queries;
@@ -2590,6 +2603,7 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     vk.skip_pass = true; // Until there's something to draw in
     vk.current = 0;
     vk.bound = false;
+    vk.pushed = NO_PUSH; // A command buffer of its own
     uniform_buffer = VK_NULL_HANDLE; // A pass's draws read the uniforms written in it
     vk.uniforms_at = 0;
     turned_count = 0;
@@ -2735,6 +2749,7 @@ static void vk_use(const tide_gpu_id id)
         vkCmdBindPipeline(vk.pass, VK_PIPELINE_BIND_POINT_COMPUTE, p->pipeline);
         return;
     }
+    if (id == vk.current) return; // Bound already (the check below was made as it was), with what it reads
     // A pipeline is for one kind of target
     const tide_gpu_target_format kind = vk.pass_target ? vk.targets[vk.pass_target - 1u].format : TIDE_GPU_TARGET_COLOR;
     if (p->into != kind) {
@@ -2800,12 +2815,15 @@ static bool bind(void)
     if (!uniform_buffer) return false;
     const vk_pipeline *p = &vk.pipelines[vk.current - 1u];
     const VkPipelineBindPoint point = vk.in_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    const vk_layout *layout = &vk.layouts[p->layout];
+    // Pushed through this layout already in this command buffer: only what changed is pushed again
+    const bool kept = layout->push && vk.pushed == p->layout;
     VkDescriptorBufferInfo block = {uniform_buffer, vk.uniforms_at, TIDE_GPU_MAX_UNIFORMS};
     VkDescriptorImageInfo images[TIDE_GPU_MAX_TEXTURES], samplers[TIDE_GPU_MAX_TEXTURES];
     VkDescriptorBufferInfo storage[TIDE_GPU_MAX_STORAGE];
     VkWriteDescriptorSet writes[1 + 2 * TIDE_GPU_MAX_TEXTURES + TIDE_GPU_MAX_STORAGE];
     uint32_t count = 0;
-    if (uniform_buffer) {
+    if (!kept || vk.pushed_uniforms != uniform_buffer || vk.pushed_uniforms_at != vk.uniforms_at) {
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 0, 0, 1,
                                                  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, NULL, &block, NULL};
     }
@@ -2816,6 +2834,7 @@ static bool bind(void)
         // pixels, as a texture with none is, through whichever of the pipeline's samplers reads it
         const VkImageView first = t->cube || t->arrayed ? t->base : t->attach;
         const VkImageView view = t->mipped || t->levels < 2 || t->depth || !first ? t->view : first;
+        if (kept && vk.pushed_views[i] == view && vk.pushed_view_layouts[i] == t->rest) continue;
         images[i] = (VkDescriptorImageInfo){VK_NULL_HANDLE, view, t->rest};
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 1u + 2u * i, 0, 1,
                                                  VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[i], NULL, NULL};
@@ -2829,6 +2848,7 @@ static bool bind(void)
         else if (read == TIDE_GPU_READ_DEPTH) sampler = TIDE_GPU_FILTER_NEAREST; // Clamped
         else if (read == TIDE_GPU_READ_CUBE) sampler = filter; // A cube has no edge to read past
         else sampler = wrap * FILTERS + filter;
+        if (kept && vk.pushed_samplers[j] == vk.samplers[sampler]) continue;
         samplers[j] = (VkDescriptorImageInfo){vk.samplers[sampler], VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 2u + 2u * j, 0, 1,
                                                  VK_DESCRIPTOR_TYPE_SAMPLER, &samplers[j], NULL, NULL};
@@ -2839,14 +2859,37 @@ static bool bind(void)
         if (!b) continue;
         // ...as far as a shader reaches one (past that, an index reads nothing, as past its end)
         const VkDeviceSize reach = vk.properties.limits.maxStorageBufferRange;
-        storage[i] = (VkDescriptorBufferInfo){b->buffer, 0, b->size < 4u ? 4u : b->size < reach ? b->size : reach};
+        const VkDeviceSize range = b->size < 4u ? 4u : b->size < reach ? b->size : reach;
+        if (kept && vk.pushed_storage[i] == b->buffer && vk.pushed_storage_range[i] == range) continue;
+        storage[i] = (VkDescriptorBufferInfo){b->buffer, 0, range};
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE,
                                                  TIDE_GPU_STORAGE_BINDING + i, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL,
                                                  &storage[i], NULL};
     }
-    const vk_layout *layout = &vk.layouts[p->layout];
     if (count && layout->push) {
         vkCmdPushDescriptorSetKHR(vk.pass, point, layout->layout, 0, count, writes);
+        // What each binding now holds, for the next draw's
+        if (!kept) {
+            memset(vk.pushed_views, 0, sizeof vk.pushed_views);
+            memset(vk.pushed_samplers, 0, sizeof vk.pushed_samplers);
+            memset(vk.pushed_storage, 0, sizeof vk.pushed_storage);
+        }
+        vk.pushed = p->layout;
+        for (uint32_t i = 0; i < count; i++) {
+            const VkWriteDescriptorSet *w = &writes[i];
+            if (w->descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+                vk.pushed_uniforms = w->pBufferInfo->buffer;
+                vk.pushed_uniforms_at = w->pBufferInfo->offset;
+            } else if (w->descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) {
+                vk.pushed_views[(w->dstBinding - 1u) / 2u] = w->pImageInfo->imageView;
+                vk.pushed_view_layouts[(w->dstBinding - 1u) / 2u] = w->pImageInfo->imageLayout;
+            } else if (w->descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) {
+                vk.pushed_samplers[(w->dstBinding - 2u) / 2u] = w->pImageInfo->sampler;
+            } else {
+                vk.pushed_storage[w->dstBinding - TIDE_GPU_STORAGE_BINDING] = w->pBufferInfo->buffer;
+                vk.pushed_storage_range[w->dstBinding - TIDE_GPU_STORAGE_BINDING] = w->pBufferInfo->range;
+            }
+        }
     } else if (count) {
         // A set of the frame's, with what the draw reads, bound for it: the GPU reads it as the frame runs
         const VkDescriptorSet set = frame_set(layout->set);
@@ -2894,6 +2937,7 @@ static void vk_compute_begin(void)
     vk.skip_pass = true; // Until it has a command buffer
     vk.current = 0;
     vk.bound = false;
+    vk.pushed = NO_PUSH; // A command buffer of its own
     vk.dispatched = false;
     uniform_buffer = VK_NULL_HANDLE; // A compute pass's dispatches read the uniforms written in it
     vk.uniforms_at = 0;

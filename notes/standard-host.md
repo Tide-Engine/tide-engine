@@ -325,6 +325,17 @@ Validation: the target builds and its full profile capture test passes under
 Windows ASan and MinGW Release, with Clang 23.1.2 and Node 24.22.1. Both runs
 use TIDE_HIDDEN. Other platforms remain normal push-triggered workflow coverage.
 
+## Render phases (2026-11-06)
+
+`--profile` reports `render_phases`: the renderer's parts of `cpu_phases.render` (`tide_render_part` in
+`tide/profiler.h`: prepare, steps, uploads, culling, record, finish) and `other`, the render phase less them (the
+host's prewarm, overlays, audio hand-off). `tide_platform_render_parts` gives the last list's (`platform.c` times
+`draw_list`'s parts with six clock reads a list, overlays aside; zero for a frame that drew nothing);
+`tide_run_frame` hands them to `tide_profile_report_render` after marking the render phase, not when embedded. The
+report samples them only for frames that gave them, so an unseen window's frames don't count as zero. Present (where
+Vulkan submits and waits for frames in flight) is outside the phase, as before. Why and what it found:
+rendering.md, The render phase's CPU, measured and cut. Docs: `docs/tools/debug-views.md`.
+
 ## Agent-readable profile captures (2026-11-02)
 
 Cheaper draw diagnostics (2026-11-05): `--profile` tripled Mount & Rifle's views (4.05 ms a

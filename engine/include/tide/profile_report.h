@@ -37,6 +37,8 @@ typedef struct tide_profile_report_info {
 void tide_profile_report_begin(tide_profile_report *r, const tide_profile *p, uint32_t frame);
 void tide_profile_report_mark(tide_profile_report *r, tide_frame_part part);
 void tide_profile_report_end(tide_profile_report *r, const tide_profile *p, uint64_t draw_calls, uint64_t vertices);
+// The renderer's parts of this frame's render phase (tide_platform_render_parts), given before end.
+void tide_profile_report_render(tide_profile_report *r, const double ms[TIDE_RENDER_PARTS]);
 // Asynchronous GPU results have no source-frame identity. They are a separate
 // distribution, never paired with or added to a CPU frame.
 void tide_profile_report_gpu(tide_profile_report *r, double ms);

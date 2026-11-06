@@ -6,7 +6,7 @@
 
 #include "tide/page.h"
 
-enum { CPU = TIDE_FRAME_PARTS, GPU, METRICS, GROUPS = 3, INDEX_SIZE = TIDE_PROFILE_REPORT_ROWS * 2u };
+enum { CPU = TIDE_FRAME_PARTS, GPU, RENDER, RENDER_OTHER = RENDER + TIDE_RENDER_PARTS, METRICS, GROUPS = 3, INDEX_SIZE = TIDE_PROFILE_REPORT_ROWS * 2u };
 
 typedef struct distribution {
     uint64_t count;
@@ -42,6 +42,8 @@ typedef struct report_state {
     uint32_t before_ticks;
     double before_systems, before_changes, systems_ms, changes_ms;
     double frame_parts[TIDE_FRAME_PARTS];
+    double render_parts[TIDE_RENDER_PARTS];
+    bool rendered; // tide_profile_report_render was given this frame's
 } report_state;
 
 static report_state *state(tide_profile_report *r)
@@ -159,6 +161,8 @@ void tide_profile_report_begin(tide_profile_report *r, const tide_profile *p, co
     s->before_systems = p ? p->systems_ms : 0.0;
     s->before_changes = p ? p->changes_ms : 0.0;
     memset(s->frame_parts, 0, sizeof s->frame_parts);
+    memset(s->render_parts, 0, sizeof s->render_parts);
+    s->rendered = false;
     if (!s->frames) s->first = frame;
     s->last = frame;
     s->began = s->mark = tide_time_now_ns();
@@ -180,6 +184,15 @@ void tide_profile_report_end(tide_profile_report *r, const tide_profile *p, cons
     tide_profile_report_mark(r, TIDE_FRAME_OTHER);
     sample(&s->metrics[CPU], s->mark > s->began ? (double)(s->mark - s->began) * 1e-6 : 0.0);
     for (uint32_t i = 0; i < TIDE_FRAME_PARTS; i++) sample(&s->metrics[i], s->frame_parts[i]);
+    if (s->rendered) { // The render phase's parts, and what's left of it: the host's own work there
+        double parts = 0.0;
+        for (uint32_t i = 0; i < TIDE_RENDER_PARTS; i++) {
+            sample(&s->metrics[RENDER + i], s->render_parts[i]);
+            parts += s->render_parts[i];
+        }
+        const double left = s->frame_parts[TIDE_FRAME_RENDER] - parts;
+        sample(&s->metrics[RENDER_OTHER], left > 0.0 ? left : 0.0);
+    }
     collect(s, p, false);
     if (p) {
         s->ticks += p->ticks >= s->before_ticks ? p->ticks - s->before_ticks : p->ticks;
@@ -190,6 +203,14 @@ void tide_profile_report_end(tide_profile_report *r, const tide_profile *p, cons
     s->vertices += vertices;
     s->frames++;
     s->began = 0;
+}
+
+void tide_profile_report_render(tide_profile_report *r, const double ms[TIDE_RENDER_PARTS])
+{
+    report_state *s = r->state;
+    if (!s || !s->began) return;
+    for (uint32_t i = 0; i < TIDE_RENDER_PARTS; i++) s->render_parts[i] += ms[i];
+    s->rendered = true;
 }
 
 void tide_profile_report_gpu(tide_profile_report *r, const double ms)
@@ -316,6 +337,12 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
         if (i) fputc(',', out);
         string(out, names[i]); fputc(':', out); distribution_json(out, &s->metrics[i]);
     }
+    fputs("},\n\"render_phases\":{", out);
+    const char *render_names[TIDE_RENDER_PARTS + 1] = {"prepare", "steps", "uploads", "culling", "record", "finish", "other"};
+    for (uint32_t i = 0; i <= TIDE_RENDER_PARTS; i++) {
+        if (i) fputc(',', out);
+        string(out, render_names[i]); fputc(':', out); distribution_json(out, &s->metrics[RENDER + i]);
+    }
     fputs("},\n\"gpu\":{\"available\":", out);
     fputs(s->metrics[GPU].count ? "true" : "false", out);
     fputs(",\"frame_aligned\":false,\"timing\":", out); distribution_json(out, &s->metrics[GPU]); fputs("},\n", out);
@@ -390,6 +417,7 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
     fprintf(out, "],\n\"limits\":{\"dropped_timing_observations\":%llu,\"dropped_draw_calls\":%llu,\"dropped_draw_candidates\":%llu},\n",
             (unsigned long long)s->dropped, (unsigned long long)r->draw.dropped_calls, (unsigned long long)r->draw.dropped_candidates);
     fputs("\"semantics\":{\"cpu_work\":\"Host callback wall time; excludes interactive waits, present, headless audio mixing, screenshot readback and report collection. Includes instrumentation and any enabled overlays. Not display FPS.\","
+          "\"render_phases\":\"Parts of cpu_phases.render: the renderer's CPU work on the frame's list, then other (the host's own work there). Excludes presenting, where command buffers are submitted and frames in flight waited for.\","
           "\"systems\":\"Elapsed first-job-start to last-job-end; overlapping systems must not be summed as CPU work.\","
           "\"workers\":\"Completed-job queue, compute and copy intervals; may overlap frames.\","
           "\"mesh_recording\":\"Inclusive bounds, frustum testing, LOD and instance recording after mesh acquisition; contained in the caller view, not isolated culling or GPU time.\","
