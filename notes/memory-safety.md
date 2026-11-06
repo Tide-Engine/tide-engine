@@ -9,7 +9,7 @@ narrowing. Output copies require a strictly earlier source and support forward
 overlap within the output allocation. Every copy advances at least eight bytes;
 decoding costs output bytes plus encoded tokens, with no token-based allocation.
 Exact end/output hash checks precede loading a temporary projected world. Existing
-projection-size/allocation policy is retained. Encoder indexes have fixed 128 KiB
+projection-size/allocation policy is retained. Encoder indexes have fixed 512 KiB
 size, no chains, and byte-compare every match. ASan/WASI malformed, truncation,
 wrong-base/hash and exact-copy regressions pass; details: netcode.md, protocol 23.
 

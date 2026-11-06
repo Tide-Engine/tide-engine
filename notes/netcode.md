@@ -11,8 +11,10 @@ that permitted baseline or already reconstructed output. No private world,
 allocator metadata or physics history is transferred. Existing projection bytes,
 logical hashes, event journals, tick/repair policy and game semantics are unchanged.
 
-Two direct-mapped 16,384-entry indexes (128 KiB total), baseline anchors every
-32 bytes and one candidate per index per scan position bound encoder work. Every
+Two direct-mapped 65,536-entry indexes (512 KiB total), adaptively spaced baseline
+anchors (at least 32 bytes apart) and one candidate per index per scan position
+bound encoder work. Matched output spans are indexed every eight bytes rather
+than scanning them again byte by byte; literal searches still visit every byte. Every
 candidate is compared exactly; hash collisions only reduce compression. Output
 copies allow overlap. The actual smaller payload wins; XOR results of at most
 64 bytes or 1/32 of raw bytes skip LZ construction/scanning. This preserves the
@@ -32,12 +34,15 @@ a world. XOR decoding clears its output rather than requiring a zeroed caller.
 Measured deterministic fixtures (1,000 records of 512 random bytes): a one-byte
 prefix insertion falls from **512,206 to 123 bytes**. Twelve changed bytes per
 record without shifting encode in 15,158 bytes; those changes plus the prefix
-insertion encode in 58,339 bytes. Exact round trips are required on native/WASI.
+insertion encode in 42,264 bytes. A 7 MiB random baseline with a prefix insertion
+and 1,000 scattered twelve-byte edits encodes in 152,660 bytes, covering index
+load/early-region retention beyond the original 512 KiB fixture.
+Exact round trips are required on native/WASI.
 Unsanitized optimized Windows pack+unpack measurements, 16 iterations each, are
-0.495 ms fixed and 1.625 ms shifted/changed, on a shared machine; these are codec
+0.506 ms fixed and 1.676 ms shifted/changed, on a shared machine; these are codec
 microbenchmarks, not the real game's bandwidth or whole-frame performance.
 
-Windows ASan and WASI pass the three new codec cases, the shifted-record probe,
+Windows ASan and WASI pass the four new codec cases, the shifted-record probe,
 nine visibility and fifteen session cases. Tests cover empty/incompressible
 payloads, insertion/deletion, shorter bases, overlapping distance-one copies,
 every truncation in representative modes, bad hashes/bases/sizes, trailing bytes,
@@ -47,6 +52,18 @@ platform. Independent decoder/encoder review found no remaining blocker.
 Real-game first-mismatch tracing and before/after traffic measurements continue
 separately; this fixes a demonstrated transfer amplification mechanism without
 claiming that all battle repairs or the allocator limitation below are gone.
+
+Index tuning used the actual game's consecutive **correction target** projections
+(not necessarily the exact acknowledged repair baseline), 7,315,009 -> 7,315,431
+bytes at ticks 1149 -> 1169 and 7,315,431 -> 7,314,111 at 1169 -> 1213. Original
+fixed-region encoding takes 2,313,763 / 2,332,588 bytes; the final codec takes
+265,732 / 272,350. Unsanitized optimized eight-iteration probes on those identical
+byte pairs measure roughly 6-7 ms original pack, 12.5-16.1 ms new pack and
+2.4-2.8 ms new unpack on the shared machine. Exact output/hash checks pass.
+This guided adaptive anchors and sparse output indexing: a fixed 16K-entry index
+with dense copied-span indexing took 550,660 / 712,151 bytes and 19-20 ms packing
+on the same pairs. These are offline codec comparisons; they do not establish
+the live recipient's final byte rate or confirmation lag.
 
 ## Mount & Rifle battle investigation and repair diagnostics (2026-11-06)
 

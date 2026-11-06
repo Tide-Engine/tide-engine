@@ -6,7 +6,7 @@
 #include <string.h>
 
 #define REGION 16384u
-#define SLOTS 16384u
+#define SLOTS 65536u
 #define MATCH 8u
 enum { XOR_REGIONS, COPY_SPANS, LITERALS };
 
@@ -17,7 +17,7 @@ static uint32_t slot_of(const uint8_t *p)
     uint32_t a, b;
     memcpy(&a, p, 4);
     memcpy(&b, p + 4, 4);
-    return ((a * 0x9e3779b1u) ^ (b * 0x85ebca77u)) >> 18;
+    return ((a * 0x9e3779b1u) ^ (b * 0x85ebca77u)) >> 16;
 }
 
 static uint32_t match_size(const uint8_t *now, uint32_t at, uint32_t count,
@@ -43,9 +43,11 @@ static uint8_t *copy_spans(const uint8_t *now, uint32_t count,
     // Sparse baseline anchors avoid drowning the fixed index in nearby keys.
     // The current scan visits every byte, so shifts retain the opportunity to
     // find an anchor at any alignment. Hash collisions only lose compression.
-    for (uint32_t i = 0; base_count >= MATCH && i <= base_count - MATCH; i += 32u) {
+    uint32_t step = ((base_count / SLOTS) + 31u) & ~31u;
+    if (step < 32u) step = 32u;
+    for (uint32_t i = 0; base_count >= MATCH && i <= base_count - MATCH; i += step) {
         old[slot_of(base + i)] = i + 1u;
-        if (base_count - MATCH - i < 32u) break;
+        if (base_count - MATCH - i < step) break;
     }
     tide_writer w = {.grows = true};
     uint32_t at = 0, literal = 0;
@@ -71,10 +73,14 @@ static uint8_t *copy_spans(const uint8_t *now, uint32_t count,
         tide_write_varint(&w, length);
         tide_write_varint64(&w, (uint64_t)source * 2u + (self ? 1u : 0u));
         const uint32_t end = at + length;
-        while (at < end) {
-            if (count - at >= MATCH) current[slot_of(now + at)] = at + 1u;
-            at++;
+        // A matched span needs no further search. Sparse indexing retains
+        // future self-copy opportunities without hashing every copied byte.
+        for (uint32_t i = at; i < end;) {
+            if (count - i >= MATCH) current[slot_of(now + i)] = i + 1u;
+            if (end - i < MATCH) break;
+            i += MATCH;
         }
+        at = end;
         literal = at;
     }
     if (literal < count) literals(&w, now, literal, count);

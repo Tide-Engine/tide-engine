@@ -137,3 +137,34 @@ TIDE_TEST(recipient_delta_fixed_changing_records_remain_compact)
     free(now);
     free(base);
 }
+
+TIDE_TEST(recipient_delta_large_baseline_keeps_early_matches)
+{
+    const uint32_t count = 7u * 1024u * 1024u;
+    uint8_t *base = malloc(count), *now = malloc(count + 1u), *out = malloc(count + 1u);
+    TIDE_REQUIRE(base && now && out);
+    uint32_t x = 0x125a3bc9u;
+    for (uint32_t i = 0; i < count; i++) {
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        base[i] = (uint8_t)x;
+    }
+    memcpy(now + 1, base, count);
+    now[0] = 17;
+    // Dynamic records throughout a much larger permitted baseline. A fixed
+    // dense direct-map index overwrites early anchors with late-region keys.
+    for (uint32_t i = 0; i < 1000; i++) {
+        const uint32_t at = 1u + i * (count / 1000u);
+        for (uint32_t j = 0; j < 12; j++) now[at + j] ^= (uint8_t)(j + 1u);
+    }
+    uint32_t size = 0;
+    uint8_t *bytes = tide_recipient_delta_pack(now, count + 1u, base, count, &size);
+    TIDE_REQUIRE(bytes);
+    TIDE_CHECK(size < count / 20u);
+    TIDE_CHECK(tide_recipient_delta_unpack(out, count + 1u, base, count, bytes, size));
+    TIDE_CHECK(memcmp(out, now, count + 1u) == 0);
+    if (getenv("TIDE_VISIBILITY_METRICS")) printf("recipient 7 MiB shifted changing baseline: %u bytes\n", size);
+    free(bytes);
+    free(out);
+    free(now);
+    free(base);
+}
