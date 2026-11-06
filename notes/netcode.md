@@ -37,12 +37,49 @@ Two mechanisms relevant to the report are established independently of timing:
   The existing maximum repair backoff with maxRewind 0.5 is seven ticks at 60 Hz;
   512 KB repairs at that rate already exceed 4 MB/s before packet overhead.
 
+The separate allocator probe (`notes/repro/recipient_allocator.tide` and `.c`)
+shows a public-spawn mismatch after loading a valid projection: create a public
+Dot and a hidden entity, destroy Dot, project/load, then both sides spawn Dot.
+Their hashes agree immediately after load; the next public entity is server
+`1:3` versus client `1:1`, and hashes differ. The projected loader discards free
+slots/generations. This extends the existing Open spawn-identity gap ("A client's
+own spawns go after the last entity it was sent", below) to public slot reuse.
+It is a plausible repair trigger for the game's spawned/destroyed Bullets, not a
+trace of that game's actual first mismatch. Reconstructing a remembered client's
+free list is insufficient: the server can have allocated those slots privately
+since the last endpoint. Recipient projections intentionally omit allocator/free
+lists; copying the full server allocator would disclose hidden lifetime activity.
+
+Reproduce with this checkout's built tools (PowerShell, TIDE_HIDDEN=1):
+
+```powershell
+New-Item -ItemType Directory -Force build/recipient-allocator | Out-Null
+build/sanitize/bin/tidec.exe notes/repro/recipient_allocator.tide -o build/recipient-allocator --name game
+& 'C:/Program Files/LLVM/bin/clang.exe' -std=c17 -O2 -g -fsanitize=address -D_DLL -D_MT -Xclang --dependent-lib=msvcrt -Iengine/include -Ibuild/recipient-allocator notes/repro/recipient_allocator.c build/recipient-allocator/game.c build/sanitize/engine/tide.lib build/sanitize/tide_font_bold.lib -o build/recipient-allocator/probe.exe
+Copy-Item 'C:/Program Files/LLVM/lib/clang/23/lib/windows/clang_rt.asan_dynamic-x86_64.dll' build/recipient-allocator
+build/recipient-allocator/probe.exe
+```
+
+The compiler/ASan paths above describe the measured Windows installation. The
+probe prints allocator/hash observations rather than treating divergence as an
+approved behavior to pin. Output from the ASan run:
+
+```text
+before: free server 2 client 0 next server 3 client 1 hash equal 1
+after: entity server 1:3 client 1:1 hash equal 0
+```
+
 Follow-up task, **recipient repair locality and battle divergence**: first trace
 the first differing logical fields/entity identities in the exact 1000-bot game,
 including Delay, and distinguish initial mismatches from repair-induced ones.
 Fix variable-length projection delta locality using stable permitted logical
 regions or bounded relocated spans, preserving all baseline/hash/privacy and
 hostile-input checks; a wire-format change needs matching protocol/version work.
+In parallel, resolve recipient-safe predicted spawn identities and slot reuse
+without transferring hidden allocation metadata; confirm the probe's public
+post-load spawns agree, including hidden intervening allocations, without pinning
+private counts or histories. This is an ownership/design decision already Open,
+not permission to publish full allocator state as a quick repair.
 Measure bytes per recipient, repairs, resyncs, tick work and confirmation age
 before/after for no-switch, Delay and TROOPER_SIGHT, plus the 10-bot control.
 Acceptance includes native/WASI correction/lifecycle/view-time tests, lossy
