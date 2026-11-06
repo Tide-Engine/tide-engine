@@ -41,8 +41,11 @@
 static struct {
     atomic_flag lock;
     char label[1024];
+    char stage[128];
+    bool build_program, succeeded;
+    int game_generation;
     int completed, total;
-    bool percent_only; // Its count is no number of things to show (the Tide step's: compile_progress_whole)
+    bool percent_only; // Parsing shows a percentage; C/C++ also shows its file count.
     int64_t started;
 } feedback = {.lock = ATOMIC_FLAG_INIT};
 static sys_activity *build_activity;
@@ -57,22 +60,18 @@ static void unlock_feedback(void)
     atomic_flag_clear_explicit(&feedback.lock, memory_order_release);
 }
 
-static void draw_build_feedback(void *user, const bool done)
+static void draw_feedback_locked(const bool finished, const bool retain)
 {
-    (void)user;
-    if (done) { line_clear(); return; }
-    lock_feedback();
     char label[sizeof feedback.label];
     memcpy(label, feedback.label, sizeof label);
     const int completed = feedback.completed, total = feedback.total;
     const bool percent_only = feedback.percent_only;
     const int64_t elapsed = sys_now_ms() - feedback.started;
-    unlock_feedback();
     enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER };
     char bar[WIDTH + 1];
     memset(bar, ' ', WIDTH);
-    if (total) {
-        const int filled = completed * WIDTH / total;
+    if (finished || total) {
+        const int filled = finished ? WIDTH : completed * WIDTH / total;
         for (int i = 0; i < WIDTH; i++) bar[i] = i < filled ? '=' : i == filled ? '>' : ' ';
     } else {
         const int frame = (int)((elapsed / 100) % (TRAVEL * 2));
@@ -85,7 +84,25 @@ static void draw_build_feedback(void *user, const bool done)
     else if (total) snprintf(text, sizeof text, "[%s] %3d%%  %d/%d  %.1fs", bar, completed * 100 / total,
                         completed, total, (double)elapsed / 1000.0);
     else snprintf(text, sizeof text, "[%s] %.1fs", bar, (double)elapsed / 1000.0);
-    line_draw_pair(label, text);
+    if (finished || retain) {
+        char summary[384];
+        if (finished) snprintf(summary, sizeof summary, "%s [%s] 100%%  in %.1fs", feedback.stage, bar, (double)elapsed / 1000.0);
+        else snprintf(summary, sizeof summary, "%s %s", label, text);
+        line_clear();
+        line_draw(summary);
+        line_end();
+    } else line_draw_pair(label, text);
+}
+
+static void draw_build_feedback(void *user, const bool done)
+{
+    (void)user;
+    lock_feedback();
+    if (done) {
+        // An error keeps its last observed progress.
+        draw_feedback_locked(feedback.succeeded, true);
+    } else draw_feedback_locked(false, false);
+    unlock_feedback();
 }
 
 // Nested build steps share one display; the scope which starts it ends it.
@@ -93,6 +110,10 @@ static bool begin_build_feedback(void)
 {
     if (build_activity || !sys_is_terminal()) return false;
     (void)diag_colored(); // Before stderr capture: preserve terminal diagnostics.
+    feedback.stage[0] = '\0';
+    feedback.percent_only = false;
+    feedback.build_program = false;
+    feedback.game_generation = 0;
     snprintf(feedback.label, sizeof feedback.label, "Preparing build");
     feedback.completed = feedback.total = 0;
     feedback.started = sys_now_ms();
@@ -100,11 +121,26 @@ static bool begin_build_feedback(void)
     return build_activity != NULL;
 }
 
-static void end_build_feedback(void)
+static void end_build_feedback(const bool succeeded)
 {
+    lock_feedback();
+    feedback.succeeded = succeeded;
+    unlock_feedback();
     sys_activity *activity = build_activity;
     build_activity = NULL;
     sys_activity_end(activity);
+}
+
+// Call with the feedback lock held. Detail changes within a stage keep its timer and row.
+static void feedback_stage(const char *stage)
+{
+    if (strcmp(feedback.stage, stage) == 0) return;
+    if (*feedback.stage) draw_feedback_locked(true, false);
+    snprintf(feedback.stage, sizeof feedback.stage, "%s", stage);
+    feedback.stage[0] = (char)toupper((unsigned char)feedback.stage[0]);
+    feedback.started = sys_now_ms();
+    feedback.completed = feedback.total = 0;
+    feedback.percent_only = false;
 }
 
 // A step of the build: `step` in its report and redirected output, and `shown` (or `step`) in the terminal's
@@ -114,9 +150,11 @@ static void build_step_shown(const char *step, const char *shown)
     build_report_stage(step);
     if (build_activity) {
         lock_feedback();
-        snprintf(feedback.label, sizeof feedback.label, "%s", shown ? shown : step);
-        feedback.label[0] = (char)toupper((unsigned char)feedback.label[0]);
-        feedback.completed = feedback.total = 0;
+        char label[sizeof feedback.stage];
+        snprintf(label, sizeof label, "%s", shown ? shown : step);
+        label[0] = (char)toupper((unsigned char)label[0]);
+        feedback_stage(label);
+        snprintf(feedback.label, sizeof feedback.label, "%s", feedback.stage);
         unlock_feedback();
         return;
     }
@@ -140,9 +178,23 @@ static void tide_progress(const char *stage, const char *detail, const int compl
         }
     }
     lock_feedback();
+    if (strcmp(stage, "Running build code") == 0)
+        feedback.build_program = detail && strcmp(detail, "making its program") == 0;
+    if (strcmp(stage, "Checking Tide") == 0) feedback.build_program = false;
+    if (strcmp(stage, "Generating C") == 0) {
+        stage = feedback.build_program ? "Generating C for the asset build program"
+              : ++feedback.game_generation == 1 ? "Generating game C" : "Generating asset data and finalizing game C";
+    }
+    const char *group = stage;
+    // Checking imports assets as declarations are visited: keep those interleaved notifications together.
+    if (strcmp(stage, "Checking Tide") == 0 || strcmp(stage, "Importing asset") == 0)
+        group = "Checking Tide and importing assets";
+    if (strcmp(stage, "Packing asset") == 0) group = "Packing assets";
+    feedback_stage(group);
     snprintf(feedback.label, sizeof feedback.label, "%s%s%s", stage, detail && *detail ? ": " : "", detail ? detail : "");
-    feedback.completed = completed;
-    feedback.total = total;
+    // Other compiler counts cover importing plus packing, rather than this stage alone.
+    feedback.completed = strcmp(stage, "Parsing Tide") == 0 ? completed : 0;
+    feedback.total = strcmp(stage, "Parsing Tide") == 0 ? total : 0;
     feedback.percent_only = true;
     unlock_feedback();
 }
@@ -150,6 +202,7 @@ static void tide_progress(const char *stage, const char *detail, const int compl
 static void build_progress(const int completed, const int total, const char *files)
 {
     lock_feedback();
+    feedback_stage("Compiling C/C++");
     snprintf(feedback.label, sizeof feedback.label, "Compiling C/C++%s%s", *files ? ": " : "", files);
     feedback.completed = completed;
     feedback.total = total;
@@ -1203,7 +1256,7 @@ static bool run_compiles(build *b, compiles *list)
         }
     }
     const bool ok = stop == list->count;
-    if (own_feedback) end_build_feedback();
+    if (own_feedback) end_build_feedback(ok);
     if (!ok) telemetry_fail(TELEMETRY_ERROR_C);
     free_compiles(list);
     return ok;
@@ -2726,10 +2779,10 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
         const int workers = b->jobs > 4 ? 4 : b->jobs - 1;
         start_compiles(ahead, workers, &stop);
     }
-    build_step("compiling Tide code and assets");
+    if (packages) build_step("compiling Tide code and assets");
     const bool ok = packages && generate_sources(b, gen, layout);
     if (!ok && ahead) free_compiles(ahead);
-    if (own_feedback) end_build_feedback();
+    if (own_feedback) end_build_feedback(ok);
     return ok;
 }
 
@@ -3052,7 +3105,7 @@ char *tide_build(const char *root, const build_options *opts)
     if (report) build_report_begin();
     const bool own_feedback = begin_build_feedback();
     char *output = build_game(root, opts, NULL);
-    if (own_feedback) end_build_feedback();
+    if (own_feedback) end_build_feedback(output != NULL);
     if (report) {
         if (output) report_output(output); // An Android app's, which build_game doesn't see
         build_report_stage(NULL); // Nothing after the build is its time
@@ -3206,7 +3259,7 @@ static bool build_library(run *r)
 {
     const bool own_feedback = begin_build_feedback();
     const bool ok = build_library_work(r);
-    if (own_feedback) end_build_feedback();
+    if (own_feedback) end_build_feedback(ok);
     return ok;
 }
 
@@ -3478,7 +3531,7 @@ static int run_reloading(const char *root, const build_options *opts, const char
     arg(&a, program);
     for (int i = 0; game_args[i]; i++) arg(&a, game_args[i]);
     build_step("starting game");
-    end_build_feedback();
+    end_build_feedback(true);
     sys_process *game = sys_start(a.items, r.b.folder);
     free(a.items);
     if (!game) {
@@ -3533,7 +3586,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 {
     begin_build_feedback();
     const int code = run_reloading(root, opts, game_args);
-    end_build_feedback();
+    end_build_feedback(code == 0);
     return code;
 }
 
@@ -4448,7 +4501,7 @@ static int run_web(const char *root, const build_options *opts, const bool open_
     }
     char url[64];
     snprintf(url, sizeof url, "http://127.0.0.1:%u/", (unsigned)port);
-    end_build_feedback();
+    end_build_feedback(true);
     printf("tide: the game is at %s\n", url); // The VS Code extension reads the address from this line
     if (opts->watch) printf("tide: save to reload; r + Enter to restart; Ctrl+C to stop\n");
     else printf("tide: Ctrl+C stops serving the page\n");
@@ -4498,7 +4551,7 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
 {
     begin_build_feedback();
     const int code = run_web(root, opts, open_page, args);
-    end_build_feedback();
+    end_build_feedback(code == 0);
     return code;
 }
 
@@ -4719,7 +4772,7 @@ static char *build_android_work(const char *root, const build_options *opts, cha
         return NULL;
     }
     if (made) {
-        end_build_feedback();
+        end_build_feedback(true);
         printf("Made the key that signs your Android apps: %s\n"
                "  Keep a copy somewhere safe. An app's updates have to be signed with the key the app was, and on\n"
                "  Google Play it's your upload key.\n",
@@ -4740,7 +4793,7 @@ static char *build_android_work(const char *root, const build_options *opts, cha
             fprintf(stderr, "tide: %s\n", error);
             return NULL;
         }
-        end_build_feedback();
+        end_build_feedback(true);
         printf("Built %s for Google Play\n", bundle);
     }
     for (int abi = 0; abi < ANDROID_ABIS; abi++) free_game_c(&c[abi]);
@@ -4753,7 +4806,7 @@ static char *build_android(const char *root, const build_options *opts, char *pa
 {
     begin_build_feedback();
     char *output = build_android_work(root, opts, package, package_size);
-    end_build_feedback();
+    end_build_feedback(output != NULL);
     return output;
 }
 
