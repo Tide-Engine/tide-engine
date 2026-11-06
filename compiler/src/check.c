@@ -23872,6 +23872,24 @@ bool check(program *prog)
     // packed (build_pack)
     int asset_decls = 0;
     for (int i = 0; i < prog->decls.count; i++) asset_decls += prog->decls.items[i]->kind == DECL_ASSET;
+    // The images the assets' paths name, decoded ahead on several threads, where they'd be decoded as each is
+    // checked (asset_files_decode_ahead): taken from the paths as written, so a path that isn't one only costs time
+    if (!prog->asset_metadata_only && asset_decls) {
+        VEC(const char *) declaring = {0};
+        VEC(str) written = {0};
+        for (int i = 0; i < prog->decls.count; i++) {
+            const decl *k = prog->decls.items[i];
+            if (k->kind != DECL_ASSET || !k->value || !k->unit || !k->unit->src) continue;
+            const bool list = k->value->kind == E_LIST;
+            for (int a = 0; a < (list ? k->value->args.count : 1); a++) {
+                const expr *path = text_literal(list ? k->value->args.items[a] : k->value);
+                if (!path) continue;
+                vec_push(declaring, k->unit->src->path);
+                vec_push(written, path->text);
+            }
+        }
+        asset_files_decode_ahead(declaring.items, written.items, written.count, prog->game_folder);
+    }
     compile_progress_whole(2 * asset_decls);
     for (int i = 0, imported = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind != DECL_ASSET) continue;

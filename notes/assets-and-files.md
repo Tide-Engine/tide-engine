@@ -176,8 +176,22 @@ Threads::Threads off Windows); `asset_cache_write`'s temporary names take an ato
 whether an entry's file is there without reading it. Diagnostics stay the pack loop's: an image that won't decode is
 skipped ahead and said when packed. With no game folder nothing's kept, so images aren't made ahead.
 
-Cold `tide build --release` of Mount & Rifle: 65 s to 47 s (levels ~1.5 s, images ~2 s). What's left: asset imports
-~11 s (one file at a time in check_asset_decl), build code's program 4 s to write and 8 s to compile, the second
+Images decoded ahead (2026-11-06, the owner: "try to improve asset imports next"). Of the cold first pass's 12.2 s
+of imports, 10.3 s was 334 texture declarations' files decoded one at a time by `read_item` (200-560 ms for each
+4096-square one); meshes were 1.5 s. Before check.c's asset loop, the literal paths of every asset (one, or a
+list's; `text_literal`, so constants too, which are checked by then) go to `asset_files_decode_ahead`: it finds their
+files as asset_resolve would (a glob's keys from the same walk), keeps those named as images, reads them
+(`read_at`), and where `use_build_cache` looks for a prepared texture as read_item does (same keys), so a warm
+build takes those and decodes nothing; the rest are decoded on at most 8 threads into their `read_file` entries
+(`decoded`, `image`, `image_mips`, `image_why`), which read_item then takes. Nothing about the asset's type is known
+yet: a file read as bytes is decoded for nothing, a Grid's file is decoded as read_item would. A file that won't
+decode is said by read_item, at the asset, as before; a path naming nothing is skipped. Not done ahead: URLs, meshes
+(1.5 s), models' skins. Measured: "declarations" 10.7 s to 3.6 s cold, the same 1.2 s warm; the pack is the same
+bytes. Test: `asset_images_decoded_ahead_are_the_ones_read` (asset_files_test.c: a file's and a glob's BMPs decoded
+ahead equal decoded inline, a missing path says nothing, a later read takes the same pixels).
+
+Cold `tide build --release` of Mount & Rifle: 65 s to 47 s (levels ~1.5 s, images ~2 s), then ~43 s with images
+decoded ahead. What's left: asset imports ~3.6 s, build code's program 4 s to write and 8 s to compile, the second
 pass of the front end ~6 s, the game's C ~11 s. Test: `mesh_lod_wanted_ahead_are_the_same_levels` (levels wanted
 ahead equal ones made alone, a file there is read instead, a want twice is made once, asking after makes none).
 
