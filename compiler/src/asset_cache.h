@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -9,4 +10,6 @@
 #define ASSET_CACHE_MAX_BYTES (1024u * 1024u * 1024u)
 void asset_cache_key(uint8_t out[32], const char *kind, const uint8_t source[32], const void *variant, size_t size);
 uint8_t *asset_cache_read(const char *game_folder, const uint8_t key[32], size_t *size);
+// Whether there's an entry for `key` that may be read: its file, of a size one can be. Reading still checks it.
+bool asset_cache_has(const char *game_folder, const uint8_t key[32]);
 void asset_cache_write(const char *game_folder, const uint8_t key[32], const void *data, size_t size);

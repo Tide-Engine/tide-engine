@@ -4,6 +4,7 @@
 
 #include "asset_files.h"
 #include "texture_cache.h"
+#include "build_threads.h"
 #include "image_files.h"
 #include "humanoid_assets.h"
 #include "asset_usage.h"
@@ -21514,6 +21515,69 @@ static uint8_t channel_byte(const float v, const float alpha)
 
 // One item of an asset into the pack: its block's offset.
 // `stored`, where it isn't NULL, gets an image's blocks' format (tide/texture_blocks.h), or 0 for its exact RGBA.
+// An image as the pack keeps it (texture_make): its view's RGBA and blocks are the made's, freed by texture_made_free.
+typedef struct texture_made {
+    texture_cache_view view;
+} texture_made;
+
+// An image file's texture: decoded where it wasn't, a byte a channel, premultiplied but for [Raw] (`raw`), and in
+// blocks where it has authored mips or is to be compressed. False with `why` where its file isn't an image. Touches
+// nothing but its own memory, so images are made on several threads at once (want_textures).
+static bool texture_make(const asset_match *item, const bool raw, const bool compress, texture_made *out, char why[256])
+{
+    asset_match decoded;
+    bool decoded_here = false;
+    if (!item->image.pixels) {
+        decoded = *item;
+        if (!image_file_read_mips(item->data, item->size, item->key, &decoded.image, &decoded.image_mips, why)) return false;
+        item = &decoded;
+        decoded_here = true;
+    }
+    const size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
+    uint8_t *rgba = malloc(pixels ? pixels * 4u : 1u);
+    if (!rgba) abort();
+    for (size_t i = 0; i < pixels; i++) {
+        const tide_color c = item->image.pixels[i];
+        const float worked = raw ? 1.0f : c.a; // [Raw]: numbers, as the file has them
+        rgba[i * 4u] = channel_byte(c.r, worked), rgba[i * 4u + 1u] = channel_byte(c.g, worked);
+        rgba[i * 4u + 2u] = channel_byte(c.b, worked), rgba[i * 4u + 3u] = channel_byte(1.0f, c.a);
+    }
+    tide_texture_blocks compressed = {0};
+    if (item->image_mips.pixels) {
+        // Authored mip levels (DDS) retain their alpha coverage and raw
+        // channels. Premultiply each color level, not only the largest.
+        compressed = item->image_mips;
+        uint8_t *chain = malloc(compressed.bytes);
+        if (!chain) abort();
+        for (uint32_t i = 0; i < compressed.bytes; i += 4u) {
+            const uint8_t *c = compressed.pixels + i;
+            const float alpha = (float)c[3] / 255.0f, worked = raw ? 1.0f : alpha;
+            chain[i] = channel_byte((float)c[0] / 255.0f, worked);
+            chain[i + 1u] = channel_byte((float)c[1] / 255.0f, worked);
+            chain[i + 2u] = channel_byte((float)c[2] / 255.0f, worked);
+            chain[i + 3u] = c[3];
+        }
+        compressed.pixels = chain;
+    } else if (compress) {
+        // Colors are premultiplied by now, and [Raw]'s channels are numbers as the file has them: either way
+        // each channel of a mip is the mean of the four below it, and BC1/BC3 keep the bytes they're given.
+        compressed = texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
+    }
+    out->view = (texture_cache_view){.width = item->image.width, .height = item->image.height, .rgba = rgba,
+        .blocks = compressed};
+    if (decoded_here) {
+        free(decoded.image.pixels);
+        free((void *)(uintptr_t)decoded.image_mips.pixels);
+    }
+    return true;
+}
+
+static void texture_made_free(texture_made *made)
+{
+    free((void *)(uintptr_t)made->view.blocks.pixels);
+    free((void *)(uintptr_t)made->view.rgba);
+}
+
 static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
                           const bool compress, uint32_t *extra, const char *cache_folder, uint32_t *stored)
 {
@@ -21528,7 +21592,6 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         return kind == ASSET_ANIMATIONS ? tide_pack_list(b, &at, 1u) : at;
     }
     if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
-        size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
         // Its block is shared by what it stores (texture_content): the same file as a color and as [Raw] is one
         // block where the two come out the same, as an opaque image does, and two where they don't
         uint8_t content[32], cache[32];
@@ -21551,64 +21614,20 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
             free(cached);
             return at;
         }
-        // A newly requested variant may not have been prepared with the old
-        // declaration. Decode its source now, without changing other consumers.
-        asset_match decoded;
-        bool decoded_here = false;
-        if (!item->image.pixels) {
-            decoded = *item;
-            char why[256];
-            if (!image_file_read_mips(item->data, item->size, item->key, &decoded.image, &decoded.image_mips, why)) {
-                diag_error((loc){0}, "'%s' can't be imported as an image: %s", item->key, why);
-                return 0;
-            }
-            item = &decoded;
-            pixels = (size_t)item->image.width * item->image.height;
-            decoded_here = true;
-        }
-        uint8_t *rgba = malloc(pixels ? pixels * 4u : 1u);
-        if (!rgba) abort();
-        for (size_t i = 0; i < pixels; i++) {
-            const tide_color c = item->image.pixels[i];
-            const float worked = raw ? 1.0f : c.a; // [Raw]: numbers, as the file has them
-            rgba[i * 4u] = channel_byte(c.r, worked), rgba[i * 4u + 1u] = channel_byte(c.g, worked);
-            rgba[i * 4u + 2u] = channel_byte(c.b, worked), rgba[i * 4u + 3u] = channel_byte(1.0f, c.a);
-        }
-        tide_texture_blocks compressed = {0};
-        if (item->image_mips.pixels) {
-            // Authored mip levels (DDS) retain their alpha coverage and raw
-            // channels. Premultiply each color level, not only the largest.
-            compressed = item->image_mips;
-            uint8_t *chain = malloc(compressed.bytes);
-            if (!chain) abort();
-            for (uint32_t i = 0; i < compressed.bytes; i += 4u) {
-                const uint8_t *c = compressed.pixels + i;
-                const float alpha = (float)c[3] / 255.0f, worked = raw ? 1.0f : alpha;
-                chain[i] = channel_byte((float)c[0] / 255.0f, worked);
-                chain[i + 1u] = channel_byte((float)c[1] / 255.0f, worked);
-                chain[i + 2u] = channel_byte((float)c[2] / 255.0f, worked);
-                chain[i + 3u] = c[3];
-            }
-            compressed.pixels = chain;
-        } else if (compress) {
-            // Colors are premultiplied by now, and [Raw]'s channels are numbers as the file has them: either way
-            // each channel of a mip is the mean of the four below it, and BC1/BC3 keep the bytes they're given.
-            compressed = texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
+        // A newly requested variant may not have been prepared with the old declaration: made now (texture_make)
+        texture_made made;
+        char why[256];
+        if (!texture_make(item, raw, compress, &made, why)) {
+            diag_error((loc){0}, "'%s' can't be imported as an image: %s", item->key, why);
+            return 0;
         }
         // Blocks are the image then, with no RGBA beside them: a device without them decodes them
-        *stored = compressed.pixels ? compressed.format : 0;
-        const texture_cache_view prepared_view = {.width = item->image.width, .height = item->image.height,
-            .rgba = rgba, .blocks = compressed};
-        texture_content(&prepared_view, content);
-        const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
-                                                    compressed.pixels ? NULL : rgba, compressed);
-        texture_cache_write(cache_folder, cache, &prepared_view);
-        if (decoded_here) {
-            free(decoded.image.pixels);
-            free((void *)(uintptr_t)decoded.image_mips.pixels);
-        }
-        free((void *)(uintptr_t)compressed.pixels);
-        free(rgba);
+        *stored = made.view.blocks.pixels ? made.view.blocks.format : 0;
+        texture_content(&made.view, content);
+        const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)made.view.width, (int32_t)made.view.height,
+                                                    made.view.blocks.pixels ? NULL : made.view.rgba, made.view.blocks);
+        texture_cache_write(cache_folder, cache, &made.view);
+        texture_made_free(&made);
         return at;
     }
     if (kind == ASSET_CLIP) return tide_pack_clip(b, item->hash, item->data, (uint32_t)item->size); // WAV/Vorbis or imported PCM WAV
@@ -21630,8 +21649,9 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
 // The levels of detail of an asset marked [LOD] (docs/spec.md, Levels of detail): made of what the file has, once
 // a file (mesh_lod_cached). `skinned` is a skinned model's bytes, whose bones' weights are weighed too. False for
 // a mesh that has none, which is packed as one with no [LOD] is. `key` gets what tells these levels from any other.
-static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned, const size_t skinned_size, const bool tangents,
-                        tide_mesh_levels *levels, uint8_t key[32])
+// What mesh_levels weighs of `m`, and `key`, what tells its levels from any other, but the bones' weights
+static tide_mesh_lod_source mesh_levels_source(const mesh_file *m, const uint8_t *skinned, const size_t skinned_size,
+                                               const bool tangents, uint8_t key[32])
 {
     static const char plain_version[] =
         "tide levels of detail 6, values by area, of meshes of 1000 triangles and levels of 64 at the least, "
@@ -21653,14 +21673,21 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
         tide_sha256_add(&s, model, sizeof model);
     }
     tide_sha256_end(&s, key);
-    tide_mesh_lod_bones bones = {0};
-    if (skinned) tide_mesh_lod_bones_of(skinned, skinned_size, m->vertices, &bones);
-    const tide_mesh_lod_source source = {
+    return (tide_mesh_lod_source){
         .vertices = m->vertices, .position = m->position, .normal = m->normal, .uv = m->has_uvs ? m->uv : NULL,
         .uv2 = m->has_uvs2 ? m->uv2 : NULL, .color = m->has_colors ? m->color : NULL, .index = m->index, .indices = m->indices,
-        .tangent = tangent_sides ? m->tangent : NULL,
-        .apart = bones.first ? tide_mesh_lod_bones_apart : NULL, .user = &bones, .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
+        .tangent = tangent_sides ? m->tangent : NULL, .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
         .triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST};
+}
+
+static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned, const size_t skinned_size, const bool tangents,
+                        tide_mesh_levels *levels, uint8_t key[32])
+{
+    tide_mesh_lod_source source = mesh_levels_source(m, skinned, skinned_size, tangents, key);
+    tide_mesh_lod_bones bones = {0};
+    if (skinned) tide_mesh_lod_bones_of(skinned, skinned_size, m->vertices, &bones);
+    source.apart = bones.first ? tide_mesh_lod_bones_apart : NULL;
+    source.user = &bones;
     const tide_mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
     tide_mesh_lod_bones_free(&bones);
     if (made->levels == 0) return false;
@@ -21878,6 +21905,116 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
     if (moved) free(rested.position), free(rested.normal);
 }
 
+// The images build_pack will make, which its cache doesn't have yet: made ahead, several at once, and written to
+// the cache, where pack_item then finds them (pack_item's calls, with the same raw and compress)
+typedef struct texture_want {
+    const asset_match *item;
+    bool raw, compress;
+    uint8_t key[32];
+} texture_want;
+
+typedef struct texture_wants {
+    VEC(texture_want) list;
+    const char *folder;
+} texture_wants;
+
+static void want_texture(texture_wants *w, const asset_match *item, const bool raw, const bool compress)
+{
+    if (item->prepared_texture && item->prepared_raw == raw && compress) return;
+    texture_want t = {.item = item, .raw = raw, .compress = compress};
+    texture_cache_key(t.key, item->hash, item->key, raw, compress);
+    if (asset_cache_has(w->folder, t.key)) return;
+    for (int i = 0; i < w->list.count; i++) {
+        if (!memcmp(w->list.items[i].key, t.key, sizeof t.key)) return;
+    }
+    vec_push(w->list, t);
+}
+
+static void make_texture(void *context, const uint32_t i)
+{
+    const texture_wants *w = context;
+    const texture_want *t = &w->list.items[i];
+    texture_made made;
+    char why[256];
+    if (!texture_make(t->item, t->raw, t->compress, &made, why)) return; // pack_item says why
+    texture_cache_write(w->folder, t->key, &made.view);
+    texture_made_free(&made);
+}
+
+// Each image a byte a channel and its blocks is held while it's made: a 4096-square one is about 100 MB
+enum { TEXTURES_AT_ONCE = 8 };
+
+static void want_textures(gen *g)
+{
+    const program *prog = g->prog;
+    texture_wants w = {.folder = prog->game_folder};
+    if (!w.folder) return; // Nothing's kept: pack_item makes each as it goes
+    for (int i = 0; i < prog->assets.count; i++) {
+        const decl *d = prog->assets.items[i];
+        const asset_value *v = d->asset;
+        if (!v) continue;
+        if (v->kind == ASSET_TEXTURE_ARRAY) {
+            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, !d->lossless);
+        } else if (v->kind == ASSET_CUBEMAP) {
+            for (int k = 0; k < 6 && k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, false);
+        } else if (v->kind == ASSET_TEXTURE && !v->many) {
+            want_texture(&w, &v->items[0], d->sample_raw, !d->lossless);
+        } else if (v->kind == ASSET_TEXTURE) {
+            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], false, !d->lossless);
+        }
+    }
+    build_threads_each((uint32_t)w.list.count, TEXTURES_AT_ONCE, make_texture, &w); // The list is the arena's
+}
+
+// The levels of detail build_pack's meshes will ask mesh_lod_cached for, made ahead on every processor: each mesh
+// as pack_mesh makes what it weighs. A key that differs from pack_mesh's only costs making those levels there.
+static void want_levels(gen *g)
+{
+    const program *prog = g->prog;
+    for (int i = 0; i < prog->assets.count; i++) {
+        const decl *d = prog->assets.items[i];
+        const asset_value *v = d->asset;
+        const decl *vertex = asset_vertex(d->return_type);
+        if (!v || !d->lod || !d->lod_multiplier || !vertex || (v->kind != ASSET_MESH && v->kind != ASSET_SKINNED)) continue;
+        const uint32_t kind = asset_decl_pack_kind(d);
+        const bool skinned = kind == TIDE_PACK_SKINNED || kind == TIDE_PACK_SKINNEDS || kind == TIDE_PACK_SKINNED_MAP;
+        const bool weighted = v->kind == ASSET_SKINNED, rest = weighted && !skinned;
+        for (int k = 0; k < (v->many ? v->count : 1); k++) {
+            const asset_match *item = &v->items[k];
+            uint8_t key[32];
+            if (item->built) {
+                int *pad = arena_alloc(sizeof(int) * (size_t)(vertex->fields.count + 1));
+                const layout whole = decl_layout_padded(vertex, pad);
+                mesh_file m;
+                uint8_t *bytes = built_mesh(item, vertex, whole, pad, &m);
+                bool tangent_sides = false;
+                for (int f = 0; f < vertex->fields.count; f++)
+                    tangent_sides |= mesh_fills(&vertex->fields.items[f]) == FILL_TANGENT && vertex->fields.items[f].type.kind == TY_FLOAT4;
+                if (m.indices) {
+                    const tide_mesh_lod_source source = mesh_levels_source(&m, NULL, 0u, tangent_sides, key);
+                    mesh_lod_want(key, &source, NULL, 0u, prog->game_folder);
+                }
+                free(bytes);
+                free(m.position), free(m.normal), free(m.uv), free(m.uv2), free(m.color), free(m.tangent);
+                continue;
+            }
+            mesh_file rested;
+            const bool moved = rest && rest_mesh(item, &item->mesh, &rested);
+            const mesh_file *m = moved ? &rested : &item->mesh;
+            bool tangent_sides = false;
+            for (int f = 0; f < vertex->fields.count; f++) {
+                if (mesh_fills(&vertex->fields.items[f]) == FILL_TANGENT) tangent_sides = vertex->fields.items[f].type.kind == TY_FLOAT4;
+            }
+            const uint8_t *model = weighted ? item->skinned : NULL;
+            const size_t model_size = weighted ? item->skinned_size : 0u;
+            const tide_mesh_lod_source source = mesh_levels_source(m, model, model_size, tangent_sides, key);
+            mesh_lod_want(key, &source, model, model_size, prog->game_folder);
+            if (moved) free(rested.position), free(rested.normal);
+        }
+    }
+    mesh_lod_make_wanted();
+}
+
 static void note_watched(void *user, const char *path)
 {
     game_info *info = user;
@@ -21971,6 +22108,8 @@ static void build_pack(gen *g)
     const bool reported = build_report_current() && !opts->build_program;
     if (reported) build_report_assets_clear(); // What the last pack holds: a server packs again with fewer
     if (!opts->build_program) diag_phase("generating C"); // ...and packing is a phase of its own (TIDEC_TIMES)
+    want_textures(g);
+    want_levels(g);
     tide_pack_builder b = {0};
     const decl *sized = NULL; // The declaration whose bytes are being counted, from sized_from
     uint64_t sized_from = 0;

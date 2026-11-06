@@ -3,6 +3,7 @@
 #endif
 #include "asset_cache.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,14 @@ static bool cache_path(char path[4096], const char *folder, const uint8_t key[32
     return snprintf(path, 4096, "%s/.tide/assets/imports/%s.bin", folder, hex) < 4096;
 }
 
+bool asset_cache_has(const char *folder, const uint8_t key[32])
+{
+    char path[4096];
+    unsigned long long bytes;
+    return cache_path(path, folder, key) && folder_file_info(path, &bytes, NULL) && bytes > 64
+        && bytes - 64 <= ASSET_CACHE_MAX_BYTES;
+}
+
 uint8_t *asset_cache_read(const char *folder, const uint8_t key[32], size_t *size)
 {
     char path[4096];
@@ -70,13 +79,13 @@ void asset_cache_write(const char *folder, const uint8_t key[32], const void *da
     if (!size || size > ASSET_CACHE_MAX_BYTES || !cache_path(path, folder, key)) return;
     snprintf(directory, sizeof directory, "%s/.tide/assets/imports", folder);
     if (!folder_make(directory)) return;
-    static unsigned serial;
+    static atomic_uint serial; // Images are written from several threads (codegen.c, want_textures)
 #ifdef _WIN32
     const unsigned long pid = GetCurrentProcessId();
 #else
     const unsigned long pid = (unsigned long)getpid();
 #endif
-    snprintf(fresh, sizeof fresh, "%s.%lu-%u.new", path, pid, ++serial);
+    snprintf(fresh, sizeof fresh, "%s.%lu-%u.new", path, pid, atomic_fetch_add(&serial, 1u) + 1u);
     FILE *file = fopen(fresh, "wb");
     if (!file) return;
     uint8_t digest[32];

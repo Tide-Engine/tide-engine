@@ -15,5 +15,14 @@
 // stay.
 const tide_mesh_lod *mesh_lod_cached(const uint8_t key[32], const tide_mesh_lod_source *source, const char *game_folder);
 
+// Levels mesh_lod_cached will be asked for: found now, in this process or the game's .tide/assets/lod/, or
+// noted, with copies of the source's numbers, for mesh_lod_make_wanted. `skinned` (a skinned model's bytes, which
+// must last until then) gives the bones the levels weigh, as tide_mesh_lod_bones_of would for `source.apart`.
+void mesh_lod_want(const uint8_t key[32], const tide_mesh_lod_source *source, const uint8_t *skinned, size_t skinned_size,
+                   const char *game_folder);
+// Makes every wanted mesh's levels, on as many threads as there are processors (one mesh to a thread at a time,
+// so each one's levels are what one thread makes), and keeps them as mesh_lod_cached does.
+void mesh_lod_make_wanted(void);
+
 // How many times mesh_lod_cached made levels itself, where it didn't find them: for tests.
 uint32_t mesh_lod_made(void);

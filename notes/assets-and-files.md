@@ -159,6 +159,28 @@ the shaders); now ~32 MB in 17 parts, 4 s. Its cold `tide build --release` went 
 cold "running build code" is mostly the build pack's levels of detail: 229 [LOD] meshes made one after another,
 ~24 s, cached in .tide/assets/lod/ after. Small fixtures stay one file; the split was checked on Mount & Rifle.
 
+Made ahead, on every processor (2026-11-06, the owner on the cold build: "lots into lod, can we improve that
+process?"). Measured on Mount & Rifle with a cold cache: the levels of 229 meshes (1.88 M triangles; 155 under the
+1,000 that get any) took 14.4 s one after another, the biggest 1.2 s; BC1/BC3 compression of its images ~14 s.
+`build_pack` now first calls `want_textures` and `want_levels` (codegen.c): each walks the assets as the pack loop
+does, with the same arguments pack_item and pack_mesh take (raw/compress per kind; a mesh at rest, a built mesh's
+fields, tangent handedness, the skinned model), and notes what the caches don't have yet. Images: `texture_make`
+(pack_item's code, moved out) runs on at most 8 threads (one image in flight holds ~100 MB at 4096 square) and
+writes `texture_cache_write`; pack_item reads them back. Levels: `mesh_lod_want` copies a source's numbers and
+`mesh_lod_make_wanted` makes them on every processor (the bones' weights are worked out on the thread, from the
+model's bytes), writes their files and keeps them, so `mesh_lod_cached` finds them. Each item is made on one thread
+by the same code, so the results are the same bytes: all 229 level files and the 742 MB pack compared equal to
+serial ones. A key the walk got differently from the pack only costs making that item in the pack, as before.
+Threads are `build_threads_each` (build_threads.c: Windows threads or pthreads, with an atomic counter; tidec links
+Threads::Threads off Windows); `asset_cache_write`'s temporary names take an atomic counter; `asset_cache_has` asks
+whether an entry's file is there without reading it. Diagnostics stay the pack loop's: an image that won't decode is
+skipped ahead and said when packed. With no game folder nothing's kept, so images aren't made ahead.
+
+Cold `tide build --release` of Mount & Rifle: 65 s to 47 s (levels ~1.5 s, images ~2 s). What's left: asset imports
+~11 s (one file at a time in check_asset_decl), build code's program 4 s to write and 8 s to compile, the second
+pass of the front end ~6 s, the game's C ~11 s. Test: `mesh_lod_wanted_ahead_are_the_same_levels` (levels wanted
+ahead equal ones made alone, a file there is read instead, a want twice is made once, asking after makes none).
+
 The tools come from codegen_options: `build_cc` (NULL-terminated command), `build_flags` (compile and link),
 `build_libs` (link only), `build_include`, `build_engine`. tidec's flags are `--build-cc`, `--build-flag`,
 `--build-lib`, `--build-include`, `--build-engine`. `tide_add_game` passes `TIDE_CLANG` (else CMAKE_C_COMPILER), so
