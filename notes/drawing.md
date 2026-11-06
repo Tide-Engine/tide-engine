@@ -2,6 +2,42 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## A depth pre-pass: `Depth.Only` and `Depth.Equal` (2026-11-06)
+
+Task (asked for by Mount & Rifle, through a parent agent): its cut-out foliage was lit where a nearer leaf hid it,
+since a frag that can discard runs before depth settles; a game had no draw that wrote depth alone into a color
+target, nor one that passed only at equal depth. The names and rules are Claude's picks, Provisional in
+`docs/spec.md` (Draw settings, Depth).
+
+- **Two members appended to `Depth`** (`tide_depth`, so the old numbers stand): `Depth.Only` (3) reads and writes
+  depth and stencil as `ReadWrite`, and writes no color; `Depth.Equal` (4) passes only at equal depth and writes
+  none. A setting like the others: `tide_draw_set_depth` clamps past `TIDE_DEPTH_EQUAL` to `ReadWrite`, and each
+  is a run of its own. `ordered_levels` keeps naming `Depth.Read` alone, so `Equal` draws gather and GPU-cull as
+  solid ones do; `Equal` draws stay occlusion-culled (`hiz_member`): their own pre-pass depth can't cull them, as the
+  test is strict (`look.nearest >` the farthest).
+- **The GPU's** (`gpu.h`): `TIDE_GPU_DEPTH_ALONE` (4: tested LEQUAL, written, every color image's write mask 0) and
+  `TIDE_GPU_DEPTH_EQUAL` (5: `EQUAL`, not written), after `RESET` so Unity's and `tide.js`'s numbers stand. Vulkan
+  (`gpu_vk.c`), WebGPU (`tide.js` `depths`, `DEPTH_ALONE`'s targets `writeMask: 0`), Unity (`TideRender.cs`: ZTest
+  Equal; depth alone blends Zero/One, which leaves color, as its shaders have no ColorMask property). Alpha to coverage
+  still runs with no color written, so a pre-pass's `this.Cutout`/`Coverage` sets each sample's depth.
+  `platform.c`: `DEPTHS` is `TIDE_DEPTH_EQUAL + 1`, `gpu_depths` maps both, and `depth_written` (`ReadWrite` or
+  `Only`) is what `writes_depth` and cull.inc's `hiz_writes_depth` ask.
+- **Invariant positions.** `Equal` needs both draws on the same bits, through two frags (two pipelines, two vertex
+  modules) or a frag and the engine's own mesh shader. Every game shader's `tide_corner` position is
+  `@builtin(position) @invariant` (`shader.c`), and so is `mesh_3d_wgsl`'s (`shaders.h`); the WGSL reader takes
+  `@invariant` (`attrs.invariant`), SPIR-V decorates the vertex output `Invariant` (18), HLSL makes it `precise`. The 54
+  `compiler/tests/shaders/*.txt` changed by that word alone. Unity's checked-in Sample shaders are rewritten by the
+  next `tide unity`.
+- **Tests:** `platform/tests/shaders.c` `run_prepass_checks` (`Prepasses`, pass 26 in shaders.tide): a 4-sample
+  Rgba16f target, a far card (engine mesh) and a cut-out near card (white frag, bottom tenth discarded) under `Only`,
+  then each lit under `Equal` and `Blend.Add` (red through a frag, green through the engine's mesh) and a card between
+  them that the pre-pass never drew (blue): every pixel is exactly half of one card, both at the cut's edge, never
+  blue, white or summed. Passes on Vulkan and WebGPU, again and prewarmed. `tests/test_draw_settings.c`
+  (`draw_depth_is_the_3d_meshes_own`), `compiler/tests/e2e/draw_depth` (the values), `lsp_draw_depth` (completion).
+- **Measured:** `bench/prepass` (`notes/benchmarks.md`, A depth pre-pass).
+- **Not built:** a color mask for draws other than 3D meshes (stencil masks still use a clear color); `Equal`
+  for anything not drawn the same way (another vert, LOD level).
+
 ## The culling's lists in the pools (2026-11-05)
 
 cull.tide's lists (and occlusion's `depths`) are ranges of the renderer's two pools since GPU lists in pools

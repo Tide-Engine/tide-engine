@@ -1947,7 +1947,7 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
 // made the first time a list draws with it.
 enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_SOLID_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_QUADS, PIPELINE_TEXT_QUADS,
        PIPELINE_MESHES_3D, PIPELINE_KINDS };
-enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_NONE + 1, CULLS = TIDE_GPU_CULL_FRONT + 1 };
+enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_EQUAL + 1, CULLS = TIDE_GPU_CULL_FRONT + 1 };
 
 // Stencil's numbers are the draw list's all the way down.
 _Static_assert((int)TIDE_GPU_STENCIL_ALWAYS == (int)TIDE_STENCIL_ALWAYS && (int)TIDE_GPU_STENCIL_NEVER == (int)TIDE_STENCIL_NEVER
@@ -2090,7 +2090,14 @@ static void use_pipeline(const draw_step *s)
 // What a pipeline does with depth for each tide_depth.
 static const tide_gpu_depth gpu_depths[DEPTHS] = {
     [TIDE_DEPTH_READ_WRITE] = TIDE_GPU_DEPTH_TEST, [TIDE_DEPTH_READ] = TIDE_GPU_DEPTH_READ,
-    [TIDE_DEPTH_NONE] = TIDE_GPU_DEPTH_NONE};
+    [TIDE_DEPTH_NONE] = TIDE_GPU_DEPTH_NONE, [TIDE_DEPTH_ONLY] = TIDE_GPU_DEPTH_ALONE,
+    [TIDE_DEPTH_EQUAL] = TIDE_GPU_DEPTH_EQUAL};
+
+// Whether a 3D mesh drawn so writes depth: read and written, or written alone (a pre-pass).
+static bool depth_written(const uint32_t depth)
+{
+    return depth == TIDE_DEPTH_READ_WRITE || depth == TIDE_DEPTH_ONLY;
+}
 
 // What the renderer keeps on the GPU (see gpu.h): its pipelines, whose
 // shaders are in shaders.h, and the buffers and textures a list's steps draw
@@ -3380,9 +3387,8 @@ static bool writes_depth(const tide_draw_list *list, const draw_step *s)
     case STEP_SHAPES:
     case STEP_TEXT:
     case STEP_MESH: return stencil_stores(s->stencil);
-    case STEP_MESH_3D: return s->depth == TIDE_DEPTH_READ_WRITE || stencil_stores(s->stencil);
-    case STEP_SHADED:
-        return (list->runs[s->first].shader->dims == 3 && s->depth == TIDE_DEPTH_READ_WRITE) || stencil_stores(s->stencil);
+    case STEP_MESH_3D: return depth_written(s->depth) || stencil_stores(s->stencil);
+    case STEP_SHADED: return (list->runs[s->first].shader->dims == 3 && depth_written(s->depth)) || stencil_stores(s->stencil);
     default: return true; // A clear, and what only says where the steps after it go
     }
 }

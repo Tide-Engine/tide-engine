@@ -1,0 +1,110 @@
+// A depth pre-pass against cut-out foliage's single pass (bench/prepass/main.c):
+// layers of full-screen cards, each cut out in a pattern of its own as a
+// crown's leaves are, into a target of 4 samples of four floats, lit by a frag
+// whose cost is `work` turns of a loop. Drawn the usual way, each card's
+// frag runs at every pixel its cut leaves, hidden or not; with a pre-pass
+// (Depth.Only through a frag that only cuts, then Depth.Equal through the lit
+// one), the lit frag runs once a sample the nearest card covers.
+
+scene Main { }
+
+struct Card
+{
+    float4x4 transform = float4x4.identity;
+    float seed;
+}
+
+local singleton Stack
+{
+    RenderTarget scene;
+    List<Vertex3> card;
+    List<Vertex> sheet;
+    List<int> faces;
+    List<Card> cards;
+    int mode;   // The host's: 0 lit and cut in one pass, 1 a pre-pass and a lit pass
+    int layers; // ...how many cards
+    int work;   // ...and how much the lighting costs
+    int width;
+    int height;
+    bool made;
+}
+
+// What a card covers: a pattern of its own, about half of it, with smooth edges
+float Leafy(float2 uv, float seed)
+{
+    return 0.5 + 0.5 * Math.Sin(uv.x * 37 + seed) * Math.Sin(uv.y * 23 + seed * 1.7);
+}
+
+// The lighting: as much work as the host asks for, the same in both ways of drawing
+Color Lighting(float2 uv, float seed, int work)
+{
+    mut float3 c = float3(uv.x, uv.y, Math.Frac(seed));
+    for (int i = 0; i < work; i++)
+    {
+        c = float3(Math.Sin(c.y * 3.1 + c.z), Math.Cos(c.z * 2.3 + c.x), Math.Sin(c.x * 1.7 + c.y)) * 0.5 + 0.5;
+    }
+    return Color(c.x, c.y, c.z);
+}
+
+// The usual way: lit, and cut, in one frag
+frag LitCut(Vertex3 vertex, out Color color, Card card, Stack stack)
+{
+    color = Lighting(vertex.uv, card.seed, stack.work);
+    this.Cutout(Leafy(vertex.uv, card.seed));
+}
+
+// A pre-pass: only the cut, its color going nowhere
+frag Cut(Vertex3 vertex, out Color color, Card card)
+{
+    color = Color.white;
+    this.Cutout(Leafy(vertex.uv, card.seed));
+}
+
+// ...and the lit pass: no cut, where the pre-pass left each sample's depth
+frag Lit(Vertex3 vertex, out Color color, Card card, Stack stack)
+{
+    color = Lighting(vertex.uv, card.seed, stack.work);
+}
+
+view Paint(mut Stack stack)
+{
+    if (stack.layers == 0) return;
+    if (!stack.made)
+    {
+        stack.made = true;
+        stack.scene = RenderTarget(stack.width, stack.height, 1, Format.Rgba16f, samples: 4);
+        stack.card = [Vertex3 { position = float3(-1, -1, 0) }, Vertex3 { position = float3(1, -1, 0), uv = float2(1, 0) },
+                      Vertex3 { position = float3(1, 1, 0), uv = float2(1, 1) }, Vertex3 { position = float3(-1, 1, 0), uv = float2(0, 1) }];
+        stack.faces = [0, 1, 2, 0, 2, 3];
+        float w = stack.width;
+        float h = stack.height;
+        stack.sheet = [Vertex { }, Vertex { position = float2(w, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(w, h), uv = float2(1, 1) }, Vertex { position = float2(0, h), uv = float2(0, 1) }];
+        // The farthest first, as nothing sorts foliage
+        for (int i = stack.layers - 1; i >= 0; i--)
+        {
+            stack.cards.Add(Card { transform = float4x4.Translate(float3(0, 0, i * 0.25)), seed = i * 2.39 });
+        }
+    }
+    stack.scene.Clear(Color.black);
+    stack.scene.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(2, 2, 0.1, 30));
+    stack.scene.SetCull(Cull.None);
+    if (stack.mode == 0)
+    {
+        stack.scene.Instanced(stack.card, stack.faces, stack.cards, LitCut);
+    }
+    else
+    {
+        stack.scene.Depth(Depth.Only)
+        {
+            stack.scene.Instanced(stack.card, stack.faces, stack.cards, Cut);
+        }
+        stack.scene.Depth(Depth.Equal)
+        {
+            stack.scene.Instanced(stack.card, stack.faces, stack.cards, Lit);
+        }
+    }
+    Draw.Clear(Color.black);
+    Draw.SetScreen();
+    Draw.Mesh(stack.sheet, stack.faces, stack.scene.color, Filter.Point);
+}

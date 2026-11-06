@@ -258,7 +258,7 @@ static bool run_valid(const tide_draw_list *d, const tide_draw_command *c)
     if ((uint64_t)r->first + instances > d->instance_used || (uint64_t)r->uniforms + uniforms > d->uniform_used
         || (instances && !d->instances) || (uniforms && !d->uniforms)) return fail("Invalid shader data range");
     if (r->moved > 1u || (r->moved && s->dims != 2)) return fail("Unsupported recorded shader transform");
-    if (c->blend > TIDE_BLEND_REPLACE || c->depth > TIDE_DEPTH_NONE || (c->cull & ~7u)
+    if (c->blend > TIDE_BLEND_REPLACE || c->depth > TIDE_DEPTH_EQUAL || (c->cull & ~7u)
         || (c->cull & 3u) > TIDE_CULL_NONE) return fail("Unsupported draw state");
     const tide_color white = TIDE_COLOR_WHITE;
     if (c->kind == TIDE_DRAW_BLIT && (s->dims != 2 || r->count != 1u || r->moved

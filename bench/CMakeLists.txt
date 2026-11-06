@@ -190,6 +190,15 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
+# A depth pre-pass (Depth.Only, then Depth.Equal) against cut-outs lit in one
+# pass: GPU time and the same picture. Its test is the picture alone.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(bench_prepass NAME game SOURCES prepass/game.tide HOST prepass/main.c)
+    target_link_libraries(bench_prepass PRIVATE tide_platform)
+    add_test(NAME bench_prepass COMMAND bench_prepass --quick)
+    tide_gpu_test(bench_prepass)
+endif()
+
 # Tide's drawing benchmark's workloads by hand in Vulkan, timed the same way
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(draw)

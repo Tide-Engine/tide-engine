@@ -9888,7 +9888,9 @@ static type check_enum_member(expr *e, decl *d)
     suggest_note(&s);
     if (d->builtin && str_eq_c(d->name, "Depth")) {
         diag_note("a 3D mesh reads depth and writes it, 'Depth.ReadWrite', as each frame starts; only reads it, "
-                  "'Depth.Read', hidden behind what's nearer and hiding nothing; or does neither, 'Depth.None'");
+                  "'Depth.Read', hidden behind what's nearer and hiding nothing; does neither, 'Depth.None'; writes "
+                  "depth and no color, 'Depth.Only' (a pre-pass); or is drawn only where its depth is the one there, "
+                  "'Depth.Equal' (lit after a pre-pass)");
     }
     if (d->builtin && str_eq_c(d->name, "Cull")) {
         diag_note("a 3D mesh's triangles aren't drawn from the back, 'Cull.Back', as each frame starts; or from the "
@@ -19987,10 +19989,10 @@ static void add_builtins(program *prog)
         vec_push(blend->members, m);
     }
     prog->blend = blend;
-    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth
+    // enum Depth { ReadWrite, Read, None, Only, Equal }: what a 3D mesh does with depth
     // (Draw.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
     // game whose code names it (decl.named).
-    static const char *const depths[] = {"ReadWrite", "Read", "None"};
+    static const char *const depths[] = {"ReadWrite", "Read", "None", "Only", "Equal"};
     decl *depth = NEW(decl);
     depth->kind = DECL_ENUM;
     depth->name = str_from("Depth");

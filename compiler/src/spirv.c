@@ -193,7 +193,7 @@ enum {
 
 enum {
     DEC_BLOCK = 2, DEC_COL_MAJOR = 5, DEC_ARRAY_STRIDE = 6, DEC_MATRIX_STRIDE = 7, DEC_BUILTIN = 11, DEC_FLAT = 14,
-    DEC_NON_WRITABLE = 24, DEC_LOCATION = 30, DEC_BINDING = 33, DEC_DESCRIPTOR_SET = 34, DEC_OFFSET = 35,
+    DEC_INVARIANT = 18, DEC_NON_WRITABLE = 24, DEC_LOCATION = 30, DEC_BINDING = 33, DEC_DESCRIPTOR_SET = 34, DEC_OFFSET = 35,
 };
 
 enum { BUILTIN_POSITION = 0, BUILTIN_FRAG_COORD = 15, BUILTIN_FRAG_DEPTH = 22, BUILTIN_LOCAL_INVOCATION_INDEX = 29 };
@@ -2348,6 +2348,9 @@ static uint32_t interface_var(translation *x, const int sc, const int t, const a
         const int builtin = at.builtin == BUILTIN_POSITION && fragment && sc == SC_INPUT ? BUILTIN_FRAG_COORD : at.builtin;
         INS(&x->decorations, OP_DECORATE, id, DEC_BUILTIN, (uint32_t)builtin);
         if (builtin == BUILTIN_FRAG_DEPTH) x->fn->uses_frag_depth = true;
+        // A vertex stage's @invariant position: the same in every pipeline that works it out the same way, so two
+        // draws of a mesh land on the same depth (a pre-pass and the draw lit after it, Depth.Equal)
+        if (at.invariant && !fragment && sc == SC_OUTPUT) INS(&x->decorations, OP_DECORATE, id, DEC_INVARIANT);
     } else if (at.location >= 0) {
         INS(&x->decorations, OP_DECORATE, id, DEC_LOCATION, (uint32_t)at.location);
         // Ints between the stages aren't blended across a triangle: WGSL says so, Vulkan needs it said

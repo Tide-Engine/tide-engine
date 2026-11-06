@@ -2276,7 +2276,10 @@ enum {
 // What the vertex stage gives the fragment stage: its position, and each @location.
 static void varyings(translation *x, const io *outs, const int count, hs *o)
 {
-    hput(o, "struct tidehl_varyings {\n    float4 position : SV_Position;\n");
+    // An @invariant position is precise: the same in every shader that works it out the same way (Depth.Equal)
+    bool invariant = false;
+    for (int i = 0; i < count; i++) invariant = invariant || (outs[i].at.builtin == BUILTIN_POSITION && outs[i].at.invariant);
+    hprintf(o, "struct tidehl_varyings {\n    %sfloat4 position : SV_Position;\n", invariant ? "precise " : "");
     for (int i = 0; i < count; i++) {
         if (outs[i].at.location < 0) continue;
         hput(o, "    ");
