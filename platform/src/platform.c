@@ -4614,6 +4614,14 @@ typedef struct texture_check {
     const char *unavailable;
     uint32_t ready;     // 1 + source_epoch where prepare_source_target found nothing to do
     uint32_t mipped;    // ...and where prepare_mipmaps found a trilinear read's smaller images made
+    // 1 + source_epoch where a step into destination `settled_target` found all of the above with nothing to do or
+    // say, its trilinear reads' smaller images too where `settled_mips` (step_settled)
+    uint32_t settled, settled_target;
+    bool settled_mips;
+    // What texture_to_read gave for a read of kind `resolved_read`, as of 1 + source_epoch `resolved_epoch`
+    uint32_t resolved_epoch;
+    tide_gpu_read resolved_read;
+    tide_gpu_id resolved;
 } texture_check;
 static texture_check *texture_checks;
 static uint32_t texture_check_capacity;
@@ -4949,6 +4957,43 @@ static bool prepare_step_mipmaps(const tide_draw_list *list, const draw_step *s,
     return needed;
 }
 
+// Whether a step's textures were each found, by a step before it at this epoch into the same destination, to be
+// available, not the destination's own, and with nothing to prepare (with `mark`: that this step found so). Then
+// the checks above are skipped: what they'd find is what they found.
+static bool step_settled(const tide_draw_list *list, const draw_step *s, const bool mark)
+{
+    const uint32_t epoch = source_epoch + 1u;
+    const bool shaded = s->kind == STEP_SHADED || s->kind == STEP_BLIT;
+    const tide_draw_run *run = shaded ? &list->runs[s->first] : NULL;
+    const uint32_t count = shaded ? run->shader->texture_count : 1u;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint32_t texture = shaded ? run->textures[i] : s->texture;
+        if (!texture || texture > list->texture_count) continue; // Nothing found of one the list hasn't
+        texture_check *c = texture_check_of(texture);
+        const bool known = c->settled == epoch && c->settled_target == s->target;
+        if (!mark && !known) return false;
+        if (!mark && c->settled_mips) continue;
+        // Whether this read needs its smaller images (prepare_step_mipmaps's rule)
+        bool trilinear = false;
+        if (shaded) {
+            const tide_gpu_read read = gpu_read(run->shader, i);
+            trilinear = (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || read == TIDE_GPU_READ_ARRAY)
+                     && tide_shader_texture_filter(run->shader, run->sampling, i) == TIDE_FILTER_TRILINEAR;
+        } else {
+            trilinear = (s->kind == STEP_MESH || s->kind == STEP_MESH_3D)
+                     && tide_filter_of((int32_t)s->filter) == TIDE_FILTER_TRILINEAR;
+        }
+        if (!mark) {
+            if (trilinear) return false;
+            continue;
+        }
+        c->settled_mips = (known && c->settled_mips) || trilinear;
+        c->settled = epoch;
+        c->settled_target = s->target;
+    }
+    return true;
+}
+
 // A list's filter as the GPU's, which has tide_filter's numbers: what isn't one is blended.
 static tide_gpu_filter gpu_filter(const tide_filter filter)
 {
@@ -4970,7 +5015,20 @@ static void bind_shader_textures(const tide_draw_list *list, const tide_shader *
                                  const uint64_t sampling)
 {
     for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
-        gpu->image(i, texture_to_read(list, textures[i], gpu_read(shader, i)));
+        const uint32_t texture = textures[i];
+        const tide_gpu_read read = gpu_read(shader, i);
+        if (!texture || texture > list->texture_count) {
+            gpu->image(i, texture_to_read(list, texture, read));
+            continue;
+        }
+        // What it is on the GPU changes only where the epoch does (a target made or drawn into, a texture prepared)
+        texture_check *c = texture_check_of(texture);
+        if (c->resolved_epoch != source_epoch + 1u || c->resolved_read != read) {
+            c->resolved = texture_to_read(list, texture, read);
+            c->resolved_read = read;
+            c->resolved_epoch = source_epoch + 1u;
+        }
+        gpu->image(i, c->resolved);
     }
     uint8_t reads[TIDE_SHADER_TEXTURES];
     const uint32_t samplers = tide_shader_samplers(shader, reads);
@@ -5668,25 +5726,28 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         if (!frame_targets[draw_target].valid) continue;
         if (view_only_3d && !window_3d_step(list, s)) continue; // Its targets, 2D and clips are the frame's own
         if (leaves_nothing(list, s)) continue; // A color, into a target of depth alone
-        const char *unavailable = samples_unavailable(list, s);
-        if (unavailable) {
-            fprintf(stderr, "draw skipped: %s\n", unavailable);
-            continue;
-        }
-        if (samples_destination(list, s)) {
-            fprintf(stderr, "draw skipped: render target %llu cannot sample itself\n",
-                    (unsigned long long)frame_targets[s->target].id);
-            continue;
-        }
-        if (prepare_source_targets(list, s, true)) {
-            if (pass_active) end_pass();
-            pass_active = false;
-            prepare_source_targets(list, s, false);
-        }
-        if (prepare_step_mipmaps(list, s, true)) { // Made outside a pass, as a backend draws them
-            if (pass_active) end_pass();
-            pass_active = false;
-            prepare_step_mipmaps(list, s, false);
+        if (!step_settled(list, s, false)) { // Its textures, unless a step before found them as they are
+            const char *unavailable = samples_unavailable(list, s);
+            if (unavailable) {
+                fprintf(stderr, "draw skipped: %s\n", unavailable);
+                continue;
+            }
+            if (samples_destination(list, s)) {
+                fprintf(stderr, "draw skipped: render target %llu cannot sample itself\n",
+                        (unsigned long long)frame_targets[s->target].id);
+                continue;
+            }
+            if (prepare_source_targets(list, s, true)) {
+                if (pass_active) end_pass();
+                pass_active = false;
+                prepare_source_targets(list, s, false);
+            }
+            if (prepare_step_mipmaps(list, s, true)) { // Made outside a pass, as a backend draws them
+                if (pass_active) end_pass();
+                pass_active = false;
+                prepare_step_mipmaps(list, s, false);
+            }
+            step_settled(list, s, true);
         }
         if (cull_spans_at(i, pass_active)) { // Draws testing occlusion: the depth drawn so far measured, outside a pass
             if (pass_active) end_pass(), hiz_report.breaks++;

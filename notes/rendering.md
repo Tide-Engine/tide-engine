@@ -1,5 +1,47 @@
 # The platform layer and the renderer
 
+## Passes recorded on the pool's threads (2026-11-06, second round)
+
+The owner asked to push the render phase further after the first round (below). Same scene, same method. Claude's,
+internal, Provisional.
+
+- **What was left** (cycle counters, removed): of `record`'s ~7.8 M cycles a frame, pass begins 16% (34k cycles each,
+  `vkBeginCommandBuffer` most of it), real pipeline binds 13% (~670), pushes 10%, draws and buffer binds 12%; the
+  renderer's checks before each draw 10% and resolving each draw's textures 8%.
+- **The renderer** (`platform.c`): `step_settled` skips a step's texture checks (available, not the destination's
+  own, source target and mipmaps ready) where a step before at the same `source_epoch` into the same destination
+  found its textures so (`texture_check.settled`, `settled_target`, `settled_mips`; a trilinear read needs
+  `settled_mips`); `bind_shader_textures` takes each texture's GPU id for a read kind from `texture_check.resolved`
+  once an epoch. Both rest on the epoch rules above. `record` p50 ~1.31 -> ~1.18 ms.
+- **Passes recorded on the pool's threads** (`gpu_vk.c`, "Passes recorded on the pool's threads"): a graphics
+  pass's commands are written down (`pc_*`: turns, the pass barrier, query reset and timestamps, rendering, viewport,
+  scissor, stencil, pipeline, pushes or set binds, vertex and index buffers, every draw kind), with the handles
+  resolved on the frame's thread; as the pass ends a `tide_jobs.background` job (`record_pass`) takes one of the
+  frame's `PASS_POOLS` (64) command pools no other thread has (`take_pass_pool`, a state each changed atomically,
+  made the first time), begins a command buffer, replays them and ends it. `pending` holds the pass's place as an
+  odd tag (`pass_tag`); `settle_passes`, first in `flush`, `tide_gpu_vk_present_updating` and `destroy_device`,
+  waits for the jobs (helping the pool) and puts each command buffer in its place, so what's submitted and in what
+  order is as before; one that failed loses the device. The frame's pass pools are reset with its own pool. After a
+  pass, outside work starts a command buffer of its own (it went on in the pass's before). Compute passes and
+  outside work are recorded at once as before; with no pool a pass is recorded as it ends. Descriptor sets
+  (`TIDE_VULKAN_DESCRIPTOR_SETS`) are still allocated and written on the frame's thread, before the bind that's
+  replayed. Pipelines being made in the background are settled before their bind is written down (`vk_use`).
+- **Waking workers** (`platform/src/jobs.c`, `background_notify`): it woke every worker for each job
+  (`WAKE_ALL` of every group), ~42k cycles (~9 µs) a pass on 12 threads, which ate most of the gain. It wakes one
+  sleeping worker now, and none where none sleeps (a worker counts itself asleep before it looks for jobs, and the
+  lock is taken and let go first, as `wake` does); a worker takes jobs till there are none, and each job of a burst
+  (prewarming's pipelines) wakes one.
+- **Measured** (`dev` 7e6ee779e built as it was and with these changes, five alternating pairs, medians): render
+  p50 1.68 -> 1.07 ms, p95 2.51 -> 1.40; `record` p50 1.31 -> 0.68, p95 1.98 -> 0.88; `cpu_work` p50 5.15 -> 4.63.
+  Draw calls the same. The frame's thread waits ~35-45 µs a frame at present for the last passes' jobs.
+- **Left on the frame's thread** in `record`: the renderer's steps and its uniforms, resolving descriptors and
+  writing the commands down. Recording one big pass on several threads (secondary command buffers) isn't built:
+  the scene pass here is ~670 of the 1,742 draws.
+- **Tests:** native sanitize, every `gpu` test (67: Vulkan with push descriptors and with sets, with the validation
+  layer where it's installed, device loss, GPU timing's pass queries, prewarm), `tide_platform_log` and the profile
+  tests; web-debug's draw (and its RGBA fallback), targets, kernels, cull (and fallback), shaders and prewarm tests (WebGPU: the renderer's
+  caches). The pool is made at first use, so the tests record passes on it.
+
 ## The render phase's CPU, measured and cut (2026-11-06)
 
 Asked from Mount & Rifle's thread (aiming at 144 fps native: 6.9 ms of CPU a frame), where its ~2 ms render phase

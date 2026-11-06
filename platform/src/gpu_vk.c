@@ -222,7 +222,18 @@ typedef struct vk_ring {
     VkDeviceSize size, used;
 } vk_ring;
 
+// A command pool for passes recorded on the pool's threads (record_pass): one thread at a time has it (`state`)
+enum { PASS_POOLS = 64 };
+enum { POOL_NONE, POOL_FREE, POOL_TAKEN, POOL_MAKING };
+typedef struct vk_pass_pool {
+    uint32_t state; // POOL_*, changed atomically
+    VkCommandPool pool;
+    VkCommandBuffer *buffers;
+    uint32_t allocated, used;
+} vk_pass_pool;
+
 typedef struct vk_frame {
+    vk_pass_pool pass_pools[PASS_POOLS];
     VkCommandPool pool;
     VkCommandBuffer *buffers;
     uint32_t allocated, used;
@@ -330,6 +341,13 @@ static struct {
     VkCommandBuffer before;
     VkCommandBuffer *pending; // To be submitted, in order: all are in it as they begin
     uint32_t pending_count, pending_capacity;
+
+    // Passes recorded on the pool's threads: each graphics pass's commands are written down as it goes
+    // (`recording`, pc_*) and recorded into its command buffer by a job as it ends; its place in `pending` holds a
+    // tag (pass_tag) until settle_passes puts the command buffer there, before anything is submitted
+    struct vk_deferred **deferred;
+    uint32_t deferred_count, deferred_capacity;
+    struct vk_deferred *recording;
 
     // The pass
     bool in_pass, skip_pass;
@@ -935,8 +953,12 @@ static VkDescriptorSet frame_set(const VkDescriptorSetLayout layout)
 // Everything recorded goes to the GPU, and is waited for: for what's read
 // back, and frames that never show (a test's draws). The frame starts again,
 // with all its room.
+static void settle_passes(void);
+static void reset_pass_pools(vk_frame *f);
+
 static void flush(void)
 {
+    settle_passes();
     if (vk.lost) return;
     close_outside();
     VkResult result = VK_SUCCESS;
@@ -979,6 +1001,7 @@ static void flush(void)
         collect(f);
         if (f->used) vkResetCommandPool(vk.device, f->pool, 0); // Unless none of its command buffers was begun since
         f->used = 0;
+        reset_pass_pools(f);
         f->ring.used = 0;
         reset_pools(f);
     }
@@ -1232,6 +1255,7 @@ void tide_gpu_vk_present(void)
 void tide_gpu_vk_present_updating(double (*update)(void))
 {
     if (!vk.open || !vk.device) return;
+    settle_passes(); // Before anything is submitted, or what was recorded is let go
     if (vk.lost) {
         vk.pending_count = 0;
         vk.outside = vk.pass = vk.before = VK_NULL_HANDLE;
@@ -1292,6 +1316,7 @@ void tide_gpu_vk_present_updating(double (*update)(void))
     collect(f);
     if (f->used) vkResetCommandPool(vk.device, f->pool, 0); // Unless none of its command buffers was begun since
     f->used = 0;
+    reset_pass_pools(f);
     f->ring.used = 0;
     reset_pools(f);
     if (vk.lose_asked) {
@@ -2070,11 +2095,15 @@ static void vk_target_free(const tide_gpu_id id)
 }
 
 // A multisampled target's samples, turned for a kernel to read them (depth_now), turned back for use as depth.
+static void turn_in(const VkCommandBuffer cb, const VkImage image, const VkFormat format, const uint32_t level,
+                    const uint32_t levels, const uint32_t layer, const uint32_t layers, const VkImageLayout from,
+                    const VkImageLayout to);
+
 static void samples_back(const VkCommandBuffer cb, vk_target *t)
 {
     if (!t->samples_turned) return;
-    turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    turn_in(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     t->samples_turned = false;
 }
 
@@ -2594,10 +2623,491 @@ static vk_turned turned[TIDE_GPU_MAX_COLORS + 1];
 static uint32_t turned_count;
 static VkBuffer uniform_buffer; // Where the uniforms the draws after them read are
 
+// ---------------------------------------------------------------------------
+// Passes recorded on the pool's threads
+//
+// A graphics pass's commands are written down as the renderer gives them, in the order it gives them, with every
+// handle they name (pipelines, descriptors, buffers, images): `pc_*` below. As the pass ends a job of the pool's
+// (tide_jobs.background) records them into the pass's command buffer, from a command pool no other thread has at
+// that moment (take_pass_pool), so the driver's work for each command is off the frame's thread and passes are
+// recorded side by side. The pass's place in `pending` is a tag until settle_passes, before any submission, waits
+// for the jobs (helping them) and puts each command buffer in its place: what's submitted, and in what order, is as
+// when the frame's thread recorded them. Compute passes and what's done outside passes are recorded as before. With
+// no pool, a pass is recorded as it ends, on the frame's thread.
+
+typedef enum pc_kind {
+    PC_TURN, PC_BARRIER_PASS, PC_QUERY_RESET, PC_TIMESTAMP, PC_RENDERING, PC_VIEWPORT, PC_SCISSOR, PC_STENCIL,
+    PC_PIPELINE, PC_PUSH, PC_SETS, PC_VERTEX, PC_INDEX, PC_DRAW, PC_DRAW_INDEXED, PC_DRAW_INDIRECT,
+    PC_DRAW_INDEXED_INDIRECT, PC_DRAW_INDEXED_INDIRECT_COUNT, PC_END_RENDERING,
+} pc_kind;
+
+typedef struct pc_head {
+    uint32_t kind, size; // size: the head's and what follows it, a multiple of 8
+} pc_head;
+typedef struct pc_turn {
+    VkImage image;
+    VkFormat format;
+    uint32_t level, levels, layer, layers;
+    VkImageLayout from, to;
+} pc_turn;
+typedef struct pc_query {
+    VkQueryPool pool;
+    uint32_t index, count;
+    VkPipelineStageFlagBits stage;
+} pc_query;
+typedef struct pc_rendering {
+    VkRect2D area;
+    uint32_t color_count;
+    VkRenderingAttachmentInfo colors[TIDE_GPU_MAX_COLORS], depth;
+} pc_rendering;
+typedef struct pc_pipeline {
+    VkPipelineBindPoint point;
+    VkPipeline pipeline;
+} pc_pipeline;
+typedef struct pc_write {
+    uint32_t binding;
+    VkDescriptorType type;
+    VkDescriptorImageInfo image;
+    VkDescriptorBufferInfo buffer;
+} pc_write;
+typedef struct pc_push {
+    VkPipelineBindPoint point;
+    VkPipelineLayout layout;
+    uint32_t count;
+    pc_write writes[1 + 2 * TIDE_GPU_MAX_TEXTURES + TIDE_GPU_MAX_STORAGE]; // `count` of them written down
+} pc_push;
+typedef struct pc_sets {
+    VkPipelineBindPoint point;
+    VkPipelineLayout layout;
+    VkDescriptorSet set;
+} pc_sets;
+typedef struct pc_vertex {
+    uint32_t slot;
+    VkBuffer buffer;
+    VkDeviceSize offset;
+} pc_vertex;
+typedef struct pc_index {
+    VkBuffer buffer;
+    VkIndexType type;
+} pc_index;
+typedef struct pc_draws {
+    uint32_t first, count, instances;
+} pc_draws;
+typedef struct pc_indirect {
+    VkBuffer buffer, counts;
+    VkDeviceSize offset, count_offset;
+    uint32_t draws, stride;
+} pc_indirect;
+
+typedef struct vk_deferred {
+    tide_background job;
+    uint8_t *ops; // pc_head and what follows each, `used` bytes of them
+    size_t used, capacity;
+    uint32_t frame; // Whose command pools it's recorded from
+    bool sent;      // To a job (or recorded at once)
+    VkCommandBuffer cb; // What it was recorded into, once done: VK_NULL_HANDLE if it couldn't be
+    VkResult result;
+} vk_deferred;
+
+// A pass's place in `pending` until its command buffer is there: odd, which no handle is
+static VkCommandBuffer pass_tag(const uint32_t index)
+{
+    return (VkCommandBuffer)(uintptr_t)(((uintptr_t)index << 1) | 1u);
+}
+
+static bool is_pass_tag(const VkCommandBuffer cb)
+{
+    return ((uintptr_t)cb & 1u) != 0;
+}
+
+// The frame's next record, empty
+static vk_deferred *deferred_take(void)
+{
+    if (vk.deferred_count == vk.deferred_capacity) {
+        const uint32_t capacity = vk.deferred_capacity ? vk.deferred_capacity * 2u : 32u;
+        vk.deferred = tide_realloc(vk.deferred, vk.deferred_capacity * sizeof *vk.deferred, capacity * sizeof *vk.deferred);
+        memset(vk.deferred + vk.deferred_capacity, 0, (capacity - vk.deferred_capacity) * sizeof *vk.deferred);
+        vk.deferred_capacity = capacity;
+    }
+    vk_deferred **at = &vk.deferred[vk.deferred_count];
+    if (!*at) { // Kept, with its room, for the frames after
+        *at = tide_alloc(sizeof **at);
+        memset(*at, 0, sizeof **at);
+    }
+    vk_deferred *d = *at;
+    d->used = 0;
+    d->sent = false;
+    d->cb = VK_NULL_HANDLE;
+    d->result = VK_SUCCESS;
+    d->frame = vk.frame;
+    vk.deferred_count++;
+    return d;
+}
+
+static void *pc_add(const pc_kind kind, const size_t size)
+{
+    vk_deferred *d = vk.recording;
+    const size_t whole = (sizeof(pc_head) + size + 7u) & ~(size_t)7u;
+    if (d->used + whole > d->capacity) {
+        size_t capacity = d->capacity ? d->capacity * 2u : 16384u;
+        while (capacity < d->used + whole) capacity *= 2u;
+        d->ops = tide_realloc(d->ops, d->capacity, capacity);
+        d->capacity = capacity;
+    }
+    pc_head *h = (pc_head *)(void *)(d->ops + d->used);
+    h->kind = kind;
+    h->size = (uint32_t)whole;
+    d->used += whole;
+    return h + 1;
+}
+
+static void pc_turn_image(const VkImage image, const VkFormat format, const uint32_t level, const uint32_t levels,
+                          const uint32_t layer, const uint32_t layers, const VkImageLayout from, const VkImageLayout to)
+{
+    if (from == to) return;
+    if (!vk.recording) {
+        turn(vk.pass, image, format, level, levels, layer, layers, from, to);
+        return;
+    }
+    *(pc_turn *)pc_add(PC_TURN, sizeof(pc_turn)) = (pc_turn){image, format, level, levels, layer, layers, from, to};
+}
+
+// An image turned in a command buffer `cb` that may be a pass's being written down
+static void turn_in(const VkCommandBuffer cb, const VkImage image, const VkFormat format, const uint32_t level,
+                    const uint32_t levels, const uint32_t layer, const uint32_t layers, const VkImageLayout from,
+                    const VkImageLayout to)
+{
+    if (vk.recording && cb == vk.pass) pc_turn_image(image, format, level, levels, layer, layers, from, to);
+    else turn(cb, image, format, level, levels, layer, layers, from, to);
+}
+
+static void pc_barrier_pass(void)
+{
+    if (!vk.recording) barrier_pass(vk.pass);
+    else (void)pc_add(PC_BARRIER_PASS, 0);
+}
+
+static void pc_query_reset(const VkQueryPool pool, const uint32_t index, const uint32_t count)
+{
+    if (!vk.recording) vkCmdResetQueryPool(vk.pass, pool, index, count);
+    else *(pc_query *)pc_add(PC_QUERY_RESET, sizeof(pc_query)) = (pc_query){pool, index, count, 0};
+}
+
+static void pc_timestamp(const VkPipelineStageFlagBits stage, const VkQueryPool pool, const uint32_t index)
+{
+    if (!vk.recording) vkCmdWriteTimestamp(vk.pass, stage, pool, index);
+    else *(pc_query *)pc_add(PC_TIMESTAMP, sizeof(pc_query)) = (pc_query){pool, index, 1, stage};
+}
+
+static void pc_scissor(const VkRect2D rect)
+{
+    if (!vk.recording) vkCmdSetScissor(vk.pass, 0, 1, &rect);
+    else *(VkRect2D *)pc_add(PC_SCISSOR, sizeof(VkRect2D)) = rect;
+}
+
+static void pc_stencil(const uint32_t value)
+{
+    if (!vk.recording) vkCmdSetStencilReference(vk.pass, VK_STENCIL_FACE_FRONT_AND_BACK, value);
+    else *(uint32_t *)pc_add(PC_STENCIL, sizeof(uint32_t)) = value;
+}
+
+static void pc_pipeline_bind(const VkPipelineBindPoint point, const VkPipeline pipeline)
+{
+    if (!vk.recording) vkCmdBindPipeline(vk.pass, point, pipeline);
+    else *(pc_pipeline *)pc_add(PC_PIPELINE, sizeof(pc_pipeline)) = (pc_pipeline){point, pipeline};
+}
+
+static void pc_push_writes(const VkPipelineBindPoint point, const VkPipelineLayout layout, const uint32_t count,
+                           const VkWriteDescriptorSet *writes)
+{
+    if (!vk.recording) {
+        vkCmdPushDescriptorSetKHR(vk.pass, point, layout, 0, count, writes);
+        return;
+    }
+    pc_push *op = pc_add(PC_PUSH, offsetof(pc_push, writes) + count * sizeof(pc_write));
+    op->point = point;
+    op->layout = layout;
+    op->count = count;
+    for (uint32_t i = 0; i < count; i++) {
+        const VkWriteDescriptorSet *w = &writes[i];
+        pc_write *to = &op->writes[i];
+        *to = (pc_write){.binding = w->dstBinding, .type = w->descriptorType};
+        if (w->pImageInfo) to->image = *w->pImageInfo;
+        if (w->pBufferInfo) to->buffer = *w->pBufferInfo;
+    }
+}
+
+static void pc_sets_bind(const VkPipelineBindPoint point, const VkPipelineLayout layout, const VkDescriptorSet set)
+{
+    if (!vk.recording) vkCmdBindDescriptorSets(vk.pass, point, layout, 0, 1, &set, 0, NULL);
+    else *(pc_sets *)pc_add(PC_SETS, sizeof(pc_sets)) = (pc_sets){point, layout, set};
+}
+
+static void pc_vertices(const uint32_t slot, const VkBuffer buffer, const VkDeviceSize offset)
+{
+    if (!vk.recording) vkCmdBindVertexBuffers(vk.pass, slot, 1, &buffer, &offset);
+    else *(pc_vertex *)pc_add(PC_VERTEX, sizeof(pc_vertex)) = (pc_vertex){slot, buffer, offset};
+}
+
+static void pc_indices(const VkBuffer buffer, const VkIndexType type)
+{
+    if (!vk.recording) vkCmdBindIndexBuffer(vk.pass, buffer, 0, type);
+    else *(pc_index *)pc_add(PC_INDEX, sizeof(pc_index)) = (pc_index){buffer, type};
+}
+
+static void pc_draw(const uint32_t first, const uint32_t count, const uint32_t instances)
+{
+    if (!vk.recording) vkCmdDraw(vk.pass, count, instances, first, 0);
+    else *(pc_draws *)pc_add(PC_DRAW, sizeof(pc_draws)) = (pc_draws){first, count, instances};
+}
+
+static void pc_draw_indexed(const uint32_t count, const uint32_t instances)
+{
+    if (!vk.recording) vkCmdDrawIndexed(vk.pass, count, instances, 0, 0, 0);
+    else *(pc_draws *)pc_add(PC_DRAW_INDEXED, sizeof(pc_draws)) = (pc_draws){0, count, instances};
+}
+
+// Indirect draws: `counts` for one whose count the GPU has, else `draws` of them `stride` apart
+static void pc_indirect_draw(const pc_kind kind, const pc_indirect op)
+{
+    if (vk.recording) {
+        *(pc_indirect *)pc_add(kind, sizeof(pc_indirect)) = op;
+    } else if (kind == PC_DRAW_INDIRECT) {
+        vkCmdDrawIndirect(vk.pass, op.buffer, op.offset, op.draws, op.stride);
+    } else if (kind == PC_DRAW_INDEXED_INDIRECT) {
+        vkCmdDrawIndexedIndirect(vk.pass, op.buffer, op.offset, op.draws, op.stride);
+    } else {
+        vkCmdDrawIndexedIndirectCount(vk.pass, op.buffer, op.offset, op.counts, op.count_offset, op.draws, op.stride);
+    }
+}
+
+// What a record says, into `cb`
+static void replay(const VkCommandBuffer cb, const vk_deferred *d)
+{
+    for (size_t at = 0; at < d->used;) {
+        const pc_head *h = (const pc_head *)(const void *)(d->ops + at);
+        const void *op = h + 1;
+        at += h->size;
+        switch ((pc_kind)h->kind) {
+        case PC_TURN: {
+            const pc_turn *t = op;
+            turn(cb, t->image, t->format, t->level, t->levels, t->layer, t->layers, t->from, t->to);
+            break;
+        }
+        case PC_BARRIER_PASS:
+            barrier_pass(cb);
+            break;
+        case PC_QUERY_RESET: {
+            const pc_query *q = op;
+            vkCmdResetQueryPool(cb, q->pool, q->index, q->count);
+            break;
+        }
+        case PC_TIMESTAMP: {
+            const pc_query *q = op;
+            vkCmdWriteTimestamp(cb, q->stage, q->pool, q->index);
+            break;
+        }
+        case PC_RENDERING: {
+            const pc_rendering *r = op;
+            const VkRenderingInfo info = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = r->area, .layerCount = 1,
+                                          .colorAttachmentCount = r->color_count, .pColorAttachments = r->colors,
+                                          .pDepthAttachment = &r->depth, .pStencilAttachment = &r->depth};
+            vkCmdBeginRendering(cb, &info);
+            break;
+        }
+        case PC_VIEWPORT:
+            vkCmdSetViewport(cb, 0, 1, op);
+            break;
+        case PC_SCISSOR:
+            vkCmdSetScissor(cb, 0, 1, op);
+            break;
+        case PC_STENCIL:
+            vkCmdSetStencilReference(cb, VK_STENCIL_FACE_FRONT_AND_BACK, *(const uint32_t *)op);
+            break;
+        case PC_PIPELINE: {
+            const pc_pipeline *b = op;
+            vkCmdBindPipeline(cb, b->point, b->pipeline);
+            break;
+        }
+        case PC_PUSH: {
+            const pc_push *push = op;
+            VkWriteDescriptorSet writes[1 + 2 * TIDE_GPU_MAX_TEXTURES + TIDE_GPU_MAX_STORAGE];
+            for (uint32_t i = 0; i < push->count; i++) {
+                const pc_write *w = &push->writes[i];
+                const bool buffer = w->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER || w->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[i] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, w->binding, 0, 1,
+                                                   w->type, buffer ? NULL : &w->image, buffer ? &w->buffer : NULL, NULL};
+            }
+            vkCmdPushDescriptorSetKHR(cb, push->point, push->layout, 0, push->count, writes);
+            break;
+        }
+        case PC_SETS: {
+            const pc_sets *b = op;
+            vkCmdBindDescriptorSets(cb, b->point, b->layout, 0, 1, &b->set, 0, NULL);
+            break;
+        }
+        case PC_VERTEX: {
+            const pc_vertex *v = op;
+            vkCmdBindVertexBuffers(cb, v->slot, 1, &v->buffer, &v->offset);
+            break;
+        }
+        case PC_INDEX: {
+            const pc_index *i = op;
+            vkCmdBindIndexBuffer(cb, i->buffer, 0, i->type);
+            break;
+        }
+        case PC_DRAW: {
+            const pc_draws *draw = op;
+            vkCmdDraw(cb, draw->count, draw->instances, draw->first, 0);
+            break;
+        }
+        case PC_DRAW_INDEXED: {
+            const pc_draws *draw = op;
+            vkCmdDrawIndexed(cb, draw->count, draw->instances, 0, 0, 0);
+            break;
+        }
+        case PC_DRAW_INDIRECT: {
+            const pc_indirect *i = op;
+            vkCmdDrawIndirect(cb, i->buffer, i->offset, i->draws, i->stride);
+            break;
+        }
+        case PC_DRAW_INDEXED_INDIRECT: {
+            const pc_indirect *i = op;
+            vkCmdDrawIndexedIndirect(cb, i->buffer, i->offset, i->draws, i->stride);
+            break;
+        }
+        case PC_DRAW_INDEXED_INDIRECT_COUNT: {
+            const pc_indirect *i = op;
+            vkCmdDrawIndexedIndirectCount(cb, i->buffer, i->offset, i->counts, i->count_offset, i->draws, i->stride);
+            break;
+        }
+        case PC_END_RENDERING:
+            vkCmdEndRendering(cb);
+            break;
+        }
+    }
+}
+
+// A command pool of the frame's that no other thread has, till it's given back: NULL if every one is taken
+// (PASS_POOLS of them) or none can be made
+static vk_pass_pool *take_pass_pool(vk_frame *f)
+{
+    for (uint32_t i = 0; i < PASS_POOLS; i++) {
+        uint32_t free_pool = POOL_FREE;
+        if (__atomic_compare_exchange_n(&f->pass_pools[i].state, &free_pool, POOL_TAKEN, false, __ATOMIC_ACQUIRE,
+                                        __ATOMIC_RELAXED)) return &f->pass_pools[i];
+    }
+    for (uint32_t i = 0; i < PASS_POOLS; i++) {
+        uint32_t none = POOL_NONE;
+        if (!__atomic_compare_exchange_n(&f->pass_pools[i].state, &none, POOL_MAKING, false, __ATOMIC_ACQUIRE,
+                                         __ATOMIC_RELAXED)) continue;
+        vk_pass_pool *p = &f->pass_pools[i];
+        const VkCommandPoolCreateInfo info = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, NULL,
+                                              VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, vk.family};
+        if (vkCreateCommandPool(vk.device, &info, NULL, &p->pool) != VK_SUCCESS) {
+            __atomic_store_n(&p->state, POOL_NONE, __ATOMIC_RELEASE);
+            return NULL;
+        }
+        __atomic_store_n(&p->state, POOL_TAKEN, __ATOMIC_RELAXED);
+        return p;
+    }
+    return NULL;
+}
+
+// A record's commands into a command buffer of its own: a job of the pool's, or the frame's thread
+static void record_pass(void *context)
+{
+    vk_deferred *d = context;
+    vk_frame *f = &vk.frames[d->frame];
+    vk_pass_pool *p = take_pass_pool(f);
+    if (!p) {
+        d->result = VK_ERROR_OUT_OF_HOST_MEMORY;
+        return;
+    }
+    VkResult result = VK_SUCCESS;
+    if (p->used == p->allocated) {
+        const uint32_t more = p->allocated ? p->allocated : 4u;
+        p->buffers = tide_realloc(p->buffers, p->allocated * sizeof(VkCommandBuffer), (p->allocated + more) * sizeof(VkCommandBuffer));
+        const VkCommandBufferAllocateInfo info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL, p->pool,
+                                                  VK_COMMAND_BUFFER_LEVEL_PRIMARY, more};
+        result = vkAllocateCommandBuffers(vk.device, &info, p->buffers + p->allocated);
+        if (result == VK_SUCCESS) p->allocated += more;
+    }
+    if (result == VK_SUCCESS) {
+        const VkCommandBuffer cb = p->buffers[p->used++];
+        const VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
+                                                VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, NULL};
+        result = vkBeginCommandBuffer(cb, &begin);
+        if (result == VK_SUCCESS) {
+            replay(cb, d);
+            result = vkEndCommandBuffer(cb);
+        }
+        if (result == VK_SUCCESS) d->cb = cb;
+    }
+    d->result = result;
+    __atomic_store_n(&p->state, POOL_FREE, __ATOMIC_RELEASE);
+}
+
+// The pass written down goes to be recorded
+static void send_pass(vk_deferred *d)
+{
+    d->sent = true;
+    d->job = (tide_background){.work = record_pass, .context = d};
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (jobs && jobs->background) {
+        jobs->background(jobs->self, &d->job);
+        return;
+    }
+    record_pass(d);
+    __atomic_store_n(&d->job.done, 1u, __ATOMIC_RELEASE);
+}
+
+// Every pass sent is recorded (helping the pool meanwhile), and in its place in `pending`; then the records are
+// free for the next. A pass that couldn't be recorded loses the device, as a command that fails does.
+static void settle_passes(void)
+{
+    if (!vk.deferred_count) return;
+    const tide_jobs *jobs = tide_platform_jobs();
+    VkResult failed = VK_SUCCESS;
+    for (uint32_t i = 0; i < vk.deferred_count; i++) {
+        vk_deferred *d = vk.deferred[i];
+        if (!d->sent) continue;
+        while (!__atomic_load_n(&d->job.done, __ATOMIC_ACQUIRE)) {
+            if (jobs && jobs->help) jobs->help(jobs->self, false);
+        }
+        if (d->result != VK_SUCCESS && failed == VK_SUCCESS) failed = d->result;
+    }
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < vk.pending_count; i++) {
+        VkCommandBuffer cb = vk.pending[i];
+        if (is_pass_tag(cb)) {
+            const uint32_t index = (uint32_t)((uintptr_t)cb >> 1);
+            const vk_deferred *d = index < vk.deferred_count ? vk.deferred[index] : NULL;
+            cb = d && d->sent ? d->cb : VK_NULL_HANDLE;
+        }
+        if (cb) vk.pending[kept++] = cb;
+    }
+    vk.pending_count = kept;
+    vk.deferred_count = 0;
+    if (failed != VK_SUCCESS) lose(failed);
+}
+
+// The frame's pools for passes, empty again: none of their command buffers is pending or still being run
+static void reset_pass_pools(vk_frame *f)
+{
+    for (uint32_t i = 0; i < PASS_POOLS; i++) {
+        vk_pass_pool *p = &f->pass_pools[i];
+        if (p->state == POOL_FREE && p->used) {
+            vkResetCommandPool(vk.device, p->pool, 0);
+            p->used = 0;
+        }
+    }
+}
+
 static void turn_for_pass(const VkImage image, const VkFormat format, const uint32_t layer, const VkImageLayout rest,
                           const VkImageLayout drawn)
 {
-    turn(vk.pass, image, format, 0, 1, layer, 1, rest, drawn);
+    pc_turn_image(image, format, 0, 1, layer, 1, rest, drawn);
     turned[turned_count++] = (vk_turned){image, format, layer, rest, drawn};
 }
 
@@ -2617,13 +3127,15 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     flush_if_full();
     // What's recorded outside passes since the last one goes before it, and what's uploaded during it, after that
     close_outside();
-    vk.pass = command_buffer();
+    // Written down, and recorded on the pool's threads as it ends
+    vk.pass = pass_tag(vk.deferred_count);
+    vk.recording = deferred_take();
     if (vk.pass_active) {
         const uint32_t at = (vk.pass_first + vk.pass_count) % TIDE_GPU_PROFILE_PENDING;
-        vkCmdResetQueryPool(vk.pass, vk.pass_queries, 2 * at, 2);
-        vkCmdWriteTimestamp(vk.pass, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.pass_queries, 2 * at);
+        pc_query_reset(vk.pass_queries, 2 * at, 2);
+        pc_timestamp(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.pass_queries, 2 * at);
     }
-    barrier_pass(vk.pass);
+    pc_barrier_pass();
     vk.pass_pending = vk.pending_count;
     queue_up(vk.pass);
     vk.before = VK_NULL_HANDLE;
@@ -2640,16 +3152,17 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     if (!target) {
         width = (int)vk.extent.width, height = (int)vk.extent.height;
         // Its first pass in a frame starts it cleared: what was there is another frame's, or nothing
-        turn(vk.pass, vk.images[vk.image], vk.window_format, 0, 1, 0, 1,
-             vk.image_drawn ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        pc_turn_image(vk.images[vk.image], vk.window_format, 0, 1, 0, 1,
+                      vk.image_drawn ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
+                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         colors[0] = (VkRenderingAttachmentInfo){.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = vk.views[vk.image],
                                                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                                 .loadOp = vk.image_drawn ? load : VK_ATTACHMENT_LOAD_OP_CLEAR,
                                                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE, .clearValue = black};
         color_count = 1;
         if (vk.window_depth_new) {
-            turn(vk.pass, vk.window_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED,
-                 VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+            pc_turn_image(vk.window_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
             vk.window_depth_new = false;
             depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         }
@@ -2688,16 +3201,13 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
         }
     }
     vk.pass_width = width, vk.pass_height = height;
-    const VkRenderingInfo info = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {(uint32_t)width, (uint32_t)height}},
-                                  .layerCount = 1, .colorAttachmentCount = color_count, .pColorAttachments = colors,
-                                  .pDepthAttachment = &depth, .pStencilAttachment = &depth};
-    vkCmdBeginRendering(vk.pass, &info);
+    pc_rendering *rendering = pc_add(PC_RENDERING, sizeof(pc_rendering));
+    *rendering = (pc_rendering){.area = {{0, 0}, {(uint32_t)width, (uint32_t)height}}, .color_count = color_count, .depth = depth};
+    memcpy(rendering->colors, colors, color_count * sizeof colors[0]);
     // Upside down: y goes up in clip space, and rows go down from the top
-    const VkViewport viewport = {0.0f, (float)height, (float)width, -(float)height, 0.0f, 1.0f};
-    vkCmdSetViewport(vk.pass, 0, 1, &viewport);
-    const VkRect2D all = {{0, 0}, {(uint32_t)width, (uint32_t)height}};
-    vkCmdSetScissor(vk.pass, 0, 1, &all);
-    vkCmdSetStencilReference(vk.pass, VK_STENCIL_FACE_FRONT_AND_BACK, 0);
+    *(VkViewport *)pc_add(PC_VIEWPORT, sizeof(VkViewport)) = (VkViewport){0.0f, (float)height, (float)width, -(float)height, 0.0f, 1.0f};
+    pc_scissor((VkRect2D){{0, 0}, {(uint32_t)width, (uint32_t)height}});
+    pc_stencil(0);
 }
 
 static void vk_end(void)
@@ -2706,24 +3216,27 @@ static void vk_end(void)
     if (vk.skip_pass) return;
     if (vk.lost) { // Nothing recorded goes
         vk.pass = vk.before = VK_NULL_HANDLE;
+        vk.recording = NULL; // Never sent: its place in `pending` goes as it's settled
         return;
     }
-    vkCmdEndRendering(vk.pass);
+    (void)pc_add(PC_END_RENDERING, 0);
     for (uint32_t i = 0; i < turned_count; i++) {
-        turn(vk.pass, turned[i].image, turned[i].format, 0, 1, turned[i].layer, 1, turned[i].drawn, turned[i].rest);
+        pc_turn_image(turned[i].image, turned[i].format, 0, 1, turned[i].layer, 1, turned[i].drawn, turned[i].rest);
     }
     turned_count = 0;
     if (!vk.pass_target) {
-        turn(vk.pass, vk.images[vk.image], vk.window_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        pc_turn_image(vk.images[vk.image], vk.window_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
     if (vk.pass_active) {
         const uint32_t at = (vk.pass_first + vk.pass_count) % TIDE_GPU_PROFILE_PENDING;
-        vkCmdWriteTimestamp(vk.pass, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, vk.pass_queries, 2 * at + 1);
+        pc_timestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, vk.pass_queries, 2 * at + 1);
         vk.pass_count++;
     }
-    // What's recorded outside passes next goes on after it, in the same command buffer
-    vk.outside = vk.pass;
+    send_pass(vk.recording);
+    vk.recording = NULL;
+    // What's recorded outside passes next goes in a command buffer after it (the pass's is the pool's)
+    vk.outside = VK_NULL_HANDLE;
     vk.drawn = true;
     vk.pass = VK_NULL_HANDLE;
     if (vk.before) check(vkEndCommandBuffer(vk.before), "vkEndCommandBuffer");
@@ -2734,7 +3247,7 @@ static void vk_scissor(const int x, const int y, const int width, const int heig
 {
     if (vk.skip_pass) return;
     const VkRect2D rect = {{x > 0 ? x : 0, y > 0 ? y : 0}, {(uint32_t)(width > 0 ? width : 0), (uint32_t)(height > 0 ? height : 0)}};
-    vkCmdSetScissor(vk.pass, 0, 1, &rect);
+    pc_scissor(rect);
 }
 
 static void vk_use(const tide_gpu_id id)
@@ -2763,13 +3276,13 @@ static void vk_use(const tide_gpu_id id)
     }
     vk.current = id;
     vk.bound = false;
-    vkCmdBindPipeline(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+    pc_pipeline_bind(VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
 }
 
 static void vk_stencil(const uint32_t value)
 {
     if (vk.skip_pass) return;
-    vkCmdSetStencilReference(vk.pass, VK_STENCIL_FACE_FRONT_AND_BACK, value < 255u ? value : 255u);
+    pc_stencil(value < 255u ? value : 255u);
 }
 
 static void vk_uniforms(const void *data, const size_t size)
@@ -2800,14 +3313,13 @@ static void vk_sampler(const uint32_t slot, const tide_gpu_filter filter, const 
 static void vk_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)
 {
     if (vk.skip_pass) return;
-    const VkDeviceSize at = offset;
-    vkCmdBindVertexBuffers(vk.pass, slot, 1, &vk.buffers[buffer - 1u].buffer, &at);
+    pc_vertices(slot, vk.buffers[buffer - 1u].buffer, offset);
 }
 
 static void vk_indices(const tide_gpu_id buffer, const bool wide)
 {
     if (vk.skip_pass) return;
-    vkCmdBindIndexBuffer(vk.pass, vk.buffers[buffer - 1u].buffer, 0, wide ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
+    pc_indices(vk.buffers[buffer - 1u].buffer, wide ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
 }
 
 // What a draw reads: the uniforms where they were written, each texture, and
@@ -2871,7 +3383,7 @@ static bool bind(void)
                                                  &storage[i], NULL};
     }
     if (count && layout->push) {
-        vkCmdPushDescriptorSetKHR(vk.pass, point, layout->layout, 0, count, writes);
+        pc_push_writes(point, layout->layout, count, writes);
         // What each binding now holds, for the next draw's
         if (!kept) {
             memset(vk.pushed_views, 0, sizeof vk.pushed_views);
@@ -2900,7 +3412,7 @@ static bool bind(void)
         if (!set) return false;
         for (uint32_t i = 0; i < count; i++) writes[i].dstSet = set;
         vkUpdateDescriptorSets(vk.device, count, writes, 0, NULL);
-        vkCmdBindDescriptorSets(vk.pass, point, layout->layout, 0, 1, &set, 0, NULL);
+        pc_sets_bind(point, layout->layout, set);
     }
     vk.bound = true;
     return true;
@@ -2909,13 +3421,13 @@ static bool bind(void)
 static void vk_draw(const uint32_t first, const uint32_t count, const uint32_t instances)
 {
     if (vk.skip_pass || !vk.current || !bind()) return;
-    vkCmdDraw(vk.pass, count, instances, first, 0);
+    pc_draw(first, count, instances);
 }
 
 static void vk_draw_indexed(const uint32_t count, const uint32_t instances)
 {
     if (vk.skip_pass || !vk.current || !bind()) return;
-    vkCmdDrawIndexed(vk.pass, count, instances, 0, 0, 0);
+    pc_draw_indexed(count, instances);
 }
 
 // ---------------------------------------------------------------------------
@@ -3002,7 +3514,7 @@ static void vk_draw_indirect(const tide_gpu_id buffer, const size_t offset)
     const vk_buffer *b = storage_of(buffer);
     if (vk.skip_pass || vk.in_compute || !vk.current || !b || offset % 4u || offset > b->size || b->size - offset < 16u
         || !bind()) return;
-    vkCmdDrawIndirect(vk.pass, b->buffer, offset, 1, 16);
+    pc_indirect_draw(PC_DRAW_INDIRECT, (pc_indirect){.buffer = b->buffer, .offset = offset, .draws = 1, .stride = 16});
 }
 
 static void vk_draw_indexed_indirect(const tide_gpu_id buffer, const size_t offset)
@@ -3010,7 +3522,7 @@ static void vk_draw_indexed_indirect(const tide_gpu_id buffer, const size_t offs
     const vk_buffer *b = storage_of(buffer);
     if (vk.skip_pass || vk.in_compute || !vk.current || !b || offset % 4u || offset > b->size || b->size - offset < 20u
         || !bind()) return;
-    vkCmdDrawIndexedIndirect(vk.pass, b->buffer, offset, 1, 20);
+    pc_indirect_draw(PC_DRAW_INDEXED_INDIRECT, (pc_indirect){.buffer = b->buffer, .offset = offset, .draws = 1, .stride = 20});
 }
 
 static void vk_draw_indexed_indirect_count(const tide_gpu_id buffer, const size_t offset, const uint32_t most,
@@ -3022,11 +3534,16 @@ static void vk_draw_indexed_indirect_count(const tide_gpu_id buffer, const size_
         || !bind()) return;
     if (vk.indirect & TIDE_GPU_INDIRECT_COUNT) { // One call, as many as the GPU counted
         const uint32_t limit = vk.properties.limits.maxDrawIndirectCount;
-        vkCmdDrawIndexedIndirectCount(vk.pass, b->buffer, offset, c->buffer, count_offset, most < limit ? most : limit, 20);
+        pc_indirect_draw(PC_DRAW_INDEXED_INDIRECT_COUNT,
+                         (pc_indirect){b->buffer, c->buffer, offset, count_offset, most < limit ? most : limit, 20});
     } else if (vk.multi_draw && most <= vk.properties.limits.maxDrawIndirectCount) { // ...or all of them, those
-        vkCmdDrawIndexedIndirect(vk.pass, b->buffer, offset, most, 20);                // past the count of none
+        pc_indirect_draw(PC_DRAW_INDEXED_INDIRECT,                                     // past the count of none
+                         (pc_indirect){.buffer = b->buffer, .offset = offset, .draws = most, .stride = 20});
     } else {
-        for (uint32_t i = 0; i < most; i++) vkCmdDrawIndexedIndirect(vk.pass, b->buffer, offset + (size_t)i * 20u, 1, 20);
+        for (uint32_t i = 0; i < most; i++) {
+            pc_indirect_draw(PC_DRAW_INDEXED_INDIRECT,
+                             (pc_indirect){.buffer = b->buffer, .offset = offset + (size_t)i * 20u, .draws = 1, .stride = 20});
+        }
     }
 }
 
@@ -3468,6 +3985,7 @@ static void destroy_device(void)
 {
     if (!vk.device) return;
     finish_all_making();
+    settle_passes(); // No job still records with what's let go below
     vkDeviceWaitIdle(vk.device);
     for (uint32_t i = 0; i < vk.target_count; i++) {
         if (vk.targets[i].used) vk_target_free(i + 1u);
@@ -3487,6 +4005,10 @@ static void destroy_device(void)
         if (f->ring.buffer) vkDestroyBuffer(vk.device, f->ring.buffer, NULL);
         give_back(&f->ring.memory);
         vkDestroyCommandPool(vk.device, f->pool, NULL);
+        for (uint32_t p = 0; p < PASS_POOLS; p++) {
+            if (f->pass_pools[p].pool) vkDestroyCommandPool(vk.device, f->pass_pools[p].pool, NULL);
+            free(f->pass_pools[p].buffers);
+        }
         vkDestroyFence(vk.device, f->fence, NULL);
         vkDestroySemaphore(vk.device, f->acquired, NULL);
         for (uint32_t p = 0; p < f->pool_count; p++) vkDestroyDescriptorPool(vk.device, f->pools[p], NULL);
