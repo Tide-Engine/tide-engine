@@ -67,6 +67,8 @@ static void draw_feedback_locked(const bool finished, const bool retain)
     const int completed = feedback.completed, total = feedback.total;
     const bool percent_only = feedback.percent_only;
     const int64_t elapsed = sys_now_ms() - feedback.started;
+    // Fast stages leave no transient or completed row. Diagnostics are emitted separately.
+    if (elapsed < 500) return;
     enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER, LABEL_WIDTH = 48 };
     char bar[WIDTH + 1];
     memset(bar, ' ', WIDTH);
@@ -86,15 +88,15 @@ static void draw_feedback_locked(const bool finished, const bool retain)
     else snprintf(text, sizeof text, "[%s] %.1fs", bar, (double)elapsed / 1000.0);
     if (finished || retain) {
         char summary[384];
-        if (finished) snprintf(summary, sizeof summary, "%-*s [%s] 100%%  in %.1fs", LABEL_WIDTH, feedback.stage, bar, (double)elapsed / 1000.0);
-        else snprintf(summary, sizeof summary, "%-*s %s", LABEL_WIDTH, feedback.stage, text);
+        if (finished) snprintf(summary, sizeof summary, "%-*.*s [%s] 100%%  in %.1fs", LABEL_WIDTH, LABEL_WIDTH, feedback.stage, bar, (double)elapsed / 1000.0);
+        else snprintf(summary, sizeof summary, "%-*.*s %s", LABEL_WIDTH, LABEL_WIDTH, feedback.stage, text);
         line_clear();
         line_draw(summary);
         line_end();
     } else {
-        char aligned[160];
-        snprintf(aligned, sizeof aligned, "%*s %s", LABEL_WIDTH, "", text);
-        line_draw_pair(label, aligned);
+        char aligned[256];
+        snprintf(aligned, sizeof aligned, "%-*.*s %s", LABEL_WIDTH, LABEL_WIDTH, label, text);
+        line_draw(aligned);
     }
 }
 
