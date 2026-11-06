@@ -1,5 +1,34 @@
 # The platform layer and the renderer
 
+## A pass's draws made on several threads: tried, not kept (2026-11-06)
+
+After the second round (below), the owner asked to explore making one big pass's draws on several threads. What was
+left in `record` on the frame's thread at Mount & Rifle's woods (84d7542, `OWNER_WOODS`, ~1,670 draws, ~3.65 M
+cycles a frame): turning each draw into commands (`draw_shaded`'s uniforms and camera, descriptor writes, the
+draws' records) ~42%, resolving each draw's textures and samplers ~20% (~8,250 `image` and ~2,650 `sampler` calls),
+the checks before each draw ~12%, handing each pass to a job ~9% (~9k cycles a pass).
+
+- **One lane, tried:** finished passes queued for one job that takes them in turn, so a pass costs no job and no
+  wake. `record` p50 ~0.77 -> ~0.60 ms, but the frame then waited ~2.9 M cycles (~0.6 ms) at present for that one
+  job: one worker can't keep up with the frame's thread. Reverted; a job a pass stays (~40 µs waited at present).
+- **Parts of a pass's draws on the pool, tried:** the backend's per-pass draw state moved to a `vk_emit` a thread
+  can have its own of (`_Thread_local`), `gpu.h` `emit_fork`/`emit_enter`/`emit_leave`/`emit_join` (each part
+  written down apart, joined in order, the upload ring and descriptor sets locked); the renderer collected shaded
+  draws that set nothing but a draw's state (counts, profile rows, stencil before each and their textures found on
+  the frame's thread) and made a run of 96 or more in parts of 48 through `tide_jobs.run`, `pass_stencil` and
+  `draw_shaded`'s uniforms per thread. `record` p50 got worse (0.80-0.97 against ~0.6-0.72 ms): of 18 runs a frame
+  only one was long enough (502 draws, 10 parts), and making it in parts took ~370k cycles on the frame's thread,
+  what making it alone does, the pool's wake for a round eating what the parts saved; the ~930 GPU-culled draws read
+  their list's numbers as a texture (`texture_to_read` can upload) and were left out. Reverted (840 lines).
+- **Why a second version wasn't built:** making a frame's draws on workers after the frame's thread moved on (one
+  round at the end, or each pass's job making its draws) needs the backend's tables (`vk.textures`, `buffers`,
+  `pipelines`, `targets`, ~60 lookups) not to move as the frame's thread makes more, a snapshot of each draw's
+  handles taken on the frame's thread (what's bound changes later in a frame: a texture's `mipped` picks its view),
+  and pipelines freed on a hot reload kept till the jobs are done. With the snapshot back on the frame's thread the
+  saving was ~0.1-0.15 ms, for most of the backend's object handling at risk. The owner chose to stop there.
+- So what's left costs the frame's thread ~0.4 µs a draw; draw count and passes split by other targets' draws are
+  the game's levers.
+
 ## Passes recorded on the pool's threads (2026-11-06, second round)
 
 The owner asked to push the render phase further after the first round (below). Same scene, same method. Claude's,
