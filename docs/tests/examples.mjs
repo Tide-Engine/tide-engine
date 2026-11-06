@@ -150,6 +150,7 @@ try {
     await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     await command('Page.addScriptToEvaluateOnNewDocument', { source: `
         window.__draws = 0;
+        window.__drawnFrames = 0;
         // WebGPU's draws, not its submits: a frame that draws nothing still submits its pass
         if (window.GPURenderPassEncoder) {
             for (const name of ['draw', 'drawIndexed']) {
@@ -159,6 +160,14 @@ try {
                 };
             }
         }
+        // Count completed game animation callbacks only when they submitted
+        // real drawing. A shadowed scene can issue many draws in one frame.
+        const requestFrame = window.requestAnimationFrame.bind(window);
+        window.requestAnimationFrame = (callback) => requestFrame(function (time) {
+            const before = window.__draws;
+            callback.call(this, time);
+            if (window.__draws > before) window.__drawnFrames++;
+        });
         // Exercise the site's local Earth build through the same unavailable-
         // hosting fallback it uses offline, without depending on a publication.
         const fetchPage = window.fetch.bind(window);
@@ -259,8 +268,10 @@ try {
             return createHash('sha256').update(pixels).digest('hex');
         };
         const afterFrames = async () => {
-            const previous = await evaluate('example.querySelector("iframe").contentWindow.__draws');
-            await until(`example.querySelector("iframe").contentWindow.__draws > ${previous + 20}`, `${id}: camera frame`);
+            const previous = await evaluate('example.querySelector("iframe").contentWindow.__drawnFrames');
+            // Overlay handles Reset after the scene was presented. The next
+            // rendered update must apply its camera before pixels are compared.
+            await until(`example.querySelector("iframe").contentWindow.__drawnFrames >= ${previous + 2}`, `${id}: camera frames`);
         };
         const click = async (localX, localY) => {
             const x = rect.left + localX, y = rect.top + localY;

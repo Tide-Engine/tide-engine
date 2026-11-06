@@ -1,5 +1,34 @@
 # The docs site
 
+## Camera smoke waits for rendered updates (2026-11-06)
+
+Docs run 42263895626 failed only the material example's exact Reset-image
+comparison. The camera helper's `afterFrames` actually waited for 20 GPU draw
+calls; Render3D issues many calls per frame, so this did not establish even two
+rendered updates. Reset is handled by Overlay after Present: one update can
+still draw the camera state from before the button was handled.
+
+The test now counts completed animation callbacks that issued actual GPU draws,
+wrapping the game's existing requestAnimationFrame callback and preserving its
+receiver. Empty callbacks and callbacks that only prepare resources do not count.
+Each camera action waits for two such updates. This is neither 20 real frames
+nor an independent animation timer; scene equality, scene-change witnesses,
+input coordinates, shader/error checks and existing deadlines remain unchanged.
+No renderer, game, runtime or production website behavior changed.
+
+Validation uses the exact failed workflow's docs-site artifact, Node 24.22.1,
+and muted headless Chrome with software WebGPU. The focused materials run and
+combined render3d/materials/effects run pass all source, camera, exact Reset,
+material and collapsed-control assertions. A 30x CPU-throttled materials probe
+also passes: the new gate advances at least two completed drawing callbacks.
+The corresponding old-gate probe records waits of only one callback (33-42 draw
+calls), demonstrating the counter defect. Its Reset happened to pass locally;
+the exact hosted timing failure was not reproduced. Correct initial/reset
+captures share the failing CI run's final-image hash, while its earlier initial
+hash differed. Captures and diagnostic logs are under build/ci-docs-camera-final
+and build/ci-docs-materials-*; the production docs build passes. Hosted
+confirmation remains the integrating task's normal dev workflow.
+
 ## The examples' test runs on Windows (2026-11-05)
 
 With WebGL gone, the docs' examples draw with WebGPU, and GitHub's Linux runners draw it without the page ever
