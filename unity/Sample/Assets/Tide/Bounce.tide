@@ -128,7 +128,7 @@ component Ball
     local int heard; // This machine's, as its local handler counts its bounces (Heard)
 }
 
-// A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntityView.On)
+// A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntity.On)
 event Bounced
 {
     float speed;

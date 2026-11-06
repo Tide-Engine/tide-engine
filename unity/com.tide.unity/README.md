@@ -204,9 +204,11 @@ An entity of a Unity prefab shows through an instance of that prefab, made
 when the entity comes; one of the open scene's shows through the scene's own
 GameObject. Any other entity is shown by the first view rule that matches it: a
 Tide prefab's name, or a component it has, and the Unity prefab to show it
-with. An entity with Tide's `Transform` is placed by it. `TideEntityView` on
+with. An entity with Tide's `Transform` is placed by it. `TideEntity` on
 that GameObject reads the entity's components as Tide's views see them this
-frame: `view.Get<Tide.Game.Health>()`. `TideRunner.Current.Send(command)`
+frame: `entity.Get<Tide.Game.Health>()`. The same `TideEntity` holds its authored
+components and live binding; `Showing` says whether it is currently bound. Scripts
+can find it and subscribe to its events before the match starts. `TideRunner.Current.Send(command)`
 sends a command, as local code's `Send`.
 
 Tide's devices are what Unity's keyboard, mouse, gamepad and touches say. For
@@ -296,7 +298,7 @@ default).
   as do commands sent while paused). **Resume** goes on from there.
 - The **Tick** slider shows any tick since the match started: its entities and
   their GameObjects, the Tide components' live values in the inspector,
-  `TideEntityView`, singletons and Tide's drawing are that tick's. Ticks
+  `TideEntity`, singletons and Tide's drawing are that tick's. Ticks
   before those kept are made again from the start as they're shown. What's
   clicked or sent on an older tick's picture never reaches the match, and the
   match's own local state is left as it was.

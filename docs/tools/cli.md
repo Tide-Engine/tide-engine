@@ -591,7 +591,7 @@ The rest of the game is C# too: `runner.Get<Tide.Game.Score>()` is a singleton
 as views see it this frame; `runner.On<Tide.Game.Hit>(hit => ...)` hears the
 match's events as the game's local handlers do, as soon as this machine has
 them, and `runner.OnVerified` once the server confirms them, with an entity's
-own view hearing those sent to it (`GetComponent<TideEntityView>().On`); and
+own view hearing those sent to it (`GetComponent<TideEntity>().On`); and
 `runner.Send(new Tide.Game.Buy { item = "sword" }, target)` sends a command,
 its text included, to the match or to the entity a GameObject shows. Local
 fields are on their components, shown in Play. Every Tide type has its C#: a

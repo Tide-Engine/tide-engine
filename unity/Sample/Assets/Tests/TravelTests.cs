@@ -26,18 +26,18 @@ public sealed unsafe class TravelTests
         while (!done() && Time.realtimeSinceStartup < until) yield return null;
     }
 
-    static TideEntityView MyBall()
+    static TideEntity MyBall()
     {
-        foreach (var view in Object.FindObjectsByType<TideEntityView>())
+        foreach (var view in Object.FindObjectsByType<TideEntity>())
         {
             if (view.Showing && view.Mine && view.GetComponent<Tide.Game.Ball>() != null) return view;
         }
         return null;
     }
 
-    static TideEntityView Tossed()
+    static TideEntity Tossed()
     {
-        foreach (var view in Object.FindObjectsByType<TideEntityView>())
+        foreach (var view in Object.FindObjectsByType<TideEntity>())
         {
             if (view.Showing && view.TryGetComponent(out Tide.Game.Ball ball) && ball.seat == -1) return view;
         }
@@ -45,12 +45,12 @@ public sealed unsafe class TravelTests
     }
 
     // The match running, this machine's ball showing
-    static IEnumerator Started(System.Action<TideRunner, TideEntityView> found)
+    static IEnumerator Started(System.Action<TideRunner, TideEntity> found)
     {
         SceneManager.LoadScene(Bounce);
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Until(() => runner.State == TideSessionState.Connected && (ball = MyBall()) != null, 10f);
         Assert.IsNotNull(ball, "the player's ball shows");
         found(runner, ball);
@@ -69,7 +69,7 @@ public sealed unsafe class TravelTests
     public IEnumerator PausingHoldsTheMatchAndStepsATick()
     {
         TideRunner runner = null;
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Started((r, b) => (runner, ball) = (r, b));
         Assert.AreEqual(TideTravelState.Live, runner.Travel.state, "the editor's match is recorded: " + runner.Travel.Why);
         Assert.IsTrue(runner.Pause());
@@ -100,7 +100,7 @@ public sealed unsafe class TravelTests
     public IEnumerator ScrubbingShowsAKeptTickWithItsGameObjects()
     {
         TideRunner runner = null;
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Started((r, b) => (runner, ball) = (r, b));
         Assert.IsTrue(runner.Pause());
         yield return null;
@@ -159,7 +159,7 @@ public sealed unsafe class TravelTests
     public IEnumerator ARecordingReplaysFromAFileBitForBit()
     {
         TideRunner runner = null;
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Started((r, b) => (runner, ball) = (r, b));
         var held = true;
         TideRunner.InputEdit right = (ref TideEmbedInput input) => { if (held) input.Hold("d"); };

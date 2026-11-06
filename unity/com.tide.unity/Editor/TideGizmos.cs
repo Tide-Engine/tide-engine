@@ -20,7 +20,7 @@ namespace Tide.Editor
         [DrawGizmo(GizmoType.Selected | GizmoType.Active)]
         static void Authored(TideEntity entity, GizmoType type)
         {
-            if (Application.isPlaying && entity.GetComponent<TideEntityView>() != null) return; // The view's label says it
+            if (Application.isPlaying && entity.Showing) return; // The view's label says it
             var text = new StringBuilder("Tide entity");
             foreach (var component in entity.components)
             {
@@ -31,7 +31,7 @@ namespace Tide.Editor
         }
 
         [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected)]
-        static void Shown(TideEntityView view, GizmoType type)
+        static void Shown(TideEntity view, GizmoType type)
         {
             if (!Application.isPlaying || !view.Showing) return;
             var e = view.Entity;

@@ -1,5 +1,31 @@
 # Unity as a front end
 
+## One Unity entity component (2026-11-06)
+
+Owner decision: combine `TideEntityView` into `TideEntity`. `TideEntity` retains
+its script GUID and serialized `components`/`references`, and now also exposes
+`Runner`, `Entity`, `Mine`, `Showing`, `Has<T>`, `TryGet<T>`, `Get<T>`, `Text`,
+and entity event subscriptions. There is no separate view component or `View`
+property. Scripts can find an authored entity and subscribe before binding;
+`Showing` is false until it represents an entity in the current view packet.
+The runner reuses the component on authored objects and ensures it on visual
+prefab instances. Runtime-added components do not modify source assets, so
+view rules still accept ordinary visual prefabs without authoring entities.
+Binding, release, pooling, source identity and event dispatch retain their
+existing behavior. The type-binding attribute has its own `TideTypeAttribute.cs`.
+Editor gizmos, sample scripts/tests, generated sample documentation and public
+CLI/package docs use the combined component. Historical mentions below describe
+the earlier split.
+
+Validation: Unity 6000.6.0f1 in a scratch Sample (automatic builds disabled,
+TIDE_HIDDEN, batchmode/nographics/noAudio) compiles the package and Sample
+without C# warnings and passes EntityBindingTests 2/2 and EntityEditorTests 3/3.
+The Sample's checked-in schema was staged into Library/Tide for the inspector
+fixtures. The new tests cover pre-binding reads, authored serialization, release
+retaining the same component, and subscriptions made before binding. The docs
+production build passes. Native/web game execution and player builds were not
+run; no native embed, wire, simulation, generated-C or web bridge code changed.
+
 ## GPU lists in pools: Unity's replay (2026-11-05)
 
 No packet changed and the embed ABI stays 12 (`notes/compute.md`, GPU lists in pools): the recorder records the same

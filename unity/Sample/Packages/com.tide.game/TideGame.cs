@@ -1079,7 +1079,7 @@ namespace Tide.Game
 {
     // Tide's event Bounced, as this machine's local handlers hear it: TideRunner.On, OnVerified (TideEvent)
     /// <summary>
-    /// A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntityView.On)
+    /// A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntity.On)
     /// <para>Tide's event Bounced, declared in Assets/Tide/Bounce.tide.</para>
     /// </summary>
     public sealed partial class Bounced : global::Tide.TideEvent

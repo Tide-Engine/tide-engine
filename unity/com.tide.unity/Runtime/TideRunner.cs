@@ -134,9 +134,9 @@ namespace Tide
         bool schemaWarned;
         bool quitHeard;
 
-        readonly Dictionary<ulong, TideEntityView> shown = new Dictionary<ulong, TideEntityView>();
+        readonly Dictionary<ulong, TideEntity> shown = new Dictionary<ulong, TideEntity>();
         readonly List<ulong> gone = new List<ulong>();
-        TideEntityView[] byRow = Array.Empty<TideEntityView>();
+        TideEntity[] byRow = Array.Empty<TideEntity>();
 
         // Where each type's rows are: rows[type][entity] is the entity's row in that type's section, or -1, as of
         // frame rowsAt[type]
@@ -517,7 +517,7 @@ namespace Tide
                 view.Row = -1;
             }
             var count = read ? Packet.EntityCount : 0;
-            if (byRow.Length < count) byRow = new TideEntityView[Math.Max(count, byRow.Length * 2)];
+            if (byRow.Length < count) byRow = new TideEntity[Math.Max(count, byRow.Length * 2)];
             for (var i = 0; i < count; i++) byRow[i] = null;
             FollowScenes(count);
             for (var i = 0; i < count; i++) ViewOf(i);
@@ -624,7 +624,7 @@ namespace Tide
         // What hears the match's event `T` as this machine's local handlers would: each one, as soon as this machine
         // has it (as `local event(Hit hit)` does), which a correction can turn out not to have happened; or once the
         // server confirmed its tick (OnVerified, as `local event(verified Hit hit)`). Before scripts' Update, after the
-        // frame's components are live. An entity's TideEntityView.On hears only those sent to it.
+        // frame's components are live. An entity's TideEntity.On hears only those sent to it.
         public void On<T>(Action<T> heard) where T : TideEvent
         {
             Listen(hearing, heard, true);
@@ -698,7 +698,7 @@ namespace Tide
         public TideEntityId EntityOf(GameObject shown)
         {
             if (shown == null) return default;
-            var view = shown.GetComponent<TideEntityView>();
+            var view = shown.GetComponent<TideEntity>();
             return view != null && view.Runner == this && view.Row >= 0 ? (TideEntityId)view.Entity : default;
         }
 
@@ -710,7 +710,7 @@ namespace Tide
 
         // The view of the packet's entity `row`, made or found the first time it's seen: by its UnityEngine.Source if it
         // has one, else by the view rules.
-        TideEntityView ViewOf(int row)
+        TideEntity ViewOf(int row)
         {
             if (byRow[row] != null) return byRow[row];
             var entity = Packet.Entity(row);
@@ -742,7 +742,7 @@ namespace Tide
 
         // Whether `view` shows the packet's entity `row`, the one it was made for: what it was spawned as, where both
         // are known, and its UnityEngine.Source are the same.
-        bool Same(TideEntityView view, TideEntityRow entity, int row)
+        bool Same(TideEntity view, TideEntityRow entity, int row)
         {
             if (view.Born != 0 && entity.Born != 0 && view.Born != entity.Born) return false;
             SourceOf(row, out var asset, out var node);
@@ -751,7 +751,7 @@ namespace Tide
 
         // Lets go of an entity's GameObject: a scene's, or one in a prefab's instance, hidden till its entity's back;
         // one made from a prefab, to the spawner, the pool or destroyed.
-        void Release(TideEntityView view)
+        void Release(TideEntity view)
         {
             if (view == null) return; // Its instance went with its root's entity
             view.Row = -1;
@@ -803,7 +803,7 @@ namespace Tide
             return made;
         }
 
-        TideEntityView Make(TideEntityRow entity, int row)
+        TideEntity Make(TideEntityRow entity, int row)
         {
             var view = MakeView(entity, row);
             if (view == null) return null;
@@ -813,13 +813,13 @@ namespace Tide
             return view;
         }
 
-        TideEntityView MakeView(TideEntityRow entity, int row)
+        TideEntity MakeView(TideEntityRow entity, int row)
         {
             if (!SourceOf(row, out var asset, out var node))
             {
                 var prefab = RuleFor(entity, row);
                 if (prefab == null) return null;
-                var made = Ensure<TideEntityView>(MakeFrom(prefab, entity));
+                var made = Ensure<TideEntity>(MakeFrom(prefab, entity));
                 made.Authored = false;
                 made.MadeFrom = prefab;
                 return made;
@@ -842,7 +842,7 @@ namespace Tide
                     Debug.LogWarning($"Tide: an entity of {a.path} came, which this build can't find: the scene links the prefabs the game spawns as it builds.", this);
                     return null;
                 }
-                var root = Ensure<TideEntityView>(MakeFrom(prefab, entity));
+                var root = Ensure<TideEntity>(MakeFrom(prefab, entity));
                 root.Authored = false;
                 root.MadeFrom = prefab;
                 return root;
@@ -862,7 +862,7 @@ namespace Tide
                 }
             }
             if (found == null) return null;
-            var view = Ensure<TideEntityView>(found.gameObject);
+            var view = Ensure<TideEntity>(found.gameObject);
             view.Authored = true;
             if (!found.gameObject.activeSelf) found.gameObject.SetActive(true);
             return view;
@@ -884,7 +884,7 @@ namespace Tide
         // Tide's Transform, where the entity has one: its local placement under its parent's GameObject.
         // A GameObject of Unity's scene or prefab instance stays where it is in Unity's hierarchy: its placement is
         // Tide's under its parent entity's, through the GameObjects between them. Its parent is placed first.
-        void Place(TideEntityView view, int row)
+        void Place(TideEntity view, int row)
         {
             if (view.PlacedAt == frames) return;
             view.PlacedAt = frames;

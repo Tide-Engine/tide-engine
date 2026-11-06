@@ -43,7 +43,7 @@ namespace Tide
     }
 
     // One of the match's events, as this machine's local handlers hear it (TideRunner.On, OnVerified, and an entity's
-    // TideEntityView.On): its fields, and what it was sent to.
+    // TideEntity.On): its fields, and what it was sent to.
     public abstract class TideEvent
     {
         public abstract string TideName { get; }

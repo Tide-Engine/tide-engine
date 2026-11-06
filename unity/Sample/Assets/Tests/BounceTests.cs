@@ -27,14 +27,14 @@ public sealed unsafe class BounceTests
         while (!done() && Time.realtimeSinceStartup < until) yield return null;
     }
 
-    static TideEntityView Totem()
+    static TideEntity Totem()
     {
         var scene = SceneManager.GetSceneByPath(Bonus);
         if (!scene.IsValid() || !scene.isLoaded) return null;
         foreach (var root in scene.GetRootGameObjects())
         {
             var totem = root.transform.Find("Totem");
-            var view = totem != null ? totem.GetComponent<TideEntityView>() : null;
+            var view = totem != null ? totem.GetComponent<TideEntity>() : null;
             if (view != null && view.Showing) return view;
         }
         return null;
@@ -67,9 +67,9 @@ public sealed unsafe class BounceTests
     }
 
     // Every Bonus open with its Totem showing an entity
-    static System.Collections.Generic.List<TideEntityView> Totems()
+    static System.Collections.Generic.List<TideEntity> Totems()
     {
-        var totems = new System.Collections.Generic.List<TideEntityView>();
+        var totems = new System.Collections.Generic.List<TideEntity>();
         for (var i = 0; i < SceneManager.sceneCount; i++)
         {
             var scene = SceneManager.GetSceneAt(i);
@@ -77,7 +77,7 @@ public sealed unsafe class BounceTests
             foreach (var root in scene.GetRootGameObjects())
             {
                 var totem = root.transform.Find("Totem");
-                var view = totem != null ? totem.GetComponent<TideEntityView>() : null;
+                var view = totem != null ? totem.GetComponent<TideEntity>() : null;
                 if (view != null && view.Showing) totems.Add(view);
             }
         }
@@ -172,7 +172,7 @@ public sealed unsafe class BounceTests
         yield return null;
         yield return Until(() => Totem() != null, 10f);
         Assert.IsNotNull(Totem(), "the match loaded Bonus's entities, which the open scene shows");
-        Assert.IsNotNull(GameObject.Find("Pillars")?.transform.GetChild(0).GetComponent<TideEntityView>(), "and Bounce's");
+        Assert.IsTrue(GameObject.Find("Pillars")?.transform.GetChild(0).GetComponent<TideEntity>()?.Showing == true, "and Bounce's");
     }
 
     // Whether the frame's draw packet (tide/embed.h's tide_embed_draw) has a text command saying `words`.
@@ -221,9 +221,9 @@ public sealed unsafe class BounceTests
         return false;
     }
 
-    static TideEntityView Tossed()
+    static TideEntity Tossed()
     {
-        foreach (var view in Object.FindObjectsByType<TideEntityView>())
+        foreach (var view in Object.FindObjectsByType<TideEntity>())
         {
             if (view.Showing && view.TryGetComponent(out Tide.Game.Ball ball) && ball.seat == -1) return view;
         }
@@ -305,9 +305,9 @@ public sealed unsafe class BounceTests
         Assert.Contains(made, spawner.released, "which it let go of as its entity went");
     }
 
-    static TideEntityView MyBall()
+    static TideEntity MyBall()
     {
-        foreach (var view in Object.FindObjectsByType<TideEntityView>())
+        foreach (var view in Object.FindObjectsByType<TideEntity>())
         {
             if (view.Showing && view.Mine && view.GetComponent<Tide.Game.Ball>() != null) return view;
         }
@@ -333,7 +333,7 @@ public sealed unsafe class BounceTests
             speed = e.speed;
         });
         runner.OnVerified<Tide.Game.Bounced>(e => verified += e.Verified ? 1 : 0);
-        TideEntityView ball = null;
+        TideEntity ball = null;
         // As soon as the ball shows: it's dropped from 2 units up, and bounces as it lands
         yield return Until(() => (ball = MyBall()) != null, 10f);
         Assert.IsNotNull(ball, "the player's ball shows");
@@ -376,7 +376,7 @@ public sealed unsafe class BounceTests
         SceneManager.LoadScene(Bounce);
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Until(() => (ball = MyBall()) != null, 10f);
         Assert.IsNotNull(ball, "the player's ball shows");
         yield return Until(() => false, 1.5f); // On the floor
@@ -399,7 +399,7 @@ public sealed unsafe class BounceTests
         SceneManager.LoadScene(Bounce);
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Until(() => (ball = MyBall()) != null, 10f);
         Assert.IsNotNull(ball, "the player's ball shows");
         var room = runner.Get<Tide.Game.Room>();
@@ -505,10 +505,10 @@ public sealed unsafe class BounceTests
         camera.targetTexture = target;
         yield return Connected(runner);
         Assert.IsTrue(runner.TryGetComponent(out TideRender render) && render.enabled, "Tide's renderer draws on this GPU");
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Until(() =>
         {
-            foreach (var view in Object.FindObjectsByType<TideEntityView>())
+            foreach (var view in Object.FindObjectsByType<TideEntity>())
             {
                 if (view.Mine && view.GetComponent<Tide.Game.Ball>() != null) ball = view;
             }
@@ -565,7 +565,7 @@ public sealed unsafe class BounceTests
     }
 
     // The frame `camera` renders into `target` has Tide's drawing as DrawsIntoUnitysFrame says
-    static void Check(Camera camera, RenderTexture target, TideEntityView ball, string when)
+    static void Check(Camera camera, RenderTexture target, TideEntity ball, string when)
     {
         camera.Render(); // A batch run's frames have no end to wait for: this frame's drawing, again, now
         var read = new Texture2D(640, 480, TextureFormat.RGBA32, false);
@@ -655,10 +655,10 @@ public sealed unsafe class BounceTests
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
         yield return Connected(runner);
-        TideEntityView ball = null;
+        TideEntity ball = null;
         yield return Until(() =>
         {
-            foreach (var view in Object.FindObjectsByType<TideEntityView>())
+            foreach (var view in Object.FindObjectsByType<TideEntity>())
             {
                 if (view.Mine && view.GetComponent<Tide.Game.Ball>() != null) ball = view;
             }
@@ -710,11 +710,11 @@ public sealed unsafe class BounceTests
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
         Assert.IsNotNull(runner, "the scene has its TideRunner");
-        TideEntityView ball = null;
+        TideEntity ball = null;
         for (var frame = 0; frame < 300 && ball == null; frame++)
         {
             yield return null;
-            foreach (var view in Object.FindObjectsByType<TideEntityView>())
+            foreach (var view in Object.FindObjectsByType<TideEntity>())
             {
                 if (view.GetComponent<Tide.Game.Ball>() != null) ball = view;
             }
@@ -747,8 +747,9 @@ public sealed unsafe class BounceTests
         for (var i = 0; i < 2; i++)
         {
             var pillar = pillars.GetChild(i);
-            var view = pillar.GetComponent<TideEntityView>();
-            Assert.IsNotNull(view, $"pillar {i} shows an entity");
+            var view = pillar.GetComponent<TideEntity>();
+            Assert.IsNotNull(view, $"pillar {i} has its TideEntity");
+            Assert.IsTrue(view.Showing, $"pillar {i} shows an entity");
             var spinner = view.GetComponent<Tide.Game.Spinner>();
             Assert.IsNotNull(spinner, $"pillar {i} has its Spinner");
             Assert.AreEqual(i == 0 ? 1.5f : -0.75f, spinner.speed, 1e-6f, "with the speed the scene gave it");

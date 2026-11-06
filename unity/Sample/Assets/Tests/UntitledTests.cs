@@ -62,14 +62,14 @@ public sealed class UntitledTests
             foreach (var root in bonus.GetRootGameObjects()) SceneManager.MoveGameObjectToScene(root, untitled);
             yield return SceneManager.UnloadSceneAsync(bonus);
             new GameObject("Tide").AddComponent<TideRunner>();
-            TideEntityView totem = null;
+            TideEntity totem = null;
             yield return Until(() =>
             {
                 totem = null;
                 foreach (var root in untitled.GetRootGameObjects())
                 {
                     var at = root.transform.Find("Totem");
-                    if (at != null) totem = at.GetComponent<TideEntityView>();
+                    if (at != null) totem = at.GetComponent<TideEntity>();
                 }
                 return totem != null && totem.Showing;
             }, 10f);

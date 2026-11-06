@@ -24,7 +24,7 @@ public sealed class PlayerSmoke : MonoBehaviour
     {
         // The match first: on the web, Tide's program loads beside Unity's, which takes a moment
         var deadline = Time.realtimeSinceStartup + 30f;
-        TideEntityView ball = null;
+        TideEntity ball = null;
         while (Time.realtimeSinceStartup < deadline && (ball = Ball()) == null) yield return null;
         var pillar = GameObject.Find("Pillars")?.transform.GetChild(0);
         var before = pillar != null ? pillar.rotation : Quaternion.identity;
@@ -43,7 +43,7 @@ public sealed class PlayerSmoke : MonoBehaviour
 
     // Whether Tide's renderer drew into the main camera, as the frame on the screen shows: the plate's orange stripe in
     // the game's frag, and the cube over the ball in its color. "yes", or what it saw.
-    static IEnumerator Drew(TideEntityView ball, Action<string> said)
+    static IEnumerator Drew(TideEntity ball, Action<string> said)
     {
         var camera = Camera.main;
         if (ball == null || camera == null)
@@ -72,11 +72,11 @@ public sealed class PlayerSmoke : MonoBehaviour
         said(Near(stripe, new Color(1f, 0.5f, 0f)) && Near(cube, color) ? "yes" : $"stripe {stripe}, cube {cube} for {color}");
     }
 
-    static TideEntityView Ball()
+    static TideEntity Ball()
     {
-        foreach (var view in FindObjectsByType<TideEntityView>())
+        foreach (var view in FindObjectsByType<TideEntity>())
         {
-            if (view.GetComponent<Tide.Game.Ball>() != null) return view;
+            if (view.Showing && view.GetComponent<Tide.Game.Ball>() != null) return view;
         }
         return null;
     }
