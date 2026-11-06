@@ -13,7 +13,8 @@ to its existing tests but is no longer used by builds.
 Validation: Windows Clang 23.1.2 ASan CLI build and help, build_overlap,
 build_report pass (3/3). Scratch ASan feedback probe verifies active labels
 and bars share one line, short and long labels put the bar in column 50,
-and long filenames truncate before it. Real-terminal appearance remains
+and long filenames truncate before it. Production docs build passes.
+Real-terminal appearance remains
 manual coverage; no generated-C or runtime changes.
 
 ## C/C++ completion labels (2026-11-06)
