@@ -1735,6 +1735,9 @@ static inline int tide_run_frame(void *user, const float seconds)
             .delay_ticks = status.client.delay_ticks,
             .up = tide_run_up,
             .down = tide_run_down,
+            .resyncs = status.client.resyncs,
+            .repairs = status.client.repairs,
+            .world_bytes = status.client.world_bytes,
             .entities = open && match ? game->entity_count(match) : 0u,
             .profile = &tide_run_profiler.profile,
         };

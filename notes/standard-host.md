@@ -1041,3 +1041,9 @@ The owner asked, from a shipping angle, how a player's crash or problem gets inv
   GPU culling's (drawing.md, A culled set's join past its top level), symbolized from WER's own dump in
   `%LOCALAPPDATA%\CrashDumps`.
 - **Gaps**: worker threads have no alternate stack, so a stack overflow off the main thread on POSIX dies without a folder; `__fastfail` and `/GS` failures on Windows bypass the filter; the web keeps nothing (the console has it). The owner's next steps (2026-11-05): keeping symbols and names so a shipped build's reports can be read (distribution strips them, `notes/cli-and-packages.md`), a build ID in the header, and a replay/reporting service that needs the exact build: open.
+
+## Native world-transfer diagnostics (2026-11-06)
+
+The open stats drawer now shows remote clients' cumulative resyncs, repairs and world data in MB. Resyncs count full-world replacement after initial join; repairs count accepted authoritative projected repairs. World data comes from the existing world_bytes counter and includes deltas and page hashes, so comparing captures separates state-transfer traffic from the total network rate. The same drawer works on native and web; no platform callback override is needed. Hosts and runtime rebuild together for the stats value layout. The 19-line capacity preserves slow-system rows when space allows; small screens retain normal truncation.
+
+Validation: Windows ASan stats 14/14 and visibility 9/9 pass, including a cumulative world count above 4 GiB and remote-only rows. Web stats validation and the host build are recorded by the integrating task. No simulation data, wire format or tick behavior changes in this diagnostic presentation.

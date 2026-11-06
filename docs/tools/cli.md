@@ -381,6 +381,8 @@ The list is two columns, a label on the left and its value on the right, in four
 | `vertices` | Vertices submitted this frame across all render-target passes, counting each index for each instance at its selected LOD. Includes shapes, text, meshes, blits and clear triangles; excludes the host's overlays. A quad counts as six, even with four shared corners. Clipped or culled geometry still counts; this measures submitted geometry, not how many pixels were visible or how often the GPU ran the vertex shader after caching. What the GPU decides (instances culled on the GPU, indirect draws over a `GPUList`) is counted from the GPU's own numbers, read back without waiting: they're a frame or two late |
 | `ping (delay 3 ticks)` | The network's round trip to the machine running the match, in the list when it's this machine, and in its label the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `network` | What goes over the network each second, up and down: `↑2.0  ↓0.5 KB/s` |
+| `resyncs`, `repairs` | On a remote client, cumulative full world resyncs and accepted authoritative visibility repairs, respectively. Repairs can correct a projected world without a full resync. |
+| `world data` | On a remote client, cumulative MB of world transfers received, including deltas and page hashes. Compare captures to separate world traffic from the total `network` rate. |
 | `entities` | How many entities the match has |
 | `threads` | The threads ticks run on |
 | `memory` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |

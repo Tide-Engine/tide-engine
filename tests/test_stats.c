@@ -194,7 +194,7 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     TIDE_CHECK(line_is(6, "threads", "12") && !stats.lines[1].gap && stats.lines[3].gap && stats.lines[6].gap);
     values.remote = true;
     draw();
-    TIDE_CHECK(line_is(0, "60 fps   ping 34 ms", "") && line_is(3, "delay", "3 ticks") && stats.line_count == 10);
+    TIDE_CHECK(line_is(0, "60 fps   ping 34 ms", "") && line_is(3, "delay", "3 ticks") && stats.line_count == 13);
     values = (tide_stats_values){.fps = 144.2, .work_ms = 0.5, .threads = 1, .draw_calls = 2, .profile = &profile};
     draw();
     TIDE_CHECK(stats.line_count == 5 && line_is(0, "144 fps", "") && line_is(1, "cpu", "0.5 ms") && line_is(2, "draw calls", "2")
@@ -208,6 +208,23 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
         draw();
         TIDE_CHECK(line_is(3, "vertices", compact[i]) && text_command(compact[i]));
     }
+    tide_draw_free(&list);
+}
+
+TIDE_TEST(stats_remote_world_transfers_are_cumulative_and_distinguish_repairs)
+{
+    start(true);
+    values.remote = true;
+    values.resyncs = 3;
+    values.repairs = 127;
+    values.world_bytes = UINT64_C(5368709120);
+    draw();
+    TIDE_CHECK(text_command("resyncs") && text_command("3"));
+    TIDE_CHECK(text_command("repairs") && text_command("127"));
+    TIDE_CHECK(text_command("world data") && text_command("5120.00 MB"));
+    values.remote = false;
+    draw();
+    TIDE_CHECK(!text_command("resyncs") && !text_command("repairs") && !text_command("world data"));
     tide_draw_free(&list);
 }
 
@@ -306,7 +323,7 @@ TIDE_TEST(stats_render_and_gpu_times_keep_the_three_system_rows)
     TIDE_CHECK(line_is(12, "Combat.Hit", "1.50 ms") && line_is(13, "Fall", "0.31 ms") && line_is(14, "Move", "0.20 ms"));
     values.remote = true;
     draw();
-    TIDE_CHECK(stats.line_count == 15 && line_is(5, "delay", "2 ticks") && line_is(14, "Move", "0.20 ms"));
+    TIDE_CHECK(stats.line_count == 18 && line_is(5, "delay", "2 ticks") && line_is(17, "Move", "0.20 ms"));
 
     values.work_ms = -1.0;
     draw();
