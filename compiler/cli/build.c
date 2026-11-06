@@ -868,10 +868,19 @@ static void arg_compiler(args *a, const char *compiler)
 
 // One line with everything that decides the engine objects, and the game's
 // C and C++ ones, so a change in any of it rebuilds them.
-static char *stamp_of(const build *b, const bool engine)
+static void c_defines(args *a, const build *b)
+{
+    for (int i = 0; i < b->opts->define_count; i++) {
+        arg(a, "-D");
+        arg(a, b->opts->defines[i]);
+    }
+}
+
+static char *stamp_of(const build *b, const bool engine, const bool defines)
 {
     args a = {0};
     config_flags(&a, b, false, engine);
+    if (defines) c_defines(&a, b);
     arg_list(&a, cpp_flags);
     // clang also reads header paths and the macOS SDK from its environment.
     // Changing those must not reuse objects compiled against other headers.
@@ -1418,7 +1427,7 @@ static void queue_engine(build *b, compiles *list)
     char *engine_src = path_join(b->root, "src/engine/");
     // Private headers affect engine objects alone; game and user C objects
     // keep their ordinary public-header stamp.
-    char *common_stamp = stamp_of(b, true);
+    char *common_stamp = stamp_of(b, true, false);
     char private_headers[17];
     snprintf(private_headers, sizeof private_headers, "%016llx", (unsigned long long)header_stamp(engine_src));
     char *stamp = format("%s %s", common_stamp, private_headers);
@@ -1567,7 +1576,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
         free(header);
         return false;
     }
-    char *flags = stamp_of(b, plumbing);
+    char *flags = stamp_of(b, plumbing, false);
     uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
     if (thin) h = hash_text(h, "ThinLTO partitions v1");
     h = hash_text(hash_text(h, source), text);
@@ -1618,7 +1627,7 @@ static void queue_c_files(const build *b, compiles *list, const char *folder_pat
     // A package's C is library code, as the engine's is: a debug build keeps
     // it optimized (with symbols), and only the game's own C at -O0
     const bool library = package != NULL;
-    char *flags = stamp_of(b, library);
+    char *flags = stamp_of(b, library, true);
     uint64_t common = hash_text(0xCBF29CE484222325ull, flags);
     free(flags);
     if (b->opts->server) {
@@ -1645,6 +1654,7 @@ static void queue_c_files(const build *b, compiles *list, const char *folder_pat
         char *old = sys_read_file(stamp_path, NULL);
         if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
             compile_job *job = queue_compile_as(list, b, sources.items[i], object, b->opts->server ? gen : NULL, false, library);
+            c_defines(&job->a, b);
             job->stamp_path = stamp_path;
             job->stamp = copy_text(stamp);
         } else {
@@ -2665,6 +2675,11 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
         // not claim the same simulation identity merely because C text matches.
         const char optimization = b->opts->optimization ? b->opts->optimization[2] : b->opts->release ? '2' : '0';
         tide_sha256_add(&external, &optimization, 1);
+        // Symbols used only by trusted C still change simulation compatibility.
+        for (int i = 0; i < b->opts->define_count; i++) {
+            const char *symbol = b->opts->defines[i];
+            tide_sha256_add(&external, symbol, strlen(symbol) + 1u);
+        }
     }
     tide_sha256_end(&external, external_identity);
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
@@ -3304,7 +3319,7 @@ static bool queue_host(run *r, compiles *list, file_list *objects)
     char *host_c = path_join(r->gen, "host.c");
     add_file(objects, path_join(r->dir, "host.o"));
     // Compiled again only when it changed, or what it's compiled with: the run's folder keeps it (clear_run_entry)
-    char *flags = stamp_of(&r->b, false);
+    char *flags = stamp_of(&r->b, false, false);
     const uint64_t h = hash_text(hash_text(hash_text(0xCBF29CE484222325ull, flags), host_c), text);
     free(flags);
     bool ok = sys_write_text(host_c, text);

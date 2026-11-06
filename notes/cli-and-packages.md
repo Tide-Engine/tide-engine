@@ -2089,3 +2089,10 @@ so separate web runtime tests are not applicable. Other host OSes remain CI cove
 Old installed launchers require upgrade or direct cached-executable invocation:
 a project pin cannot repair released launcher binaries. No external project or pin
 was edited.
+## User symbols in handwritten C/C++ (2026-11-06)
+
+Mount & Rifle reported that --define affected Tide but never its C files. queue_c_files now passes each selected symbol as a separate -D argument (value 1) to handwritten game and package C/C++. This includes the existing default-debug DEBUG entry. Automatic PACKAGE_ symbols remain Tide-only. Generated code, host launchers and engine sources receive no user macros; engine-object reuse is preserved. The path is shared by native, web, Android and reload builds.
+
+The handwritten-source stamp contains exactly these additional arguments. A symbol used only by trusted C also enters the external simulation fingerprint: changing it must change compatibility even if no Tide #if reads it. No new symbol syntax or runtime API is introduced. User docs/help describe C/C++ forwarding.
+
+Validation: Windows Clang 23.1.2 ASan CLI/helper builds and help, build_overlap and build_report pass (3/3). The controlled-compiler regression checks game and package .c/.cpp macro arguments, no macros on engine/generated sources, a zero-compile unchanged rebuild, and removing a C-only symbol recompiling all four handwritten sources while retaining engine objects and changing the simulation ID. This validates the common host-side command/cache path, without a game or browser launch; Android/other OS execution remains CI coverage. The integrating task ran the production docs build; the added CLI wording changes no docs structure.

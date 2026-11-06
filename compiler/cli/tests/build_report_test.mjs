@@ -142,6 +142,35 @@ try {
     assert(serverReport.outputs.some(output => resolve(output.path) === join(game, ".build", "reported-server.pack")),
         `${serverReport.outputs.map(output => output.path)}`);
 
+    // A symbol used only by handwritten game/package C changes its flags, cache and simulation identity.
+    const defined = join(root, "defined"), localPackage = join(root, "local-package");
+    put(join(defined, "game.tide"), "scene Main { }\n");
+    put(join(defined, "tide.packages"), "../local-package\n");
+    put(join(localPackage, "tide.packages"), "package Local\n");
+    for (const folder of [defined, localPackage]) {
+        put(join(folder, "custom.c"), "// trusted C\n");
+        put(join(folder, "custom.cpp"), "// trusted C++\n");
+    }
+    const definedReport = join(root, "reports", "defined.json");
+    const definedArgs = ["build", defined, "--release", "--report", definedReport];
+    const identity = () => readFileSync(join(defined, ".tide", "native-release", "gen", "game.h"), "utf8")
+        .match(/^#define TIDE_SIMULATION_ID .*$/m)[0];
+    const compiledDefined = () => JSON.parse(readFileSync(definedReport, "utf8")).compiles.files.map(file => basename(file.source));
+    env.TIDE_TEST_BUILD_DEFINE = "on";
+    const withDefine = await run([...definedArgs, "--define", "BATTLE_TEST"]);
+    assert.equal(withDefine.code, 0, withDefine.said);
+    const definedIdentity = identity();
+    const warmDefine = await run([...definedArgs, "--define", "BATTLE_TEST"]);
+    assert.equal(warmDefine.code, 0, warmDefine.said);
+    assert.deepEqual(compiledDefined(), []);
+    env.TIDE_TEST_BUILD_DEFINE = "off";
+    const withoutDefine = await run(definedArgs);
+    assert.equal(withoutDefine.code, 0, withoutDefine.said);
+    assert.notEqual(identity(), definedIdentity);
+    assert.equal(compiledDefined().filter(name => name.startsWith("custom.")).length, 4);
+    assert(!compiledDefined().includes("engine.c"), "user defines preserve engine-object reuse");
+    delete env.TIDE_TEST_BUILD_DEFINE;
+
     // Large generated code is in parts, as many as its size takes, and its data's, with ThinLTO compilation and a
     // cached link.
     const large = join(root, "large");

@@ -26,6 +26,15 @@ int main(int argc, char **argv)
         if (!source && output && (!thin || !cache || !jobs)) return 9;
     }
     if (!output) return 0; // The fake host, or a compiler discovery probe
+    const char *symbol = sys_env("TIDE_TEST_BUILD_DEFINE");
+    if (source && symbol) {
+        bool found = false;
+        for (int i = 1; i + 1 < argc; i++) {
+            if (strcmp(argv[i], "-D") == 0 && strcmp(argv[i + 1], "BATTLE_TEST") == 0) found = true;
+        }
+        const bool authored = strncmp(path_base(source), "custom.", 7) == 0;
+        if (found != (authored && strcmp(symbol, "on") == 0)) return 10;
+    }
     const char *events = sys_env("TIDE_TEST_BUILD_EVENTS");
     if (!events) return 2;
     if (source) {

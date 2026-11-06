@@ -215,6 +215,7 @@ static const argument_help arguments[] = {
      "bundle and require the game's appId. Choose native, web or Android.", RUN | BUILD},
     {"--define", "--define <SYMBOL>", "Define a symbol for #if lines",
      "Repeat for as many symbols as needed, like --define FAST --define STEAM.\n"
+     "Builds also define these macros as 1 in game/package C and C++ sources.\n"
      "DEBUG is automatic without --release; PACKAGE_<NAME> is automatic for\n"
      "each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
     {"--title", "--title <title>", "Override the game's window title",
