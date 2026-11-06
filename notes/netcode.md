@@ -118,9 +118,9 @@ every truncation in representative modes, bad hashes/bases/sizes, trailing bytes
 zero/small/overflowing spans and invalid 64-bit sources. Sixteen generated
 network/prediction/visibility/view-time/voice integration CTests pass on each
 platform. Independent decoder/encoder review found no remaining blocker.
-Real-game first-mismatch tracing and before/after traffic measurements continue
-separately; this fixes a demonstrated transfer amplification mechanism without
-claiming that all battle repairs or the allocator limitation below are gone.
+The live measurements below subsequently established the first battle mismatch
+and measured the combined protocol-23/24 changes. Repairs and the allocator
+limitation below remain; compression locality alone was insufficient.
 
 Index tuning used the actual game's consecutive **correction target** projections
 (not necessarily the exact acknowledged repair baseline), 7,315,009 -> 7,315,431
@@ -134,6 +134,89 @@ with dense copied-span indexing took 550,660 / 712,151 bytes and 19-20 ms packin
 on the same pairs. These are offline codec comparisons; they do not establish
 the live recipient's final byte rate or confirmation lag.
 
+## Mount & Rifle live battle measurements (2026-11-06)
+
+The controlled Windows comparison uses game commit `349c35a`, its exact non-art
+source assets, the local art/cache, optimized tools and runtime built in this
+engine checkout, seed 0, two players, latency option 40, 2100 frames and 1280x720.
+`BATTLE_TEST ARMY` creates 1000 bots; F7 is sent to both players at frame 100,
+with player-2 captures at 900, 1500 and 2100. The executable receives:
+
+```text
+--players 2 --latency 40 --frames 2100 --size 1280 720 --stats --script battle.txt --profile profile.json
+```
+
+The script is:
+
+```text
+100 player 1 key f7
+100 player 2 key f7
+900 player 2 capture battle-900.png
+1500 player 2 capture battle-1500.png
+2100 player 2 capture battle-2100.png
+```
+
+Build with `--release --debug-views --define BATTLE_TEST --define ARMY --stats`,
+adding the named switch below; the ten-bot control omits ARMY. Every invocation
+sets `TIDE_HIDDEN=1`. The preserved protocol-22 baseline and final protocol-24
+runtime use the same game source, assets, optimized platform and command line.
+The baseline session source is the pre-codec implementation, with the new status
+counters retained. The intermediate protocol-23 result is retained in the
+[compact metrics artifact](repro/mount-rifle-network-20261106-summary.json).
+
+After three startup repairs, the public battle ran on inputs until the first
+battle mismatch at tick **1149**. Both same-tick permitted projections were
+7,315,009 bytes; exactly four bytes differed. Two freshly spawned bullets had
+matching shooters, bornTick 1148 and gameplay values, but different identities:
+shooter `#1568.1` produced server `#3380.45` versus client `#3376.59`, and shooter
+`#997.1` produced server `#3376.59` versus client `#3389.49`. This establishes
+identity divergence as the observed trigger, followed by repeated repair
+transfers. Projection loading loses physical slot/free-generation information;
+its precise contribution to this game's allocation ordering remains inferred,
+not an approved change to recipient identity semantics. Physics.Rewind is not
+called by this game revision, as source inspection below explains.
+
+Player-2 rates below are decimal KB per **simulation second**, measured from
+cumulative counters at seconds 20 and 34. World bytes count transferred world
+payload; total received also includes ordinary frames, inputs and protocol
+traffic. Joins are outside this interval. All runs completed with zero resyncs.
+
+| Build / game switch | World KB/s | Total received KB/s | Repairs at 34 s | Wall seconds for 2100 frames |
+|---|---:|---:|---:|---:|
+| Protocol 22, 1000 bots | 3028.5 | 3113.2 | 22 | 146.85 |
+| Protocol 24, 1000 bots | 107.8 | 128.3 | 57 | 144.08 |
+| Protocol 24, PREDICT_DELAY | 60.1 | 79.7 | 45 | 87.26 |
+| Protocol 24, TROOPER_SIGHT | 654.8 | 699.6 | 78 | 92.14 |
+| Protocol 22, ten-bot control | 665.8 | 695.5 | 59 | 40.82 |
+| Protocol 24, ten-bot control | 58.7 | 85.1 | 51 | 41.05 |
+
+The public 1000-bot battle therefore uses **28.1 times less world payload** and
+**24.3 times less total received traffic** (about 1.03 Mbit/s total). At second
+34 its cumulative world bytes fall from 55,732,919 to 6,279,847. More repairs can
+finish because they are much smaller; repair count alone is not transfer volume.
+Delay's late input delay stays at 12 ticks instead of growing throughout the
+run. The paired ten-bot baseline verifies an 8.2-fold total-traffic improvement;
+the reported nightly's 29 KB/s ten-bot behavior was not reproduced in this setup.
+
+TROOPER_SIGHT remains substantially more expensive, about 5.60 Mbit/s total.
+Selecting by actual encoded cost lowered its world traffic from 1588.2 to 654.8
+KB/s. The game's public `Crowd` singleton contains positions of all server troops,
+while a client rebuilds it from permitted troops. Even a small hidden subset can
+therefore change public state and coupled AI decisions; it can also disclose
+hidden positions. The game should give this derived data an appropriate audience
+or rebuild it without mixing restricted and public state. The engine transfer
+fix does not establish correctness of that visibility policy.
+
+Hidden native runs advance a fixed 60-frame simulation clock; the table's rates
+and the displayed FPS are **not real-time throughput/FPS benchmarks**. Wall
+seconds are measured separately, and one run per configuration on a shared
+machine does not establish a CPU improvement. The paired main profiles average
+58.78 / 60.13 ms CPU work per frame and 38.72 / 41.68 ms match work before/after.
+This change fixes transfer amplification, not repeated prediction work. Delay
+averages 10.43 ms match work and Sight 9.30 ms, with different simulation work.
+Full samples, cumulative counters, profile summaries, source hashes and the
+intermediate results are in the artifact; raw world dumps are not committed.
+
 ## Mount & Rifle battle investigation and repair diagnostics (2026-11-06)
 
 `tide_client_status.repairs` counts successful authoritative recipient repair
@@ -143,8 +226,9 @@ object, like `resyncs` and `world_bytes`. The visibility backoff fixture checks
 that repairs equal projection loads minus the initial snapshot. Native stats
 presentation is recorded in standard-host.md.
 
-The reported battle flood is **not fixed** by this diagnostic change. Source
-inspection of Mount & Rifle commit `349c35a` refutes its proposed Physics.Rewind
+The diagnostic counter alone did not fix the battle flood; the repair changes
+and live measurements above followed it. Source inspection of Mount & Rifle
+commit `349c35a` refutes its proposed Physics.Rewind
 cause: its only Tide references to rewind are the maxRewind setting and the
 hitbox.tide comment saying those capsules used to be Box3D bodies. Actual hits use
 the game's posed capsules and shooter-lag displacement. No Physics.Rewind call
@@ -178,8 +262,9 @@ Their hashes agree immediately after load; the next public entity is server
 `1:3` versus client `1:1`, and hashes differ. The projected loader discards free
 slots/generations. This extends the existing Open spawn-identity gap ("A client's
 own spawns go after the last entity it was sent", below) to public slot reuse.
-It is a plausible repair trigger for the game's spawned/destroyed Bullets, not a
-trace of that game's actual first mismatch. Reconstructing a remembered client's
+The live trace above subsequently found bullet identity differences at the
+first battle mismatch. The exact allocator ordering cause remains an inference.
+Reconstructing a remembered client's
 free list is insufficient: the server can have allocated those slots privately
 since the last endpoint. Recipient projections intentionally omit allocator/free
 lists; copying the full server allocator would disclose hidden lifetime activity.
