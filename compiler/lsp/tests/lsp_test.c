@@ -901,7 +901,8 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(three, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(three, "\"SetDepth(${1:mode})\""));
     TIDE_CHECK(offers(three, "Blend") && offers(three, "Clip"));
     const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");
-    TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None"));
+    TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None") && offers(modes, "Only")
+               && offers(modes, "Equal"));
 
     open_document("scene Main { }\nview V()\n{\n    Draw.De$pth(Depth.Read)\n    {\n    }\n}\n");
     const char *around = request("textDocument/hover");
@@ -3517,6 +3518,26 @@ TIDE_TEST(lsp_empty_scene_declarations)
     TIDE_CHECK(has(last_sent(), "expected '{'"));
 }
 
+TIDE_TEST(lsp_scene_preparation)
+{
+    start();
+    open_document("singleton Stats { int value; }\nscene Main\n{\n    int seed = 7;\n"
+                  "    prepare(mut Stats stats) { stats.value = se$ed; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "int seed"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"prepare\""));
+    TIDE_CHECK(!has(symbols, "tide_prepare") && !has(symbols, "tide_preparation_scene"));
+    const char *values = complete("singleton Stats { int value; }\nscene Main\n{\n    int seed;\n"
+                                  "    prepare(mut Stats stats) { stats.value = $; }\n}\n");
+    TIDE_CHECK(offers(values, "seed") && offers(values, "stats"));
+    TIDE_CHECK(!offers(values, "tide_preparation_scene"));
+    open_document("scene Main { prepare() {} }\nsystem Check(with Main) { Debug.Assert(Scene.IsPrep$ared(this)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "acknowledged a player's readiness"));
+}
+
 TIDE_TEST(lsp_scenes)
 {
     start();
@@ -3538,6 +3559,7 @@ TIDE_TEST(lsp_scenes)
     const char *calls = complete("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main)\n{\n    Scene.$\n}\n");
     TIDE_CHECK(offers(calls, "Load"));
     TIDE_CHECK(offers(calls, "Unload"));
+    TIDE_CHECK(offers(calls, "IsPrepared"));
     TIDE_CHECK(!offers(calls, "AddPlayer"));
     TIDE_CHECK(!offers(calls, "RemovePlayer"));
     const char *fields = complete("scene Arena { int size; }\nscene Main { }\nsystem S(Arena arena)\n{\n    var x = arena.$\n}\n");

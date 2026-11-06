@@ -49,7 +49,8 @@
 # SPLIT_PLUMBING compiles the game's generated C as tide's debug builds do: the
 # game's own code (<name>.c) with the target's flags, and the rest, the
 # generated plumbing (<name>_plumbing.c), optimized (-O2).
-# SPLIT_CODE partitions generated C into four stable files compiled/linked with ThinLTO.
+# SPLIT_CODE partitions generated C into four stable files of code and one of its
+# large constants (<name>_data.c), compiled/linked with ThinLTO.
 # With SPLIT_PLUMBING it partitions the optimized plumbing and leaves game code debuggable.
 #
 # The generated files land in the build tree and are regenerated whenever a
@@ -269,12 +270,12 @@ function(tide_add_game target)
     endif()
     if(ARG_SPLIT_CODE)
         list(APPEND split --split-code)
-        foreach(part RANGE 1 3)
+        foreach(part _part1 _part2 _part3 _data)
             if(ARG_SPLIT_PLUMBING)
-                list(APPEND split_c "${out_dir}/${name}_plumbing_part${part}.c")
-                set_property(SOURCE "${out_dir}/${name}_plumbing_part${part}.c" APPEND PROPERTY COMPILE_OPTIONS -O2)
+                list(APPEND split_c "${out_dir}/${name}_plumbing${part}.c")
+                set_property(SOURCE "${out_dir}/${name}_plumbing${part}.c" APPEND PROPERTY COMPILE_OPTIONS -O2)
             else()
-                list(APPEND split_c "${out_dir}/${name}_part${part}.c")
+                list(APPEND split_c "${out_dir}/${name}${part}.c")
             endif()
         endforeach()
         set(thin_sources ${split_c})

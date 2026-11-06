@@ -1,5 +1,28 @@
 # Netcode: sessions, prediction, commands
 
+## Scene preparation and player readiness (2026-11-05)
+
+Owner-approved scene preparation (language.md) uses optional tide_game callbacks `prepare_pending`, `prepare`,
+`prepared_scene` and `prepared_command`. Sessions stop ticks while their private preparation job runs, continuing
+receive/send/timeout processing. The server resumes on its own completion. Client prediction stops at a pending
+load; generation starts only on the verified endpoint, then becomes the replay baseline. Startup page negotiation
+can generate its ordinary initial baseline asynchronously before requesting missing pages. Slow peers use the
+existing input history, catch-up and snapshot recovery. Recovery-journal replay prepares before the following tick.
+
+Readiness is a private empty command sent once per completed root identity, through existing reliable authenticated
+command sequencing. Its sender supplies the player; game payloads cannot name another sender. The generated world
+stores player bits, clears departed players and preserves them in snapshots/hashes/packing. This is a completion
+report, not proof of honest work; game logic owns any readiness barrier or kick. No new wire packet/protocol version.
+All hosts/libraries rebuild for the tide_game callback layout (Session ABI preparation 1).
+
+Prepared local/verified events merge ahead of the next tick's events. Visibility servers additionally record
+recipient-filtered genuine lifecycle logs from preparation; projected clients never regenerate from potentially
+missing private inputs and request the permitted prepared snapshot instead. The private ordinal singleton and
+root ordinals are omitted/canonicalized in recipient codecs and lifecycle payloads. Completion and readiness remain
+permitted match state. Leaving/restart/rewind/reload drain and discard private jobs/logs before releasing worlds/code.
+Progress endpoints are available to views while initial baseline preparation is still connecting, without promoting
+them to verified state. Tests and validation: language.md, Deterministic scene preparation.
+
 ## Bans (2026-11-04)
 
 The owner's ask, from mount-and-rifle, whose host re-kicked banned PlayerIDs

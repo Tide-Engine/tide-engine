@@ -17,6 +17,7 @@
 
 #include "assets.h"
 #include "asset_import_cache.h"
+#include "build_threads.h"
 #include "texture_cache.h"
 #include "audio_files.h"
 #include "folders.h"
@@ -1414,6 +1415,108 @@ asset_value *asset_resolve_paths(const char *declaring, const str path, const as
                                  const bool is_map, const loc at, const char *game_folder)
 {
     return asset_resolve_impl(declaring, path, kind, many, is_map, at, game_folder, true);
+}
+
+// A file whose name says it's an image, which read_item may decode
+static bool named_as_image(const char *path)
+{
+    static const char *const suffixes[] = {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd", ".dds"};
+    const size_t n = strlen(path);
+    for (size_t i = 0; i < sizeof suffixes / sizeof *suffixes; i++) {
+        const size_t s = strlen(suffixes[i]);
+        if (n < s) continue;
+        bool same = true;
+        for (size_t k = 0; k < s && same; k++) same = tolower((unsigned char)path[n - s + k]) == suffixes[i][k];
+        if (same) return true;
+    }
+    return false;
+}
+
+typedef struct decode_ahead {
+    read_file **files;
+    const char **keys;
+} decode_ahead;
+
+static void decode_one(void *context, const uint32_t i)
+{
+    const decode_ahead *d = context;
+    read_file *f = d->files[i];
+    image_file_read_mips(f->data, f->len, d->keys[i], &f->image, &f->image_mips, f->image_why);
+}
+
+// Each image a decode holds as floats, and what decoding takes: a 4096-square one is hundreds of megabytes
+enum { DECODES_AT_ONCE = 8 };
+
+void asset_files_decode_ahead(const char *const *declaring, const str *paths, const int count, const char *game_folder)
+{
+    // The files the paths name, with each one's key, as asset_resolve finds them: only images, and only where they
+    // are files on this machine
+    VEC(char *) keys = {0};
+    VEC(char *) found = {0};
+    for (int i = 0; i < count; i++) {
+        const char *written = asset_written_path(paths[i]);
+        if (!*written || asset_path_is_url(written, strlen(written))) continue;
+        char *at = declaring_abs(declaring[i]);
+        char *folder = asset_path_folder(at);
+        free(at);
+        if (asset_path_is_glob(written, strlen(written))) {
+            const size_t prefix_len = fixed_prefix(written);
+            char *prefix = str_to_cstr((str){written, (int)prefix_len});
+            char *base = asset_path_join(folder, prefix, prefix_len);
+            const size_t base_len = strlen(base);
+            char *base_slash = malloc(base_len + 2);
+            if (!base_slash) abort();
+            sprintf(base_slash, "%s%s", base, base_len && base[base_len - 1] == '/' ? "" : "/");
+            glob_walk w = {base_slash, written + prefix_len, prefix, {0}, {0}};
+            folder_find_files_in(base_slash, glob_enters, glob_found, &w);
+            for (int k = 0; k < w.keys.count; k++) {
+                if (!named_as_image(w.paths.items[k])) continue;
+                vec_push(keys, w.keys.items[k]);
+                vec_push(found, w.paths.items[k]);
+            }
+            free(base_slash);
+            free(base);
+        } else if (named_as_image(written)) {
+            char *abs = asset_path_join(folder, written, strlen(written));
+            if (folder_file_info(abs, NULL, NULL)) {
+                vec_push(keys, str_to_cstr(str_from(written)));
+                vec_push(found, str_to_cstr(str_from(abs)));
+            }
+            free(abs);
+        }
+        free(folder);
+    }
+    // Read (which may move the files' table), then what's to decode: what read_item would decode, and not a texture
+    // its cache has prepared, as read_item looks for one first
+    for (int i = 0; i < found.count; i++) read_at(found.items[i]);
+    decode_ahead d = {arena_alloc(sizeof(read_file *) * (size_t)(found.count ? found.count : 1)),
+                      arena_alloc(sizeof(char *) * (size_t)(found.count ? found.count : 1))};
+    uint32_t n = 0;
+    for (int i = 0; i < found.count; i++) {
+        read_file *f = read_at(found.items[i]);
+        if (!f || f->decoded) continue;
+        bool listed = false;
+        for (uint32_t k = 0; k < n && !listed; k++) listed = d.files[k] == f;
+        if (listed) continue;
+        if (use_build_cache && !f->prepared_tried) {
+            texture_cache_view view;
+            f->prepared_tried = true;
+            uint8_t cache[32];
+            texture_cache_key(cache, f->hash, keys.items[i], false, true);
+            f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+            if (!f->prepared_texture) {
+                texture_cache_key(cache, f->hash, keys.items[i], true, true);
+                f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+                f->prepared_raw = true;
+            }
+        }
+        if (f->prepared_texture) continue; // A Grid of it decodes it as it's read, as before
+        d.files[n] = f;
+        d.keys[n] = keys.items[i];
+        n++;
+    }
+    build_threads_each(n, DECODES_AT_ONCE, decode_one, &d);
+    for (uint32_t i = 0; i < n; i++) d.files[i]->decoded = true;
 }
 
 void asset_watched(const char *declaring_as_given, const str path, asset_path_fn found, void *user)

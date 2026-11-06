@@ -1,0 +1,3 @@
+// expect: prepare runs to completion and can't start async tasks
+async void Later() { await Wait.Ticks(1); }
+scene Main { prepare() { Later(); } }

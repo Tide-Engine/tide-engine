@@ -1,5 +1,13 @@
 # Code the GPU runs: frags and verts
 
+## Invariant positions (2026-11-06)
+
+Every game shader's vertex position is `@builtin(position) @invariant` (`write_wgsl`, `tide_corner`), as is the
+renderer's `mesh_3d_wgsl`: `Depth.Equal` after `Depth.Only` needs a mesh drawn through two shaders on the same depth
+bits. The WGSL reader keeps `@invariant` (`attrs.invariant`); SPIR-V decorates the vertex stage's output `Invariant`,
+HLSL declares the varyings' position `precise`. The `shaders/*.txt` expectations changed by that word alone. Why and
+what relies on it: drawing.md, A depth pre-pass.
+
 ## GPU lists in pools (2026-11-05)
 
 A shader's GPU lists are ranges of two pools, `tide_words` (binding 33, `SHADER_STORAGE_BINDING`) and `tide_ints`

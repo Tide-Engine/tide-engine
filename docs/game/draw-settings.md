@@ -59,7 +59,7 @@ Draw.Tint(Color(1, 1, 1, 0.5))
 Every setting belongs to the destination it's called on. `Draw`'s are the window's, and a [render target](./render-targets.md) has its own, by the same names (`target.Blend(Blend.Add) { ... }`, `target.Clip(rect) { ... }`, `target.SetCamera(...)`, `target.Depth(mode) { ... }`): a blend or a tint set for the window doesn't reach a target's draws, and a target's doesn't reach the window's. Depth and cull are for 3D meshes alone: around 2D draws they change nothing, and that's no error.
 
 ::: info
-What a `Set` with no arguments does, how one setting nests in another, `Draw.Depth`'s name and its three modes', `Cull`'s three names and which way round a triangle's front goes, and how `Draw.Stencil` is written, its tests' and operations' names and each of its rules, are provisional: they're how it works today, and may still change.
+What a `Set` with no arguments does, how one setting nests in another, `Draw.Depth`'s name and its modes', `Cull`'s three names and which way round a triangle's front goes, and how `Draw.Stencil` is written, its tests' and operations' names and each of its rules, are provisional: they're how it works today, and may still change.
 :::
 
 ## Several at once
@@ -324,3 +324,5 @@ Draw.Mesh(vertices, indices, transform, texture, Cutout);
 ```
 
 [`this.Discard()`](./shaders.md#where-the-pixel-is) ends the frag and writes no color, depth or stencil for that pixel. The surviving pixels can use the usual opaque draw order. The threshold gives a hard edge; use the translucent recipe above when you want partial opacity at the edge instead.
+
+A frag that can discard is run for every pixel it covers, even one a nearer leaf hides. Where many cut-outs overlap and their lighting is expensive, draw their depth first with `Depth.Only` and light them with `Depth.Equal`: see [A depth pre-pass](./3d.md#a-depth-pre-pass).

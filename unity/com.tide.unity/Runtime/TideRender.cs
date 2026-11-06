@@ -1137,16 +1137,19 @@ namespace Tide
             if (p.materials.TryGetValue(key, out var m) && m != null) return m;
             m = new Material(p.shader) { hideFlags = HideFlags.HideAndDontSave, name = "Tide " + p.name };
             // How it blends: what tide_gpu_blend says, every color premultiplied
-            switch (p.blend)
+            switch (p.depth == 4 ? 4 : p.blend) // Depth alone (tide_gpu_depth 4) leaves every color as it is
             {
+                case 4: Blend(m, BlendMode.Zero, BlendMode.One, BlendMode.Zero, BlendMode.One); break;
                 case 1: Blend(m, BlendMode.One, BlendMode.One, BlendMode.OneMinusDstAlpha, BlendMode.One); break;
                 case 2: Blend(m, BlendMode.DstColor, BlendMode.Zero, BlendMode.Zero, BlendMode.One); break;
                 case 3: Blend(m, BlendMode.One, BlendMode.Zero, BlendMode.One, BlendMode.Zero); break;
                 default: Blend(m, BlendMode.One, BlendMode.OneMinusSrcAlpha, BlendMode.One, BlendMode.OneMinusSrcAlpha); break;
             }
             // Depth: Unity turns the test around where it keeps depth from 1 near
-            m.SetFloat(ZTest, (float)(p.depth == 0 || p.depth == 3 ? CompareFunction.Always : CompareFunction.LessEqual));
-            m.SetFloat(ZWrite, p.depth == 1 || p.depth == 3 ? 1f : 0f);
+            // (tide_gpu_depth: none, tested and written, tested, written whatever is there, depth alone, equal)
+            m.SetFloat(ZTest, (float)(p.depth == 0 || p.depth == 3 ? CompareFunction.Always
+                                      : p.depth == 5 ? CompareFunction.Equal : CompareFunction.LessEqual));
+            m.SetFloat(ZWrite, p.depth == 1 || p.depth == 3 || p.depth == 4 ? 1f : 0f);
             var cull = p.cull == 1 ? CullMode.Back : p.cull == 2 ? CullMode.Front : CullMode.Off;
             if (flipped && cull != CullMode.Off) cull = cull == CullMode.Back ? CullMode.Front : CullMode.Back;
             m.SetFloat(Cull, (float)cull);

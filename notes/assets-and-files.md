@@ -38,6 +38,8 @@ unchanged. This is host-tool feedback only; no generated code/runtime contract c
 Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
 CLI unit/help and recompile CTests pass. The recompile regression checks actual
 parsing, checking, file import, asset packing and C-generation notifications.
+Correction (2026-11-06): after parsing, imports and packing share one count for the whole step
+(cli-and-packages.md, One count for the Tide step).
 Docs production build passes with the usual unstaged example-page 404s.
 Other OS terminals remain CI/manual coverage; no web runtime code changed.
 
@@ -147,6 +149,51 @@ the tools' flags), runs it with a ten-minute limit, keeps each whole root it wro
 game again from its sources (codegen changed the program), which then finds every value. A second miss is an error
 rather than a loop. Processes are started directly (CreateProcessA with Microsoft's quoting, posix_spawnp), output
 to a log file whose last lines become notes.
+
+Correction (2026-11-06, cold builds of Mount & Rifle): the program's C is split as the CLI splits a game's
+(`split_code`, 4 MiB and up, up to 16 parts of 512 KiB, then `build_data.c`), listed in `build_parts.txt`; the parts
+compile as many at once as there are processors (`compile_all`, which the engine's objects use too) and link with
+the engine. Its shaders' arrays are empty (`gen_shader_text`/`gen_shader_spirv` with `build_program`: build code
+draws nothing, and no WGSL is translated). Mount & Rifle's 108 MB single file took 33-37 s at -O1 (only 3 s of it
+the shaders); now ~32 MB in 17 parts, 4 s. Its cold `tide build --release` went 98 s to 69 s. What's left of the
+cold "running build code" is mostly the build pack's levels of detail: 229 [LOD] meshes made one after another,
+~24 s, cached in .tide/assets/lod/ after. Small fixtures stay one file; the split was checked on Mount & Rifle.
+
+Made ahead, on every processor (2026-11-06, the owner on the cold build: "lots into lod, can we improve that
+process?"). Measured on Mount & Rifle with a cold cache: the levels of 229 meshes (1.88 M triangles; 155 under the
+1,000 that get any) took 14.4 s one after another, the biggest 1.2 s; BC1/BC3 compression of its images ~14 s.
+`build_pack` now first calls `want_textures` and `want_levels` (codegen.c): each walks the assets as the pack loop
+does, with the same arguments pack_item and pack_mesh take (raw/compress per kind; a mesh at rest, a built mesh's
+fields, tangent handedness, the skinned model), and notes what the caches don't have yet. Images: `texture_make`
+(pack_item's code, moved out) runs on at most 8 threads (one image in flight holds ~100 MB at 4096 square) and
+writes `texture_cache_write`; pack_item reads them back. Levels: `mesh_lod_want` copies a source's numbers and
+`mesh_lod_make_wanted` makes them on every processor (the bones' weights are worked out on the thread, from the
+model's bytes), writes their files and keeps them, so `mesh_lod_cached` finds them. Each item is made on one thread
+by the same code, so the results are the same bytes: all 229 level files and the 742 MB pack compared equal to
+serial ones. A key the walk got differently from the pack only costs making that item in the pack, as before.
+Threads are `build_threads_each` (build_threads.c: Windows threads or pthreads, with an atomic counter; tidec links
+Threads::Threads off Windows); `asset_cache_write`'s temporary names take an atomic counter; `asset_cache_has` asks
+whether an entry's file is there without reading it. Diagnostics stay the pack loop's: an image that won't decode is
+skipped ahead and said when packed. With no game folder nothing's kept, so images aren't made ahead.
+
+Images decoded ahead (2026-11-06, the owner: "try to improve asset imports next"). Of the cold first pass's 12.2 s
+of imports, 10.3 s was 334 texture declarations' files decoded one at a time by `read_item` (200-560 ms for each
+4096-square one); meshes were 1.5 s. Before check.c's asset loop, the literal paths of every asset (one, or a
+list's; `text_literal`, so constants too, which are checked by then) go to `asset_files_decode_ahead`: it finds their
+files as asset_resolve would (a glob's keys from the same walk), keeps those named as images, reads them
+(`read_at`), and where `use_build_cache` looks for a prepared texture as read_item does (same keys), so a warm
+build takes those and decodes nothing; the rest are decoded on at most 8 threads into their `read_file` entries
+(`decoded`, `image`, `image_mips`, `image_why`), which read_item then takes. Nothing about the asset's type is known
+yet: a file read as bytes is decoded for nothing, a Grid's file is decoded as read_item would. A file that won't
+decode is said by read_item, at the asset, as before; a path naming nothing is skipped. Not done ahead: URLs, meshes
+(1.5 s), models' skins. Measured: "declarations" 10.7 s to 3.6 s cold, the same 1.2 s warm; the pack is the same
+bytes. Test: `asset_images_decoded_ahead_are_the_ones_read` (asset_files_test.c: a file's and a glob's BMPs decoded
+ahead equal decoded inline, a missing path says nothing, a later read takes the same pixels).
+
+Cold `tide build --release` of Mount & Rifle: 65 s to 47 s (levels ~1.5 s, images ~2 s), then ~43 s with images
+decoded ahead. What's left: asset imports ~3.6 s, build code's program 4 s to write and 8 s to compile, the second
+pass of the front end ~6 s, the game's C ~11 s. Test: `mesh_lod_wanted_ahead_are_the_same_levels` (levels wanted
+ahead equal ones made alone, a file there is read instead, a want twice is made once, asking after makes none).
 
 The tools come from codegen_options: `build_cc` (NULL-terminated command), `build_flags` (compile and link),
 `build_libs` (link only), `build_include`, `build_engine`. tidec's flags are `--build-cc`, `--build-flag`,

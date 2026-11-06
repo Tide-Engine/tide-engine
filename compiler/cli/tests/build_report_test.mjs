@@ -142,7 +142,8 @@ try {
     assert(serverReport.outputs.some(output => resolve(output.path) === join(game, ".build", "reported-server.pack")),
         `${serverReport.outputs.map(output => output.path)}`);
 
-    // Large generated code uses all four parts, with ThinLTO compilation and a cached link.
+    // Large generated code is in parts, as many as its size takes, and its data's, with ThinLTO compilation and a
+    // cached link.
     const large = join(root, "large");
     const largeSource = amount => "scene Main { }\nsingleton State { int value; }\nsystem Tick(mut State state) {\n"
         + "state.value += 1;\n".repeat(80000) + `state.value += ${amount};\n}\n`;
@@ -151,9 +152,14 @@ try {
     const largeReport = join(root, "reports", "large.json");
     const largeBuild = await run(["build", large, "--release", "--report", largeReport]);
     assert.equal(largeBuild.code, 0, largeBuild.said);
-    const partNames = ["game.c", "game_part1.c", "game_part2.c", "game_part3.c"];
+    const manifest = readFileSync(join(large, ".tide", "native-release", "gen", "game_parts.txt"), "utf8");
+    const partNames = manifest.trim().split("\n").map(line => line.slice(4));
+    assert.equal(partNames[0], "game.c");
+    assert.equal(partNames.at(-1), "game_data.c");
+    assert([5, 9, 17].includes(partNames.length), `a power of two of code parts, and the data's: ${partNames}`);
+    for (let i = 1; i < partNames.length - 1; i++) assert.equal(partNames[i], `game_part${i}.c`);
     const compiledLarge = () => JSON.parse(readFileSync(largeReport, "utf8")).compiles.files.map(file => basename(file.source));
-    assert.deepEqual(compiledLarge().filter(name => partNames.includes(name)).sort(), partNames);
+    assert.deepEqual(compiledLarge().filter(name => partNames.includes(name)).sort(), [...partNames].sort());
     const largeWarm = await run(["build", large, "--release", "--report", largeReport]);
     assert.equal(largeWarm.code, 0, largeWarm.said);
     assert.deepEqual(compiledLarge(), []);

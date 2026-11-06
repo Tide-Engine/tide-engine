@@ -369,7 +369,7 @@ static const char *const mesh_3d_wgsl = WGSL(
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
     "@group(0) @binding(2) var how0: sampler;\n"
     "struct Corner {\n"
-    "    @builtin(position) position: vec4f,\n"
+    "    @builtin(position) @invariant position: vec4f,\n" // On the same depth as a game's shader, for Depth.Equal
     "    @location(0) at: vec2f,\n"
     "    @location(1) tint: vec4f,\n"
     "    @location(2) white: f32,\n"

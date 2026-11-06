@@ -487,6 +487,8 @@ static attrs parse_attrs(translation *x)
             at.builtin = builtin_named(x, expect_name(x, "a built-in's name"));
             accept(x, P_COMMA);
             expect(x, P_RPAREN, "')'");
+        } else if (same(name->at, name->len, "invariant")) {
+            at.invariant = true;
         } else if (same(name->at, name->len, "interpolate")) {
             expect(x, P_LPAREN, "'('");
             token *how = expect_name(x, "how it's interpolated");

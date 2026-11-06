@@ -24,7 +24,7 @@ var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 var<private> tide_cover: f32;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec2f,
 }
 struct tt_Corner {
@@ -100,7 +100,7 @@ var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 var<private> tide_cover: f32;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec2f,
 }
 struct tt_Corner {

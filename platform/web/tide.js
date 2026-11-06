@@ -1686,12 +1686,17 @@
           alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } },
         undefined,
     ];
-    const depths = [ // tide_gpu_depth: neither, tested and written, tested, written whatever is there
+    // tide_gpu_depth: neither, tested and written, tested, written whatever is there, tested and written with no
+    // color (a pre-pass: the pipeline's targets write nothing), and shown only where it's equal, writing none
+    const depths = [
         { depthWriteEnabled: false, depthCompare: 'always' },
         { depthWriteEnabled: true, depthCompare: 'less-equal' },
         { depthWriteEnabled: false, depthCompare: 'less-equal' },
         { depthWriteEnabled: true, depthCompare: 'always' },
+        { depthWriteEnabled: true, depthCompare: 'less-equal' },
+        { depthWriteEnabled: false, depthCompare: 'equal' },
     ];
+    const DEPTH_ALONE = 4;
     const culls = ['none', 'back', 'front']; // tide_gpu_cull, of a front that goes clockwise
     // What a kind of target holds (tide_gpu_target_format): 4 bits for each of its color images in order, 1 for
     // 4 bytes a pixel, which is the canvas's own format, and 2 for four floats of 16 bits (tide_gpu_color), and
@@ -2281,7 +2286,7 @@
                 // image in its place goes nowhere (into depth alone, that's all of them; the stage still runs,
                 // as it may discard), and an image past them is one the pipeline doesn't write
                 fragment: { module, entryPoint: 'fragment', targets: b.into.map((format, i) =>
-                    i < b.outputs ? { format, blend: blends[b.blend] } : { format, writeMask: 0 }) },
+                    i < b.outputs && b.depth !== DEPTH_ALONE ? { format, blend: blends[b.blend] } : { format, writeMask: 0 }) },
                 // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
                 primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
                 // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several

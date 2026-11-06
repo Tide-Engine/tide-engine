@@ -31,7 +31,7 @@ var<private> tide_g0: vec4i;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) @interpolate(flat) tide_f0: vec4f,
     @location(1) @interpolate(flat) tide_g0: vec4i,
 }

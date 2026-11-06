@@ -153,4 +153,6 @@ TIDE_TEST(draw_depth_is_a_value)
     tide_local_init(&local);
     TIDE_CHECK(local.Look.kept == Depth_Read && Depth_ReadWrite == TIDE_DEPTH_READ_WRITE);
     TIDE_CHECK(Depth_Read == TIDE_DEPTH_READ && Depth_None == TIDE_DEPTH_NONE);
+    TIDE_CHECK(local.Look.pre == Depth_Only && Depth_Only == TIDE_DEPTH_ONLY);
+    TIDE_CHECK(local.Look.lit == Depth_Equal && Depth_Equal == TIDE_DEPTH_EQUAL);
 }

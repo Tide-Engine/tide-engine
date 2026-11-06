@@ -5040,3 +5040,78 @@ view LayersRead(Art art, Layers layers)
         Draw.Transform(float2(8 + layer * 16, 56)) { Draw.Mesh(layers.small, art.faces, DepthLayer, Pick { layer = layer }); }
     }
 }
+
+// A depth pre-pass (pass 26), as a forest's leaves are drawn: into a target of 4 samples of four floats, a far card
+// and a near one cut out as Edge3's is (its bottom tenth discarded too) write depth alone, the near one through a
+// frag that writes white, the far one as the engine's own mesh. Then each is lit where its depth is the one there,
+// added, the near one through a frag that neither discards nor cuts, the far one as the engine's mesh, and a third
+// card between them, which the pre-pass never drew, nowhere. So a sample shaded twice, a sample lit by what's
+// hidden, or the pre-pass's white would all show: each pixel is a half of red or green, or both at the near card's
+// edge, where its samples are the cut-out's.
+local singleton Prepass
+{
+    RenderTarget scene;
+    List<Vertex> sheet; // 64 across from its corner
+    List<Vertex3> card; // 2 by 2 around the origin, its uv.x from 0 to 1
+    bool made;
+}
+
+// The pre-pass's frag: white, which goes nowhere, cut out where the near card's edge is
+frag CutWhite(Vertex3 vertex, out Color color)
+{
+    if (vertex.uv.y > 0.9) this.Discard();
+    color = Color.white;
+    this.Cutout(vertex.uv.x + 0.5 / 64);
+}
+
+// The near card's lit frag: what the pre-pass covered, with no discard and no cut
+frag LitRed(Vertex3 vertex, out Color color)
+{
+    color = Color(0.5, 0, 0);
+}
+
+[After(LayersRead)]
+view Prepasses(Art art, mut Prepass pre)
+{
+    if (art.targetPass != 26) return;
+    if (!pre.made)
+    {
+        pre.made = true;
+        pre.scene = RenderTarget(64, 64, 1, Format.Rgba16f, samples: 4);
+        pre.sheet = [Vertex { }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                     Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+        pre.card = [Vertex3 { position = float3(-1, -1, 0) }, Vertex3 { position = float3(1, -1, 0), uv = float2(1, 0) },
+                    Vertex3 { position = float3(1, 1, 0), uv = float2(1, 1) }, Vertex3 { position = float3(-1, 1, 0), uv = float2(0, 1) }];
+    }
+    var near = float4x4.identity;
+    var between = float4x4.Translate(float3(0, 0, 1));
+    var far = float4x4.Translate(float3(0, 0, 2));
+    // From 10 in front of the near card, a box 2 by 2 with no perspective: each card fills it
+    pre.scene.Clear(Color.black);
+    pre.scene.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(2, 2, 0.1, 30));
+    pre.scene.SetCull(Cull.None);
+    pre.scene.Depth(Depth.Only)
+    {
+        pre.scene.Mesh(pre.card, art.faces, far);
+        pre.scene.Mesh(pre.card, art.faces, near, CutWhite);
+    }
+    pre.scene.Depth(Depth.Equal)
+    {
+        pre.scene.Blend(Blend.Add)
+        {
+            pre.scene.Mesh(pre.card, art.faces, near, LitRed);
+            pre.scene.Tint(Color(0, 0.5, 0))
+            {
+                pre.scene.Mesh(pre.card, art.faces, far);
+            }
+            pre.scene.Tint(Color(0, 0, 0.5))
+            {
+                pre.scene.Mesh(pre.card, art.faces, between);
+            }
+        }
+    }
+    Draw.Clear(Color.black);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Mesh(pre.sheet, art.faces, pre.scene.color, Filter.Point);
+}

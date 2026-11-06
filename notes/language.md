@@ -1,5 +1,74 @@
 # Language features, as tidec builds them
 
+## Deterministic scene preparation (2026-11-05)
+
+Owner-approved syntax: `scene Campaign { prepare(mut Geography geography) { ... } }`, including mandatory
+parentheses for no dependencies. One block per match scene; its fields/methods and root `this` are in scope.
+Other access uses explicit match parameters, helpers and queries. Initial and later committed loads prepare before
+Spawned; preparation's entities exist by root Spawned. Ticks/Time wait locally, networking and views continue.
+Every full-state peer generates independently; the server never waits for client readiness. Slow peers catch up.
+Progress uses ordinary component/singleton fields. `Scene.IsPrepared(scene)` reads local completion;
+`Scene.IsPrepared(scene, player)` reads server-acknowledged readiness. Waiting/timeouts/kicks are game policy.
+
+Parser/checker/codegen lower a scene-owned block to a private targeted match handler with an implicit mutable
+scene receiver. Unqualified scene member access resolves to that receiver. User parameters cannot be filters;
+required root components are checked against reachable archetypes and actual presence at execution. Helper/event
+effects propagate refusal of nested scene loads and async starts. Existing match capabilities exclude local I/O.
+
+Generated scenes carry hidden engine-owned completion/player bits and a load ordinal for blocks. An inaccessible
+match singleton allocates ordinals, preserving load order across archetypes/reused entity IDs. Normal setters and
+row write-back preserve metadata, even for whole scene assignments. Row write-back uses the scheduler's output
+lanes: bypassing them with a world store let lane completion adopt uninitialized pages, caught by the transition
+regression and fixed. Completion defaults true when migrating an already activated root; actual loads reset false.
+
+Host callbacks defer preparation at start/tick boundaries. `tide/preparation.h` runs an independent world on the
+existing background provider and adopts completion at the same tick. Direct generated C world init/tick entry
+points prepare synchronously. Progress snapshots publish between complete top-level preparation statements after
+mutable parameter write-back; they are observational, never simulation inputs. Long loops/helpers need not publish
+intermediate progress. Generated loop/helper/handler safe points stop abandoned Tide work; trusted C must return.
+Readiness reads declare global scene-component read effects, including through helpers, so they cannot race
+mutable scene rows. Synchronous local handlers cannot read current match readiness; views can.
+
+Input capture uses raw world packing/unpacking rather than cross-thread COW: page reference counts are not atomic.
+Publication likewise builds an independently unpacked snapshot on the worker and transfers exclusive ownership under
+a lock. The main thread acquires that endpoint without decoding it, never sharing pages with the running worker.
+Completed state can use ordinary COW adoption after the provider has finished. This avoids a page-reference race
+that a shared published snapshot would have had. Input capture is linear in current world size; publication is linear
+in generated state size and happens on the worker. No per-loop-iteration snapshots are inferred.
+
+Session/readiness/visibility contracts: netcode.md. Ownership: schedule-and-threads.md, memory-safety.md and
+runtime-ownership.md. Reload: hot-reload.md. Provisional limits documented in spec/user docs: sharded matches
+reject preparation; no background provider runs synchronously; visibility clients receive the permitted server
+result because they may lack private generation inputs. No engine readiness timeout was added.
+
+Coverage: `scene_preparation_empty` covers empty blocks, local/helper/named-argument readiness and no-heap code.
+`scene_preparation` checks startup/transition ordering, fields/methods, Spawned queries, multiple loads,
+player index 64, whole-value replacement, packed/hash/snapshot state, queued/running cancellation, published progress,
+local/verified lifecycle and slow independent peers without resync. `scene_preparation_visibility` checks a namespaced
+scene's root dependency, hidden Recipe absence, permitted results, readiness and recipient-private ordinals.
+Negative fixtures cover syntax, placement, duplicates, dependencies, async/nested loads and readiness argument types.
+LSP/outline/grammar expose the authored block without synthetic declarations. The schedule prints preparation
+separately from event handlers; its golden pins helper-propagated readiness dependencies without a World parameter.
+`scene_preparation_assets` compares serial and actual background parallel generation using packed build constants;
+preparation step callbacks bind the pack on helper threads, including query steps.
+
+Validation before dev integration: Clang 23.1.2 / Windows ASan and WASI / Node 24.22.1; all preparation fixtures,
+readiness-only compilation, diagnostics, LSP, debug split-C compilation/link/run and 354 grammar checks pass. Docs
+production build passes. The full native run passed 3187/3189: one new diagnostic expectation was corrected and its
+focused run passes; the other failure is Render3D post's sampler expectation, already fixed in incoming origin/dev.
+The full web run passed 3015/3016 with the same existing Render3D expectation as its only failure. Native engine/LSP
+suites also pass after the session changes. Final merged validation is recorded below. Other OSes/Android are CI's;
+no CI was dispatched and no private prototype was changed.
+
+Merged validation (2026-11-06): kept both sides of the worker pack-binding conflict, using
+`is_worker || preparation_cpu` for parallel callbacks. Full sanitize and web-debug builds are warning-free.
+The affected preparation/readiness/diagnostic/schedule/worker/query/world-set/visibility/split-code/Render3D checks
+pass 49/49 natively (including the complete LSP suite) and 47/47 on WASI. The incoming Render3D post fix passes on
+both. Debug code/plumbing partitions and ordinary distribution partitions each compile, link and run all seven
+non-platform preparation cases. The merged docs production build and all 356 grammar checks pass. No remaining
+failure from either full-suite run is unresolved; the new tests and merge overlaps were validated without repeating
+unrelated suites. Provisional feature limits above remain explicit in the spec and user guide.
+
 ## Build-code constants in workers (2026-11-05)
 
 Build-code list constants are hidden packed assets even when their producer reads
@@ -43,6 +112,12 @@ so shared constants carry `unused` explicitly. Prototype emission ends any trail
 source as `plumbing thin filename` (two 0/1 flags and a basename). A nonpartitioned group has one record. Debug's
 own game code remains whole/unoptimized; its plumbing can partition. `split_code_min_bytes` is zero for explicit
 tidec use and 4 MiB in the CLI. Without `split_code`, the ordinary one-file output remains supported.
+
+Correction (2026-11-06): a split now first moves the large constants (const variables over `SPLIT_SHARED_CONST`,
+mostly shaders' code) into `<name>_data.c`, listed last, written even when it only declares (`partition ==
+SPLIT_DATA`, `split_name.data`). The code is then halved by hash bits into `split_code_parts` parts (default 4, up to
+16) while each keeps `split_code_part_bytes` of code: tidec keeps four, the CLI asks for up to 16 of 512 KiB.
+Measurements are in cli-and-packages.md, Faster edit builds of big games.
 
 No Tide semantics, generated runtime calls, layouts, ordering, snapshots or hashes change. ThinLTO preserves
 cross-part optimization opportunities, not an identical machine-code layout. Stable-part regression changes one
@@ -4705,4 +4780,3 @@ in `notes/standard-host.md`.
 Worker-constant fix integration: merged origin/dev bda29c5c9 cleanly. Rebuilt
 the affected targets after incoming compiler/runtime changes; the same four
 Windows ASan and three WASI checks pass again.
-

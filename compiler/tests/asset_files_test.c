@@ -187,3 +187,67 @@ TIDE_TEST(asset_mesh_side_notifications_override_unchanged_metadata)
     remove(model);
     remove(obj_model);
 }
+
+// A width x 1 BMP, 24 bits a pixel, its pixels' blue channel `seed + x`
+static bool write_bmp(const char *path, const uint32_t width, const uint8_t seed)
+{
+    const uint32_t row = (width * 3u + 3u) & ~3u, size = 54u + row;
+    uint8_t bytes[54 + 64] = {'B', 'M'};
+    if (row > 64) return false;
+    memcpy(bytes + 2, &size, 4);
+    const uint32_t offset = 54, header = 40, height = 1, image = row;
+    const uint16_t planes = 1, bits = 24;
+    memcpy(bytes + 10, &offset, 4), memcpy(bytes + 14, &header, 4), memcpy(bytes + 18, &width, 4);
+    memcpy(bytes + 22, &height, 4), memcpy(bytes + 26, &planes, 2), memcpy(bytes + 28, &bits, 2);
+    memcpy(bytes + 34, &image, 4);
+    for (uint32_t x = 0; x < width; x++) {
+        bytes[54 + x * 3] = (uint8_t)(seed + x), bytes[54 + x * 3 + 1] = 10, bytes[54 + x * 3 + 2] = 200;
+    }
+    return write_bytes(path, bytes, size);
+}
+
+// Images decoded ahead, a file's and a glob's, are what reading each as an asset decodes, and reading them after
+// decodes none again
+TIDE_TEST(asset_images_decoded_ahead_are_the_ones_read)
+{
+    const char *source = ASSET_FILES_WORK "/ahead.tide";
+    char one[512], first[512], second[512], folder[512];
+    snprintf(one, sizeof one, "%s/ahead_one.bmp", ASSET_FILES_WORK);
+    snprintf(folder, sizeof folder, "%s/ahead_many", ASSET_FILES_WORK);
+    snprintf(first, sizeof first, "%s/a.bmp", folder);
+    snprintf(second, sizeof second, "%s/b.bmp", folder);
+    TIDE_REQUIRE(folder_make(folder));
+    TIDE_REQUIRE(write_bmp(one, 5, 30) && write_bmp(first, 3, 60) && write_bmp(second, 7, 90));
+    const str written[] = {str_from("ahead_one.bmp"), str_from("ahead_many/*.bmp"), str_from("missing.bmp")};
+    const char *declaring[] = {source, source, source};
+
+    // Inline, as before
+    asset_files_forget();
+    asset_value *alone_one = asset_resolve(source, written[0], ASSET_TEXTURE, false, false, (loc){0}, NULL);
+    asset_value *alone_many = asset_resolve(source, written[1], ASSET_TEXTURE, true, false, (loc){0}, NULL);
+    TIDE_REQUIRE(alone_one && alone_many && alone_many->count == 2);
+    tide_color kept_one[5], kept_many[2][7];
+    memcpy(kept_one, alone_one->items[0].image.pixels, sizeof kept_one);
+    memcpy(kept_many[0], alone_many->items[0].image.pixels, 3 * sizeof(tide_color));
+    memcpy(kept_many[1], alone_many->items[1].image.pixels, 7 * sizeof(tide_color));
+
+    // Ahead: what's read after is the same, and is what was decoded ahead (the file's own pixels, not another decode)
+    asset_files_forget();
+    asset_files_decode_ahead(declaring, written, 3, NULL);
+    TIDE_CHECK(diag_error_count() == 0); // A path that names nothing is said when an asset reads it
+    asset_value *ahead_one = asset_resolve(source, written[0], ASSET_TEXTURE, false, false, (loc){0}, NULL);
+    asset_value *ahead_many = asset_resolve(source, written[1], ASSET_TEXTURE, true, false, (loc){0}, NULL);
+    TIDE_REQUIRE(ahead_one && ahead_many && ahead_many->count == 2);
+    TIDE_CHECK(ahead_one->items[0].image.width == 5 && ahead_many->items[1].image.width == 7);
+    TIDE_CHECK(memcmp(kept_one, ahead_one->items[0].image.pixels, sizeof kept_one) == 0);
+    TIDE_CHECK(memcmp(kept_many[0], ahead_many->items[0].image.pixels, 3 * sizeof(tide_color)) == 0);
+    TIDE_CHECK(memcmp(kept_many[1], ahead_many->items[1].image.pixels, 7 * sizeof(tide_color)) == 0);
+    asset_value *again = asset_resolve(source, written[0], ASSET_TEXTURE, false, false, (loc){0}, NULL);
+    TIDE_CHECK(again && again->items[0].image.pixels == ahead_one->items[0].image.pixels);
+    asset_files_forget();
+    arena_reset();
+    diag_reset();
+    remove(one);
+    remove(first);
+    remove(second);
+}

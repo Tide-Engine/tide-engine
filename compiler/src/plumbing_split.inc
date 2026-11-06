@@ -54,6 +54,7 @@ typedef struct split_name {
     bool is_static;   // Defined static (or with a macro meaning it)
     bool renamed;     // Written tide_split_<name> (above)
     bool field;       // Also a field's name somewhere: never renamed, as a struct declaring it would be
+    bool data;        // A large constant SPLIT_DATA puts in the second file, whoever names it
 } split_name;
 
 typedef struct split_names {
@@ -643,6 +644,14 @@ static void split_put_conditionals(split_out *o, const char *t, const size_t fro
 // Larger static consts than this are the plumbing's alone (shaders' code, tables of rows), not copied.
 #define SPLIT_SHARED_CONST 16384
 
+// split_plumbing's `partition` that cuts out the generated C's data: its large constants (shaders' code, tables) go
+// to the second file, everything else to the first. Most of a big game's C is that data, which an edit of its code
+// doesn't change: the parts of the code are then cut from what's left, a fraction of the text.
+#define SPLIT_DATA (-2)
+
+// The most parts the code is cut into (codegen_options.split_code_parts)
+#define SPLIT_MOST_PARTS 16
+
 static const char split_macros[] =
     "// This build's generated C is in two files, the game's code and its plumbing; what one names of the other's\n"
     "// is linked by name, inside the game\n"
@@ -657,6 +666,7 @@ typedef enum split_place { SPLIT_IN_PLUMBING, SPLIT_IN_CODE, SPLIT_IN_BOTH } spl
 
 static split_place split_place_of(const split_name *e, const bool is_static)
 {
+    if (e->data) return SPLIT_IN_PLUMBING;
     if (e->code || (is_static && e->by_code && !e->by_plumbing)) return SPLIT_IN_CODE;
     if (e->shared && e->by_code && e->by_plumbing) return SPLIT_IN_BOTH;
     return SPLIT_IN_PLUMBING;
@@ -746,18 +756,19 @@ static void split_emit(const char *t, const size_t n, const split_item_list *ite
 }
 
 // Splits `c` into `code` and `plumbing`, with the variables starting at the `code_count` offsets `code_at` the
-// code's. False, writing neither, where it can't.
+// code's (`partition` -1); or by bit `partition` of each name's hash (0 and up), or with only the large constants
+// in `plumbing` (SPLIT_DATA). False, writing neither, where it can't.
 static bool split_plumbing(const sb *c, const size_t *code_at, const int code_count, sb *code, sb *plumbing, const int partition)
 {
     const char *t = c->data ? c->data : "";
     split_item_list items = {0};
     split_why = NULL;
     if (!split_items(t, c->len, &items)) return false;
-    if (partition >= 0) {
+    if (partition != -1) {
         for (int i = 0; i < items.count; i++) {
             split_item *it = &items.items[i];
             if (it->kind == SPLIT_FUNCTION)
-                it->code = ((split_hash(t + it->name, it->name_len) >> partition) & 1) == 0;
+                it->code = partition == SPLIT_DATA || ((split_hash(t + it->name, it->name_len) >> partition) & 1) == 0;
         }
     }
     split_names names = {0};
@@ -780,7 +791,11 @@ static bool split_plumbing(const sb *c, const size_t *code_at, const int code_co
             e->variable = true;
             e->is_static = e->is_static || it->is_static;
             for (int k = 0; k < code_count; k++) e->code = e->code || code_at[k] == it->start;
-            if (partition >= 0 && !shared)
+            if (partition == SPLIT_DATA && !shared) {
+                e->data = !split_word_is(t + it->name, it->name_len, "tide_game_api") && it->constant
+                       && it->end - it->start > SPLIT_SHARED_CONST;
+                e->code = !e->data;
+            } else if (partition >= 0 && !shared)
                 e->code = split_word_is(t + it->name, it->name_len, "tide_game_api")
                        || ((split_hash(t + it->name, it->name_len) >> partition) & 1) == 0;
         }
@@ -813,7 +828,7 @@ static bool split_plumbing(const sb *c, const size_t *code_at, const int code_co
     // The plumbing's static names the code's file names, which become external (split_emit)
     for (size_t k = 0; k < names.cap; k++) {
         split_name *e = &names.slots[k];
-        if (partition >= 0) {
+        if (partition != -1) {
             if (!e->name || !e->is_static || e->field || (e->code ? !e->by_plumbing : !e->by_code)) continue;
             if (e->variable && split_place_of(e, true) == SPLIT_IN_BOTH) continue;
             e->renamed = true;

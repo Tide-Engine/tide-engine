@@ -1785,6 +1785,52 @@ static void run_size_checks(const char *when)
     tide_render_target_dispose(limited);
 }
 
+// A depth pre-pass and its lit pass (`Prepasses` in shaders.tide): Depth.Only writes depth and no color, its frag's
+// discards and cut-outs included, at 4 samples; Depth.Equal then shades each sample the pre-pass left once, added, and
+// nothing the pre-pass didn't draw. The near card fills one half of the target and the far card shows in the other
+// (whichever side the camera puts it), and in the near card's discarded tenth.
+static void run_prepass_checks(const char *when)
+{
+    local.Art.targetPass = 26;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    enum { LEFT, RIGHT, EDGE_A, EDGE_B, TOP_LEFT, TOP_RIGHT, LOW_LEFT, LOW_RIGHT, POINTS };
+    const tide_float2 points[POINTS] = {{16.5f, 32.5f}, {48.5f, 32.5f}, {31.5f, 32.5f}, {32.5f, 32.5f},
+                                        {16.5f, 2.5f},  {48.5f, 2.5f},  {16.5f, 61.5f}, {48.5f, 61.5f}};
+    uint32_t got[POINTS];
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, POINTS, got);
+    int r[POINTS], g[POINTS], b[POINTS];
+    bool once = true; // Every sample one card's half, never both added, nor white, nor the card between
+    for (int i = 0; i < POINTS; i++) {
+        r[i] = (int)(got[i] >> 24), g[i] = (int)(got[i] >> 16 & 255u), b[i] = (int)(got[i] >> 8 & 255u);
+        once = once && b[i] <= 1 && abs(r[i] + g[i] - 128) <= 4;
+    }
+    printf("%s: a lit pass under Depth.Equal shades each sample of a pre-pass once, and the pre-pass writes no color%s "
+           "(0x%08X 0x%08X 0x%08X 0x%08X 0x%08X 0x%08X 0x%08X 0x%08X)\n", once ? "ok" : "FAIL", when, (unsigned)got[0],
+           (unsigned)got[1], (unsigned)got[2], (unsigned)got[3], (unsigned)got[4], (unsigned)got[5], (unsigned)got[6],
+           (unsigned)got[7]);
+    if (!once) failures++;
+    // Which half the near card is in: red there, green past its cut
+    const bool near_right = r[RIGHT] > r[LEFT];
+    const int near = near_right ? RIGHT : LEFT, past = near_right ? LEFT : RIGHT;
+    const bool halves = r[near] >= 124 && g[near] <= 3 && g[past] >= 124 && r[past] <= 3;
+    printf("%s: the near card is lit where its cut-out pre-pass covered, the far one where it was cut%s\n",
+           halves ? "ok" : "FAIL", when);
+    if (!halves) failures++;
+    // Its discarded tenth, at its top or its bottom, shows the far card, and the other end the near one
+    const int top = near_right ? TOP_RIGHT : TOP_LEFT, low = near_right ? LOW_RIGHT : LOW_LEFT;
+    const bool cut = (g[top] >= 124 && r[low] >= 124) || (r[top] >= 124 && g[low] >= 124);
+    printf("%s: where the pre-pass's frag discarded, the far card is lit%s\n", cut ? "ok" : "FAIL", when);
+    if (!cut) failures++;
+    // At the cut's edge, the near card's samples are the cut-out's share, the far card's the rest
+    const bool shared = (r[EDGE_A] >= 20 && g[EDGE_A] >= 20) || (r[EDGE_B] >= 20 && g[EDGE_B] >= 20);
+    printf("%s: at the cut-out's edge, each card is lit at its own samples%s\n", shared ? "ok" : "FAIL", when);
+    if (!shared) failures++;
+}
+
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
 // as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
 // draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
@@ -1824,6 +1870,7 @@ static void run_prewarmed_checks(void)
     run_model_checks(when);
     run_place_checks(when);
     run_size_checks(when);
+    run_prepass_checks(when);
     const uint32_t after = tide_platform_shader_pipelines();
     printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
            (unsigned)after);
@@ -1856,6 +1903,7 @@ static void run_again(const int roll, const char *when)
     run_model_checks(when);
     run_place_checks(when);
     run_size_checks(when);
+    run_prepass_checks(when);
 }
 #endif
 
@@ -1930,6 +1978,8 @@ static int frame(void *user, const float seconds)
     run_place_checks("");
     run_place_checks(", again");
     run_size_checks("");
+    run_prepass_checks("");
+    run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

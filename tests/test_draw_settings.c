@@ -478,6 +478,16 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_set_depth(&d, (tide_depth)77);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
+    // A pre-pass and the draw lit after it: each its own run, carrying its depth
+    const uint32_t before = d.count;
+    tide_draw_set_depth(&d, TIDE_DEPTH_ONLY);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.count == before + 1 && last(&d)->depth == TIDE_DEPTH_ONLY);
+    tide_draw_set_depth(&d, TIDE_DEPTH_EQUAL);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.count == before + 2 && last(&d)->depth == TIDE_DEPTH_EQUAL);
+    tide_draw_set_depth(&d, (tide_depth)(TIDE_DEPTH_EQUAL + 1));
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
 
     tide_draw_reset(&d);
     for (int entity = 0; entity < 3; entity++) {

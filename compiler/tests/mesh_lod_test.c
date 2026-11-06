@@ -484,6 +484,54 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
     shape_free(&s);
 }
 
+// Levels wanted ahead are made at once, on several threads, and are the levels one made alone would be: the asking
+// after finds them, and makes nothing. One a file holds is read, not made.
+TIDE_TEST(mesh_lod_wanted_ahead_are_the_same_levels)
+{
+    enum { SHAPES = 6 };
+    shape shapes[SHAPES];
+    tide_mesh_lod_source sources[SHAPES];
+    uint8_t ahead[SHAPES][32], alone[SHAPES][32];
+    char path[SHAPES][600];
+    for (int i = 0; i < SHAPES; i++) {
+        shapes[i] = ball(8u + 2u * (uint32_t)i, 16u + 3u * (uint32_t)i);
+        sources[i] = source_of(&shapes[i]);
+        memset(ahead[i], 0, 32), memset(alone[i], 0, 32);
+        ahead[i][0] = 40, ahead[i][1] = (uint8_t)i, alone[i][0] = 41, alone[i][1] = (uint8_t)i;
+        key_path(path[i], sizeof path[i], ahead[i]);
+        remove(path[i]);
+    }
+    // The first's file is there already
+    TIDE_REQUIRE(mesh_lod_cached(alone[0], &sources[0], MESH_LOD_WORK));
+    char first[600];
+    key_path(first, sizeof first, alone[0]);
+    copy_file(first, path[0], -1, -1);
+
+    const uint32_t before = mesh_lod_made();
+    for (int i = 0; i < SHAPES; i++) mesh_lod_want(ahead[i], &sources[i], NULL, 0u, MESH_LOD_WORK);
+    mesh_lod_want(ahead[1], &sources[1], NULL, 0u, MESH_LOD_WORK); // Wanted twice: made once
+    mesh_lod_make_wanted();
+    TIDE_CHECK(mesh_lod_made() == before + SHAPES - 1u);
+    for (int i = 0; i < SHAPES; i++) {
+        const tide_mesh_lod *got = mesh_lod_cached(ahead[i], &sources[i], MESH_LOD_WORK);
+        TIDE_REQUIRE(got && levels_hold(&shapes[i], got));
+        const tide_mesh_lod made = *got; // The table it's in may move as the next is kept; its indices stay
+        TIDE_CHECK(file_size(path[i]) > 0);
+        const tide_mesh_lod *own = mesh_lod_cached(alone[i], &sources[i], NULL);
+        TIDE_REQUIRE(own);
+        TIDE_CHECK(own->levels == made.levels && own->indices == made.indices && own->radius == made.radius);
+        TIDE_CHECK(memcmp(own->index, made.index, made.indices * sizeof(uint32_t)) == 0);
+        TIDE_CHECK(memcmp(own->error, made.error, sizeof made.error) == 0);
+    }
+    // Asking for the ahead ones made none; the ones alone are made but the first, whose file was read
+    TIDE_CHECK(mesh_lod_made() == before + SHAPES - 1u + SHAPES - 1u);
+    for (int i = 0; i < SHAPES; i++) {
+        remove(path[i]);
+        shape_free(&shapes[i]);
+    }
+    remove(first);
+}
+
 // A level only pays by the triangles it takes off, so none is made with
 // fewer than a source says: the chain stops above it. And a mesh of fewer
 // triangles than a source says has no levels at all.

@@ -783,8 +783,8 @@ static bool hiz_member(const tide_draw_list *list, const draw_step *s)
 // Whether a step writes depth where it draws: what a pyramid made after it can measure.
 static bool hiz_writes_depth(const tide_draw_list *list, const draw_step *s)
 {
-    if (s->kind == STEP_MESH_3D) return s->depth == TIDE_DEPTH_READ_WRITE;
-    return s->kind == STEP_SHADED && list->runs[s->first].shader->dims == 3 && s->depth == TIDE_DEPTH_READ_WRITE;
+    if (s->kind == STEP_MESH_3D) return depth_written(s->depth);
+    return s->kind == STEP_SHADED && list->runs[s->first].shader->dims == 3 && depth_written(s->depth);
 }
 
 // Whether a step that goes through the frame's culled buckets is an ordinary listed run's, its places the CPU's

@@ -112,6 +112,11 @@ bool asset_animations_format_diagnostic(const char *path, const char *why, loc a
 // its value's to say: asset_match.sides.
 typedef void (*asset_path_fn)(void *user, const char *path);
 void asset_watched(const char *declaring, str path, asset_path_fn found, void *user);
+// The images `count` paths name (each written in the file `declaring[i]`; files or globs), read and decoded ahead,
+// several at once, where asset_resolve would decode them as it reads them: not one whose texture the cache has
+// prepared, which it takes instead. What each gives is what asset_resolve would get, as it's the same file read the
+// same way; what's wrong with one is said when an asset reads it.
+void asset_files_decode_ahead(const char *const *declaring, const str *paths, int count, const char *game_folder);
 
 // Whether `path` (forward slashes) matches the glob `pattern`: `*` within a
 // name, `**` across folders, `?` a character; Windows paths ignore case.
