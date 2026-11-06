@@ -37,7 +37,8 @@ Project build and package commands automatically use the version pinned with
 `tide pin`, asking before downloading a missing release into the shared
 version cache. Exact project pins suppress automatic upgrade notices. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
-In a terminal, each build stage keeps a completed line with a full bar and its
+In a terminal, build stages appear only after 0.5 seconds; stages that finish
+sooner leave no progress line. Each displayed stage keeps a completed line with a full bar and its
 elapsed time, with bars aligned in one column. Asset build program preparation
 (including its C generation and packing) stays in one row, followed by separate
 compiling and running rows. The program is compiled once when its cached results

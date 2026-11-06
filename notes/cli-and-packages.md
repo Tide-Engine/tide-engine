@@ -1,5 +1,23 @@
 # `tide`, packages and the package
 
+## Hide stages shorter than half a second (2026-11-06)
+
+Owner: show progress only if a stage lasts at least 0.5 seconds. The terminal
+renderer now skips both active and retained rows while that stage's elapsed
+time is below 500 ms. The existing activity thread reveals a longer stage on
+its next frame; its timer still measures from the stage's actual start. A stage
+that crosses the threshold between frames still gets its completed row.
+Diagnostic replay, redirected output and reports are unchanged, including errors
+from a stage that finishes before the threshold. No added waits or build delays.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and help, build_overlap,
+build_report pass (3/3); production docs build passes. Scratch ASan feedback
+probe checks 499 ms stays hidden,
+500 ms reveals progress, fast stage transitions leave no rows, slow stages
+retain completion even without an active frame, and failed stages retain their
+actual count. No game or browser was launched; real-terminal appearance remains
+manual coverage. No generated-C, scheduling or runtime changes.
+
 ## One-line active build progress (2026-11-06)
 
 Owner: put the active label beside its bar, truncating text that would overlap.
