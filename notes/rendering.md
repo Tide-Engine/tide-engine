@@ -1,5 +1,64 @@
 # The platform layer and the renderer
 
+## The render phase's CPU, measured and cut (2026-11-06)
+
+Asked from Mount & Rifle's thread (aiming at 144 fps native: 6.9 ms of CPU a frame), where its ~2 ms render phase
+went at a forest spot of ~1,600 draws in ~60 passes, and to cut what dominates. Claude's work, internal (no language
+or API change beyond the profile's new fields).
+
+- **Measured breakdown** (`tide_platform_render_parts`, `--profile`'s `render_phases`; standard-host.md, Render
+  phases): `prepare`, `steps`, `uploads`, `culling`, `record`, `finish`, `other`. Mount & Rifle (its `dev` e19b25d,
+  built with this checkout in a scratch `TIDE_EXTERNAL_DIRS` folder like benchmarks.md's, `DEFINES PERFORMANCE_TRACE
+  FOREST_REVIEW`, release, hidden, Vulkan, RTX 4080 SUPER, 1920x1036), its `tools/trees-profile.txt` route moved for
+  today's menu and world-making (click Start new at 30, Begin at 80, E at 900, the route's moves 610 frames later),
+  measured frames 1511-1760 among the trees: 1,742 draw calls, 36 passes. Render p50 ~2.0 ms, of which `record`
+  1.63, `steps` 0.11, `uploads` 0.13, `culling` 0.11, `prepare` 0.02, `finish` 0.01. So the passes' recording is
+  80% of it.
+- **Inside `record`** (temporary cycle counters around the backend's calls, removed): ~62% in `gpu_vk.c`, ~38% the
+  renderer's own per-step work. Of the backend's: `vkCmdBindPipeline` 18% (one each draw, and 1,091 of the 1,761
+  were the pipeline already bound), descriptor pushes 15% (every draw pushed all its bindings, ~6 textures and their
+  samplers on average, because its uniforms moved), pass begins 15% (~7 µs each: `vkBeginCommandBuffer` ~3 µs,
+  `vkCmdBeginRendering` ~2.4, the barrier and the outside command buffer's end the rest), vertex binds 7%.
+  Sampling the main thread (`tide_sample --main`) put the renderer's own share in `prepare_source_target`,
+  `target_extent`, `texture_to_read`, `prepare_step_mipmaps`, `unavailable_texture` and `texture_for`: each step
+  looked at each of its textures four or five times, shadow maps' targets through `target_extent` each time.
+- **Changed:**
+  - `vk_use` binds nothing for the pipeline the pass has bound already (its target-kind check was made when it was).
+  - `bind()` pushes only what changed: push descriptors are updated incrementally while the same pipeline layout
+    is used in a command buffer (Vulkan's spec, `vkCmdPushDescriptorSetKHR`), so `vk.pushed` (the layout of the
+    command buffer's last push, `NO_PUSH` at every pass and compute pass) and what each binding was given
+    (`pushed_uniforms[_at]`, `pushed_views`/`_view_layouts`, `pushed_samplers`, `pushed_storage[_range]`) let a draw
+    write only its uniforms' place and the images, samplers and storage that aren't the last push's. Another layout,
+    or a device on descriptor sets (`TIDE_VULKAN_DESCRIPTOR_SETS`), writes all as before. Handles can't be reused
+    within a command buffer (freed objects wait for the frame's fence), so equal handles are the same thing.
+  - `platform.c` keeps a `texture_check` for each of the list's textures: whether it can be sampled (once a list),
+    and whether `prepare_source_target` and a trilinear read's `prepare_mipmaps` found nothing to do, as of
+    `source_epoch`. The epoch goes up at each list, each change of destination (a pass drew into a target, or one
+    was made), after each kernel or GPU list step, after occlusion's measure, and after either preparation made
+    anything; a found need is never kept (it's made, which moves the epoch). Overlays draw another list and start
+    their own.
+- **Not changed, tried:** skipping vertex and index buffer binds already bound gave nothing measurable (reverted).
+  Pass begins stay a command buffer each: a pass's uploads go in a `before` command buffer queued ahead of it, which
+  sharing one command buffer with the work before it would put ahead of that work too. Reordering draws so a target's
+  passes join would change what the game asked for; here the scene's pass is split by shadow-map draws between its
+  draws (passes 9-14 of 36), the game's to order (its `notes/gaps.md` has it).
+- **Before/after**, the same binary with the changes switched off by a temporary environment variable, five
+  alternating pairs, medians of the runs' figures: render p50 2.02 -> 1.65 ms, mean 2.24 -> 1.91, p95 3.50 -> 2.89;
+  `record` p50 1.63 -> 1.26, p95 2.95 -> 2.33; `cpu_work` p50 5.55 -> 5.24 ms. Draw calls the same (1,742). What's
+  left in `record`, by the counters: pass begins ~0.2 ms (36), real pipeline changes ~0.2 ms (~670), the draws'
+  pushes and draws ~0.25, the renderer's own steps ~0.5.
+- **Next, not built:** recording passes on several threads (secondary command buffers per pass or per run of
+  draws) is what would take most of what's left; the renderer's step state is global in `platform.c` today.
+- **Pixels:** the game's own frames differ by 300-450 pixels between two runs of one mode (wind, timing), so its
+  captures can't show identity; the engine's pixel tests are what check it (below).
+- **Tests:** `profile_report_render_phases_of_the_frames_that_gave_them` (`tests/test_profile_report.c`);
+  `platform/tests/profile.mjs` checks the phases' names, samples, and that they add up to the render phase.
+  Native sanitize: every `gpu`-labelled test (Vulkan with push descriptors and with sets). `tide_platform_draw`'s
+  prewarm phase failed on this machine before any change (the base commit too): ten pipelines on the pool with the
+  driver's cache cold took more than its 600 headless frames (~1.5 ms each); `PREWARM_FRAMES` is 6,000 now, still a
+  bound on a hang. After merging `origin/dev` (the depth pre-pass, new shaders) `tide_platform_prewarm` failed the
+  same way two runs in three (its `WAIT_FRAMES`, 600, used up in 0.8 s); 6,000 too, then 4 of 4 passed. Web: `platform.c`'s part runs there too (below in validation).
+
 ## Vulkan pipelines on the pool's threads; the loader waits for them (2026-11-05)
 
 The owner's report: Rogue State (Mount & Rifle, a `tide run` debug build) sat on

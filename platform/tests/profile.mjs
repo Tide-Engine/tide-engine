@@ -47,7 +47,14 @@ function checkReport(r, total, warmup, bypass = false) {
     assert.match(r.metadata.simulation_id, /^[0-9a-f]{64}$/);
     assert.ok(r.metadata.threads >= 1);
     assert.equal(r.cpu_work.samples, measured);
-    for (const metric of [r.cpu_work, ...Object.values(r.cpu_phases)]) {
+    assert.deepEqual(Object.keys(r.render_phases), ['prepare', 'steps', 'uploads', 'culling', 'record', 'finish', 'other']);
+    if (measured) { // The renderer's parts come to the render phase, give or take its rounding
+        const parts = Object.values(r.render_phases).reduce((sum, m) => sum + m.total_ms, 0);
+        assert.ok(Math.abs(parts - r.cpu_phases.render.total_ms) <= 0.001 * measured + 1e-6,
+                  `render parts ${parts} against render ${r.cpu_phases.render.total_ms}`);
+        assert.ok(r.render_phases.record.total_ms > 0);
+    }
+    for (const metric of [r.cpu_work, ...Object.values(r.cpu_phases), ...Object.values(r.render_phases)]) {
         assert.equal(metric.samples, measured);
         assert.equal(metric.quantile_samples, measured);
         assert.equal(metric.quantiles_estimated, false);

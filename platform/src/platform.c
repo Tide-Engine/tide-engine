@@ -1,5 +1,6 @@
 #include "tide/platform.h"
 #include "tide/draw_profile.h"
+#include "tide/time.h"
 
 #include <float.h>
 #include <errno.h>
@@ -4602,6 +4603,47 @@ static void forget_textures(const uint32_t epoch)
 }
 
 // Whether a list's texture is a render target's image: its color, or its depth.
+// What the steps of the list being drawn found of each of its textures, so that a texture many draws read is
+// looked at once rather than at each: whether it can be sampled (`unavailable`, once a list), and whether a source
+// target's image or a texture's smaller images were found ready, as of `source_epoch`, which goes up wherever a
+// pass, a kernel or a preparation could change that (a pass drew into a target, a target was made or resolved,
+// smaller images were made). A found need isn't kept: it's made, which moves the epoch.
+typedef struct texture_check {
+    uint32_t list;      // check_list as these were found, or another: nothing found yet
+    bool known;         // `unavailable` was found
+    const char *unavailable;
+    uint32_t ready;     // 1 + source_epoch where prepare_source_target found nothing to do
+    uint32_t mipped;    // ...and where prepare_mipmaps found a trilinear read's smaller images made
+} texture_check;
+static texture_check *texture_checks;
+static uint32_t texture_check_capacity;
+static uint32_t check_list;   // Goes up for each list drawn (overlays too)
+static uint32_t source_epoch;
+
+static void checks_begin(const tide_draw_list *list)
+{
+    if (list->texture_count > texture_check_capacity) {
+        texture_checks = tide_realloc(texture_checks, texture_check_capacity * sizeof(texture_check),
+                                      list->texture_count * sizeof(texture_check));
+        memset(texture_checks + texture_check_capacity, 0,
+               (list->texture_count - texture_check_capacity) * sizeof(texture_check));
+        texture_check_capacity = list->texture_count;
+    }
+    if (++check_list == 0) { // Wrapped: nothing is as found
+        memset(texture_checks, 0, texture_check_capacity * sizeof(texture_check));
+        check_list = 1;
+    }
+    source_epoch++;
+}
+
+// The list's texture's check (1 + its place), this list's
+static texture_check *texture_check_of(const uint32_t texture)
+{
+    texture_check *c = &texture_checks[texture - 1u];
+    if (c->list != check_list) *c = (texture_check){.list = check_list};
+    return c;
+}
+
 static bool of_target(const tide_draw_texture *t)
 {
     return t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH;
@@ -4696,9 +4738,21 @@ static bool samples_destination(const tide_draw_list *list, const draw_step *s)
 // Why a list's texture can't be sampled, or NULL: a target that was disposed
 // or has no image, the color of one that holds depth alone, and a color image
 // past the ones a target holds.
+static const char *texture_unavailable(const tide_draw_list *list, const uint32_t texture);
+
 static const char *unavailable_texture(const tide_draw_list *list, const uint32_t texture)
 {
     if (!texture || texture > list->texture_count) return NULL;
+    texture_check *c = texture_check_of(texture);
+    if (!c->known) {
+        c->unavailable = texture_unavailable(list, texture);
+        c->known = true;
+    }
+    return c->unavailable;
+}
+
+static const char *texture_unavailable(const tide_draw_list *list, const uint32_t texture)
+{
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (t->space == TIDE_PIXELS_TARGET_CUBE) {
         return !tide_render_target_live(t->id) || !tide_target_size_valid(t->target) ? "source cube is invalid or disposed" : NULL;
@@ -4738,9 +4792,21 @@ static const char *samples_unavailable(const tide_draw_list *list, const draw_st
 // A source at the current revision, whose image now comes to another number
 // of pixels (the display's scale changed, or the window's size under a target
 // that follows it), sees the image made again, black, as a destination would.
+static bool source_target_needs(const tide_draw_list *list, const uint32_t texture, const bool check);
+
 static bool prepare_source_target(const tide_draw_list *list, const uint32_t texture, const bool check)
 {
     if (!texture || texture > list->texture_count) return false;
+    texture_check *c = texture_check_of(texture);
+    if (check && c->ready == source_epoch + 1u) return false;
+    const bool needed = source_target_needs(list, texture, check);
+    if (!check) source_epoch++; // What it made, any of it
+    else if (!needed) texture_check_of(texture)->ready = source_epoch + 1u;
+    return needed;
+}
+
+static bool source_target_needs(const tide_draw_list *list, const uint32_t texture, const bool check)
+{
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (t->space == TIDE_PIXELS_TARGET_CUBE) { // A cube nothing drew into yet, or one that was resized, is black
         const gpu_cube *c = find_cube(t->id);
@@ -4812,9 +4878,21 @@ static bool prepare_source_targets(const tide_draw_list *list, const draw_step *
 // drawn into the target. So one that's never read so has none, and one that
 // doesn't change makes them once. Whether any was to be made; with `check`,
 // nothing is.
+static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, const bool check);
+
 static bool prepare_mipmaps(const tide_draw_list *list, const uint32_t texture, const tide_filter filter, const bool check)
 {
     if (filter != TIDE_FILTER_TRILINEAR || !texture || texture > list->texture_count) return false;
+    texture_check *c = texture_check_of(texture);
+    if (check && c->mipped == source_epoch + 1u) return false;
+    const bool needed = mipmaps_needed(list, texture, check);
+    if (!check) source_epoch++;
+    else if (!needed) texture_check_of(texture)->mipped = source_epoch + 1u;
+    return needed;
+}
+
+static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, const bool check)
+{
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (t->space == TIDE_PIXELS_TARGET_DEPTH) return false;
     if (t->space == TIDE_PIXELS_TARGET_ARRAY) { // Once more passes have drawn into its layers, every layer's
@@ -5288,6 +5366,23 @@ static const screen_uniforms *step_uniforms(screen_uniforms *of_target, const dr
 // tide_platform_read_pixels' own pixels. With `over`, it goes over what's
 // there (the overlay), and leaves the frame's camera, textures and meshes as
 // they are.
+// The CPU's time in the parts of the last list drawn, overlays aside (tide_platform_render_parts)
+static double render_part_ms[TIDE_RENDER_PARTS];
+static uint64_t render_part_mark;
+
+static void render_part(const bool over, const tide_render_part part)
+{
+    if (over) return;
+    const uint64_t now = tide_time_now_ns();
+    render_part_ms[part] = now > render_part_mark ? (double)(now - render_part_mark) * 1e-6 : 0.0;
+    render_part_mark = now;
+}
+
+void tide_platform_render_parts(double ms[TIDE_RENDER_PARTS])
+{
+    memcpy(ms, render_part_ms, sizeof render_part_ms);
+}
+
 static void draw_list(const tide_draw_list *list, const draw_root to, const bool over, const bool timed)
 {
     if (!gpu_ready()) { // Between a device that was lost and the next
@@ -5298,7 +5393,12 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
         return;
     }
+    if (!over) {
+        memset(render_part_ms, 0, sizeof render_part_ms);
+        render_part_mark = tide_time_now_ns();
+    }
     tide_draw_prepare(list, tide_platform_jobs());
+    checks_begin(list);
     if (!over) compute_frame_start(list);
     if (!over) counted_poll();
     const tide_gpu_id target = to.gpu;
@@ -5355,6 +5455,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
     }
     select_target(0);
+    render_part(over, TIDE_RENDER_PREPARE);
     tide_font_frame();
     shape_count = 0;
     shape_extra_count = 0;
@@ -5497,6 +5598,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     settle_radii();
     if (!over) last_camera = frame_targets[0].world;
     move_work_out_of_passes(list); // Runs a pass doesn't wait for go before it, so it isn't split
+    render_part(over, TIDE_RENDER_STEPS);
 
     // What the steps draw from goes to the GPU first
     renderer_start();
@@ -5516,6 +5618,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // Texture uploads requested by shaded draws still occur inside the query.
     gpu_profile_drawing = !over && gpu_pass_collect;
     if (gpu_profile_drawing) { gpu_profile_frame++; gpu_profile_pass = 0; }
+    render_part(over, TIDE_RENDER_UPLOADS);
     if (timed && gpu->time_begin) gpu->time_begin();
     cull_run(list); // The culled runs' instances, found on the GPU before any pass: timed with the frame's work
     // A pass begins at the first step that draws in it, so steps that only
@@ -5523,6 +5626,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // them (Vulkan, WebGPU) command buffers or encoders, and barriers. The
     // frame's target starts black in its first (Draw.Clear picks another
     // color), or in one of its own if nothing draws in it.
+    render_part(over, TIDE_RENDER_CULLING);
     bool pass_active = false;
     bool cleared = over;
     uint32_t calls = 0; // The steps that draw, a draw call each
@@ -5536,12 +5640,14 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             pass_active = false;
             if (s->kind == STEP_COMPUTE) run_compute(list, s);
             else run_gpu_op(list, s);
+            source_epoch++; // What it wrote may be what a draw reads
             prepare_storage_draws(list, i + 1u); // The indirect draws up to the next one's, with the counts it left
             continue;
         }
         if (s->target != draw_target) {
             if (pass_active) end_pass();
             pass_active = false;
+            source_epoch++; // A target drawn into since, or made
             select_target(s->target);
             frame_target *f = &frame_targets[draw_target];
             if (!f->valid) {
@@ -5586,6 +5692,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (pass_active) end_pass(), hiz_report.breaks++;
             pass_active = false;
             cull_spans_start(list, i);
+            source_epoch++;
         }
         if (!pass_active && step_draws(s)) {
             begin_pass(frame_targets[draw_target].gpu, !draw_target && !cleared);
@@ -5693,6 +5800,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         end_pass();
     }
     if (timed && gpu->time_end) gpu->time_end();
+    render_part(over, TIDE_RENDER_RECORD);
     gpu_profile_drawing = false;
     draw_width = draw_height = 0.0f;
     draw_pixel_width = draw_pixel_height = 0;
@@ -5714,6 +5822,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
         free_spare_buffers(); // Those no mesh took
         forget_textures(list->epoch);
+        render_part(over, TIDE_RENDER_FINISH);
     } else {
         free_spare_buffers(); // Those its meshes had no use for
     }
@@ -5741,6 +5850,7 @@ void tide_platform_draw(const tide_draw_list *list)
     // Nobody sees it while the window is minimized or, on the web, the page
     // is hidden, and frames go on meanwhile. A headless window's are for
     // whoever reads them.
+    memset(render_part_ms, 0, sizeof render_part_ms);
     if (headless || !tide_window_unseen()) {
         if (!gpu_ready()) return;
         draw_list(list, frame_destination(), false, gpu_timing);

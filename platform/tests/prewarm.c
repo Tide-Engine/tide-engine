@@ -29,7 +29,9 @@
 
 uint32_t tide_platform_shader_pipelines(void); // The renderer's, for a test (platform/src/gpu.h)
 
-enum { WAIT_FRAMES = 600 };
+// A bound on a hang, not on speed: headless frames take a millisecond or so, and the pool's threads compiling the
+// game's pipelines with the driver's cache cold under ASan took more than 600 of them (2026-11-06)
+enum { WAIT_FRAMES = 6000 };
 
 #define GAME_ID "dev.tide.prewarm" // What the host names the game, whose temporary cache folder has the file
 

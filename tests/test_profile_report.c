@@ -220,6 +220,36 @@ TIDE_TEST(profile_report_excludes_baseline_and_survives_overlay_clears)
     tide_profile_report_free(&report);
 }
 
+TIDE_TEST(profile_report_render_phases_of_the_frames_that_gave_them)
+{
+    tide_profile_report report = {0};
+    tide_profile_report_begin(&report, NULL, 1);
+    const double first[TIDE_RENDER_PARTS] = {[TIDE_RENDER_PREPARE] = 0.25, [TIDE_RENDER_RECORD] = 1.0,
+                                             [TIDE_RENDER_UPLOADS] = 0.5};
+    tide_profile_report_render(&report, first);
+    tide_profile_report_end(&report, NULL, 0, 0);
+    tide_profile_report_begin(&report, NULL, 2);
+    const double second[TIDE_RENDER_PARTS] = {[TIDE_RENDER_RECORD] = 3.0};
+    tide_profile_report_render(&report, second);
+    tide_profile_report_end(&report, NULL, 0, 0);
+    tide_profile_report_begin(&report, NULL, 3); // A frame that drew nothing (an unseen window's) gives none
+    tide_profile_report_end(&report, NULL, 0, 0);
+    tide_profile_report_render(&report, second); // ...nor does one given between frames
+    char *text = written(&report, &(tide_profile_report_info){.total_frames = 3});
+    TIDE_REQUIRE(text);
+    const tide_json j = report_json(text), phases = field(j, "render_phases");
+    TIDE_CHECK(number(field(field(j, "cpu_work"), "samples")) == 3);
+    const tide_json prepare = field(phases, "prepare"), record = field(phases, "record"), other = field(phases, "other");
+    TIDE_CHECK(number(field(prepare, "samples")) == 2 && number(field(prepare, "total_ms")) == 0.25);
+    TIDE_CHECK(number(field(record, "samples")) == 2 && number(field(record, "total_ms")) == 4.0);
+    TIDE_CHECK(number(field(record, "max_ms")) == 3.0 && number(field(record, "min_ms")) == 1.0);
+    TIDE_CHECK(number(field(field(phases, "uploads"), "total_ms")) == 0.5);
+    TIDE_CHECK(number(field(field(phases, "finish"), "samples")) == 2);
+    TIDE_CHECK(number(field(other, "samples")) == 2 && number(field(other, "total_ms")) >= 0.0); // The host's, by the clock
+    free(text);
+    tide_profile_report_free(&report);
+}
+
 TIDE_TEST(profile_report_owns_distinct_long_names_and_escaped_source_paths)
 {
     tide_profile_report report = {0};

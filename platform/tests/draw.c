@@ -4730,7 +4730,9 @@ static int background_frame(void)
 // pipeline, and draw every one: on WebGPU too, whose first frame through a shader that wasn't made leaves it out
 // (background_frame). A pipeline made for a table stays when another build's first frame lets go of the last one's
 // (forget_pipelines), till another table is given.
-enum { PREWARM_FRAMES = 600 };
+// Headless frames that draw only a clear take a millisecond or two, and the pool's threads compiling ten pipelines
+// with the driver's cache cold under ASan took more than 600 of them (2026-11-06): the number bounds a hang, not speed.
+enum { PREWARM_FRAMES = 6000 };
 
 // A lit square through `shader`, green, where shaded_3d_scene has its middle instance.
 static void lit_square(const tide_shader *shader)

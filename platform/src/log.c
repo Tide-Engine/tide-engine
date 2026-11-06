@@ -530,6 +530,24 @@ static void start_reporter(const wchar_t *folder)
 
 static volatile LONG crashing;
 
+// The dump is written by a thread of its own, waited for DUMP_MOST_MS at the most. MiniDumpWriteDump suspends the
+// process's other threads, and one of them can hold a lock it then waits for (the heap's, the loader's): an abort
+// on MinGW sometimes never came back from it, and left no crash.txt. Past the wait the report goes on without the
+// dump, which may be cut short.
+enum { DUMP_MOST_MS = 10000 };
+typedef struct dump_job {
+    HANDLE file;
+    dump_exception exception;
+} dump_job;
+
+static DWORD WINAPI dump_work(LPVOID context)
+{
+    const dump_job *job = context;
+    // MiniDumpWithUnloadedModules, MiniDumpWithIndirectlyReferencedMemory, MiniDumpWithThreadInfo
+    write_dump(GetCurrentProcess(), GetCurrentProcessId(), job->file, 0x20 | 0x40 | 0x1000, &job->exception, NULL, NULL);
+    return 0;
+}
+
 static void record_crash(EXCEPTION_POINTERS *pointers)
 {
     if (InterlockedExchange(&crashing, 1)) Sleep(INFINITE); // Another thread is writing its crash; the program ends with it
@@ -543,10 +561,17 @@ static void record_crash(EXCEPTION_POINTERS *pointers)
         _snwprintf(path, PATH_MOST + 32, L"%ls\\crash.dmp", wide_folder);
         const HANDLE dump = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (dump != INVALID_HANDLE_VALUE) {
-            const dump_exception exception = {GetCurrentThreadId(), pointers, FALSE};
-            // MiniDumpWithUnloadedModules, MiniDumpWithIndirectlyReferencedMemory, MiniDumpWithThreadInfo
-            write_dump(GetCurrentProcess(), GetCurrentProcessId(), dump, 0x20 | 0x40 | 0x1000, &exception, NULL, NULL);
-            CloseHandle(dump);
+            static dump_job job; // A thread still writing past the wait keeps reading it
+            job = (dump_job){dump, {GetCurrentThreadId(), pointers, FALSE}};
+            const HANDLE writer = CreateThread(NULL, 0, dump_work, &job, 0, NULL);
+            if (writer) {
+                const bool done = WaitForSingleObject(writer, DUMP_MOST_MS) == WAIT_OBJECT_0;
+                CloseHandle(writer);
+                if (done) CloseHandle(dump); // Otherwise the writer still has it
+            } else {
+                dump_work(&job); // No thread to be had: as it was
+                CloseHandle(dump);
+            }
         }
     }
     HANDLE report = INVALID_HANDLE_VALUE;
