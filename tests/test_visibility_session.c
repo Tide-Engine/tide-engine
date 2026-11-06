@@ -483,6 +483,7 @@ static void visibility_count_repairs(const tide_game *game, uint32_t *loads, uin
     *loads = visibility_loads - before;
     const tide_client_status status = tide_client_status_of(client);
     TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
+    TIDE_CHECK(status.repairs > 0 && status.repairs == visibility_loads - 1u);
     const visibility_world *w = tide_client_verified_world(client);
     TIDE_REQUIRE(w);
     TIDE_CHECK(w->tick > 600 && w->health == 563u);

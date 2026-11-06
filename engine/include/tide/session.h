@@ -630,6 +630,7 @@ typedef struct tide_client_status {
     uint32_t run_ticks;            // Ticks it ran so far, all of them: as the server sent them, predicted, and again
     uint32_t ahead_ticks;          // ...and the predicted ones among them, again_ticks included
     uint32_t resyncs;              // Times its world diverged and the server sent it again
+    uint32_t repairs;              // Recipient projection corrections adopted, excluding initial/full snapshots
     uint32_t near_kept;            // Confirmed ticks, run whole as something was far, that kept the predicted ticks after them
     uint64_t world_bytes;          // Bytes the server sent of worlds so far: whole, as deltas, and the hashes of their pages
     uint64_t cookie;               // What makes this player this player again, on the next connection

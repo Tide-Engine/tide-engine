@@ -3758,6 +3758,7 @@ struct tide_client {
     bool repair_stream;
     bool snapshot_stream;
     uint32_t resyncs;
+    uint32_t repairs;
     uint32_t near_skips; // tide_client_status.near_kept
     uint64_t world_bytes;
     traffic traffic;
@@ -5500,6 +5501,7 @@ static void load_snapshot(tide_client *c)
             if (c->frames[i].data && c->frames[i].tick < tick) drop_frame(&c->frames[i]);
         }
         c->verified = tick;
+        c->repairs++;
         c->repair_stream = c->snapshot_stream;
         c->repair_tick = c->repair_stream ? tick + 1u : 0u;
         c->need_snapshot = false;
@@ -6531,6 +6533,7 @@ tide_client_status tide_client_status_of(const tide_client *c)
         .run_ticks = c->ran,
         .ahead_ticks = c->ran_ahead,
         .resyncs = c->resyncs,
+        .repairs = c->repairs,
         .near_kept = c->near_skips,
         .world_bytes = c->world_bytes,
         .cookie = c->cookie,

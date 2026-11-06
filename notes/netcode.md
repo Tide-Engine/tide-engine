@@ -1,5 +1,61 @@
 # Netcode: sessions, prediction, commands
 
+## Mount & Rifle battle investigation and repair diagnostics (2026-11-06)
+
+`tide_client_status.repairs` counts successful authoritative recipient repair
+adoptions, separately from `resyncs` (full snapshot replacements). Initial joins,
+rejected transfers and host mirrors do not count. It is cumulative for the client
+object, like `resyncs` and `world_bytes`. The visibility backoff fixture checks
+that repairs equal projection loads minus the initial snapshot. Native stats
+presentation is recorded in standard-host.md.
+
+The reported battle flood is **not fixed** by this diagnostic change. Source
+inspection of Mount & Rifle commit `349c35a` refutes its proposed Physics.Rewind
+cause: its only Tide references to rewind are the maxRewind setting and the
+hitbox.tide comment saying those capsules used to be Box3D bodies. Actual hits use
+the game's posed capsules and shooter-lag displacement. No Physics.Rewind call
+occurs in that commit's Tide sources. This does not remove the separately
+documented physics-history limitation after projection loading.
+
+Two mechanisms relevant to the report are established independently of timing:
+
+- `as_predicted` rejects any changed foreign input. The game's `PlayerControl`
+  copies the automatically sampled `viewTime` every tick (`body.tide`); that
+  timestamp advances even when another player stands still. A stationary player
+  therefore does not establish unchanged input or reusable predicted ticks.
+  Near prediction additionally compares the entire heap and non-Native singleton
+  state; its rebuilt `Crowd` lists and grids can reject near reuse even when all
+  near components match. FAR_STALE_SECONDS only bounds successful reuse to 0.25 s;
+  increasing it cannot make those rejected comparisons pass.
+- Recipient repair compression splits flat variable-length projection bytes at
+  fixed 16 KiB offsets. A prefix insertion shifts every later region against its
+  base. `delta_recipient_shifted_records_round_trip` provides a repeatable
+  1000-record probe (512 random bytes per record), using the same region codec:
+  one changed byte packs to 19 bytes, a one-byte prefix insertion to 512,206.
+  Both decode exactly. This is synthetic evidence of compression locality, not
+  a measurement of the game's component entropy or actual first mismatch.
+  The existing maximum repair backoff with maxRewind 0.5 is seven ticks at 60 Hz;
+  512 KB repairs at that rate already exceed 4 MB/s before packet overhead.
+
+Follow-up task, **recipient repair locality and battle divergence**: first trace
+the first differing logical fields/entity identities in the exact 1000-bot game,
+including Delay, and distinguish initial mismatches from repair-induced ones.
+Fix variable-length projection delta locality using stable permitted logical
+regions or bounded relocated spans, preserving all baseline/hash/privacy and
+hostile-input checks; a wire-format change needs matching protocol/version work.
+Measure bytes per recipient, repairs, resyncs, tick work and confirmation age
+before/after for no-switch, Delay and TROOPER_SIGHT, plus the 10-bot control.
+Acceptance includes native/WASI correction/lifecycle/view-time tests, lossy
+variable-list/spawn/despawn cases and an exact-game bounded run. Arbitrarily
+throttling repairs is not a substitute: it can move confirmed presentation
+outside maxRewind while hiding the transfer volume. Sending private allocator or
+physics-history state wholesale is not an acceptable fix either.
+
+Validation: Windows ASan and WASI pass all nine visibility-filtered engine cases
+and all twelve delta-filtered cases. The new probe pins successful round trips,
+not its poor compression size, allowing future improvements. No actual battle
+before/after bandwidth result or Internet/browser validation is claimed.
+
 ## Scene preparation and player readiness (2026-11-05)
 
 Owner-approved scene preparation (language.md) uses optional tide_game callbacks `prepare_pending`, `prepare`,
