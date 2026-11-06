@@ -7,6 +7,7 @@
 
 #include "tide/list.h"
 #include "tide/pack.h"
+#include "tide/time.h"
 
 // ---------------------------------------------------------------------------
 // The scratch area: a stack of bytes, one per thread, in pieces (see
@@ -22,7 +23,9 @@
 // the area did when it was one allocation; the others go when the area goes
 // back to a mark from before them, but the biggest of those let go at once is
 // kept as a spare for the next piece (up to SPARE_SLOTS), so code that makes
-// something big for each entity doesn't allocate it each time. A piece made
+// something big for each entity doesn't allocate it each time. A spare nothing
+// took for SPARE_IDLE_NS goes too (tide_scratch_trim), so a thread that made
+// something big once doesn't keep its memory from the rest. A piece made
 // of the spare only takes the slots asked for, so where things go depends on
 // what was made since the mark, never on what came and went before.
 
@@ -40,11 +43,23 @@ typedef struct scratch_piece {
 } scratch_piece;
 
 #define SPARE_SLOTS 64u // The biggest piece kept as a spare: 64 MiB
+#define SPARE_IDLE_NS 1000000000u // A spare nothing took for this long goes: a second
 
 static TIDE_THREAD_LOCAL scratch_piece *pieces; // In order, the first at offset 0
 static TIDE_THREAD_LOCAL uint32_t piece_count;
 static TIDE_THREAD_LOCAL uint32_t piece_room;
 static TIDE_THREAD_LOCAL scratch_piece spare; // Let go, kept for the next piece; `memory` NULL for none
+static TIDE_THREAD_LOCAL uint64_t spare_since; // When it was let go (tide_time_now_ns)
+static TIDE_THREAD_LOCAL uint32_t empties;     // Times the area went back to empty with a spare, for tide_scratch_trim
+
+bool tide_scratch_trim(const uint64_t idle_ns)
+{
+    if (!spare.memory) return false;
+    if (idle_ns && tide_time_now_ns() - spare_since < idle_ns) return true;
+    free(spare.memory);
+    spare.memory = NULL;
+    return false;
+}
 
 static void map_piece(const scratch_piece *p, const bool mapped)
 {
@@ -80,6 +95,9 @@ void tide_scratch_reset_to(const uint64_t mark)
                 free(p.memory);
             }
         }
+        if (spare.memory) spare_since = tide_time_now_ns();
+    } else if (!mark && spare.memory && ++empties % 256u == 0) { // Now and then, not at every row
+        tide_scratch_trim(SPARE_IDLE_NS);
     }
     const scratch_piece *top = &pieces[piece_count - 1u]; // Which the mark is in: the one after it started where it ends
     scratch_end = top->start + (top->slots << TIDE_SCRATCH_SHIFT);
@@ -104,14 +122,18 @@ void tide_scratch_free(void)
     scratch_end = 0;
 }
 
-// Ends the program: `what` of `bytes` bytes can't go in the scratch area, for
-// the reason `why`.
-static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const char *why)
+// Ends the program: `what` of `bytes` bytes can't go in the scratch area, as
+// its offsets are used up, or there's no memory for it after `waited` ms
+// (tide_memory_wait).
+static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const bool offsets, const uint32_t waited)
 {
-    fprintf(stderr,
-            "tide: out of memory: %s of %llu bytes can't go in the scratch area (%s), which holds %llu bytes on this thread: the text, "
-            "lists and grids code makes along the way, kept until their system, view or handler is done\n",
-            what, (unsigned long long)bytes, why, (unsigned long long)tide_scratch_top);
+    char said[512];
+    snprintf(said, sizeof said,
+             "%s of %llu bytes can't go in the scratch area, which holds %llu bytes on this thread: the text, lists and grids code "
+             "makes along the way, kept until their system, view or handler is done",
+             what, (unsigned long long)bytes, (unsigned long long)tide_scratch_top);
+    if (!offsets) tide_memory_ran_out(said, waited);
+    fprintf(stderr, "tide: out of memory: %s; its offsets are used up\n", said);
     abort();
 }
 
@@ -124,7 +146,7 @@ static void add_piece(const uint64_t bytes, const char *what)
     // Memory runs out first: the pack (tide/pack.h) has the offsets from TIDE_PACK_BASE on, and size_t is a
     // piece's size
     if (slots > (TIDE_PACK_BASE - start) >> TIDE_SCRATCH_SHIFT || slots > SIZE_MAX >> TIDE_SCRATCH_SHIFT) {
-        scratch_full(what, bytes, "the machine has no more memory");
+        scratch_full(what, bytes, true, 0);
     }
     scratch_piece p = {start, slots, slots, NULL};
     if (spare.memory && spare.room >= slots) {
@@ -132,8 +154,11 @@ static void add_piece(const uint64_t bytes, const char *what)
         p.memory = spare.memory;
     } else {
         free(spare.memory);
-        p.memory = malloc((size_t)slots << TIDE_SCRATCH_SHIFT);
-        if (!p.memory) scratch_full(what, bytes, "the machine has no more memory");
+        spare.memory = NULL;
+        const size_t size = (size_t)slots << TIDE_SCRATCH_SHIFT;
+        uint32_t waited = 0; // Where the system has none for a moment, it waits for it
+        while (!(p.memory = malloc(size))) if (!tide_memory_wait(size, &waited)) scratch_full(what, bytes, false, waited);
+        tide_memory_waited(size, waited);
         tide_memory_sync(); // Before anything touches it (see tide/page.h)
     }
     spare.memory = NULL;

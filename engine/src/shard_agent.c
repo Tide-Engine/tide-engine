@@ -207,8 +207,7 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
         const void *world = tide_server_world(a->server);
         const uint32_t n = a->game->pack_world(world, NULL, 0);
         free(a->checkpoint);
-        a->checkpoint = malloc(n ? n : 1u);
-        if (!a->checkpoint) tide_out_of_memory();
+        a->checkpoint = tide_alloc(n ? n : 1u);
         a->game->pack_world(world, a->checkpoint, n);
         a->checkpoint_size = n;
         a->checkpoint_tick = tide_shard_agent_tick(a);
@@ -229,8 +228,7 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
         else tide_server_unadmit(a->server, player);
     }
     if (flags & TIDE_SHARD_DO_TARGETS) {
-        target *kept = calloc(targets ? targets : 1u, sizeof *kept);
-        if (!kept) tide_out_of_memory();
+        target *kept = tide_alloc_zeroed(targets ? targets : 1u, sizeof *kept);
         r.at = targets_at;
         for (uint32_t i = 0; i < targets; i++) {
             kept[i].shard = tide_read_u32(&r);
@@ -369,8 +367,7 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
             tide_write_bytes(&m, now_bytes, size);
             if (!was || was->size != size) {
                 free(was);
-                was = malloc(sizeof *was + size);
-                if (!was) tide_out_of_memory();
+                was = tide_alloc(sizeof *was + size);
                 was->size = size;
                 map_put(bases, b.keys[i], (uint64_t)(uintptr_t)was);
             }
@@ -519,8 +516,7 @@ uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size)
     count = 0;
     tide_write_u32(&w, 0u);
     if (a->api->presence && a->players) {
-        tide_shard_presence *found = malloc(a->players * sizeof *found);
-        if (!found) tide_out_of_memory();
+        tide_shard_presence *found = tide_alloc(a->players * sizeof *found);
         const uint32_t n = a->api->presence(world, found, a->players);
         for (uint32_t k = 0; k < n && k < a->players; k++) {
             tide_write_u32(&w, found[k].player.id);

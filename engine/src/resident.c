@@ -143,8 +143,7 @@ static void fresh(tide_arena *a)
 
 static tide_arena *arena_new(const uint64_t kind, const char *name, const size_t bytes)
 {
-    tide_arena *a = calloc(1, sizeof *a);
-    if (!a) tide_out_of_memory();
+    tide_arena *a = tide_alloc_zeroed(1, sizeof *a);
     a->bytes = (bytes + TIDE_ARENA_PAGE - 1u) / TIDE_ARENA_PAGE * TIDE_ARENA_PAGE;
     a->pages = (uint32_t)(a->bytes / TIDE_ARENA_PAGE);
     a->base = reserve(a->bytes);
@@ -340,8 +339,7 @@ const void *tide_arena_page_at(const tide_arena *a, const uint32_t i)
 
 static tide_resident_pages *pages_new(const uint32_t count)
 {
-    tide_resident_pages *t = calloc(1, sizeof *t + (size_t)count * sizeof(tide_page *));
-    if (!t) tide_out_of_memory();
+    tide_resident_pages *t = tide_alloc_zeroed(1, sizeof *t + (size_t)count * sizeof(tide_page *));
     t->refs = 1;
     t->count = count;
     return t;

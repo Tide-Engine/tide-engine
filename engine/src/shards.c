@@ -55,8 +55,7 @@ static void shard_journal(void *user, const uint32_t tick, const uint8_t *record
         j->s->desc.journal(j->s->desc.user, j->shard, tick, record, size);
         return;
     }
-    uint8_t *numbered = malloc(size);
-    if (!numbered) tide_out_of_memory();
+    uint8_t *numbered = tide_alloc(size);
     memcpy(numbered, record, size);
     const uint32_t on = before + tick;
     for (uint32_t k = 0; k < 4u; k++) numbered[k] = (uint8_t)(on >> (8u * k));
@@ -94,8 +93,7 @@ static bool replay(tide_shards *s, const uint32_t shard, void *world, uint32_t *
 
 static void start(tide_shards *s, const tide_shard_action *a, const double now)
 {
-    void *world = calloc(1, s->game->world_size);
-    if (!world) tide_out_of_memory();
+    void *world = tide_alloc_zeroed(1, s->game->world_size);
     uint32_t next = a->tick;
     if (a->world) {
         if (!s->game->unpack_world(world, a->world, a->world_size) || !replay(s, a->shard, world, &next)) {
@@ -122,8 +120,7 @@ static void start(tide_shards *s, const tide_shard_action *a, const double now)
     h->ticks_before = a->world ? next : 0u;
     if (s->desc.journal) { // Its ticks go to the world's journal, as this shard's
         if (!h->journal) {
-            h->journal = malloc(sizeof *h->journal);
-            if (!h->journal) tide_out_of_memory();
+            h->journal = tide_alloc(sizeof *h->journal);
             *h->journal = (journal_ref){s, a->shard};
         }
         d.journal_user = h->journal;
@@ -364,8 +361,7 @@ static uint8_t *world_of(void *user, const uint32_t shard, uint32_t *size, uint3
     if (!h || !h->server) return NULL;
     const void *world = tide_server_world(h->server);
     const uint32_t n = s->game->pack_world(world, NULL, 0);
-    uint8_t *packed = malloc(n ? n : 1u);
-    if (!packed) tide_out_of_memory();
+    uint8_t *packed = tide_alloc(n ? n : 1u);
     s->game->pack_world(world, packed, n);
     *size = n;
     *tick = h->ticks_before + tide_server_tick(h->server); // The tick its journal's next record is of

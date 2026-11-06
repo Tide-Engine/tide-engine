@@ -461,8 +461,7 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
         *destroyed = died;
         *destroyed_count = died_count;
         if (event_size) {
-            events->bytes = malloc(event_size);
-            if (!events->bytes) tide_out_of_memory();
+            events->bytes = tide_alloc(event_size);
             memcpy(events->bytes, event_bytes, event_size);
             events->size = events->capacity = event_size;
             events->build = event_build;
@@ -1222,8 +1221,7 @@ static void start_snapshot(tide_server *s, connection *c)
     // The whole world: packed once a tick, however many join in it. An
     // earlier tick's pack that players are still being sent stays theirs.
     if (!s->pack || s->pack->tick != s->tick) {
-        shared_pack *made = calloc(1, sizeof *made);
-        if (!made) tide_out_of_memory();
+        shared_pack *made = tide_alloc_zeroed(1, sizeof *made);
         made->tick = s->tick;
         made->bytes = g->pack_delta(s->world, NULL, NULL, 0, false, &made->size);
         s->pack = made;
@@ -1703,8 +1701,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         && (!c->verified_world || frame_ack > c->verified_tick)) {
         const void *known = server_world_at(s, frame_ack);
         if (known) {
-            if (!c->verified_world) c->verified_world = calloc(1, s->game->world_size);
-            if (!c->verified_world) tide_out_of_memory();
+            if (!c->verified_world) c->verified_world = tide_alloc_zeroed(1, s->game->world_size);
             s->game->copy_world(c->verified_world, known);
             c->verified_tick = frame_ack;
             c->has_world = true;
@@ -2478,8 +2475,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
         const size_t slots = (size_t)s->players + 1u;
         if ((size_t)g->input_size > SIZE_MAX / 2u / slots) tide_out_of_memory();
         all_size = slots * g->input_size;
-        all_inputs = malloc(2u * all_size);
-        if (!all_inputs) tide_out_of_memory();
+        all_inputs = tide_alloc(2u * all_size);
         for (uint32_t slot = 0; slot <= s->players; slot++) {
             g->world_input(before, slot, all_inputs + (size_t)slot * g->input_size);
             g->world_input(s->world, slot, all_inputs + all_size + (size_t)slot * g->input_size);
@@ -4169,8 +4165,7 @@ static const void *base_for(tide_client *c, const uint32_t tick, const uint8_t k
     } else if (kind == START_GIVEN && g->start_size) {
         // The start's bytes are wherever they came in a message, and the game
         // reads them as the value they are: from memory aligned for one
-        void *start = malloc(g->start_size);
-        if (!start) tide_out_of_memory();
+        void *start = tide_alloc(g->start_size);
         memcpy(start, given, g->start_size);
         g->start(c->base, dt, start, seed);
         free(start);
@@ -4537,8 +4532,7 @@ static void on_handover(tide_client *c, tide_reader *r)
     const uint8_t key = tide_read_u8(&record);
     const uint8_t *key_bytes = key <= TIDE_ROOM_KEY_LENGTH ? tide_read_bytes(&record, key) : NULL;
     h.in_match = read_players(&record);
-    h.digests = calloc(c->players, sizeof *h.digests);
-    if (!h.digests) tide_out_of_memory();
+    h.digests = tide_alloc_zeroed(c->players, sizeof *h.digests);
     bool sound = h.own <= c->players;
     for (uint32_t i = 0; i < TIDE_PLAYER_SET_BITS; i++) {
         if (!tide_players_has(&h.in_match, i)) continue;
@@ -4547,8 +4541,7 @@ static void on_handover(tide_client *c, tide_reader *r)
     }
     h.banned = read_players(&record);
     if (tide_players_any(&h.banned)) {
-        h.ban_messages = calloc(c->players, sizeof *h.ban_messages);
-        if (!h.ban_messages) tide_out_of_memory();
+        h.ban_messages = tide_alloc_zeroed(c->players, sizeof *h.ban_messages);
     }
     for (uint32_t i = 0; sound && i < TIDE_PLAYER_SET_BITS; i++) {
         if (!tide_players_has(&h.banned, i)) continue;
@@ -5476,8 +5469,7 @@ static void load_snapshot(tide_client *c)
             return;
         }
         if (kept_bytes) {
-            if (!c->taken_world) c->taken_world = calloc(1, g->world_size);
-            if (!c->taken_world) tide_out_of_memory();
+            if (!c->taken_world) c->taken_world = tide_alloc_zeroed(1, g->world_size);
             g->copy_world(c->taken_world, world);
             free(c->taken_bytes);
             c->taken_bytes = kept_bytes;
@@ -5517,8 +5509,7 @@ static void load_snapshot(tide_client *c)
         return;
     }
     if (kept_bytes) {
-        if (!c->taken_world) c->taken_world = calloc(1, g->world_size);
-        if (!c->taken_world) tide_out_of_memory();
+        if (!c->taken_world) c->taken_world = tide_alloc_zeroed(1, g->world_size);
         g->copy_world(c->taken_world, world);
         free(c->taken_bytes);
         c->taken_bytes = kept_bytes;
@@ -5878,8 +5869,7 @@ static void play(tide_client *c)
                 : hash_of(c->game, world_at(c, tick + 1u), c->desc.jobs)) == frame_hash(f);
         } else {
             if (near_kept) {
-                if (!c->near_kept) c->near_kept = calloc(1, c->game->world_size);
-                if (!c->near_kept) tide_out_of_memory();
+                if (!c->near_kept) c->near_kept = tide_alloc_zeroed(1, c->game->world_size);
                 c->game->copy_world(c->near_kept, world_at(c, tick + 1u));
             }
             if (tick < c->ahead) capture_view_correction(c, tick + 1u);
@@ -7560,8 +7550,7 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
         free(s->frames[i].world);
         s->frames[i].world = NULL;
     }
-    bool *sending = calloc(s->players, sizeof *sending); // The old build's transfers start again
-    if (!sending) tide_out_of_memory();
+    bool *sending = tide_alloc_zeroed(s->players, sizeof *sending); // The old build's transfers start again
     for (uint32_t i = 0; i < s->players; i++) {
         sending[i] = s->connections[i].used && s->connections[i].sending;
         if (sending[i]) stop_sending(s, &s->connections[i]);

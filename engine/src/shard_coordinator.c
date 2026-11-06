@@ -416,8 +416,7 @@ static bool setup(tide_shard_coordinator *c, const tide_shard_coordinator_desc *
     c->now = now;
     c->checkpointed = now;
     c->player_count = desc->players;
-    c->players = calloc(c->player_count ? c->player_count : 1u, sizeof *c->players);
-    if (!c->players) tide_out_of_memory();
+    c->players = tide_alloc_zeroed(c->player_count ? c->player_count : 1u, sizeof *c->players);
     return true;
 }
 
@@ -595,8 +594,7 @@ bool tide_shard_coordinator_report(tide_shard_coordinator *c, const uint8_t *rep
         const uint32_t n = tide_read_u32(&r);
         if (r.failed || n > (r.size - r.at) / 24u) return false;
         free(sh->points);
-        sh->points = malloc((n ? n : 1u) * sizeof *sh->points);
-        if (!sh->points) tide_out_of_memory();
+        sh->points = tide_alloc((n ? n : 1u) * sizeof *sh->points);
         for (uint32_t i = 0; i < n; i++) memcpy(sh->points[i], tide_read_bytes(&r, 24u), 24u);
         sh->point_count = n;
         sh->sampled = true;
@@ -627,8 +625,7 @@ bool tide_shard_coordinator_report(tide_shard_coordinator *c, const uint8_t *rep
         const uint8_t *world = tide_read_bytes(&r, n);
         if (!world) return false;
         free(sh->world);
-        sh->world = malloc(n ? n : 1u);
-        if (!sh->world) tide_out_of_memory();
+        sh->world = tide_alloc(n ? n : 1u);
         memcpy(sh->world, world, n);
         sh->world_size = n;
         sh->world_tick = world_tick;
@@ -838,8 +835,7 @@ static bool maybe_split(tide_shard_coordinator *c, const uint32_t id)
         }
     }
     const uint32_t n = sh->point_count;
-    double *values = malloc((n ? n : 1u) * sizeof *values);
-    if (!values) tide_out_of_memory();
+    double *values = tide_alloc((n ? n : 1u) * sizeof *values);
     for (uint32_t i = 0; i < n; i++) values[i] = sh->points[i][axis];
     qsort(values, n, sizeof *values, compare_double);
     const double cut = n ? values[n / 2u] : 0.0;
@@ -1131,8 +1127,7 @@ static void route_players(tide_shard_coordinator *c)
     const bool keep = moving(c);
     uint32_t seen_count = 0;
     for (uint32_t i = 0; i < c->count; i++) seen_count += c->shards[i].used ? c->shards[i].presence_count : 0u;
-    sighting *seen = malloc((seen_count ? seen_count : 1u) * sizeof *seen);
-    if (!seen) tide_out_of_memory();
+    sighting *seen = tide_alloc((seen_count ? seen_count : 1u) * sizeof *seen);
     seen_count = 0;
     for (uint32_t i = 0; i < c->count; i++) {
         const cshard *sh = &c->shards[i];
@@ -1517,8 +1512,7 @@ tide_shard_coordinator *tide_shard_coordinator_load(const tide_shard_coordinator
     c->next_index = tide_read_u64(&r);
     const uint32_t ranges = tide_read_u32(&r);
     if (r.failed || ranges > (r.size - r.at) / 12u) goto fail;
-    c->ranges = calloc(ranges ? ranges : 1u, sizeof *c->ranges);
-    if (!c->ranges) tide_out_of_memory();
+    c->ranges = tide_alloc_zeroed(ranges ? ranges : 1u, sizeof *c->ranges);
     for (uint32_t i = 0; i < ranges; i++) {
         c->ranges[i].first = tide_read_u32(&r);
         c->ranges[i].end = tide_read_u32(&r);
@@ -1569,8 +1563,7 @@ tide_shard_coordinator *tide_shard_coordinator_load(const tide_shard_coordinator
         const uint32_t bytes = tide_read_u32(&r);
         const uint8_t *world = tide_read_bytes(&r, bytes);
         if (!world) goto fail;
-        uint8_t *copy = malloc(bytes ? bytes : 1u);
-        if (!copy) tide_out_of_memory();
+        uint8_t *copy = tide_alloc(bytes ? bytes : 1u);
         memcpy(copy, world, bytes);
         tide_shard_action *a = act(c, TIDE_SHARD_ACTION_START, id);
         a->world = keep_bytes(c, copy);

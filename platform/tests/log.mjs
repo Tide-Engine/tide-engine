@@ -91,6 +91,19 @@ const abortFolder = after.length ? join(crashes, after[0]) : '';
 const abortReport = abortFolder ? read(join(abortFolder, 'crash.txt')) : '';
 check(/tide: crashed: .*abort/i.test(abortReport), `and leaves what it was: ${abortReport.split('\n')[0]}`);
 check(read(join(abortFolder, 'Player.log')).includes('said before the end: abort'), 'with the log');
+check(abortReport.includes('\nsaid before it: said before the end: abort\n'), 'and what was said last before it');
+check(/\nmemory: this program has \d/.test(abortReport), `and how much memory there was: ${abortReport.split('\n')[2]}`);
+
+// Running out of memory: what couldn't be had, after how long, and how much memory there was, in its report too
+const outOf = run('out');
+check(outOf.status !== 0, `running out of memory ends the program (exit ${outOf.status}${outOf.signal ? `, ${outOf.signal}` : ''})`);
+const outLine = outOf.err.split('\n').find(l => l.includes('out of memory')) ?? '';
+check(/^tide: out of memory: a test's 12 bytes after waiting 2 s for more\. This program has \d/.test(outLine),
+    `saying what, after how long, and how much memory there is: ${outLine}`);
+const outFolders = folders().filter(name => !crashed.includes(name) && !after.includes(name));
+const outReport = outFolders.length === 1 ? read(join(crashes, outFolders[0], 'crash.txt')) : '';
+check(outReport.includes('\nsaid before it: tide: out of memory: a test') && outReport.includes('\nmemory: '),
+    `its report says so: ${outReport.split('\n').slice(0, 3).join(' | ')}`);
 
 // tide-crash's zip of each, once it has written it: it runs on after the game
 // ended, so it's waited for, up to half a minute
