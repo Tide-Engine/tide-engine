@@ -199,6 +199,8 @@ void compile_progress(const char *stage, const char *detail, const int completed
 
 void compile_progress_whole(const int total)
 {
+    // The same count again (the game compiled again once build code has run) goes on from where it was
+    if (total > 0 && total == progress_total) return;
     progress_total = total > 0 ? total : 0;
     progress_done = 0;
 }

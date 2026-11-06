@@ -133,3 +133,30 @@ TIDE_TEST(compile_progress_identifies_sources_and_assets)
     TIDE_CHECK(progress_seen == 511);
     arena_reset();
 }
+
+static int whole_done, whole_total;
+
+static void whole_progress(const char *stage, const char *detail, const int completed, const int total)
+{
+    (void)stage, (void)detail;
+    whole_done = completed, whole_total = total;
+}
+
+// The game compiled again after build code ran counts the same: the count goes on from where it was, never back
+TIDE_TEST(compile_progress_whole_keeps_its_place_when_counted_again)
+{
+    compile_set_progress(whole_progress);
+    compile_progress_whole(6);
+    compile_progress_reach(4);
+    compile_progress_whole(6);
+    compile_progress_reach(2);
+    compile_progress("Checking Tide", NULL, 0, 0);
+    TIDE_CHECK(whole_done == 4 && whole_total == 6);
+    compile_progress_whole(8); // Another count starts over
+    compile_progress("Checking Tide", NULL, 0, 0);
+    TIDE_CHECK(whole_done == 0 && whole_total == 8);
+    compile_progress_whole(0);
+    compile_progress("Checking Tide", NULL, 1, 3);
+    TIDE_CHECK(whole_done == 1 && whole_total == 3);
+    compile_set_progress(NULL);
+}
