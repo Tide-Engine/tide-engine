@@ -241,7 +241,9 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
 bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     asset_files_use_build_cache(schedule == NULL);
+    compile_progress_whole(0); // Parsing counts its files; checking starts the whole compilation's count
     const bool ok = compile_inputs_impl(inputs, count, opts, schedule);
+    compile_progress_whole(0);
     asset_files_use_build_cache(false);
     return ok;
 }

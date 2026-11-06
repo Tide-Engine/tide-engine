@@ -1,0 +1,2 @@
+// expect: a scene has one prepare block
+scene Main { prepare() {} prepare() {} }

@@ -4,6 +4,11 @@
 scene Main;
 local scene Menu;
 
+scene Campaign
+{
+    prepare(mut Geography geography) { }
+}
+
 command Rename { string name; }
 command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)
 {

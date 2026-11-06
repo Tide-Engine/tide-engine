@@ -1,5 +1,77 @@
 # `tide`, packages and the package
 
+## Faster edit builds of big games (2026-11-06)
+
+Owner: time `tide run --release` of Mount & Rifle and make iterations faster. Measured with this checkout's
+packaged tide (embedded clang/lld 23.1.2) on a scratch copy of the game (unpinned), Ryzen 9 7900X, `tide build
+--release --report` after a one-constant edit in camera.tide; medians of three on a quiet machine (another worktree's
+suite made single runs 2-3x slower, those were discarded):
+
+| | before | after |
+|---|---|---|
+| edit, whole build | 27.2 s | 13-14.5 s |
+| generated C compile (the edited part) | 5.1 s | 1.0 s |
+| ThinLTO link | 12.5 s (incl. 0.6 s pack copy) | 4.5 s |
+| splitting/writing generated C | 2.3 s | ~1.6 s |
+| shader arrays' text | 1.1 s | 0.37 s |
+| unchanged rebuild | 13.4 s | 7.4 s |
+| `tide run --release --frames 2` after an edit | ~30 s | 16.7 s |
+
+Truly cold (no .tide/): 126 s, then 98 s with the parts above, then 69 s with build code's program split and
+without shaders (assets-and-files.md, Build code). Of the 69 s: asset imports 11.5 s, build code 39 s (of which
+~24 s making levels of detail one mesh at a time, cached after), C 9 s. A full recompile of the generated C
+(cached data part) takes ~19 s. Starting the game adds ~3 s (its 742 MB pack).
+
+What changed:
+- **The data part.** 93 of the game's 106 MB of generated C were shaders' SPIR-V/WGSL arrays. `write_code_parts`
+  first splits with `SPLIT_DATA` (plumbing_split.inc): constant variables larger than `SPLIT_SHARED_CONST`, whoever
+  names them (`split_name.data`), go to `<name>_data.c`, everything else stays to be partitioned. Each binary level
+  of the old split re-scanned and re-wrote all 106 MB (~0.9 s per level); the code's levels now cut ~14 MB. An edit
+  of the code leaves the data part's text, and so its object, as they were. It is compiled with ThinLTO like the
+  other parts (compiling it without LTO made no link-time difference, and LTO keeps the constants visible to the
+  optimizer as before). It is always written when splitting (possibly only declarations), so CMake can name it.
+- **More code parts.** `codegen_options.split_code_parts` (most parts, a power of two up to 16; tidec's default 4)
+  and `split_code_part_bytes` (fewer parts when each would have less code; 0 = always the most). The CLI asks for up
+  to 16 of at least 512 KiB: Mount & Rifle gets 16. Swept on the old split: 4 parts 27.2 s, 8 parts 19.4 s, 16 parts
+  17.1 s, 32 parts ~19 s (link no faster, splitting slower); with the data part: 8 parts 16.8 s, 16 parts 14.2 s.
+- **Shader arrays without a printf per element.** `gen_shader_text`/`gen_shader_spirv` format lines directly; the
+  text is byte for byte what `"%s%d,"`/`"%s0x%08x,"` wrote (checked on Mount & Rifle's 92 MB data part). Translating
+  WGSL to SPIR-V itself is 0.28 s of the remainder.
+- **The pack is left alone when it comes out the same.** tidec's `write_pack` compares the existing file first
+  (`pack_file_is`, reading is cheaper than writing 742 MB); tide's `place_pack` keeps `<gen>/game.pack.placed`
+  (destination and both files' stamps after the last copy) and copies again only when either file changed.
+
+Findings that limit the rest: a ThinLTO link where every module is cached takes 0.24 s, but any edit re-runs the
+backend of every generated module (all 16, ~4.5 s wall in parallel), even with `-import-instr-limit=0`: the cache
+keys cover more than imports. Each part's cost is its code (frontend 1 s, optimizer 4.7 s, codegen 5.2 s for a
+7 MB-of-code part without LTO); shader data and `-g` changed the backend time by under 1 s. What remains of an
+edit build is mostly the Tide side (declarations ~1.1 s, generating C ~2.1 s, packing 1 s in memory, split/write
+1.6 s). Not done: caching SPIR-V across builds, a single N-way split pass, skipping the in-memory pack build.
+
+Tests: `tidec_split_code_stable` now expects `game_data.c` in the manifest and checks the compute fixture's shader
+arrays are defined there alone; `tide_cli_build_report`'s large game reads its part list from the manifest
+(a power of two of code parts, then the data part).
+
+Validation (Windows, Clang 23.1.2, Node 24.22.1): ASan builds; tidec_split_code_stable, the five SPLIT_CODE e2e
+fixtures (crossplatform pins, nested, tasks, compute, nested_split_debug), tidec_e2e_shaders/compute,
+tidec_recompile, tide_cli_build_report/build_overlap/help pass (12/12). A locally built embedded-LLVM package
+(native half only) passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`. Mount & Rifle builds and
+runs two hidden frames in release and debug (16 plumbing parts and `game_plumbing_data.c`). Docs production build
+passes. Not run: web builds of the split fixtures, Linux/macOS, Android (CI).
+
+## One count for the Tide step (2026-11-06)
+
+Owner: the bar for assets and Tide compiling went back and forth per file. Each notification carried its own
+stage's count (a file's import 0/1 then 1/1, a glob's i/n, checking indeterminate, packing i/n), so the bar reset
+with every label. Now `compile_progress_whole`/`_reach` (common.h) give one count after parsing: check.c's asset loop
+sets it to twice the asset declarations and moves on as each is imported; build_pack takes the second half, as many as
+were declared, whatever a release leaves out (it ends at the total). While it's set, every notification carries it,
+so labels still name the file or asset while the bar only goes forward, and holds through checking and generating
+C. Parsing keeps its files' count (it ends before); a game without assets keeps the old stage counts.
+`compile_inputs` clears it before and after; build code's own codegen doesn't move it. `tidec_recompile` checks that
+after parsing every count is the whole one (4 for two assets) and never goes back, reaching 2 before generating C
+and 4 after packing.
+
 ## Exact pins suppress upgrade notices (2026-11-05)
 
 Exact project pin selection sets TIDE_NO_UPDATE_CHECK in the command's process

@@ -1,5 +1,13 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Views while scenes prepare (2026-11-05)
+
+Sessions expose observational scene-preparation progress endpoints through their existing view API, including initial
+baseline preparation before connection finishes; these are never verified worlds. Networking/local views continue
+while match ticks and Time wait. Standard hosts already supply background jobs; custom hosts without them prepare
+synchronously. Leaving/restart/reload cancels and drains owned work. No host loading percentage/timeout is inferred:
+game components supply progress and Scene.IsPrepared supplies completion. Contracts/tests: language.md and netcode.md.
+
 ## Crash reports sent to a hosting project, masked (2026-11-05)
 
 The owner's decisions:

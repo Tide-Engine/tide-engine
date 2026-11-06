@@ -24,8 +24,10 @@ typedef struct codegen_options {
     // With line_directives: write the plumbing, all but the game's own code, as <name>_plumbing.c, for a debug build
     // to compile optimized while the game's code (<name>.c) stays as it was written (plumbing_split.inc).
     bool split_plumbing;
-    bool split_code; // Four stable generated C partitions, listed in <name>_parts.txt.
+    bool split_code; // Stable generated C partitions, listed in <name>_parts.txt.
     size_t split_code_min_bytes; // Smaller files stay whole (CLI only; tidec splits explicitly).
+    int split_code_parts;          // The most parts of the code: a power of two up to 16 (0: 4).
+    size_t split_code_part_bytes;  // Fewer parts where they'd have less code than this each (0: always the most).
     bool visualizers;        // Also write <name>.natvis and <name>_lldb.py: how debuggers show the game's values.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
     bool embed;              // ...and tide_game_embed (tide/embed_game.h), for another program to run it (tide/embed.h): implies layout.

@@ -1,0 +1,4 @@
+scene Main { int seed; prepare() {} }
+bool Prepared(Entity scene) { return Scene.IsPrepared(scene); }
+system Change(mut Main main) { main.seed += 1; }
+system Check() { Debug.Assert(!Prepared(default)); }

@@ -209,6 +209,7 @@ const cases = {
         ['asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";', [['asset', 'storage.modifier'], ['SkinnedMesh', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['Locomotion', 'entity.name.type'], ['hero', 'variable.other']]],
         ['List<float> Weights()', [['Weights', 'entity.name.function'], ['Weights', '!entity.name.function.call']]],
         ['mut void Heal(', [['mut', 'storage.modifier'], ['Heal', 'entity.name.function']]],
+        ['prepare(mut Geography geography)', [['prepare', 'entity.name.function'], ['mut', 'storage.modifier']]],
         ['Stats operator +(', [['operator', 'keyword.other.operator'], ['+', 'keyword.operator']]],
     ],
     'declaration words are keywords only where a declaration starts': [

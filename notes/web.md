@@ -1,5 +1,12 @@
 # Web builds
 
+## Deterministic scene preparation (2026-11-05)
+
+Scene prepare blocks use the existing WASM background worker provider on isolated/threaded pages; main-thread
+networking and views read retained observational snapshots. The same generated deterministic code and readiness
+commands run on native/web. A host/page without background workers falls back synchronously, as local workers do.
+No JavaScript protocol or loader change. Contracts/fixtures and validation: language.md, Deterministic scene preparation.
+
 ## GPU lists in pools, on WebGPU (2026-11-05)
 
 A shader's GPU lists are ranges of two pools (`notes/compute.md`, GPU lists in pools): `MAX_STORAGE` in `tide.js` is 4

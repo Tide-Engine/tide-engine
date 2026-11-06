@@ -2,6 +2,10 @@
 
 ## SPLIT_CODE (2026-11-05)
 
+2026-11-06: the generated outputs are now five, `<name>_data.c` (the large constants, notes/language.md) after
+the three extra parts; with SPLIT_PLUMBING, `<name>_plumbing_data.c`. It takes ThinLTO and, with the plumbing, -O2
+like the other parts.
+
 `tide_add_game(... SPLIT_CODE)` passes `tidec --split-code`, declares the three extra generated C outputs, compiles
 all four with ThinLTO and enables it at link time (lld explicitly on non-Apple native targets). CMake opt-in is explicit (the CLI automatically uses a 4 MiB
 threshold). Combined with SPLIT_PLUMBING, only the plumbing is split; all its parts take O2 and ThinLTO while game

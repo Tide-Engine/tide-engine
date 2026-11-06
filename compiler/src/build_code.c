@@ -643,6 +643,38 @@ static void push_args(arg_list *argv, const char *const *more)
     for (int i = 0; more && more[i]; i++) vec_push(*argv, more[i]);
 }
 
+// Compiles each of `sources` to the object beside it in `objects` with `common`, as many at once as there are
+// processors, each one's output in <logs>/<i>.log. False with `failed` the first that failed.
+static bool compile_all(const codegen_options *opts, const char *const *common, const path_list *sources,
+                        char *const *objects, const char *logs, int *failed)
+{
+    const unsigned most = processors();
+    build_process *running = calloc((size_t)(sources->count ? sources->count : 1), sizeof *running);
+    if (!running) abort();
+    bool ok = true;
+    int waited = 0;
+    for (int i = 0; i < sources->count; i++) {
+        if (i - waited >= (int)most && wait_process(&running[waited++], 0) != 0 && ok) ok = false, *failed = waited - 1;
+        arg_list argv = {0};
+        push_args(&argv, opts->build_cc);
+        push_args(&argv, common);
+        vec_push(argv, "-c");
+        vec_push(argv, sources->items[i]);
+        vec_push(argv, "-o");
+        vec_push(argv, objects[i]);
+        vec_push(argv, NULL);
+        sb log = {0};
+        sb_printf(&log, "%s/%d.log", logs, i);
+        running[i] = start_process(argv.items, log.data);
+        if (!running[i].started && ok) ok = false, *failed = i;
+    }
+    for (; waited < sources->count; waited++) {
+        if (wait_process(&running[waited], 0) != 0 && ok) ok = false, *failed = waited;
+    }
+    free(running);
+    return ok;
+}
+
 // The engine's objects, compiled once for these flags and these sources, in `folder`
 static bool engine_objects(const codegen_options *opts, const char *folder, const char *const *common, path_list *objects)
 {
@@ -674,34 +706,14 @@ static bool engine_objects(const codegen_options *opts, const char *folder, cons
     sb stamp = {0};
     sb_printf(&stamp, "%s/done", dir.data);
     const bool done = folder_file_info(stamp.data, NULL, NULL);
-    const unsigned most = processors();
-    build_process *running = calloc((size_t)files.sources.count, sizeof *running);
-    if (!running) abort();
+    const int first = objects->count;
     for (int i = 0; i < files.sources.count; i++) {
         sb object = {0};
         sb_printf(&object, "%s/%d.o", dir.data, i);
         vec_push(*objects, object.data);
     }
-    bool ok = true;
-    int failed = -1, waited = 0;
-    for (int i = 0; !done && i < files.sources.count; i++) {
-        if (i - waited >= (int)most && wait_process(&running[waited++], 0) != 0 && ok) ok = false, failed = waited - 1;
-        arg_list argv = {0};
-        push_args(&argv, opts->build_cc);
-        push_args(&argv, common);
-        vec_push(argv, "-c");
-        vec_push(argv, files.sources.items[i]);
-        vec_push(argv, "-o");
-        vec_push(argv, objects->items[i]);
-        vec_push(argv, NULL);
-        sb log = {0};
-        sb_printf(&log, "%s/%d.log", dir.data, i);
-        running[i] = start_process(argv.items, log.data);
-        if (!running[i].started && ok) ok = false, failed = i;
-    }
-    for (; !done && waited < files.sources.count; waited++) {
-        if (wait_process(&running[waited], 0) != 0 && ok) ok = false, failed = waited;
-    }
+    int failed = -1;
+    const bool ok = done || compile_all(opts, common, &files.sources, objects->items + first, dir.data, &failed);
     if (!ok) {
         diag_error((loc){0}, "the engine's sources didn't compile for build code's program: '%s'",
                    failed >= 0 ? files.sources.items[failed] : "?");
@@ -715,7 +727,6 @@ static bool engine_objects(const codegen_options *opts, const char *folder, cons
         FILE *f = fopen(stamp.data, "wb");
         if (f) fclose(f);
     }
-    free(running);
     return ok;
 }
 
@@ -748,6 +759,11 @@ static bool run_program(program *prog, const codegen_options *opts, root_info *r
     build.external_identity = opts->external_identity;
     build.scene = opts->scene;
     build.build_program = true;
+    // A big game's program is megabytes of C: in parts, compiled at once (as the CLI does the game's)
+    build.split_code = true;
+    build.split_code_min_bytes = 4u * 1024u * 1024u;
+    build.split_code_parts = 16;
+    build.split_code_part_bytes = 512u * 1024u;
     remove(pack.data);
     if (!codegen(prog, &build) || diag_error_count()) return false;
     static const char *const common_flags[] = {"-std=c17", "-O1", "-fno-fast-math", "-ffp-contract=off", "-w", NULL};
@@ -760,21 +776,58 @@ static bool run_program(program *prog, const codegen_options *opts, root_info *r
     vec_push(common, NULL);
     path_list objects = {0};
     if (!engine_objects(opts, folder.data, common.items, &objects)) return false;
-    sb exe = {0}, source = {0}, log = {0};
+    sb exe = {0}, log = {0};
 #ifdef _WIN32
     sb_printf(&exe, "%s/build.exe", folder.data);
 #else
     sb_printf(&exe, "%s/build", folder.data);
 #endif
-    sb_printf(&source, "%s/build.c", folder.data);
     sb_printf(&log, "%s/build.log", folder.data);
+    // Its parts, as build_parts.txt lists them (`plumbing thin name`), each compiled to <name>.o
+    path_list sources = {0}, part_objects = {0};
+    sb manifest_path = {0};
+    sb_printf(&manifest_path, "%s/build_parts.txt", folder.data);
+    size_t manifest_size = 0;
+    char *manifest = (char *)read_all(manifest_path.data, &manifest_size);
+    for (char *line = manifest; line && *line;) {
+        char *end = strchr(line, '\n');
+        if (end) *end = '\0';
+        if (strlen(line) > 4) {
+            sb part = {0}, object = {0};
+            sb_printf(&part, "%s/%s", folder.data, line + 4);
+            sb_printf(&object, "%s/%.*s.o", folder.data, (int)strlen(line + 4) - 2, line + 4);
+            vec_push(sources, part.data);
+            vec_push(part_objects, object.data);
+        }
+        line = end ? end + 1 : line + strlen(line);
+    }
+    free(manifest);
+    if (!sources.count) {
+        diag_error(first->at, "build code's program wasn't written: '%s' is missing", manifest_path.data);
+        return false;
+    }
+    sb here = {0};
+    sb_printf(&here, "-I%s", folder.data);
+    arg_list part_flags = {0};
+    for (int i = 0; common.items[i]; i++) vec_push(part_flags, common.items[i]);
+    vec_push(part_flags, here.data);
+    vec_push(part_flags, NULL);
+    sb part_logs = {0};
+    sb_printf(&part_logs, "%s/parts", folder.data);
+    int failed = -1;
+    if (!folder_make(part_logs.data) || !compile_all(opts, part_flags.items, &sources, part_objects.items, part_logs.data, &failed)) {
+        diag_error(first->at, "build code's program didn't compile");
+        if (failed >= 0) {
+            sb part_log = {0};
+            sb_printf(&part_log, "%s/%d.log", part_logs.data, failed);
+            note_log(part_log.data, 12);
+        }
+        return false;
+    }
     arg_list argv = {0};
     push_args(&argv, opts->build_cc);
     for (int i = 0; common.items[i]; i++) vec_push(argv, common.items[i]);
-    sb here = {0};
-    sb_printf(&here, "-I%s", folder.data);
-    vec_push(argv, here.data);
-    vec_push(argv, source.data);
+    for (int i = 0; i < part_objects.count; i++) vec_push(argv, part_objects.items[i]);
     for (int i = 0; i < objects.count; i++) vec_push(argv, objects.items[i]);
     vec_push(argv, "-o");
     vec_push(argv, exe.data);

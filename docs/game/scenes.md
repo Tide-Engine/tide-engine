@@ -168,7 +168,9 @@ Additional component arguments attach to the loaded root, for example
 same component names, literals and existing values as `Spawn` and are present before `Spawned`
 handlers run. Local scenes can also take root components, using local placement.
 
-Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. A scene is set up by `Spawned` handlers, and its entities get `Destroyed` when it unloads, both within that tick.
+Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`.
+A scene can do heavy preparation before its `Spawned` handlers run, as described
+below. Its entities get `Destroyed` when it unloads.
 
 The startup scene is also the fallback: the selected scene or prefab, or `Main`
 without a selection. When the last scene of its world unloads, the fallback loads
@@ -211,6 +213,82 @@ A spawn joins the scene of the entity the code is running for. In a handler, tha
 A scene itself is never owned: it lives until it's unloaded, whoever loaded it.
 
 Loaded scenes share their world: the same systems, singletons and `Time`.
+
+## Heavy preparation
+
+Put expensive deterministic setup inside a scene's `prepare(...)` block:
+
+```csharp
+singleton Geography
+{
+    int completed;
+    int total;
+}
+
+scene Campaign
+{
+    int seed = 42;
+
+    prepare(mut Geography geography)
+    {
+        geography.total = 3;
+        GenerateTerrain(seed, geography);
+        geography.completed = 1;
+        GenerateRoads(seed, geography);
+        geography.completed = 2;
+        GenerateSettlements(seed, geography);
+        geography.completed = 3;
+    }
+}
+```
+
+The generation functions above are game code. A scene has at most one block,
+and parentheses are required even with no dependencies: `prepare() { ... }`.
+Scene fields and methods are available directly; `this` is the scene's entity.
+Other data uses the same explicit parameters as match handlers. A component
+parameter belongs to the root and must be supplied to `Scene.Load`; singletons
+and queries keep their ordinary meaning.
+
+Preparation runs for the initial scene and for later loads, before `Spawned`.
+Its spawns belong to the scene and exist before the scene's `Spawned` handlers.
+The match stops advancing ticks while this machine prepares; `Time` does not
+advance. On hosts with background workers, views and networking keep running.
+Views can read consistent progress snapshots between completed top-level
+preparation statements. Progress fields are ordinary game data: the engine
+doesn't infer a percentage, and a long helper or loop need not publish an
+intermediate update.
+
+```csharp
+bool loading = !Scene.IsPrepared(campaign);
+bool playerReady = Scene.IsPrepared(campaign, player);
+```
+
+The one-argument form checks completion on this machine. The player form reads
+readiness acknowledged through the server's ordered commands, so match code can
+decide when to admit a player to gameplay. Missing, unloaded and non-scene
+handles return false. Scenes without a block finish immediately; their players
+still acknowledge readiness. Local scenes support the one-argument form and
+use ordinary `Spawned` setup.
+Read match readiness from match code and views; synchronous local event
+handlers operate on their recorded event state.
+
+Every peer with the complete match independently prepares the same committed
+state. The server resumes when its own preparation finishes. Slower peers catch
+up from buffered ticks, using normal state recovery if needed. Waiting for
+players, deadlines and kicks are game policy. In visibility-enabled matches,
+clients receive the permitted prepared result from the server, because they may
+lack private generation inputs.
+
+Preparation is deterministic match code. It can call synchronous helpers,
+change declared match data, query and spawn. It cannot access local state,
+await, start async tasks, or load another scene, including through helpers and
+sent events. Start follow-up work in `Spawned`. Trusted C retains its ordinary
+determinism and thread-safety responsibilities.
+
+Heavy work starts only for committed loads. Completed preparation becomes the
+baseline for subsequent prediction and rollback. Leaving the match discards
+unfinished work. Hosts without a background provider execute preparation
+synchronously; sharded matches currently reject preparation blocks.
 
 ## Private scenes
 

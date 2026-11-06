@@ -38,6 +38,8 @@ unchanged. This is host-tool feedback only; no generated code/runtime contract c
 Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
 CLI unit/help and recompile CTests pass. The recompile regression checks actual
 parsing, checking, file import, asset packing and C-generation notifications.
+Correction (2026-11-06): after parsing, imports and packing share one count for the whole step
+(cli-and-packages.md, One count for the Tide step).
 Docs production build passes with the usual unstaged example-page 404s.
 Other OS terminals remain CI/manual coverage; no web runtime code changed.
 
@@ -147,6 +149,15 @@ the tools' flags), runs it with a ten-minute limit, keeps each whole root it wro
 game again from its sources (codegen changed the program), which then finds every value. A second miss is an error
 rather than a loop. Processes are started directly (CreateProcessA with Microsoft's quoting, posix_spawnp), output
 to a log file whose last lines become notes.
+
+Correction (2026-11-06, cold builds of Mount & Rifle): the program's C is split as the CLI splits a game's
+(`split_code`, 4 MiB and up, up to 16 parts of 512 KiB, then `build_data.c`), listed in `build_parts.txt`; the parts
+compile as many at once as there are processors (`compile_all`, which the engine's objects use too) and link with
+the engine. Its shaders' arrays are empty (`gen_shader_text`/`gen_shader_spirv` with `build_program`: build code
+draws nothing, and no WGSL is translated). Mount & Rifle's 108 MB single file took 33-37 s at -O1 (only 3 s of it
+the shaders); now ~32 MB in 17 parts, 4 s. Its cold `tide build --release` went 98 s to 69 s. What's left of the
+cold "running build code" is mostly the build pack's levels of detail: 229 [LOD] meshes made one after another,
+~24 s, cached in .tide/assets/lod/ after. Small fixtures stay one file; the split was checked on Mount & Rifle.
 
 The tools come from codegen_options: `build_cc` (NULL-terminated command), `build_flags` (compile and link),
 `build_libs` (link only), `build_include`, `build_engine`. tidec's flags are `--build-cc`, `--build-flag`,

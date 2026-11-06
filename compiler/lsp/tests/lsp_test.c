@@ -3518,6 +3518,26 @@ TIDE_TEST(lsp_empty_scene_declarations)
     TIDE_CHECK(has(last_sent(), "expected '{'"));
 }
 
+TIDE_TEST(lsp_scene_preparation)
+{
+    start();
+    open_document("singleton Stats { int value; }\nscene Main\n{\n    int seed = 7;\n"
+                  "    prepare(mut Stats stats) { stats.value = se$ed; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "int seed"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"prepare\""));
+    TIDE_CHECK(!has(symbols, "tide_prepare") && !has(symbols, "tide_preparation_scene"));
+    const char *values = complete("singleton Stats { int value; }\nscene Main\n{\n    int seed;\n"
+                                  "    prepare(mut Stats stats) { stats.value = $; }\n}\n");
+    TIDE_CHECK(offers(values, "seed") && offers(values, "stats"));
+    TIDE_CHECK(!offers(values, "tide_preparation_scene"));
+    open_document("scene Main { prepare() {} }\nsystem Check(with Main) { Debug.Assert(Scene.IsPrep$ared(this)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "acknowledged a player's readiness"));
+}
+
 TIDE_TEST(lsp_scenes)
 {
     start();
@@ -3539,6 +3559,7 @@ TIDE_TEST(lsp_scenes)
     const char *calls = complete("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main)\n{\n    Scene.$\n}\n");
     TIDE_CHECK(offers(calls, "Load"));
     TIDE_CHECK(offers(calls, "Unload"));
+    TIDE_CHECK(offers(calls, "IsPrepared"));
     TIDE_CHECK(!offers(calls, "AddPlayer"));
     TIDE_CHECK(!offers(calls, "RemovePlayer"));
     const char *fields = complete("scene Arena { int size; }\nscene Main { }\nsystem S(Arena arena)\n{\n    var x = arena.$\n}\n");

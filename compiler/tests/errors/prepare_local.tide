@@ -1,0 +1,2 @@
+// expect: prepare runs deterministic match code; local scenes use Spawned handlers
+local scene Main { prepare() {} }

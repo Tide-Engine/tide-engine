@@ -1,0 +1,3 @@
+// expect: prepare(...) belongs inside a scene
+component Body { prepare() {} }
+scene Main;

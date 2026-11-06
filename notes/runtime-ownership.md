@@ -1,5 +1,14 @@
 # Runtime written by Claude for now
 
+## Deterministic scene preparation (2026-11-05)
+
+Owner-requested implementation, agent-maintained: `tide/preparation.h` and `engine/src/preparation.c`, including
+`tide_preparation_update`, `_update_clients`, `_free`, `_publish` and `_view`. Generated code calls `_publish`
+at safe statement boundaries; sessions own/update/drain private world jobs through the other calls. The existing
+worker provider/cancellation/page APIs are reused. `tide_game` gains optional prepare_pending/prepare/prepared_scene/
+prepared_command callbacks (Session ABI preparation 1); generated world readiness/preparation helpers specialize
+each game. Hosts and game libraries rebuild together. Contracts/tests: language.md and netcode.md, scene preparation.
+
 ## GPU lists in pools (2026-11-05)
 
 Under compute's pre-approved boundary, owner-approved lifting of the storage limit: `tide_shader` gains
