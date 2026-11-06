@@ -42,7 +42,9 @@ elapsed time, with bars aligned in one column. Asset build program preparation
 (including its C generation and packing) stays in one row, followed by separate
 compiling and running rows. The program is compiled once when its cached results
 are missing or invalidated; unchanged build results are reused. The active stage shows its current source or asset above a bar;
-changing filenames updates that stage in place. Parsing and C/C++ compilation
+changing filenames updates that stage in place. C/C++ shows the most recently
+completed file as each compilation finishes, alongside the completed/total count.
+Parsing and C/C++ compilation
 show file counts or percentages. Checking and importing assets, running the asset
 build program, generating game C, packing assets, and finalizing generated C
 have distinct labels. Stages without a reliable total show moving activity.

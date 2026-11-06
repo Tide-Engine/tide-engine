@@ -214,7 +214,8 @@ static void build_progress(const int completed, const int total, const char *fil
 {
     lock_feedback();
     feedback_stage("Compiling C/C++");
-    snprintf(feedback.label, sizeof feedback.label, "Compiling C/C++%s%s", *files ? ": " : "", files);
+    snprintf(feedback.label, sizeof feedback.label, "%s%s%s", *files ? "Compiled C/C++" : "Compiling C/C++",
+             *files ? ": " : "", files);
     feedback.completed = completed;
     feedback.total = total;
     feedback.percent_only = false; // Files
@@ -1221,18 +1222,6 @@ static bool run_compiles(build *b, compiles *list)
     for (;;) {
         start_compiles(list, at_once, &stop);
         show_compiles(b, list, &shown);
-        if (terminal && list->count) {
-            char files[sizeof feedback.label - 32] = "";
-            size_t used = 0;
-            // Source order keeps the label stable as parallel jobs finish.
-            for (int i = 0; i < list->count && used < sizeof files - 1; i++) {
-                const compile_job *active = &list->items[i];
-                if (!active->started || active->done) continue;
-                snprintf(files + used, sizeof files - used, "%s%s", used ? ", " : "", path_base(active->made[0]));
-                used += strlen(files + used);
-            }
-            build_progress(completed, list->count, files);
-        }
         if (list->running_count == 0) break;
         int code = 1;
         char *text = NULL;
@@ -1261,7 +1250,8 @@ static bool run_compiles(build *b, compiles *list)
             b->engine_built = true;
         }
         completed++;
-        if (!terminal) {
+        if (terminal) build_progress(completed, list->count, path_base(job->made[0]));
+        else {
             fprintf(stderr, "tide: compiled [%d/%d] %s\n", completed, list->count, path_base(job->made[0]));
             fflush(stderr);
         }

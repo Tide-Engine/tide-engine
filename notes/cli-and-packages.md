@@ -1,5 +1,22 @@
 # `tide`, packages and the package
 
+## C/C++ completion labels (2026-11-06)
+
+Owner: show completed C files as they finish, rather than listing active jobs and
+removing their names. run_compiles now updates its terminal label immediately
+on each successful completion with that file's basename and the new count.
+It keeps the last completion visible until the next; batch start has no filename.
+Failed compiles do not advance the count or claim completion. The C/C++ stage
+still retains one summary row. Redirected completion lines, scheduling, diagnostic
+ordering and reports are unchanged. The active-jobs scan and comma-separated
+label are removed.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and help, build_overlap,
+build_report pass (3/3); production docs build passes. A scratch ASan probe checks the initial filename-free
+label and the completed basename/count, alongside retained-row alignment and
+success/failure behavior. No game or browser was launched; real-terminal
+appearance remains manual coverage. No generated or web runtime changes.
+
 ## Aligned bars and asset build preparation (2026-11-06)
 
 Owner's terminal capture showed unaligned completed bars and repeated asset-build
