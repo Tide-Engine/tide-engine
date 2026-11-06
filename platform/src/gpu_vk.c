@@ -2508,8 +2508,11 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
     m->depth = (VkPipelineDepthStencilStateCreateInfo){
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .depthTestEnable = desc->depth != TIDE_GPU_DEPTH_NONE,
-        .depthWriteEnable = desc->depth == TIDE_GPU_DEPTH_TEST || desc->depth == TIDE_GPU_DEPTH_RESET,
-        .depthCompareOp = desc->depth == TIDE_GPU_DEPTH_RESET ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS_OR_EQUAL,
+        .depthWriteEnable = desc->depth == TIDE_GPU_DEPTH_TEST || desc->depth == TIDE_GPU_DEPTH_RESET
+                         || desc->depth == TIDE_GPU_DEPTH_ALONE,
+        .depthCompareOp = desc->depth == TIDE_GPU_DEPTH_RESET   ? VK_COMPARE_OP_ALWAYS
+                        : desc->depth == TIDE_GPU_DEPTH_EQUAL ? VK_COMPARE_OP_EQUAL
+                                                              : VK_COMPARE_OP_LESS_OR_EQUAL,
         .stencilTestEnable = !(test == TIDE_GPU_STENCIL_ALWAYS && op == TIDE_GPU_STENCIL_KEEP),
         .front = stencil, .back = stencil, .maxDepthBounds = 1.0f,
     };
@@ -2536,7 +2539,8 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         default:
             break;
         }
-        if (i >= outputs) b = (VkPipelineColorBlendAttachmentState){.colorWriteMask = 0};
+        // Depth alone writes no color: the frag still runs, for its discards and its coverage
+        if (i >= outputs || desc->depth == TIDE_GPU_DEPTH_ALONE) b = (VkPipelineColorBlendAttachmentState){.colorWriteMask = 0};
         blends[i] = b;
     }
     m->blend = (VkPipelineColorBlendStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, NULL, 0, VK_FALSE,

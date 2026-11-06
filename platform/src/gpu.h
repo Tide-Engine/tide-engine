@@ -174,6 +174,8 @@ typedef enum tide_gpu_depth {
     TIDE_GPU_DEPTH_TEST,  // The nearest shows, and is written
     TIDE_GPU_DEPTH_READ,  // The nearest shows, and nothing is written: what's see-through
     TIDE_GPU_DEPTH_RESET, // Written whatever is there: for clears
+    TIDE_GPU_DEPTH_ALONE, // As TIDE_GPU_DEPTH_TEST, and no color is written: a depth pre-pass
+    TIDE_GPU_DEPTH_EQUAL, // Shows only where its depth is the one there, and nothing is written: lit after a pre-pass
 } tide_gpu_depth;
 
 // Which side of a triangle a pipeline doesn't draw. The front is the side its

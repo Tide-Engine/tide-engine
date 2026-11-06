@@ -29,7 +29,7 @@ var<private> tide_g0: vec4i;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec3f,
     @location(1) tide_s2: vec2f,
     @location(2) tide_world: vec3f,

@@ -9,7 +9,7 @@ struct tide_uniforms {
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec2f,
 }
 struct tt_SkyVertex {
@@ -98,7 +98,7 @@ struct tide_uniforms {
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec2f,
 }
 struct tt_SkyVertex {
@@ -434,7 +434,7 @@ struct tide_uniforms {
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec2f,
 }
 struct tt_SkyVertex {

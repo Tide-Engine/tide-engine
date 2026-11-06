@@ -76,6 +76,8 @@ typedef enum tide_depth {
     TIDE_DEPTH_READ_WRITE, // Hidden behind what's nearer, and hides what's drawn behind it later: what's solid
     TIDE_DEPTH_READ,       // Hidden behind what's nearer, and hides nothing: what's see-through, decals, glass
     TIDE_DEPTH_NONE,       // Neither: drawn over whatever is there
+    TIDE_DEPTH_ONLY,       // Read and written as TIDE_DEPTH_READ_WRITE, and no color: a depth pre-pass
+    TIDE_DEPTH_EQUAL,      // Drawn only where its depth is the one there, and writes none: lit after a pre-pass
 } tide_depth;
 
 // Which side of a 3D mesh's triangles isn't drawn. Tide's `Cull` has the same
@@ -2297,9 +2299,13 @@ uint32_t tide_draw_push_transform_3d(tide_draw_list *d, tide_float4x4 transform)
 // frame's first, so they hide each other by how far they are, whatever their
 // order. A mesh that only reads it is hidden behind what was drawn nearer
 // before it, and hides nothing: what's see-through is drawn so, after what's
-// solid, and goes over what's there in the order it's drawn. Nothing else
-// has depth: 2D commands neither read nor write it whatever this says, a
-// clear sets it back, and a blit leaves it.
+// solid, and goes over what's there in the order it's drawn. One drawn for
+// depth alone (TIDE_DEPTH_ONLY) reads and writes it and writes no color, and
+// one drawn where depth is equal (TIDE_DEPTH_EQUAL) shows only at the samples
+// whose depth is its own, writing none: a pre-pass and its lit pass, where
+// each covered sample is shaded once. Nothing else has depth: 2D commands
+// neither read nor write it whatever this says, a clear sets it back, and a
+// blit leaves it.
 void tide_draw_set_depth(tide_draw_list *d, tide_depth depth);
 void tide_draw_unset_depth(tide_draw_list *d);
 uint32_t tide_draw_push_depth(tide_draw_list *d, tide_depth depth);

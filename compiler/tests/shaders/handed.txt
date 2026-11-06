@@ -22,7 +22,7 @@ var<private> tide_n3: vec4f;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s2: vec2f,
     @location(1) tide_h0_1: f32,
     @location(2) tide_h0_2: vec4f,
@@ -139,7 +139,7 @@ var<private> tide_f0: vec4f;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_h0_0: vec3f,
     @location(1) tide_h1_0: f32,
     @location(2) tide_h1_1: vec2f,
@@ -261,7 +261,7 @@ var<private> tide_n3: vec4f;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
 }
 struct tt_Corner {
     m_position: vec3f,
@@ -347,7 +347,7 @@ struct tide_uniforms {
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_h0_0: f32,
 }
 struct tt_Flake {

@@ -901,7 +901,8 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(three, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(three, "\"SetDepth(${1:mode})\""));
     TIDE_CHECK(offers(three, "Blend") && offers(three, "Clip"));
     const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");
-    TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None"));
+    TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None") && offers(modes, "Only")
+               && offers(modes, "Equal"));
 
     open_document("scene Main { }\nview V()\n{\n    Draw.De$pth(Depth.Read)\n    {\n    }\n}\n");
     const char *around = request("textDocument/hover");

@@ -159,6 +159,7 @@ typedef struct attrs {
     int location;  // -1 for none
     int builtin;   // A SPIR-V built-in, or -1
     bool flat;
+    bool invariant;     // @invariant: a position worked out the same in every shader that works it out the same way
     int group, binding; // -1 for none
     int stage;     // A function's: 0, or 1 for @vertex, 2 for @fragment and 3 for @compute
     int size[3];   // A compute function's @workgroup_size: 0 for none

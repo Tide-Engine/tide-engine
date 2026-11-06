@@ -1,5 +1,24 @@
 # Benchmarks
 
+## A depth pre-pass: bench_prepass (2026-11-06)
+
+`bench/prepass` (native only; its CTest, `--quick`, checks the picture alone): N full-screen cards, each cut out in
+its own sine pattern (about half covered, `this.Cutout`), farthest first, into a 1920x1036 target of 4 samples of
+Rgba16f, lit by a frag of `work` loop turns. Mode 0 lights and cuts in one frag; mode 1 is `Depth.Only` through a
+frag that only cuts, then `Depth.Equal` through the lit frag. Alternating modes, 3 rounds of 120 timed frames after
+20 warmup, GPU time (`tide_platform_gpu_ms`); every run also compares the two pictures (0 pixels differed by more
+than 2 of 255 in all of them). Release, Vulkan, RTX 4080 SUPER, 2026-11-06, medians:
+
+| Cards, work | One pass | Pre-pass + Equal | |
+|---|---|---|---|
+| 16, 48 (default) | 1.460 ms | 0.370 ms | -74.7% |
+| 8, 16 | 0.313 ms | 0.201 ms | -35.8% |
+| 16, 0 | 0.305 ms | 0.328 ms | +7.6% |
+| 4, 4 | 0.127 ms | 0.147 ms | +16.3% |
+
+The pre-pass pays where hidden lit fragments are expensive, and costs a little where lighting is cheap or little is
+hidden, as the docs say (3d.md, A depth pre-pass). Contracts: drawing.md, A depth pre-pass.
+
 ## Generated C partition experiment (2026-11-05)
 
 `bench/results/generated-c-partitions-2026-11-05.json` retains the exploratory compilation/link samples and source

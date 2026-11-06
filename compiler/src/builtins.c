@@ -731,9 +731,11 @@ static void build_signatures(void)
     add_setting("Draw", "Depth", "tide_draw_push_depth", "tide_draw_set_depth", NULL, "mode",
                 "What the 3D meshes do with depth: `Depth.ReadWrite` (each frame's first: a mesh is hidden behind what's "
                 "nearer and hides what's drawn behind it later, whatever the order), `Depth.Read` (hidden behind what's "
-                "nearer, and hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke) or "
-                "`Depth.None` (drawn over whatever is there). Only 3D meshes have depth: the 2D draws (shapes, text and "
-                "2D meshes) draw over what's there, in order, whatever this says.",
+                "nearer, and hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke), "
+                "`Depth.None` (drawn over whatever is there), `Depth.Only` (read and written, and no color: a pre-pass, "
+                "whose frag can still discard and cover) or `Depth.Equal` (drawn only where its depth is the one there, "
+                "writing none: lit after a pre-pass, each covered pixel once). Only 3D meshes have depth: the 2D draws "
+                "(shapes, text and 2D meshes) draw over what's there, in order, whatever this says.",
                 1, &T_DEPTH);
     add_unset("Draw", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
     add_setting("Draw", "Cull", "tide_draw_push_cull", "tide_draw_set_cull", NULL, "side",

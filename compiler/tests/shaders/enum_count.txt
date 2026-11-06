@@ -21,7 +21,7 @@ var<private> tide_n3: vec4f;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
 }
 struct tt_Vertex3 {
     m_position: vec3f,

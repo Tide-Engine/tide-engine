@@ -1371,7 +1371,7 @@ uint32_t tide_draw_push_blend(tide_draw_list *d, const tide_blend blend)
 // What the selected destination's 3D meshes do with its depth: its own, as its cameras are.
 void tide_draw_set_depth(tide_draw_list *d, const tide_depth depth)
 {
-    d->place.depth = (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
+    d->place.depth = (uint32_t)depth <= TIDE_DEPTH_EQUAL ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
 }
 
 void tide_draw_unset_depth(tide_draw_list *d)
@@ -3556,7 +3556,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     // More instances of the run before it, when nothing came between them and they draw with the same
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
     // What has no depth says 0 whatever is set, so the setting never comes between two 2D runs
-    const uint8_t deep = kind == TIDE_DRAW_SHADED && shader->dims == 3 && (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint8_t)depth : 0;
+    const uint8_t deep = kind == TIDE_DRAW_SHADED && shader->dims == 3 && (uint32_t)depth <= TIDE_DEPTH_EQUAL ? (uint8_t)depth : 0;
     // ...and what has no sides, so neither does that one
     const uint8_t sided = kind == TIDE_DRAW_SHADED && shader->dims == 3 ? sides(cull) : 0;
     if (kind == TIDE_DRAW_SHADED && last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)blend
@@ -4172,7 +4172,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
         made->rows_revision = d->diagnostics->revision;
         for (uint32_t level = low; level <= high; level++) made->rows[level] = tide_draw_geometry_row_of(d, meshes[level]);
     }
-    const uint8_t depth = (uint32_t)p->depth <= TIDE_DEPTH_NONE ? (uint8_t)p->depth : 0;
+    const uint8_t depth = (uint32_t)p->depth <= TIDE_DEPTH_EQUAL ? (uint8_t)p->depth : 0;
     const uint8_t cull = sides(p->cull | (p->cull != TIDE_CULL_NONE && stats->mirrored ? TIDE_DRAW_MIRRORED : 0u));
     const uint32_t uniform_size = tide_shader_uniform_size(shader);
     // After the set of draws recorded just before it, of the same mesh through the same shader with the same
@@ -5250,7 +5250,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             const uint32_t texture = append_texture(d, from, c->mesh3.texture);
             mesh_instances(d, slot, from->matrices + c->mesh3.first, c->mesh3.count, texture,
                            (tide_filter)c->mesh3.filter, (tide_wrap)c->mesh3.wrap, (tide_blend)c->blend,
-                           c->depth <= TIDE_DEPTH_NONE ? (tide_depth)c->depth : TIDE_DEPTH_READ_WRITE,
+                           c->depth <= TIDE_DEPTH_EQUAL ? (tide_depth)c->depth : TIDE_DEPTH_READ_WRITE,
                            c->cull | SIDES_KNOWN, c->color, NULL, false);
         } else if (c->kind == TIDE_DRAW_SHADED || c->kind == TIDE_DRAW_BLIT) {
             const tide_draw_run *r = &from->runs[c->shaded.run];

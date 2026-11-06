@@ -6458,7 +6458,8 @@ static void write_wgsl(program *prog, shader *sh)
     put_wgsl_inputs(sh, &rest);
     put_dice_variable(&em, &rest, rolls);
     if (sh->frag && sh->frag->cutout) sb_put(&rest, "var<private> tide_cover: f32;\n"); // What it covers
-    sb_put(&rest, "struct tide_corner {\n    @builtin(position) tide_at: vec4f,\n");
+    // Invariant: a mesh drawn through two shaders lands on the same depth in both, for Depth.Equal after Depth.Only
+    sb_put(&rest, "struct tide_corner {\n    @builtin(position) @invariant tide_at: vec4f,\n");
     put_varyings(&em, &rest);
     sb_put(&rest, "}\n");
     put_structs(&em, &rest);
