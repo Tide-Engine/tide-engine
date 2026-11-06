@@ -17,6 +17,7 @@
 #include "tide/platform.h"
 
 #include "files.h"
+#include "tide/page.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -167,6 +168,26 @@ static void put_time(text *t, const int64_t seconds, const bool name)
 }
 
 #ifdef CRASHES
+static char last_line[512];
+
+// What a crash's report says after its first line: for an abort, the last
+// line said on stderr (why it stopped, as the engine's stops say it first);
+// and how much memory the program and the system had (tide/page.h)
+static void put_crash_context(text *t, const bool aborted)
+{
+    if (aborted && last_line[0]) {
+        put(t, "said before it: ");
+        put(t, last_line);
+        put(t, "\n");
+    }
+    char memory[512];
+    if (tide_memory_figures(memory, sizeof memory)) {
+        put(t, "memory: ");
+        put(t, memory);
+        put(t, "\n");
+    }
+}
+
 static bool make_new_folder(const char *path);
 
 // A folder of its own for a crash in Crashes, by its UTC time, with a number
@@ -544,13 +565,15 @@ static DWORD WINAPI dump_work(LPVOID context)
 {
     const dump_job *job = context;
     // MiniDumpWithUnloadedModules, MiniDumpWithIndirectlyReferencedMemory, MiniDumpWithThreadInfo
-    write_dump(GetCurrentProcess(), GetCurrentProcessId(), job->file, 0x20 | 0x40 | 0x1000, &job->exception, NULL, NULL);
+    // MiniDumpWithFullMemoryInfo: the program's memory regions, by size and kind, not what's in them
+    write_dump(GetCurrentProcess(), GetCurrentProcessId(), job->file, 0x20 | 0x40 | 0x1000 | 0x800, &job->exception, NULL, NULL);
     return 0;
 }
 
 static void record_crash(EXCEPTION_POINTERS *pointers)
 {
     if (InterlockedExchange(&crashing, 1)) Sleep(INFINITE); // Another thread is writing its crash; the program ends with it
+    tide_memory_spend_reserve(); // For the dump, the stack and the reporter, if memory is what ran out
     end_tee();
     // The crash's folder, named by its time
     text folder;
@@ -594,6 +617,9 @@ static void record_crash(EXCEPTION_POINTERS *pointers)
     write_handle(report, line.bytes, line.used);
     write_handle(log_file, line.bytes, line.used);
     write_original(line.bytes, line.used);
+    text context = {0};
+    put_crash_context(&context, pointers->ExceptionRecord->ExceptionCode == 0x40000015); // STATUS_FATAL_APP_EXIT: an abort
+    write_handle(report, context.bytes, context.used);
     put_stack(report, *pointers->ContextRecord);
     if (report != INVALID_HANDLE_VALUE) CloseHandle(report);
     if (made) {
@@ -883,6 +909,9 @@ static void crashed(const int signal, siginfo_t *info, void *context)
     write_fd(report, line.bytes, line.used);
     write_fd(log_fd, line.bytes, line.used);
     write_fd(STDERR_FILENO, line.bytes, line.used); // The original stderr again (end_tee): the thread closes its own copy
+    text context = {0};
+    put_crash_context(&context, signal == SIGABRT);
+    write_fd(report, context.bytes, context.used);
     void *frames[64];
     const int count = backtrace(frames, 64);
     if (report >= 0) backtrace_symbols_fd(frames, count, report);
@@ -937,8 +966,34 @@ static void write_log(const void *bytes, const size_t size)
 #endif
 }
 
+// The last whole line written to stderr (last_line, above), which an abort's
+// report gives: it's the engine's or the game's say of why it stopped. The
+// thread writes it, and a crash reads it once the thread is done (or has had
+// its two seconds).
+#ifndef CRASHES
+static char last_line[512];
+#endif
+static char line_so_far[512];
+static size_t line_used;
+
+static void keep_last_line(const char *bytes, const size_t size)
+{
+    for (size_t i = 0; i < size; i++) {
+        if (bytes[i] == '\n') {
+            if (line_used) {
+                memcpy(last_line, line_so_far, line_used);
+                last_line[line_used] = '\0';
+            }
+            line_used = 0;
+        } else if (bytes[i] != '\r' && line_used + 1u < sizeof line_so_far) {
+            line_so_far[line_used++] = bytes[i];
+        }
+    }
+}
+
 static void forward(const char *bytes, const size_t size)
 {
+    keep_last_line(bytes, size);
     write_original(bytes, size);
     if (logged >= LOG_LIMIT) return;
     write_log(bytes, size);

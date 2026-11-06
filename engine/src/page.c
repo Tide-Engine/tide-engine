@@ -11,12 +11,6 @@
 #include <errno.h>
 #endif
 
-_Noreturn void tide_out_of_memory(void)
-{
-    fprintf(stderr, "tide: out of memory\n");
-    abort();
-}
-
 #ifdef __wasm__
 // 64 bytes a round, with no way out inside it, so the compiler makes SIMD
 // loads of them: a run that differs is found within its first 64 bytes that
@@ -190,25 +184,38 @@ void *tide_realloc(void *p, const size_t old_size, const size_t size)
 
 #else
 
+// Where the system has no memory for a moment, each waits for it (tide_memory_wait). The web's above don't: a
+// page's memory has a most it grows to.
+#define NO_MEMORY "there's no more memory"
+
 void *tide_alloc(const size_t size)
 {
-    void *p = malloc(size ? size : 1u);
-    if (!p) tide_out_of_memory();
+    uint32_t waited = 0;
+    void *p;
+    while (!(p = malloc(size ? size : 1u))) if (!tide_memory_wait(size, &waited)) tide_memory_ran_out(NO_MEMORY, waited);
+    tide_memory_waited(size, waited);
     return p;
 }
 
 void *tide_alloc_zeroed(const size_t count, const size_t size)
 {
-    void *p = calloc(count ? count : 1u, size ? size : 1u);
-    if (!p) tide_out_of_memory();
+    if (size && count > SIZE_MAX / size) tide_out_of_memory();
+    uint32_t waited = 0;
+    void *p;
+    while (!(p = calloc(count ? count : 1u, size ? size : 1u))) {
+        if (!tide_memory_wait((uint64_t)count * size, &waited)) tide_memory_ran_out(NO_MEMORY, waited);
+    }
+    tide_memory_waited((uint64_t)count * size, waited);
     return p;
 }
 
 void *tide_realloc(void *p, const size_t old_size, const size_t size)
 {
     (void)old_size;
-    void *grown_to = realloc(p, size ? size : 1u);
-    if (!grown_to) tide_out_of_memory();
+    uint32_t waited = 0;
+    void *grown_to;
+    while (!(grown_to = realloc(p, size ? size : 1u))) if (!tide_memory_wait(size, &waited)) tide_memory_ran_out(NO_MEMORY, waited);
+    tide_memory_waited(size, waited);
     return grown_to;
 }
 

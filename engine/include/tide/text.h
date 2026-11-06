@@ -61,6 +61,11 @@ static inline void tide_scratch_reset(const uint64_t mark)
 // Frees this thread's scratch area; the next text made allocates it again.
 // For hot reloading, before a game's library is unloaded (tide/host.h).
 void tide_scratch_free(void);
+// Lets go of this thread's spare piece (what the area kept of a piece it let
+// go, for the next) if nothing took it for `idle_ns`, or at once for 0; says
+// whether it still keeps one. The area does it itself now and then, as does a
+// thread leaving a tick's work (tide/jobs.h), and tide_memory_wait.
+bool tide_scratch_trim(uint64_t idle_ns);
 
 // How numbers are written, as in C# format strings: TIDE_FORMAT('F', 2) is
 // "F2", two decimals. 0 is the default: the shortest text that reads back as

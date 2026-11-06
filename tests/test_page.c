@@ -173,3 +173,23 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
     tide_table_free(&a, &wide);
     tide_table_free(&b, &wide);
 }
+
+// Waiting for memory (tide_memory_wait): a little longer each time, and no
+// more once it has waited ten seconds in all; on the web, not at all.
+TIDE_TEST(page_memory_wait_stops_after_ten_seconds)
+{
+    uint32_t waited = 0;
+#ifdef __wasm__
+    TIDE_CHECK(!tide_memory_wait(16u, &waited) && waited == 0);
+#else
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 1u);
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 2u);
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 4u);
+    waited = 9998u;
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 10000u); // The last step is what's left
+    TIDE_CHECK(!tide_memory_wait(16u, &waited) && waited == 10000u);
+#endif
+    char figures[512];
+    TIDE_CHECK(tide_memory_figures(figures, sizeof figures) > 0 && strncmp(figures, "this program has ", 17) == 0);
+    TIDE_CHECK(tide_memory_figures(figures, 8u) == 7u && figures[7] == '\0'); // Cut short to fit
+}

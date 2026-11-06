@@ -265,8 +265,7 @@ void tide_shard_bytes_append(tide_list *l, const void *data, const uint32_t size
     bool copied;
     const uint8_t *flat = tide_shard_bytes_flat(*l, &had, &copied);
     if ((uint64_t)had + size > INT32_MAX) tide_out_of_memory();
-    uint8_t *all = malloc((size_t)had + size);
-    if (!all) tide_out_of_memory();
+    uint8_t *all = tide_alloc((size_t)had + size);
     if (had) memcpy(all, flat, had);
     tide_shard_bytes_done(*l, flat, copied);
     memcpy(all + had, data, size);

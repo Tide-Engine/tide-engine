@@ -29,8 +29,7 @@ static uint32_t clamped_capacity(const int32_t capacity, const uint32_t stride)
 // `stride` as tide_gpu_list_make takes it: words an element, and TIDE_GPU_LIST_INTS for ints.
 static tide_gpu_list made(const uint32_t capacity, const uint32_t stride)
 {
-    void *memory = calloc(1, sizeof(tide_gpu_list_state));
-    if (!memory) tide_out_of_memory();
+    void *memory = tide_alloc_zeroed(1, sizeof(tide_gpu_list_state));
     tide_gpu_list_state *s = memory;
     *s = (tide_gpu_list_state){.next = gpu_lists, .owner = &gpu_lists, .capacity = capacity,
                                .stride = stride & ~TIDE_GPU_LIST_INTS, .ints = (stride & TIDE_GPU_LIST_INTS) != 0,
@@ -192,8 +191,7 @@ uint32_t tide_gpu_list_read_begin(const tide_gpu_list list, const bool count_onl
         *r = (tide_gpu_read_request){.list = list.id, .bytes = (uint32_t)bytes, .state = TIDE_GPU_READ_ASKED,
                                      .serial = reads_now->serial, .count_only = count_only};
         if (bytes) {
-            r->data = calloc(1, (size_t)bytes); // Zeros past what the renderer reads of a range smaller than asked
-            if (!r->data) tide_out_of_memory();
+            r->data = tide_alloc_zeroed(1, (size_t)bytes); // Zeros past what the renderer reads of a range smaller than asked
         } else {
             r->state = TIDE_GPU_READ_FAILED; // No list to read
         }

@@ -189,3 +189,24 @@ TIDE_TEST(scratch_pieces_go_back_with_the_mark)
     TIDE_CHECK(marks[0][0] == marks[1][0] && marks[0][1] == marks[1][1]);
     tide_heap_free(&world.heap);
 }
+
+// A spare goes once nothing takes it (tide_scratch_trim): at once for 0, and
+// not before its time otherwise. What comes after is where it would have been.
+TIDE_TEST(scratch_spare_goes_when_nothing_takes_it)
+{
+    start();
+    const uint64_t mark = tide_scratch_mark();
+    char *big = tide_scratch_memory(2u * TIDE_SCRATCH_BYTES);
+    memset(big, 1, 2u * TIDE_SCRATCH_BYTES);
+    const uint64_t at = tide_scratch_mark();
+    tide_scratch_reset(mark);
+    TIDE_CHECK(tide_scratch_trim(UINT64_MAX)); // Kept: let go just now
+    TIDE_CHECK(!tide_scratch_trim(0));         // Gone
+    TIDE_CHECK(!tide_scratch_trim(0));         // And none to go
+    big = tide_scratch_memory(2u * TIDE_SCRATCH_BYTES);
+    memset(big, 2, 2u * TIDE_SCRATCH_BYTES);
+    TIDE_CHECK(tide_scratch_mark() == at);
+    tide_scratch_reset(mark);
+    TIDE_CHECK(!tide_scratch_trim(0));
+    tide_heap_free(&world.heap);
+}

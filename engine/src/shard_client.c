@@ -51,8 +51,7 @@ static void make_room(tide_shard_client *c, const uint32_t shard)
 static bool open_client(tide_shard_client *c, const uint32_t shard, tide_client_desc d, const double now)
 {
     if (c->heard && !c->logs[shard]) {
-        c->logs[shard] = calloc(1, sizeof *c->logs[shard]);
-        if (!c->logs[shard]) tide_out_of_memory();
+        c->logs[shard] = tide_alloc_zeroed(1, sizeof *c->logs[shard]);
         c->logs[shard]->taken = c->heard->taken;
     }
     d.events = c->heard ? c->logs[shard] : NULL;
@@ -156,8 +155,7 @@ static uint32_t add_watched(tide_shard_client *c, const void *world, tide_shard_
     if (count > c->region_room) {
         free(c->regions);
         c->region_room = count * 2u;
-        c->regions = malloc(c->region_room * sizeof *c->regions);
-        if (!c->regions) tide_out_of_memory();
+        c->regions = tide_alloc(c->region_room * sizeof *c->regions);
         (void)api->regions(world, c->regions, c->region_room);
     }
     for (uint32_t i = 0; i < count && n < FOLLOWS_MOST; i++) {

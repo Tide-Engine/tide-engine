@@ -43,6 +43,38 @@ typedef struct tide_page {
 // same way on every machine.
 _Noreturn void tide_out_of_memory(void);
 
+// Running out of memory (engine/src/memory.c). Where the system has none for a
+// moment (Windows growing its page file, another program about to let go), an
+// allocation waits for it, and the program stutters rather than ends:
+//
+//     uint32_t waited = 0;
+//     while (!(p = malloc(bytes))) if (!tide_memory_wait(bytes, &waited)) tide_memory_ran_out(what, waited);
+//     tide_memory_waited(bytes, waited);
+//
+// tide_alloc and its kin, and the scratch area, do. tide_memory_wait first lets
+// go of what this thread keeps for later (its scratch spare), then sleeps a
+// little longer each time it's asked, `waited` being how long it has so far in
+// milliseconds (0 to start), and says false once that's 10 s, or at once on
+// the web, where a page's memory has a most and its thread can't wait.
+// tide_memory_waited says on stderr, once a second at most, that memory came
+// after a wait. tide_memory_ran_out lets go of memory kept from the start for
+// it, says on stderr that `what` couldn't be had (after the wait), how much
+// memory this program and the system have, and whether the system as a whole
+// is out, and ends the program.
+bool tide_memory_wait(uint64_t bytes, uint32_t *waited_ms);
+void tide_memory_waited(uint64_t bytes, uint32_t waited_ms);
+_Noreturn void tide_memory_ran_out(const char *what, uint32_t waited_ms);
+// Lets go of the memory kept for when it runs out (8 MiB, kept from the
+// start; none on the web), once: tide_memory_ran_out does, and so does a
+// crash's handler on Windows, for its dump and its reporter.
+void tide_memory_spend_reserve(void);
+
+// How much memory this program and the system have, as text for a person
+// ("this program has 6.9 GB (4.9 GB of it in RAM); all programs have ..."), in
+// `text` of `size` bytes: its length. It allocates nothing and formats its own
+// text, so a crash's handler can call it (on Linux, inside a signal).
+size_t tide_memory_figures(char *text, size_t size);
+
 // Whether this is a run nobody watches: TIDE_HIDDEN is set in the environment
 // to anything but nothing or 0, as in the shell of an automated run or a build
 // server, which mustn't put anything on somebody's screen, or in their ears. The

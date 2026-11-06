@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "tide/page.h"
+#include "tide/text.h"
 #include "tide/time.h"
 #include "tide/worker.h"
 
@@ -436,6 +437,7 @@ static void work(void *context, const uint32_t thread)
     }
     may_sleep(false);
     current = NULL;
+    tide_scratch_trim(1000000000u); // A spare nothing took for a second, before the thread may sleep
 }
 
 // While a tick runs on one thread: the threads it could have had, so its C

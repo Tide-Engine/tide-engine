@@ -112,8 +112,7 @@ static void put_bytes(tide_delta_writer *d, const uint8_t *now, const uint32_t s
     if (base && base_size) {
         if (d->scratch_size < size) {
             free(d->scratch);
-            d->scratch = malloc(size);
-            if (!d->scratch) tide_out_of_memory();
+            d->scratch = tide_alloc(size);
             d->scratch_size = size;
         }
         for (uint32_t i = 0; i < base_size; i++) d->scratch[i] = (uint8_t)(now[i] ^ base[i]);
