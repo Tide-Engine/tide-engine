@@ -180,6 +180,14 @@ against 37.1 s, the same machine and run order). A/B on the same cold build: bui
 game's pack are the same bytes stripped and not. Tests: the build-code, build-error, asset-usage, scene-startup and
 server fixtures (smoke, pack, room, shards, entry, visual) and the CLI build report pass under ASan.
 
+Its C is only what its main reaches (same day, the owner: "yeah let's try that next"). Codegen still makes the whole
+game's C in build mode, then `split_prune(&g.c, "main", ...)` (plumbing_split.inc) keeps the functions and variables
+main reaches through bodies, initializers and macros' bodies (a name after `.`/`->` is a field's), every item that
+defines neither (types, prototypes, directives, macros), and the conditional directives of what it drops; C it
+can't cut stays whole. Nothing of the engine names generated code, so the link needs nothing else. Mount & Rifle's
+program: 32 MB in 17 parts to 795 KB in one file; build code's step 12.3 s to 8.2 s cold; results.bin and the game's
+pack the same bytes. The fixtures' programs are 9-43 KB. Tests: the same 18 as above.
+
 Made ahead, on every processor (2026-11-06, the owner on the cold build: "lots into lod, can we improve that
 process?"). Measured on Mount & Rifle with a cold cache: the levels of 229 meshes (1.88 M triangles; 155 under the
 1,000 that get any) took 14.4 s one after another, the biggest 1.2 s; BC1/BC3 compression of its images ~14 s.

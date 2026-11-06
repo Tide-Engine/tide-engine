@@ -26815,6 +26815,12 @@ bool codegen(program *prog, const codegen_options *opts)
         report_asset(d, type_name(d->return_type), 0, server_cut ? "the server's code never reads it" : "nothing in the game's code, defaults or shaders names it");
     }
     if (diag_error_count()) { free(g.pack_bytes); return false; }
+    // Build code's program runs its main alone: what it doesn't reach of the game's C isn't compiled (split_prune).
+    // C it can't cut is compiled whole, as before
+    if (opts->build_program) {
+        sb reached = {0};
+        if (split_prune(&g.c, "main", &reached)) g.c = reached;
+    }
     sb parts_manifest = {0};
     bool ok = write_file(h_path.data, &g.h), whole = true;
     if (ok && opts->split_plumbing) {
