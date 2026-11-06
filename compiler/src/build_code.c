@@ -170,7 +170,7 @@ static unsigned processors(void)
     const long got = sysconf(_SC_NPROCESSORS_ONLN);
     const unsigned n = got > 0 ? (unsigned)got : 1u;
 #endif
-    return n < 1u ? 1u : n > 8u ? 8u : n;
+    return n < 1u ? 1u : n;
 }
 
 static uint8_t *read_all(const char *path, size_t *size)
@@ -643,53 +643,93 @@ static void push_args(arg_list *argv, const char *const *more)
     for (int i = 0; more && more[i]; i++) vec_push(*argv, more[i]);
 }
 
-// Compiles each of `sources` to the object beside it in `objects` with `common`, as many at once as there are
-// processors, each one's output in <logs>/<i>.log. False with `failed` the first that failed.
+// Compiles of `sources` to the objects beside them in `objects` with `common`, as many at once as there are
+// processors, each one's output in <logs>/<i>.log: started with compile_start, which can return before they're
+// all started, so the caller does something else meanwhile, and finished by compile_finish.
+typedef struct compile_batch {
+    const codegen_options *opts;
+    const char *const *common;
+    const path_list *sources;
+    char *const *objects;
+    const char *logs;
+    build_process *running;
+    int started, waited, failed;
+    bool ok;
+} compile_batch;
+
+static void compile_next(compile_batch *b)
+{
+    const int i = b->started++;
+    arg_list argv = {0};
+    push_args(&argv, b->opts->build_cc);
+    push_args(&argv, b->common);
+    vec_push(argv, "-c");
+    vec_push(argv, b->sources->items[i]);
+    vec_push(argv, "-o");
+    vec_push(argv, b->objects[i]);
+    vec_push(argv, NULL);
+    sb log = {0};
+    sb_printf(&log, "%s/%d.log", b->logs, i);
+    b->running[i] = start_process(argv.items, log.data);
+    if (!b->running[i].started && b->ok) b->ok = false, b->failed = i;
+}
+
+// Starts as many as there are processors
+static compile_batch compile_start(const codegen_options *opts, const char *const *common, const path_list *sources,
+                                   char *const *objects, const char *logs)
+{
+    compile_batch b = {opts, common, sources, objects, logs, calloc((size_t)(sources->count ? sources->count : 1),
+                       sizeof(build_process)), 0, 0, -1, true};
+    if (!b.running) abort();
+    while (b.started < sources->count && b.started < (int)processors()) compile_next(&b);
+    return b;
+}
+
+// Starts the rest as those before them end, and waits for all. False with `failed` the first that failed.
+static bool compile_finish(compile_batch *b, int *failed)
+{
+    for (; b->waited < b->sources->count; b->waited++) {
+        if (wait_process(&b->running[b->waited], 0) != 0 && b->ok) b->ok = false, b->failed = b->waited;
+        if (b->started < b->sources->count) compile_next(b);
+    }
+    free(b->running);
+    b->running = NULL;
+    *failed = b->failed;
+    return b->ok;
+}
+
 static bool compile_all(const codegen_options *opts, const char *const *common, const path_list *sources,
                         char *const *objects, const char *logs, int *failed)
 {
-    const unsigned most = processors();
-    build_process *running = calloc((size_t)(sources->count ? sources->count : 1), sizeof *running);
-    if (!running) abort();
-    bool ok = true;
-    int waited = 0;
-    for (int i = 0; i < sources->count; i++) {
-        if (i - waited >= (int)most && wait_process(&running[waited++], 0) != 0 && ok) ok = false, *failed = waited - 1;
-        arg_list argv = {0};
-        push_args(&argv, opts->build_cc);
-        push_args(&argv, common);
-        vec_push(argv, "-c");
-        vec_push(argv, sources->items[i]);
-        vec_push(argv, "-o");
-        vec_push(argv, objects[i]);
-        vec_push(argv, NULL);
-        sb log = {0};
-        sb_printf(&log, "%s/%d.log", logs, i);
-        running[i] = start_process(argv.items, log.data);
-        if (!running[i].started && ok) ok = false, *failed = i;
-    }
-    for (; waited < sources->count; waited++) {
-        if (wait_process(&running[waited], 0) != 0 && ok) ok = false, *failed = waited;
-    }
-    free(running);
-    return ok;
+    compile_batch b = compile_start(opts, common, sources, objects, logs);
+    return compile_finish(&b, failed);
 }
 
-// The engine's objects, compiled once for these flags and these sources, in `folder`
-static bool engine_objects(const codegen_options *opts, const char *folder, const char *const *common, path_list *objects)
+// The engine's objects, compiled once for these flags and these sources, in `folder`: started by engine_start,
+// before the program is generated (they don't depend on it), and finished by engine_finish after
+typedef struct engine_build {
+    engine_files files;
+    sb dir, stamp;
+    bool done;
+    compile_batch batch;
+} engine_build;
+
+static bool engine_start(const codegen_options *opts, const char *folder, const char *const *common, path_list *objects,
+                         engine_build *e)
 {
     tide_sha256 hash;
     tide_sha256_init(&hash);
     for (int i = 0; opts->build_cc[i]; i++) tide_sha256_add(&hash, opts->build_cc[i], strlen(opts->build_cc[i]) + 1);
     for (int i = 0; common[i]; i++) tide_sha256_add(&hash, common[i], strlen(common[i]) + 1);
-    engine_files files = {.hash = &hash};
+    *e = (engine_build){.files = {.hash = &hash}};
     sb engine = {0}, include = {0};
     sb_printf(&engine, "%s/", opts->build_engine);
     sb_printf(&include, "%s/", opts->build_include);
-    folder_find(engine.data, ".c", found_source, &files);
-    folder_find(engine.data, ".h", found_header, &files);
-    folder_find(include.data, ".h", found_header, &files);
-    if (!files.sources.count) {
+    folder_find(engine.data, ".c", found_source, &e->files);
+    folder_find(engine.data, ".h", found_header, &e->files);
+    folder_find(include.data, ".h", found_header, &e->files);
+    e->files.hash = NULL; // Only while it's found
+    if (!e->files.sources.count) {
         diag_error((loc){0}, "build code needs the engine's sources, and '%s' has none", opts->build_engine);
         return false;
     }
@@ -697,34 +737,40 @@ static bool engine_objects(const codegen_options *opts, const char *folder, cons
     tide_sha256_end(&hash, key);
     char hex[17];
     for (int i = 0; i < 8; i++) snprintf(hex + i * 2, 3, "%02x", key[i]);
-    sb dir = {0};
-    sb_printf(&dir, "%s/engine-%s", folder, hex);
-    if (!folder_make(dir.data)) {
-        diag_error((loc){0}, "can't make the folder '%s' for build code's program", dir.data);
+    sb_printf(&e->dir, "%s/engine-%s", folder, hex);
+    if (!folder_make(e->dir.data)) {
+        diag_error((loc){0}, "can't make the folder '%s' for build code's program", e->dir.data);
         return false;
     }
-    sb stamp = {0};
-    sb_printf(&stamp, "%s/done", dir.data);
-    const bool done = folder_file_info(stamp.data, NULL, NULL);
+    sb_printf(&e->stamp, "%s/done", e->dir.data);
+    e->done = folder_file_info(e->stamp.data, NULL, NULL);
     const int first = objects->count;
-    for (int i = 0; i < files.sources.count; i++) {
+    for (int i = 0; i < e->files.sources.count; i++) {
         sb object = {0};
-        sb_printf(&object, "%s/%d.o", dir.data, i);
+        sb_printf(&object, "%s/%d.o", e->dir.data, i);
         vec_push(*objects, object.data);
     }
+    // The list's items are the arena's: a list that grows is copied, and these stay as they are
+    if (!e->done) e->batch = compile_start(opts, common, &e->files.sources, objects->items + first, e->dir.data);
+    return true;
+}
+
+static bool engine_finish(const codegen_options *opts, engine_build *e)
+{
+    if (e->done) return true;
     int failed = -1;
-    const bool ok = done || compile_all(opts, common, &files.sources, objects->items + first, dir.data, &failed);
+    const bool ok = compile_finish(&e->batch, &failed);
     if (!ok) {
         diag_error((loc){0}, "the engine's sources didn't compile for build code's program: '%s'",
-                   failed >= 0 ? files.sources.items[failed] : "?");
+                   failed >= 0 ? e->files.sources.items[failed] : "?");
         if (failed >= 0) {
             sb log = {0};
-            sb_printf(&log, "%s/%d.log", dir.data, failed);
+            sb_printf(&log, "%s/%d.log", e->dir.data, failed);
             note_log(log.data, 12);
         }
         diag_note("the compiler was '%s'; check that it's clang and can build C for this machine", opts->build_cc[0]);
-    } else if (!done) {
-        FILE *f = fopen(stamp.data, "wb");
+    } else {
+        FILE *f = fopen(e->stamp.data, "wb");
         if (f) fclose(f);
     }
     return ok;
@@ -764,8 +810,6 @@ static bool run_program(program *prog, const codegen_options *opts, root_info *r
     build.split_code_min_bytes = 4u * 1024u * 1024u;
     build.split_code_parts = 16;
     build.split_code_part_bytes = 512u * 1024u;
-    remove(pack.data);
-    if (!codegen(prog, &build) || diag_error_count()) return false;
     static const char *const common_flags[] = {"-std=c17", "-O1", "-fno-fast-math", "-ffp-contract=off", "-w", NULL};
     arg_list common = {0};
     push_args(&common, common_flags);
@@ -774,8 +818,17 @@ static bool run_program(program *prog, const codegen_options *opts, root_info *r
     sb_printf(&include, "-I%s", opts->build_include);
     vec_push(common, include.data);
     vec_push(common, NULL);
+    // The engine's compiles go first, as they don't need the program: they run while it's generated
     path_list objects = {0};
-    if (!engine_objects(opts, folder.data, common.items, &objects)) return false;
+    engine_build engine;
+    if (!engine_start(opts, folder.data, common.items, &objects, &engine)) return false;
+    remove(pack.data);
+    if (!codegen(prog, &build) || diag_error_count()) {
+        int failed;
+        if (!engine.done) compile_finish(&engine.batch, &failed); // Leaves no compiler running
+        return false;
+    }
+    if (!engine_finish(opts, &engine)) return false;
     sb exe = {0}, log = {0};
 #ifdef _WIN32
     sb_printf(&exe, "%s/build.exe", folder.data);

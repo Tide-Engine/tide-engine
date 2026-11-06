@@ -19,7 +19,8 @@ suite made single runs 2-3x slower, those were discarded):
 
 Truly cold (no .tide/): 126 s, then 98 s with the parts above, then 69 s with build code's program split and
 without shaders (assets-and-files.md, Build code), then 47 s with images and levels of detail made ahead on every
-processor (same file, "Made ahead"), then ~43 s with images decoded ahead of the asset loop (same file). Of the 69 s: asset imports 11.5 s, build code 39 s (of which
+processor (same file, "Made ahead"), then ~43 s with images decoded ahead of the asset loop (same file), then ~36 s on a quiet machine with build
+code's compiles overlapping its generation on every processor (same file, Build code). Of the 69 s: asset imports 11.5 s, build code 39 s (of which
 ~24 s making levels of detail one mesh at a time, cached after), C 9 s. A full recompile of the generated C
 (cached data part) takes ~19 s. Starting the game adds ~3 s (its 742 MB pack).
 

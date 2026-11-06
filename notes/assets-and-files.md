@@ -159,6 +159,19 @@ the shaders); now ~32 MB in 17 parts, 4 s. Its cold `tide build --release` went 
 cold "running build code" is mostly the build pack's levels of detail: 229 [LOD] meshes made one after another,
 ~24 s, cached in .tide/assets/lod/ after. Small fixtures stay one file; the split was checked on Mount & Rifle.
 
+Its compiles overlap the program's generation (2026-11-06, the owner: "what about the generate + compile time?").
+Measured on a cold Mount & Rifle build: generating 9.1 s (its C 1.2, images 1.9 and levels 1.4 made ahead for the
+first time, the pack loop 2.3, split and write 1.7, the 739 MB pack 0.4), then the engine 3.4 s and the parts 4.1 s,
+each at most 8 compiles at once, link 0.1, run 0.7. `engine_objects` became `engine_start`/`engine_finish`
+around codegen: the flags are worked out first, a compile per processor starts before the program is generated, the
+rest as those end once it is (`compile_start`/`compile_finish`, a `compile_batch`; no thread, as starting a process
+uses the arena); a generation that fails waits for the compiles it started. `processors()` no longer stops at 8
+(they're below normal priority on Windows, as the game's are already at TIDE_JOBS). After: the engine 1.3 s past
+generation, the parts 2.4 s; build code's whole step 17.4 s to ~13.5 s, the cold build ~43 s to 36 s on a quiet
+machine (single cold runs vary by 10 s with other load). Left: the program's pack holds every asset, textures
+included, which build code can't read (its pack loop and file ~2 s); leaving them out takes generated loading that
+tolerates them missing, as a server's does.
+
 Made ahead, on every processor (2026-11-06, the owner on the cold build: "lots into lod, can we improve that
 process?"). Measured on Mount & Rifle with a cold cache: the levels of 229 meshes (1.88 M triangles; 155 under the
 1,000 that get any) took 14.4 s one after another, the biggest 1.2 s; BC1/BC3 compression of its images ~14 s.
