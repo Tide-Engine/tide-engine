@@ -56,7 +56,8 @@ or API change beyond the profile's new fields).
   Native sanitize: every `gpu`-labelled test (Vulkan with push descriptors and with sets). `tide_platform_draw`'s
   prewarm phase failed on this machine before any change (the base commit too): ten pipelines on the pool with the
   driver's cache cold took more than its 600 headless frames (~1.5 ms each); `PREWARM_FRAMES` is 6,000 now, still a
-  bound on a hang. Web: `platform.c`'s part runs there too (below in validation).
+  bound on a hang. After merging `origin/dev` (the depth pre-pass, new shaders) `tide_platform_prewarm` failed the
+  same way two runs in three (its `WAIT_FRAMES`, 600, used up in 0.8 s); 6,000 too, then 4 of 4 passed. Web: `platform.c`'s part runs there too (below in validation).
 
 ## Vulkan pipelines on the pool's threads; the loader waits for them (2026-11-05)
 
