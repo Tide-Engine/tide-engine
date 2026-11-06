@@ -1,5 +1,21 @@
 # `tide`, packages and the package
 
+## One-line active build progress (2026-11-06)
+
+Owner: put the active label beside its bar, truncating text that would overlap.
+Active build feedback now uses line_draw with the same 48-character label column
+as retained rows. Labels are padded or truncated to that width for both active
+and retained rows, so long filenames cannot shift or overwrite the bar. Existing
+line redraw clears the tail when text gets shorter. Stage timing/counts and
+compiler scheduling are unchanged; the two-row line helper remains available
+to its existing tests but is no longer used by builds.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and help, build_overlap,
+build_report pass (3/3). Scratch ASan feedback probe verifies active labels
+and bars share one line, short and long labels put the bar in column 50,
+and long filenames truncate before it. Real-terminal appearance remains
+manual coverage; no generated-C or runtime changes.
+
 ## C/C++ completion labels (2026-11-06)
 
 Owner: show completed C files as they finish, rather than listing active jobs and

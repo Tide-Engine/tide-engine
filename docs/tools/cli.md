@@ -41,7 +41,8 @@ In a terminal, each build stage keeps a completed line with a full bar and its
 elapsed time, with bars aligned in one column. Asset build program preparation
 (including its C generation and packing) stays in one row, followed by separate
 compiling and running rows. The program is compiled once when its cached results
-are missing or invalidated; unchanged build results are reused. The active stage shows its current source or asset above a bar;
+are missing or invalidated; unchanged build results are reused. The active stage shows its current source or asset on the same line as its bar,
+truncating the label at the bar column;
 changing filenames updates that stage in place. C/C++ shows the most recently
 completed file as each compilation finishes, alongside the completed/total count.
 Parsing and C/C++ compilation

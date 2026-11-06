@@ -86,15 +86,15 @@ static void draw_feedback_locked(const bool finished, const bool retain)
     else snprintf(text, sizeof text, "[%s] %.1fs", bar, (double)elapsed / 1000.0);
     if (finished || retain) {
         char summary[384];
-        if (finished) snprintf(summary, sizeof summary, "%-*s [%s] 100%%  in %.1fs", LABEL_WIDTH, feedback.stage, bar, (double)elapsed / 1000.0);
-        else snprintf(summary, sizeof summary, "%-*s %s", LABEL_WIDTH, feedback.stage, text);
+        if (finished) snprintf(summary, sizeof summary, "%-*.*s [%s] 100%%  in %.1fs", LABEL_WIDTH, LABEL_WIDTH, feedback.stage, bar, (double)elapsed / 1000.0);
+        else snprintf(summary, sizeof summary, "%-*.*s %s", LABEL_WIDTH, LABEL_WIDTH, feedback.stage, text);
         line_clear();
         line_draw(summary);
         line_end();
     } else {
-        char aligned[160];
-        snprintf(aligned, sizeof aligned, "%*s %s", LABEL_WIDTH, "", text);
-        line_draw_pair(label, aligned);
+        char aligned[256];
+        snprintf(aligned, sizeof aligned, "%-*.*s %s", LABEL_WIDTH, LABEL_WIDTH, label, text);
+        line_draw(aligned);
     }
 }
 
