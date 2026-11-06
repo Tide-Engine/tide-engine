@@ -37,19 +37,16 @@ Project build and package commands automatically use the version pinned with
 `tide pin`, asking before downloading a missing release into the shared
 version cache. Exact project pins suppress automatic upgrade notices. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
-In a terminal, builds use one progress display: the current compiler step above
-a bar, updated in place through preparation, package resolution, Tide and asset
-compilation, C/C++ compilation, linking and packaging. The bar shows file counts
-and a percentage during C/C++ batches, with active source filenames above it;
-Tide compilation shows the current source filename while parsing and checking,
-and asset imports and packing show the current filename or asset declaration.
-Parsing, importing files (including glob matches) and packing assets fill the bar
-with completed/total item counts for that stage. These percentages count items,
-not elapsed time or the whole build.
-Other steps show moving activity because
-they have no reliable total. Elapsed time covers the build. The display clears
-before game launch or completion output, and diagnostics appear on clean lines.
-Redirected output uses plain stderr lines with file counts.
+In a terminal, each build stage keeps a completed line with a full bar and its
+elapsed time. The active stage shows its current source or asset above a bar;
+changing filenames updates that stage in place. Parsing and C/C++ compilation
+show file counts or percentages. Checking and importing assets, running the asset
+build program, generating game C, packing assets, and finalizing generated C
+have distinct labels. Stages without a reliable total show moving activity.
+Percentages count work items, not time or whole-build completion. Each stage has
+its own timer. Completed stages remain visible before game launch or completion
+output, and diagnostics appear on clean lines. A failed stage keeps its last
+observed progress. Redirected output uses plain stderr lines with file counts.
 
 Large generated C files (at least 4 MiB) compile as four stable partitions in
 parallel, with ThinLTO preserving optimization across them. Each completed

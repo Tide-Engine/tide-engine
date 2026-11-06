@@ -1,5 +1,30 @@
 # `tide`, packages and the package
 
+## Retained build progress stages (2026-11-06)
+
+Owner: `tide build`/`run` erased finished bars and repeated "Generating C"
+without explaining the work. Terminal feedback now retains each completed stage
+as a summary line with a full bar and that stage's elapsed time. Active labels
+and filenames still use the two-row display. Stage transitions and drawing share
+the feedback lock, so the activity thread cannot redraw over a retained row.
+Checking and asset imports share a stage because they interleave per declaration;
+packing notifications share another regardless of singular/plural wording.
+C generation distinguishes the asset build program, game C, and asset data/final
+C generation. These are CLI labels; compiler callbacks and reports are unchanged.
+Parsing and C/C++ retain their item percentages. The other compiler stages use
+activity bars: their supplied count covers imports plus packing, not an individual
+stage. Success completes the last row; failure retains its observed progress.
+Package resolution failure does not advance to a completed package stage.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and four focused CTests pass
+(unit, help, build_overlap, build_report). A scratch ASan probe of the actual
+feedback functions with controlled clock/line output checks retained rows,
+per-stage timing, filename updates without extra rows, all three C-generation
+contexts, failure at 33%, and successful final completion. No game was launched.
+The docs CLI reference and production docs build pass (usual unstaged example-page
+404s). Real-terminal appearance and other OS terminals
+remain manual/CI coverage; no game/runtime or WASM code changed.
+
 ## Faster edit builds of big games (2026-11-06)
 
 Owner: time `tide run --release` of Mount & Rifle and make iterations faster. Measured with this checkout's
