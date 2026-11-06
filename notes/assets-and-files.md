@@ -168,9 +168,17 @@ rest as those end once it is (`compile_start`/`compile_finish`, a `compile_batch
 uses the arena); a generation that fails waits for the compiles it started. `processors()` no longer stops at 8
 (they're below normal priority on Windows, as the game's are already at TIDE_JOBS). After: the engine 1.3 s past
 generation, the parts 2.4 s; build code's whole step 17.4 s to ~13.5 s, the cold build ~43 s to 36 s on a quiet
-machine (single cold runs vary by 10 s with other load). Left: the program's pack holds every asset, textures
-included, which build code can't read (its pack loop and file ~2 s); leaving them out takes generated loading that
-tolerates them missing, as a server's does.
+machine (single cold runs vary by 10 s with other load). Its pack now holds only what build code reaches (same day): `program_strip_build_assets` (asset_usage.c) walks from
+the roots' `build_fn` and marks `decl.server_asset` as a server's walk does; codegen strips `prog->assets` to them,
+filters asset dependencies and skinned fingerprints as for a server, and declares the others with
+`gen_asset_storage(..., left_out)`, which gen_assets uses too, so a list or map of meshes' `_refs`/`_geometry` and
+a stripped name's `tide_id_` are declared as well (a server's left-out assets got only their value before; none of
+the fixtures named those). The program's pack has no levels of detail either (`want_levels` and pack_mesh's
+multiplier skip them in build mode). Mount & Rifle's build pack: 720 MB to 3.9 MB. The images and levels the
+build pack made first, cold, are made by the game's pack instead, so a cold build gains ~1 s overall (36.1 s
+against 37.1 s, the same machine and run order). A/B on the same cold build: build code's results.bin and the
+game's pack are the same bytes stripped and not. Tests: the build-code, build-error, asset-usage, scene-startup and
+server fixtures (smoke, pack, room, shards, entry, visual) and the CLI build report pass under ASan.
 
 Made ahead, on every processor (2026-11-06, the owner on the cold build: "lots into lod, can we improve that
 process?"). Measured on Mount & Rifle with a cold cache: the levels of 229 meshes (1.88 M triangles; 155 under the

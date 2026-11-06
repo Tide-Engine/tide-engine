@@ -21223,6 +21223,27 @@ static void gen_font_decode(gen *g)
               result_c, result_c);
 }
 
+// Where an asset's value is kept, and what's kept beside it: its references' list and geometry for a list or map of
+// meshes, and its id where names are stripped. `left_out`: an asset this program doesn't load (a server's, or build
+// code's program's), declared for code that names it and never runs here.
+static void gen_asset_storage(const gen *g, sb *o, const decl *d, const bool left_out)
+{
+    sb_printf(o, "static %s %s __attribute__((unused)); // " STR_FMT "\n", asset_ctype(d->return_type), asset_cname(d), STR_ARG(d->qualified));
+    if (mesh_collection(d)) {
+        sb_printf(o, "static %s %s_refs%s;\nstatic tide_mesh_lists %s_geometry[%d]%s;\n",
+                  d->return_type.kind == TY_MAP ? "tide_map" : "tide_list", asset_cname(d),
+                  left_out ? " __attribute__((unused))" : "", asset_cname(d), d->asset && d->asset->count ? d->asset->count : 1,
+                  left_out ? " __attribute__((unused))" : "");
+    }
+    if (g->opts->strip_names) {
+        uint8_t id[32];
+        tide_sha256_of(d->qualified.ptr, (size_t)d->qualified.len, id);
+        sb_printf(o, "static const uint8_t tide_id_%s[32]%s = {", asset_cname(d), left_out ? " __attribute__((unused))" : "");
+        for (int k = 0; k < 32; k++) sb_printf(o, "%s0x%02x", k ? "," : "", (unsigned)id[k]);
+        sb_put(o, "};\n");
+    }
+}
+
 static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
@@ -21235,22 +21256,7 @@ static void gen_assets(gen *g)
     }
     if (!prog->assets.count && !prog->asset_refs.count) return;
     sb_put(o, "// The game's assets: the values their names read as, from the pack (tide/pack.h)\n");
-    for (int i = 0; i < prog->assets.count; i++) {
-        const decl *d = prog->assets.items[i];
-        sb_printf(o, "static %s %s __attribute__((unused)); // " STR_FMT "\n", asset_ctype(d->return_type), asset_cname(d), STR_ARG(d->qualified));
-        if (mesh_collection(d)) {
-            sb_printf(o, "static %s %s_refs;\nstatic tide_mesh_lists %s_geometry[%d];\n",
-                      d->return_type.kind == TY_MAP ? "tide_map" : "tide_list", asset_cname(d), asset_cname(d),
-                      d->asset && d->asset->count ? d->asset->count : 1);
-        }
-        if (g->opts->strip_names) {
-            uint8_t id[32];
-            tide_sha256_of(d->qualified.ptr, (size_t)d->qualified.len, id);
-            sb_printf(o, "static const uint8_t tide_id_%s[32] = {", asset_cname(d));
-            for (int k = 0; k < 32; k++) sb_printf(o, "%s0x%02x", k ? "," : "", (unsigned)id[k]);
-            sb_put(o, "};\n");
-        }
-    }
+    for (int i = 0; i < prog->assets.count; i++) gen_asset_storage(g, o, prog->assets.items[i], false);
     if (prog->views.count) {
         sb_put(o, "\nstatic const char *tide_profile_mesh_name(const uint64_t vertices, const uint64_t indices)\n{\n"
                   "    if (!vertices || !indices) return NULL;\n");
@@ -21971,6 +21977,7 @@ static void want_textures(gen *g)
 static void want_levels(gen *g)
 {
     const program *prog = g->prog;
+    if (g->opts->build_program) return; // Its pack has no levels (build_pack): build code doesn't draw
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         const asset_value *v = d->asset;
@@ -22146,7 +22153,7 @@ static void build_pack(gen *g)
             const uint32_t laid = mesh_layout_number(g, vertex);
             if (!v->many) {
                 uint64_t at[3];
-                pack_mesh(g, &b, &v->items[0], vertex, d->lod ? d->lod_multiplier : 0.0f, weighted, weighted && !skinned, at + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[0], vertex, d->lod && !opts->build_program ? d->lod_multiplier : 0.0f, weighted, weighted && !skinned, at + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
@@ -22160,7 +22167,7 @@ static void build_pack(gen *g)
             uint64_t *names = malloc(sizeof(uint64_t) * (size_t)(v->count ? v->count : 1));
             if (!meshes || !names) abort();
             for (int k = 0; k < v->count; k++) {
-                pack_mesh(g, &b, &v->items[k], vertex, d->lod ? d->lod_multiplier : 0.0f, weighted, weighted && !skinned, meshes + stride * k + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[k], vertex, d->lod && !opts->build_program ? d->lod_multiplier : 0.0f, weighted, weighted && !skinned, meshes + stride * k + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
@@ -26678,6 +26685,24 @@ bool codegen(program *prog, const codegen_options *opts)
             opts->info->asset_count = 0;
         }
         build_pack(&g);
+    } else if (opts->build_program) {
+        // Build code's program packs only what its roots' code reaches: build code can't draw, so most of a big
+        // game's pack, its textures, isn't its. The rest are declared, as a server's are, for code that never runs
+        all_assets = arena_alloc((size_t)(all_asset_count ? all_asset_count : 1) * sizeof *all_assets);
+        if (all_asset_count) memcpy(all_assets, prog->assets.items, (size_t)all_asset_count * sizeof *all_assets);
+        program_strip_build_assets(prog);
+        int dependencies = 0;
+        for (int i = 0; i < g.asset_dependencies.count; i++) {
+            const asset_dependency dep = g.asset_dependencies.items[i];
+            if (dep.asset->server_asset) g.asset_dependencies.items[dependencies++] = dep;
+        }
+        g.asset_dependencies.count = dependencies;
+        int skinned = 0;
+        for (int i = 0; i < g.skinned_fingerprints.count; i++) {
+            const asset_dependency dep = g.skinned_fingerprints.items[i];
+            if (dep.asset->server_asset) g.skinned_fingerprints.items[skinned++] = dep;
+        }
+        g.skinned_fingerprints.count = skinned;
     }
 
     gen_prelude(&g);
@@ -26687,9 +26712,9 @@ bool codegen(program *prog, const codegen_options *opts)
     for (int i = 0; i < prog->views.count; i++) gen_query_row_types(&g, prog->views.items[i]);
     for (int i = 0; i < prog->handlers.count; i++) gen_query_row_types(&g, prog->handlers.items[i]);
     gen_routine_prototypes(&g);
-    for (int i = 0; opts->server && i < all_asset_count; i++) {
+    for (int i = 0; all_assets && i < all_asset_count; i++) {
         const decl *d = all_assets[i];
-        if (!d->server_asset) sb_printf(&g.c, "static %s %s __attribute__((unused));\n", asset_ctype(d->return_type), asset_cname(d));
+        if (!d->server_asset) gen_asset_storage(&g, &g.c, d, true);
     }
     gen_build_constants(&g);
     gen_assets(&g);

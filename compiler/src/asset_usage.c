@@ -598,6 +598,28 @@ static void strip_assets(program *prog, const bool server)
 void program_strip_unused_assets(program *prog) { strip_assets(prog, false); }
 void program_strip_server_assets(program *prog) { strip_assets(prog, true); }
 
+void program_strip_build_assets(program *prog)
+{
+    if (!prog->assets.count) return;
+    // What build code's program runs: each root's code, and what that reaches. Marked as a server's are
+    // (decl.server_asset), so codegen declares the others without loading them
+    asset_usage w = {.prog = prog};
+    for (int i = 0; i < prog->build_roots.count; i++) queue(&w, USAGE_DECL, prog->build_roots.items[i]->build_fn);
+    while (w.pending.count) {
+        const usage_node n = w.pending.items[--w.pending.count];
+        if (n.kind == USAGE_DECL) declaration(&w, n.value);
+        else if (n.kind == USAGE_EXPR) expression(&w, n.value);
+        else statement(&w, n.value);
+    }
+    int count = 0;
+    for (int i = 0; i < prog->assets.count; i++) {
+        decl *d = prog->assets.items[i];
+        d->server_asset = contains(&w.used, d);
+        if (d->server_asset) prog->assets.items[count++] = d;
+    }
+    prog->assets.count = count;
+}
+
 bool program_simulation_id(const program *prog, uint8_t out[32], const bool conservative_assets)
 {
     tide_sha256 hash;
