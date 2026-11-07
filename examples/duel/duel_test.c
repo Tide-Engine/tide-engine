@@ -116,8 +116,10 @@ static bool choose(tide_entity target, int sender, int round, int slot)
     uint8_t bytes[TIDE_COMMAND_BYTES];
     tide_bits bits = {bytes, sizeof bytes, 0, false};
     tide_bits_put(&bits, TIDE_COMMAND_ID_ChooseCard, 16);
-    tide_bits_put(&bits, target.index, 32);
-    tide_bits_put(&bits, target.generation, 32);
+    tide_bits_put(&bits, (uint32_t)target.birth, 32);
+    tide_bits_put(&bits, (uint32_t)(target.birth >> 32), 32);
+    tide_bits_put(&bits, (uint32_t)target.lineage, 32);
+    tide_bits_put(&bits, (uint32_t)(target.lineage >> 32), 32);
     tide_bits_put_varint(&bits, tide_zigzag(round));
     tide_bits_put_varint(&bits, tide_zigzag(slot));
     const uint32_t size = tide_bits_end(&bits);
@@ -131,6 +133,8 @@ static bool match_command(uint32_t id, int sender, int match)
     uint8_t bytes[TIDE_COMMAND_BYTES];
     tide_bits bits = {bytes, sizeof bytes, 0, false};
     tide_bits_put(&bits, id, 16);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put_varint(&bits, tide_zigzag(match));
@@ -184,6 +188,9 @@ TIDE_TEST(duel_client_corrections_preserve_display_and_follow_normal_movement)
     TIDE_CHECK(tide_world_hash(&world) == hash);
 
     tide_local_frame_time(&local, 0.075f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 0.075f);
+#endif
     TIDE_CHECK(fabsf(rendered_blue_x(&local, &draw, &gui) - -190) < 0.001f);
 
     // A second correction preserves what the player sees, including the
@@ -841,6 +848,9 @@ static void frame(const tide_world *w, const float seconds)
 {
     static tide_devices devices;
     tide_local_frame_time(&local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, seconds);
+#endif
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1280, 720), NULL);
     tide_frame(w, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);

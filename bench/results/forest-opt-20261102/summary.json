@@ -1,0 +1,284 @@
+[
+  {
+    "trees": 10000,
+    "camera": "canopy",
+    "visible_trees": 8262,
+    "calls": 24,
+    "view_record_ms": {
+      "before": {
+        "median_of_process_medians": 16.15715,
+        "range": [
+          16.09695,
+          16.6228
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 14.8225,
+        "range": [
+          14.63545,
+          15.40825
+        ]
+      },
+      "median_paired_reduction_percent": 9.418121388982591,
+      "per_pair_ratios": [
+        0.9058187861101741,
+        0.9572154973457705,
+        0.8916969463628268
+      ]
+    },
+    "cpu_submit_ms": {
+      "before": {
+        "median_of_process_medians": 0.28905,
+        "range": [
+          0.28375,
+          0.2923
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 0.2836,
+        "range": [
+          0.2762,
+          0.28805
+        ]
+      },
+      "median_paired_reduction_percent": 1.453985631200827,
+      "per_pair_ratios": [
+        0.9555440235253417,
+        0.9994713656387666,
+        0.9854601436879917
+      ]
+    },
+    "gpu_ms": {
+      "before": {
+        "median_of_process_medians": 13.315744,
+        "range": [
+          11.968144,
+          13.74848
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 13.463136,
+        "range": [
+          12.814784,
+          14.736128
+        ]
+      },
+      "median_paired_reduction_percent": -7.074112744632743,
+      "per_pair_ratios": [
+        1.1066695184287112,
+        1.0707411274463274,
+        0.9792454147658505
+      ]
+    },
+    "completion_readback_ms": {
+      "before": {
+        "median_of_process_medians": 15.77285,
+        "range": [
+          14.32765,
+          16.1468
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 15.85775,
+        "range": [
+          14.99005,
+          17.39305
+        ]
+      },
+      "median_paired_reduction_percent": -4.623228512700961,
+      "per_pair_ratios": [
+        1.102720814564267,
+        1.0462322851270096,
+        0.9820986201600317
+      ]
+    }
+  },
+  {
+    "trees": 100000,
+    "camera": "wide",
+    "visible_trees": 96479,
+    "calls": 6,
+    "view_record_ms": {
+      "before": {
+        "median_of_process_medians": 151.093,
+        "range": [
+          144.09435,
+          159.1646
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 118.7176,
+        "range": [
+          114.5606,
+          128.2393
+        ]
+      },
+      "median_paired_reduction_percent": 17.61120404790333,
+      "per_pair_ratios": [
+        0.8487441509533863,
+        0.8238879595209667,
+        0.7197618063313073
+      ]
+    },
+    "cpu_submit_ms": {
+      "before": {
+        "median_of_process_medians": 1.49935,
+        "range": [
+          1.443,
+          1.54615
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 1.5093,
+        "range": [
+          1.47535,
+          1.5256
+        ]
+      },
+      "median_paired_reduction_percent": -0.6636209023910489,
+      "per_pair_ratios": [
+        0.986708922161498,
+        1.0224185724185724,
+        1.0066362090239105
+      ]
+    },
+    "gpu_ms": {
+      "before": {
+        "median_of_process_medians": 36.636992,
+        "range": [
+          32.204832,
+          44.536112
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 34.818816,
+        "range": [
+          30.63592,
+          36.758768
+        ]
+      },
+      "median_paired_reduction_percent": 4.962678158730938,
+      "per_pair_ratios": [
+        0.8253699379954855,
+        0.9512833353702946,
+        0.9503732184126906
+      ]
+    },
+    "completion_readback_ms": {
+      "before": {
+        "median_of_process_medians": 41.03395,
+        "range": [
+          36.4282,
+          49.2348
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 39.08825,
+        "range": [
+          34.59305,
+          41.3464
+        ]
+      },
+      "median_paired_reduction_percent": 5.03771803163483,
+      "per_pair_ratios": [
+        0.8397799930130722,
+        0.9496228196836517,
+        0.9525831658906834
+      ]
+    }
+  },
+  {
+    "trees": 100000,
+    "camera": "ground",
+    "visible_trees": 78286,
+    "calls": 24,
+    "view_record_ms": {
+      "before": {
+        "median_of_process_medians": 148.35275,
+        "range": [
+          134.49955,
+          164.93625
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 129.58365,
+        "range": [
+          112.7377,
+          145.60305
+        ]
+      },
+      "median_paired_reduction_percent": 16.179868259782282,
+      "per_pair_ratios": [
+        0.7856590046154196,
+        0.9814651228238102,
+        0.8382013174021772
+      ]
+    },
+    "cpu_submit_ms": {
+      "before": {
+        "median_of_process_medians": 1.45915,
+        "range": [
+          1.45385,
+          1.46545
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 1.44745,
+        "range": [
+          1.44735,
+          1.45465
+        ]
+      },
+      "median_paired_reduction_percent": 0.808689990748046,
+      "per_pair_ratios": [
+        1.000550263094542,
+        0.9919131000925195,
+        0.9877170834897131
+      ]
+    },
+    "gpu_ms": {
+      "before": {
+        "median_of_process_medians": 13.454544,
+        "range": [
+          11.97216,
+          15.823664
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 12.9332,
+        "range": [
+          12.001504,
+          14.957344
+        ]
+      },
+      "median_paired_reduction_percent": -0.24510196990350508,
+      "per_pair_ratios": [
+        1.002451019699035,
+        0.8173328250650418,
+        1.1116946066696873
+      ]
+    },
+    "completion_readback_ms": {
+      "before": {
+        "median_of_process_medians": 16.34155,
+        "range": [
+          14.82255,
+          18.66085
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 15.7161,
+        "range": [
+          14.89505,
+          17.42345
+        ]
+      },
+      "median_paired_reduction_percent": -0.48911961841922036,
+      "per_pair_ratios": [
+        1.0048911961841922,
+        0.8421963629738196,
+        1.0662054701053447
+      ]
+    }
+  }
+]

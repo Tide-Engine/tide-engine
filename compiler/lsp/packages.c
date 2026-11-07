@@ -419,7 +419,12 @@ bool packages_pin_kept(const char *pinned, const char *version)
     // A build of tide's own source (`-dev`) is someone working on tide, who builds with what they have
     const size_t length = strlen(version);
     if (length > 4 && strcmp(version + length - 4, "-dev") == 0) return true;
-    return strcmp(pinned, version) == 0;
+    return packages_channel(pinned) || strcmp(pinned, version) == 0;
+}
+
+bool packages_channel(const char *text)
+{
+    return strcmp(text, "nightly") == 0 || strcmp(text, "stable") == 0;
 }
 
 bool packages_exact_version(const char *text)
@@ -747,11 +752,11 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
         }
         if (strcmp(words[0], "tide") == 0 && count >= 2 && strcmp(words[1], "=") == 0) {
             // `tide = 0.5.0-nightly.12`: the game builds with that tide alone (resolve says when this isn't it)
-            const char *pin = count == 3 && words[2][0] == 'v' ? words[2] + 1 : count == 3 ? words[2] : "";
-            if (count != 3 || !packages_exact_version(pin)) {
-                report_at(report, user, path, number, "write the whole version it builds with, like `tide = 0.5.0` or "
-                          "`tide = 0.5.0-nightly.12`, as `tide version` says it (`tide pin` writes it)",
-                          "`tide =` needs a whole version");
+            const char *pin = count == 3 && words[2][0] == 'v' && packages_exact_version(words[2] + 1) ? words[2] + 1 : count == 3 ? words[2] : "";
+            if (count != 3 || (!packages_exact_version(pin) && !packages_channel(pin))) {
+                report_at(report, user, path, number, "use `tide = nightly`, `tide = stable`, or an exact version like "
+                          "`tide = 0.5.0-nightly.12` (`tide pin` writes it)",
+                          "`tide =` needs a whole version or release channel");
                 ok = false;
             } else if (out->tide_line || out->pinned_line) {
                 report_at(report, user, path, number, NULL, "the version of tide is already given on line %d",
@@ -1255,12 +1260,13 @@ bool packages_resolve(const char *folder, game_packages *out, const packages_fet
         ok = false;
     }
     const char *version = tide_version_text();
-    if (game->pinned && !packages_pin_kept(game->pinned, version)) {
+    if (game->pinned && (!packages_pin_kept(game->pinned, version)
+                        || (packages_channel(game->pinned) && packages_unity_assets(game->folder)))) {
         char note[256];
         if (packages_unity_assets(game->folder)) {
             // Unity's Tide package builds with the tide of its own commit
-            snprintf(note, sizeof note, "in a Unity project, Tide's package builds with the tide of its commit: `tide pin %s` "
-                     "pins that, or move the package to tide %s's", version, game->pinned);
+            snprintf(note, sizeof note, "in a Unity project, Tide's package selects an exact compiler: `tide pin %s` "
+                     "pins that; use Window > Tide > Versions to switch the package", version);
         } else {
             snprintf(note, sizeof note, "run `tide upgrade --version %s`, or `tide pin` to pin this one", game->pinned);
         }

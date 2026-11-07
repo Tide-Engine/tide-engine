@@ -1,0 +1,21 @@
+// expect: so it can't make a GPU list
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Make(Meadow meadow)
+{
+    var l = GPUList<int>(4);
+    meadow.counts[0] = 1;
+}
+view Show(Meadow meadow) { GPU.Run(Make, 1); }

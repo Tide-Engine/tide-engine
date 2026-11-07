@@ -1,0 +1,88 @@
+// Compare a translated scene with the same geometry at world zero. The red
+// channel magnifies depth error; green verifies that materials keep world space.
+scene Main { }
+
+local singleton Probe
+{
+    float3 origin;
+    float yaw;
+    int mode;
+    float4x4 relative;
+}
+
+vert Kept(mut Vertex3 vertex, out float4 clip)
+{
+    clip = this.clip;
+}
+
+vert Authored(mut Vertex3 vertex, out float4 clip, Probe probe)
+{
+    // Deliberately independent of the engine camera and instance translation.
+    clip = Math.Mul(probe.relative, float4(vertex.position, 1));
+}
+
+frag Observed(Vertex3 vertex, out Color color, Probe probe, Instance instance)
+{
+    bool world = this.world.z > probe.origin.z + 120
+              && this.world.z < probe.origin.z + 160
+              && Math.Abs(this.world.y - probe.origin.y) < 65
+              && instance.transform.c3.x == probe.origin.x
+              && instance.transform.c3.y == probe.origin.y
+              && instance.transform.c3.z == probe.origin.z;
+    color = Color((this.depth - 0.9997) * 16384 + 0.5,
+                  world ? 0.5 : 1, vertex.color.b);
+}
+
+view Precision(mut Probe probe)
+{
+    var turn = quaternion.AxisAngle(float3(0, 1, 0), probe.yaw);
+    var projection = float4x4.PerspectiveFov(Math.Radians(60), 1, 0.04, 80000);
+    probe.relative = Math.Mul(Math.Mul(projection, float4x4.Scale(float3(1, 1, -1))),
+                              Math.Inverse(float4x4.TRS(float3(0), turn, float3(1))));
+    Draw.Clear(Color.black);
+    if (probe.mode == 4) Draw.SetCamera(probe.origin, turn, 60);
+    else Draw.SetCamera(float4x4.TRS(probe.origin, turn, float3(1)), projection);
+    Draw.SetCull(Cull.None);
+    Draw.SetFrustumCulling(false);
+    // A tilted sheet intersects the front and sides of a box at 140 units.
+    // Integer and binary-fraction offsets survive translation to 3000 exactly.
+    List<Vertex3> sheet = [
+        Vertex3 { position = float3(-64, -64, 138), color = Color.red },
+        Vertex3 { position = float3(64, -64, 142), color = Color.red },
+        Vertex3 { position = float3(64, 64, 142), color = Color.red },
+        Vertex3 { position = float3(-64, 64, 138), color = Color.red }];
+    List<Vertex3> box = [
+        Vertex3 { position = float3(-12, -12, 140), color = Color.blue },
+        Vertex3 { position = float3(12, -12, 140), color = Color.blue },
+        Vertex3 { position = float3(12, 12, 140), color = Color.blue },
+        Vertex3 { position = float3(-12, 12, 140), color = Color.blue },
+        Vertex3 { position = float3(-12, -12, 144), color = Color.blue },
+        Vertex3 { position = float3(12, -12, 144), color = Color.blue },
+        Vertex3 { position = float3(12, 12, 144), color = Color.blue },
+        Vertex3 { position = float3(-12, 12, 144), color = Color.blue }];
+    List<int> face = [0, 1, 2, 0, 2, 3];
+    List<int> faces = [0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6,
+                       0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2,
+                       2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0];
+    var place = float4x4.Translate(probe.origin);
+    if (probe.mode == 0)
+    {
+        Draw.Mesh(sheet, face, place, Observed);
+        Draw.Instanced(box, faces, [place], Observed);
+    }
+    else if (probe.mode == 1)
+    {
+        Draw.Mesh(sheet, face, place, Kept, Observed);
+        Draw.Instanced(box, faces, [place], Kept, Observed);
+    }
+    else if (probe.mode == 2)
+    {
+        Draw.Mesh(sheet, face, place, Authored, Observed);
+        Draw.Instanced(box, faces, [place], Authored, Observed);
+    }
+    else
+    {
+        Draw.Mesh(sheet, face, place);
+        Draw.Instanced(box, faces, [place]);
+    }
+}

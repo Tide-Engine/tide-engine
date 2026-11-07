@@ -3,6 +3,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "entity_order_test.h"
 
 #ifdef TIDE_QUERY_THREADS
 #include "tide/platform.h"
@@ -12,20 +13,30 @@ static tide_world world;
 static tide_world snapshot;
 
 // Main occupies slot 0; these are Setup's spawn handles, not query ordering.
-static const tide_entity FAR = {1, 1};
-static const tide_entity NEAR = {2, 1};
-static const tide_entity SHIELDED = {3, 1};
-static const tide_entity SHOT = {8, 1};
-static const tide_entity MISS = {9, 1};
-static const tide_entity COUNT_A = {10, 1};
-static const tide_entity COUNT_B = {11, 1};
-static const tide_entity COUNT_C = {12, 1};
-static const tide_entity SAMPLE_B = {14, 1};
-static const tide_entity PROBE = {16, 1};
+static tide_entity FAR;
+static tide_entity NEAR;
+static tide_entity SHIELDED;
+static tide_entity SHOT;
+static tide_entity MISS;
+static tide_entity COUNT_A;
+static tide_entity COUNT_B;
+static tide_entity COUNT_C;
+static tide_entity SAMPLE_B;
+static tide_entity PROBE;
 
 TIDE_TEST(queries_select_a_second_set_and_defer_events)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    FAR = tide_entity_in_slot(&world.entities, 1);
+    NEAR = tide_entity_in_slot(&world.entities, 2);
+    SHIELDED = tide_entity_in_slot(&world.entities, 3);
+    SHOT = tide_entity_in_slot(&world.entities, 8);
+    MISS = tide_entity_in_slot(&world.entities, 9);
+    COUNT_A = tide_entity_in_slot(&world.entities, 10);
+    COUNT_B = tide_entity_in_slot(&world.entities, 11);
+    COUNT_C = tide_entity_in_slot(&world.entities, 12);
+    SAMPLE_B = tide_entity_in_slot(&world.entities, 14);
+    PROBE = tide_entity_in_slot(&world.entities, 16);
     tide_world_tick(&world);
     const Bullet shot = tide_get_Bullet(&world, SHOT);
     const Bullet miss = tide_get_Bullet(&world, MISS);
@@ -52,23 +63,59 @@ TIDE_TEST(queries_select_a_second_set_and_defer_events)
     tide_world_free(&world);
 }
 
+static void model_samples(const entity_order_value order[3], int values[3], int *before, int *after)
+{
+    *before = *after = 0;
+    for (int row = 0; row < 3; row++) {
+        const int i = order[row].value;
+        const int previous = values[i];
+        *before += previous;
+        if (i == 0) values[1] = 20;
+        values[i] = previous + 1;
+        *after += values[i];
+    }
+}
+
 TIDE_TEST(queries_read_previous_writes_and_replaced_pages)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    FAR = tide_entity_in_slot(&world.entities, 1);
+    NEAR = tide_entity_in_slot(&world.entities, 2);
+    SHIELDED = tide_entity_in_slot(&world.entities, 3);
+    SHOT = tide_entity_in_slot(&world.entities, 8);
+    MISS = tide_entity_in_slot(&world.entities, 9);
+    COUNT_A = tide_entity_in_slot(&world.entities, 10);
+    COUNT_B = tide_entity_in_slot(&world.entities, 11);
+    COUNT_C = tide_entity_in_slot(&world.entities, 12);
+    SAMPLE_B = tide_entity_in_slot(&world.entities, 14);
+    PROBE = tide_entity_in_slot(&world.entities, 16);
+    const tide_entity counters[3] = { COUNT_A, COUNT_B, COUNT_C };
+    entity_order_value counter_order[3];
+    entity_order_value sample_order[3];
+    int values[3] = { 1, 2, 3 };
+    for (int i = 0; i < 3; i++) {
+        counter_order[i] = (entity_order_value){ counters[i], i };
+        sample_order[i] = (entity_order_value){ tide_entity_in_slot(&world.entities, 13u + (uint32_t)i), i };
+    }
+    qsort(counter_order, 3, sizeof *counter_order, entity_order_compare);
+    qsort(sample_order, 3, sizeof *sample_order, entity_order_compare);
     tide_world_copy(&snapshot, &world);
     const uint64_t before = tide_world_hash(&snapshot);
-    tide_world_tick(&world);
-    TIDE_CHECK(tide_get_Counter(&world, COUNT_A).value == 11 && tide_get_Counter(&world, COUNT_A).seen == 60);
-    TIDE_CHECK(tide_get_Counter(&world, COUNT_B).value == 21 && tide_get_Counter(&world, COUNT_B).seen == 61);
-    TIDE_CHECK(tide_get_Counter(&world, COUNT_C).value == 31 && tide_get_Counter(&world, COUNT_C).seen == 62);
-    const Probe first = tide_get_Probe(&world, PROBE);
-    TIDE_CHECK(first.before == 24 && first.after == 27);
-    TIDE_CHECK(tide_get_Sample(&world, SAMPLE_B).value == 21);
+    for (int tick = 0; tick < 2; tick++) {
+        int expected_before, expected_after;
+        model_samples(sample_order, values, &expected_before, &expected_after);
+        tide_world_tick(&world);
+        for (int rank = 0; rank < 3; rank++) {
+            const int i = counter_order[rank].value;
+            const Counter counter = tide_get_Counter(&world, counters[i]);
+            TIDE_CHECK(counter.value == 10 * (i + 1) + tick + 1);
+            TIDE_CHECK(counter.seen == 60 + 3 * tick + rank);
+        }
+        const Probe probe = tide_get_Probe(&world, PROBE);
+        TIDE_CHECK(probe.before == expected_before && probe.after == expected_after);
+        TIDE_CHECK(tide_get_Sample(&world, SAMPLE_B).value == values[1]);
+    }
     TIDE_CHECK(tide_world_hash(&snapshot) == before && tide_get_Sample(&snapshot, SAMPLE_B).value == 2);
-    tide_world_tick(&world);
-    const Probe second = tide_get_Probe(&world, PROBE);
-    TIDE_CHECK(second.before == 26 && second.after == 29);
-    TIDE_CHECK(tide_get_Counter(&world, COUNT_A).seen == 63 && tide_get_Counter(&world, COUNT_C).seen == 65);
     tide_world_free(&snapshot);
     tide_world_free(&world);
 }
@@ -94,7 +141,8 @@ static uint64_t semantic_hash(const tide_world *w)
     hash = hash_word(hash, (uint32_t)w->Stats.impossibleVisits);
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&w->entities, i);
-        hash = hash_word(hash_word(hash, e.index), e.generation);
+        hash = hash_word(hash_word(hash_word(hash_word(hash, (uint32_t)e.birth), (uint32_t)(e.birth >> 32)),
+                                   (uint32_t)e.lineage), (uint32_t)(e.lineage >> 32));
         if (tide_has_Body(w, e)) {
             const Body body = tide_get_Body(w, e);
             hash = hash_word(hash_word(hash, tide_f_bits(body.position.x)), tide_f_bits(body.position.y));
@@ -102,7 +150,8 @@ static uint64_t semantic_hash(const tide_world *w)
         if (tide_has_Health(w, e)) hash = hash_word(hash, (uint32_t)tide_get_Health(w, e).value);
         if (tide_has_Bullet(w, e)) {
             const Bullet b = tide_get_Bullet(w, e);
-            hash = hash_word(hash_word(hash, b.hit.index), b.hit.generation);
+            hash = hash_word(hash_word(hash_word(hash_word(hash, (uint32_t)b.hit.birth), (uint32_t)(b.hit.birth >> 32)),
+                                       (uint32_t)b.hit.lineage), (uint32_t)(b.hit.lineage >> 32));
             hash = hash_word(hash, tide_f_bits(b.fraction));
             hash = hash_word(hash_word(hash, (uint32_t)b.candidates), (uint32_t)b.pairs);
             hash = hash_word(hash_word(hash, (uint32_t)b.continued), (uint32_t)b.stopped);
@@ -128,9 +177,19 @@ static uint64_t semantic_hash(const tide_world *w)
 TIDE_TEST(queries_match_across_platforms)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    FAR = tide_entity_in_slot(&world.entities, 1);
+    NEAR = tide_entity_in_slot(&world.entities, 2);
+    SHIELDED = tide_entity_in_slot(&world.entities, 3);
+    SHOT = tide_entity_in_slot(&world.entities, 8);
+    MISS = tide_entity_in_slot(&world.entities, 9);
+    COUNT_A = tide_entity_in_slot(&world.entities, 10);
+    COUNT_B = tide_entity_in_slot(&world.entities, 11);
+    COUNT_C = tide_entity_in_slot(&world.entities, 12);
+    SAMPLE_B = tide_entity_in_slot(&world.entities, 14);
+    PROBE = tide_entity_in_slot(&world.entities, 16);
     for (int i = 0; i < 16; i++) tide_world_tick(&world);
     const uint64_t hash = semantic_hash(&world);
-    const uint64_t expected = UINT64_C(0x23FB1DD4AEBCB224);
+    const uint64_t expected = UINT64_C(0x8FA74C3B18C86E22);
     if (hash != expected) printf("    queries: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", hash, expected);
     TIDE_CHECK(hash == expected);
     tide_world_free(&world);
@@ -172,6 +231,16 @@ TIDE_TEST(queries_threads_and_snapshots_change_nothing)
         limited_jobs limited = {.pool = pool, .threads = threads};
         const tide_jobs jobs = {.self = &limited, .threads = threads, .run = limited_run};
         tide_world_init(&world, 1.0f / 60.0f);
+    FAR = tide_entity_in_slot(&world.entities, 1);
+    NEAR = tide_entity_in_slot(&world.entities, 2);
+    SHIELDED = tide_entity_in_slot(&world.entities, 3);
+    SHOT = tide_entity_in_slot(&world.entities, 8);
+    MISS = tide_entity_in_slot(&world.entities, 9);
+    COUNT_A = tide_entity_in_slot(&world.entities, 10);
+    COUNT_B = tide_entity_in_slot(&world.entities, 11);
+    COUNT_C = tide_entity_in_slot(&world.entities, 12);
+    SAMPLE_B = tide_entity_in_slot(&world.entities, 14);
+    PROBE = tide_entity_in_slot(&world.entities, 16);
         tide_world_init(&many, 1.0f / 60.0f);
         for (int t = 0; t < 16; t++) {
             tide_world_copy(&snapshot, &many);

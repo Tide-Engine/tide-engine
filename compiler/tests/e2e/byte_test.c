@@ -6,7 +6,7 @@
 
 static tide_world world;
 static tide_world copy;
-static const tide_entity THING = {1, 1};
+static tide_entity THING;
 
 TIDE_TEST(byte_integer_arguments_run_in_local_code)
 {
@@ -35,6 +35,7 @@ TIDE_TEST(byte_fields_lists_arithmetic_and_conversions)
     TIDE_CHECK(sizeof(CompactCode) == 1 && CompactCode_Maximum == 255);
     TIDE_CHECK(BytePhases_Prepare == 1 && BytePhases_Advance == 64);
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     TIDE_REQUIRE(tide_has_Bytes(&world, THING));
     const Bytes initial = tide_get_Bytes(&world, THING);
     TIDE_CHECK(initial.packed.a == 1 && initial.packed.b == 131 && initial.packed.c == 52);
@@ -80,6 +81,7 @@ TIDE_TEST(byte_input_has_eight_bits_and_round_trips_deltas)
 TIDE_TEST(byte_snapshots_pack_and_hash_deterministically)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     const uint32_t size = tide_world_pack(&world, NULL, 0);
     uint8_t *packed = malloc(size);

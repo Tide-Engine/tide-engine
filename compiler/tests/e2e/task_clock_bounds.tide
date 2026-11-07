@@ -1,0 +1,13 @@
+singleton Log { bool started; bool finished; }
+scene Main { }
+async void Later(mut Log log)
+{
+    await Wait.Ticks(100);
+    log.finished = true;
+}
+system Start(mut Log log)
+{
+    if (log.started) return;
+    log.started = true;
+    Later(log);
+}

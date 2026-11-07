@@ -8,6 +8,8 @@ struct SurfaceInput
     float3 bitangent;
     float2 uv;
     float3 viewDirection;
+    // Already-sampled raw mask channels: AO, roughness, metallic, artist data.
+    float4 mask = float4(1, 1, 0, 1);
 }
 
 // Albedo and emission are linear light. Decode display-space material colors
@@ -20,6 +22,30 @@ struct Surface
     float metallic;
     float3 emission;
     float occlusion = 1;
+    // Linear fraction of diffuse light transmitted to the opposite side.
+    // Zero preserves the ordinary opaque BRDF, including its arithmetic.
+    float3 transmission;
+}
+
+struct LeafSettings
+{
+    float transmission = 0.5;
+    float3 transmissionColor = float3(1); // Linear RGB, not display sRGB.
+    float thickness; // Optical depth: exp(-thickness) attenuates transmission.
+}
+
+// Thin-sheet approximation, not volumetric subsurface scattering. Keep the
+// settings shared across a species: the callback captures draw uniforms, not
+// per-instance attributes. Games may compose this with their own surface edits.
+void ApplyThinLeaf(mut Surface surface, LeafSettings settings)
+{
+    surface.transmission = Math.Clamp(settings.transmissionColor, float3(0), float3(1))
+        * (Math.Clamp(settings.transmission, 0, 1) * Math.Exp(-Math.Clamp(settings.thickness, 0, 80)));
+}
+
+Func<SurfaceInput, mut Surface, void> ThinLeaf(LeafSettings settings)
+{
+    return (SurfaceInput input, mut Surface surface) => ApplyThinLeaf(surface, settings);
 }
 
 // The default callback leaves the caller's material and geometric normal alone.
@@ -49,7 +75,19 @@ float3 EvaluateDirectPbr(Surface surface, float3 viewDirection, float3 lightDire
     float3 l = Math.Normalize(lightDirection);
     float noL = Math.Clamp(Math.Dot(n, l), 0, 1);
     float noV = Math.Clamp(Math.Dot(n, v), 0, 1);
-    if (noL <= 0 || noV <= 0) return float3(0);
+    if (noV <= 0) return float3(0);
+    float3 transmission = Math.Clamp(surface.transmission, float3(0), float3(1));
+    bool leaf = transmission.x > 0 || transmission.y > 0 || transmission.z > 0;
+    if (noL <= 0)
+    {
+        if (!leaf) return float3(0);
+        // The same direct-light attenuation and shadow visibility apply on
+        // both sides. Shadow maps remain cutout/opaque, not colored transport.
+        float back = Math.Clamp(Math.Dot(-n, l), 0, 1);
+        return Math.Clamp(surface.albedo, float3(0), float3(1)) * transmission
+            * (1 - Math.Clamp(surface.metallic, 0, 1)) * Math.Max(radiance, float3(0))
+            * (back * Math.Clamp(visibility, 0, 1) / Math.PI);
+    }
 
     float3 h = Math.Normalize(v + l);
     float noH = Math.Clamp(Math.Dot(n, h), 0, 1);
@@ -75,7 +113,8 @@ float3 EvaluateDirectPbr(Surface surface, float3 viewDirection, float3 lightDire
     float fifth = square * square * oneMinusVoH;
     float3 fresnel = f0 + (float3(1) - f0) * fifth;
     float3 specular = distribution * smith * fresnel;
-    float3 diffuse = (float3(1) - fresnel) * (1 - metallic) * albedo / Math.PI;
+    mut float3 diffuse = (float3(1) - fresnel) * (1 - metallic) * albedo / Math.PI;
+    if (leaf) diffuse *= float3(1) - transmission;
     return (diffuse + specular) * Math.Max(radiance, float3(0))
         * (noL * Math.Clamp(visibility, 0, 1));
 }

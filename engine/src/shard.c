@@ -44,11 +44,11 @@ static void unlock(tide_shard_tick *t)
 static int compare(const tide_shard_attempt *a, const tide_shard_attempt *b)
 {
     if (a->code != b->code) return a->code < b->code ? -1 : 1;
-    if (a->entity.index != b->entity.index) return a->entity.index < b->entity.index ? -1 : 1;
-    if (a->entity.generation != b->entity.generation) return a->entity.generation < b->entity.generation ? -1 : 1;
+    const int entity = tide_entity_compare(a->entity, b->entity);
+    if (entity) return entity;
     if (a->occurrence != b->occurrence) return a->occurrence < b->occurrence ? -1 : 1;
-    if (a->touched.index != b->touched.index) return a->touched.index < b->touched.index ? -1 : 1;
-    if (a->touched.generation != b->touched.generation) return a->touched.generation < b->touched.generation ? -1 : 1;
+    const int touched = tide_shard_ref_compare(a->touched, b->touched);
+    if (touched) return touched;
     return 0;
 }
 
@@ -57,7 +57,7 @@ static int compare_any(const void *a, const void *b)
     return compare(a, b);
 }
 
-void tide_shard_note(tide_shard_tick *t, const tide_entity touched)
+static void note_reference(tide_shard_tick *t, const tide_shard_ref touched)
 {
     if (!t) return;
     const tide_shard_attempt a = {tide_shard_code, tide_shard_occurrence, tide_shard_this, touched};
@@ -74,11 +74,21 @@ void tide_shard_note(tide_shard_tick *t, const tide_entity touched)
     unlock(t);
 }
 
+void tide_shard_note(tide_shard_tick *t, const tide_entity touched)
+{
+    note_reference(t, tide_shard_entity_ref(touched));
+}
+
+void tide_shard_note_singleton(tide_shard_tick *t, const uint32_t singleton)
+{
+    note_reference(t, tide_shard_singleton_ref(singleton));
+}
+
 // The first skipped attempt of the code, entity and occurrence, or skip_count
 static uint32_t first_skipped(const tide_shard_tick *t, const uint32_t code, const tide_entity entity,
                               const uint32_t occurrence)
 {
-    const tide_shard_attempt key = {code, occurrence, entity, {0, 0}};
+    const tide_shard_attempt key = {code, occurrence, entity, {{0, 0}, 0}};
     uint32_t lo = 0, hi = t->skip_count;
     while (lo < hi) {
         const uint32_t mid = lo + (hi - lo) / 2u;
@@ -101,7 +111,7 @@ bool tide_shard_skips(const tide_shard_tick *t, const uint32_t code, const tide_
 }
 
 uint32_t tide_shard_touched(const tide_shard_tick *t, const uint32_t code, const tide_entity entity,
-                            const uint32_t occurrence, tide_entity *out, const uint32_t capacity)
+                            const uint32_t occurrence, tide_shard_ref *out, const uint32_t capacity)
 {
     if (!t) return 0;
     uint32_t count = 0;
@@ -227,8 +237,8 @@ bool tide_shard_next_outgoing(tide_reader *r, tide_shard_outgoing *out)
     if (r->at >= r->size) return false;
     out->route = tide_read_u32(r);
     out->target = tide_read_u32(r);
-    out->entity.index = tide_read_u32(r);
-    out->entity.generation = tide_read_u32(r);
+    out->entity.birth = tide_read_u64(r);
+    out->entity.lineage = tide_read_u64(r);
     out->number = tide_read_u32(r);
     out->size = tide_read_u32(r);
     out->data = tide_read_bytes(r, out->size);
@@ -252,7 +262,7 @@ void tide_shard_bytes_done(const tide_list l, const uint8_t *flat, const bool co
 void tide_shard_bytes_set(tide_list *l, const void *data, const uint32_t size, const uint32_t where)
 {
     if (size > INT32_MAX) tide_out_of_memory();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list from = tide_list_from(data, (int32_t)size, 1);
     tide_list_set(l, from, 1, where);
     tide_scratch_reset(mark);
@@ -265,8 +275,7 @@ void tide_shard_bytes_append(tide_list *l, const void *data, const uint32_t size
     bool copied;
     const uint8_t *flat = tide_shard_bytes_flat(*l, &had, &copied);
     if ((uint64_t)had + size > INT32_MAX) tide_out_of_memory();
-    uint8_t *all = malloc((size_t)had + size);
-    if (!all) tide_out_of_memory();
+    uint8_t *all = tide_alloc((size_t)had + size);
     if (had) memcpy(all, flat, had);
     tide_shard_bytes_done(*l, flat, copied);
     memcpy(all + had, data, size);

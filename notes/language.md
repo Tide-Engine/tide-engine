@@ -1,4 +1,1304 @@
+## Narrow transient match-query reads (2026-11-07)
+
+Plain canonical match `foreach` lowering now finds the component bytes consumed
+by its body and copies only their lanes. Ordinary stored fields and direct
+vector swizzles can narrow; properties, composed swizzles and uncertain places
+read their receiver conservatively. Whole rows/components, whole-value helper
+arguments, extern consumers, async/task code, shards and materialized parallel
+rows retain full copies. Partially gathered transient rows are zero-initialized,
+including unused vector lanes that C helpers may receive by value. No partially
+filled row is persisted, hashed, packed or passed to a whole-value consumer.
+
+Within one canonical query invocation, eligible code retains read-only column
+pointers for each admitted archetype's most recently visited physical chunk.
+Only selected lane pointers are materialized. Entity location and live row/sparse
+filters still run in canonical key order; sparse presence is read anew. A
+component writable through `World.Set` is read from its current published pages
+for every row. Other component columns can be reused: immediate Set replaces
+component pages without moving entities; Add/Remove/Spawn/Destroy remain deferred.
+Code reaching game C, async/tasks or shards keeps per-row metadata refresh.
+The cache is bounded stack metadata, ends with the loop and adds no world/local
+fields, runtime API, snapshot ownership or reload state. Ordinary lists and
+presentation traversal do not change.
+
+`query_narrow` covers 3,000 wide (352-byte/88-lane) rows across two archetypes and
+multiple chunks: xz through a float2 helper, a zero-demand entity-only binding,
+all lanes observed by trusted C, canonical later-row Set with shared snapshots,
+other-component Set while entity/Marker columns are reused, raw-world resume and
+unchanged snapshot hashes. Its deliberately unused binding warning is pinned.
+`query_read_paths` covers a reordered vector property whose 12-byte receiver
+coincides with the returned vector's size, and a composed yx.x swizzle.
+Windows ASan and WASI pass both fixtures, `queries`, `world_set_read`,
+`canonical_rows`, indexed/plain loops and their tick-by-tick differential (eight
+CTests per platform). The complete native ASan suite passes all 3,237 CTests;
+the UDP server smoke required a retry after an unrelated process released port
+7777 (the exact CTest then passed). The complete WASI/web suite passes all
+3,053 CTests. Both full native/web builds are warning-free with the platform
+enabled.
+Indexed candidate lowering is unchanged; its plain path
+uses these reads and remains bit-identical. Broader validation and release CPU
+measurements are recorded with delivery; generated lane counts alone do not
+establish a speedup (LLVM can remove unused copies in small unsplit callers).
+
+Release measurement isolates the production split-code/ThinLTO path using the
+same frozen fixture and runtime library: eight alternating blocks, each with
+20 warmup ticks and 2,000 measured ticks, hashing every measured tick. Initial,
+final and folded per-tick hashes, results and work counts agree. Mean current-
+thread CPU falls from 16.18359375 to 5.69921875 seconds (2.8396x, 64.78% less);
+mean wall time is 16.234489175 to 5.7123322 seconds and cycles are 76,074,765,175
+to 26,734,726,120. This is a split canonical-query kernel result, not a general
+whole-game speedup. Post-ThinLTO machine code retains the baseline full-gather
+call; the unsplit control instead lets LLVM eliminate unused copies already.
+The retained [reproducer](repro/canonical-query-cpu/README.md) includes the
+PowerShell driver, C host, flags and fixed-work checks. Its compact
+[summary](repro/canonical-query-cpu/summary-20261107.json), per-run results and
+source/binary manifest retain the evidence. The actual mount-and-rifle 349c35a candidate's
+BuildKitBodies inner Trooper query also uses exactly two lane pointers/copies
+(x/z offsets 0/8) in both admitted archetypes; its outer Place copies remain
+whole because the body passes that value to whole-place consumers.
+
+The matched 1,000-bot game runs use the exported **player 2** profile, confirmed
+by its player/players metadata. Both run 2,100 frames and 15,977 ticks/system
+calls; final t=34 counts agree (389 ours, 366 theirs, 3,024 shots). Profiled
+system time per tick falls from 14.16188 to 11.99609 ms; BuildKitBodies per call
+falls from 4.38333 to 1.88990 ms. Match work per frame, including reruns, is
+111.88273 to 95.75445 ms. This is a scoped CPU reduction, not a reduction in
+prediction work or a display-FPS claim: BotSense is 3.33345 to 3.56047 ms/call
+and FallOnField is 0.31870 to 0.32635 ms/call in these runs. Inputs, prediction,
+visibility and gameplay code are unchanged. Exact commands, source/compiler
+identities, profile scope and all measured fields are in the compact
+[game/kernel comparison](repro/canonical-query-cpu-20261107.json) and the
+[reproducer README](repro/canonical-query-cpu/README.md). Raw profiles/captures
+remain ignored build artifacts.
+
+## Defined task deadline and tick boundary arithmetic (2026-11-07)
+
+Linux UBSan found that `tide_task_after` evaluated `INT32_MAX - now` in signed
+32-bit arithmetic; a negative restored/shard clock overflowed before the
+saturation check. The helper now adds in int64 and clamps the result to INTMAX.
+Positive waits from negative clocks keep their intended deadline; nonpositive
+waits still return the current clock. The generated tick increment also uses
+unsigned addition followed by the existing Tide int conversion, preserving
+wrap at INTMAX without signed C overflow. Scheduling semantics do not change.
+
+`task_clock_bounds` checks a wait from -15 to 85, saturation of a wait begun at
+INTMAX-1, and tick progression through INTMAX, INTMIN and INTMIN+1. The negative
+clock case also detects the old incorrect saturation without relying on UBSan.
+Windows ASan and WASI `task_clock_bounds` and the shard retry fixture pass
+after the fixes.
+
+## Bounded view interpolation lookup expansion (2026-11-07)
+
+Foldline's partial-field view query admitted 32 archetypes. Each query branch
+forced its previous-world lookup inline, and that lookup contained all 32
+component storage shapes and their field lanes. The resulting quadratic
+expansion exceeded V8's function-local limit before the WASM module could
+instantiate. Large previous-field lookups are now explicitly outlined: more
+than eight storage shapes, or more than 128 shape/lane combinations across
+multiple shapes. Small and single-shape lookups retain their existing forced
+inline path. This changes neither view traversal order nor interpolation,
+match state, generated layouts or the runtime API.
+
+`view_lookup_size` exercises 32 shapes and 20 float lanes, reading a subset
+through a blended view query. It checks halfway/latest values and unchanged
+match hash. Restoring only the previous forced-inline attribute in its generated
+C reproduces V8's local-count failure (`tide_query_Read_1`); the outlined module
+instantiates. Windows ASan and WASI `view_lookup_size` and `view_queries` pass,
+as does the
+same new fixture compiled with `-O2` and the existing strict float flags.
+Foldline's WASI game/test/render targets build; all four web CTests pass,
+including the browser render checks, layout export and map tools. Recompiling Foldline's generated game C with `-O2`
+and the same strict float flags also passes V8 compilation, exports all 14 built
+maps, and passes its simulation checks. Foldline's four native CTests pass;
+native replay/campaign hashes match the optimized WASI run exactly
+(15199560312636401323 / 10564020633757747729). Native/WASI layout exports are
+byte-identical (215,447 bytes, 14 maps).
+
+## Event-order fixture oracles after logical identities (2026-11-07)
+
+CI found two remaining fixtures that expected numeric initializer order after
+structural Send systems correctly switched to canonical source order.
+`events_batch` now derives an independent lexicographic full-key sender oracle
+from the initial world. It checks each phase and sparse filter in that order,
+then checks handler-generated Echo events behind the entire recorded tick in
+their enqueue order. The actual trace list is never sorted. Existing C-call,
+unfinished-record, snapshot, raw-world and threaded-schedule checks remain;
+each target additionally must receive all seven applicable health events.
+
+`events_runs` uses the same independent source-key oracle for its C model's
+Hit, Ping, Roll and Graze phases. Handler-generated echoes and local hearing
+records follow their original enqueue order. `Log.targets` remains the authored
+list, with each surviving target's payload ID checked against its list index;
+ordinary list semantics do not change. This corrects test expectations, with no
+production event behavior or hash-pin changes.
+
+Validation: Windows ASan and WASI each pass `events`, `events_lookup`,
+`events_batch` and `events_runs` (four CTests per platform).
+
+## Stable causal entity identities and canonical match iteration (2026-11-06)
+
+Owner-approved implementation replaces physical slot/generation handles with an
+opaque 16-byte `Entity`/`LocalEntity` (`uint64_t birth, lineage`, alignment eight).
+The public simulation identity clock starts at one, survives snapshots, raw/delta
+world transfer, recipient projection loading and reload, and advances once after
+a completed tick. Physical dense slot indices and free lists remain private.
+The Entity type has no new Tide fields or operators; C equality, hash, physics,
+seeding and serialized references use the complete logical identity.
+
+Generated code records declaration-local causal sites and allocates a bounded
+counter array sized from that declaration's AST. Each site increments its own
+64-bit counter, so executing a different private site cannot advance a visible
+site's occurrence. Root contexts combine code identity and the source entity;
+helpers fork by their written call site and occurrence, query rows by their
+logical entity, prefabs by their source invocation and child ordinal, and events
+by their recorded causal send identity and handler. Task frames persist the path
+and counters across waits. Transient contexts keep pointers only on the C stack;
+frame counters are accessed through object-byte pointers and fixed-size memcpy,
+avoiding array arithmetic across individual scalar frame members. No component values or global allocation/handler turn
+counts are hashed into match identity. The old value-derived presentation birth
+hash is replaced by a hash of the logical identity alone.
+
+Query iteration executed by match/simulation code is now ascending
+`(birth, lineage)` across all admitted
+archetypes. Structural/event and otherwise serial per-entity systems
+use the same order, merging maximal physically contiguous same-archetype/chunk
+runs through the existing batching/COW/extern-row bridges. Independent row
+updates can retain physical parallel traversal because they expose no modelled
+cross-row ordering. Ordinary extern C function calls retain their prior parallel
+eligibility; determinism, external state and thread safety stay the game's
+responsibility, and their independent-row calls promise no global serial order.
+Presentation/view query traversal, local entity traversal and ordinary list/map
+insertion order retain their existing contracts. Spatial indexed-query searches remain enabled; candidate execution is
+sorted by logical identity, matching the canonical plain traversal. A public
+spawn's identity is independent of hidden allocations,
+but code that actually depends on absent hidden state can still need authority
+corrections. Static causal sites and observable behavior are not a new secrecy
+mechanism; no private payload, private allocator count or free-list metadata is
+published to obtain stable IDs.
+
+The only new generated runtime allocation calls are the agreed
+`tide_new_entity_key` / `tide_entity_create_key` boundary, plus the approved
+`tide_entities_ordered` / `tide_entities_ordered_archetypes` borrowed-order lookups.
+Their immutable derived key arrays stay valid through structural changes until
+entity settle. Plain match queries and canonical system wrappers cache only keys
+in their statically admitted archetypes, so a per-row query over two fighters does not scan thousands of
+unrelated entities. Empty admitted sets emit no walk. The runtime copies the
+archetype set values, invalidates filtered arrays when logical membership or an
+entity's archetype changes, and drops derived caches on snapshot copy. Sparse
+presence filters and current component values remain live reads in the loop.
+Spatial indexes sort only their candidate hits (notes/indexed-loops.md).
+Canonical writable component lanes are prepared once per physical chunk before
+logical-order runs and finalized once afterward. Each run reads the current
+published pages, never a saved pre-system image. The prepared pages preserve all
+rows and untouched bytes, and unchanged pages regain the prior shared page/hash
+at finalization. Same-component World reads/writes keep their existing dynamic
+in-place path; different-component World.Set does not force every logical row to
+copy its whole component chunk again.
+
+Projection load/reload stages its transactional world on the heap, frees that
+shell after successful ownership adoption, and destroys/frees it on invalid data.
+The 65,536-player fixture exceeds the WASI stack once public lifecycle counters
+join its input arrays; staging the complete world as a C stack value is unsafe.
+Envelope validation precedes allocation, and failed decoding preserves the old
+world and restores heap binding. `players_ceiling`, projection truncation and
+reload fixtures validate the boundary on native ASan and WASI.
+Logical-key duplicates,
+including a spawn destroyed earlier in the same clock, fail closed rather than
+probe for another logical ID or alias existing references. Physical lookup may
+probe hash buckets with exact full-key equality. Unkeyed C/local allocation stays
+separate and does not promise recipient-stable match identity.
+
+Focused compiler fixture `stable_entities` combines public spawners in different
+archetypes, an omitted hidden spawner, two helper call sites, queued targeted
+events, expiry/reuse and repeated projection loading. It checks permitted hashes,
+canonical query order and exact public projectile identities/gameplay values.
+`canonical_rows` covers 3000 rows across two archetypes, canonical C runs,
+partial-chunk writes against shared snapshots and preservation of untouched
+fields. Whole-chunk replacement pages are used only for a canonical run that
+covers the whole physical chunk; a partial run must preserve other rows.
+`stable_async` separates causal provenance from hidden Task slot allocation and
+checks persisted counters through raw-world resume. Player membership is public
+in authenticated frame events (before input filtering); per-player clock-local
+Joined/Left counters distinguish repeated lifecycle events in one tick. The
+public array costs eight bytes per configured maximum player in the world and
+projection, resets after the tick, and participates in copy/hash/raw/delta/reload.
+A separate public per-clock Main-root occurrence scalar permits initialization
+and implicit Main recreation in the same clock without aliasing. It has the same
+persistence/reset contract, covered by `stable_main`.
+
+Task handles themselves still use the existing global task serial and physical
+registry slot. Stable Entity IDs do not make a public stored Task handle
+recipient-independent when an absent hidden execution starts another task first;
+that separate design gap is not changed here. Waiting tasks' Entity birth
+provenance never derives from that Task serial/slot.
+
+Focused validation: Windows ASan and WASI pass `stable_entities`, `stable_main`,
+`stable_async`, `canonical_rows` and the existing `destroy_rows` regression.
+The latter includes a trusted C observer followed by a direct queued Destroy,
+which must still traverse canonical sources. Direct system AST effects participate
+in split eligibility, independently of helper capability summaries. Both targets
+produce the same `queries` semantic hash (`8FA74C3B18C86E22`). Filtering the cached
+order restores the 4096-row per-entity query fixture from scanning all unrelated
+keys: its isolated 16-tick test drops from 11.629 seconds to 253 milliseconds on
+Windows ASan; WASI takes 356 milliseconds after the fix. These correctness-test
+timings are diagnostic, not release game performance measurements. The indexed,
+plain and differential indexed-loop fixtures also pass on WASI.
+Entity-dependent simulation/random, asset, text and raw/wire regression pins are
+updated only after matching native/WASI outputs. Local-field/local-event and
+plain variants agree on semantic hashes and portable delta bytes; raw save header
+pins remain pointer-width specific. The ordered-schedule golden now records the
+canonical source-order dependency between the two per-entity spawning systems.
+The demo simulation hash changes with logical identity while its pixel assertions
+remain intact.
+
 # Language features, as tidec builds them
+
+## Mixed position widths in prediction lookup (2026-11-06)
+
+Mount & Rifle exposed `tide_shard_where` reading `.z` from a `[Position] float2`
+when the program's first position had three axes. This shared lookup used the
+program-wide shard dimension count for every field; C partitioning exposed it
+in a plumbing part but was not the cause. `gen_position_where` now bounds emitted
+axes by the individual field's width, as `gen_far_rows` already does. Double2
+uses the same guard. Sharded games retain their checker requirement that all
+positions have matching dimensions.
+
+No axis interpretation, selection priority, layout, runtime API or language
+semantics change: two-dimensional positions still use x/y with zero z. Mixing
+map x/z coordinates with world x/y/z coordinates needs a separate owner decision.
+The `predict_near` fixture now includes a three-axis position declared before
+its two-axis bodies, and a split-C variant compiles, links and executes the
+same network/prediction checks.
+
+Validation: both ordinary and split fixtures pass on Windows ASan (`sanitize`)
+and WASI (`web-debug`), four CTests total, with strict warnings. No browser/GPU
+coverage is needed for this coordinate emission repair; other native OSes are CI.
+
+## Deterministic scene preparation (2026-11-05)
+
+Owner-approved syntax: `scene Campaign { prepare(mut Geography geography) { ... } }`, including mandatory
+parentheses for no dependencies. One block per match scene; its fields/methods and root `this` are in scope.
+Other access uses explicit match parameters, helpers and queries. Initial and later committed loads prepare before
+Spawned; preparation's entities exist by root Spawned. Ticks/Time wait locally, networking and views continue.
+Every full-state peer generates independently; the server never waits for client readiness. Slow peers catch up.
+Progress uses ordinary component/singleton fields. `Scene.IsPrepared(scene)` reads local completion;
+`Scene.IsPrepared(scene, player)` reads server-acknowledged readiness. Waiting/timeouts/kicks are game policy.
+
+Parser/checker/codegen lower a scene-owned block to a private targeted match handler with an implicit mutable
+scene receiver. Unqualified scene member access resolves to that receiver. User parameters cannot be filters;
+required root components are checked against reachable archetypes and actual presence at execution. Helper/event
+effects propagate refusal of nested scene loads and async starts. Existing match capabilities exclude local I/O.
+
+Generated scenes carry hidden engine-owned completion/player bits and a load ordinal for blocks. An inaccessible
+match singleton allocates ordinals, preserving load order across archetypes/reused entity IDs. Normal setters and
+row write-back preserve metadata, even for whole scene assignments. Row write-back uses the scheduler's output
+lanes: bypassing them with a world store let lane completion adopt uninitialized pages, caught by the transition
+regression and fixed. Completion defaults true when migrating an already activated root; actual loads reset false.
+
+Host callbacks defer preparation at start/tick boundaries. `tide/preparation.h` runs an independent world on the
+existing background provider and adopts completion at the same tick. Direct generated C world init/tick entry
+points prepare synchronously. Progress snapshots publish between complete top-level preparation statements after
+mutable parameter write-back; they are observational, never simulation inputs. Long loops/helpers need not publish
+intermediate progress. Generated loop/helper/handler safe points stop abandoned Tide work; trusted C must return.
+Readiness reads declare global scene-component read effects, including through helpers, so they cannot race
+mutable scene rows. Synchronous local handlers cannot read current match readiness; views can.
+
+Input capture uses raw world packing/unpacking rather than cross-thread COW: page reference counts are not atomic.
+Publication likewise builds an independently unpacked snapshot on the worker and transfers exclusive ownership under
+a lock. The main thread acquires that endpoint without decoding it, never sharing pages with the running worker.
+Completed state can use ordinary COW adoption after the provider has finished. This avoids a page-reference race
+that a shared published snapshot would have had. Input capture is linear in current world size; publication is linear
+in generated state size and happens on the worker. No per-loop-iteration snapshots are inferred.
+
+Session/readiness/visibility contracts: netcode.md. Ownership: schedule-and-threads.md, memory-safety.md and
+runtime-ownership.md. Reload: hot-reload.md. Provisional limits documented in spec/user docs: sharded matches
+reject preparation; no background provider runs synchronously; visibility clients receive the permitted server
+result because they may lack private generation inputs. No engine readiness timeout was added.
+
+Coverage: `scene_preparation_empty` covers empty blocks, local/helper/named-argument readiness and no-heap code.
+`scene_preparation` checks startup/transition ordering, fields/methods, Spawned queries, multiple loads,
+player index 64, whole-value replacement, packed/hash/snapshot state, queued/running cancellation, published progress,
+local/verified lifecycle and slow independent peers without resync. `scene_preparation_visibility` checks a namespaced
+scene's root dependency, hidden Recipe absence, permitted results, readiness and recipient-private ordinals.
+Negative fixtures cover syntax, placement, duplicates, dependencies, async/nested loads and readiness argument types.
+LSP/outline/grammar expose the authored block without synthetic declarations. The schedule prints preparation
+separately from event handlers; its golden pins helper-propagated readiness dependencies without a World parameter.
+`scene_preparation_assets` compares serial and actual background parallel generation using packed build constants;
+preparation step callbacks bind the pack on helper threads, including query steps.
+
+Validation before dev integration: Clang 23.1.2 / Windows ASan and WASI / Node 24.22.1; all preparation fixtures,
+readiness-only compilation, diagnostics, LSP, debug split-C compilation/link/run and 354 grammar checks pass. Docs
+production build passes. The full native run passed 3187/3189: one new diagnostic expectation was corrected and its
+focused run passes; the other failure is Render3D post's sampler expectation, already fixed in incoming origin/dev.
+The full web run passed 3015/3016 with the same existing Render3D expectation as its only failure. Native engine/LSP
+suites also pass after the session changes. Final merged validation is recorded below. Other OSes/Android are CI's;
+no CI was dispatched and no private prototype was changed.
+
+Merged validation (2026-11-06): kept both sides of the worker pack-binding conflict, using
+`is_worker || preparation_cpu` for parallel callbacks. Full sanitize and web-debug builds are warning-free.
+The affected preparation/readiness/diagnostic/schedule/worker/query/world-set/visibility/split-code/Render3D checks
+pass 49/49 natively (including the complete LSP suite) and 47/47 on WASI. The incoming Render3D post fix passes on
+both. Debug code/plumbing partitions and ordinary distribution partitions each compile, link and run all seven
+non-platform preparation cases. The merged docs production build and all 356 grammar checks pass. No remaining
+failure from either full-suite run is unresolved; the new tests and merge overlaps were validated without repeating
+unrelated suites. Provisional feature limits above remain explicit in the spec and user guide.
+
+## Build-code constants in workers (2026-11-05)
+
+Build-code list constants are hidden packed assets even when their producer reads
+no source asset. Generated local worker entry points did not call tide_pack_use,
+leaving tide_pack_memory NULL on fresh pool threads. List indexing then read a
+small pack offset as an address. The worker_values regression reproduces that
+access violation under Windows ASan in tide_list_at via a helper reading constants.
+
+Worker entry points and their parallel list/grid callbacks now bind the pack with
+the existing tide_pack_use, as tick/frame entry points do. This supports the intended
+constant value reads without changing language semantics, capture ownership,
+runtime APIs, match state or pack format. Built constants affect program identity
+and changes rebuild code rather than performing a live asset-only replacement.
+Live asset reads in workers remain subject to their existing checker restrictions.
+
+worker_values checks a 4 KB source decoded into integer constants, an integer list
+made without an asset, and a list of structs containing float2s, a float and an int.
+Reads pass through an ordinary helper, directly in a worker and inside a parallel
+loop. The host loads its embedded pack and checks completion and exact results
+both with synchronous execution and with the actual native pool; the visualizer
+variant covers typed list wrappers too.
+
+Validation: built the four affected Windows sanitize targets and passed
+local_workers, worker_values, worker_values_visualizers and worker_grids (4 CTests).
+Built the three ordinary targets in web-release and passed their WASI CTests
+under Node 24.22.1 (3 CTests). No browser, other native OS, or mount-and-rifle run;
+mount-and-rifle was not edited. No docs change is needed for this implementation
+repair of existing constant semantics.
+
+## Stable generated C partitions (2026-11-05)
+
+`codegen_options.split_code` / `tidec --split-code` cut generated C into four translation units using two binary
+passes of the existing plumbing splitter. `partition == -1` retains the debug code/plumbing policy; 0 and 1 choose
+by bits of the symbol-name hash. Function bodies stay intact. Types/macros/prototypes are repeated; cross-part
+references promote internal linkage and rename private symbols to avoid host/pack collisions. Small immutable
+constants retain the existing sharing policy. Conservative dependency propagation can leave a retained copy unused,
+so shared constants carry `unused` explicitly. Prototype emission ends any trailing line comment before its semicolon.
+
+`tide_game_api` always lands in part zero: only that object's header stamp needs the changing simulation identity.
+`write_code_parts` writes `<name>.c` and `<name>_part1.c` through `_part3.c`; `<name>_parts.txt` lists each generated
+source as `plumbing thin filename` (two 0/1 flags and a basename). A nonpartitioned group has one record. Debug's
+own game code remains whole/unoptimized; its plumbing can partition. `split_code_min_bytes` is zero for explicit
+tidec use and 4 MiB in the CLI. Without `split_code`, the ordinary one-file output remains supported.
+
+Correction (2026-11-06): a split now first moves the large constants (const variables over `SPLIT_SHARED_CONST`,
+mostly shaders' code) into `<name>_data.c`, listed last, written even when it only declares (`partition ==
+SPLIT_DATA`, `split_name.data`). The code is then halved by hash bits into `split_code_parts` parts (default 4, up to
+16) while each keeps `split_code_part_bytes` of code: tidec keeps four, the CLI asks for up to 16 of 512 KiB.
+Measurements are in cli-and-packages.md, Faster edit builds of big games.
+
+No Tide semantics, generated runtime calls, layouts, ordering, snapshots or hashes change. ThinLTO preserves
+cross-part optimization opportunities, not an identical machine-code layout. Stable-part regression changes one
+function's numeric body and checks that exactly one C part changes and repeated generation is identical. Real
+native/web links and execution cover pinned cross-platform math, nested container ownership, tasks, compute/shader
+arrays and a debug-code/optimized-plumbing combination. CLI/cache/CMake contracts and measurements are recorded in
+cli-and-packages.md and tide-programs.md.
+
+## Tide compilation progress labels (2026-11-05)
+
+The terminal build display now receives synchronous compiler progress through
+`compile_set_progress`/`compile_progress` in common.h. The CLI installs the receiver
+only around source generation and copies labels under its existing feedback lock.
+Parsing and method checking name the Tide source; imports name each resolved file
+(including individual glob matches); packing names the qualified asset declaration.
+Generating C has its own label. The terminal uses basenames so absolute directory
+prefixes cannot hide the filename. Redirected output and build-report stages stay
+unchanged. This is host-tool feedback only; no generated code/runtime contract changes.
+
+Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
+CLI unit/help and recompile CTests pass. The recompile regression checks actual
+parsing, checking, file import, asset packing and C-generation notifications.
+Docs production build passes with the usual unstaged example-page 404s.
+Other OS terminals remain CI/manual coverage; no web runtime code changed.
+
+Progress counts follow-up (2026-11-05): the compiler callback now includes
+completed/total item counts (zero total means indeterminate). Parsing counts input
+files, importing counts each resolved set of files (glob matches included), and
+packing counts asset declarations. The existing terminal bar shows those stage
+counts and percentages; checking and C generation retain activity animation.
+Counts describe work items, not time estimates or whole-build completion.
+Redirected output is unchanged. ASan CLI unit/help and compiler recompile checks
+pass, including notification count bounds and parsing/import completion. Docs
+production build passes; other host terminals remain CI/manual coverage.
+
+
+## GPU lists written through functions (2026-11-05)
+
+A function the GPU runs takes a `GPUList<T>` and writes, adds to or uses atomics on it (or on a field of a struct
+it's given): the checker notes it on the parameter (`param.gpu_written`, `gpu_adds`, `gpu_atomic`) or the function's
+field lists (`decl.adds`, `atomics`, `gpu_writes`, now any GPU code's), and `settle_gpu_list_writes`
+(compute_check.inc, after `settle_grid_functions`) hands them to callers over `c->calls` to a fixed point, then
+checks Add's rules through calls. `call_site` gained `statement` (the call is a statement of its own) and `looped`
+(in a loop's body, condition or step), set where calls are noted (`check_method_args`, overloads, property sets).
+Add's once-a-path check and a kernel's one-axis group moved there from `check_kernel_flow`. The shared-race warning
+(`shared_races`, `group_uniform`) is gone: the writes are guarded instead. Details: notes/compute.md, Closing the
+gaps.
+
+## Unread results of calls that keep their order (2026-11-04)
+
+Fix, found building Mount & Rifle with dev: a statement that is a call with a result, whose arguments
+make it keep its order (an `out` argument, a call before it), ran into a temporary and then left the
+temporary's name as the statement, `tide_called1;`, which clang refuses (`-Wunused-value`). The
+`S_EXPR` case for calls now writes `(void)` before a hoisted result that isn't void. The `Tally` case in
+`compiler/tests/e2e/out_params.tide` (`out_declared_wherever_a_call_is`) pins it.
+
+## Read-only list foreach borrows its elements (2026-11-04)
+
+mount-and-rifle's DrawWays (a view, `foreach (var piece in pieces.all)` over ~500 structs of two lists, ~2,000
+corners each) spent 41 ms a frame copying each element, its lists included, into scratch
+(`tide_copy_<Piece>(tide_list<n>_get(...))`), against nothing for `pieces.all[k].surface`. Codegen-only, no language,
+runtime-interface or layout change: the element stays a read-only value, and anything taking it elsewhere still copies
+it (`gen_value_of` on a local isn't fresh: `kept = piece`, `Add(piece)`, `return piece`).
+
+- **When it borrows** (`foreach_borrows` in codegen.c, used by `gen_stmt`'s list `S_FOREACH`): the element type holds a
+  list (`type_has_list`; plain elements generate what they did), the code isn't a task (`g->task`: a wait lets
+  anything run), and nothing in the body can disturb the source (`borrow_disturbed_stmt`/`_expr`, over statements,
+  switch cases, call blocks, lambda bodies and draw operands). Disturbing: an assignment, `++`/`--`, or any writing
+  call (`writes()`: its receiver and every argument, conservatively) whose place overlaps the source's
+  (`borrow_overlaps`: same root, the local, parameter or `this`, and the paths agree up to the shorter, fields that
+  differ being apart and any index matching any index); a mut method of `this` called bare when the source is in
+  `this`; a call to an extern, a routine reaching the game's own C (`reaches_extern`; the engine's order-keeping builtins don't count) or a task-starting one, or one that changes the world
+  (`changes_world`, `takes_world_bindings`); a non-reading `CALL_WORLD`; an await or a task start; a query foreach
+  inside. The code itself setting the world (`world_sets`, `takes_world_bindings` of `g->code`) keeps the copy unless
+  the source is in a local. A computed source is the loop's own copy (`foreach_value`), which nothing else names; a
+  source through a property is never borrowed.
+- **Why it's safe.** The checker refuses every write through the foreach variable (`check_writable`, "read-only copy
+  of a foreach element"). With nothing in the body able to change the list or its elements' lists, the handles the
+  element holds point at what it had for the whole body; readonly parameters are already copied at a call where a
+  `mut` argument could alias them. Outer and inner loops are decided apart: an outer loop whose body (the inner loop
+  included) writes the source copies, so an inner loop borrowing from that copy is safe.
+- **Maps, sets and arrays (2026-11-05).** These took entries and elements shallow whatever the body did: an array
+  foreach whose body replaced `pair[0]` read the replacement's list through its variable (0, then 1,000 parts where
+  it had 4: a freed block read through a stale handle), and a map entry's value was the same kind of handle, kept
+  across waits in a task. Now `foreach_borrows(g, s, held)` decides them too, `held` being what a round holds: a
+  map's value type (`gen_map_foreach`: `.value = tide_copy_<T>(entry->value)` when it copies; a set's keys hold no
+  list), and an array's element type, where a copy is the whole array as the loop found it
+  (`tide_array<n>_copy(...)` into `tide_all<n>`; an array nothing writes, `array_unwritten`, has no copy helper and
+  needs none, and a fresh array is the loop's own). Read-only loops generate what they did. Generated C over every
+  source list: only the Box2D package's two map loops in its topology pass (which remove and replace entries of the
+  map they walk) now copy, in every game that uses it (towers and the box2d tests).
+- **Generated C.** Old and new tidec over every `.sources` list in build/sanitize (476, prototypes included),
+  `--no-line`: all differ only in the simulation identity (the compiler's sources are in it) but 18, whose only change
+  is such loops borrowing: banked, foldline, sidekick, the lobby/steam-lobby packages, asset_borrows, asset_meshes,
+  mesh_decode, mesh_runtime, nested, skinned_defaults, safety optional_fields and the new fixture.
+- **Measured** (release, Windows, Ryzen 9 7900X shared with other sessions; a scratch view over a local singleton of
+  500 pieces, 2,000 `{float3, float3}` corners and 2,000 ints each, summing three reads a piece; median of 200
+  frames, three runs): 6.0 to 7.4 ms a frame before (minimum 4.7), 0.009 to 0.016 ms after, the same sum.
+- **Tests:** `tidec_e2e_foreach_borrow` (maps and arrays read only taking no scratch, and with the body removing
+  and replacing the entry or both elements seeing them as the loop found them and taking scratch; a set's plain keys;
+  a read-only loop beside writes to a disjoint field and locals taking no
+  scratch, nested loops, an element kept past the loop staying its own copy, and loops whose body empties an
+  element's list, empties the list, calls a `mut` helper given the singleton, or replaces the element, each seeing the
+  element as it was and taking scratch; a view's loop over the match taking none; snapshots unchanged), plus the
+  changed targets' own tests on native and web.
+
+## Generated C in two files (2026-11-04)
+
+`codegen_options.split_plumbing` (`tidec --split-plumbing`) cuts the finished generated C into `<name>.c`, the
+game's code, and `<name>_plumbing.c`, for debug builds to optimize the plumbing alone
+(`compiler/src/plumbing_split.inc`). Codegen's part: `gen.code_at`, the definitions an edit of the code changes,
+which stay in the code's file, and `write_pinned`, `#line` pinning streamed to the file. Nothing a Tide programmer
+sees changes, and without the option the output is as before. Details, tests and measurements:
+notes/cli-and-packages.md, Optimized plumbing in debug builds.
+
+## Grids as values (2026-11-03)
+
+The owner, reworking build code: grids work as values in all code, not only in build code ("`build` making code
+behave in a different way, that is a nono"). docs/spec.md, Grids, has the rules; docs/language/grids.md, Grids in
+code, the user page.
+
+**Checker** (check.c). `fresh_grid(e, returning)`: a grid of its own is `default`, a call or a method (`Grid2(...)`,
+`cells.Copy()`, any function's result), a conditional of two, and when returning a local (`BIND_LOCAL`), which the
+function is done with. It gates three places that took only `is_new_grid` before: an assignment to a grid
+(`check_assign`), a local's value (`check_var`, after the GPU's `names_grid` case, which still names a grid in a frag,
+a vert and a function only they call), and `check_return` (a build owner's return says "an asset's grid is its own").
+`local_type` no longer refuses a grid type. A local grid in async code is refused (a task can't keep one). Field
+defaults keep `own_grid`. `check_signature` sets `grid_param` for the return type of an ordinary function (not
+extern, async, operator, interpolate, audio, worker or shader), so `method_type` takes a grid there, with a message
+for the rest. Grid parameters lost the build-only case, and the mark that made a function taking a grid `gpu_only` at its
+signature moved after the calls are known: any function takes one, `mut` too, but `out` (an error that says to
+return it) and `mut` in a worker or a shader, and `settle_grid_functions` (before `check_gpu_only_calls`) marks a
+function that takes a grid `gpu_only` when only code the GPU runs calls it, or nothing does, as every such function
+was before, so generated C still leaves those out. A local naming a grid parameter (`var mine = tallies;`, which a
+shader helper in platform/tests/shaders.tide does) is kept in `grid_names` and is the copy error only if its function
+isn't the GPU's once that's settled.
+`check_grid_method` adds `Copy` (no arguments, refused in GPU code). `thread_grid(e)`: a grid whose root is a local or
+a grid parameter, which a caller can pass a local; `check_parallel` refuses those (but in a worker), and the automatic
+parallel foreach in a system skips them.
+
+**Codegen.** Little changed: a local grid is a `tide_grid` with `TIDE_IN_SCRATCH` as its `where` (`place_where`), a
+`mut` grid parameter is `tide_grid *` with its caller's `where`, returns are the handle, and `cells.Copy()` is
+`tide_grid_copy(g, &shape)`. Assigning a field `tide_grid_set`s it, which copies a scratch grid's cells into the
+world's heap (runtime-ownership.md). Calls passing a field's grid to a non-`mut` parameter pass the handle, as build
+functions did.
+
+**What stays refused.** Structs with grids in locals, returns and copies; `Grid2(...)` as an argument (functions take
+no new grid in `arg_fits`); lambdas capturing a grid (a stored callable captures plain values); worker code keeping a
+grid local (worker_check.inc), so a worker can't call a helper that makes one; grids in lists and maps.
+
+**Tests.** `tidec_e2e_grid_values` (e2e/grid_values.tide, _test.c): locals made by a function past one chunk, `mut`
+parameters on a field's grid and a local's, reads of a passed grid, `Copy` leaving the original, a field given a
+function's grid and a copy, open 3D grids, a local given a new grid and cleared, returns from both branches, a view
+making grids in local code, world copy/pack/unpack with the field's cells, and the scratch mark back at 0 after the
+system. `tidec_safety_grid_values`: hostile sizes and places on locals, copies of a grid too big to list its chunks,
+fields taking them, foreach at the int limits, and 2000 grids made and dropped in one system, every tick. Errors:
+`grid_return_param`, `grid_parallel_local`, `grid_async_local`, `grid_out_param`; `grid_copy`, `grid_local`,
+`worker_grid_local`, `worker_grid_helper_local` and `worker_grid_return` say the new messages;
+`grid_function_param`, `grid_function_cpu_call` and `worker_grid_cpu_caller` were removed (all three are allowed
+now, and covered by grid_values and worker_grids). Codegen diff (old and new tidec, `--no-line`, plain and `--layout`, every
+`.sources` list in build/sanitize, the prototypes' too: 462): every game's C is the same but for the simulation identity,
+which the compiler's sources are part of; only the three fixtures written in the new form differ, as the old tidec
+refuses them. Full native sanitize (3025) and web-debug (2896, without the prototypes) suites passed.
+
+**Gaps.** A field can't be given a local (`terrain.heights = local;` is an error: `local.Copy()`, which copies twice,
+once into scratch and once into the world); a move from a local's last use isn't there. A parallel loop can't go
+through a local's grid. A worker can't make a grid. (GPU code can't pass a grid `mut`: what a frag reads is read-only.)
+
+## Build code (2026-11-03)
+
+`build` functions, assets and constants whose value is build code, built constants and their checks are in
+notes/assets-and-files.md, Build code: parser.c (the `build` word; a block after an asset or a constant is an error),
+build_check.inc (the made functions, `check_build_code`), and the changes to `is_constant`, `use_constant`,
+`check_constant`, `constant_type`, `find_named` (ClipData and MeshLevel once named) and `check_new_mesh` (levels).
+
+## Diagnostic mesh asset names (2026-11-03)
+
+Generated frames scope a diagnostic mesh-name callback alongside their existing
+view source. It matches current asset geometry handles without reading game
+values later, and restores the caller's callback after views. Static collections
+use their stable resolved geometry and glob key; skinned collections use their
+asset declaration name. Shared packed aliases report the first matching name.
+Strip-names uses existing opaque asset diagnostics and hides glob keys. No
+language semantics or new generated runtime call; hosts/game libraries rebuild
+for draw-list/mesh metadata layout. Asset-mesh and skinned-rest E2Es check names.
+
+
+## Correction age between rendered frames (2026-11-03)
+
+Generated games with corrected fields expose `tide_local_age_views(local,
+seconds)` through the host's optional `age_views` callback. It performs the
+existing correction decay without changing `Frame.dt` or local random state.
+The host ages existing errors before each session update, including updates
+while waiting for the GPU; newly received errors therefore start at that update.
+`tide_local_frame_time` still sets the full rendered-frame duration and reseeds
+local randomness exactly once per frame, without also aging corrections. No
+Tide syntax, match state, interpolation or correction decay arithmetic changes.
+
+Direct generated-C callers in editor previews, the demo, example/package test
+hosts, compiler/safety tests and benchmarks call both phases where needed.
+Their previous frame duration, RNG and correction-aging behavior is preserved.
+Unity travel preview's zero-second frame-time
+call needs no age call because zero aging is a no-op. The correction fixture
+checks two update intervals with a fresh error between them, unchanged random
+state and frame duration during aging, and one full frame duration/random seed
+at the next draw. Existing half-life and Transform checks use the age function.
+Native/web validation is recorded with the host's GPU-wait update changes in
+`notes/standard-host.md`.
+
+## Names `is` gives are list wrappers too (2026-11-04)
+
+With visualizers (debug builds), `if (F() is List<T> got)` declared `got` as a
+plain `tide_list` while every reference to it read `got.list`, as any list local
+does (`typed_list_local`), so clang refused the foreach over it ("no member named
+'list'"; mount-and-rifle's `Directory.GetDirectories(folder) is List<string>`).
+`declare_bindings` now declares a list binding as its `tide_local_list<N>` and
+the test's assignment writes its `.list`. Without visualizers nothing changes.
+`fails.tide` reads an `is List<int>` binding with a foreach, and
+`tidec_e2e_fails_visualizers` builds that fixture with wrappers on every preset.
+
+## Worker parallel captures with debugger list wrappers (2026-11-02)
+
+`gen_parallel_call` preserves a captured list local's `tide_local_list<N>`
+wrapper when visualizers are enabled. The capture context expects that wrapper;
+the snapshot and ownership walkers instead receive its `.list` storage. Without
+visualizers the temporary remains a plain `tide_list`. The previous initializer
+mixed those two C types and failed when a worker's parallel pass read another
+local list (mount-and-rifle's terrain height/vertex passes).
+
+This changes no Tide semantics, runtime call, ownership policy or scheduling.
+Captures still fully materialize before entering the parallel pass and live in
+the worker's existing private heap. Nested list snapshots use the same recursive
+walkers, and only the outer debugger wrapper needs unwrapping.
+
+`worker_values` now runs two parallel passes over 4,096 entries, reading a local
+integer list and a nested integer list, checking every first-pass result and
+source updates observed by the second pass. The existing host runs with no jobs
+provider and with the native shared pool. A separate native
+`tidec_e2e_worker_values_visualizers` target always enables wrappers, independently
+of the build's visualizer setting, so the regression remains covered in CI.
+
+Validation: Windows ASan builds and all four focused tests pass (`local_workers`,
+`worker_values`, `worker_values_visualizers`, `worker_grids`), covering wrapped
+and plain list locals. The three ordinary fixtures also pass on web-release
+under WASI with Node 24.22.1. Browser worker scheduling and other native platforms
+were not exercised in this scoped fix; existing runtime scheduling is unchanged.
+
+## Mesh<V>.Decode (2026-11-02)
+
+Owner-approved (assets-and-files.md, The static mesh reader in the engine):
+`Mesh<V>.Decode(List<byte> bytes)` gives `Mesh<V> fails IOError`, the same
+geometry value `Mesh(vertices, indices)` makes. Rules are Provisional in
+docs/spec.md, Decoding a mesh.
+
+- **Parsing.** `Mesh<...>` followed by `.` after its `>` (`type_then_dot`,
+  token lookahead as `at_type_argument`) is read as `SkinnedMesh<...>` is: an
+  `E_NAME` with `type_arg_ref`. Nothing else named `Mesh` changes.
+- **Checking** (`check_mesh_decode`, from `check_method` after
+  `check_skinned_static`): the receiver is `Mesh<V>` as written
+  (`resolve_mesh`, PLACE_LOCAL) or an alias of the geometry Mesh, which
+  `alias_receiver` has already replaced by the builtin type and left in
+  `receiver->type_alias`. Only `Decode` (other names: "has the static method
+  Decode(bytes)", with a note naming the constructor); refused in frag/vert
+  (`gpu_code`, as `check_new_mesh` and skinned ops are); `mesh_vertex_ok`
+  checks the vertex; `skinned_arguments` the one `List<byte>`. Sets
+  `CALL_MESH_DECODE`, `type_decl` = the Mesh decl, `decl.mesh_decoded`,
+  `program.mesh_decodes`, `uses_text`.
+- **Codegen.** `gen_mesh_decode` (beside `tide_mesh_make_<ref>`, for each
+  decoded Mesh decl) writes `tide_mesh_decode_<ref>(tide_list)`: flatten,
+  `tide_mesh_data_decode(..., TIDE_MESH_ANY, &tide_mesh_decode_limits, ...)`,
+  `tide_mesh_data_with_tangents` for a `float4 tangent` (as `pack_mesh`'s
+  variant), or for `joints`/`weights` the skinned decoder then
+  `tide_mesh_data_of_model`/`_rest`/`_finite` and `_bones` per vertex (as
+  `pack_mesh` with `rest`); scratch lists filled by `mesh_fills`, defaults by
+  `gen_value`; `id = tide_mesh_key(...)`. The call site is
+  `tide_mesh_decode_<ref>(bytes)`. Games that decode include
+  `tide/mesh_data.h` and `tide/skinned_data.h`; others generate what they did.
+- **Identity.** `collect_asset_dependencies` seeds each decoded Mesh's vertex
+  into the default closure, as SkinnedMesh's Decode results are.
+- **Editors.** `mesh_calls` (`Decode`) is the geometry Mesh's in
+  `methods_of`; completion after `Mesh<...>.`; hover and signature help
+  through `CALL_MESH_DECODE` beside `CALL_SKINNED`; `format_method` names
+  the Mesh type and substitutes `Mesh<V>`. As for SkinnedMesh, a value's
+  completion lists `Decode` too.
+
+Tests: `tidec_e2e_mesh_decode` (GLB, embedded glTF and an alias's decode,
+OBJ into a vertex with a default and a float4 tangent, a mesh with bones,
+each equal to its asset field by field; refusals of text and no bytes; `is`
+unwrapping; a list of asset and decoded meshes; key equality; snapshot, hash,
+pack and unpack; a world hash pinned, the same on native and web; a local
+decode and the match's drawn as one GPU mesh), five `mesh_decode_*`
+diagnostics, `lsp_mesh_decode_completes_hovers_and_checks`, and
+`tests/test_mesh_decode.c` for the reader.
+
+## Actionable compiler diagnostics (2026-11-02)
+
+The owner requested a pass over Tide's error messages for clear explanations
+and useful fixes or workarounds. The compiler changes are diagnostic-only:
+accepted syntax, checking rules, exit codes, code generation and runtime contracts
+are unchanged. Existing messages that already explain the fix remain concise.
+
+- Lexer messages explain how to close an unfinished comment, save invalid text
+  and character literals as UTF-8, and replace non-ASCII names. Invalid numeric
+  literals describe the digits and suffixes allowed for their base. Literal
+  overflow notes give a representable range or suggest a suitable alternative.
+- Parser messages distinguish an inferred local that needs an initializer from
+  an explicitly typed local that can be assigned later. Repeated Sample,
+  Sanitize and Predict methods say to combine their logic into one method.
+  Grid3's missing-cell-type example now correctly uses Grid3, formerly Grid2,
+  and its grid-default workaround supplies all three dimensions.
+- The tidec driver identifies unknown, incomplete and repeated options before
+  its usage text, and distinguishes missing inputs/output from a depfile used
+  with an inspection mode. Source, response-list, overlay and depfile failures
+  include path/permission or disk-space recovery guidance.
+- Checker examples now use mutable locals when copying, changing and replacing
+  indexed values. Mut/out and pose diagnostics cover indexed destinations
+  without calling every container a list; out-field and optional-field fixes
+  describe valid writable destinations. Foreach guidance distinguishes map,
+  set, text, list and array sources. Missing accessor, texture-constructor and
+  unsupported grid-copy messages explain an available path forward.
+- Await diagnostics cover started handles, synchronous calls and callback
+  limitations without suggesting async Action functions or workers. Void
+  failable calls no longer receive the invalid `?? fallback` suggestion:
+  their errors are handled with `is` or `!`, or propagated by a suitable
+  `fails` declaration. These are wording corrections to existing rules.
+
+Regression coverage: existing literal, encoding, duplicate-input and local
+fixtures pin the added guidance. Four diagnostics_frontend_* fixtures cover
+an unfinished comment, Grid3's example and duplicate Sample/Sanitize methods.
+tidec_diagnostics_frontend_cli checks 13 driver invocation/file failures with
+their existing exit codes and rejects sanitizer reports. Six new
+diagnostics_checker_* fixtures pin void-try, await-in-Action and foreach
+map/set/text guidance, and 24 existing checker fixtures pin revised messages.
+The language basics page explains how to read the error and its notes and
+correct common literals.
+The compiler's notes/suggestions continue through the existing common sink to
+editors; no new diagnostic API or editor-specific duplicate is introduced.
+
+Validation: the warning-free Windows ASan tool build and all 2,203 selected
+compiler error/warning, lexer, driver, CLI and language-server CTests pass.
+The docs production build passes. A positive compiler probe also accepts the
+copy/change/writeback and optional-field out/mut workarounds. These diagnostics
+run in native host tools for every game target; no web runtime or generated-C
+behavior changed, so no separate web runtime suite was needed. This pass does
+not claim every game-specific error has one universal fix; shader/runtime
+boundaries and import format decisions remain unchanged.
+
+## Shared shader preparation inside read-only view runs (2026-11-02)
+
+The forest's opaque pass already joins trees into a handful of GPU runs, but
+each generated shade wrapper still resolves the same textures and numeric
+lists and completes the same shared uniform packet for every tree. The compiler
+now reuses that completed preparation inside a proven read-only view invocation.
+Shader code, resource conversion routines, draw order, geometry, per-instance
+packing, runtime interfaces and match state are unchanged.
+
+`shader_prep_codegen.inc` recursively checks the authored body and synchronous
+helper/operator/property graph, expanded constants, omitted/default initializers and the runner's
+fresh attached defaults. Mutable parameters/queries, container writes or
+construction, CPU callable/Action execution, externs, tasks/workers, GUI/audio,
+world writes, Query parameters, resource operations and custom interpolation retain the original
+path. World.Get is excluded because its implicit interpolation is outside that
+graph; Has and the ordinary transform helpers remain supported. GPU callback
+values do not execute their bodies on the CPU. Read-only Texture.size calls
+keep their original evaluation and ordering. Both authored metadata reads and
+generated shader-size captures use a private adapter: a nonzero target identity
+disables reuse before the host target-pixel callback, for the rest of the scope.
+Pack/grid/empty texture metadata keeps reuse. Genuine extern calls still exclude
+the region even though metadata reads also use the existing calls_c summary.
+CPU builtins are limited to the arithmetic Math/quaternion/matrix owners.
+Debug.Log, other host builtins and Draw.MeasureText's host font callback retain
+the original path.
+
+Each eligible runner owns two lazy entries per reachable supported shader,
+allocated in scratch before any row/query/default mark. A private TLS scope is
+saved, installed and restored; ineligible runners mask inherited scopes during
+reentrant frames. Entries keep copied packets and numeric identities, never
+borrowed source storage. Keys compare zero-initialized semantic source fields,
+active heap/pack identities, heap high-water marks, selected draw-list identity,
+frame/epoch and the exact initially packed uniform bytes, including GPU seed
+and frame-random words. Count words start at their ordinary zero value, then
+the completed conversion counts are retained with the finished uniforms.
+Pending heap releases and non-pack scratch handles force the original path.
+
+Hits also validate each resolved slot's identity, version, space, format,
+dimensions, frame/epoch and writer kind. This is necessary because sampling one
+grid through color and Raw Texture fields overwrites the same slot. Sampling
+bits are still computed normally. Supported sources initially are numeric List,
+Texture (including persistent/packed grid references) and DepthTexture. Direct
+Grid, Map/Set, Cubemap, texture-size shader metadata, instanced, skinned and blit
+wrappers retain their existing path. A wrapper called outside an eligible
+scope performs only the private scope lookup/branch before its original work.
+
+The new `shared_bindings` fixture checks six distinct instance tints, A/B/A/B/A/B
+resource choices, shared uniforms and numeric-list counts/data, source edits
+between frames and unchanged match hashes. Its private target includes generated
+C and counts the actual conversion calls: two list and two texture conversions
+for six draws on every invocation, plus exact restoration of an outer scope.
+`shared_bindings_fallback` checks transitive C effects, scratch reuse, list/grid
+mutation, mutable helper/callable/Action effects, operators/properties, implicit
+defaults, expanded constants, both managed-size metadata paths, text-measure
+callbacks and color/Raw slot aliasing in sixteen scenarios, using captured
+packets and actual texture bytes. All 2,911 native sanitizer and 2,797 web-release
+CTests pass. After the final narrow text-measure exclusion, all three focused
+fixtures pass again on native and web. Forest shader/image equivalence and
+measurement scopes are recorded with the final optimization run in render3d.md
+and bench/results/forest-batch-20261102/README.md.
+
+## Meshes the game makes: Mesh(vertices, indices) (2026-11-02)
+
+Owner-approved design (one type, `Asset<Mesh<V>>` split back out, match state
+allowed, a keyed draw entry point); detailed rules are Provisional in
+docs/spec.md, Meshes the game makes. Supersedes "both spellings are one type"
+from Static mesh values keep stable IDs (2026-10-30).
+
+- **Two reference decls a mesh type.** `asset_reference_of(c, mesh, at,
+  geometry)` keeps one builtin struct per (Mesh decl, `asset_ref_geometry`).
+  The geometry one is `Mesh<V>` (type name `Mesh<V>`): hidden `long id`,
+  `List<V> vertices`, `List<int> indices`, 24 bytes. The other is
+  `Asset<Mesh<V>>`, the id alone. `resolve_mesh` and asset names (globs'
+  elements too) give the geometry decl; `Asset<...>` gives the ID-only one.
+  Skinned references are unchanged (`geometry` is forced false).
+- **Conversion** Asset -> Mesh in `type_assignable` and `gen_as`
+  (`gen_mesh_of_asset`: `{.id = (e).id}`); never back. Static `.Value` on
+  either gives the geometry decl.
+- **Ownership** is ordinary: the asset-ref decls are emitted first in the
+  struct-helper loop (`tide_own_/release_/assign_/copy_`), before the program's
+  structs that hold them. Snapshots, hashes, packing, codecs, hot-reload
+  layouts follow from the struct's fields.
+- **`Mesh(vertices, indices)`** is `CALL_NEW_MESH` (`check_new_mesh`,
+  dispatched like `Grid2(...)`, from `check_call`, from `check_expr_want_any`
+  for a list literal's vertex type, and for an alias of the type). V must be a
+  3D vertex (`vertex_dims` 3); indices a List<int>; refused in frag/vert
+  (`gpu_code`). Codegen calls the generated
+  `tide_mesh_make_<ref>(vertices, indices)`: two `tide_list_copy`s (scratch,
+  asset lists stay borrowed) and `id = tide_mesh_key(...)`, negative.
+- **Resolver**: the geometry decl's `tide_resolve_<ref>` returns its own lists
+  for `id < 0` before the asset switch; `.vertices`/`.indices` and Draw's
+  two-list expansion are unchanged.
+- **Equality** stays `tide_asset_equal_id` on ids: made meshes compare by
+  content key; a made mesh is never `default`.
+- **Draw key**: `keyed_mesh_draw` wraps an E_METHOD draw whose first argument
+  is a geometry Mesh in `(tide_draw_mesh_key(tide_draw, resolve(m), m.id),
+  draw, tide_draw_mesh_key(tide_draw, {0}, 0))`. `collect_ordered` hoists a
+  mesh made or returned by an E_CALL within a draw, so it's made once.
+- **CPU-only marking**: `holds_heap_beside_meshes` replaces `holds_heap` where
+  mesh collections set `borrows_asset_collections`; a single Mesh value's own
+  lists don't make a function CPU-only or worker-refused. Workers still refuse
+  Mesh values at their boundaries (`asset_ref_of`), JSON refuses the builtin.
+- **Glob metadata**: `#mesh-values` rows are now 24-byte Mesh values (list) or
+  40-byte map entries (value at 16), allocated by `tide_pack_skinned_list` /
+  `tide_pack_skinned_map` (same row sizes, text index) and overwritten with
+  `{id, 0, 0}`; load code reads `tide_ref_mesh` / `tide_ref_mesh_entry`.
+  Pack format and kinds are unchanged.
+
+Tests: new `mesh_runtime` E2E (24/8-byte layouts, copy independence, asset
+and made meshes mixed in lists/maps, Asset->Mesh, `.Value`, equality,
+snapshot/hash/pack/unpack round trip, three draws of copies as one instanced
+run of one GPU mesh kept across frames, the runtime key/hint contract).
+`mesh_values` re-pinned to 24/48 bytes and its reordered-pack swap to 24-byte
+metadata rows. Diagnostics: `mesh_made_arguments`, `mesh_made_2d`,
+`mesh_made_indices`, `mesh_made_not_asset`; `asset_reference_vertex` and
+`skinned_asset_reference_static` now name `Mesh<Vertex3>`; the LSP hover pin
+in `lsp_asset_meshes` follows the new text. Gaps: no skinned or 2D made meshes;
+LSP has no signature help for `Mesh(`. Merged with `lod:` on mesh draws (same
+day): its want wraps the keyed draw, and `tide_draw_lod_version` mixes into
+keyed versions as into list versions.
+
+## Generic functions and `has` (2026-11-02)
+
+The owner approved Claude's recommendations for the Geometry package (2026-11-02: "go with you recommendations"): generic functions with C#'s inference (generics step 3, functions at least), a compile-time field test `V has <type> <field>`, and `Weld` requiring the vertex struct's `==`. What's built is in `docs/spec.md`, Generics (Decided and Provisional); generic structs and methods, checking an uncalled generic, the GPU, Func values and editor support stay Open there.
+
+How it's built, and what code relies on:
+
+- **Parsing.** `parse_method` reads `<T, U>` after a function's name (`at_method_from` skips it with `skip_type_params`). A function with type parameters is a `DECL_GENERIC` holding `type_params`, their locations and a copy of the parser from its first token (`generic_parser`). `parse_generic_instance` reads the declaration again from there for each instantiation, as placement methods are read twice: the checker annotates and rewrites its tree, so each instantiation needs its own. A method with type parameters, and an override, are errors. Calls take types in `<>` before their arguments (`expr.type_args`, `parse_type_args`, on `E_CALL` and `E_METHOD`); `at_type_argument` now also takes a top-level comma, `[`, `]`, ints and `?` between the `<>`, as C# reads `F(a < b, c > (d))` as a generic call. `T has float3 normal` is `E_HAS` (contextual: a name followed by `has` and a type reads no other way), at `is`'s precedence.
+- **Names.** A `DECL_GENERIC` is a function to lookup (`is_kind`, `same_role`, `same_name_kind`) so plain functions and generics share names as overloads; every pass that walks `DECL_FUNCTION` skips it. Instantiations are `DECL_FUNCTION`s with `generic_of` set; the name index (`decls_by`, not the C-name one) leaves them out, so only their generic finds them.
+- **Type parameters are aliases.** Each instantiation has a `DECL_ALIAS` per parameter (`type_arg_decls`, `type_param` set, `alias_type` bound). `find_named` looks there first while `checker.generic` is the instantiation, so every place a type name is read (`resolve_named`, `find_type`, struct literals, `has`) gets the type with no change of its own; `resolve_alias_at` and `method_type` return the bound type without re-reading a written alias.
+- **Inference and picking** happen in `check_overloaded_args`, which every call of a generic goes through (`check_routine_args`): once the arguments are checked, each generic candidate becomes its instantiation (`instantiate_for_call`: types from `<>`, or `infer_type` matching each parameter's written type against its argument's type through `List`, `Set`, `Map`, `Grid2/3`, arrays and `T?`), and the usual overload rules pick, a plain function winning over an instantiation. With one candidate its inference errors are said (`loud`); with several, a generic that can't be instantiated just doesn't fit.
+- **Instantiating.** `generic_instance` finds the instantiation with the same type arguments (`same_type`) or parses one, binds the parameters, checks its signature with a nested checker, and names it in C: the generic's name with `c_suffix` = each type argument's letters (and its parameters' types where generics share the name), `tide_function_Max_int`. `place_generic_instance`, when a call picks it, puts it in `program.decls`, checks its body with a nested checker (as `check_placement_body` does), merges the nested checker's lists, notes the call ("in 'Max<Pair>', which this call instantiates") after errors in its body, refuses a C-name clash, and runs `mark_io_callers`, `mark_roll_callers` and `mark_act_callers` again so a system being checked sees what the new body does. Depth past 8 (`GENERIC_DEPTH`) is an error.
+- **`has`** (`check_has`) resolves its type and field type and becomes an `E_BOOL`. `S_IF` with a condition of `has` tests alone (`has_condition`: `!`, `&&`, `||`) is replaced by the side that runs, before anything of it is checked, so codegen and every later pass see only that side.
+- **Not built:** an uncalled generic is never checked, so its own errors wait for a call; generic structs and methods; async generics and workers (errors); a generic as a `Func` value (an error that says to use a lambda); tidels shows an instantiation's code at the generic's locations with nothing generic-aware (hover, rename, completion of `<`).
+- **Tests:** `compiler/tests/e2e/generics` (inference through containers and `T?`, types in `<>` including a parameter only `<>` gives, a plain overload winning, `has` with `else`, `!` and `&&` over a struct with and without the fields, generics calling generics, recursion through one instantiation) and `compiler/tests/errors/generic_*.tide` (clashing arguments, a parameter nothing gives, the count in `<>`, `<>` on a plain function, a parameter named as a type, an error inside an instantiation with its note, an endless chain, a method's type parameters, a generic as a value, a component as a type argument). The full sanitize build compiles every repository game with the changed parser and checker. `packages/geometry` (`notes/geometry-package.md`) is the first package written with them.
+
+## `lod:` on mesh draws (2026-11-02)
+
+`check_mesh_draw` takes a last argument named `lod` off `args` (with its name and place) before peeling verts,
+frags and values, and checks it once the vertex's dimensions are known: a float or int (`check_expr_want` with
+float), refused on a 2D vertex, kept as `expr.mesh_lod` with `mesh_lod_vertex`. Any
+other name written on a mesh draw's argument is an error naming `lod:` (it formerly fell through to the overload
+mismatch). `gen_expr` writes a call with `mesh_lod` as `(tide_draw_want_levels(tide_draw, (float)(m), layout),
+<the call>, tide_draw_want_levels(tide_draw, 0.0f, NULL))`, the call generated from a copy without `mesh_lod`.
+The multiplier is evaluated after hoisted operands, which keeps written order, as it's written last. Works for
+lists, `Mesh<V>` values (whose arguments are rewritten after the peel), instances, shaders and targets (the list
+is `tide_draw` for every destination) and models with bones, where `tide_draw_want_bones(tide_draw, (model).data)`
+follows the want, the model being the operand the skinned adapter already reads (`e->skin_mesh`). The language
+server offers `lod:` in completion after a mesh draw's lists and shows it last in 3D forms' signature help
+(`MESH_LOD`). Feature notes: assets-and-files.md, Levels of detail for meshes a game makes.
+
+Integration with shared shader preparation: the retained `mesh_lod` child must
+participate in purity, lane read/write, borrow, worker, asset/dependency and
+writer/operand-order analysis. It is taken last in `call_operands`, preserving
+earlier captured values when the LOD expression has a declared mutable effect.
+Conditional asset traversal leaves the identity of programs without LOD unchanged.
+Fallback scenarios 17/18 check a transitive extern grid edit from `lod:` and a
+declared mutable helper after an earlier transform argument, using actual texture
+bytes, transforms and unchanged match hashes. Four focused probes per platform,
+then 61 affected native ASan and 65 web-release tests pass. Rebuilt release forest
+shader blocks and all pixels in three captures still match the baseline; no new
+post-merge performance claim is made. Evidence: bench/results/forest-batch-20261102/validation-merge.json.
+
+The later skinned/model-LOD merge needs the same retained operand appended before
+`call_operands` returns from its skinned written-argument path. `lod_generated`
+checks an earlier transform and an earlier argument inside the LOD helper against
+a later declared mutation, one mutation/instance and an unchanged match hash.
+Generic instantiations are checked ordinary functions; their bodies/effects and
+the selected compile-time `has` branch remain visible to the preparation proof.
+All 26 focused native ASan and 26 web-release checks pass, and rebuilt release
+forest shaders/pixels still match. Evidence: bench/results/forest-batch-20261102/validation-finaldev.json.
+
+The runtime static Mesh-value merge introduces `CALL_NEW_MESH` with ordinary
+argument operands; the shared-preparation switch's unsupported-call fallback
+already excludes its scratch copies. No new retained AST child needs a visitor.
+All 14 native ASan and 15 web-release overlap checks pass; rebuilt forest shader
+blocks and all three captures' pixels/work/world hashes still match baseline.
+Evidence: bench/results/forest-batch-20261102/validation-meshvalue.json.
+
+## Non-drawing views of shader components (2026-11-01)
+
+The forest stress scene exposed an overly broad partial-lane fallback: a
+component named by any shader forced every view of that type to gather and
+blend all its match lanes, even a view only binding attached local fields.
+The existing lane-read analysis now applies to non-drawing views of these
+components too. An attached-only binder has a zero numeric-lane mask; ordinary
+field readers retain their precise masks and normal selected-lane blending.
+
+Drawing views retain the complete shader-input fallback. Views do not carry
+the helper-only `decl.draws` summary, so a conservative AST walk detects direct
+Draw/GUI operations, drawing-helper calls and nested blocks/operands before
+allowing the optimization. Correction, custom Interpolate, verified/joined
+bindings, local-component writeback, heap-reading interpolation and sharding
+retain their existing guards. Attached fields still use their current local
+cells and normal writeback; no API, runtime call, layout, ownership or language
+semantics change is introduced.
+
+The extended `view_reads` fixture uses a shader-read material with an attached
+counter. Generated-C checks require zero numeric lanes for its binding view,
+selected lanes for its ordinary reader and complete lanes for its drawing
+view. Execution checks blended and current values, actual shader capture,
+persisted attached writes and unchanged current/previous world hashes.
+The five affected E2E targets build warning-free on native ASan; all six scoped
+CTests pass (`view_reads`, its generated-C assertions, `view_corrections`,
+`view_queries`, `local_fields` and `query_local_fields`). Final integration
+passes all 2,908 enabled native sanitizer and 2,794 enabled web-release CTests.
+Independent drawing-traversal review finds no blocker. Three corresponding
+1920x1080 forest before/after captures have zero changed RGBA pixels.
+[Paired measurements and reproduction](../bench/results/forest-opt-20261102/README.md)
+cover the combined safe list-cache, shared-binding-factory and partial-lane
+changes; they do not isolate this compiler optimization's timing contribution.
+No forced-inline heuristic is shipped or measured.
+
+## LOD attribute multiplier (2026-10-31)
+
+The owner approved `[LOD(multiplier)]` multiplying the destination's pixel
+tolerance. Parser attribute values retain ordinary expressions; the checker
+requires an optional positive finite constant float/int using existing
+constant checking and numeric folding. The AST retains the checked multiplier
+beside `decl.lod`. Pack generation passes it on without changing simplification
+or generated draws. Default 1 preserves earlier pack/content identities;
+other values distinguish geometry handles even for the same source/layout.
+Spec/user docs and editor hover describe composition. Five new diagnostic
+fixtures cover zero, negative, nonfinite, text and runtime values; the existing
+arity fixture now uses two arguments. Tests and pack/runtime contracts are in
+assets-and-files.md, Asset LOD tolerance multiplier.
+
+## LOD error tolerance setting (2026-10-31)
+
+The approved `Draw.LODPixels(float pixels)` / `Draw.SetLODPixels(float pixels)`
+setting uses ordinary `add_setting` registration, including no-argument forms
+and render-target receivers. It inherits local-only capabilities, setting-form
+diagnostics, cleanup on early exit, and editor completion/hover. There is no
+new code-generation branch; GUI.Draw setup stops copying the removed global
+tolerance field, keeping ordinary destination-local settings. The default is 1 pixel; higher values allow coarser
+automatic levels, positive fractions retain detail, and invalid values reset.
+Forced levels override it. Spec and user docs describe the public contract.
+Runtime state/boundary and native ASan/WASM validation are in drawing.md.
+Two new diagnostic fixtures pin block/Set misuse; language-server tests check
+window/target completion and both setter signatures in hover.
+
+## Fresh pose and conditional value copies (2026-10-30)
+
+Performance review found generated playback helpers copying the result of
+`model.defaultPose` before editing it, then copying a conditional whose selected
+arm already returned an owned Pose. `is_fresh` now recognizes SKIN_OP_REST_POSE:
+the property uses the same constructor as the already-fresh Skeleton.RestPose
+method. It also recognizes a conditional only when both arms recursively meet
+the existing freshness rules. Exactly one arm executes, with normal authored
+effect order; a mixed fresh/borrowed conditional still takes its ordinary copy.
+No ownership representation, arithmetic, API or local-return rule changes.
+In the measured 55-node target, these two redundant copies each moved 2,200
+transform bytes plus allocation metadata per sample. The copy when returning a
+local Pose remains; no general escape or move analysis is introduced.
+
+Sampling adapters now query clip duration only for Playback.Loop. Clamp and
+unknown playback enum values pass seconds directly to the sampler, as before,
+without an otherwise unused model-open/clip lookup. Loop wrapping and all
+sampling arithmetic remain unchanged.
+
+`value_fresh` compares constructor scratch allocation with the runtime rest-pose
+operation for both defaultPose and a pure conditional of helper calls. It also
+covers nested conditional branch effects, ordinary/mixed borrowed Pose copies,
+an escaped helper-local Pose, list and nested-struct isolation, persistent
+ownership, snapshots and serialization. Generic heap-valued conditionals use
+the same proof, so native and WASM compiler suites are included in validation.
+The full native ASan suite passes all 2,906 enabled tests, including 61 GPU and
+29 safety checks. The full web suite passes all 2,794 enabled tests, including
+22 WebGPU, 10 D3D11 and 24 safety checks. Both retain the pre-existing disabled
+MicroDuck case. Existing exact world/pose hash pins remain unchanged. Final
+paired measurements, unchanged harness, raw runs, identities and methodology
+are archived in `bench/results/retarget-playback-20261030/README.md`; the combined
+compiler/runtime changes reduce the 1,000-pose batch cost by about 48% for baked
+playback and 26% for live retargeting. Smaller batches have lower gains, as the
+archive details. These changes add no API or language semantics.
+
+## Dynamic retarget baking (2026-10-30)
+
+Owner-approved `mapping.Bake(source, target[, sampleRate])` is an instance
+operation on RetargetMap, with Animation and AnimationCatalog overloads. The
+optional float rate defaults to 60; the baker also accepts zero as that default.
+Both overloads use ordinary `fails IOError` values and report InvalidData with
+the shared baker's diagnostic. The catalog result is plain AnimationCatalog,
+without compile-time inferred members. Named arguments retain authored argument
+evaluation order after evaluating the receiver once. CPU restrictions follow
+the existing skinned operations.
+
+Generated adapters call the agreed shared `tide_retarget_bake` helper for a
+selected clip and `tide_retarget_bake_with_budget` for ordered catalog sources.
+One zero-initialized budget bounds samples, transforms, key reads and bytes
+across the whole catalog. Each part is staged as ordinary scratch bytes; any
+failure resets all staged results and publishes no partial catalog. A selected
+clip's new index is zero, and names/durations plus target skeleton identity are
+preserved. Empty/default catalogs fail InvalidData. The map's current root and
+chain settings are copied into the bake; later edits affect only later bakes.
+
+The agreed `tide_skinned_own(data, where)` ownership hook promotes stored
+Animation model bytes to the existing immutable asset-descriptor/payload form.
+AnimationCatalog keeps an ordinary source list and promotes each inner model.
+Heap-path provenance preserves these hooks in nested structs, optional storage,
+components and container elements; assignment acquires the new value before
+releasing its predecessor. Scratch values remain ordinary lists, existing
+immutable values retain descriptor leases, and ordinary snapshots/codecs apply.
+Repeated assignment of the same immutable Animation retains the existing
+descriptor through the normal list-set fast path.
+This makes stored baked or decoded animation playback use the immutable sampler
+cache without retaining any input value or pack. Pose/model layouts are unchanged.
+The existing skinned E2E world's exact hash intentionally changes from
+13181359130345510980 to 18284937891356215991 because its stored decoded Animation
+now owns an immutable descriptor instead of a mutable byte-list allocation.
+Native ASan and WASM agree on the new hash; pose values, snapshot independence
+and packed-state equality remain unchanged. This is an ownership representation
+change, with release-configuration confirmation included in final validation.
+
+`retargeting_dynamic` covers runtime Decode input, a selected second clip,
+direct/escaped/multi-source catalogs, failable helper propagation, named effect
+order, immutable completed bakes, error paths, pack unload, copies, snapshots,
+serialization, self-assignment, nested structs/lists/fixed arrays/maps/optionals,
+unchanged world state during scratch operations and stable repeated sampling
+storage. Four `retarget_bake_*` diagnostics pin the overload's source/target/rate
+types and instance-only call. All 23 affected native ASan and 22 affected WASM
+CTests pass, including the full engine suites, after the intentional hash-pin
+correction above. The existing skinned hash also matches in release. All 17
+related LSP tests and the production docs build pass. The dynamic-bake fixture's
+world hash is pinned to 6273408732930949875, identical on native ASan, WASM and
+release; all three final pinned-fixture checks pass.
+
+## Imported humanoid profiles and baked retargeting (2026-10-30)
+
+Owner-approved `.humanoid.json` `HumanoidRig` assets and
+`[Retarget(sourceRig, targetRig)]` on Animation/AnimationCatalog use the shared
+runtime preparation/transfer algorithm during import. The result is ordinary
+target-skeleton canonical animation data; generated playback has no retarget
+operation. Dynamic Pose.Retarget remains unchanged. Schema and syntax are in
+docs/spec.md and docs/game/animation.md.
+
+`humanoid_assets.c` resolves explicit rest or named-clip reference poses through
+the existing file reader, applies finite local calibration edits, runs Auto,
+then exact-name role overrides. Unknown/duplicate keys, invalid references and
+ambiguous explicit names diagnose at the asset. Profiles may remain partially
+discovered; baking validates required roles through Create. No manifest recursion
+is introduced: references import as glTF/FBX animation data. JSON work is bounded
+by HUMANOID_PROFILE_MAX_BYTES (1 MiB) and HUMANOID_PROFILE_MAX_VALUES (16,384).
+Editor metadata-only checks retain the profile's resolved paths and asset type
+without reading the profile or importing/discovering its reference rig. Full
+builds validate profile contents and bake; ordinary edits do not run FBX import
+or Auto for a HumanoidRig declaration.
+
+Profiles are singular assets. A private versioned byte payload contains four
+aligned ordinary list blocks: geometry/clip-free canonical skeleton, calibration
+TRS, 55 role indices and statuses. Generated loaders construct the HumanoidRig
+from those immutable pack handles; original skeleton identity is preserved.
+The existing complete byte fingerprint preflight authenticates embedded list
+headers and payload before replacement. Normal generated list ownership handles
+copying, detaching edits, world fields, snapshots and packing; no new runtime
+pack kind or pointer-bearing game value is introduced.
+
+Retarget is the only declaration attribute using `attribute.call` and the normal
+argument parser, with two positional profile names followed by named numeric
+settings. Checker resolution supports forward profile declarations and refuses
+dependency cycles. `rootOffset` accepts constant float3 construction; other
+settings accept numeric literal/constant arithmetic. Selected Animation imports
+bake one clip and reset the stored index to zero; combined catalogs retain their
+source/clip ordering and inferred aliases. Source cache objects are never edited:
+only the current declaration's asset_match selects derived canonical bytes.
+
+Derived disk cache keys cover canonical source bytes, both compiled profiles,
+options, automatic-scale choice and baker version. The cached payload carries
+its own SHA-256 and must pass full canonical validation, or is rebuilt. Profile
+manifests, reference files and external buffers become side dependencies before
+cache lookup, including when release strips profiles used only by a bake.
+Profiles used by runtime code retain ordinary asset usage and match identity.
+
+Coverage added: retargeting_baked E2E compares baked/ordinary sampling against
+live maps, manual statuses, separate actual exports, calibration, controls,
+forward declarations, catalogs, copies, snapshots, serialization and rejected
+profile pack changes. retarget_asset_* diagnostics cover attribute placement,
+types/options, collection profiles and malformed schema. retarget_assets.mjs
+checks cold/warm/repaired cache output, calibration/options identity and
+transitive dependency output. Native full-suite validation passed 2,923 tests;
+two test-fixture failures were corrected (the extended asset-type diagnostic and
+a JSON fixture directory accidentally treated as a diagnostic program), then all
+nine affected checks passed. Humanoid asset editor regressions pass 2/2, asset
+type completion passes 1/1, and the production docs build passes. Native ASan and
+WASM each pass all 25 runtime/baker checks. The ignored real-asset fixture passes
+1,181 bake/live comparison samples across five clips with identical native/web
+printed maxima. The full web suite passes all 2,812 enabled tests (one existing
+disabled Newton test). Final integration results are in tide-programs.md.
+Final review also corrected relative URL profile references to ignore slashes
+inside query/fragment text when selecting the profile URL's parent; the focused
+cache/import fixture exercises parent-relative and root-relative model URLs.
+
+## Static mesh values keep stable IDs (2026-10-30)
+
+Owner-approved follow-up: ordinary Mesh<V> lists/arrays should use the existing
+asset-ID machinery internally, sharing large geometry and borrowing it on access.
+This supersedes the Mesh collection/field/async restrictions recorded below.
+
+Non-import Mesh<V> types and expressions canonicalize to the existing checked
+Asset<Mesh<V>> struct (one hidden long). Explicit Asset spelling denotes the
+same type; Value is identity for static meshes. vertices/indices resolve the ID
+through the generated typed resolver, and Draw's existing two-list expansion
+uses that path. Match/local fields, lists, arrays, maps, nested structs and task
+state use ordinary ownership, padding, snapshots, hashes and codecs. Geometry
+members remain immutable. Skinned Value semantics and worker restrictions stay
+as before. A generated equality helper avoids C self-comparison warnings when
+comparing a handle with its Value.
+
+Imported declarations retain raw TY_MESH/tide_mesh_lists for pack building and
+loading. Glob imports add private generic list/map metadata entries named by a
+SHA-256 lookup of qualified-name + #mesh-values. Values are 64-bit IDs; geometry
+blocks remain shared and unchanged. Singular IDs keep the existing positive
+63-bit qualified-name FNV identity. Glob IDs additionally hash a zero separator
+and the authored file key. All static/skinned singular and static glob IDs are
+sorted and checked for collisions before code generation.
+
+Each load clears compiler-private geometry caches and binds actual pack rows
+by their metadata IDs. Compiled ID switches resolve those cached two-list
+handles. Reordering the glob/pack rows therefore cannot change a retained
+selection. Unknown/removed IDs read empty geometry. Metadata map records use
+the ordinary generated handle-map layout (24-byte rows, ID at offset 16); raw
+mesh map records retain their original value at offset 12. Builder allocation
+is reused with compile-time size checks and byte copies. No runtime function,
+raw mesh pack kind, geometry format or engine ABI changed. Server asset pruning
+retains matching glob domains as well as singular assets for received IDs.
+
+mesh_values pins eight-byte scalar IDs and sixteen-byte pairs, ordinary Mesh
+annotations/aliases, nested lists/arrays/structs, maps, mutable/return helpers,
+copy independence, snapshot/pack equality, task waits, unknown IDs, and a
+replacement pack whose raw mesh rows and ID metadata are reversed. Existing
+asset_meshes, LOD, mesh_bones, alias_assets, asset_references, no-asset signatures,
+skinned references and asset-usage checks retain their drawing/import/reload
+coverage. Old refusal fixtures are removed or updated to the handle diagnostics.
+
+Validation: ten affected E2E programs pass on Windows ASan and WASI, plus the
+native asset-usage target. The 2,117-case diagnostic sweep had six old expectations;
+two obsolete errors were removed and the other four corrected cases pass (2,115
+remaining cases). The 264-case LSP sweep had two stale resource-collection
+expectations from the preceding completion; both corrected cases pass, along
+with mesh/reference/alias checks after direct-member/type-tree updates. The
+production docs build passes on Node 24.22.1. GPU backends and other native
+platforms remain CI coverage.
+
+## Resource values in collections (2026-10-30)
+
+Owner-requested completion after a sound-layer implementation worked around
+Clips being refused in lists. Lists, arrays and map values now accept Clip,
+Texture, DepthTexture, Cubemap, RenderTarget, Sound and structs holding them,
+including nested containers. Existing ownership helpers already copy these
+values and any text/lists alongside them. Clip/texture collections use normal
+helper parameters, returns and mutation rather than the old asset-only borrow.
+Only Mesh collections retain the unique borrowed-pack contract. Grids, ECS
+declarations, borrowed contexts and direct optional/result elements retain
+their existing restrictions; this is not support for every type expression.
+
+The recursive local-only checks remain. Resource collection helper signatures
+retain the transitive CPU-only marker, so GPU helpers cannot gain dynamic
+resource collection access. New resource_collection_gpu pins that boundary;
+asset_borrow_gpu continues to pin the Mesh borrow boundary.
+
+Generated resource rebinding visits arrays and live list/map elements, prepares
+packed wrappers before mutation, and selects the local heap explicitly. Sound
+collection traversals are read-only; voice identity extends the existing field
+path/entity identity by list/array positions or map insertion order. No runtime
+entry point or representation changed.
+
+resource_collections executes owned Clip parameters/returns/mutation, nested
+resource/text copies, Clip arrays and integer-keyed maps, five distinct voices
+across lists/arrays/maps/nested lists/arrays in lists, pack reload, local saved
+state restoration and pointer clearing during resource rebinding. clip_values
+now also covers list/array/struct storage without assets or audio playback.
+Old refusal fixtures now enforce local-only state or the retained Mesh borrow.
+
+Validation: 101 focused Windows ASan CTests (97 diagnostic cases and four E2E
+programs), six dependent native checks including asset usage, all nine matching
+WASI E2E programs, and the production docs build pass on Node 24.22.1. The final
+CPU-only diagnostic addition passes both the resource and Mesh boundary cases. GPU rendering and other
+native platforms were not run; these changes introduce no shader operations.
+
+Merged current dev retargeting work; the only conflict was this notes preamble,
+resolved by retaining both entries. The four resource/container E2E programs
+and incoming retargeting fixture rebuild and pass on native ASan and WASI.
+Three GPU boundary diagnostics pass, including a helper constructing its own
+Clip list. Existing Mesh/grid restrictions describe current missing lifetime
+mechanisms, not a permanent language decision against borrowed collections.
+
+## Standalone humanoid pose retargeting (2026-10-30)
+
+Owner-approved automatic-plus-manual runtime retargeting is independent of
+tide-motion. The compiler provides lazy `HumanoidRig`, `HumanoidBone`,
+`HumanoidBoneStatus`, `RetargetMap` and `RetargetError` builtins in the existing
+skinned implementation. Existing programs which only sample/bind poses do not
+gain those types or new adapters. The runtime boundary was agreed before use:
+`tide_humanoid_auto`, `tide_retarget_create`, `tide_retarget_apply` in
+`tide/retarget.h`; runtime contracts and tests are in assets-and-files.md and
+runtime-ownership.md.
+
+- `HumanoidRig.Auto(referencePose)` copies the reference and discovers roles.
+  `rig[HumanoidBone]` returns a typed Bone; whole assignment checks its original
+  skeleton identity. A default Bone explicitly unmaps; wrong-identity bones and
+  out-of-range roles are ignored. `GetStatus(bone)` exposes Missing, Automatic,
+  Uncertain or Manual. The role enum follows Unity HumanBodyBones order (55
+  values, UpperChest last). Unset reads produce a fully default Bone, never a
+  forged fingerprint with a negative index. Synthetic role indices cannot be
+  passed by mut/out, or written through a collection-element copy.
+- `referencePose` is an ordinary editable Pose field. A hidden original data
+  value keeps old role indices from being applied to a replacement skeleton;
+  Create diagnoses such replacement and returns IncompatibleSkeleton. A manual
+  `HumanoidRig { referencePose = pose }` initializes all other roles to missing
+  on its first typed assignment. Profile copies own independent reference/list
+  values. Explicitly calling Auto is the only rediscovery operation.
+- `RetargetMap.Create(source, sourceRig, targetRig)` returns the normal failable
+  value with RetargetError values 1..6: InvalidRig, MissingBone, AmbiguousBone,
+  InvalidReferencePose, IncompatibleSkeleton, UnsupportedScale. Its source is
+  the actual export's Skeleton, independent of calibration. Generated adapters
+  retain only the immutable prepared byte list with ordinary list ownership.
+  Its runtime header records source/target node counts and full 32-byte skeleton
+  hashes; Apply validates the supplied poses against them before writing.
+  Keeping duplicate source/target canonical data in each map was removed in the
+  final performance audit: packed assets share their payloads, but decoded/owned
+  model data would otherwise be deep-copied with every map. Maps therefore store
+  only preparation data, never complete geometry or clip payloads.
+  The public rootScale/rootOffset/headingDegrees and
+  spineDistribution/twistDistribution fields stay mutable; successful Create
+  sets the runtime's leg ratio and unit distributions. Plans freeze reference
+  edits until recreated.
+- `pose.Retarget(source, mapping)` has the existing mutable Pose capability,
+  evaluation-order and collection-copy checks and returns the runtime's bool.
+  Failed calls leave the destination unchanged. Mutable effect analysis sees
+  it alongside Sample/Blend, including helper ordering and scheduling. Public
+  fields use normal owned-struct access; private bytes/indices remain hidden.
+- `Animation.skeleton` and `Pose.skeleton` expose dynamic catalogs. Inferred
+  model skeletons can erase their catalog into a plain Skeleton parameter or
+  variable; conversion evaluates its operand once and copies owned data when
+  appropriate. Existing checked model catalogs remain available. No typed
+  animation/pose catalog inference expansion is introduced.
+
+The original glTF fixtures in `compiler/tests/e2e/retargeting/` are generated by
+retargeting_make.mjs: anatomical calibration, reordered export with an extra
+wrapper and different default hips, and a target with doubled dimensions.
+`retargeting.tide`/`retargeting_test.c` exercise discovery, manual/unset/foreign
+assignments, statuses/invalid roles, manual-only profiles, preparation failures,
+source export resolution, ratio/root/chain settings, target bone edits/blending,
+reference edits versus frozen maps, named-argument effect order, persistent
+values, snapshots and pack/unpack. Seven `retargeting_*` diagnostic fixtures pin
+role and source types, readonly receivers, hidden data, mut-reference rejection
+and the collection-copy rule. Native Windows ASan and WASM both passed the six
+affected CTest targets: retargeting (two internal cases), skinned, animations,
+animation_imports, skinned_rest and skinned_defaults. Native diagnostic fixtures
+passed 7/7; existing native CPU skinned tests passed 62/62. The docs site passed
+`npm run build` (expected absent unstaged demo URLs only). User API and examples:
+docs/spec.md and docs/game/animation.md.
+
+Limitations: humanoids only; no IK/contact/foot-plant solver or automatic entity
+movement. Rotation and hips translation transfer preserves target segment
+lengths; other animated local translations are not copied. Palm/leaf roll with
+insufficient anatomical rays can need calibration or a post-transfer edit.
+Reference anatomy and post-transfer artistic offsets are separate operations.
+Runtime discovery thresholds and detailed rejection/distribution
+rules remain provisional in the spec.
 
 ## Arrays of text and lists (2026-10-29)
 
@@ -1715,6 +3015,16 @@ mutation during the call. No Tide alias/reference behavior is added. Overlapping
 mutable input types (including nested fields/containers), world writes, sends,
 spawns, tasks, extern calls and Action helpers keep the ordinary value path.
 Extern, async, operator, Interpolate, audio and input entry ABIs are unchanged.
+(2026-11-05) "Extern calls" means a game's own `extern` C, reached directly or
+through helpers (`decl.reaches_extern`, propagated with `calls_c`). `calls_c`
+alone also marks the engine's ordered builtins (render-target and cubemap
+creation, Resize/Dispose, Texture.size and contentRevision, file and network
+I/O), which keep their place among C's calls but can't reach a value a caller
+lends: a helper calling only those borrows. Found in Mount & Rifle's
+performance pass, where a helper reaching an extern copied a 452 KB local
+singleton on every call. `readonly_aggregates_codegen` checks that a helper
+reading a render target's size borrows its `Big` and `WithC`, which reaches C,
+keeps its copy.
 Recursive type inspection is bounded and fails conservatively. Later argument
 side effects retain existing ordered snapshots; non-addressable values use
 caller-owned compound literals. Shared GPU helpers retain their shader ABI.
@@ -1747,7 +3057,6 @@ The instance list follows the model/pose argument borrow rule when no later
 operand can change it; later Tide/C effects preserve nested value snapshots.
 No general GPU support for Pose or implicit shader inputs was added. See
 `notes/drawing.md` for the full contract, fixtures and validation.
-
 
 ## Recorded containers for local handlers (2026-10-19)
 
@@ -2593,7 +3902,9 @@ packages need visibility-aware integration before concealing bodies: public
 Box2D.Physics.image contains the complete native snapshot byte list,
 Box3D.Physics.stamp hashes native world operations, and both packages retain
 public collider/rewind lists. Hiding Body/collider entities or omitting Resident
-does not restrict those ordinary singleton fields. Internal command
+does not restrict those ordinary singleton fields. (Corrected 2026-11-04: all
+of those are `[Native]`, which projections now write as 0; notes/netcode.md, A
+client's own ticks of its projection.) Internal command
 delivery state is restricted to the recipient's own sequence/window; other
 players' command activity is withheld. Input audience masks are derived once per
 recipient by walking entities, then reused for all input slots. Remote previous
@@ -2632,9 +3943,9 @@ are recorded with the networking/editor changes after validation completes.
 Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
 fixture plus 10,000 visible PublicState rows with empty owned fields produced
 1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
-2.12Ã¢â‚¬â€œ2.92 ms per recipient canonical hash after changing every added row's integer
-column; unchanged worlds measured 2.22Ã¢â‚¬â€œ3.54 ms. Full-world hashes measured
-4.19Ã¢â‚¬â€œ9.76 us with that column dirty and 2.57Ã¢â‚¬â€œ11.11 us unchanged. These operations
+2.12ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“3.54 ms. Full-world hashes measured
+4.19ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“9.76 us with that column dirty and 2.57ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“11.11 us unchanged. These operations
 do different work: full-world hashing reuses cached page hashes and only rehashes
 the changed integer-column pages, whereas recipient hashing currently traverses
 and serializes every permitted logical value and allocates the temporary byte
@@ -2643,8 +3954,10 @@ hardware-independent tick budget. Debug/O0 (40 calls) measured 6.08 ms for the
 recipient hash versus 13.88 us for the changed-column full-world hash, and
 8.66 ms versus 36.31 us unchanged, including full-world cache warmup. The
 visibility path's linear work and allocation remain a performance limitation;
-since 2026-10-24 each entity's part is hashed once a tick for every recipient
-(`gen_client_hashes`, `notes/netcode.md`). The no-visibility path keeps its
+since 2026-10-24 each entity's part is hashed once a tick for every recipient,
+and since 2026-11-04 the singletons' lists, maps, sets and grids keep their
+hashes while their heap pages don't change (`gen_client_hashes`,
+`notes/netcode.md`). The no-visibility path keeps its
 ordinary cached full-world hash. The focused release projection fixture passes
 all 12 cases and the same canonical pin.
 
@@ -3454,7 +4767,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Provisional, awaiting the owner (`docs/spec.md`, Text): everything but that there's a `char` and that `text[i]` gives one. The ones most worth a look: a char converting to an int by itself and operators giving ints; `'\0'` as no character, which text shows as nothing; an index before the start reading `'\0'` where `Substring` clamps; `char(n)` of a number no character has being `'\0'`; the three escapes text's literals don't have.
 - A game can have several `settings` blocks, in any of its files, and they're one list of what it sets (the owner, 2026-10-08: a second block used to be an error by itself, which was redundant, as what clashes is two that set the same thing; `docs/spec.md`, Settings). A setting is set once among them all: a second one is the error a setting set twice in a block always was, at the second place, with a note that says where the other one is (`set_before`, `check_settings` in `compiler/src/check.c`). The blocks are in the order their files compile, and every one's settings count. That the same value twice is still an error is Claude's pick, Provisional in the spec. A package's files still have none. Editors' completion in a block leaves out what any of the game's blocks sets (`complete_settings` in `compiler/lsp/analysis.c`). Nothing in codegen changed. Tests: `compiler/tests/e2e/settings` (three blocks in two files), `compiler/tests/errors/settings_set_twice_blocks` and `settings_set_twice_files`, `lsp_settings`.
 - A plain name means what's nearest, as in C# (agreed 2026-10-05; `docs/spec.md`, Namespaces): the file's namespace, then the namespaces around it out to the global one, then the `using` namespaces, where two that both have the name are ambiguous (`lookup` in `compiler/src/check.c`). So what a game declares itself wins over what a namespace it imports has by that name. It was the other way round, `using` before the global namespace, until a game with a `Body` of its own said `using Box2D;` and got the package's, with no error. `compiler/tests/e2e/using_own` checks it, a file in a namespace of the game's own included; no other game in the repo generates other C for it (old and new tidec over every source list).
-- **The nearest namespace with a name decides, of any kind** (2026-10-30, from the Bannerlord duel: a campaign's global `void Side(...)` made `Side(i)` in the combat package's `namespace Combat`, its own enum's conversion, a call of the game's function, `'Side' takes 7 arguments, not 1`). `lookup` looked for one kind at a time out to the global namespace, and a call tries a function before a type, so a function further out won over a type nearer. Now the walk stops at the first namespace with a declaration of the name that the kind asked for couldn't share it with there (`hides_kind`, the clashes check_decls reports: a function, frag/vert, constant or alias shares a name with nothing; types and prefabs clash with each other, systems with systems; a type and a system can share one), and returns nothing, without the `using` namespaces. The callers that try kinds in turn (a call: function, then type; a name: constant, asset, function, shader) then find the nearer one. Consequence: a global declaration can't be named from code in a namespace that hides it (there's no `global::`). `compiler/tests/e2e/package_own` (a package with an enum `Side` that it converts to, a game with a global function `Side`).
+- **Inside a namespace its own names win; a package doesn't see the game's globals** (2026-10-30, from the Bannerlord duel). First a campaign's global `void Side(...)` made `Side(i)` in the combat package's `namespace Combat`, its own enum's conversion, a call of the game's function (`'Side' takes 7 arguments, not 1`): `lookup` looked for one kind at a time out to the global namespace, and a call tries a function before a type. The first fix (nightly.62) stopped the walk at any namespace with a declaration of the name that couldn't share it with the kind asked for, the global one included, which broke the duel three other ways: the game's global `void Box(...)` hid Box3D's component `Box` (through `using`) from Combat's `Spawn(..., Box { ... })`; the game's `command(...) Shake(...)` handler hid Combat's function `Shake` from the game's own call; and its global `Color Lit(...)` hid Combat's frag `Lit` from `Draw.SkinnedMesh(..., Lit, ...)` (the frag lookup came back empty and the name was read as the function, `CallableÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦`). What's built now, in `lookup` (`compiler/src/check.c`): in a namespace other than the global one, a declaration of the name in the *role* asked for (`same_role`: types with prefabs, scenes and aliases; systems; values, which are functions, constants, assets and frags/verts; and for a function's lookup, an enum, since a call is a conversion too) hides the name further out (`hides_kind`); the global namespace has a name only of the kind asked for, as before; and code in a package's file (`source.package`) looks in its `using` namespaces before the game's global declarations (`games_own`: not built in, not a prelude's `<tide>/` file, from a file of no package; packages declare nothing global, and an override in place counts as its package's through `decl_home`). Skipping the game's globals altogether in package code broke render3d: a game's function handed to its frag as a `Func` (`material.coverage = SkinningCoverage`) is looked up by name in the frag's own code, and the preludes' declarations (`WebResponse`) carry no `builtin`. The callers that try kinds in turn (a call: function, then type; a name: constant, asset, function, shader) find the nearer one. A global declaration can't be named from code in a namespace that hides it (there's no `global::`). The tide-editor's startup check follows the type role (`startup_name_visible`, `notes/editors.md`). `compiler/tests/e2e/package_own`: packages Shapes (component `Box`) and Combat (enum `Side`, function `Shake`, frag `Lit`, `using Shapes;`, spawning a `Box`), Shapes also has a component `Wheel` that Combat spawns, which nightly.59 got wrong too; a game with global functions `Side`, `Box` and `Lit`, a component `Wheel` and a command handler `Shake` that calls and draws Combat's; nightly.62's tidec gives the duel's three errors on it. The duel's campaign before it renamed round .62 (bannerlord-duel 1990651) builds with no error.
 - A namespace can be a block, `namespace Combat { ... }`, for some of a file's declarations (the owner, 2026-10-07: "we should probably allow scoped namespaces, including on the same file... handy to separate concerns", then "yes build it"; `docs/spec.md`, Namespaces, where the rules beyond that are Provisional). A file can have several, the same one twice, and one inside another, whose name is inside the namespace it's written in (a file's `namespace Game;` too). What's built, and what code relies on:
   - **A block is a `unit` of its own** (`compiler/src/ast.h`), which is what kept the change small: declarations get their namespace from their unit and their code reads names through it (`decl.unit`, `decl_home`, `lookup` in `check.c`), so the checker's name index, generated C's names, the schedule's names and overrides have no rule for blocks. A block's unit has its file's `src`, a copy of its file's `usings` (complete by then: `using` comes before any declaration, and a block counts as one), `outer` (the file's unit or the block it's in), `ns` (the whole namespace), `ns_written` (the name as written at `ns_at`), and where its word and braces are (`block_at`, `open_at`, `close_at`).
   - **`program.units` has files and blocks**, a file's before its blocks', a block before those inside it. What goes through it for the namespaces there are needs nothing (`is_namespace`, the editors' completion and rename). What means a file skips a unit with `outer`: `check_units` for the `using` lines, which a block only shares. The first unit whose `src` is a file's is that file's (`doc_unit` in `compiler/lsp/analysis.c`). Nothing compares `decl.unit` to tell whether two declarations are in one file: compare `unit->src`.
@@ -3541,11 +4854,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **The table** is `generic_forms` in `compiler/src/types.c` (`generic_form`, `generic_arg` in `types.h`): for each of `List`, `Map`, `Set`, `Grid2` and `Grid3`, what each type in its `<>` is (`GENERIC_ELEMENT`, `GENERIC_KEY`, `GENERIC_CELL`) and what a syntax error says of it; `generic_optional` and `generic_fails` are the forms around a type. The parser reads it for the `<>` (`parse_type`), the checker for what may go there: `resolve_generic` resolves each argument at its kind's place (`ARG_ELEMENT`, `ARG_KEY`, `ARG_CELL`) and `resolve_arg` checks it with that kind's rule (`element_ok`, `map_key_ok`, `grid_cell_ok`). `element_ok` takes containers and structs that hold them, and a grid only where the type is an asset's (`PLACE_ASSET`, which `asset_type` resolves through and then reads the shape of). `refuse_held`, `first_held`, the parser's `refuse_nested` and the fields' second look at their elements are gone, with the nine error tests that pinned what they said.
   - **An element that's a container is changed where it is** (`element_in_place` in `check.c`; `gen_slot` in `codegen.c`): `rows[i].Add(x)`, `rows[i][j] = v`, `buckets[key].Add(e)`, through any number of indexes, each a `tide_list%d_slot(l, i)` (a pointer to the element, or NULL past the end) or a `tide_map%d_slot(m, key, where)` (which adds the key). In a program that has such a type (`program_has_slots`), what changes a list or a map takes NULL for one that isn't there and does nothing; a program with none generates the helpers it did. Not through a struct element's field, and not `Sort`: both say to take the element out and put it back. A `parallel` loop's list refuses elements that hold lists as it refuses text, and C takes none (`c_refuses`).
   - **Ownership goes through the helpers there were:** a list's `put`, `drop` and `take` of an element that's a container call that container's `assign`, `release` and `own` (`gen_list_helpers`), and a map's value the same (`gen_map_slot`), so a world's inner lists are blocks of its own heap, released as the outer lets go of them (`Clear`, `RemoveAt`, `Resize`, a release), and made its own as a value comes in. Snapshots, hashes, deltas, the world as bytes and hot reloading see nothing new: an inner list is a block with pages of its own. `nested_lists_reuse_their_memory` checks the heap's use stays flat through 400 ticks of churn.
-  - **A copy is deep where it has to be:** `tide_list%d_copy` and `tide_map%d_copy` of elements that hold lists copy each element's own (`element_copy_open`), as do a map's `Get` and `TryGet`, a foreach's variable and `gen_value_of`'s copies, so no scratch copy ever holds a handle into a world's heap, which a later change to the outer list would leave dangling. An element with a list in it goes into a list or a map as a copy of its own (`gen_value_of` at `Add`, `Insert` and `items[i] = x`), as `scores[k] = x` always did. Reading `rows[i][j]` and `rows[i].count` goes through the handles where they are.
+  - **A copy is deep where it has to be:** `tide_list%d_copy` and `tide_map%d_copy` of elements that hold lists copy each element's own (`element_copy_open`), as do a map's `Get` and `TryGet`, a foreach's variable (unless its body can't change the list: see Read-only list foreach borrows its elements, 2026-11-04) and `gen_value_of`'s copies, so no scratch copy ever holds a handle into a world's heap, which a later change to the outer list would leave dangling. An element with a list in it goes into a list or a map as a copy of its own (`gen_value_of` at `Add`, `Insert` and `items[i] = x`), as `scores[k] = x` always did. Reading `rows[i][j]` and `rows[i].count` goes through the handles where they are.
   - **A `verified` value's elements say which heap they're in through every level** (`gen_confirm_value`, `gen_confirm_decl`): a list or a map whose elements hold text or containers is copied to the scratch area and each element retagged, inner lists and maps included, with `tide_e<depth>` and `tide_k<depth>` for the loops, which is the one change to the C of games that had `verified` lists of text (`tidec_e2e_verified_heap`, `view_queries`); every other game's C is byte for byte what it was (175 of 178).
   - **Measured** (`bench/versus/buckets`, `versus_buckets`, saved as `nested-lists` in `bench/results/versus.jsonl`; `nested-lists-removeat` is the same with `RemoveAt(0)` where the ring is): 4,096 buckets of 32 values each, a value a tick into each, as a `List<List<int>>` of rings, as one flat `List<int>` of rings, and in C. Release, one thread, with the run caches that write (`list-caches`, built the same day: see A world's list, under ECS and simulation state): 0.043 ms a tick nested, 0.019 flat (2.2x), 0.007 C; before them (`nested-lists`), 0.165, 0.082 and 0.009. What's left of the difference is one `tide_list_at_mut` for each inner list written, a page table lookup and the page made the world's own, as each bucket's is another list and a cache holds one run; the flat list's writes all go through its one cache.
   - Tests: `compiler/tests/e2e/nested` (every shape in a component, a singleton, an event, a local singleton and a view, changes in place through two and three indexes, copies that change nothing, text, a map's key added by `Add`, the heap's use, snapshots, the world as bytes, a pinned hash the web shares, and a `verified` view through the confirmed copy), `compiler/tests/errors/nested_*.tide` (a grid in a map, a map in a grid's cells and as a set's key, an element changed through a struct's field, `Sort` of an element, an extern's list of lists, a parallel loop over one), and the docs' Lists inside lists (`docs/language/text-and-lists.md`).
-- User-defined generics, the third step (`struct Pair<T>`, `T Max<T>(T a, T b)`), are a proposal in `docs/spec.md` (Generics, Open: declaring, what a type argument can be, monomorphization and the names in C and tools, no constraints in v1 with errors at the instantiation, C#'s inference, the GPU, editors, recursion), awaiting the owner. Nothing of it is built.
+- User-defined generics, the third step: generic functions, inference and `has` are built (2026-11-02, see Generic functions and `has`, above); generic structs and methods, and the rest of the proposal, are still Open in `docs/spec.md`, Generics.
 - **Skinned model types and CPU operations** (2026-10-08; `docs/spec.md`, Skinned meshes and animation). `skinned_types.inc` builds ordinary generated structs for `SkinnedMesh<V, Contract>`, its animation and bone catalogs, `Skeleton`, `Animation`, `Bone`, `Pose` and `BoneTransform`, with internal `decl.skin_kind` markers. `Playback` is an ordinary enum. The parser's `SkinnedMesh` generic form takes the vertex struct and an optional ordinary struct contract; contract fields are required `Animation` or `Bone` values, with `[Name("source")]` for an exact source alias. `skinned_contract_catalogs` finalizes both asset contracts and generic helper types after their field types resolve. A plain generic parameter has the dynamic catalog; an uncontracted single imported asset has a distinct inferred catalog and `var` preserves it. Inference cleans exporter separators into writable identifiers, prefixes leading digits/keywords/reserved names, and disambiguates collisions with source ordinals; combined animation sources first use filename prefixes. Checked metadata lives on `decl.skin_catalog`; the editor reads it instead of guessing its own names.
   - **Scratch cleanup follows owned struct fields** (2026-10-10): `check_expr` marks temporary scratch use through the existing recursive `holds_heap` predicate, including `SkinnedMesh`, `Pose` and other structs holding text/lists. Previously only a direct string/list/map/set expression enabled the generated cleanup; a skinned-only view could copy a model's hidden lists without reclaiming them after its entity, leaking scratch across frames. String literals retain their exemption. Generated cleanup boundaries and runtime ownership are unchanged. `tidec_e2e_skinned_scratch` uses an omitted-pose model draw with no direct container/text expressions, checks the exact scratch mark before every entity and after each of sixteen frames, and verifies all thirty-two instances still reach the draw list.
   - **Skinned draws borrow stable operands** (2026-10-10): the existing once-only, written-order captures in `collect_ordered` keep model/Pose list handles without an owned copy when none of the later written operands has an ordered effect. The draw adapter reads these handles synchronously and captures the mesh, pose bytes and model dependencies before returning. Deferred atlas preparation reads that owned capture, never the borrowed operand handles (see `notes/shaders.md`). Later Tide writes, extern/C calls, nested effects or suspensions keep the ordinary owned snapshot, including effects in shader values and targeted draws. This changes no runtime signature, ordinary assignment/copy rule, persistent ownership or COW behavior. `tidec_e2e_skinned_draw_borrow` checks zero retained scratch allocation after asset and owned-model/shared-pose draws, a later operand releasing the model's lists, later Tide/C pose edits, and palette stability after a following statement edits the borrowed pose. The scratch-cleanup regression explicitly creates an owned local model before drawing, so it continues to pin per-entity reclamation independently of this draw-only optimization.
@@ -3709,3 +5022,35 @@ checks. Docs production build, 230 grammar checks, 24 VS Code tests/build and
 JetBrains plugin build plus 7 headless adapter/platform tests pass. No CI, other
 operating systems, Android or sanitizers were run; opted-in JCEF/client integration
 was not run. Source/whitespace review passes.
+
+## Profiling source attribution (2026-11-02)
+
+The owner approved useful agent-facing profiling, including engine costs attributed
+to the views that request them. Generated ticks register a static
+`tide_profile_source` table with `tide_profile_sources` before scheduler dispatch;
+generated frames register the corresponding table for every view, including
+package views. Entries preserve the complete qualified/overloaded diagnostic name
+and the declaration's source file, line and column. Distribution name stripping
+keeps the existing numbered system/view identity and omits the file and location;
+the private `.names` map remains the way to resolve stripped identities.
+
+While drawing diagnostics are attached, each generated view sets
+`draw->profile_source` to its static entry, including all of that view's entities
+and additional shard worlds. The prior pointer is restored before local command
+application and local tasks, so those operations do not inherit the last view's
+attribution. The pointer is borrowed only during the call; retained diagnostics
+copy its strings. No per-entity source timer or simulation state was added.
+Unmeasured execution still reads no profiling clock. A build with no systems or
+views clears the corresponding old timing rows when given a profile.
+
+`compiler/tests/e2e/profile*` checks declaration locations, a qualified name longer
+than the panel label, view attribution/restoration, measured/unmeasured world hash
+equivalence and unchanged draw counts. The release diagnostic-name fixture checks
+normal source metadata and stripped identities without locations. Runtime copying,
+same-prefix name changes, source relocation and count changes are covered by
+`tests/test_profile.c`. Validation is recorded with the coordinated profiler work
+in `notes/standard-host.md`.
+
+Worker-constant fix integration: merged origin/dev bda29c5c9 cleanly. Rebuilt
+the affected targets after incoming compiler/runtime changes; the same four
+Windows ASan and three WASI checks pass again.

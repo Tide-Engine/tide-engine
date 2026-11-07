@@ -10,6 +10,7 @@
 #include "island.h"
 #include "joint.h"
 #include "physics_world.h"
+#include "box2d/box2d.h"
 
 #include <string.h>
 
@@ -200,6 +201,20 @@ void b2TrySleepIsland( b2World* world, int islandId )
 	if ( island->constraintRemoveCount > 0 && island->bodies.count > 1 )
 	{
 		return;
+	}
+
+	// Tide: nor while it touches a held body (b2World_HoldBodies), whose set is another
+	if ( world->holding )
+	{
+		for ( int i = 0; i < island->contacts.count; ++i )
+		{
+			b2ContactLink* link = island->contacts.data + i;
+			if ( b2IsHeldBody( world, b2Array_Get( world->bodies, link->bodyIdA ) ) ||
+				 b2IsHeldBody( world, b2Array_Get( world->bodies, link->bodyIdB ) ) )
+			{
+				return;
+			}
+		}
 	}
 
 	// island is sleeping
@@ -729,4 +744,107 @@ void b2TransferJoint( b2World* world, b2SolverSet* targetSet, b2SolverSet* sourc
 			movedJoint->localIndex = localIndex;
 		}
 	}
+}
+
+// Tide: whether a body is in a held set (b2World_HoldBodies)
+bool b2IsHeldBody( b2World* world, const b2Body* body )
+{
+	return world->holding && body->setIndex >= b2_firstSleepingSet &&
+		   b2Array_Get( world->solverSets, body->setIndex )->held;
+}
+
+// Tide: whether every body of a set's or an island's is one of those given (a bit for each body id)
+static bool b2AllGiven( const uint64_t* given, const int* bodyIds, int count, int stride )
+{
+	for ( int i = 0; i < count; ++i )
+	{
+		int bodyId = *(const int*)( (const char*)bodyIds + (size_t)i * (size_t)stride );
+		if ( ( given[bodyId >> 6] & ( (uint64_t)1 << ( bodyId & 63 ) ) ) == 0 )
+		{
+			return false;
+		}
+	}
+	return count > 0;
+}
+
+// Tide: hold bodies for a client's predicted ticks, which leave out what's far from its player (box2d.h). The
+// islands put to sleep are followed as any that fall asleep are (b2TrySleepIsland); which sets are held isn't
+// in an image.
+void b2World_HoldBodies( b2WorldId worldId, const b2BodyId* bodyIds, int count )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	B2_ASSERT( world->locked == false );
+	if ( world->locked || world->holding || count <= 0 )
+	{
+		return;
+	}
+
+	int words = ( world->bodies.count + 63 ) >> 6;
+	size_t givenSize = (size_t)( words > 0 ? words : 1 ) * sizeof( uint64_t );
+	uint64_t* given = b2Alloc( givenSize );
+	memset( given, 0, givenSize );
+	for ( int i = 0; i < count; ++i )
+	{
+		if ( b2Body_IsValid( bodyIds[i] ) == false )
+		{
+			continue;
+		}
+		int bodyId = bodyIds[i].index1 - 1;
+		given[bodyId >> 6] |= (uint64_t)1 << ( bodyId & 63 );
+	}
+
+	// Sleeping sets of given bodies alone stay so. A set made by an island falling asleep below isn't
+	// looked at again: it's held as it's made.
+	int setCount = world->solverSets.count;
+	for ( int setIndex = b2_firstSleepingSet; setIndex < setCount; ++setIndex )
+	{
+		b2SolverSet* set = world->solverSets.data + setIndex;
+		if ( set->setIndex == B2_NULL_INDEX || set->bodySims.count == 0 )
+		{
+			continue;
+		}
+		if ( b2AllGiven( given, &set->bodySims.data[0].bodyId, set->bodySims.count, (int)sizeof( b2BodySim ) ) )
+		{
+			set->held = true;
+		}
+	}
+
+	// Awake islands of given bodies alone fall asleep, held. Which, first: each one that falls asleep
+	// moves others in the awake set's array.
+	b2SolverSet* awakeSet = b2Array_Get( world->solverSets, b2_awakeSet );
+	int islandCount = awakeSet->islandSims.count;
+	size_t idsSize = (size_t)( islandCount > 0 ? islandCount : 1 ) * sizeof( int );
+	int* islandIds = b2Alloc( idsSize );
+	int holdCount = 0;
+	for ( int i = 0; i < islandCount; ++i )
+	{
+		int islandId = awakeSet->islandSims.data[i].islandId;
+		b2Island* island = b2Array_Get( world->islands, islandId );
+		if ( b2AllGiven( given, island->bodies.data, island->bodies.count, (int)sizeof( int ) ) )
+		{
+			islandIds[holdCount++] = islandId;
+		}
+	}
+
+	world->holding = true;
+	for ( int i = 0; i < holdCount; ++i )
+	{
+		b2Island* island = b2Array_Get( world->islands, islandIds[i] );
+		int firstBodyId = island->bodies.data[0];
+		b2TrySleepIsland( world, islandIds[i] );
+		b2Body* body = b2Array_Get( world->bodies, firstBodyId );
+		if ( body->setIndex >= b2_firstSleepingSet )
+		{
+			b2Array_Get( world->solverSets, body->setIndex )->held = true;
+		}
+	}
+
+	b2Free( islandIds, idsSize );
+	b2Free( given, givenSize );
+}
+
+bool b2World_IsHolding( b2WorldId worldId )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	return world != NULL && world->holding;
 }

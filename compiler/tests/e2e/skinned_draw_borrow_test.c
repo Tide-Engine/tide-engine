@@ -11,7 +11,7 @@ static tide_world world;
 static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
-static uint32_t expected_mark;
+static uint64_t expected_mark;
 static uint32_t observations;
 static uint32_t bad_marks;
 

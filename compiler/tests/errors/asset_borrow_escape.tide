@@ -1,3 +1,0 @@
-// expect: a borrowed asset collection is only read or forwarded to a synchronous helper
-void Keep(List<Clip> values) { var kept = values; Debug.Log(kept.count); }
-scene Main { }

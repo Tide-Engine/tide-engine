@@ -48,7 +48,7 @@ TIDE_TEST(text_arrays_keep_their_own_text)
 {
     tide_world_init(&world, 1.0f);
     tide_world_tick(&world);
-    const tide_entity fox = {1, 1}, cat = {2, 1};
+    const tide_entity fox = tide_entity_in_slot(&world.entities, 1), cat = tide_entity_in_slot(&world.entities, 2);
     TIDE_REQUIRE(tide_has_Named(&world, fox) && tide_has_Named(&world, cat));
     const Named a = tide_get_Named(&world, fox);
     const Named b = tide_get_Named(&world, cat);
@@ -98,10 +98,10 @@ TIDE_TEST(text_arrays_reuse_their_memory)
     // Once the names stop growing, each tick's new text reuses what was released
     tide_world_init(&world, 1.0f);
     for (int i = 0; i < 50; i++) tide_world_tick(&world);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     for (int i = 0; i < 200; i++) tide_world_tick(&world);
     TIDE_CHECK(world.heap.used == used);
-    const Named a = tide_get_Named(&world, (tide_entity){1, 1});
+    const Named a = tide_get_Named(&world, tide_entity_in_slot(&world.entities, 1));
     TIDE_CHECK(reads(&world, a.names.at[0], "FOXSSSSSSS"));
 }
 

@@ -1,0 +1,13 @@
+// expect: this loop can't be indexed: its body doesn't start by skipping rows
+component Body { float3 position; }
+event Hit { float amount; }
+scene Main { }
+system Hits(Body body, query (Body other) others)
+{
+    indexed foreach (var o in others)
+    {
+        o.entity.Send(Hit { amount = 1 });
+        if (Math.Distance(o.other.position, body.position) > 2.0) continue;
+    }
+}
+event(Hit hit) Heard() { }

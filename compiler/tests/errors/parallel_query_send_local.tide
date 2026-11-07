@@ -1,0 +1,11 @@
+// expect: a parallel loop's steps send only the match's events, and 'Blink' is local
+component Body { float x; }
+local event Blink { }
+scene Main { }
+view Look(query (Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        if (f.body.x > 1) Send(Blink { });
+    }
+}

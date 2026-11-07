@@ -1,0 +1,118 @@
+using Render3D;
+
+scene Main;
+asset Mesh3D LeafCard = "quad.obj";
+singleton FoliagePixelFixture { int side = 1; bool built; bool wind; }
+component FoliagePatch { int role; }
+local singleton FoliagePixelProbe
+{
+    bool disabled;
+    bool shadows = true;
+    float strength = 0.5;
+    float time;
+    bool authoredWind;
+    [Filter(Filter.Point)] Grid2<Color> mask = Grid2(2, 1);
+}
+
+system BuildFoliagePixels(mut FoliagePixelFixture fixture)
+{
+    if (fixture.built) return;
+    fixture.built = true;
+    if (fixture.wind)
+    {
+        Spawn(FoliagePatch { role = 0 }, MeshRenderer { mesh = LeafCard },
+            Material { mode = SurfaceMode.Cutout, doubleSided = true, emission = float3(4, 0, 0) });
+        Spawn(DirectionalLight { direction = float3(0, 0, 1), radiance = float3(0) });
+        return;
+    }
+    for (var i = 0; i < 3; i++)
+        Spawn(FoliagePatch { role = i }, MeshRenderer { mesh = LeafCard },
+            Material { doubleSided = true, mode = i == 0 ? SurfaceMode.Cutout : SurfaceMode.Opaque, roughness = 1 },
+            Transform { localPosition = float3(float(i - 1) * 2, 0, 0), localScale = float3(1.5) });
+    // Behind the receiver to the eye, in front of it to the light.
+    Spawn(MeshRenderer { mesh = LeafCard }, Material { doubleSided = true },
+        Transform { localPosition = float3(2, 0, float(fixture.side)), localScale = float3(1) });
+    Spawn(DirectionalLight { direction = float3(0, 0, -float(fixture.side)), radiance = float3(4) });
+}
+
+[Before(Stages.Prepare)]
+view ConfigureFoliagePixels(mut Renderer renderer, mut FoliagePixelProbe probe, FoliagePixelFixture fixture)
+{
+    renderer.enabled = !probe.disabled;
+    renderer.shadows = probe.shadows;
+    renderer.background = Color.black;
+    renderer.camera = Camera {
+        position = float3(0, 0, -8 * float(fixture.side)),
+        rotation = fixture.side > 0 ? quaternion.identity : quaternion.Euler(0, 180deg, 0)
+    };
+    renderer.shadowCascades = 0;
+    renderer.shadowExtent = 5;
+    renderer.shadowDistance = 12;
+    renderer.shadowResolution = 256;
+    renderer.shadowBias = 0.003;
+    renderer.shadowSlopeBias = 0;
+    probe.mask[0, 0] = Color(1, 1, 1, 0);
+    probe.mask[1, 0] = Color.white;
+}
+
+void FoliagePixelWind(VertexInput input, mut MeshVertex vertex, Wind wind, bool authored, float phase)
+{
+    vertex.position.y += 2;
+    if (authored) ApplyWind(input, vertex, wind, WindResponse { bend = 1, branchPhase = phase });
+    else ApplyWind(input, vertex, wind, 1, 0);
+}
+
+[Before(Stages.Prepare), After(ConfigureFoliagePixels)]
+view BindFoliagePixels(FoliagePatch patch, mut Material material, FoliagePixelProbe probe, FoliagePixelFixture fixture)
+{
+    if (patch.role == 0) material.baseMap = probe.mask;
+    material.shader = Lit { surface = StandardSurface };
+    if (fixture.wind)
+    {
+        bool authored = probe.authoredWind;
+        float phase = probe.time;
+        Wind wind = Wind { direction = float2(1, 0), strength = 1, speed = 0,
+            gustScale = 0, gustSpeed = 1, gustStrength = authored ? 0 : 1, time = authored ? 0 : probe.time };
+        material.vertex = Deform {
+            vertex = (VertexInput input, mut MeshVertex vertex) => FoliagePixelWind(input, vertex, wind, authored, phase)
+        };
+        material.customBounds = true;
+        material.boundsCenter = float3(authored ? 3 : 2, 2, 0);
+        material.boundsSize = float3(authored ? 8 : 6, 1, 0);
+        return;
+    }
+    if (patch.role != 1)
+        material.shader = Lit { surface = ThinLeaf(LeafSettings {
+            transmission = probe.strength, transmissionColor = float3(0.5, 1, 0.25), thickness = Math.Log(2)
+        }) };
+}
+
+struct FoliageShadowPoint { float3 world; }
+frag FoliageShadowWitness(Vertex vertex, out Color color, Renderer renderer, FoliageShadowPoint point)
+{
+    var shadow = renderer.shadowViews[0];
+    float4 clip = Math.Mul(shadow.worldToClip, float4(point.world, 1));
+    float2 uv = shadow.uvRect.xy + float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5) * shadow.uvRect.zw;
+    float visibility = renderer.shadow.Compare(uv, clip.z / clip.w * 0.5 + 0.5);
+    color = Color(visibility, visibility, visibility);
+}
+
+[Stage(Stages.Present, 1)]
+view FoliageWindShadows(Renderer renderer, FoliagePixelFixture fixture, FoliagePixelProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready || !fixture.wind) return;
+    Draw.Screen()
+    {
+        Draw.SetBlend(Blend.Replace);
+        Draw.SetDepth();
+        Draw.SetCull();
+        for (var i = 0; i < 2; i++)
+        {
+            float x = float(2 + i * 8);
+            Draw.Mesh([Vertex { position = float2(x, 2) }, Vertex { position = float2(x + 4, 2) },
+                       Vertex { position = float2(x + 4, 6) }, Vertex { position = float2(x, 6) }],
+                [0, 1, 2, 0, 2, 3], FoliageShadowWitness,
+                FoliageShadowPoint { world = float3(probe.authoredWind ? (i == 0 ? 1.02 : 4) : (i == 0 ? -0.3 : 2.25), 2, 1) });
+        }
+    }
+}

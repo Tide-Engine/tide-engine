@@ -1,0 +1,42 @@
+// expect: this draw reads its textures 18 ways, and a draw has 16 samplers
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+// Nine textures, each a Texture whose Sample leaves its filter or its wrap to it: a sampler of its own for each way
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Texture page0;
+    Texture page1;
+    Texture page2;
+    Texture page3;
+    Texture page4;
+    Texture page5;
+    Texture page6;
+    Texture page7;
+    Texture page8;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    color = models.page0.Sample(vertex.uv) * models.page0.Sample(vertex.uv, Filter.Point)
+        * models.page1.Sample(vertex.uv) * models.page1.Sample(vertex.uv, Filter.Point)
+        * models.page2.Sample(vertex.uv) * models.page2.Sample(vertex.uv, Filter.Point)
+        * models.page3.Sample(vertex.uv) * models.page3.Sample(vertex.uv, Filter.Point)
+        * models.page4.Sample(vertex.uv) * models.page4.Sample(vertex.uv, Filter.Point)
+        * models.page5.Sample(vertex.uv) * models.page5.Sample(vertex.uv, Filter.Point)
+        * models.page6.Sample(vertex.uv) * models.page6.Sample(vertex.uv, Filter.Point)
+        * models.page7.Sample(vertex.uv) * models.page7.Sample(vertex.uv, Filter.Point)
+        * models.page8.Sample(vertex.uv) * models.page8.Sample(vertex.uv, Filter.Point);
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

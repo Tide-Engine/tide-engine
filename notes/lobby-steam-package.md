@@ -42,6 +42,12 @@ The SDK isn't in the repository and can't be (its license). Everything below was
 - **Steam starts at the first sign-in** (`IdentitySignIn` or `LobbySignIn`), or at `Steam.Start()`, and `MatchOpen` and `MatchJoin` register the network again before each `Session.Open` and `Session.Join`.
 - **`#error` on wasm and Android**, at the top of `bridge.c`, with what to write.
 
+## Steam's keyboard (2026-11-05)
+
+For the Steam Deck, at the owner's ask. Where Steam has started and `SteamAPI_SteamUtils_v010` answers, `TideSteamStart` registers a `tide_screen_keyboard` (`tide/screen_keyboard.h`) with the user's `steam` as `self`: `steam_typing` calls `ShowFloatingGamepadTextInput` (single line, no field rectangle: all zeros) when typing starts, and `DismissFloatingGamepadTextInput` when it stops. Steam shows it on a Steam Deck and in Big Picture, and nothing elsewhere; its keys come to the window as typing. `steam_flat.h` declares the accessor, both functions and `k_EFloatingGamepadTextInputModeModeSingleLine`. The fake records whether a user's keyboard shows (`FakeSteamKeyboard`), and the test checks that the registration shows and dismisses it. The host's side, telling the keyboard once each change, is in `notes/standard-host.md`.
+
+**Not verified:** `SteamUtils010` as SDK 1.60's version, written from memory as the others were; whether Steam shows it anywhere but a Deck and Big Picture; the field's place, which the GUI doesn't give (the keyboard may cover a low field). **Picks, Provisional:** single-line mode; showing it whenever the player types, even with a physical keyboard attached; that the package does it once Steam started, with nothing for the game to call.
+
 ## The fake
 
 `test/fake_steam.c` defines every function `steam_flat.h` declares, for four users in one program (`FakeSteamUser`), and is linked in the SDK's library's place by the test only. It has: users with Steam IDs and names (one with quotes and a backslash in it); lobbies with type, joinable, limit, data, member data and an owner, which passes to the member there longest when the owner leaves; lists by string filters and free slots, kept per user; call results two of the asking user's frames later, through `SteamAPICallCompleted_t` and `GetAPICallResult` (which refuses another size or kind, as Steam does); `LobbyDataUpdate_t` and `LobbyChatUpdate_t` to every member; messages between users, held until the receiver accepted the sender's session, with `SteamNetworkingMessagesSessionRequest_t` for the first; `LobbyCreated_t` and `LobbyEnter_t` in the platform's size. `FakeSteamDeafen` cuts a user off (callbacks and messages), `FakeSteamForge` writes any bytes into a lobby's data as another program might, `FakeSteamData` reads a key.
@@ -74,6 +80,7 @@ It has no overlay, friends, relays, rate limits, or anything Valve's servers che
 ## Not built
 
 - A run against Steam.
+- The text field's place for Steam's keyboard, and its other modes (numbers, several lines).
 - Launch parameters (`+connect_lobby`), rich presence, friends, lobby chat, Steam's own ping or timestamps (`Session.ping` counts a frame's wait there), relay settings, dedicated game servers, authentication tickets.
 - An identity Tide's own service verifies with Steam.
 - A package for another store: it would be written the same way.

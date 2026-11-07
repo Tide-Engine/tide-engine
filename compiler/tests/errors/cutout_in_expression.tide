@@ -1,0 +1,7 @@
+// expect: 'this.Cutout(...)' is a statement of its own: it says how much of the pixel the frag covers
+scene Main { }
+frag Leaf(Vertex3 vertex, out Color color)
+{
+    color = Color.white;
+    bool cut = vertex.uv.x > 0.5 && this.Cutout(vertex.uv.y);
+}

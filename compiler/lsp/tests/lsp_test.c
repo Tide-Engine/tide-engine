@@ -348,7 +348,7 @@ TIDE_TEST(lsp_borrowed_asset_collections_in_helpers)
     open_document("scene Main { }\nint Count(List<Clip> val$ues) { return values.count; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "List<Clip> values"));
-    TIDE_CHECK(has(request("textDocument/hover"), "Read-only asset collection borrowed"));
+    TIDE_CHECK(!has(request("textDocument/hover"), "Read-only asset collection borrowed"));
     TIDE_CHECK(offers(complete("scene Main { }\nint Count(List<Texture> values) { return values.$; }\n"), "count"));
     TIDE_CHECK(offers(complete("scene Main { }\nint Count(Map<string, Clip> values) { return values.$; }\n"), "TryGet"));
     const char *shader = complete("scene Main { }\nint Count(List<Texture> values) { return values.count; }\n"
@@ -901,7 +901,8 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(three, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(three, "\"SetDepth(${1:mode})\""));
     TIDE_CHECK(offers(three, "Blend") && offers(three, "Clip"));
     const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");
-    TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None"));
+    TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None") && offers(modes, "Only")
+               && offers(modes, "Equal"));
 
     open_document("scene Main { }\nview V()\n{\n    Draw.De$pth(Depth.Read)\n    {\n    }\n}\n");
     const char *around = request("textDocument/hover");
@@ -929,7 +930,7 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
 }
 
-// Levels of detail: [LOD], and the two settings naming a level and a camera, each with both forms, on Draw and on a target.
+// Levels of detail: [LOD], level, pixel tolerance and camera settings, on Draw and on a target.
 TIDE_TEST(lsp_levels_of_detail)
 {
     start();
@@ -945,9 +946,16 @@ TIDE_TEST(lsp_levels_of_detail)
     const char *draw = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(draw, "LOD") && offers(draw, "SetLOD") && offers(draw, "LODCamera") && offers(draw, "SetLODCamera"));
     TIDE_CHECK(has(draw, "LOD(${1:level})\\n{\\n\\t$0\\n}") && has(draw, "\"SetLOD(${1:level})\""));
+    TIDE_CHECK(offers(draw, "LODPixels") && offers(draw, "SetLODPixels"));
     const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget shadow; }\nview V(Look look)\n{\n"
                                   "    look.shadow.$\n}\n");
     TIDE_CHECK(offers(target, "LOD") && offers(target, "SetLODCamera"));
+    TIDE_CHECK(offers(target, "LODPixels") && offers(target, "SetLODPixels"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetLODPix$els(4);\n}\n");
+    const char *pixels = request("textDocument/hover");
+    TIDE_CHECK(has(pixels, "Draw.SetLODPixels(float pixels)") && has(pixels, "Draw.SetLODPixels()"));
+    TIDE_CHECK(has(pixels, "Higher values") && has(pixels, "1 by default"));
 
     open_document("scene Main { }\nview V()\n{\n    Draw.SetLO$D(1);\n}\n");
     const char *set = request("textDocument/hover");
@@ -962,11 +970,12 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetLOD'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
 
     const char *offered = complete("[$] asset Texture masks = \"art/tile.png\";\nscene Main { }\n");
-    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter") && offers(offered, "BlendShapes"));
+    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter") && offers(offered, "BlendShapes") && offers(offered, "Parts"));
     open_document("[LO$D] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "LOD has simpler versions of a mesh made") && has(last_sent(), "'Rock' isn't a mesh"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "[LOD]") && has(hover, "levels of detail made as the game is built") && has(hover, "Draw.LODCamera"));
+    TIDE_CHECK(has(hover, "[LOD(2)]") && has(hover, "positive finite constant multiplier"));
     open_document("[Lod] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
     // [BlendShapes], beside them: offered, explained, refused off an asset, suggested for a misspelling.
@@ -976,6 +985,38 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(hover, "[BlendShapes(") && has(hover, "any run of characters") && has(hover, "keeps none"));
     open_document("[BlendShape(\"jaw*\")] component Face { float x; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "did you mean 'BlendShapes'?"));
+    // [Parts] the same way
+    open_document("[Par$ts(\"Body*\")] component Body { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "Parts chooses which parts of its file a SkinnedMesh asset keeps"));
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "[Parts(") && has(hover, "node holding a mesh") && has(hover, "every bone stays"));
+    open_document("[Part(\"Body*\")] component Body { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "did you mean 'Parts'?"));
+}
+
+// `lod:` on a mesh the game makes: no diagnostic, offered by completion after the lists, shown and followed by
+// signature help as the last parameter of a 3D mesh's draw, and absent from a 2D one's.
+TIDE_TEST(lsp_generated_levels_of_detail)
+{
+    start();
+#define LOD_TYPES "scene Main { }\nlocal singleton Art\n{\n    List<Vertex3> corners;\n    List<int> faces;\n}\n"
+    open_document(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, lod: 2);\n"
+                            "    Draw.Instanced(art.corners, art.faces, [float4x4.identity], lod: 1);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *offered = complete(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, $\n}\n");
+    TIDE_CHECK(offers(offered, "lod:") && has(offered, "made in the background"));
+    const char *early = complete(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, $\n}\n");
+    TIDE_CHECK(!offers(early, "lod:"));
+    const char *once = complete(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, lod: 1, $\n}\n");
+    TIDE_CHECK(!offers(once, "lod:"));
+    open_document(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, lod: $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "[, values][, lod: multiplier])") && has(help, "\"activeParameter\":9"));
+    TIDE_CHECK(has(help, "made in the background"));
+    open_document("scene Main { }\nlocal singleton Flat { List<Vertex> corners; }\nview V(Flat flat)\n{\n"
+                  "    Draw.Mesh(flat.corners, $\n}\n");
+    TIDE_CHECK(!has(request("textDocument/signatureHelp"), "lod: multiplier"));
+#undef LOD_TYPES
 }
 
 // Cull, which side of a 3D mesh's triangles draws: both forms, its sides, hovers, and rename fixes.
@@ -1277,7 +1318,7 @@ TIDE_TEST(lsp_text_anchor_and_font)
     open_document(TEXT_VIEW("    var size = Draw.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw.Rect(size, size, Color.white);"));
     TIDE_CHECK(has(request("textDocument/hover"), "Draw.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
     open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
-    TIDE_CHECK(has(request("textDocument/hover"), "A game only carries the bold weight's file when its code says"));
+    TIDE_CHECK(has(request("textDocument/hover"), "a file a game carries only when it says so"));
     open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
     TIDE_CHECK(has(request("textDocument/hover"), "which place of a text's box is at the position"));
 
@@ -1379,7 +1420,7 @@ TIDE_TEST(lsp_draw_values)
 
     open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Wave, Shade, $\n}\n");
     const char *help = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(help, "[, vert][, frag][, values])") && has(help, "\"activeParameter\":8"));
+    TIDE_CHECK(has(help, "[, vert][, frag][, values][, lod: multiplier])") && has(help, "\"activeParameter\":8"));
     TIDE_CHECK(has(help, "A struct's value, after the vert and the frag"));
     open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Shade, Swell { height = 2 }$);\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":8"));
@@ -1455,6 +1496,37 @@ static const char *rename_at(const int line, const int character, const char *na
 }
 
 // Completion in frags and verts: their words, parameters, GPU code, and names at Draw.Mesh.
+// Kernels and GPU lists (docs/spec.md, Compute on the GPU): the declaration, GPU.Run in drawing code and
+// GPU.Barrier in a kernel, a GPU list's members on each side, and `this`'s fields in a kernel.
+TIDE_TEST(lsp_compute_complete)
+{
+    start();
+#define COMPUTE_TYPES                                                                                                 \
+    "scene Main { }\n"                                                                                                \
+    "struct Blade { float3 root; float height; }\n"                                                                   \
+    "local singleton Meadow { GPUList<Blade> blades; GPUList<int> counts; }\n"
+    const char *top = complete(COMPUTE_TYPES "\n$");
+    TIDE_CHECK(offers(top, "compute") && has(top, "compute ${2:Name}($3)"));
+    const char *view = complete(COMPUTE_TYPES "view Show(Meadow meadow)\n{\n    $\n}\n");
+    TIDE_CHECK(offers(view, "GPU"));
+    TIDE_CHECK(offers(complete(COMPUTE_TYPES "view Show(Meadow meadow)\n{\n    GPU.$\n}\n"), "Run"));
+    const char *cpu = complete(COMPUTE_TYPES "view Show(Meadow meadow)\n{\n    meadow.blades.$\n}\n");
+    TIDE_CHECK(offers(cpu, "Set") && offers(cpu, "Clear") && offers(cpu, "SetCount") && offers(cpu, "Resize")
+               && offers(cpu, "Read") && offers(cpu, "ReadCount") && offers(cpu, "capacity") && offers(cpu, "contentRevision"));
+    TIDE_CHECK(!offers(cpu, "count") && !offers(cpu, "Add"));
+#define IN_KERNEL(code) COMPUTE_TYPES "compute Grow(Meadow meadow)\n{\n    " code "\n}\n"
+    const char *gpu = complete(IN_KERNEL("meadow.counts.$"));
+    TIDE_CHECK(offers(gpu, "count") && offers(gpu, "Add") && offers(gpu, "AtomicAdd") && offers(gpu, "AtomicCompareExchange"));
+    TIDE_CHECK(!offers(gpu, "Set") && !offers(gpu, "Read"));
+    TIDE_CHECK(offers(complete(IN_KERNEL("GPU.$")), "Barrier"));
+    const char *self = complete(IN_KERNEL("int i = this.$"));
+    TIDE_CHECK(offers(self, "index") && offers(self, "at") && offers(self, "local") && offers(self, "group") && offers(self, "count"));
+    open_document(IN_KERNEL("meadow.counts[this.index] = 1;"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef IN_KERNEL
+#undef COMPUTE_TYPES
+}
+
 TIDE_TEST(lsp_shaders_complete)
 {
     start();
@@ -1510,6 +1582,7 @@ TIDE_TEST(lsp_shaders_complete)
 
     const char *pixel = complete(IN_FRAG("var x = this.$"));
     TIDE_CHECK(offers(pixel, "position") && offers(pixel, "depth") && offers(pixel, "world") && offers(pixel, "Discard"));
+    TIDE_CHECK(offers(pixel, "Fwidth") && offers(pixel, "Ddx") && offers(pixel, "Cutout") && offers(pixel, "Coverage"));
     TIDE_CHECK(has(pixel, "Where the pixel is on the screen"));
     const char *position = complete(IN_FRAG("var x = this.position.$"));
     TIDE_CHECK(offers(position, "x") && offers(position, "y") && !offers(position, "z") && !offers(position, "Discard"));
@@ -2837,6 +2910,7 @@ TIDE_TEST(lsp_asset_reference_members)
     const char *members = complete("component Art { Asset<Mesh<Vertex3>> model; }\nscene Main {}\n"
                                    "system Read(Art art) { var model = art.model.$; }\n");
     TIDE_CHECK(offers(members, "Value"));
+    TIDE_CHECK(offers(members, "vertices") && offers(members, "indices"));
     TIDE_CHECK(!offers(members, "id"));
     TIDE_CHECK(offers(complete("component Art { $ }\nscene Main {}\n"), "Asset"));
     TIDE_CHECK(offers(complete("component Art { Asset<Mesh<Vertex3>> model; }\nscene Main {}\n"
@@ -3444,6 +3518,26 @@ TIDE_TEST(lsp_empty_scene_declarations)
     TIDE_CHECK(has(last_sent(), "expected '{'"));
 }
 
+TIDE_TEST(lsp_scene_preparation)
+{
+    start();
+    open_document("singleton Stats { int value; }\nscene Main\n{\n    int seed = 7;\n"
+                  "    prepare(mut Stats stats) { stats.value = se$ed; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "int seed"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"prepare\""));
+    TIDE_CHECK(!has(symbols, "tide_prepare") && !has(symbols, "tide_preparation_scene"));
+    const char *values = complete("singleton Stats { int value; }\nscene Main\n{\n    int seed;\n"
+                                  "    prepare(mut Stats stats) { stats.value = $; }\n}\n");
+    TIDE_CHECK(offers(values, "seed") && offers(values, "stats"));
+    TIDE_CHECK(!offers(values, "tide_preparation_scene"));
+    open_document("scene Main { prepare() {} }\nsystem Check(with Main) { Debug.Assert(Scene.IsPrep$ared(this)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "acknowledged a player's readiness"));
+}
+
 TIDE_TEST(lsp_scenes)
 {
     start();
@@ -3465,6 +3559,7 @@ TIDE_TEST(lsp_scenes)
     const char *calls = complete("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main)\n{\n    Scene.$\n}\n");
     TIDE_CHECK(offers(calls, "Load"));
     TIDE_CHECK(offers(calls, "Unload"));
+    TIDE_CHECK(offers(calls, "IsPrepared"));
     TIDE_CHECK(!offers(calls, "AddPlayer"));
     TIDE_CHECK(!offers(calls, "RemovePlayer"));
     const char *fields = complete("scene Arena { int size; }\nscene Main { }\nsystem S(Arena arena)\n{\n    var x = arena.$\n}\n");
@@ -5573,7 +5668,7 @@ TIDE_TEST(lsp_enum_members_and_hovers)
 
     open_document("local scene Main { }\nview Menu()\n{\n    Sess$ion.Leave();\n}\n");
     const char *session = request("textDocument/hover");
-    TIDE_CHECK(has(session, "Start, Open, Close, Kick, KickAll, Join, Connect, Leave, End, Watch and Unwatch") && !has(session, "Play"));
+    TIDE_CHECK(has(session, "Start, Open, Close, Kick, KickAll, Ban, Unban, Join, Connect, Leave, End, Watch and Unwatch") && !has(session, "Play"));
     open_document("[Native$Name(\"c_noise\")]\nextern float Noise(float x);\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "The C function the extern function after it calls"));
     open_document("enum Voxel : by$te { Air, Stone }\nscene Main { }\n");
@@ -6067,7 +6162,11 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     const char *members = complete(program);
     TIDE_CHECK(offers(members, "color") && offers(members, "Clear") && offers(members, "Mesh"));
     TIDE_CHECK(offers(members, "Resize") && offers(members, "Dispose"));
+    TIDE_CHECK(offers(members, "contentRevision"));
     TIDE_CHECK(!offers(members, "list") && !offers(members, "Blit"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers) { var revision = buffers.scene.contentRe$vision; }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "long"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.window.$ }\n"), "Camera"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.$ }\n"), "Blit"));
     TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, out Color color, $"), "Texture"));
@@ -6192,8 +6291,21 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
     TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float"));
     snprintf(program, sizeof program, "%sColor Tile(Texture image, float2 uv)\n{\n    return image.$\n}\n", types);
-    TIDE_CHECK(offers(complete(program), "Sample"));
-    TIDE_CHECK(offers(complete(program), "size"));
+    const char *texture_reads = complete(program);
+    TIDE_CHECK(offers(texture_reads, "Sample") && offers(texture_reads, "SampleGrad") && offers(texture_reads, "size"));
+    TIDE_CHECK(has(texture_reads, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's, Wrap wrap = the texture's) -> Color"));
+    TIDE_CHECK(has(texture_reads, "SampleGrad($1, $2, $3)"));
+    snprintf(program, sizeof program, "%sfrag Gradient(Vertex3 vertex, out Color color, Lamp lamp) { color = lamp.image.$ }\n", types);
+    TIDE_CHECK(offers(complete(program), "SampleGrad"));
+    snprintf(program, sizeof program, "%svert Warp(mut Vertex3 vertex, Lamp lamp) { vertex.color = lamp.image.$ }\n", types);
+    const char *vertex_reads = complete(program);
+    TIDE_CHECK(offers(vertex_reads, "Sample") && !offers(vertex_reads, "SampleGrad"));
+    snprintf(program, sizeof program, "%sfrag Gradient(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    color = lamp.image.SampleGrad(vertex.uv, float2(0.01, 0), $float2(0, 0.01));\n}\n", types);
+    open_document(program);
+    const char *gradient_signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(gradient_signature, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's, Wrap wrap = the texture's) -> Color"));
+    TIDE_CHECK(has(gradient_signature, "\"activeParameter\":2") && has(gradient_signature, "destination pixel"));
     snprintf(program, sizeof program, "%sint2 Size(Texture image) { return image.size; }\nview V(Lamp lamp) { Debug.Log($$\"{Size(lamp.image)}\"); }\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -6201,7 +6313,8 @@ TIDE_TEST(lsp_textures_in_functions)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "physical pixels"));
     snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.image.$ }\n", types);
-    TIDE_CHECK(offers(complete(program), "size"));
+    const char *cpu_reads = complete(program);
+    TIDE_CHECK(offers(cpu_reads, "size") && !offers(cpu_reads, "SampleGrad"));
     snprintf(program, sizeof program, "%sint2 Size(DepthTexture depth) { return depth.size; }\nview V(Lamp lamp) { Debug.Log($$\"{Size(lamp.shadow)}\"); }\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -7982,7 +8095,7 @@ TIDE_TEST(lsp_asset_type_completion)
         "[LOD] asset Me$", "namespace Art { asset Tex$ }",
     };
     static const char *const types[] = {
-        "string", "Texture", "Clip", "Grid2", "Mesh", "SkinnedMesh", "AnimationCatalog", "Animation", "Cubemap", "List", "Map",
+        "string", "Texture", "Clip", "Grid2", "Mesh", "SkinnedMesh", "AnimationCatalog", "Animation", "HumanoidRig", "Cubemap", "List", "Map",
     };
     for (size_t i = 0; i < sizeof declarations / sizeof declarations[0]; i++) {
         open_document(declarations[i]);
@@ -7998,7 +8111,7 @@ TIDE_TEST(lsp_asset_type_completion)
         open_document(collections[i]);
         const char *reply = request("textDocument/completion");
         TIDE_CHECK(offers(reply, "Texture") && offers(reply, "Mesh") && offers(reply, "SkinnedMesh") && offers(reply, "AnimationCatalog"));
-        TIDE_CHECK(!offers(reply, "Animation") && !offers(reply, "Cubemap") && !offers(reply, "Map"));
+        TIDE_CHECK(!offers(reply, "Animation") && !offers(reply, "HumanoidRig") && !offers(reply, "Cubemap") && !offers(reply, "Map"));
         TIDE_CHECK(has(reply, "\"insertText\":\"List<byte>\""));
         TIDE_CHECK(offers(reply, "byte") == (i < 2));
     }
@@ -11300,7 +11413,7 @@ TIDE_TEST(lsp_asset_path_completion)
     write_bytes("lsp_cp/art/hero.png", "png", 3);
     write_bytes("lsp_cp/art/hero.psd", "psd", 3);
     write_bytes("lsp_cp/art/tile.PSD", "psd", 3);
-    static const char *const image_names[] = {"photo.jpg", "photo.JPEG", "tile.tga", "tile.bmp"};
+    static const char *const image_names[] = {"photo.jpg", "photo.JPEG", "tile.tga", "tile.bmp", "leaves.DDS"};
     for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) {
         char path[100];
         snprintf(path, sizeof path, "lsp_cp/art/%s", image_names[i]);
@@ -11334,6 +11447,7 @@ TIDE_TEST(lsp_asset_path_completion)
     TIDE_CHECK(offers(completion, "*.psd") && offers(completion, "**/*.psd"));
     for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) TIDE_CHECK(offers(completion, image_names[i]));
     TIDE_CHECK(offers(completion, "*.jpg") && offers(completion, "**/*.jpeg") && offers(completion, "*.tga") && offers(completion, "**/*.bmp"));
+    TIDE_CHECK(offers(completion, "*.dds") && offers(completion, "**/*.dds"));
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":1,\"character\":36},\"end\":{\"line\":1,\"character\":36}},\"newText\":\"hero.png\"}"));
 
     completion = request_at(uri_main, "textDocument/completion", 2, 26, "");
@@ -11550,8 +11664,8 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     open_uri(uri_main, "[Wrap(Wrap.Repeat), Wrap(Wrap.Mirror)]\nasset Texture tiles = \"art/tile.png\";\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "'tiles' already has a Wrap"));
     open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    List<Texture> frames;\n}\n");
-    TIDE_CHECK(has(last_sent(), "a list or a map can't hold rendering resources"));
-    TIDE_CHECK(has(last_sent(), "asset List<Texture> frames"));
+    TIDE_CHECK(!has(last_sent(), "a list or a map can't hold rendering resources"));
+    TIDE_CHECK(!has(last_sent(), "asset List<Texture> frames"));
 
     static const char sampling_aliases[] = "using Sampling;\n"
         "namespace Sampling { using Sampler = Filter; using Address = Wrap; }\n"
@@ -11783,6 +11897,117 @@ TIDE_TEST(lsp_cubemaps)
     TIDE_CHECK(has(last_sent(), "use local placement and access for this component"));
 }
 
+// Texture arrays: the types, an asset of a glob's images, an array a view draws into, what a frag reads.
+TIDE_TEST(lsp_texture_arrays)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_ta");
+    make_folder("lsp_ta/ground");
+    static const unsigned char png[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x12, 0x49,
+        0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x0c, 0x81, 0x34, 0x18, 0x00, 0x00, 0x49, 0xc8,
+        0x09, 0xf7, 0x03, 0xd9, 0x64, 0xf1, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+    write_bytes("lsp_ta/ground/grass.png", (const char *)png, sizeof png);
+    write_bytes("lsp_ta/ground/rock.png", (const char *)png, sizeof png);
+    write_file("lsp_ta/ground/notes.txt", "text");
+    static const char main_file[] = "asset TextureArray ground = \"ground/*.png\";\n"
+                                    "scene Main { }\n"
+                                    "local singleton Room\n"
+                                    "{\n"
+                                    "    TextureArray paint;\n"
+                                    "    DepthTextureArray depths;\n"
+                                    "    List<Vertex3> ball;\n"
+                                    "}\n"
+                                    "frag Shade(Vertex3 vertex, out Color color, Room room)\n"
+                                    "{\n"
+                                    "    float lit = room.depths.Compare(vertex.uv, 1, 0.5);\n"
+                                    "    color = (room.paint.Sample(vertex.uv, 2) + ground.Sample(vertex.uv, 0, Filter.Trilinear)) * lit;\n"
+                                    "}\n"
+                                    "view V(mut Room room)\n"
+                                    "{\n"
+                                    "    room.paint = TextureArray(64, 64, 3, Format.Rgba16f);\n"
+                                    "    room.depths = room.paint.depth;\n"
+                                    "    room.paint.layers[1].Clear(Color.black);\n"
+                                    "    Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Shade);\n"
+                                    "    room.paint.Resize(32, 32);\n"
+                                    "}\n";
+    write_file("lsp_ta/main.tide", main_file);
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_ta", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_ta/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *hover = request_at(uri_main, "textDocument/hover", 0, 21, "");
+    TIDE_CHECK(has(hover, "asset TextureArray ground") && has(hover, "images of one size as its layers"));
+    hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
+    TIDE_CHECK(has(hover, "layers of images of one size") && has(hover, "TextureArray(width, height, layers)"));
+    hover = request_at(uri_main, "textDocument/hover", 5, 6, "");
+    TIDE_CHECK(has(hover, "a TextureArray's depth"));
+    hover = request_at(uri_main, "textDocument/hover", 10, 30, "");
+    TIDE_CHECK(has(hover, "Compare(float2 uv, int layer, float value) -> float"));
+    hover = request_at(uri_main, "textDocument/hover", 11, 26, "");
+    TIDE_CHECK(has(hover, "TextureArray.Sample(float2 uv, int layer, Filter filter = the array's, Wrap wrap = the array's) -> Color")
+               && has(hover, "one past the layers reads the nearest"));
+    hover = request_at(uri_main, "textDocument/hover", 16, 30, "");
+    TIDE_CHECK(has(hover, "DepthTextureArray depth") && has(hover, "Each layer's depth"));
+    hover = request_at(uri_main, "textDocument/hover", 19, 17, "");
+    TIDE_CHECK(has(hover, "Resize(float width, float height)") && has(hover, "every layer"));
+    const char *help = request_at(uri_main, "textDocument/signatureHelp", 15, 39, "");
+    TIDE_CHECK(has(help, "TextureArray(float width, float height, int layers, Format format)") && has(help, "array.layers[0]"));
+    help = request_at(uri_main, "textDocument/signatureHelp", 11, 31, "");
+    TIDE_CHECK(has(help, "Sample(float2 uv, int layer, Filter filter = the array's, Wrap wrap = the array's) -> Color"));
+
+    static const char paths[] = "asset TextureArray ground = \"ground/\";\nscene Main { }\n";
+    open_uri(uri_main, paths);
+    const char *completion = request_at(uri_main, "textDocument/completion", 0, 36, "");
+    TIDE_CHECK(offers(completion, "rock.png") && !offers(completion, "notes.txt") && offers(completion, "*.png"));
+
+    remove_game_file("lsp_ta/ground/grass.png");
+    remove_game_file("lsp_ta/ground/rock.png");
+    remove_game_file("lsp_ta/ground/notes.txt");
+    remove_game_file("lsp_ta/main.tide");
+    remove_game_file("lsp_ta/.tide/assets.sha256");
+    remove_game_file("lsp_ta/.tide/.gitignore");
+    remove_folder("lsp_ta/.tide");
+    remove_folder("lsp_ta/ground");
+    remove_folder("lsp_ta");
+    clear_sent();
+    lsp_free(&server);
+
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Room { TextureArray paint; DepthTextureArray depths; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.paint.$\n}\n", types);
+    const char *members = complete(program);
+    TIDE_CHECK(offers(members, "layers") && offers(members, "depth") && offers(members, "size") && offers(members, "count"));
+    TIDE_CHECK(offers(members, "Resize") && offers(members, "Dispose") && !offers(members, "Sample") && has(members, "layers[$1]"));
+    snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n    color = room.paint.$\n}\n", types);
+    members = complete(program);
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "SampleGrad") && !offers(members, "layers") && !offers(members, "Dispose"));
+    TIDE_CHECK(has(members, "Sample($1, $2)"));
+    snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n    float d = room.depths.$\n}\n", types);
+    members = complete(program);
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "Compare") && !offers(members, "count"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var n = room.depths.$\n}\n", types);
+    members = complete(program);
+    TIDE_CHECK(offers(members, "size") && offers(members, "count") && !offers(members, "Compare"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    TextureA$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "TextureArray"));
+    snprintf(program, sizeof program, "scene Main { }\nlocal singleton Room\n{\n    DepthTextureA$\n}\n");
+    TIDE_CHECK(offers(complete(program), "DepthTextureArray"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.paint = TextureArray($);\n}\n", types);
+    open_document(program);
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "TextureArray(float width, float height, int layers)")
+               && has(help, "TextureArray(float width, float height, int layers, float pixelsPerUnit, Format format)"));
+    TIDE_CHECK(offers(complete("asset Texture$\nscene Main { }\n"), "TextureArray"));
+}
+
 // A game with no asset registers nothing and makes no .tide/; an editor that takes no registration is asked about every rename.
 TIDE_TEST(lsp_game_without_assets_changes_nothing)
 {
@@ -11925,8 +12150,8 @@ TIDE_TEST(lsp_asset_meshes)
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Mesh(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);
     const char *help = request_at(uri_main, "textDocument/signatureHelp", 14, 20, "");
-    TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])"));
-    TIDE_CHECK(has(help, "\"activeParameter\":1") && has(help, "A `Mesh<V>`: an asset's vertices and its indices as one"));
+    TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])"));
+    TIDE_CHECK(has(help, "\"activeParameter\":1") && has(help, "A `Mesh<V>`: its vertices and its indices as one"));
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Instanced(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);
     help = request_at(uri_main, "textDocument/signatureHelp", 14, 25, "");
@@ -11942,7 +12167,7 @@ TIDE_TEST(lsp_asset_meshes)
     TIDE_CHECK(has(last_sent(), "'art/rock.glb' has an invalid GLB header: its magic isn't glTF"));
     TIDE_CHECK(has(last_sent(), "'art/hill.gltf' is glTF of no version, and Tide reads glTF 2.0"));
     TIDE_CHECK(has(last_sent(), "'art/other.txt' isn't a mesh file Tide reads"));
-    TIDE_CHECK(has(last_sent(), "a field can't be a Mesh"));
+    TIDE_CHECK(!has(last_sent(), "a field can't be a Mesh"));
 
     remove_game_file("lsp_mesh/main.tide");
     remove_game_file("lsp_mesh/art/tree.obj");
@@ -12313,6 +12538,315 @@ TIDE_TEST(lsp_skinned_blend_shapes_complete_hover_and_help)
     TIDE_CHECK(has(request("textDocument/hover"), "TryGetByName"));
     completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
     TIDE_CHECK(offers(completion, "Decode") && !offers(completion, "Shaped"));
+}
+
+TIDE_TEST(lsp_mesh_decode_completes_hovers_and_checks)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    var model = Mesh<Vertex3>.$\n}\n");
+    TIDE_CHECK(offers(completion, "Decode") && has(completion, "Decode(List<byte> bytes)"));
+    open_document("scene Main { }\nsingleton Art { List<byte> bytes; Mesh<Vertex3> model; }\n"
+                  "system Read(mut Art art) { art.model = Mesh<Vertex3>.Dec$ode(art.bytes)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Mesh<Vertex3>.Decode(List<byte> bytes)") && has(hover, "fails IOError") && has(hover, ".obj"));
+    open_document("scene Main { }\nusing Model = Mesh<Vertex3>;\nsingleton Art { List<byte> bytes; Model model; }\n"
+                  "system Read(mut Art art) { art.model = Model.Decode($art.bytes)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Decode(List<byte> bytes)"));
+}
+
+TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
+{
+    start();
+    const char *completion = complete("void Helper($\n");
+    TIDE_CHECK(offers(completion, "HumanoidRig") && offers(completion, "HumanoidBone")
+               && offers(completion, "HumanoidBoneStatus") && offers(completion, "RetargetMap") && offers(completion, "RetargetError"));
+    completion = complete("scene Main { }\nview V() { var rig = HumanoidRig.$ }\n");
+    TIDE_CHECK(offers(completion, "Auto") && !offers(completion, "GetStatus") && has(completion, "Auto(Pose referencePose)"));
+    completion = complete("scene Main { }\nview V() { var mapping = RetargetMap.$ }\n");
+    TIDE_CHECK(offers(completion, "Create") && !offers(completion, "rootScale") && has(completion, "fails RetargetError"));
+    completion = complete("scene Main { }\nvoid Inspect(HumanoidRig rig) { rig.$ }\n");
+    TIDE_CHECK(offers(completion, "referencePose") && offers(completion, "GetStatus") && !offers(completion, "Auto")
+               && !offers(completion, "bones") && !offers(completion, "status"));
+    completion = complete("scene Main { }\nvoid Inspect(RetargetMap mapping) { mapping.$ }\n");
+    TIDE_CHECK(offers(completion, "rootScale") && offers(completion, "rootOffset") && offers(completion, "headingDegrees")
+               && offers(completion, "spineDistribution") && offers(completion, "twistDistribution")
+               && !offers(completion, "Create") && !offers(completion, "sourceData") && !offers(completion, "targetData") && !offers(completion, "plan"));
+    completion = complete("scene Main { }\nvoid Inspect(Animation clip) { clip.skeleton.$ }\n");
+    TIDE_CHECK(offers(completion, "bones") && offers(completion, "RestPose"));
+    completion = complete("scene Main { }\nvoid Inspect(Pose pose) { pose.$ }\n");
+    TIDE_CHECK(offers(completion, "skeleton") && offers(completion, "Retarget") && !offers(completion, "transforms"));
+    completion = complete("scene Main { }\nvoid Inspect(HumanoidRig rig) { rig.referencePose.skeleton.bones.$ }\n");
+    TIDE_CHECK(offers(completion, "TryGetByName") && offers(completion, "TryGetAt") && offers(completion, "NameOf"));
+    completion = complete("scene Main { }\nvoid Inspect(Animation clip) { clip.skeleton.Na$ }\n");
+    TIDE_CHECK(offers(completion, "NameOf") && has(completion, "NameOf(Bone bone)"));
+    completion = complete("scene Main { }\nvoid Inspect(Bone bone) { bone.$ }\n");
+    TIDE_CHECK(offers(completion, "index") && !offers(completion, "fingerprint"));
+    open_document("scene Main { }\nint Place(HumanoidRig rig) { return rig[HumanoidBone.Head].in$dex; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "place in its skeleton"));
+
+    open_document("scene Main { }\nHumanoidRig Characterize(Pose reference) { return HumanoidRig.Au$to(reference); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "HumanoidRig.Auto(Pose referencePose)") && has(hover, "first frame"));
+    open_document("scene Main { }\nPose Reference(HumanoidRig rig) { return rig.reference$Pose; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "explicit calibration pose"));
+    open_document("scene Main { }\nfloat Heading(RetargetMap mapping) { return mapping.heading$Degrees; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "degrees"));
+    open_document("scene Main { }\nSkeleton Source(Animation clip) { return clip.ske$leton; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "not necessarily a neutral reference pose"));
+    open_document("scene Main { }\nHumanoidRig Copy(Humanoid$Rig rig) { return rig; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Reusable humanoid bone assignments"));
+}
+
+TIDE_TEST(lsp_humanoid_retargeting_roles_signatures_and_restrictions)
+{
+    start();
+    const char *completion = complete("scene Main { }\nBone Read(HumanoidRig rig) { return rig[$]; }\n");
+    TIDE_CHECK(offers(completion, "HumanoidBone") && offers(completion, "HumanoidBone.LeftHand"));
+    completion = complete("scene Main { }\nBone Read(HumanoidRig rig) { return rig[.$]; }\n");
+    TIDE_CHECK(offers(completion, "LeftHand") && offers(completion, "UpperChest") && offers(completion, "RightLittleDistal")
+               && !offers(completion, "HumanoidBone.LeftHand"));
+    completion = complete("scene Main { }\nHumanoidBoneStatus Read(HumanoidRig rig) { return rig.GetStatus($); }\n");
+    TIDE_CHECK(offers(completion, "HumanoidBone.LeftHand"));
+    completion = complete("scene Main { }\nHumanoidBoneStatus Read(HumanoidRig rig) { return rig.GetStatus(bone: .$); }\n");
+    TIDE_CHECK(offers(completion, "LeftHand") && !offers(completion, "Missing"));
+    completion = complete("scene Main { }\nHumanoidBoneStatus Read(HumanoidRig rig) { return HumanoidBoneStatus.$; }\n");
+    TIDE_CHECK(offers(completion, "Missing") && offers(completion, "Automatic") && offers(completion, "Uncertain") && offers(completion, "Manual"));
+
+    open_document("scene Main { }\nHumanoidBoneStatus Assign(Pose reference, Bone hand) {\n"
+                  "    mut var rig = HumanoidRig.Auto(reference);\n    rig[.LeftHand] = hand;\n    return rig.GetSta$tus(.LeftHand);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GetStatus(HumanoidBone bone)"));
+    open_document("scene Main { }\nRetargetMap Prepare(Animation clip, HumanoidRig sourceRig, HumanoidRig targetRig) {\n"
+                  "    return RetargetMap.Cre$ate(clip.skeleton, sourceRig, targetRig)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "RetargetMap.Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig)")
+               && has(hover, "fails RetargetError") && has(hover, "actual animation skeleton"));
+    open_document("scene Main { }\nRetargetMap Prepare(Animation clip, HumanoidRig sourceRig, HumanoidRig targetRig) {\n"
+                  "    return RetargetMap.Create(targetRig: targetRig, source: clip.skeleton, sourceRig: $sourceRig)!;\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "fails RetargetError") && has(help, "\"activeParameter\":1"));
+    open_document("scene Main { }\nview V() { var mapping = RetargetMap.Create($\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig)"));
+    open_document("scene Main { }\nHumanoidRig Characterize(Pose reference) { return HumanoidRig.Auto($reference); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Auto(Pose referencePose)"));
+    open_document("scene Main { }\nbool Apply(mut Pose target, Pose source, RetargetMap mapping) { return target.Reta$rget(source, mapping); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Returns false and leaves the target unchanged"));
+    open_document("scene Main { }\nbool Apply(mut Pose target, Pose source, RetargetMap mapping) { return target.Retarget(source, $mapping); }\n");
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Retarget(Pose source, RetargetMap mapping) -> bool") && has(help, "\"activeParameter\":1"));
+
+    open_document("scene Main { }\nbool Apply(Pose target, Pose source, RetargetMap mapping) { return target.Retarget(source, mapping); }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+    open_document("scene Main { }\nvoid Assign(HumanoidRig rig, Bone hand) { rig[.LeftHand] = hand; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+    completion = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { Humanoid$ }\n");
+    TIDE_CHECK(!offers(completion, "HumanoidRig") && !offers(completion, "RetargetMap"));
+    completion = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { var rig = HumanoidRig.$ }\n");
+    TIDE_CHECK(!offers(completion, "Auto"));
+    completion = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { HumanoidRig rig = default; rig.$ }\n");
+    TIDE_CHECK(!offers(completion, "GetStatus") && !offers(completion, "referencePose"));
+}
+
+TIDE_TEST(lsp_humanoid_runtime_bake_overloads_and_hints)
+{
+    start();
+    const char *reply = complete("scene Main { }\nvoid Inspect(RetargetMap mapping) { mapping.$ }\n");
+    TIDE_CHECK(offers(reply, "Bake") && !offers(reply, "Create") && has(reply, "sampleRate = 60")
+               && has(reply, "IOError.InvalidData") && has(reply, "AnimationCatalog"));
+    reply = complete("scene Main { }\nview V() { var mapping = RetargetMap.$ }\n");
+    TIDE_CHECK(offers(reply, "Create") && !offers(reply, "Bake"));
+    open_document("scene Main { }\nAnimation Convert(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Ba$ke(clip, target)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/hover");
+    TIDE_CHECK(has(reply, "Bake(Animation source, Skeleton target, float sampleRate = 60) -> Animation fails IOError")
+               && has(reply, "ordinary owned") && has(reply, "no per-frame retargeting"));
+    open_document("scene Main { }\nAnimationCatalog Convert(RetargetMap mapping, AnimationCatalog clips, Skeleton target) {\n"
+                  "    return mapping.Ba$ke(clips, target)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/hover");
+    TIDE_CHECK(has(reply, "Bake(AnimationCatalog source, Skeleton target, float sampleRate = 60) -> AnimationCatalog fails IOError")
+               && has(reply, "approximate"));
+    open_document("scene Main { }\nAnimationCatalog Convert(RetargetMap mapping, AnimationCatalog clips, Skeleton target) {\n"
+                  "    return mapping.Bake(clips, target, $30)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "Bake(Animation source") && has(reply, "Bake(AnimationCatalog source")
+               && has(reply, "\"activeSignature\":1,\"activeParameter\":2"));
+    open_document("scene Main { }\nAnimation Convert(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(sampleRate: 30, target: target, source: $clip)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "\"activeSignature\":0,\"activeParameter\":0"));
+    open_document("scene Main { }\nAnimation Convert(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake($\n");
+    reply = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "Bake(Animation source") && has(reply, "Bake(AnimationCatalog source"));
+    open_document("scene Main { }\nAnimation One(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(clip, target, 30)!;\n}\n"
+                  "AnimationCatalog All(RetargetMap mapping, AnimationCatalog clips, Skeleton target) {\n"
+                  "    return mapping.Bake(clips, target, 24)!;\n}\n"
+                  "Animation DefaultRate(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(clip, target)!;\n}\n"
+                  "Animation NamedRate(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(clip, target, sampleRate: 30)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(count(all_hints(), "\"label\":\"sampleRate:\"") == 2);
+    reply = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { RetargetMap mapping = default; mapping.$ }\n");
+    TIDE_CHECK(!offers(reply, "Bake"));
+}
+
+static const char *humanoid_asset_request(const char *uri, const char *marked, const char *method)
+{
+    char text[4096];
+    size_t n = 0;
+    int line = 0, column = 0, cursor_at_line = 0, cursor_at_column = 0;
+    for (const char *p = marked; *p && n + 1 < sizeof text; p++) {
+        if (*p == '$') { cursor_at_line = line; cursor_at_column = column; continue; }
+        text[n++] = *p;
+        if (*p == '\n') { line++; column = 0; } else column++;
+    }
+    text[n] = '\0';
+    open_uri(uri, text);
+    return request_at(uri, method, cursor_at_line, cursor_at_column, "");
+}
+
+TIDE_TEST(lsp_humanoid_assets_bake_completion_and_signatures)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_humanoid_completion");
+    static const char profile[] = "{\"reference\":{\"file\":\"rig.gltf\",\"pose\":\"rest\"}}";
+    write_file("lsp_humanoid_completion/source.humanoid.json", profile);
+    write_file("lsp_humanoid_completion/target.humanoid.json", profile);
+    write_file("lsp_humanoid_completion/rig.gltf", "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"Hips\"}],"
+               "\"scenes\":[{\"nodes\":[0]}],\"scene\":0}");
+    write_file("lsp_humanoid_completion/clip.gltf", "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Idle\"}]}");
+    write_file("lsp_humanoid_completion/other.txt", "text");
+    write_file("lsp_humanoid_completion/main.tide", "scene Main { }\n");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root[700], uri[700], text[2048];
+    snprintf(root, sizeof root, "file:///%s/lsp_humanoid_completion", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_humanoid_completion/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    TIDE_CHECK(offers(humanoid_asset_request(uri, "[$]\nscene Main { }\n", "textDocument/completion"), "Retarget"));
+    static const char profiles[] = "const string sourcePath = \"source.humanoid.json\";\n"
+                                  "const string targetPath = \"target.humanoid.json\";\n"
+                                  "const string otherPath = \"other.txt\";\n"
+                                  "const string clipPath = \"clip.gltf\";\n"
+                                  "asset HumanoidRig sourceRig = sourcePath;\n"
+                                  "asset HumanoidRig targetRig = targetPath;\n"
+                                  "asset string other = otherPath;\n";
+    snprintf(text, sizeof text, "%s[Retarget($)]\nasset Animation baked = clipPath;\n", profiles);
+    const char *reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "sourceRig") && offers(reply, "targetRig") && !offers(reply, "other") && !offers(reply, "rootScale"));
+    snprintf(text, sizeof text, "%s[Retarget(sourceRig, targetRig, $)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "rootScale") && offers(reply, "rootOffset") && offers(reply, "headingDegrees")
+               && offers(reply, "spineDistribution") && offers(reply, "twistDistribution") && offers(reply, "sampleRate"));
+    TIDE_CHECK(has(reply, "sampleRate: ${1:60}") && !offers(reply, "sourceRig"));
+    snprintf(text, sizeof text, "%s[Retarget(sourceRig, targetRig, sampleRate: 30, $)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "rootOffset") && !offers(reply, "sampleRate"));
+    snprintf(text, sizeof text, "%sconst float3 offset = float3(0, 1, 0);\n"
+             "[Retarget(sourceRig, targetRig, rootOffset: $)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "offset") && offers(reply, "float3") && !offers(reply, "sampleRate"));
+    snprintf(text, sizeof text, "%s[Reta$rget(sourceRig, targetRig)]\nasset Animation baked = clipPath;\n", profiles);
+    TIDE_CHECK(has(humanoid_asset_request(uri, text, "textDocument/hover"), "no per-frame retargeting"));
+    snprintf(text, sizeof text, "%s[Retarget(sourceRig, targetRig, sampleRate: $30)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "HumanoidRig sourceRig") && has(reply, "sampleRate = 60") && has(reply, "\"activeParameter\":7"));
+    TIDE_CHECK(has(humanoid_asset_request(uri, "[Retarget($\n", "textDocument/signatureHelp"), "HumanoidRig targetRig"));
+    remove_game_file("lsp_humanoid_completion/source.humanoid.json");
+    remove_game_file("lsp_humanoid_completion/target.humanoid.json");
+    remove_game_file("lsp_humanoid_completion/rig.gltf");
+    remove_game_file("lsp_humanoid_completion/clip.gltf");
+    remove_game_file("lsp_humanoid_completion/other.txt");
+    remove_game_file("lsp_humanoid_completion/main.tide");
+    remove_game_file("lsp_humanoid_completion/.tide/assets.sha256");
+    remove_game_file("lsp_humanoid_completion/.tide/.gitignore");
+    remove_folder("lsp_humanoid_completion/.tide");
+    remove_folder("lsp_humanoid_completion");
+    clear_sent();
+    lsp_free(&server);
+}
+
+TIDE_TEST(lsp_humanoid_assets_paths_and_bake_references)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_humanoid_assets");
+    make_folder("lsp_humanoid_assets/art");
+    static const char profile[] = "{\"reference\":{\"file\":\"rig.gltf\",\"pose\":\"rest\"}}";
+    static const char rig[] = "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"Hips\",\"translation\":[0,1,0]}],"
+                              "\"scenes\":[{\"nodes\":[0]}],\"scene\":0}";
+    static const char source[] = "namespace Rigs {\n"
+        "    asset HumanoidRig sourceRig = \"art/source.humanoid.json\";\n"
+        "    asset HumanoidRig targetRig = \"art/target.humanoid.json\";\n}\n"
+        "const float rate = 30;\n"
+        "[Retarget(Rigs.sourceRig, Rigs.targetRig, sampleRate: rate, rootOffset: float3(0, 0, 0))]\n"
+        "asset Animation baked = \"art/clip.gltf\";\nscene Main { }\n"
+        "asset HumanoidRig unloaded = \"art/unloaded.humanoid.json\";\n";
+    write_file("lsp_humanoid_assets/main.tide", source);
+    write_file("lsp_humanoid_assets/art/source.humanoid.json", profile);
+    write_file("lsp_humanoid_assets/art/target.humanoid.json", profile);
+    // Editor analysis resolves the profile path without importing its model.
+    // A build remains responsible for checking this unavailable reference.
+    write_file("lsp_humanoid_assets/art/unloaded.humanoid.json",
+               "{\"reference\":{\"file\":\"not-available.fbx\",\"pose\":\"rest\"}}");
+    write_file("lsp_humanoid_assets/art/unrelated.json", "{}");
+    write_file("lsp_humanoid_assets/art/rig.gltf", rig);
+    write_file("lsp_humanoid_assets/art/clip.gltf", "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Idle\"}]}");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root[700], uri[700];
+    snprintf(root, sizeof root, "file:///%s/lsp_humanoid_assets", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_humanoid_assets/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri, source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *reply = request_at(uri, "textDocument/completion", 1, (int)strlen("    asset HumanoidRig sourceRig = \"art/"), "");
+    TIDE_CHECK(offers(reply, "source.humanoid.json") && offers(reply, "target.humanoid.json")
+               && !offers(reply, "unrelated.json") && !offers(reply, "rig.gltf") && !offers(reply, "*.humanoid.json"));
+    reply = request_at(uri, "textDocument/hover", 5, (int)strlen("[Retarget(Rigs.s"), "");
+    TIDE_CHECK(has(reply, "asset HumanoidRig sourceRig") && has(reply, ".humanoid.json profile"));
+    reply = request_at(uri, "textDocument/hover", 6, (int)strlen("asset Animation b"), "");
+    TIDE_CHECK(has(reply, "no per-frame retargeting"));
+    reply = request_at(uri, "textDocument/definition", 5, (int)strlen("[Retarget(Rigs.s"), "");
+    TIDE_CHECK(has(reply, "\"line\":1"));
+    reply = request_at(uri, "textDocument/references", 1, (int)strlen("    asset HumanoidRig s"), "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(reply, "\"uri\"") == 2);
+    request_at(uri, "textDocument/rename", 5, (int)strlen("[Retarget(Rigs.s"), "\"newName\":\"calibrated\"");
+    const char *edited = apply_reply(source, uri);
+    TIDE_CHECK(has(edited, "asset HumanoidRig calibrated") && has(edited, "Retarget(Rigs.calibrated, Rigs.targetRig"));
+    request_at(uri, "textDocument/rename", 4, (int)strlen("const float r"), "\"newName\":\"frequency\"");
+    edited = apply_reply(source, uri);
+    TIDE_CHECK(has(edited, "const float frequency") && has(edited, "sampleRate: frequency"));
+    request_at(uri, "textDocument/rename", 0, (int)strlen("namespace R"), "\"newName\":\"Profiles\"");
+    edited = apply_reply(source, uri);
+    TIDE_CHECK(has(edited, "namespace Profiles") && has(edited, "Retarget(Profiles.sourceRig, Profiles.targetRig"));
+    will_rename("lsp_humanoid_assets/art/source.humanoid.json", "lsp_humanoid_assets/art/calibrated.humanoid.json");
+    TIDE_CHECK(has(apply_reply(source, uri), "art/calibrated.humanoid.json"));
+    remove_game_file("lsp_humanoid_assets/art/source.humanoid.json");
+    remove_game_file("lsp_humanoid_assets/art/target.humanoid.json");
+    remove_game_file("lsp_humanoid_assets/art/unloaded.humanoid.json");
+    remove_game_file("lsp_humanoid_assets/art/unrelated.json");
+    remove_game_file("lsp_humanoid_assets/art/rig.gltf");
+    remove_game_file("lsp_humanoid_assets/art/clip.gltf");
+    remove_game_file("lsp_humanoid_assets/main.tide");
+    remove_game_file("lsp_humanoid_assets/.tide/assets.sha256");
+    remove_game_file("lsp_humanoid_assets/.tide/.gitignore");
+    remove_folder("lsp_humanoid_assets/.tide");
+    remove_folder("lsp_humanoid_assets/art");
+    remove_folder("lsp_humanoid_assets");
+    clear_sent();
+    lsp_free(&server);
 }
 
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)

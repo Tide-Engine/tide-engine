@@ -37,6 +37,9 @@ typedef struct tide_mesh_lists {
 // Grid2<float> to a Texture. It names the grid, by where its directory is
 // and how its cells are laid out, and is sampled as `sampling` says
 // (tide_sampling_bits). The default Texture for a grid of any other cells.
+// `image.version` has the handle's low 32 bits, the cells and the chunks'
+// shifts; `image.width`, which a grid's texture has no other use for, the
+// handle's high 32 bits.
 //
 // It's the grid for as long as the grid is there. One that outlives its grid
 // (the entity it was a field of is gone, the match is another) names whatever
@@ -49,10 +52,49 @@ static inline tide_texture_ref tide_texture_of_grid(const tide_grid grid, const 
     if (shape->dims != 2u || (!colors && shape->cell != sizeof(float)) || shape->shift[0] > 15u || shape->shift[1] > 15u) {
         return (tide_texture_ref){0};
     }
-    const uint64_t named = (uint64_t)grid.at | (uint64_t)(colors ? 1u : 2u) << 32 | (uint64_t)shape->shift[0] << 40
+    const uint64_t named = (uint64_t)(uint32_t)grid.at | (uint64_t)(colors ? 1u : 2u) << 32 | (uint64_t)shape->shift[0] << 40
                          | (uint64_t)shape->shift[1] << 48;
-    return tide_texture_sampled((tide_texture_ref){.image = {.height = TIDE_TEXTURE_GRID, .version = named}}, sampling);
+    const int32_t high = (int32_t)(uint32_t)(grid.at >> 32);
+    return tide_texture_sampled((tide_texture_ref){.image = {.width = high, .height = TIDE_TEXTURE_GRID, .version = named}}, sampling);
 }
+
+// A Grid3 of colors or of floats as a TextureArray: its layers (z) as the array's, as it is whenever it's drawn. A
+// name, as a grid's Texture is: nothing is copied here. None for a grid that isn't one of those.
+static inline tide_texture_array_ref tide_texture_array_of_grid(const tide_grid grid, const tide_grid_shape *shape, const bool raw)
+{
+    const bool colors = shape->cell == sizeof(tide_color);
+    if (shape->dims != 3u || (!colors && shape->cell != sizeof(float)) || shape->shift[0] > 15u || shape->shift[1] > 15u
+        || shape->shift[2] > 15u) {
+        return (tide_texture_array_ref){0};
+    }
+    return (tide_texture_array_ref){.named = (uint64_t)grid.at, .reserved = TIDE_TEXTURE_ARRAY_GRID,
+                                    .layers = (colors ? (raw ? 3u : 1u) : 2u) | (uint32_t)shape->shift[0] << 8 | (uint32_t)shape->shift[1] << 16
+                                            | (uint32_t)shape->shift[2] << 24};
+}
+
+// The grid an array names, with its cells' shape: false for an array that's no grid's. A [Raw] grid's colors are
+// numbers (tide_texture_array_grid_raw).
+static inline bool tide_texture_array_grid(const tide_texture_array_ref array, tide_grid *grid, tide_grid_shape *shape)
+{
+    const uint32_t cells = array.layers & 255u;
+    if (array.target.id || array.reserved != TIDE_TEXTURE_ARRAY_GRID || cells < 1u || cells > 3u) return false;
+    *grid = (tide_grid){(tide_handle)array.named};
+    *shape = (tide_grid_shape){.dims = 3u, .cell = cells == 2u ? (uint32_t)sizeof(float) : (uint32_t)sizeof(tide_color),
+                               .shift = {(uint8_t)(array.layers >> 8), (uint8_t)(array.layers >> 16), (uint8_t)(array.layers >> 24)}};
+    return true;
+}
+
+static inline bool tide_texture_array_grid_raw(const tide_texture_array_ref array)
+{
+    return array.reserved == TIDE_TEXTURE_ARRAY_GRID && (array.layers & 255u) == 3u;
+}
+
+// A Grid3's texture of the list's, for an array read by a shader (TIDE_PIXELS_GRID_ARRAY): 0 for a grid that's no
+// array (no size on an axis, more than TIDE_TEXTURE_ARRAY_LAYERS layers, or a side past TIDE_GRID_TEXTURE_MOST).
+// `raw`: colors as they are, with no alpha worked into them.
+uint32_t tide_draw_grid_array_texture(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, bool raw);
+// Its size, and its layers: zeros for one that's none.
+tide_int3 tide_grid_array_extent(tide_grid grid, const tide_grid_shape *shape);
 
 // The grid a texture names, with its cells' shape: false for a texture that's
 // no grid's.
@@ -62,7 +104,7 @@ static inline bool tide_texture_grid(const tide_texture_ref texture, tide_grid *
     const uint64_t named = texture.image.version;
     const uint32_t cells = (uint32_t)(named >> 32) & 255u;
     if (cells != 1u && cells != 2u) return false;
-    *grid = (tide_grid){(uint32_t)named};
+    *grid = (tide_grid){(tide_handle)(uint32_t)texture.image.width << 32 | (uint32_t)named};
     *shape = (tide_grid_shape){.cell = cells == 1u ? (uint32_t)sizeof(tide_color) : (uint32_t)sizeof(float), .dims = 2u,
                                .shift = {(uint32_t)(named >> 40) & 15u, (uint32_t)(named >> 48) & 15u, 0u}};
     return true;
@@ -71,11 +113,30 @@ static inline bool tide_texture_grid(const tide_texture_ref texture, tide_grid *
 void tide_draw_mesh_lists(tide_draw_list *d, tide_list vertices, tide_list indices);
 void tide_draw_mesh_texture(tide_draw_list *d, tide_list vertices, tide_list indices, tide_texture_ref texture);
 
+// A static Mesh<V> the game made, Mesh(vertices, indices): what its two lists
+// hold, as a number with its top bit set, which no asset's id has (they're
+// positive), and the same on every machine. It's worked out once, as the
+// mesh is made; the lists are its own after, which nothing writes.
+uint64_t tide_mesh_key(tide_list vertices, uint32_t vertex_size, tide_list indices);
+
+// Tells the draw that comes next of `lists` that they hold what `key` says
+// (tide_mesh_key): that draw takes the key as their version, with no list
+// read, and every copy of the mesh is one mesh on the GPU. The first draw of
+// two lists after it clears it, whichever lists it draws, and so does a key
+// of 0 (generated code gives one after the draw). A key with its top bit
+// clear is none.
+void tide_draw_mesh_key(tide_draw_list *d, tide_mesh_lists lists, uint64_t key);
+
 // The same in 3D, with lists of `Vertex3` and a transform: Tide's
 // Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]]). The lists are
 // a mesh the draw list keeps (see tide_draw_mesh_slot): a list that doesn't
 // change costs a hash of its pages' hashes to draw again, not a copy.
 void tide_draw_mesh3_lists(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform);
+
+// The next mesh draw that asks for levels (tide_draw_want_levels) draws a skinned model whose canonical bytes are
+// `model` (SkinnedMesh<V>.data): how its vertices follow their bones is weighed too, as an asset's [LOD] does.
+// Read while that draw is recorded; tide_draw_want_levels(d, 0, NULL) forgets it.
+void tide_draw_want_bones(tide_draw_list *d, tide_list model);
 void tide_draw_mesh3_texture(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform,
                              tide_texture_ref texture);
 
@@ -178,3 +239,20 @@ void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, tide_li
 void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
                                      const void *instances, uint32_t count, const void *uniforms,
                                      const uint32_t *textures, uint64_t sampling);
+
+// Draw.Instanced over a GPU list (tide_draw_shaded_indirect): the mesh of the two lists, once for each element
+// `instances` has on the GPU, indirect.
+void tide_draw_mesh_shaded_indirect(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
+                                    tide_gpu_list instances, const tide_gpu_list *storage, const void *uniforms,
+                                    const uint32_t *textures, uint64_t sampling);
+
+// Draw.Instanced of a list the list keeps: `write` writes an item's instance (tide_shader_instance_size bytes, as
+// ints) from the item alone, and `layout` names that writing (two layouts of one list are kept apart). Where the
+// shader has a listed vertex stage (tide_shader.listed), the items' instances go into a region of
+// one of the draw list's pages of numbers, kept while a world's list stays as it was the frame before (the frame's
+// own region otherwise), and the runs have only the places of those drawn (tide_draw_run.listed): culled, picked
+// and merged as tide_draw_mesh_shaded_instances's, to the same runs. Otherwise (no listed stage, a 3D transform
+// set, no room) nothing is drawn and it says false, for the caller to draw the instances it packs.
+bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
+                                tide_list items, uint32_t item_size, tide_list_words_fn *write, uint32_t layout,
+                                const void *uniforms, const uint32_t *textures, uint64_t sampling);

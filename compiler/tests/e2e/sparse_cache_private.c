@@ -159,13 +159,15 @@ static void private_init_large(tide_world *w)
     TIDE_REQUIRE(w->arch0_Item.count == 2081u && w->arch1_Item_Extra_Gauge.count == 2082u);
     for (uint32_t a = 0u; a < 2u; a++) {
         const private_arch at = private_arch_at(w, a);
-        TIDE_REQUIRE(at.table->chunks == 2u && at.columns->shift == 11u);
+        const uint32_t capacity = 1u << at.columns->shift;
+        TIDE_REQUIRE(at.table->chunks == (at.table->count + capacity - 1u) / capacity);
+        TIDE_REQUIRE(at.table->chunks > 1u && at.table->count % capacity != 0u);
         for (uint32_t c = 0u; c < at.table->chunks; c++) {
             const uint32_t rows = tide_table_rows(at.table, at.columns->shift, c);
             uint8_t *needed = tide_table_column_mut(at.table, at.columns, c, at.needed);
             uint8_t *blocked = tide_table_column_mut(at.table, at.columns, c, at.blocked);
-            // Both full chunks and both short tails have a rare positive
-            // selection, independently of spawn ordering or entity IDs.
+            // Every full chunk and both short tails have a rare positive
+            // selection, independently of chunk capacity, spawn ordering or IDs.
             for (uint32_t i = 0u; i < rows; i++) {
                 needed[i] = (uint8_t)(i % 97u == 0u);
                 blocked[i] = (uint8_t)((i + 53u) % 191u == 0u);
@@ -204,13 +206,19 @@ static void private_same_worlds(tide_world *a, tide_world *b)
 }
 
 typedef struct private_holds {
-    tide_page *pages[64];
-    uint32_t count;
+    tide_page **pages;
+    uint32_t count, room;
 } private_holds;
 
 static void private_hold(private_holds *holds, tide_page *page)
 {
-    TIDE_REQUIRE(holds->count < sizeof holds->pages / sizeof holds->pages[0]);
+    if (holds->count == holds->room) {
+        const uint32_t room = holds->room ? holds->room * 2u : 16u;
+        tide_page **const pages = realloc(holds->pages, (size_t)room * sizeof *pages);
+        TIDE_REQUIRE(pages != NULL);
+        holds->pages = pages;
+        holds->room = room;
+    }
     tide_page_retain(page);
     holds->pages[holds->count++] = page;
 }
@@ -218,7 +226,8 @@ static void private_hold(private_holds *holds, tide_page *page)
 static void private_release(private_holds *holds)
 {
     for (uint32_t i = 0u; i < holds->count; i++) tide_page_release(holds->pages[i], 1u);
-    holds->count = 0u;
+    free(holds->pages);
+    *holds = (private_holds){0};
 }
 
 static void private_share_gauges(tide_world *w, private_holds *holds)
@@ -263,14 +272,16 @@ static void private_run_task_pairs(tide_world *fast, tide_world *slow)
 {
     uint64_t work = 0u;
     const uint32_t update_tasks = tide_tasks_Update(fast, &work);
-    TIDE_REQUIRE(update_tasks == 4u && update_tasks == tide_tasks_Update(slow, &work));
+    const uint32_t expected_update = fast->arch0_Item.chunks + fast->arch1_Item_Extra_Gauge.chunks;
+    TIDE_REQUIRE(update_tasks == expected_update && update_tasks == tide_tasks_Update(slow, &work));
     for (uint32_t task = 0u; task < update_tasks; task++) {
         tide_task_Update(fast, task, 1u);
         tide_task_Update_slow(slow, task, 1u);
         private_same_worlds(fast, slow);
     }
     const uint32_t extra_tasks = tide_tasks_UpdateExtra(fast, &work);
-    TIDE_REQUIRE(extra_tasks == 2u && extra_tasks == tide_tasks_UpdateExtra(slow, &work));
+    TIDE_REQUIRE(extra_tasks == fast->arch1_Item_Extra_Gauge.chunks &&
+                 extra_tasks == tide_tasks_UpdateExtra(slow, &work));
     for (uint32_t task = 0u; task < extra_tasks; task++) {
         tide_task_UpdateExtra(fast, task, 1u);
         tide_task_UpdateExtra_slow(slow, task, 1u);
@@ -326,6 +337,7 @@ TIDE_TEST(sparse_cache_private_task_stale_keys_and_zero_matches_use_the_correct_
     // Retained presence references force replacement without changing bytes;
     // neither cache may be prepared again before these direct task calls.
     tide_page *const was = private_page(fa, 1u, fa.needed);
+    TIDE_REQUIRE(was->refs > 1u); // A published cache really retains this presence page.
     (void)tide_table_column_mut(fa.table, fa.columns, 1u, fa.needed);
     (void)tide_table_column_mut(sa.table, sa.columns, 1u, sa.needed);
     TIDE_REQUIRE(private_page(fa, 1u, fa.needed) != was);

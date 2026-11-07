@@ -14,7 +14,7 @@ set_tests_properties(tide_network_udp PROPERTIES TIMEOUT 120)
 
 # The same game under the standard host (tide/run.h), in a run with no
 # window: what the host itself does with the game's network. Nothing shows,
-# but such a run needs a desktop session with OpenGL (platform/CMakeLists.txt).
+# but such a run needs a desktop session with Vulkan (platform/CMakeLists.txt).
 if(TARGET tide_platform AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     tide_add_game(tide_network_hosted SOURCES game.tide test/hosted.tide udp.c test/hosted.c)
     add_test(NAME tide_network_hosted COMMAND tide_network_hosted --frames 20)

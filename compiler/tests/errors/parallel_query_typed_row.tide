@@ -1,0 +1,11 @@
+// expect: a query row takes its type from the query: write 'parallel (var f in ...)'
+component Body { float x; }
+event Hit { }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    parallel (Body f in bodies)
+    {
+        if (f.body.x > 1) f.entity.Send(Hit { });
+    }
+}

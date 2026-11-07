@@ -51,7 +51,7 @@ TIDE_TEST(component_loads_copy_current_match_rows_and_complete_layouts)
     TIDE_CHECK(world.LoadProbe.seen == -19.5); // Alias World.Get reads the replacement page.
 
     const tide_entity absent[] = {{0}, world.LoadProbe.other,
-        {selected.index, selected.generation + 1u}, {UINT32_MAX, UINT32_MAX}};
+        {selected.birth, selected.lineage ^ UINT64_C(1)}, {UINT64_MAX, UINT64_MAX}};
     const LoadWide zero = {0};
     for (size_t i = 0; i < sizeof absent / sizeof absent[0]; i++) {
         TIDE_CHECK(!tide_has_LoadWide(&world, absent[i]));

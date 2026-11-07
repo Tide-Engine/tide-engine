@@ -1,11 +1,13 @@
-// Desktop windows (see src/window.h): GLFW's, drawn in with Vulkan where the
-// machine has it (src/gpu_vk.c; on a Mac, MoltenVK beside the program) and
-// with an OpenGL 3.3 context where it hasn't, and the keyboard, mouse, gamepads and clipboard through it. Touchscreens are
-// Windows' own (src/touch_win32.c): GLFW has no touch, so other desktops have
-// none yet.
+// Desktop windows (see src/window.h): GLFW's, drawn in with Vulkan 1.3
+// (src/gpu_vk.c; on a Mac, MoltenVK beside the program), which a game needs:
+// a machine without it is told so, in a dialog of the system's where one can
+// be shown. The keyboard, mouse, gamepads and clipboard go through GLFW. Touchscreens are
+// the system's own, as GLFW has no touch: Windows' pointer messages
+// (src/touch_win32.c) and X11's touch events on Linux (src/touch_x11.c). A
+// Mac's have none.
 
 #if !defined(_WIN32) && !defined(__APPLE__)
-#define _DEFAULT_SOURCE // readlink under strict C
+#define _DEFAULT_SOURCE // readlink and posix_spawnp under strict C
 #endif
 
 #include "window.h"
@@ -15,7 +17,7 @@
 #include <string.h>
 
 #include "gpu_vk.h" // Before GLFW's header, which declares its Vulkan functions where Vulkan's types are
-#define GLFW_INCLUDE_NONE // Its OpenGL is ours (src/gl.h)
+#define GLFW_INCLUDE_NONE // No OpenGL: the window is Vulkan's
 #include <GLFW/glfw3.h>
 
 #include "tide/page.h"
@@ -26,16 +28,21 @@
 #endif
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #else
+#include <spawn.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
-#include "gl.h"
 #include "touch_win32.h"
+#include "touch_x11.h"
 
 #ifdef _WIN32
 void *glfwGetWin32Window(GLFWwindow *window); // GLFW's glfw3native.h, without Windows' headers: an HWND
+#elif defined(__linux__)
+unsigned long glfwGetX11Window(GLFWwindow *window); // ...without X11's: a Window
 #endif
 
 #define COUNT_OF(array) (sizeof(array) / sizeof((array)[0]))
@@ -112,7 +119,7 @@ static const struct {
 _Static_assert(COUNT_OF(pad_buttons) == TIDE_PAD_COUNT, "every gamepad button needs GLFW's");
 
 static GLFWwindow *window;
-static bool vulkan; // What draws in it is Vulkan, else OpenGL
+static bool vulkan; // Vulkan is open on it
 static int pixel_width = 1, pixel_height = 1; // The framebuffer's, as of when it last had a size
 static double wheel_x, wheel_y;               // Since the last tide_window_mouse_state
 static bool paste_asked;
@@ -141,7 +148,7 @@ static double moved_from_x, moved_from_y; // GLFW's own position for it as of th
 
 static void on_error(const int code, const char *text)
 {
-    // Only while pasting: it's also how a window with no OpenGL to be had says why
+    // Only while pasting: a clipboard with no text says so this way
     if (pasting && code == GLFW_FORMAT_UNAVAILABLE) return;
     fprintf(stderr, "tide: GLFW: %s (0x%X)\n", text, (unsigned)code);
 }
@@ -203,7 +210,7 @@ static void framebuffer_size(int *width, int *height)
 // its validation layer), else MoltenVK, Vulkan on Metal, which tide puts
 // beside every game it builds, and an app has in its bundle's Frameworks.
 // GLFW is handed the one found, and makes the window's surface with it; with
-// none, it looks where it does by itself, and the window draws with OpenGL.
+// none, it looks where it does by itself, and there's no window to draw in.
 static void find_vulkan(void)
 {
     static void *library;
@@ -223,21 +230,11 @@ static void find_vulkan(void)
 }
 #endif
 
-// A window, not yet shown: one for Vulkan has no OpenGL context.
-static GLFWwindow *make_window(const tide_window_desc *desc, const bool hidden, const bool gl)
+// A window, not yet shown, for Vulkan: no OpenGL context.
+static GLFWwindow *make_window(const tide_window_desc *desc, const bool hidden)
 {
     glfwDefaultWindowHints();
-    if (gl) {
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // The only core contexts macOS makes
-        // With depth and stencil, as every render target has: what draws in the window draws the same in one
-        glfwWindowHint(GLFW_DEPTH_BITS, 24);
-        glfwWindowHint(GLFW_STENCIL_BITS, 8);
-    } else {
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    }
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     glfwWindowHint(GLFW_FOCUSED, hidden ? GLFW_FALSE : GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, hidden ? GLFW_FALSE : GLFW_TRUE);
@@ -247,6 +244,54 @@ static GLFWwindow *make_window(const tide_window_desc *desc, const bool hidden, 
     // (Windows, X11). It renders at the display's full resolution either way.
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
     return glfwCreateWindow(desc->width, desc->height, desc->title ? desc->title : "", NULL, NULL);
+}
+
+// What a machine that can't draw a game is told: on stderr, and where somebody
+// can see it (not in a quiet run, TIDE_HIDDEN), in a dialog of the system's.
+// Linux has no dialog of its own, so the first of zenity, kdialog and xmessage
+// it has shows it.
+static void say_needs_vulkan(const char *why)
+{
+    static const char title[] = "This game can't draw";
+    char text[768];
+    snprintf(text, sizeof text,
+             "This game needs Vulkan 1.3 to draw, and %s.\n\nUpdating the graphics driver usually brings it: "
+             "any GPU from 2016 on has it with a current driver.", why);
+    fprintf(stderr, "tide: %s\n", text);
+    if (tide_hidden()) return;
+#ifdef _WIN32
+    wchar_t wide_title[64], wide_text[768];
+    if (MultiByteToWideChar(CP_UTF8, 0, title, -1, wide_title, (int)COUNT_OF(wide_title)) &&
+        MultiByteToWideChar(CP_UTF8, 0, text, -1, wide_text, (int)COUNT_OF(wide_text)))
+        MessageBoxW(NULL, wide_text, wide_title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+#elif defined(__APPLE__)
+    CFStringRef cf_title = CFStringCreateWithCString(NULL, title, kCFStringEncodingUTF8);
+    CFStringRef cf_text = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
+    CFOptionFlags answer = 0;
+    if (cf_title && cf_text)
+        CFUserNotificationDisplayAlert(0, kCFUserNotificationStopAlertLevel, NULL, NULL, NULL, cf_title, cf_text, NULL,
+                                       NULL, NULL, &answer);
+    if (cf_title) CFRelease(cf_title);
+    if (cf_text) CFRelease(cf_text);
+#else
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return;
+    extern char **environ;
+    char *const dialogs[][6] = {
+        {"zenity", "--error", "--title", (char *)title, "--text", text},
+        {"kdialog", "--title", (char *)title, "--error", text, NULL},
+        {"xmessage", "-center", text, NULL, NULL, NULL},
+    };
+    for (size_t i = 0; i < COUNT_OF(dialogs); i++) {
+        char *argv[7] = {0};
+        for (int k = 0; k < 6; k++) argv[k] = dialogs[i][k];
+        pid_t child = 0;
+        if (posix_spawnp(&child, argv[0], NULL, NULL, argv, environ) != 0) continue;
+        int status = 0;
+        // A dialog program that isn't there ends at once with 127, as the shell's would
+        if (waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 127) continue;
+        return;
+    }
+#endif
 }
 
 bool tide_window_open(const tide_window_desc *desc)
@@ -261,48 +306,33 @@ bool tide_window_open(const tide_window_desc *desc)
         fprintf(stderr, "tide: no desktop to open a window on\n");
         return false;
     }
-    // Vulkan where the machine has a device for it, else OpenGL; TIDE_BACKEND
-    // picks one, and a Vulkan asked for that isn't there is a failure
-    const char *backend = getenv("TIDE_BACKEND");
-    const bool asks_vulkan = backend && strcmp(backend, "vulkan") == 0;
-    const bool asks_gl = backend && strcmp(backend, "opengl") == 0;
-    if (backend && *backend && !asks_vulkan && !asks_gl) {
-        fprintf(stderr, "tide: TIDE_BACKEND is \"%s\", where it's vulkan or opengl\n", backend);
-        glfwTerminate();
-        return false;
-    }
     vulkan = false;
-    if (!asks_gl && glfwVulkanSupported()) {
-        uint32_t count = 0;
-        const char **extensions = glfwGetRequiredInstanceExtensions(&count);
-        window = extensions ? make_window(desc, hidden, false) : NULL;
-        if (window) {
-            const tide_vk_window vk = {instance_proc, extensions, count, make_surface, framebuffer_size, !hidden};
-            vulkan = tide_gpu_vk_open(&vk, asks_vulkan);
-            if (!vulkan) {
-                glfwDestroyWindow(window);
-                window = NULL;
-            }
-        }
-    }
-    if (asks_vulkan && !vulkan) {
-        fprintf(stderr, "tide: TIDE_BACKEND asks for Vulkan, and this machine has none to draw with\n");
+    if (!glfwVulkanSupported()) {
+        say_needs_vulkan("this machine has no Vulkan driver (no Vulkan loader was found)");
         glfwTerminate();
         return false;
     }
+    uint32_t count = 0;
+    const char **extensions = glfwGetRequiredInstanceExtensions(&count);
+    if (!extensions) {
+        say_needs_vulkan("this machine's Vulkan can't draw in a window");
+        glfwTerminate();
+        return false;
+    }
+    window = make_window(desc, hidden);
+    if (!window) {
+        fprintf(stderr, "tide: no window to be had\n");
+        glfwTerminate();
+        return false;
+    }
+    const tide_vk_window vk = {instance_proc, extensions, count, make_surface, framebuffer_size, !hidden};
+    vulkan = tide_gpu_vk_open(&vk, true); // Which says why on stderr where it finds no device
     if (!vulkan) {
-        window = make_window(desc, hidden, true);
-        if (!window) {
-            fprintf(stderr, "tide: no window with OpenGL 3.3 to be had\n");
-            glfwTerminate();
-            return false;
-        }
-        glfwMakeContextCurrent(window);
-        if (!tide_gl_load(glfwGetProcAddress)) {
-            tide_window_close();
-            return false;
-        }
-        glfwSwapInterval(hidden ? 0 : 1);
+        glfwDestroyWindow(window);
+        window = NULL;
+        say_needs_vulkan("this machine has no GPU whose driver has it with what Tide needs");
+        glfwTerminate();
+        return false;
     }
 
     for (size_t i = 0; i < COUNT_OF(keys); i++) key_of[keys[i].glfw] = (int16_t)(keys[i].key + 1);
@@ -318,6 +348,8 @@ bool tide_window_open(const tide_window_desc *desc)
     locked = false;
 #ifdef _WIN32
     tide_win32_touch_attach(glfwGetWin32Window(window));
+#elif defined(__linux__)
+    tide_x11_touch_attach(glfwGetX11Window(window));
 #endif
 
     if (!hidden) {
@@ -342,13 +374,16 @@ GLFWwindow *tide_glfw_window(void)
 
 const tide_gpu *tide_window_gpu(void)
 {
-    return vulkan ? &tide_gpu_vulkan : &tide_gpu_gl;
+    return &tide_gpu_vulkan;
 }
 
 void tide_window_close(void)
 {
     if (vulkan) tide_gpu_vk_close(); // Before the window its surface is of
     vulkan = false;
+#ifdef __linux__
+    tide_x11_touch_detach(); // Before the window it took the touches of
+#endif
     if (window) glfwDestroyWindow(window);
     window = NULL;
     glfwTerminate();
@@ -397,8 +432,7 @@ void tide_window_size(int *width, int *height)
 
 void tide_window_present(void)
 {
-    if (vulkan) tide_gpu_vk_present();
-    else glfwSwapBuffers(window);
+    if (vulkan) tide_gpu_vk_present_updating(tide_window_update_while_waiting);
     glfwPollEvents();
 }
 
@@ -499,6 +533,8 @@ bool tide_window_touchscreen(void)
 {
 #ifdef _WIN32
     return tide_win32_touchscreen();
+#elif defined(__linux__)
+    return tide_x11_touchscreen();
 #else
     return false;
 #endif
@@ -506,8 +542,14 @@ bool tide_window_touchscreen(void)
 
 bool tide_window_take_touch(tide_touch_report *report)
 {
+#if defined(_WIN32) || defined(__linux__)
 #ifdef _WIN32
     if (!tide_win32_take_touch(report)) return false;
+#else
+    int across = 0, down = 0; // X11's pixels, as the touches are
+    glfwGetWindowSize(window, &across, &down);
+    if (!tide_x11_take_touch(report, across, down)) return false;
+#endif
     int width, height;
     tide_window_size(&width, &height);
     report->x *= (float)width;
@@ -550,7 +592,7 @@ void tide_window_typing(const bool typing)
 
 // The program's own path, with its extension replaced by .pack: what tide
 // build and tide_add_game put a game's assets in, beside it.
-uint8_t *tide_window_pack(size_t *size)
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
 {
     *size = 0;
     char path[4096];
@@ -571,18 +613,5 @@ uint8_t *tide_window_pack(size_t *size)
     if (dot && (!slash || dot > slash) && (!backslash || dot > backslash)) *dot = '\0';
     if (strlen(path) + 6 >= sizeof path) return NULL;
     strcat(path, ".pack");
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    const long length = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
-    const bool ok = bytes && fread(bytes, 1, (size_t)length, f) == (size_t)length;
-    fclose(f);
-    if (!ok) {
-        free(bytes);
-        return NULL;
-    }
-    *size = (size_t)length;
-    return bytes;
+    return tide_platform_read_counted(path, size, progress);
 }

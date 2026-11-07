@@ -31,6 +31,8 @@ local singleton Look
     RenderTarget target;
     bool leave;              // The blocks are left early
     Depth kept = Depth.Read; // A value like any other enum's
+    Depth pre = Depth.Only;  // ...the pre-pass's and the lit pass's too
+    Depth lit = Depth.Equal;
     List<Corner> corners;
     List<int> faces;
     List<Spot> spots;

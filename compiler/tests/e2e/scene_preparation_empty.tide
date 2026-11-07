@@ -1,0 +1,17 @@
+#if READINESS_ONLY
+scene Main;
+#else
+scene Main { prepare() {} }
+#endif
+local scene Menu;
+local singleton UI { LocalEntity menu; bool ready; bool matchReady; int frames; }
+
+bool LocalReady(LocalEntity scene) { return Scene.IsPrepared(scene: scene); }
+
+view Check(with Main, mut UI ui)
+{
+    if (ui.frames == 0) ui.menu = Scene.Load(Menu);
+    ui.ready = LocalReady(ui.menu);
+    ui.matchReady = Scene.IsPrepared(this);
+    ui.frames += 1;
+}

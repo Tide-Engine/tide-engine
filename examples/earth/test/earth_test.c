@@ -30,6 +30,9 @@ static void draw_world(const tide_world *w, const tide_player_id who)
     }
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, who, 0, true, false, "");
     tide_local_frame_time(&local, 1.0f / 60.0f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 1.0f / 60.0f);
+#endif
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(640, 480), NULL);
     tide_frame(w, NULL, 1, w, NULL, 1, &local, &draw, &gui);
@@ -207,7 +210,7 @@ TIDE_TEST(earth_ground_detail_is_seamless_and_cached)
         }
     }
     const uint64_t id = texture->id, version = texture->version;
-    const uint32_t mesh = local.Land.shown.at;
+    const tide_handle mesh = local.Land.shown.at;
     draw_world(NULL, player(0));
     bool kept = false;
     for (uint32_t i = 0; i < draw.texture_count; i++) {
@@ -449,7 +452,7 @@ TIDE_TEST(earth_hills_match_the_drawn_surface_and_stay_gentle)
         }
     }
     TIDE_CHECK(tide_list_count(local.Land.chunks) <= 2048);
-    const uint32_t terrain = local.Land.shown.at, plants = local.Flora.plants.at;
+    const tide_handle terrain = local.Land.shown.at, plants = local.Flora.plants.at;
     local.Pilot.look = local.Pilot.facing = (tide_float3){0, -up.z, up.y};
     draw_world(NULL, player(0));
     TIDE_CHECK(local.Land.shown.at == terrain);
@@ -1182,7 +1185,7 @@ static void check_join_recovery(const bool applied)
     const tide_entity restored = walker_of(w, before.player);
     TIDE_CHECK(w->Roster.online == 1 && w->Roster.next == 1);
     TIDE_CHECK(!tide_entity_is_null(restored));
-    if (applied) TIDE_CHECK(restored.index == avatar.index && restored.generation == avatar.generation);
+    if (applied) TIDE_CHECK(tide_entity_equal(restored, avatar));
     TIDE_CHECK(after.state == TIDE_SESSION_CONNECTED && after.player.id == before.player.id && after.cookie == before.cookie);
     tide_shard_client_destroy(first.client); first.client = NULL;
     if (applied) {

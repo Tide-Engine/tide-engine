@@ -1,0 +1,18 @@
+// expect: a group's size along an axis is a whole number from 1 to 256
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+[Group(0)]
+compute Inner(Meadow meadow) { meadow.counts[0] = 1; }
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

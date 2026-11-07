@@ -1,6 +1,6 @@
 // Android's window (see src/window.h): Android's NativeActivity, drawn in with
-// Vulkan where the device has what the renderer needs (src/gpu_vk.h), else
-// with OpenGL ES 3 through EGL, and no Java of our own.
+// Vulkan 1.3 (src/gpu_vk.h), and no Java of our own. A device without it
+// shows what the game needs instead, drawn by the CPU into the window.
 //
 // Android starts the app by loading its library and calling
 // ANativeActivity_onCreate on its main thread, which mustn't block. The program
@@ -17,6 +17,8 @@
 // The screen is the window in the display's logical pixels, as a browser's CSS
 // pixels are: its own pixels over (dpi / 160). It renders the window's own
 // pixels, so it's sharp.
+//
+// An app ends with _exit, never exit: see __wrap_exit, at the end.
 
 #include "window.h"
 
@@ -28,17 +30,18 @@
 #include <android/looper.h>
 #include <android/native_activity.h>
 #include <android/native_window.h>
-#include <EGL/egl.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <jni.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include "font.h"
 #include "gpu_vk.h"
 #include "vulkan/vulkan_android.h"
 
@@ -68,11 +71,7 @@ static struct {
     ALooper *looper;
     AInputQueue *queue;
     ANativeWindow *window;
-    EGLDisplay display;
-    EGLConfig config;
-    EGLContext context;
-    EGLSurface surface;
-    bool vulkan;           // What draws is Vulkan, else OpenGL ES
+    bool vulkan;           // Vulkan is open on the window
     void *vulkan_library;  // libvulkan.so, opened where there's one
     float scale;                    // The window's pixels per logical pixel
     int width, height;              // The window's size in logical pixels, as of when it last had one...
@@ -124,6 +123,9 @@ static void *log_lines(void *pipe_read)
     }
 }
 
+static pthread_t log_thread;
+static bool logging; // log_thread runs: what's written reaches the log once it has read it
+
 static void log_output(void)
 {
     int fds[2];
@@ -133,8 +135,22 @@ static void log_output(void)
     dup2(fds[1], STDOUT_FILENO);
     dup2(fds[1], STDERR_FILENO);
     close(fds[1]);
-    pthread_t thread;
-    if (pthread_create(&thread, NULL, log_lines, (void *)(intptr_t)fds[0]) == 0) pthread_detach(thread);
+    logging = pthread_create(&log_thread, NULL, log_lines, (void *)(intptr_t)fds[0]) == 0;
+}
+
+// The program's last output into the log, before the process goes: the pipe's
+// writing ends go, so the thread reads the rest and stops.
+static void end_output(void)
+{
+    fflush(NULL);
+    if (!logging) return;
+    const int none = open("/dev/null", O_WRONLY);
+    if (none >= 0) {
+        dup2(none, STDOUT_FILENO);
+        dup2(none, STDERR_FILENO);
+        close(none);
+    }
+    pthread_join(log_thread, NULL);
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +209,7 @@ static void on_destroy(ANativeActivity *activity)
     app.destroyed = true;
     app.activity = NULL;
     wake();
+    pthread_cond_broadcast(&app.taken); // An app that's ending waits for this (__wrap_exit)
     pthread_mutex_unlock(&app.lock);
 }
 
@@ -203,6 +220,7 @@ static void on_configuration_changed(ANativeActivity *activity)
 }
 
 static JavaVM *java_vm; // The app's, for code that calls Java (rooms' TLS: platform/src/rtc/tls.c)
+static pthread_t main_thread; // Android's, which the activity's callbacks run on
 static int ui_pipe[2] = {-1, -1}; // The program's asks of the main thread: the keyboard, and copying
 static int on_ui_asked(int fd, int events, void *data);
 
@@ -247,9 +265,7 @@ static bool intent_string(JNIEnv *env, jobject intent, jmethodID get_extra, cons
 
 // What the app was started with, for main: the intent's "tide.args", words
 // apart (as `tide run --android` gives --host, --join or --connect), into
-// `argv` after the program's name. Returns how many arguments that makes. Its
-// "tide.backend" is TIDE_BACKEND, as a desktop program's environment has it:
-// "vulkan" or "opengl" (`--es tide.backend opengl`).
+// `argv` after the program's name. Returns how many arguments that makes.
 static int intent_args(char *text, const size_t size, char **argv, const int max)
 {
     static char name[] = "tide";
@@ -266,8 +282,6 @@ static int intent_args(char *text, const size_t size, char **argv, const int max
         jclass intent_class = (*env)->GetObjectClass(env, intent);
         jmethodID get_extra =
             (*env)->GetMethodID(env, intent_class, "getStringExtra", "(Ljava/lang/String;)Ljava/lang/String;");
-        char backend[32];
-        if (intent_string(env, intent, get_extra, "tide.backend", backend, sizeof backend)) setenv("TIDE_BACKEND", backend, 1);
         if (intent_string(env, intent, get_extra, "tide.args", text, size)) {
             char *rest = NULL;
             for (char *word = strtok_r(text, " ", &rest); word && argc < max - 1; word = strtok_r(NULL, " ", &rest)) {
@@ -289,14 +303,7 @@ static void *run_program(void *unused)
     static char text[1024];
     char *argv[16];
     const int argc = intent_args(text, sizeof text, argv, 16);
-    const int code = main(argc, argv);
-    // main returned without closing a window (see tide_window_close): the app ends
-    pthread_mutex_lock(&app.lock);
-    app.running = false;
-    if (app.activity) ANativeActivity_finish(app.activity);
-    pthread_cond_broadcast(&app.taken);
-    pthread_mutex_unlock(&app.lock);
-    exit(code);
+    exit(main(argc, argv)); // Which ends the activity too (__wrap_exit)
 }
 
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity *activity, void *saved, size_t size)
@@ -312,6 +319,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
     pthread_mutex_lock(&app.lock);
     app.activity = activity;
     java_vm = activity->vm;
+    main_thread = pthread_self();
     const bool started = app.running;
     pthread_mutex_unlock(&app.lock);
     if (started) return; // The process outlived an activity: the program goes on in this one
@@ -342,7 +350,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
 }
 
 // ---------------------------------------------------------------------------
-// The program's thread: the window and EGL
+// The program's thread: the window
 
 // Takes the window's sizes: the screen in logical pixels, rendering in its
 // own. It follows the screen's turns and the system's bars.
@@ -359,31 +367,6 @@ static void fit_window(void)
     if (app.height < 1) app.height = 1;
 }
 
-static void drop_surface(void)
-{
-    if (app.surface != EGL_NO_SURFACE) {
-        eglMakeCurrent(app.display, EGL_NO_SURFACE, EGL_NO_SURFACE, app.context); // Keeps the context and what's in it
-        eglDestroySurface(app.display, app.surface);
-        app.surface = EGL_NO_SURFACE;
-    }
-}
-
-static void make_surface(void)
-{
-    if (!app.window || app.display == EGL_NO_DISPLAY || app.surface != EGL_NO_SURFACE) return;
-    EGLint format = 0;
-    eglGetConfigAttrib(app.display, app.config, EGL_NATIVE_VISUAL_ID, &format);
-    ANativeWindow_setBuffersGeometry(app.window, 0, 0, format);
-    app.surface = eglCreateWindowSurface(app.display, app.config, app.window, NULL);
-    if (app.surface == EGL_NO_SURFACE || !eglMakeCurrent(app.display, app.surface, app.surface, app.context)) {
-        fprintf(stderr, "tide: no surface to draw in (EGL error 0x%x)\n", (unsigned)eglGetError());
-        drop_surface();
-        return;
-    }
-    eglSwapInterval(app.display, 1); // Frames at the display's pace
-    fit_window();
-}
-
 // Takes what the activity changed: a window and input queue, or none, and
 // whether it's gone.
 static void follow_activity(void)
@@ -397,15 +380,10 @@ static void follow_activity(void)
         if (app.queue) AInputQueue_attachLooper(app.queue, app.looper, LOOPER_INPUT, NULL, NULL);
     }
     if (app.window_given != app.window) {
-        if (app.vulkan) { // Its surface goes before the window may, and another is made for the next one
-            app.window = app.window_given;
-            tide_gpu_vk_surface_changed();
-            fit_window();
-        } else {
-            drop_surface();
-            app.window = app.window_given;
-            make_surface();
-        }
+        app.window = app.window_given;
+        // Its surface goes before the window may, and another is made for the next one
+        if (app.vulkan) tide_gpu_vk_surface_changed();
+        fit_window();
     }
     app.window_taken = app.window;
     app.queue_taken = app.queue;
@@ -928,7 +906,7 @@ bool tide_window_should_close(void)
 // function asked, and draw nothing, until the system freezes it.
 bool tide_window_unseen(void)
 {
-    return app.vulkan ? !app.window : app.surface == EGL_NO_SURFACE;
+    return !app.window;
 }
 
 void tide_window_size(int *width, int *height)
@@ -947,12 +925,7 @@ void tide_window_pixel_size(int *width, int *height)
 
 void tide_window_present(void)
 {
-    if (app.vulkan) {
-        tide_gpu_vk_present();
-    } else if (app.surface != EGL_NO_SURFACE && !eglSwapBuffers(app.display, app.surface)) {
-        const EGLint error = eglGetError();
-        if (error == EGL_BAD_SURFACE || error == EGL_BAD_NATIVE_WINDOW) drop_surface(); // Gone under us
-    }
+    if (app.vulkan) tide_gpu_vk_present();
     poll_looper(0);
 }
 
@@ -964,7 +937,7 @@ void tide_window_wait(const double seconds)
 
 // ---------------------------------------------------------------------------
 // Vulkan: libvulkan.so, opened rather than linked, so a device without it
-// runs the app with OpenGL ES all the same.
+// can still say what the game needs.
 
 static PFN_vkGetInstanceProcAddr vulkan_proc;
 
@@ -984,9 +957,11 @@ static void vulkan_pixel_size(int *width, int *height)
     *height = app.window ? ANativeWindow_getHeight(app.window) : 0;
 }
 
-static bool open_vulkan(const bool say)
+// `*loader`: whether the device has Vulkan at all, for what it's told where it can't draw with it.
+static bool open_vulkan(const bool say, bool *loader)
 {
     app.vulkan_library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+    *loader = app.vulkan_library != NULL;
     if (!app.vulkan_library) {
         if (say) fprintf(stderr, "tide: this device has no Vulkan\n");
         return false;
@@ -1000,63 +975,100 @@ static bool open_vulkan(const bool say)
     return false;
 }
 
+// Draws `text` in the regular weight, white on dark, wrapped at words, straight into the window's pixels by the
+// CPU: what a device that has no Vulkan to draw with shows.
+static void draw_message(const char *text)
+{
+    if (!app.window) return;
+    ANativeWindow_setBuffersGeometry(app.window, 0, 0, WINDOW_FORMAT_RGBA_8888);
+    ANativeWindow_Buffer buffer;
+    if (ANativeWindow_lock(app.window, &buffer, NULL) != 0) return;
+    uint32_t *const pixels = buffer.bits;
+    const int width = buffer.width, height = buffer.height, stride = buffer.stride;
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++) pixels[(size_t)y * (size_t)stride + (size_t)x] = 0xFF201A18u; // ABGR
+    const int size = (int)(20.0f * app.scale + 0.5f), margin = (int)(24.0f * app.scale + 0.5f);
+    const int pitch = (int)tide_font_pitch(NULL, size, 1.0f), baseline = (int)(tide_font_baseline(NULL) * (float)size);
+    int atlas_width = 0, atlas_height = 0;
+    uint32_t version = 0;
+    int pen_x = margin, line_top = margin;
+    for (const char *at = text; *at && line_top + pitch <= height - margin;) {
+        // The next word and the space after it: past the line's end, it starts the next line
+        const char *end = at;
+        int word = 0;
+        while (*end && *end != ' ' && *end != '\n') {
+            const char *next = end;
+            word += tide_font_advance(NULL, tide_utf8_next(&next), size);
+            end = next;
+        }
+        if (pen_x > margin && pen_x + word > width - margin) pen_x = margin, line_top += pitch;
+        while (at < end) {
+            const uint32_t code = tide_utf8_next(&at);
+            tide_font_glyph glyph;
+            if (tide_font_glyph_for(NULL, code, size, &glyph) && glyph.width) {
+                const uint8_t *atlas = tide_font_atlas(&atlas_width, &atlas_height, &version);
+                for (int y = 0; y < glyph.height; y++) {
+                    const int to_y = line_top + baseline + glyph.top + y;
+                    if (to_y < 0 || to_y >= height) continue;
+                    for (int x = 0; x < glyph.width; x++) {
+                        const int to_x = pen_x + glyph.left + x;
+                        if (to_x < 0 || to_x >= width) continue;
+                        const uint32_t cover = atlas[(size_t)(glyph.y + y) * (size_t)atlas_width + glyph.x + x];
+                        const uint32_t back = 0x18u, mixed = back + ((0xEEu - back) * cover + 127u) / 255u;
+                        if (cover) pixels[(size_t)to_y * (size_t)stride + (size_t)to_x] = 0xFF000000u | mixed << 16 | mixed << 8 | mixed;
+                    }
+                }
+            }
+            pen_x += glyph.advance;
+        }
+        if (*at == '\n') pen_x = margin, line_top += pitch * 2;
+        else if (*at == ' ') pen_x += tide_font_advance(NULL, ' ', size);
+        if (*at) at++;
+    }
+    ANativeWindow_unlockAndPost(app.window);
+    tide_font_frame();
+}
+
+// A device without what the game needs is told so on its screen, until the player leaves (the back button, or
+// the activity going): never a window that stays black, or an app that's gone before anyone sees why. Tests of
+// apps that draw stop at its "needs Vulkan 1.3" (cmake/run_android.mjs --vulkan).
+static void say_needs_vulkan(const char *why)
+{
+    char text[512];
+    snprintf(text, sizeof text,
+             "This game needs Vulkan 1.3 to draw, and %s.\nA system update may bring it; phones from about 2019 on "
+             "have it.", why);
+    fprintf(stderr, "tide: %s\n", text);
+    const ANativeWindow *drawn = NULL;
+    while (!tide_window_should_close() && !tide_window_key_held(TIDE_KEY_escape)) {
+        if (app.window && app.window != drawn) {
+            draw_message(text);
+            drawn = app.window;
+        }
+        poll_looper(-1);
+        if (!app.window) drawn = NULL; // A window given back is drawn again
+    }
+}
+
 bool tide_window_open(const tide_window_desc *desc)
 {
     (void)desc; // The system sizes the activity's window, and names it after the app
-    // Vulkan where the device has it, else OpenGL ES; TIDE_BACKEND (the intent's
-    // tide.backend) picks one, and a Vulkan asked for that isn't there is a failure
-    const char *backend = getenv("TIDE_BACKEND");
-    const bool asks_vulkan = backend && strcmp(backend, "vulkan") == 0;
-    const bool asks_gl = backend && strcmp(backend, "opengl") == 0;
-    if (backend && *backend && !asks_vulkan && !asks_gl) {
-        fprintf(stderr, "tide: TIDE_BACKEND is \"%s\", where it's vulkan or opengl\n", backend);
+    // The first window, which the surface is of
+    while (!app.window && !tide_window_should_close()) poll_looper(-1);
+    if (!app.window) return false; // The activity went before it had one
+    bool loader = false;
+    app.vulkan = open_vulkan(true, &loader); // Which says why where it finds no device
+    if (!app.vulkan) {
+        say_needs_vulkan(loader ? "this device's Vulkan is older or lacks what Tide needs" : "this device has no Vulkan");
         return false;
     }
-    if (!asks_gl) {
-        // The first window, which the surface is of
-        while (!app.window && !tide_window_should_close()) poll_looper(-1);
-        if (!app.window) return false; // The activity went before it had one
-        app.vulkan = open_vulkan(asks_vulkan);
-        if (app.vulkan) {
-            fit_window();
-            return true;
-        }
-        if (asks_vulkan) {
-            fprintf(stderr, "tide: TIDE_BACKEND asks for Vulkan, and this device has none to draw with\n");
-            return false;
-        }
-    }
-    app.display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (app.display == EGL_NO_DISPLAY || !eglInitialize(app.display, NULL, NULL)) {
-        fprintf(stderr, "tide: no EGL display\n");
-        return false;
-    }
-    // With depth and stencil, as every render target has: what draws in the window draws the same in one
-    const EGLint wanted[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RED_SIZE, 8,
-                             EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8, EGL_NONE};
-    EGLint found = 0;
-    if (!eglChooseConfig(app.display, wanted, &app.config, 1, &found) || found < 1) {
-        fprintf(stderr, "tide: this device has no OpenGL ES 3\n");
-        return false;
-    }
-    eglBindAPI(EGL_OPENGL_ES_API);
-    const EGLint version[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
-    app.context = eglCreateContext(app.display, app.config, EGL_NO_CONTEXT, version);
-    if (app.context == EGL_NO_CONTEXT) {
-        fprintf(stderr, "tide: no OpenGL ES 3 context (EGL error 0x%x)\n", (unsigned)eglGetError());
-        return false;
-    }
-    app.surface = EGL_NO_SURFACE;
-    make_surface(); // For the window there may be already
-
-    // The first window: the renderer needs a context that's current to start.
-    while (app.surface == EGL_NO_SURFACE && !tide_window_should_close()) poll_looper(-1);
-    return app.surface != EGL_NO_SURFACE; // Or the activity went before it had a window
+    fit_window();
+    return true;
 }
 
 const tide_gpu *tide_window_gpu(void)
 {
-    return app.vulkan ? &tide_gpu_vulkan : &tide_gpu_gl;
+    return &tide_gpu_vulkan;
 }
 
 void tide_window_close(void)
@@ -1067,9 +1079,6 @@ void tide_window_close(void)
         app.vulkan_library = NULL;
         app.vulkan = false;
     }
-    drop_surface();
-    if (app.context != EGL_NO_CONTEXT) eglDestroyContext(app.display, app.context);
-    if (app.display != EGL_NO_DISPLAY) eglTerminate(app.display);
     // The program ends with the activity: it says so before the process goes.
     pthread_mutex_lock(&app.lock);
     app.running = false;
@@ -1079,15 +1088,25 @@ void tide_window_close(void)
 }
 
 // The game's pack of assets, in the APK as assets/game.pack (compiler/cli/apk.c).
-uint8_t *tide_window_pack(size_t *size)
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
 {
     *size = 0;
     AAssetManager *manager = app.activity ? app.activity->assetManager : NULL;
-    AAsset *asset = manager ? AAssetManager_open(manager, "game.pack", AASSET_MODE_BUFFER) : NULL;
+    AAsset *asset = manager ? AAssetManager_open(manager, "game.pack", AASSET_MODE_STREAMING) : NULL;
     if (!asset) return NULL;
-    const off_t length = AAsset_getLength(asset);
+    const off64_t length = AAsset_getLength64(asset);
     uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
-    const bool ok = bytes && AAsset_read(asset, bytes, (size_t)length) == (int)length;
+    if (progress) __atomic_store_n(&progress[1], (uint64_t)length, __ATOMIC_RELAXED);
+    // In pieces, saying how far it got, for a loading screen
+    size_t at = 0;
+    while (bytes && at < (size_t)length) {
+        const size_t left = (size_t)length - at;
+        const int got = AAsset_read(asset, bytes + at, left < (16u << 20) ? left : (16u << 20));
+        if (got <= 0) break;
+        at += (size_t)got;
+        if (progress) __atomic_store_n(&progress[0], (uint64_t)at, __ATOMIC_RELAXED);
+    }
+    const bool ok = bytes && at == (size_t)length;
     AAsset_close(asset);
     if (!ok) {
         free(bytes);
@@ -1095,4 +1114,37 @@ uint8_t *tide_window_pack(size_t *size)
     }
     *size = (size_t)length;
     return bytes;
+}
+
+// ---------------------------------------------------------------------------
+// The app's end
+
+// exit() would run the destructors of every library in the process, Android's
+// own too, while its threads still run: HWUI's workers (hwuiTask0, ...) then
+// lock a mutex its destructors destroyed, and the app aborts as it ends. So an
+// app links with --wrap=exit (tide_android_app in platform/CMakeLists.txt, and
+// `tide build --android`), and every exit() in its library comes here: its own
+// exit handlers run (atexit's, C++ destructors), its output reaches the log,
+// the activity finishes and goes, and then the process, with _exit.
+_Noreturn void __wrap_exit(int code) __attribute__((visibility("hidden")));
+extern void *__dso_handle __attribute__((visibility("hidden"))); // This library's, which its handlers have
+void __cxa_finalize(void *dso);
+
+_Noreturn void __wrap_exit(const int code)
+{
+    static atomic_flag ending = ATOMIC_FLAG_INIT;
+    if (atomic_flag_test_and_set(&ending)) {
+        for (;;) pause(); // Another thread is ending the app, which this one goes with
+    }
+    __cxa_finalize(&__dso_handle);
+    pthread_mutex_lock(&app.lock);
+    app.running = false; // The activity's callbacks that take things away don't wait for the program
+    if (app.activity) ANativeActivity_finish(app.activity);
+    pthread_cond_broadcast(&app.taken);
+    // The activity goes first, unless this is its thread, which can't wait for itself
+    const bool wait = app.activity && !pthread_equal(pthread_self(), main_thread);
+    while (wait && !app.destroyed) pthread_cond_wait(&app.taken, &app.lock);
+    pthread_mutex_unlock(&app.lock);
+    end_output();
+    _exit(code);
 }

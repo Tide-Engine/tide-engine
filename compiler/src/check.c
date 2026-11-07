@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "asset_files.h"
+#include "build_report.h"
+#include "humanoid_assets.h"
 #include "assets.h"
 #include "model_metadata.h"
 #include "ast.h"
@@ -13,6 +15,7 @@
 #include "tide/player.h" // How many players a game can take
 #include "tide/skinned_data.h" // [BlendShapes] keeps some of an imported model's shapes
 #include "types.h"
+#include "indexing.h"
 
 // Semantic analysis: resolves names and types, enforces access and mutability
 // rules, and derives the archetype list from spawn, add and remove sites.
@@ -22,6 +25,7 @@ typedef struct checker {
     VEC(expr *) raw_uses;     // Raw Texture sources: sampled, inspected, stored in a Raw field or rejected (check_raw_uses).
     const expr *raw_value;    // The direct initializer/assignment of a statically [Raw] Texture field.
     const expr *texture_arg;  // Texture argument conversions whose Raw permission waits for GPU call propagation.
+    bool raw_mesh; // Resolving an imported mesh payload rather than its stable value handle.
     bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
@@ -41,6 +45,8 @@ typedef struct checker {
     const expr *write_root;   // Checking an assignment's target: the name it writes through, which that doesn't read
     VEC(stmt *) unused;       // Locals nothing read by the end of their scope, warned about once every body is checked
     VEC(decl *) access_warnings; // Systems whose access warnings await transitive World effects
+    VEC(stmt *) grid_names;   // Locals naming a grid parameter, an error unless their function is the GPU's (settle_grid_functions)
+    VEC(decl *) grid_name_fns; // ...the function each is in
     VEC(const expr *) dropped; // Calls written as statements whose value nothing takes (warn_dropped_values)
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
@@ -74,6 +80,7 @@ typedef struct checker {
     bool constants_only;     // A constant expression is being checked (check_constant_expr)
     bool grid_param;         // Resolving a function's parameter, which can be a grid: one code the GPU runs passes it
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
+    decl *generic;           // The instantiation of a generic function being checked: its type parameters' names are types
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -109,6 +116,8 @@ typedef struct call_site {
     bool comparing;
     bool sanitizing; // In the input's Sanitize
     bool predicting;
+    bool statement; // The call is a statement of its own
+    bool looped;    // ...in a loop of the code that makes it
 } call_site;
 
 static const type T_ERR = {TY_ERROR, NULL};
@@ -122,6 +131,7 @@ static const type T_ENTITY_ = {TY_ENTITY, NULL};
 static void check_signature(checker *c, decl *m);
 static void check_method_body(checker *c, decl *m);
 static void check_function_decl(checker *c, decl *fn);
+static type check_has(checker *c, expr *e);
 static type resolve_alias_type(const checker *c, decl *d);
 static void check_enum_storage(const checker *c, decl *d);
 
@@ -170,6 +180,7 @@ static type decl_type(decl *d)
     case DECL_ENUM: return (type){TY_ENUM, d};
     case DECL_ALIAS: return d->alias_type;
     case DECL_LIST: return (type){TY_LIST, d};
+    case DECL_GPU_LIST: return (type){TY_GPU_LIST, d};
     case DECL_MAP: return (type){d->is_set ? TY_SET : TY_MAP, d};
     case DECL_GRID: return (type){TY_GRID, d};
     case DECL_ARRAY: return (type){TY_ARRAY, d};
@@ -318,12 +329,13 @@ typedef enum name_kind {
 static bool is_kind(const decl *d, const name_kind kind)
 {
     if (kind == NAME_SYSTEM) return d->kind == DECL_SYSTEM;
-    if (kind == NAME_FUNCTION) return d->kind == DECL_FUNCTION;
+    if (kind == NAME_FUNCTION) return d->kind == DECL_FUNCTION || d->kind == DECL_GENERIC;
     if (kind == NAME_CONST) return d->kind == DECL_CONST;
     if (kind == NAME_SHADER) return d->kind == DECL_SHADER;
     if (kind == NAME_ASSET) return d->kind == DECL_ASSET;
     if (kind == NAME_PREFAB) return d->kind == DECL_PREFAB;
-    return d->kind != DECL_PREFAB && d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER && d->kind != DECL_ASSET;
+    return d->kind != DECL_PREFAB && d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER
+        && d->kind != DECL_ASSET && d->kind != DECL_GENERIC;
 }
 
 static void c_name_of(const decl *d, sb *out);
@@ -357,6 +369,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
         const decl *d = prog->decls.items[i];
         index->next[i] = -1;
         if (unplaced_override(d)) continue;
+        if (d->generic_of && !c_names) continue; // Found through its generic, by its type arguments
         const str ns = decl_ns(d);
         uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), d->name.ptr, (size_t)d->name.len);
         if (c_names) {
@@ -379,7 +392,7 @@ static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
         || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time
-        || d == prog->audience || d == prog->visibility_group;
+        || d == prog->audience || d == prog->visibility_group || d == prog->clip_data || d == prog->mesh_level;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -437,34 +450,62 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     return find_in_folders(prog, ns, name, kind);
 }
 
-// Whether `ns` has a declaration named `name` that a `kind` of that name
-// couldn't share it with in one namespace (the clashes check_decls reports):
-// it hides any `kind` of the name further out. A type and a system can share
-// a name; a function, a frag or vert, a constant or an alias shares none.
+// What a name is used as: a type (and a prefab or scene, which take a
+// type's place), a system, or a value, which a function, a constant, an asset
+// and a frag or vert all are where a name is read. A call takes an enum too:
+// `Side(i)` converts to it.
+static bool same_role(const decl *d, const name_kind kind)
+{
+    if (kind == NAME_SYSTEM) return d->kind == DECL_SYSTEM;
+    if (kind == NAME_TYPE || kind == NAME_PREFAB) return is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB;
+    if (kind == NAME_FUNCTION && d->kind == DECL_ENUM) return true;
+    return d->kind == DECL_FUNCTION || d->kind == DECL_GENERIC || d->kind == DECL_CONST || d->kind == DECL_ASSET
+        || d->kind == DECL_SHADER;
+}
+
+// Whether namespace `ns` has a declaration named `name` that's used as a
+// `kind` of that name would be: it hides any `kind` of the name further out.
+// A namespace's enum Side hides a function Side around it from a call, and a
+// command or a component of a name hides no function of it.
 static bool hides_kind(const program *prog, const str ns, const str name, const name_kind kind)
 {
     const decl_index *index = decls_by(prog, false);
     const uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), name.ptr, (size_t)name.len);
-    const bool kind_type = kind == NAME_TYPE || kind == NAME_PREFAB;
-    const bool kind_sole = kind == NAME_FUNCTION || kind == NAME_SHADER || kind == NAME_CONST;
     for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         const decl *d = prog->decls.items[i];
-        if (!str_eq(d->name, name) || !str_eq(decl_ns(d), ns)) continue;
-        const bool sole = d->kind == DECL_FUNCTION || d->kind == DECL_SHADER || d->kind == DECL_CONST || d->kind == DECL_ALIAS;
-        const bool type = is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB;
-        if (sole || kind_sole || (type && kind_type) || (d->kind == DECL_SYSTEM && kind == NAME_SYSTEM)) return true;
+        if (str_eq(d->name, name) && str_eq(decl_ns(d), ns) && same_role(d, kind)) return true;
     }
     return false;
+}
+
+// Whether `d` is the game's own, from a file of no package and not one of
+// tide's own (the preludes, "<tide>/..."). Packages declare nothing in the
+// global namespace, so there it's the game's or the engine's.
+static bool games_own(const decl *d)
+{
+    const unit *home = decl_home(d);
+    return !d->builtin && home && home->src && !home->src->package
+        && !(home->src->path && strncmp(home->src->path, "<tide>/", 7) == 0);
 }
 
 // What a name means as written in `from`. A qualified name (Combat.Health) is
 // exact. A plain one is looked up in the file's namespace, then its parents
 // out to the global namespace, then the `using` namespaces, as in C#: what a
 // game declares itself is what its code means, whatever a namespace it
-// imports also has by that name. The nearest namespace with the name decides,
-// whatever kind it has there: a package's enum Side hides the game's global
-// function Side from the package's code. If two `using` namespaces both have
-// it, *other gets the second: the name is ambiguous.
+// imports also has by that name.
+// - A namespace's own names win inside it: in a namespace other than the
+//   global one, a name of the role asked for hides the name further out,
+//   whatever its kind (hides_kind), so a package's enum Side is what Side(i)
+//   means in its code, though the game has a function Side.
+// - The global namespace has a name only of the kind asked for: a game's
+//   command Shake doesn't hide the function Shake its `using` namespace has.
+// - In a package's code, the game's global declarations come after the
+//   package's `using` namespaces (the engine's stay where they are): nothing a
+//   game names hides a package's names from a package's code. The game's
+//   functions are still found there when nothing else has the name, as a
+//   game's function a package's frag is handed as a Func.
+// If two `using` namespaces both have it, *other gets the second: the name is
+// ambiguous.
 static decl *lookup(const program *prog, const unit *from, const str text, const name_kind kind, decl **other)
 {
     *other = NULL;
@@ -472,11 +513,17 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
     str name;
     if (split_qualified(text, &ns, &name)) return find_in(prog, ns, name, kind);
 
+    const bool package = from && from->src && from->src->package;
+    decl *games = NULL; // A package's code: the game's global one, after the `using` namespaces
     for (ns = from ? from->ns : global_ns;;) {
         decl *d = find_in(prog, ns, text, kind);
+        if (d && ns.len == 0 && package && games_own(d)) {
+            games = d;
+            d = NULL;
+        }
         if (d) return d;
-        if (hides_kind(prog, ns, text, kind)) return NULL;
         if (ns.len == 0) break; // The global namespace, which is around every other
+        if (hides_kind(prog, ns, text, kind)) return NULL;
         int dot = ns.len - 1;
         while (dot >= 0 && ns.ptr[dot] != '.') dot--;
         ns.len = dot < 0 ? 0 : dot;
@@ -487,13 +534,27 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
         if (d && !found) found = d;
         else if (d && d != found && !*other) *other = d;
     }
-    return found;
+    return found ? found : games;
 }
+
+static void build_struct_ready(checker *c, decl *d);
 
 static decl *find_named(const checker *c, const str name, const loc at, const name_kind kind)
 {
+    if (c->generic && (kind == NAME_TYPE || kind == NAME_PREFAB)) { // An instantiation's T: the type it's bound to
+        for (int i = 0; i < c->generic->type_arg_decls.count; i++) {
+            decl *t = c->generic->type_arg_decls.items[i];
+            if (str_eq(t->name, name)) return t;
+        }
+    }
     decl *other;
     decl *d = lookup(c->prog, c->unit, name, kind, &other);
+    if (!d && kind == NAME_TYPE && (str_eq_c(name, "ClipData") || str_eq_c(name, "MeshLevel"))) {
+        // Built-in structs a game has once its code names them (build_check.inc)
+        decl *builtin = str_eq_c(name, "ClipData") ? c->prog->clip_data : c->prog->mesh_level;
+        build_struct_ready((checker *)c, builtin);
+        return builtin;
+    }
     if (other) {
         diag_error(at, "'" STR_FMT "' is ambiguous: both " STR_FMT " and " STR_FMT " have it", STR_ARG(name),
                    STR_ARG(decl_ns(d)), STR_ARG(decl_ns(other)));
@@ -764,7 +825,10 @@ static bool same_package(const decl *a, const decl *b);
 // handlers are systems), and frags and verts.
 static bool same_name_kind(const decl *a, const decl *b)
 {
-    return a->kind == b->kind && (a->kind == DECL_FUNCTION || a->kind == DECL_SYSTEM || a->kind == DECL_SHADER);
+    // A generic function and a plain one can share a name: the plain one wins where both take the arguments
+    const bool fa = a->kind == DECL_FUNCTION || a->kind == DECL_GENERIC, fb = b->kind == DECL_FUNCTION || b->kind == DECL_GENERIC;
+    if (fa && fb) return true;
+    return a->kind == b->kind && (a->kind == DECL_SYSTEM || a->kind == DECL_SHADER);
 }
 
 // Every declaration with `d`'s name where it's declared, `d` among them, in
@@ -1178,7 +1242,7 @@ static void note_operator_call(checker *c, decl *op, const expr *e)
 {
     decl *from = reading_code(c);
     if (!op) return;
-    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict, false, false};
     if (!from) {
         vec_push(c->bare, site);
         return;
@@ -1323,10 +1387,11 @@ typedef struct resource_outer {
     const struct resource_outer *previous;
 } resource_outer;
 
-static bool holds_render_resource_in(const type t, const resource_outer *outer)
+static bool holds_render_resource_in(const type t, const resource_outer *outer, const bool fonts)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_CLIP) return true;
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY
+        || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
@@ -1334,14 +1399,23 @@ static bool holds_render_resource_in(const type t, const resource_outer *outer)
     }
     const resource_outer here = {t.decl, outer};
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (holds_render_resource_in(t.decl->fields.items[i].type, &here)) return true;
+        if (holds_render_resource_in(t.decl->fields.items[i].type, &here, fonts)) return true;
     }
     return false;
 }
 
+// Whether a value of `t` is or holds this machine's: a rendering resource, a
+// Clip or a Font, which the match can't use.
 static bool holds_render_resource(const type t)
 {
-    return holds_render_resource_in(t, NULL);
+    return holds_render_resource_in(t, NULL, true);
+}
+
+// The same, but for a Font, which is a number however it's kept: a constant
+// holds one (a GUITheme's), and a parameter takes one as its default.
+static bool holds_resource_but_font(const type t)
+{
+    return holds_render_resource_in(t, NULL, false);
 }
 
 static bool holds_local_handle(const type t, const int depth)
@@ -1413,6 +1487,63 @@ static type list_of(program *prog, const type element)
 }
 
 // ---------------------------------------------------------------------------
+// GPU lists: GPUList<T>, a list that lives on the GPU (docs/spec.md, Compute on the GPU)
+
+// Why a value of `t` can't be a GPU list's element, or NULL where it can: a
+// GPU value, numbers, vectors, colors, quaternions, float matrices, bools,
+// bytes, chars, enums, and fixed arrays and structs of them.
+static const char *gpu_element_refusal(const type t, const int depth)
+{
+    if (depth > 32) return "it holds itself";
+    switch (t.kind) {
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_INT2: case TY_INT3: case TY_INT4:
+    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_COLOR:
+    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENUM:
+        return NULL;
+    case TY_LONG: return "the GPU's ints are 32 bits";
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_DOUBLE2X2: case TY_DOUBLE3X3:
+    case TY_DOUBLE4X4: return "the GPU's floats are 32 bits";
+    case TY_STRING: return "text is the CPU's";
+    case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: return "it's a handle into a world, which the GPU doesn't have";
+    case TY_ARRAY: return gpu_element_refusal(t.decl->fields.items[0].type, depth + 1);
+    case TY_STRUCT:
+        if (t.decl->skin_kind || t.decl->task_handle || t.decl->binding_of) return "it's a handle the GPU doesn't have";
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->hidden) return "it's a handle the GPU doesn't have";
+            const char *why = gpu_element_refusal(f->type, depth + 1);
+            if (why) return why;
+        }
+        return NULL;
+    case TY_ERROR: return NULL;
+    default: return "it's no value the GPU has: GPU lists hold numbers, vectors, colors, matrices, enums, and arrays and "
+                    "structs of them";
+    }
+}
+
+// GPUList<T> for element type `element`: one declaration for each, so two GPU lists of floats are the same type.
+static type gpu_list_of(program *prog, const type element)
+{
+    for (int i = 0; i < prog->gpu_lists.count; i++) {
+        const type t = prog->gpu_lists.items[i]->fields.items[0].type;
+        if (t.kind == element.kind && t.decl == element.decl) return (type){TY_GPU_LIST, prog->gpu_lists.items[i]};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_GPU_LIST;
+    d->builtin = true;
+    sb name = {0};
+    sb_printf(&name, "GPUList<%s>", type_name(element));
+    d->name = (str){name.data, (int)name.len};
+    field item = {0};
+    item.name = str_from("item");
+    item.type = element;
+    vec_push(d->fields, item);
+    d->index = prog->gpu_lists.count;
+    vec_push(prog->gpu_lists, d);
+    return (type){TY_GPU_LIST, d};
+}
+
+// ---------------------------------------------------------------------------
 // Meshes: Mesh<V>, an asset's vertices and its indices (docs/spec.md, Assets, Meshes)
 
 static type mesh_vertex(const type t)
@@ -1441,6 +1572,45 @@ static type mesh_of(program *prog, const type vertex)
     return (type){TY_MESH, d};
 }
 
+// Asset<Mesh<V>> (and Asset<SkinnedMesh<V>>): a model asset's identity, one hidden long. With `geometry`, a
+// static Mesh<V> itself: that identity, or, with the id negative, a mesh the game made (Mesh(vertices, indices)),
+// whose two lists are its own, in hidden fields that ordinary ownership copies, snapshots, hashes and packs.
+static type asset_reference_of(const checker *c, const type mesh, const loc at, bool geometry)
+{
+    geometry = geometry && mesh.kind == TY_MESH;
+    for (int i = 0; i < c->prog->asset_refs.count; i++) {
+        decl *d = c->prog->asset_refs.items[i];
+        if (d->asset_ref_of == mesh.decl && d->asset_ref_geometry == geometry) return (type){TY_STRUCT, d};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_STRUCT;
+    d->builtin = true;
+    d->at = at;
+    d->asset_ref_of = mesh.decl;
+    d->asset_ref_geometry = geometry;
+    sb name_text = {0};
+    if (geometry) sb_printf(&name_text, "%s", type_name(mesh));
+    else sb_printf(&name_text, "Asset<%s>", type_name(mesh));
+    d->name = (str){name_text.data, (int)name_text.len};
+    field id = {0};
+    id.name = str_from("id");
+    id.type = (type){TY_LONG, NULL};
+    id.hidden = true;
+    vec_push(d->fields, id);
+    if (geometry) {
+        field part = {0};
+        part.hidden = true;
+        part.name = str_from("vertices");
+        part.type = list_of(c->prog, mesh_vertex(mesh));
+        vec_push(d->fields, part);
+        part.name = str_from("indices");
+        part.type = list_of(c->prog, T_INT_);
+        vec_push(d->fields, part);
+    }
+    vec_push(c->prog->asset_refs, d);
+    return (type){TY_STRUCT, d};
+}
+
 // Whether a value of type `t` is a Mesh, or holds one: a list or a map of
 // them, an entry of such a map, a T? of one. It's the pack's own memory by
 // two handles, which a frame reads and passes on, and nothing keeps: a pack
@@ -1453,6 +1623,31 @@ static bool holds_mesh(const type t)
         const type f = t.decl->fields.items[i].type;
         if (f.kind == TY_MESH || ((f.kind == TY_LIST || f.kind == TY_MAP) && holds_mesh(f))) return true;
     }
+    return false;
+}
+
+// Whether a value keeps heap data besides what a Mesh<V> in it keeps of its own: a mesh the game made has two
+// lists, which make no collection of meshes.
+static bool holds_heap_beside_meshes(const type t, const int depth)
+{
+    if (depth > 128) return false;
+    if (t.kind == TY_STRUCT && t.decl->asset_ref_geometry) return false;
+    if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) return true;
+    if (t.kind != TY_STRUCT && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+    for (int i = 0; i < t.decl->fields.count; i++)
+        if (holds_heap_beside_meshes(t.decl->fields.items[i].type, depth + 1)) return true;
+    return false;
+}
+
+// Mesh values are stable references; collections containing them remain CPU values.
+static bool holds_mesh_reference(const type t, const int depth)
+{
+    if (depth > 128) return false;
+    if (t.kind == TY_STRUCT && t.decl->asset_ref_of && t.decl->asset_ref_of->kind == DECL_MESH) return true;
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_ARRAY
+        && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+    for (int i = 0; i < t.decl->fields.count; i++)
+        if (holds_mesh_reference(t.decl->fields.items[i].type, depth + 1)) return true;
     return false;
 }
 
@@ -1743,21 +1938,15 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
     case TY_STRUCT:
-        if (holds_render_resource(t)) {
-            diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: case TY_DEPTH_TEXTURE_ARRAY:
+        return true;
+    case TY_TEXTURE_ARRAY:
+        if (asset) {
+            diag_error(at, "a TextureArray is many files already, which its glob matches: a list or a map of arrays isn't there");
+            diag_note("declare each array as an asset of its own: 'asset TextureArray ground = \"art/ground/*.png\";'");
             return false;
         }
         return true;
-    case TY_TEXTURE: // An asset's glob of images: nothing writes one, and each is a value
-        if (asset) return true;
-        diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
-        diag_note("but for an asset's: 'asset List<Texture> frames = \"art/run_*.png\";'");
-        return false;
-    case TY_CLIP: // The same for an asset's glob of sounds
-        if (asset) return true;
-        diag_error(at, "a list or a map can't hold a Clip, including inside a struct");
-        diag_note("but for an asset's: 'asset List<Clip> hits = \"sfx/hit_*.wav\";'");
-        return false;
     case TY_MESH: // An asset's glob of mesh files
         if (asset) return true;
         diag_error(at, "a %s can't hold a Mesh: one is the pack's own, which nothing keeps", key ? "map" : "list");
@@ -1774,9 +1963,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
             diag_note("declare each cube as an asset of its own: 'asset Cubemap sky = \"art/sky_??.png\";'");
             return false;
         }
-        // Other contexts retain the ordinary unsupported-element diagnostic.
-        diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
-        return false;
+        return true;
     default:
         diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in a list, keep their Entity");
@@ -2001,10 +2188,12 @@ static type resolve_arg(const checker *c, const type_ref *arg, const generic_for
 {
     static const type_place places[] = {ARG_ELEMENT, ARG_KEY, ARG_CELL};
     const generic_arg kind = form->args[i];
-    const type t = resolve_type(c, arg, places[kind], at);
+    checker scoped = *c;
+    scoped.raw_mesh = asset && kind == GENERIC_ELEMENT;
+    const type t = resolve_type(&scoped, arg, places[kind], at);
     switch (kind) {
     case GENERIC_ELEMENT: return element_ok(t, at, key, asset || (borrow && (!key || key->kind == TY_STRING)
-                                           && (t.kind == TY_CLIP || t.kind == TY_TEXTURE || t.kind == TY_MESH))) ? t : T_ERR;
+                                           && (t.kind == TY_CLIP || t.kind == TY_TEXTURE || t.kind == TY_FONT || t.kind == TY_MESH))) ? t : T_ERR;
     case GENERIC_KEY: return map_key_ok(t, at, strcmp(form->name, "Set") == 0) ? t : T_ERR;
     default: return grid_cell_ok(t, at) ? t : T_ERR;
     }
@@ -2022,6 +2211,16 @@ static type resolve_generic(const checker *c, const type_ref *r, const loc at, c
         if (args[i].kind == TY_ERROR) return T_ERR;
     }
     if (str_eq_c(r->name, "List")) return list_of(c->prog, args[0]);
+    if (str_eq_c(r->name, "GPUList")) {
+        const char *why = gpu_element_refusal(args[0], 0);
+        if (why) {
+            diag_error(at, "a GPUList can't hold %s: %s", type_name(args[0]), why);
+            diag_note("a GPU list's elements are GPU values: numbers, vectors, colors, quaternions, float matrices, bools, "
+                      "enums, and fixed arrays and structs of them");
+            return T_ERR;
+        }
+        return gpu_list_of(c->prog, args[0]);
+    }
     if (str_eq_c(r->name, "Set")) return map_of(c->prog, args[0], T_ERR, true);
     if (str_eq_c(r->name, "Map")) return map_of(c->prog, args[0], args[1], false);
     return grid_of(c->prog, args[0], r->name.ptr[4] - '0');
@@ -2067,15 +2266,8 @@ static type resolve_mesh(const checker *c, const type_ref *r, const type_place p
         diag_error(at, "a Mesh's vertices are a struct with a 'float3 position', like 'Mesh<Vertex3>', not %s", type_name(vertex));
         return T_ERR;
     }
-    if (place == PLACE_FIELD || place == PLACE_CONST || place == PLACE_IS) {
-        diag_error(at, "%s can't be a Mesh: one is an asset's, the pack's own, which code reads by the asset's name and nothing keeps",
-                   place == PLACE_FIELD ? "a field" : place == PLACE_CONST ? "a constant" : "a pattern");
-        diag_note("declare it as an asset, 'asset Mesh<" STR_FMT "> tree = \"art/tree.glb\";'; to say which of several a thing has, "
-                  "keep its place in an 'asset List<Mesh<" STR_FMT ">>', or its key in an 'asset Map<string, Mesh<" STR_FMT ">>'",
-                  STR_ARG(vertex.decl->name), STR_ARG(vertex.decl->name), STR_ARG(vertex.decl->name));
-        return T_ERR;
-    }
-    return mesh_of(c->prog, vertex);
+    const type mesh = mesh_of(c->prog, vertex);
+    return place == PLACE_ASSET || c->raw_mesh ? mesh : asset_reference_of(c, mesh, at, true);
 }
 
 // The type `r` names, written at `place`, with errors at `at` (where the
@@ -2144,6 +2336,7 @@ static type resolve_type(const checker *c, const type_ref *r, const type_place p
 
 static type resolve_alias_at(const checker *c, decl *d, const type_place place, const loc at)
 {
+    if (d->type_param) return d->alias_type;
     if (d->alias_state == 1) {
         diag_error(at, "type alias '" STR_FMT "' refers to itself", STR_ARG(d->qualified));
         diag_note_at(d->at, "an alias can name another alias, but its chain must end at a type without returning here");
@@ -2228,25 +2421,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
             diag_error(at, "Asset references a Mesh<V> or SkinnedMesh<V>, not %s", type_name(mesh));
             return T_ERR;
         }
-        for (int i = 0; i < c->prog->asset_refs.count; i++) {
-            decl *d = c->prog->asset_refs.items[i];
-            if (d->asset_ref_of == mesh.decl) return (type){TY_STRUCT, d};
-        }
-        decl *d = NEW(decl);
-        d->kind = DECL_STRUCT;
-        d->builtin = true;
-        d->at = at;
-        d->asset_ref_of = mesh.decl;
-        sb name_text = {0};
-        sb_printf(&name_text, "Asset<%s>", type_name(mesh));
-        d->name = (str){name_text.data, (int)name_text.len};
-        field id = {0};
-        id.name = str_from("id");
-        id.type = (type){TY_LONG, NULL};
-        id.hidden = true;
-        vec_push(d->fields, id);
-        vec_push(c->prog->asset_refs, d);
-        return (type){TY_STRUCT, d};
+        return asset_reference_of(c, mesh, at, false);
     }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
@@ -2319,8 +2494,15 @@ static const type_ref *type_ref_or_text(const type_ref *r, const str text)
 // ---------------------------------------------------------------------------
 // Arrays: T[N], N values side by side in the bytes of whatever holds them (docs/spec.md, Arrays)
 
+static bool takes_grid(const decl *d);
 static bool fold_int(const expr *e, int64_t *out);
 static bool is_constant(const checker *c, const expr *e);
+static bool build_calls(const expr *e);
+static bool build_constant(const checker *c, const decl *k);
+static void build_constant_function(checker *c, decl *k);
+static bool build_constant_type_ok(type t, loc at);
+static void build_asset_function(checker *c, decl *k);
+static void resolve_field_types(const checker *c, const decl *d);
 static type check_constant_expr(checker *c, expr *value, bool typed, type want);
 
 static type array_element(const type t)
@@ -2378,7 +2560,8 @@ static bool reaches_long_array(const type t)
 
 // What an array's elements can be: values an array keeps side by side in the
 // bytes of whatever holds it. Text, lists, maps and sets are their handles
-// there, kept in the heap as a struct's fields' are; grids and resources never.
+// there, kept in the heap as a struct's fields' are. Resource handles retain
+// their ordinary local-only rules; grids are never copied.
 static bool array_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
@@ -2394,18 +2577,16 @@ static bool array_element_ok(const type t, const loc at)
             diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
             return false;
         }
-        if (holds_render_resource(t)) {
-            diag_error(at, "an array can't hold rendering resources, including inside a struct");
-            return false;
-        }
         return true;
-    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: return true;
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
+    case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
         return false;
     default:
-        diag_error(at, "an array's elements are plain values, like numbers, enums, vectors and structs of them, not %s", type_name(t));
+        diag_error(at, "an array holds copyable values, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in an array, keep their Entity");
         return false;
     }
@@ -2469,8 +2650,8 @@ static bool element_in_place(const expr *receiver)
         base = base->object;
     }
     if (!through_element(base)) return true;
-    diag_error(receiver->at, "a list's element is a copy, so what it holds can't be changed where it is");
-    diag_note("take it out, change it, and put it back: 'var e = items[i]; e.parts.Add(x); items[i] = e;'");
+    diag_error(receiver->at, "an indexed element is a copy, so what it holds can't be changed in place");
+    diag_note("take it out, change it, and put it back: 'mut var e = items[i]; e.parts.Add(x); items[i] = e;'");
     return false;
 }
 
@@ -2494,7 +2675,7 @@ static bool element_path_in_place(const expr *target)
         if (e->skin_operation == SKIN_OP_POSE_INDEX) only_arrays = false;
     }
     if (holds_grid(kept) || (holds_heap(kept) && !only_arrays))
-        why = "it holds text or a list, which an element's bytes can't take as they are";
+        why = "replace the whole element to update text or container fields";
     for (const expr *e = target; !why && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_MEMBER && !e->field && e->swizzle_len == 0) why = "it's a part of a value, not a field";
         if (e->kind == E_INDEX && e->object->type.kind == TY_GRID) cell = e;
@@ -2504,12 +2685,12 @@ static bool element_path_in_place(const expr *target)
     }
     if (cell) {
         diag_error(target->at, "a grid's cell is a copy, so it can't be changed where it is");
-        diag_note("take it out, change it, and put it back: 'var c = cells[p]; c.x = 5; cells[p] = c;'");
+        diag_note("take it out, change it, and put it back: 'mut var c = cells[p]; c.x = 5; cells[p] = c;'");
         return false;
     }
     if (!why) return true;
-    diag_error(target->at, "a list's element is a copy, so it can't be changed where it is: %s", why);
-    diag_note("take it out, change it, and put it back: 'var e = items[i]; e.x = 5; items[i] = e;'");
+    diag_error(target->at, "an indexed element is a copy, so it can't be changed in place: %s", why);
+    diag_note("take it out, change it, and put it back: 'mut var e = items[i]; e.x = 5; items[i] = e;'");
     return false;
 }
 
@@ -2535,7 +2716,10 @@ static type check_instance_call(expr *e);
 static type check_depth_read(const checker *c, expr *e);
 static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
+static bool is_new_mesh(const checker *c, const expr *e);
+static type check_new_mesh(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
+static bool fresh_grid(const expr *e, bool returning);
 static void refuse_arg_names(const expr *e, type result);
 
 // `default` where a value of `want` goes: that type's default value, the one
@@ -2575,19 +2759,32 @@ static bool fold_int(const expr *e, int64_t *out);
 // they are. Everything that draws a texture takes it for colors with how much
 // of each there is. Raw Texture fields retain a static role, while ordinary
 // Texture values carry none; GPU helpers substitute their original sources.
+// A type a [Raw] role goes with: a Texture, a TextureArray or a Cubemap, each of numbers
+static bool raw_kind(const type t)
+{
+    return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
+}
+
+static const char *raw_kind_name(const type t)
+{
+    return t.kind == TY_TEXTURE_ARRAY ? "TextureArray" : t.kind == TY_CUBEMAP ? "Cubemap" : "Texture";
+}
+
 static void raw_note(void)
 {
     diag_note("read it in a frag or a vert, by its name: 'color = masks.Sample(vertex.uv);' gives its numbers as they are. "
               "A texture that's drawn, or handed to a frag as its Texture, is a color and how much of it there is: "
               "declare that one without [Raw]");
-    diag_note("keep numeric images in '[Raw] Texture' fields; those fields also accept [Raw] grids and other [Raw] Texture fields");
+    diag_note("keep numeric images in '[Raw] Texture', '[Raw] TextureArray' or '[Raw] Cubemap' fields; they also accept [Raw] "
+              "grids of colors and other [Raw] fields of their type");
 }
 
 // A [Raw] grid where a Texture goes: false, and said.
 static bool refuse_raw_grid(const expr *e)
 {
     if (!e || e->type.kind != TY_GRID || !declared_raw(e)) return true;
-    diag_error(e->at, "this grid is [Raw], its cells numbers and not colors to draw: it's no Texture to draw with or hand on");
+    diag_error(e->at, "this grid is [Raw], its cells numbers and not colors to draw: it's no %s to draw with or hand on",
+               e->type.decl && e->type.decl->dims == 3 ? "TextureArray" : "Texture");
     raw_note();
     return false;
 }
@@ -2612,7 +2809,7 @@ static void check_raw_uses(const checker *c)
         for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
             const param *p = &site->to->params.items[k];
             expr *arg = site->call->args.items[k];
-            if (p->type.kind != TY_TEXTURE || !declared_raw(arg)) continue;
+            if (!raw_kind(p->type) || !declared_raw(arg)) continue;
             if (gpu && p->mode == PARAM_READ && !p->is_out) arg->raw_sampled = true;
             else refuse_raw_grid(arg);
         }
@@ -2620,8 +2817,8 @@ static void check_raw_uses(const checker *c)
     for (int i = 0; i < c->raw_uses.count; i++) {
         const expr *e = c->raw_uses.items[i];
         if (e->raw_sampled) continue;
-        diag_error(e->at, "'" STR_FMT "' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or "
-                   "hand on", STR_ARG(e->bind == BIND_ASSET ? e->constant->name : e->field->name));
+        diag_error(e->at, "'" STR_FMT "' is [Raw], its pixels numbers and not colors to draw: it's no %s to draw with or "
+                   "hand on", STR_ARG(e->bind == BIND_ASSET ? e->constant->name : e->field->name), raw_kind_name(e->type));
         raw_note();
     }
 }
@@ -2644,11 +2841,32 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         return want;
     }
     const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
+    if (e->enum_shorthand && inner.kind == TY_FONT) {
+        // .Bold where a Font goes is Font.Bold, as an enum's member would be
+        e->enum_shorthand = false;
+        e->object = NEW(expr);
+        e->object->kind = E_NAME;
+        e->object->at = e->at;
+        e->object->name = str_from("Font");
+        return check_expr_any(c, e);
+    }
     if (e->enum_shorthand) {
         e->type_decl = inner.kind == TY_ENUM ? inner.decl : NULL;
         return check_expr_any(c, e);
     }
-    if (e->kind == E_CONDITIONAL && (inner.kind == TY_ENUM || (inner.decl && inner.decl->asset_ref_of)) && !checked) e->type_decl = inner.decl;
+    if (e->kind == E_CONDITIONAL && inner.kind == TY_FONT && !checked) {
+        // bold ? .Bold : .Regular, where a Font goes: each side is Font's
+        expr *sides[2] = {e->lhs, e->rhs};
+        for (int i = 0; i < 2; i++) {
+            if (!sides[i]->enum_shorthand) continue;
+            sides[i]->enum_shorthand = false;
+            sides[i]->object = NEW(expr);
+            sides[i]->object->kind = E_NAME;
+            sides[i]->object->at = sides[i]->at;
+            sides[i]->object->name = str_from("Font");
+        }
+    }
+    if (e->kind == E_CONDITIONAL && (inner.kind == TY_ENUM ||(inner.decl && inner.decl->asset_ref_of)) && !checked) e->type_decl = inner.decl;
     if (e->kind == E_LIST) {
         const bool takes_list = inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY || inner.kind == TY_ERROR;
         if (!takes_list) diag_error(e->at, "a list's type comes from where it goes: 'List<int> scores = [1, 2];'");
@@ -2659,6 +2877,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         refuse_arg_names(e, grid);
         return grid;
     }
+    if (!checked && is_new_mesh(c, e) && !authored_alias(c, e->name, e->at)) return check_new_mesh(c, e, inner);
     if (e->kind == E_DEFAULT) return check_default_value(c, e, inner);
     if (e->kind == E_NULL) {
         null_error(e, want);
@@ -2666,11 +2885,11 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
     }
     const type t = checked ? e->type : check_expr_any(c, e);
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && e->bind == BIND_ASSET
-        && type_asset_reference_accepts(inner.decl, t)) {
+        && type_asset_reference_accepts(inner.decl, e->constant->return_type)) {
         e->asset_reference = true;
         return e->type = inner;
     }
-    if (inner.kind == TY_TEXTURE && c->raw_value != e && c->texture_arg != e && !refuse_raw_grid(e)) return e->type = T_ERR;
+    if (raw_kind(inner) && c->raw_value != e && c->texture_arg != e && !refuse_raw_grid(e)) return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
     if (inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(e, &value) && value >= 0 && value <= 255) {
@@ -2707,8 +2926,9 @@ static type check_raw_field_value(expr *e, const type t)
 {
     if (t.kind == TY_ERROR || e->kind == E_DEFAULT) return t;
     if (!declared_raw(e)) {
-        diag_error(e->at, "a [Raw] Texture field takes a [Raw] Texture asset, field or grid, not a color texture");
-        diag_note("declare numeric sources with [Raw], or keep color images in a Texture field without [Raw]");
+        const char *kind = raw_kind_name(t);
+        diag_error(e->at, "a [Raw] %s field takes a [Raw] %s asset, field or grid, not a color texture", kind, kind);
+        diag_note("declare numeric sources with [Raw], or keep color images in a %s field without [Raw]", kind);
         return e->type = T_ERR;
     }
     e->raw_sampled = true;
@@ -2718,7 +2938,7 @@ static type check_raw_field_value(expr *e, const type t)
 static type check_field_value(checker *c, expr *e, const field *f)
 {
     const expr *saved = c->raw_value;
-    const bool raw = f && f->type.kind == TY_TEXTURE && field_is_raw(f);
+    const bool raw = f && raw_kind(f->type) && field_is_raw(f);
     c->raw_value = raw ? e : NULL;
     const type t = check_expr_want(c, e, f ? f->type : T_ERR);
     c->raw_value = saved;
@@ -3215,8 +3435,8 @@ static void ensure_shards(program *prog)
         vec_push(state->fields, f);
     }
     // moves: how many times an entity came to this shard or left it (tide_shard_moves_now, for C libraries)
-    static const char *const longs[] = {"next", "end", "singletons", "moves"};
-    for (int i = 0; i < 4; i++) {
+    static const char *const longs[] = {"singletons", "moves"};
+    for (int i = 0; i < 2; i++) {
         f.name = str_from(longs[i]);
         f.type = (type){TY_LONG, NULL};
         vec_push(state->fields, f);
@@ -3229,11 +3449,25 @@ static void ensure_shards(program *prog)
     // matches: the match each region's host knows its shard by, beside `regions`
     // touching: entities that act on each other (Shards.Together), each pair its two keys, lower first, and a count
     // spanned: entities reaching past their position (Shards.Spans) this tick, by key, and spans their boxes, 6 doubles each
-    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes", "matches", "touching",
+    // Fixed-width internal words preserve mixed-record strides while keeping
+    // complete logical Entity keys and separately tagged singleton references.
+    decl *word = NEW(decl);
+    word->kind = DECL_STRUCT;
+    word->builtin = true;
+    word->name = word->qualified = str_from("tide_shard_word");
+    word->c_name = "tide_shard_word";
+    static const char *const words[] = {"a", "b", "c"};
+    for (int i = 0; i < 3; i++) {
+        f.name = str_from(words[i]);
+        f.type = (type){TY_LONG, NULL};
+        vec_push(word->fields, f);
+    }
+    vec_push(prog->structs, word);
+    static const char *const long_lists[] = {"heard", "pins", "asked", "gone", "held", "routes", "matches", "touching",
                                              "spanned", "members"};
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < 10; i++) {
         f.name = str_from(long_lists[i]);
-        f.type = list_of(prog, (type){TY_LONG, NULL});
+        f.type = list_of(prog, (type){TY_STRUCT, word});
         vec_push(state->fields, f);
     }
     // shared: the root's fields of singletons with [Native] state, as they last came (tide_shard_apply_shared)
@@ -3350,6 +3584,9 @@ static int target_formats(const checker *c, const expr *e, const int tail, const
 }
 
 static type check_cube_target(checker *c, expr *e);
+static type check_array_target(checker *c, expr *e);
+static type check_array_sample(const checker *c, expr *e);
+static type check_depth_array_read(const checker *c, expr *e);
 
 // Constructors of built-in types: float(x), int3(1), float4(v.xy, 0, 1),
 // quaternion(x, y, z, w), float3x3(c0, c1, c2) and friends.
@@ -3408,9 +3645,12 @@ static type check_construct(checker *c, expr *e, const type target)
     }
     // Cubemap(256), Cubemap(256, Format.Rgba16f): a cube that's drawn into, a face at a time
     if (target.kind == TY_CUBEMAP) return check_cube_target(c, e);
-    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
-        diag_error(e->at, "%s has no constructor yet", name);
+    // TextureArray(1024, 1024, 4), TextureArray(2048, 2048, 3, 1, Format.Depth): layers drawn into one at a time
+    if (target.kind == TY_TEXTURE_ARRAY) return check_array_target(c, e);
+    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        diag_error(e->at, "%s has no constructor", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
+        else diag_note("declare a Texture asset for an image file, or read a render target's color image: 'target.color'");
         return T_ERR;
     }
 
@@ -3611,7 +3851,6 @@ static type check_enum_conversion(checker *c, expr *e, decl *d)
     // Its name is the enum's, for editors, whatever its arguments are: it's a call only once they're right
     e->type_decl = d;
     e->ctor = CTOR_ENUM;
-    if (d == c->prog->font) c->prog->names_bold = true; // Whatever number it's of
     const type target = {TY_ENUM, d};
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
@@ -3655,6 +3894,8 @@ static decl *converted_enum(const checker *c, const expr *e)
         name = (str){text, ns.len + 1 + e->name.len};
     }
     decl *d = find_type(c, name, e->at);
+    type builtin;
+    if (!d && skinned_type_named(c->prog, name, &builtin) && builtin.kind == TY_ENUM) d = builtin.decl;
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
@@ -3800,7 +4041,7 @@ static const decl *gpu_code(const checker *c)
 
 static const char *shader_word(const decl *d)
 {
-    return d->is_frag ? "frag" : "vert";
+    return d->is_compute ? "kernel" : d->is_frag ? "frag" : "vert";
 }
 
 // The function or method being checked, where it's one code the GPU runs can
@@ -3822,7 +4063,8 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
 {
     const bool own = of->kind == E_NAME && of->bind == BIND_PARAM && of->param->function_param;
     if (!own && !(assets && of->bind == BIND_ASSET)) {
-        const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid" : "Texture";
+        const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid"
+                         : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray" : "Texture";
         diag_error(of->at, "a function samples a %s it takes as a parameter of its own%s", what,
                    !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
                    ? ", or a Cubemap asset by its name" : ", or a Texture asset by its name");
@@ -3849,7 +4091,7 @@ static bool gpu_refuses(const checker *c, const loc at, const char *what, const 
 {
     const decl *s = gpu_code(c);
     if (!s) return false;
-    diag_error(at, "a %s runs on the GPU, for each %s, so it can't %s", shader_word(s), s->is_frag ? "pixel" : "vertex", what);
+    diag_error(at, "a %s runs on the GPU, for each %s, so it can't %s", shader_word(s), s->is_compute ? "invocation" : s->is_frag ? "pixel" : "vertex", what);
     if (instead) diag_note("%s", instead);
     return true;
 }
@@ -4471,6 +4713,12 @@ static type check_send(checker *c, expr *e)
     }
     e->type_decl = event;
     note_text_write(c, decl_holds_text(event));
+    decl *sender = reading_code(c);
+    if (sender) {
+        bool known = false;
+        for (int i = 0; i < sender->sent_events.count; i++) known |= sender->sent_events.items[i] == event;
+        if (!known) vec_push(sender->sent_events, event);
+    }
     vec_push(c->sends, e);
     return T_VOID_;
 }
@@ -4859,7 +5107,8 @@ static void check_method_args(checker *c, expr *e, decl *m)
     e->names_taken = true;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict,
+                                c->statement_call == e, c->loop_depth > 0 || c->loop_header > 0};
         vec_push(c->calls, site);
     }
     int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
@@ -4951,8 +5200,8 @@ static bool check_out_param(checker *c, const decl *m, const param *p, expr *arg
     } else if (arg->out_local) {
         // Its own, made here
     } else if (through_element(arg)) {
-        diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't make it", STR_ARG(m->name));
-        diag_note("make a variable, and put it in: '" STR_FMT "(..., out var e); items[i] = e;'", STR_ARG(m->name));
+        diag_error(arg->at, "an indexed element can't be an 'out' argument to '" STR_FMT "'", STR_ARG(m->name));
+        diag_note("receive the result in 'out var value', then assign value to the indexed destination after the call");
     } else if (through_swizzle(arg)) {
         diag_error(arg->at, "a swizzle of several components is a copy, so '" STR_FMT "' can't make it", STR_ARG(m->name));
         diag_note("make a variable, and assign the components from it: '" STR_FMT "(..., out var made); v.xy = made;'", STR_ARG(m->name));
@@ -5029,12 +5278,12 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             note_conversion(p->type, arg->type);
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
-                diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
+                diag_error(arg->at, "an indexed element can't be a 'mut' argument to '" STR_FMT "'", STR_ARG(m->name));
                 if (c->fields_ordered && holds_long_array(arg->type)) { // Nothing takes one out to put it back
                     diag_note("pass what holds the element as the 'mut' parameter, and which one it is: an element's own fields are "
                               "read and written where they are, 'sides[i].line[k]'");
                 } else {
-                    diag_note("take it out, change it, and put it back: 'var e = items[i]; ...; items[i] = e;'");
+                    diag_note("copy the argument into a 'mut' local, pass that local, then assign it back to the indexed destination");
                 }
             } else if (through_swizzle(arg)) {
                 diag_error(arg->at, "a swizzle of several components is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
@@ -5080,7 +5329,7 @@ static bool arg_fits(const expr *arg, const param *p)
         return out_untyped(arg) || arg->type.kind == TY_ERROR || p->type.kind == TY_ERROR || same_type(p->type, arg->type);
     }
     const type inner = p->type.kind == TY_OPTIONAL ? wrapped_value(p->type) : p->type;
-    if (arg->enum_shorthand) return p->mode != PARAM_MUT && inner.kind == TY_ENUM;
+    if (arg->enum_shorthand) return p->mode != PARAM_MUT && (inner.kind == TY_ENUM || inner.kind == TY_FONT);
     if (arg->kind == E_DEFAULT) return p->mode != PARAM_MUT;
     if (arg->kind == E_NULL) return p->mode != PARAM_MUT && p->type.kind == TY_OPTIONAL;
     if (arg->kind == E_LIST) return p->mode != PARAM_MUT && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY);
@@ -5089,7 +5338,7 @@ static bool arg_fits(const expr *arg, const param *p)
     if (t.kind == TY_ERROR || p->type.kind == TY_ERROR) return true;
     if (p->mode == PARAM_MUT) return same_type(p->type, t); // The variable itself
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && arg->bind == BIND_ASSET
-        && type_asset_reference_accepts(inner.decl, t)) return true;
+        && type_asset_reference_accepts(inner.decl, arg->constant->return_type)) return true;
     if (type_assignable(p->type, t)) return true;
     int64_t value; // As in C#, an int constant fits a byte
     return inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(arg, &value) && value >= 0 && value <= 255;
@@ -5173,6 +5422,237 @@ static void put_arg_types(sb *out, const expr *e)
 // A call of a name several functions, or several of a type's methods, share:
 // the one C#'s rules pick for its arguments, with them checked against it, or
 // NULL after saying that none takes them, or that more than one could.
+// ---------------------------------------------------------------------------
+// Generic functions
+
+static void mark_io_callers(const checker *c);
+static void mark_roll_callers(const checker *c);
+static void mark_act_callers(const checker *c);
+
+#define GENERIC_DEPTH 8 // Instantiations made by instantiations, one inside another: more is an endless chain
+
+// What a type argument can be: what a list's element can (the proposal's rule), as a value.
+static bool type_arg_ok(const type t, const loc at, const str param)
+{
+    switch (t.kind) {
+    case TY_ERROR: return false;
+    case TY_VOID: case TY_OPTIONAL: case TY_FAILABLE: case TY_GRID: case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT:
+    case TY_RECORD: case TY_EVENT: case TY_WORLD: case TY_QUERY: case TY_ACTION: case TY_DRAW_LIST: case TY_RESIDENT:
+        diag_error(at, "'" STR_FMT "' can't be %s: a type argument is a value, what a list can hold", STR_ARG(param), type_name(t));
+        if (t.kind == TY_COMPONENT) diag_note("a struct with the same fields can be one");
+        return false;
+    default: return true;
+    }
+}
+
+// Binds the type parameters `pattern` names to what `actual` has in their
+// places: `List<T>` against a List<Corner> makes T Corner. False where a
+// parameter is already something else, which `clash` says.
+static bool infer_type(const decl *g, const type_ref *pattern, const type actual, type *bound, bool *set, int *clash)
+{
+    if (actual.kind == TY_ERROR || !pattern) return true;
+    if (pattern->optional) {
+        type_ref inner = *pattern;
+        inner.optional = false;
+        return infer_type(g, &inner, actual.kind == TY_OPTIONAL ? actual.decl->fields.items[0].type : actual, bound, set, clash);
+    }
+    if (pattern->sizes.count > 0) { // T[4][8]: the outer array's elements are T[8]
+        if (actual.kind != TY_ARRAY) return true;
+        type_ref inner = *pattern;
+        inner.sizes.items = pattern->sizes.items + 1;
+        inner.sizes.count = pattern->sizes.count - 1;
+        return infer_type(g, &inner, actual.decl->fields.items[0].type, bound, set, clash);
+    }
+    if (pattern->args.count == 0) {
+        for (int k = 0; k < g->type_params.count; k++) {
+            if (!str_eq(g->type_params.items[k], pattern->name)) continue;
+            if (set[k] && !same_type(bound[k], actual)) {
+                *clash = k;
+                return false;
+            }
+            bound[k] = actual;
+            set[k] = true;
+        }
+        return true;
+    }
+    const str name = pattern->name;
+    if ((str_eq_c(name, "List") && actual.kind == TY_LIST) || (str_eq_c(name, "Set") && actual.kind == TY_SET)
+        || ((str_eq_c(name, "Grid2") || str_eq_c(name, "Grid3")) && actual.kind == TY_GRID)) {
+        return pattern->args.count != 1 || infer_type(g, pattern->args.items[0], actual.decl->fields.items[0].type, bound, set, clash);
+    }
+    if (str_eq_c(name, "Map") && actual.kind == TY_MAP && pattern->args.count == 2) {
+        return infer_type(g, pattern->args.items[0], actual.decl->fields.items[0].type, bound, set, clash)
+            && infer_type(g, pattern->args.items[1], actual.decl->fields.items[1].type, bound, set, clash);
+    }
+    return true; // Its shape isn't the argument's: whether the instantiation takes it is the call's to say
+}
+
+static void put_generic_name(sb *out, const decl *g, const type *args)
+{
+    sb_printf(out, STR_FMT "<", STR_ARG(g->name));
+    for (int k = 0; k < g->type_params.count; k++) sb_printf(out, "%s%s", k ? ", " : "", type_name(args[k]));
+    sb_put(out, ">");
+}
+
+// Generic `g` with type arguments `args`: the instantiation that has them, made
+// the first time (its signature checked, its body when a call picks it).
+static decl *generic_instance(checker *c, decl *g, const type *args, const loc at)
+{
+    for (int i = 0; i < g->generic_instances.count; i++) {
+        decl *d = g->generic_instances.items[i];
+        bool same = true;
+        for (int k = 0; k < g->type_params.count && same; k++) same = same_type(d->type_args.items[k], args[k]);
+        if (same) return d;
+    }
+    sb name = {0};
+    put_generic_name(&name, g, args);
+    const int depth = c->generic ? c->generic->generic_depth + 1 : 1;
+    if (depth > GENERIC_DEPTH) {
+        diag_error(at, "'%s' would instantiate generics without end", name.data);
+        diag_note_at(c->generic->generic_at, "'%s' is instantiated here", c->generic->generic_name);
+        diag_note("a generic that instantiates itself with a bigger type each time never stops: at most %d go one inside another", GENERIC_DEPTH);
+        return NULL;
+    }
+    decl *d = parse_generic_instance(g);
+    if (!d) return NULL;
+    d->generic_of = g;
+    d->generic_depth = depth;
+    d->generic_at = at;
+    d->generic_name = name.data;
+    d->qualified = g->qualified;
+    d->is_local = g->is_local;
+    d->local_at = g->local_at;
+    for (int k = 0; k < g->type_params.count; k++) {
+        vec_push(d->type_args, args[k]);
+        decl *t = NEW(decl);
+        t->kind = DECL_ALIAS;
+        t->type_param = true;
+        t->name = t->qualified = g->type_params.items[k];
+        t->at = g->type_param_at.items[k];
+        t->unit = g->unit;
+        t->alias_state = 2;
+        t->alias_type = args[k];
+        type_ref *ref = NEW(type_ref);
+        ref->name = ref->text = str_from(type_name(args[k]));
+        ref->at = ref->name_at = t->at;
+        t->alias_ref = ref;
+        vec_push(d->type_arg_decls, t);
+    }
+    vec_push(g->generic_instances, d);
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = g->unit, .generic = d};
+    check_function_decl(&nested, d);
+    // Its name in generated C: the generic's, then its type arguments', Max_float (and its parameters', where
+    // generics share the name)
+    sb suffix = {0};
+    for (int k = 0; k < d->type_args.count; k++) {
+        sb_put(&suffix, "_");
+        for (const char *text = type_name(d->type_args.items[k]); *text; text++) {
+            if (isalnum((unsigned char)*text)) sb_putn(&suffix, text, 1);
+            else if (*text == '?') sb_put(&suffix, "_opt");
+            else if (*text == '[') sb_put(&suffix, "_of");
+            else if (*text != ' ' && *text != '>' && *text != ']') sb_put(&suffix, "_");
+        }
+    }
+    if (g->shares_name) put_c_suffix(&suffix, d->params.items, d->params.count);
+    d->c_suffix = suffix.data;
+    d->signature = d->generic_name;
+    return d;
+}
+
+// The instantiation a call picked: in the program from here on, its body
+// checked as the generic's own code with the type arguments bound.
+static void place_generic_instance(checker *c, decl *d)
+{
+    if (d->generic_placed) return;
+    d->generic_placed = true;
+    vec_push(c->prog->decls, d);
+    // Another declaration generated C would spell the same: Max_float of the game's own
+    sb mine = {0};
+    c_name_of(d, &mine);
+    sb_put(&mine, d->c_suffix);
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *other = c->prog->decls.items[i];
+        if (other == d || other->builtin || other->kind == DECL_ALIAS || other->kind == DECL_GENERIC) continue;
+        if (other->kind != DECL_FUNCTION && !is_kind(other, NAME_TYPE) && other->kind != DECL_SYSTEM && other->kind != DECL_CONST) continue;
+        sb theirs = {0};
+        c_name_of(other, &theirs);
+        if (other->c_suffix) sb_put(&theirs, other->c_suffix);
+        if (strcmp(mine.data, theirs.data) != 0) continue;
+        diag_error(d->generic_at, "'%s' and '" STR_FMT "' would have the same name in generated C, %s", d->generic_name,
+                   STR_ARG(other->qualified), mine.data);
+        diag_note("rename one of them");
+        break;
+    }
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = d->unit, .generic = d};
+    const int errors = diag_error_count();
+    check_method_body(&nested, d);
+    if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
+#define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
+    MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
+    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
+    MERGE_CHECKS(access_warnings);
+#undef MERGE_CHECKS
+    c->outs += nested.outs;
+    // What its code does, through the functions it calls, is known before the code that called it goes on
+    mark_io_callers(c);
+    mark_roll_callers(c);
+    mark_act_callers(c);
+}
+
+// The instantiation of generic `g` that call `e` means: its type arguments as
+// written in <>, or from its arguments' types, which are checked. NULL where
+// there's none, which `loud` says.
+static decl *instantiate_for_call(checker *c, const expr *e, decl *g, const bool loud)
+{
+    const int n = g->type_params.count;
+    type *bound = arena_alloc(sizeof(type) * (size_t)n);
+    bool *set = arena_alloc(sizeof(bool) * (size_t)n);
+    for (int k = 0; k < n; k++) set[k] = false;
+    if (e->type_args.count > 0) {
+        if (e->type_args.count != n) {
+            if (loud) diag_error(e->type_args.items[0]->at, "'" STR_FMT "' takes %d type%s in '<>', not %d", STR_ARG(g->name), n,
+                                 n == 1 ? "" : "s", e->type_args.count);
+            return NULL;
+        }
+        for (int k = 0; k < n; k++) {
+            const type_ref *r = e->type_args.items[k];
+            bound[k] = resolve_type(c, r, PLACE_LOCAL, r->at);
+            if (bound[k].kind == TY_ERROR || !type_arg_ok(bound[k], r->at, g->type_params.items[k])) return NULL;
+        }
+        return generic_instance(c, g, bound, e->at);
+    }
+    int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
+    if (!bind_args(e, g, param_of, !loud)) return NULL;
+    for (int i = 0; i < e->args.count; i++) {
+        const expr *arg = e->args.items[i];
+        if (param_of[i] < 0 || arg->is_out || untyped_arg(arg)) continue;
+        if (arg->type.kind == TY_ERROR) return NULL;
+        int clash = -1;
+        if (infer_type(g, g->params.items[param_of[i]].type_ref, arg->type, bound, set, &clash)) continue;
+        if (loud) {
+            diag_error(arg->at, "'" STR_FMT "' is %s from an argument before, and this one makes it something else",
+                       STR_ARG(g->type_params.items[clash]), type_name(bound[clash]));
+            diag_note("each argument that says what '" STR_FMT "' is says the same type: write it in '<>', like '" STR_FMT "<%s>(...)', "
+                      "and the arguments are converted to it", STR_ARG(g->type_params.items[clash]), STR_ARG(g->name),
+                      type_name(bound[clash]));
+        }
+        return NULL;
+    }
+    for (int k = 0; k < n; k++) {
+        if (set[k]) {
+            if (!type_arg_ok(bound[k], e->at, g->type_params.items[k])) return NULL;
+            continue;
+        }
+        if (loud) {
+            diag_error(e->at, "nothing in the arguments says what '" STR_FMT "' of '" STR_FMT "' is", STR_ARG(g->type_params.items[k]),
+                       STR_ARG(g->name));
+            diag_note("write the types in '<>', like '" STR_FMT "<int>(...)'", STR_ARG(g->name));
+        }
+        return NULL;
+    }
+    return generic_instance(c, g, bound, e->at);
+}
+
 static decl *check_overloaded_args(checker *c, expr *e, decl *first)
 {
     decl_list same = {0};
@@ -5209,12 +5689,28 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         c->input_value = previous_input;
         c->asset_value = previous_asset;
     }
+    // A generic takes part as the instantiation its type arguments make: written in <>, or from the arguments
+    bool *failed = arena_alloc(sizeof(bool) * (size_t)same.count);
+    bool said = false; // ...what's wrong with the one there is, said already
+    for (int k = 0; k < same.count; k++) {
+        failed[k] = false;
+        if (same.items[k]->kind != DECL_GENERIC) {
+            failed[k] = e->type_args.count > 0;
+            continue;
+        }
+        const bool loud = same.count == 1;
+        const int errors = diag_error_count();
+        decl *made = instantiate_for_call(c, e, same.items[k], loud);
+        if (made) same.items[k] = made;
+        failed[k] = !made;
+        said |= loud && !made && diag_error_count() > errors;
+    }
     int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
     bool *fits = arena_alloc(sizeof(bool) * (size_t)same.count);
     for (int k = 0; k < same.count; k++) {
         const decl *m = same.items[k];
         param_of[k] = arena_alloc(sizeof(int) * (size_t)(written ? written : 1));
-        fits[k] = m->takes_action == (e->block != NULL) && bind_args(e, m, param_of[k], true);
+        fits[k] = !failed[k] && m->takes_action == (e->block != NULL) && bind_args(e, m, param_of[k], true);
     }
     // A T? or a failable call's value only goes where its own type does (as check_expr_want)
     for (int i = 0; i < written; i++) {
@@ -5241,7 +5737,10 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         if (!fits[k]) continue;
         bool wins = true;
         for (int j = 0; j < same.count && wins; j++) {
-            if (j != k && fits[j]) wins = better_candidate(e, same.items[k], param_of[k], same.items[j], param_of[j]) > 0;
+            if (j == k || !fits[j]) continue;
+            const bool k_generic = same.items[k]->generic_of != NULL, j_generic = same.items[j]->generic_of != NULL;
+            wins = k_generic != j_generic ? !k_generic // A plain function wins over a generic, as in C#
+                                          : better_candidate(e, same.items[k], param_of[k], same.items[j], param_of[j]) > 0;
         }
         if (wins) best = k;
     }
@@ -5250,6 +5749,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             if (e->args.items[i]->is_out) finish_out_arg(c, e->args.items[i], T_ERR);
             else if (untyped_arg(e->args.items[i])) check_expr_want_checked(c, e->args.items[i], T_ERR, true);
         }
+        if (said) return NULL;
         sb args = {0};
         put_arg_types(&args, e);
         if (applicable == 0) {
@@ -5268,11 +5768,13 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         return NULL;
     }
     decl *m = same.items[best];
+    if (m->generic_of) place_generic_instance(c, m);
     e->call = m->kind == DECL_FUNCTION ? CALL_FUNCTION : CALL_METHOD;
     e->method = m;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict,
+                                c->statement_call == e, c->loop_depth > 0 || c->loop_header > 0};
         vec_push(c->calls, site);
     }
     for (int i = 0; i < written; i++) {
@@ -5315,7 +5817,11 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
 // which is said).
 static decl *check_routine_args(checker *c, expr *e, decl *m)
 {
-    if (m->shares_name) return check_overloaded_args(c, e, m);
+    if (m->shares_name || m->kind == DECL_GENERIC) return check_overloaded_args(c, e, m);
+    if (e->type_args.count > 0) {
+        diag_error(e->type_args.items[0]->at, "'" STR_FMT "' takes no types in '<>': it isn't generic", STR_ARG(m->name));
+        diag_note("leave out the '<...>'");
+    }
     check_method_args(c, e, m);
     return m;
 }
@@ -5559,8 +6065,12 @@ static type check_self_call(checker *c, expr *e, decl *m)
 
 #include "callable_check.inc"
 
+static type check_gpu_list_make(checker *c, expr *e);
+
 static type check_call(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "GPUList") && e->type_args.count && !find_local(c, e->name) && !find_param(c, e->name))
+        return check_gpu_list_make(c, e);
     const stmt *call_local = find_local(c, e->name);
     const param *call_param = find_param(c, e->name);
     const field *call_field = field_in_scope(c, e->name);
@@ -5579,12 +6089,23 @@ static type check_call(checker *c, expr *e)
 
     decl *const own = c->method && !c->method->is_operator && !c->method->is_interpolate ? find_method(c->method->owner, e->name) : NULL;
     if (own) return check_self_call(c, e, own);
+    if (!call_local && !call_param && c->system && c->system->preparation_owner
+        && find_method(c->system->preparation_owner, e->name)) {
+        expr *self = NEW(expr);
+        self->kind = E_NAME;
+        self->name = str_from("tide_preparation_scene");
+        self->at = e->at;
+        e->kind = E_METHOD;
+        e->object = self;
+        return check_expr(c, e);
+    }
 
     type builtin;
     e->type_alias = authored_alias(c, e->name, e->at);
     if (resolve_builtin_alias(c, e->name, &builtin)) return check_construct(c, e, builtin);
     if (e->type_alias && e->type_alias->alias_type.kind == TY_GRID) return check_new_grid(c, e, e->type_alias->alias_type);
     if (is_new_grid(e)) return check_new_grid(c, e, T_VOID_); // Where nothing says its type: an error
+    if (is_new_mesh(c, e)) return check_new_mesh(c, e, T_VOID_);
 
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
 
@@ -5808,7 +6329,8 @@ static bool address_like(const str text)
 // and Session.Leave(): which match this machine is in; Session.Open(port)
 // and Session.Close(): whether others can join the one it runs;
 // Session.Kick(player, message) and Session.KickAll(message): sending players
-// out of it; Session.End(): ending it for everyone; and Session.Watch(center,
+// out of it; Session.Ban(player, message) and Session.Unban(player): keeping
+// one out for the rest of it; Session.End(): ending it for everyone; and Session.Watch(center,
 // size) and Session.Unwatch(): an area of a sharded world this machine sees
 // wherever its player is. Only local code decides.
 static type check_session_call(checker *c, expr *e)
@@ -5821,10 +6343,13 @@ static type check_session_call(checker *c, expr *e)
     const bool close = str_eq_c(e->name, "Close");
     const bool kick = str_eq_c(e->name, "Kick");
     const bool kick_all = str_eq_c(e->name, "KickAll");
+    const bool ban = str_eq_c(e->name, "Ban");
+    const bool unban = str_eq_c(e->name, "Unban");
     const bool end = str_eq_c(e->name, "End");
     const bool watch = str_eq_c(e->name, "Watch");
     const bool unwatch = str_eq_c(e->name, "Unwatch");
-    if (!start && !join && !connect && !leave && !open && !close && !kick && !kick_all && !end && !watch && !unwatch) {
+    if (!start && !join && !connect && !leave && !open && !close && !kick && !kick_all && !ban && !unban && !end && !watch
+        && !unwatch) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (str_eq_c(e->name, "Play") || str_eq_c(e->name, "Host")) {
             diag_error(e->at, "Session." STR_FMT " is Session.Start now", STR_ARG(e->name));
@@ -5832,8 +6357,8 @@ static type check_session_call(checker *c, expr *e)
                                                 : "'Session.Start(Arena); Session.Open();' starts a match others can join");
             return T_ERR;
         }
-        diag_error(e->at, "Session has no '" STR_FMT "'; it has Start, Open, Close, Kick, KickAll, End, Join, Connect, Leave, "
-                          "Watch and Unwatch",
+        diag_error(e->at, "Session has no '" STR_FMT "'; it has Start, Open, Close, Kick, KickAll, Ban, Unban, End, Join, "
+                          "Connect, Leave, Watch and Unwatch",
                    STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Start");
@@ -5841,6 +6366,8 @@ static type check_session_call(checker *c, expr *e)
         suggest_consider_c(&s, "Close");
         suggest_consider_c(&s, "Kick");
         suggest_consider_c(&s, "KickAll");
+        suggest_consider_c(&s, "Ban");
+        suggest_consider_c(&s, "Unban");
         suggest_consider_c(&s, "Join");
         suggest_consider_c(&s, "Connect");
         suggest_consider_c(&s, "Leave");
@@ -5879,10 +6406,10 @@ static type check_session_call(checker *c, expr *e)
         note_act(c, true, e->at, what.data, false, false);
     }
     e->call = CALL_SESSION;
-    const int least = watch ? 2 : join || connect || kick ? 1 : 0;
-    const int most = connect || kick || watch ? 2 : open || kick_all || start ? 1 : least;
-    const char *named = start ? "scene" : join ? "code" : connect ? "address, port" : open ? "port" : kick ? "player, message"
-                        : kick_all ? "message" : watch ? "center, size" : "";
+    const int least = watch ? 2 : join || connect || kick || ban || unban ? 1 : 0;
+    const int most = connect || kick || ban || watch ? 2 : open || kick_all || start ? 1 : least;
+    const char *named = start ? "scene" : join ? "code" : connect ? "address, port" : open ? "port"
+                        : kick || ban ? "player, message" : unban ? "player" : kick_all ? "message" : watch ? "center, size" : "";
     if (!order_named_args(e, named, most - least)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
@@ -5902,6 +6429,9 @@ static type check_session_call(checker *c, expr *e)
                                            "'Session.Kick(player)' or 'Session.Kick(player, \"Be nice\")'"
                                : kick_all ? "Session.KickAll takes nothing, or a message: "
                                             "'Session.KickAll()' or 'Session.KickAll(\"The party's over\")'"
+                               : ban     ? "Session.Ban takes the player, and maybe a message: "
+                                           "'Session.Ban(player)' or 'Session.Ban(player, \"Cheating\")'"
+                               : unban   ? "Session.Unban takes the player: 'Session.Unban(player)'"
                                : end     ? "Session.End takes nothing: 'Session.End()'"
                                : watch   ? "Session.Watch takes the area's center and size: "
                                            "'Session.Watch(camera.position, float3(200, 200, 200))'"
@@ -5957,17 +6487,20 @@ static type check_session_call(checker *c, expr *e)
         }
         return T_VOID_;
     }
-    if (kick) {
+    if (kick || ban || unban) {
         const type t = check_expr(c, e->args.items[0]);
         if (t.kind != TY_ERROR && t.kind != TY_PLAYER) {
-            diag_error(e->args.items[0]->at, "Session.Kick takes the player to send away, a PlayerID, not %s", type_name(t));
+            diag_error(e->args.items[0]->at, "%s, a PlayerID, not %s",
+                       kick ? "Session.Kick takes the player to send away" : ban ? "Session.Ban takes the player to keep out"
+                                                                         : "Session.Unban takes the player to let in again",
+                       type_name(t));
         }
     }
-    if ((kick && e->args.count == 2) || (kick_all && e->args.count == 1)) {
+    if (((kick || ban) && e->args.count == 2) || (kick_all && e->args.count == 1)) {
         const expr *message = e->args.items[e->args.count - 1];
         const type t = check_expr(c, e->args.items[e->args.count - 1]);
         if (t.kind != TY_ERROR && t.kind != TY_STRING) {
-            diag_error(message->at, "a kick's message is text, like \"Be nice\"");
+            diag_error(message->at, ban ? "a ban's message is text, like \"Cheating\"" : "a kick's message is text, like \"Be nice\"");
             diag_note("put a value in text with '$', like '$\"{value}\"'");
         }
     }
@@ -6005,16 +6538,48 @@ static type check_session_call(checker *c, expr *e)
 
 static type check_scene_call(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "IsPrepared")) {
+        if (!order_named_args(e, "scene, player", 1)) return T_ERR;
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (e->args.count < 1 || e->args.count > 2) {
+            diag_error(e->at, "Scene.IsPrepared takes a scene entity and optionally a player: Scene.IsPrepared(scene, player)");
+            return T_ERR;
+        }
+        const type_kind kind = e->args.items[0]->type.kind;
+        if (kind != TY_ENTITY && kind != TY_LOCAL_ENTITY && kind != TY_ERROR)
+            diag_error(e->args.items[0]->at, "Scene.IsPrepared takes the scene's entity handle");
+        if (e->args.count == 2 && e->args.items[1]->type.kind != TY_PLAYER && e->args.items[1]->type.kind != TY_ERROR)
+            diag_error(e->args.items[1]->at, "Scene.IsPrepared's second argument is a PlayerID");
+        if (kind == TY_LOCAL_ENTITY && e->args.count == 2)
+            diag_error(e->at, "a local scene belongs to this machine; use Scene.IsPrepared(scene) without a player");
+        e->local_world = kind == TY_LOCAL_ENTITY;
+        if (c->in_input || (in_routine(c) && !inherits(c) && !async_code(c))) {
+            diag_error(e->at, "Scene.IsPrepared reads world state; use it from world code or its synchronous helpers");
+            return T_ERR;
+        }
+        decl *code = reading_code(c);
+        if (code) {
+            code->preparation_reads |= e->local_world ? 2u : 1u;
+            if (e->local_world) {
+                code->world_local = true;
+                if (code->is_async) note_side(code, TASK_LOCAL, e->at);
+                else if (!in_routine(c) && !local_code(c)) diag_error(e->at, "a local scene belongs to this machine; match code can't read it");
+            } else code->world_match = true;
+        }
+        e->call = CALL_IS_PREPARED;
+        return T_BOOL_;
+    }
     const bool load = str_eq_c(e->name, "Load");
     const bool unload = str_eq_c(e->name, "Unload");
     if (!load && !unload) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load and Unload", STR_ARG(e->name));
+        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load, Unload and IsPrepared", STR_ARG(e->name));
         if (str_eq_c(e->name, "AddPlayer") || str_eq_c(e->name, "RemovePlayer"))
             diag_note("set the scene root's Visibility group audience with Visibility.Set(group, audience)");
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Load");
         suggest_consider_c(&s, "Unload");
+        suggest_consider_c(&s, "IsPrepared");
         suggest_note(&s);
         return T_ERR;
     }
@@ -6092,6 +6657,7 @@ static type check_scene_call(checker *c, expr *e)
             return T_ERR;
         }
         e->call = CALL_LOAD;
+        if (c->system) c->system->loads_scenes = true;
         e->type_decl = scene;
         note_text_write(c, decl_holds_text(scene));
         e->spawn_mask = bit(scene);
@@ -6294,6 +6860,41 @@ static type check_clipboard_call(checker *c, expr *e)
     return T_VOID_;
 }
 
+// Application.Quit(): the program ends after this frame, as when its window
+// closes, which the host does once the frame's done, as it does what
+// Session's calls ask. Local code's, like those: quitting is this machine's.
+static type check_quit_call(checker *c, expr *e)
+{
+    if (in_async_function(c) && !note_task_side(c, TASK_LOCAL, e->at)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if ((in_routine(c) && !inherits(c)) || c->in_input || (!c->method && !local_code(c))) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (in_routine(c)) {
+            diag_error(e->at, "%s can't call Application.Quit; views, local handlers and the functions they call do", routines(c));
+        } else if (c->in_input) {
+            diag_error(e->at, "%s makes this machine's input, so it can't call Application.Quit", input_code(c));
+        } else {
+            diag_error(e->at, "the match runs the same on every machine, so it can't call Application.Quit");
+            diag_note("quitting is this machine's: call it from a view or a local handler, like a menu's Quit button");
+        }
+        return T_ERR;
+    }
+    if (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0) {
+        diag_error(e->at, "Application.Quit is a statement of its own");
+    }
+    if (inherits(c)) note_act(c, true, e->at, "calls Application.Quit", false, false);
+    e->call = CALL_QUIT;
+    if (e->args.count != 0) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Application.Quit takes nothing: 'Application.Quit()'");
+        diag_note("the program's exit code is 0, as when its window closes");
+        return T_ERR;
+    }
+    return T_VOID_;
+}
+
 // Draw.Mesh takes the program's own vertex lists and
 // List<int>, its Grid2<Color> if it has one, and its Filter and Wrap.
 static void use_mesh_types(checker *c)
@@ -6456,8 +7057,8 @@ static void note_mesh_forms(const expr *e)
         return;
     }
     diag_note("%s.Mesh(vertices, indices) draws a 2D mesh, and %s.Mesh(vertices, indices, transform) a 3D one, by its "
-              "vertices' position; then come a texture, its filter and its wrap, or a vert and a frag by name, and after those "
-              "a struct of values they read", on, on);
+              "vertices' position, the lists the CPU's or a kernel's GPU lists; then come a texture, its filter and its wrap, or "
+              "a vert and a frag by name, and after those a struct of values they read", on, on);
 }
 
 // Whether a vert writes a struct of this type for its frag: `out FromLamp lamp`.
@@ -6714,6 +7315,27 @@ static type check_mesh_draw(checker *c, expr *e)
     bool skinned = e->skinned = str_eq_c(e->name, "SkinnedMesh");
     const char *draw_name = e->targeted ? (skinned ? "target.SkinnedMesh" : instanced ? "target.Instanced" : "target.Mesh")
                                         : (skinned ? "Draw.SkinnedMesh" : instanced ? "Draw.Instanced" : "Draw.Mesh");
+    // `lod: multiplier`, written last: levels of detail made for a mesh the game made, while it runs (docs/spec.md,
+    // Levels of detail). Taken off the arguments, which go by what each is, and checked once the mesh's are
+    loc lod_at = e->at;
+    if (e->arg_names.count == e->args.count && e->args.count > 0 && str_eq_c(e->arg_names.items[e->args.count - 1], "lod")) {
+        e->mesh_lod = e->args.items[e->args.count - 1];
+        lod_at = e->arg_name_at.items[e->args.count - 1];
+        e->args.count--;
+        e->arg_names.count--;
+        e->arg_name_at.count--;
+    }
+    for (int i = 0; i < e->arg_names.count; i++) {
+        if (e->arg_names.items[i].len == 0) continue;
+        for (int k = 0; k < e->args.count; k++) {
+            if (e->args.items[k]->kind != E_LIST && e->args.items[k]->kind != E_DEFAULT) check_expr(c, e->args.items[k]);
+        }
+        diag_error(e->arg_name_at.items[i], "%s takes its arguments in order, and 'lod:' alone by name, last", draw_name);
+        diag_note("'lod: 1' asks for levels of detail of a mesh the game makes; leave out '" STR_FMT ":'",
+                  STR_ARG(e->arg_names.items[i]));
+        return T_ERR;
+    }
+    e->arg_names.count = e->arg_name_at.count = 0;
     // The vert and the frag it names come last, the vert first, and after
     // them a struct of values they read, the same for the whole draw
     int count = e->args.count;
@@ -6728,6 +7350,11 @@ static type check_mesh_draw(checker *c, expr *e)
             continue;
         }
         if (!shader) break;
+        if (shader->is_compute) {
+            diag_error(name->at, "'" STR_FMT "' is a kernel: it's run with 'GPU.Run(" STR_FMT ", over)', not drawn",
+                       STR_ARG(shader->name), STR_ARG(shader->name));
+            return T_ERR;
+        }
         decl **slot = shader->is_frag ? &e->frag : &e->vert;
         if (*slot) {
             diag_error(name->at, "%s takes one %s, and this names two", draw_name, shader_word(shader));
@@ -6768,7 +7395,8 @@ static type check_mesh_draw(checker *c, expr *e)
                                        : "%s takes a skinned mesh and its float4x4 transform first; a Pose is optional", draw_name);
             return T_ERR;
         }
-        if (whole.kind == TY_MESH || skinned) {
+        if (whole.kind == TY_MESH || (whole.kind == TY_STRUCT && whole.decl->asset_ref_of
+                && whole.decl->asset_ref_of->kind == DECL_MESH) || skinned) {
             const int had = e->args.count;
             expr **given = e->args.items;
             e->written.items = given;
@@ -6782,7 +7410,7 @@ static type check_mesh_draw(checker *c, expr *e)
                 of->at = mesh->at;
                 of->object = mesh;
                 of->member = str_from(part == 1 ? "vertices" : "indices");
-                of->type = part == 1 ? list_of(prog, skinned ? whole.decl->skin_vertex : mesh_vertex(whole)) : list_of(prog, T_INT_);
+                of->type = part == 1 ? list_of(prog, skinned ? whole.decl->skin_vertex : mesh_vertex(whole.kind == TY_MESH ? whole : (type){TY_MESH, whole.decl->asset_ref_of})) : list_of(prog, T_INT_);
                 if (skinned) of->field = (field *)field_called(whole.decl, part == 1 ? "vertices" : "indices");
                 of->mesh_part = part;
                 vec_push(e->args, of);
@@ -6848,11 +7476,13 @@ static type check_mesh_draw(checker *c, expr *e)
         check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
     } else {
         const type t = checked > 0 ? vertices->type : check_expr(c, vertices);
-        if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_STRUCT) {
+        if ((t.kind == TY_LIST || t.kind == TY_GPU_LIST) && t.decl->fields.items[0].type.kind == TY_STRUCT) {
             vertex = t.decl->fields.items[0].type.decl;
+            e->gpu_vertices = t.kind == TY_GPU_LIST; // A kernel's: each read on the GPU, by its index
         } else if (t.kind != TY_ERROR) {
             diag_error(vertices->at, "%s draws a list of vertices, and this is %s", draw_name, type_name(t));
-            diag_note("a List<Vertex> in 2D, a List<Vertex3> in 3D, or a list of a struct of the game's with a 'position'");
+            diag_note("a List<Vertex> in 2D, a List<Vertex3> in 3D, or a list of a struct of the game's with a 'position', or a "
+                      "GPUList of one");
         }
     }
     expr *indices = e->args.items[1];
@@ -6916,6 +7546,23 @@ static type check_mesh_draw(checker *c, expr *e)
     const int dims = vertex_dims(vertex, vertices->at, true);
     if (dims == 0) return T_ERR;
     e->draw_dims = dims;
+    if (e->mesh_lod) {
+        const type multiplier = check_expr_want(c, e->mesh_lod, T_FLOAT_);
+        if (multiplier.kind == TY_ERROR) return T_ERR;
+        if (multiplier.kind != TY_FLOAT && multiplier.kind != TY_INT) {
+            diag_error(e->mesh_lod->at, "'lod:' takes how many times the pixels a level may be off by, a float, and this "
+                       "is %s", type_name(multiplier));
+            diag_note("'lod: 1' for the destination's own tolerance (Draw.LODPixels), 'lod: 2' for twice it");
+            return T_ERR;
+        }
+        if (dims != 3) {
+            diag_error(lod_at, "levels of detail are for 3D meshes, and '" STR_FMT "' is a 2D mesh's vertex",
+                       STR_ARG(vertex->name));
+            diag_note("a 2D mesh is drawn as it is: leave 'lod:' out");
+            return T_ERR;
+        }
+        e->mesh_lod_vertex = vertex;
+    }
     // A 3D mesh takes the transform that places it; a 2D one is drawn where its vertices are
     if (!instanced && dims == 3 && (count < 3 || (e->args.items[2]->type.kind != TY_FLOAT4X4 && e->args.items[2]->type.kind != TY_ERROR
                                                  && e->args.items[2]->kind != E_DEFAULT))) {
@@ -6941,7 +7588,20 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
 
-    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced && !skinned) {
+    // Indices on the GPU: as many as its count there, each vertex read by its index, so the vertices are there too
+    e->gpu_indices = index_type.kind == TY_GPU_LIST && index_type.decl->fields.items[0].type.kind == TY_INT;
+    if (e->gpu_indices && !e->gpu_vertices) {
+        diag_error(indices->at, "a GPUList of indices picks its vertices on the GPU, and these vertices are the CPU's");
+        diag_note("put them in a GPUList too, sent once with 'Set' where they don't change, or give the indices as a List<int>");
+        return T_ERR;
+    }
+    if (e->gpu_vertices && e->mesh_lod) {
+        diag_error(lod_at, "levels of detail are made of the CPU's vertices, and this mesh's are a GPU list's: 'lod:' isn't for it");
+        diag_note("draw one GPU list a level, each made by the kernel that picks them");
+        return T_ERR;
+    }
+
+    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced && !skinned && !e->gpu_vertices) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
@@ -6951,8 +7611,10 @@ static type check_mesh_draw(checker *c, expr *e)
     }
 
     bool ok = true;
-    if (index_type.kind != TY_ERROR && (index_type.kind != TY_LIST || index_type.decl != index_list.decl)) {
-        diag_error(indices->at, "a mesh's indices are a List<int>, three for each triangle, and this is %s", type_name(index_type));
+    if (index_type.kind != TY_ERROR && (index_type.kind != TY_LIST || index_type.decl != index_list.decl)
+        && (index_type.kind != TY_GPU_LIST || index_type.decl->fields.items[0].type.kind != TY_INT)) {
+        diag_error(indices->at, "a mesh's indices are a List<int>, three for each triangle, or a GPUList<int>, and this is %s",
+                   type_name(index_type));
         ok = false;
     }
     for (int i = 2; i < count; i++) {
@@ -6969,12 +7631,24 @@ static type check_mesh_draw(checker *c, expr *e)
     if (instanced) {
         const expr *instances = e->args.items[at++];
         const type list = instances->type;
-        const type element = list.kind == TY_LIST ? list.decl->fields.items[0].type : T_ERR;
-        if (list.kind != TY_LIST || (element.kind != TY_STRUCT && element.kind != TY_FLOAT4X4)) {
-            diag_error(instances->at, "%s takes a List<float4x4> of transforms or a List<T> of instance structs, and this is %s",
-                       draw_name, type_name(list));
+        const bool on_gpu = list.kind == TY_GPU_LIST; // As many as its count on the GPU: drawn indirect
+        const type element = list.kind == TY_LIST || on_gpu ? list.decl->fields.items[0].type : T_ERR;
+        if ((list.kind != TY_LIST && !on_gpu) || (element.kind != TY_STRUCT && element.kind != TY_FLOAT4X4)) {
+            diag_error(instances->at, "%s takes a List<float4x4> of transforms or a List<T> of instance structs, or a GPUList of "
+                       "either, and this is %s", draw_name, type_name(list));
             return T_ERR;
         }
+        if (on_gpu && skinned) {
+            diag_error(instances->at, "a skinned mesh's instances are posed on the CPU, so they can't be a GPU list's");
+            return T_ERR;
+        }
+        if (on_gpu && e->mesh_lod) {
+            diag_error(instances->at, "a draw over a GPU list picks no levels on the CPU, which has no instances to weigh: 'lod:' "
+                       "isn't for it");
+            diag_note("draw one GPU list a level, each filled by the kernel that picks them");
+            return T_ERR;
+        }
+        e->gpu_instances = on_gpu;
         transforms = element.kind == TY_FLOAT4X4;
         if (transforms && dims != 3) {
             diag_error(instances->at, "a List<float4x4> places 3D instances: a 2D draw takes instance structs and a vert that places them");
@@ -7082,7 +7756,7 @@ static type check_mesh_draw(checker *c, expr *e)
     }
     if (!ok) return T_ERR;
 
-    if (instanced && transforms && vertex == prog->vertex3 && !shaded && !skinned) {
+    if (instanced && transforms && vertex == prog->vertex3 && !shaded && !skinned && !e->gpu_vertices) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
@@ -7095,7 +7769,7 @@ static type check_mesh_draw(checker *c, expr *e)
     e->c_callee = NULL;
     e->arg_want.count = 0;
     vec_push(e->arg_want, vertices->type);
-    vec_push(e->arg_want, index_list);
+    vec_push(e->arg_want, e->gpu_indices ? index_type : index_list);
     for (int i = 2; i < count; i++) {
         const expr *arg = e->args.items[i];
         // The texture as the Texture it is, a grid too
@@ -7453,6 +8127,57 @@ static type check_cube_target(checker *c, expr *e)
     return (type){TY_CUBEMAP, NULL};
 }
 
+// TextureArray(width, height, layers[, pixelsPerUnit][, format]): layers of one size drawn into a layer at a time,
+// each a target of logical pixels as a RenderTarget's are, holding one color image or depth alone, with a depth array.
+static type check_array_target(checker *c, expr *e)
+{
+    if (gpu_refuses(c, e->at, "create a TextureArray", "the view creates it, and the frag reads it where it's a field")) return T_ERR;
+    if (!reading_code(c)) {
+        diag_error(e->at, "a TextureArray is created in local code, not a field default or constant");
+        diag_note("leave the field at default and create its array in a view or local handler");
+        return T_ERR;
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->name.len) {
+            diag_error(e->args.items[i]->at, "a TextureArray's arguments aren't named: 'TextureArray(width, height, layers)'");
+            if (str_eq_c(e->args.items[i]->name, "samples")) diag_note("an array's layers have one sample a pixel");
+            return T_ERR;
+        }
+    }
+    const int argc = e->args.count;
+    const type last = argc ? e->args.items[argc - 1]->type : T_ERR;
+    const bool formatted = last.kind == TY_ENUM && last.decl == c->prog->format;
+    const int sizes = argc - (formatted ? 1 : 0); // width, height, layers[, pixelsPerUnit]
+    bool numbers = sizes == 3 || sizes == 4;
+    for (int i = 0; numbers && i < sizes; i++) {
+        numbers = i == 2 ? type_assignable(T_INT_, e->args.items[i]->type) : type_assignable(T_FLOAT_, e->args.items[i]->type);
+    }
+    if (!numbers) {
+        diag_error(e->at, "TextureArray takes its layers' width and height in logical pixels, how many layers, an int, and "
+                          "its pixels per unit when it isn't the display's: 'TextureArray(width, height, layers)' or "
+                          "'TextureArray(width, height, layers, 1)'");
+        diag_note("what each layer holds comes last when that isn't Format.Rgba8: 'TextureArray(2048, 2048, 3, 1, Format.Depth)'");
+        return T_ERR;
+    }
+    const expr *layers = e->args.items[2];
+    if (layers->kind == E_INT && (layers->int_value < 1 || layers->int_value > 256)) {
+        diag_error(layers->at, "a TextureArray has 1 to 256 layers, and this asks for %lld", (long long)layers->int_value);
+        diag_note("256 is the most every GPU Tide draws with takes");
+        return T_ERR;
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = sizes == 4 ? (formatted ? "tide_texture_array_make_scaled_as" : "tide_texture_array_make_scaled")
+                             : (formatted ? "tide_texture_array_make_sized_as" : "tide_texture_array_make_sized");
+    e->resource_operation = true;
+    reading_code(c)->calls_c = true;
+    vec_push(e->arg_want, T_FLOAT_);
+    vec_push(e->arg_want, T_FLOAT_);
+    vec_push(e->arg_want, T_INT_);
+    if (sizes == 4) vec_push(e->arg_want, T_FLOAT_);
+    if (formatted) vec_push(e->arg_want, last);
+    return (type){TY_TEXTURE_ARRAY, NULL};
+}
+
 // RenderTarget.Window(), RenderTarget.Window(0.5): a target that's always the
 // window's size, or that part of it. Made where the constructor's are, and
 // like them, it says last what it holds when that isn't one color image:
@@ -7522,17 +8247,113 @@ static type check_window_target(checker *c, expr *e)
 static bool mesh_vertex_ok(const decl *vertex, loc at);
 #include "skinned_ops.inc"
 
+// Mesh<V>.Decode(bytes): a static Mesh<V> of a file's bytes (a .glb, a .gltf whose buffers are inside it, or an .obj;
+// tide/mesh_data.h), read as an asset of the file is, so the same vertices, on every machine: pure, so match code
+// decodes too. It fails with IOError.InvalidData. The receiver is `Mesh<V>` as written, or an alias of one.
+static type check_mesh_decode(checker *c, expr *e, bool *handled)
+{
+    *handled = false;
+    expr *receiver = e->object;
+    if (!receiver || receiver->kind != E_NAME) return T_ERR;
+    type mesh = T_ERR;
+    if (receiver->type_arg_ref && str_eq_c(receiver->type_arg_ref->name, "Mesh") && receiver->type_arg_ref->args.count == 1) {
+        *handled = true;
+        mesh = resolve_mesh(c, receiver->type_arg_ref, PLACE_LOCAL, receiver->at);
+    } else if (receiver->type_alias || (!receiver->type_arg_ref && !find_local(c, receiver->name) && !find_param(c, receiver->name)
+               && !field_in_scope(c, receiver->name))) {
+        // An alias: alias_receiver has already put the type it names in its place, and kept the alias
+        decl *alias = receiver->type_alias ? receiver->type_alias : authored_alias(c, receiver->name, receiver->at);
+        if (!alias) return T_ERR;
+        const type t = resolve_alias_type(c, alias);
+        if (t.kind != TY_STRUCT || !t.decl->asset_ref_geometry) return T_ERR;
+        *handled = true;
+        mesh = t;
+    } else return T_ERR;
+    if (mesh.kind == TY_ERROR) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if (!str_eq_c(e->name, "Decode")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "%s has the static method Decode(bytes), not '" STR_FMT "'", type_name(mesh), STR_ARG(e->name));
+        diag_note("a Mesh is made from lists with 'Mesh(vertices, indices)'");
+        return T_ERR;
+    }
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Mesh is decoded in CPU code, and drawn: 'Draw.Mesh(%s.Decode(bytes)!, transform)'", type_name(mesh));
+        return T_ERR;
+    }
+    const decl *vertex = mesh.decl->asset_ref_of->fields.items[0].type.decl;
+    if (!mesh_vertex_ok(vertex, e->at)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1, -1)) return T_ERR;
+    receiver->type = mesh;
+    receiver->type_decl = mesh.decl;
+    receiver->bind = BIND_TYPE;
+    e->call = CALL_MESH_DECODE;
+    e->type_decl = mesh.decl;
+    mesh.decl->mesh_decoded = true;
+    c->prog->mesh_decodes = true;
+    c->prog->uses_text = true; // Its lists are made in the scratch area, which code clears after it runs
+    return result_of(c->prog, mesh, (type){TY_ENUM, c->prog->io_error}, false);
+}
+
+// Font.Decode(bytes): a font file's bytes read into this machine's font
+// registry (tide/font.h) as an asset of the file is read, every place it says
+// checked before it's read, so what's drawn is checked font data. A Font is
+// this machine's, so local code decodes, and the functions it calls. It fails
+// with IOError.InvalidData.
+static type check_font_decode(checker *c, expr *e, bool *handled)
+{
+    *handled = false;
+    expr *receiver = e->object;
+    if (!receiver || receiver->kind != E_NAME || !str_eq_c(receiver->name, "Font") || receiver->type_arg_ref
+        || find_local(c, receiver->name) || find_param(c, receiver->name) || field_in_scope(c, receiver->name)) {
+        return T_ERR;
+    }
+    *handled = true;
+    if (!str_eq_c(e->name, "Decode")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Font has the static method Decode(bytes), not '" STR_FMT "'", STR_ARG(e->name));
+        diag_note("a Font is 'Font.Regular', 'Font.Bold', an 'asset Font' or one 'Font.Decode(bytes)' read");
+        return T_ERR;
+    }
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Font is decoded in CPU code, and drawn with: 'Draw.Text(text, position, size, color, font)'");
+        return T_ERR;
+    }
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1, -1)) return T_ERR;
+    if (!c->method && !local_code(c)) {
+        diag_error(e->at, "a Font is this machine's, so the match can't decode one: Font.Decode is for local code");
+        diag_note("decode it in a view, a local handler or a local task, from bytes the match keeps if every machine "
+                  "should draw it: 'myFont = Font.Decode(match.fontBytes)!;'");
+        return T_ERR;
+    }
+    receiver->type = (type){TY_FONT, NULL};
+    e->call = CALL_FONT_DECODE;
+    if (builds(c->prog)) c->prog->font_decodes = true;
+    c->prog->uses_text = true; // Its bytes are flattened in the scratch area
+    return result_of(c->prog, (type){TY_FONT, NULL}, (type){TY_ENUM, c->prog->io_error}, false);
+}
+
 static decl *named_enum(const checker *c, const expr *e);
 // Sample's filter and wrap have fixed enum types even though this call's
 // shader binding is checked separately from the ordinary signature table.
 static void check_sample_args(checker *c, expr *e, const bool cube)
 {
+    const int filter_at = str_eq_c(e->name, "SampleGrad") ? 3 : 1;
     for (int i = 0; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         if (!arg->enum_shorthand) { check_expr(c, arg); continue; }
         const str name = arg_name(e, i);
-        const bool filter = name.len ? str_eq_c(name, "filter") : i == 1;
-        const bool wrap = !cube && (name.len ? str_eq_c(name, "wrap") : i == 2);
+        const bool filter = name.len ? str_eq_c(name, "filter") : i == filter_at;
+        const bool wrap = !cube && (name.len ? str_eq_c(name, "wrap") : i == filter_at + 1);
         check_expr_want(c, arg, filter ? (type){TY_ENUM, c->prog->filter} : wrap ? (type){TY_ENUM, c->prog->wrap} : T_ERR);
     }
 }
@@ -7818,6 +8639,58 @@ static type check_parse_call(checker *c, expr *e, const type result)
 }
 
 #include "visibility_check.inc"
+#include "compute_check.inc"
+
+// A frag's this.Ddx(v), this.Ddy(v) and this.Fwidth(v): how much a float or a
+// float vector changes from this pixel to the next one across, down, and the
+// two's sizes added, of the same type. The frag works v out as it starts and
+// asks there (shader.c, ex_derivative), as the GPU only answers outside
+// branches. And this.Cutout(alpha) and this.Coverage(share), statements: how
+// much of the pixel the frag covers, which makes it a cut-out (decl.cutout).
+// The arguments were checked.
+static type check_pixel_method(checker *c, expr *e, const bool derivative)
+{
+    const str name = e->object->kind == E_THIS ? str_from("this") : e->object->name;
+    const type t = e->args.count == 1 ? e->args.items[0]->type : T_ERR;
+    if (t.kind == TY_ERROR && e->args.count == 1) return T_ERR; // Said already
+    if (derivative) {
+        if (e->args.count != 1 || (t.kind != TY_FLOAT && t.kind != TY_FLOAT2 && t.kind != TY_FLOAT3 && t.kind != TY_FLOAT4
+                                   && t.kind != TY_COLOR)) {
+            diag_error(e->at, "'" STR_FMT "." STR_FMT "' takes one float, float vector or Color: how fast it changes across "
+                       "the pixel is what it gives", STR_ARG(name), STR_ARG(e->name));
+            diag_note("like 'this.Fwidth(distance)', of a value the frag can work out as it starts");
+            return T_ERR;
+        }
+        e->call = CALL_DERIVATIVE;
+        return t;
+    }
+    if (e->args.count != 1 || (t.kind != TY_FLOAT && t.kind != TY_INT)) {
+        diag_error(e->at, "'" STR_FMT "." STR_FMT "' takes one float: %s", STR_ARG(name), STR_ARG(e->name),
+                   str_eq_c(e->name, "Cutout") ? "the alpha that says where the frag is there, from 0.5 on"
+                                               : "the share of the pixel the frag covers, from 0 to 1");
+        return T_ERR;
+    }
+    if (c->statement_call != e || c->short_circuit_depth > 0 || c->branch_depth > 0) {
+        diag_error(e->at, "'" STR_FMT "." STR_FMT "(...)' is a statement of its own: it says how much of the pixel the "
+                   "frag covers", STR_ARG(name), STR_ARG(e->name));
+        return T_ERR;
+    }
+    decl *frag = c->method && c->method->kind == DECL_SHADER && c->method->is_frag ? c->method : NULL;
+    const bool raw = str_eq_c(e->name, "Coverage");
+    if (frag && frag->cutout && frag->raw_coverage != raw) {
+        diag_error(e->at, "a frag says how much of its pixel it covers one way: '%s' and '%s' are both here",
+                   raw ? "this.Cutout" : "this.Coverage", raw ? "this.Coverage" : "this.Cutout");
+        diag_note("'Cutout(alpha)' sharpens the alpha to a pixel's edge itself; 'Coverage(share)' takes the share as "
+                  "it's given, which 'this.Fwidth' can sharpen in the frag's own way");
+        return T_ERR;
+    }
+    if (frag) {
+        frag->cutout = true;
+        frag->raw_coverage = raw;
+    }
+    e->call = CALL_COVER;
+    return T_VOID_;
+}
 
 static type check_method(checker *c, expr *e)
 {
@@ -7838,6 +8711,8 @@ static type check_method(checker *c, expr *e)
     alias_receiver(c, e);
     if (visibility_owner(c, e->object, "Visibility") || visibility_owner(c, e->object, "Audience"))
         return check_visibility_static(c, e);
+    if (e->object->kind == E_NAME && str_eq_c(e->object->name, "GPU") && !find_local(c, e->object->name)
+        && !find_param(c, e->object->name) && !field_in_scope(c, e->object->name)) return check_gpu_static(c, e);
     if (str_eq_c(e->name, "Count")) {
         decl *d = named_enum(c, e->object);
         if (d) {
@@ -7859,6 +8734,12 @@ static type check_method(checker *c, expr *e)
     bool static_skin_handled = false;
     const type static_skin = check_skinned_static(c, e, &static_skin_handled);
     if (static_skin_handled) return static_skin;
+    bool mesh_decode_handled = false;
+    const type mesh_decoded = check_mesh_decode(c, e, &mesh_decode_handled);
+    if (mesh_decode_handled) return mesh_decoded;
+    bool font_decode_handled = false;
+    const type font_decoded = check_font_decode(c, e, &font_decode_handled);
+    if (font_decode_handled) return font_decoded;
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
         if (!world && str_eq_c(e->object->name, "world") && !field_in_scope(c, e->object->name)
@@ -7886,6 +8767,9 @@ static type check_method(checker *c, expr *e)
     if (e->object->kind == E_NAME && str_eq_c(e->object->name, "Clipboard") && !find_local(c, e->object->name)
         && !find_param(c, e->object->name)) {
         return check_clipboard_call(c, e);
+    }
+    if (names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Application") && str_eq_c(e->name, "Quit")) {
+        return check_quit_call(c, e);
     }
 
     if (names_random(c, e->object)) return check_roll(c, e); // Random.NextInt(6): a roll, with no generator of the game's
@@ -8071,8 +8955,13 @@ static type check_method(checker *c, expr *e)
     if (names_snapped_field(c, e, obj)) return check_field_snap(c, e);
     if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // this.Discard(): the frag's pixel isn't drawn
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        const bool derivative = str_eq_c(e->name, "Ddx") || str_eq_c(e->name, "Ddy") || str_eq_c(e->name, "Fwidth");
+        const bool cover = str_eq_c(e->name, "Cutout") || str_eq_c(e->name, "Coverage");
+        if (derivative || cover) return check_pixel_method(c, e, derivative);
         if (!str_eq_c(e->name, "Discard") || e->args.count) {
-            diag_error(e->at, "a frag's pixel has one method, 'Discard()', which leaves it undrawn; the rest are its fields");
+            diag_error(e->at, "a frag's pixel has the methods 'Discard()', which leaves it undrawn, 'Cutout(alpha)' and "
+                              "'Coverage(share)', which say how much of it the frag covers, and 'Ddx(v)', 'Ddy(v)' and "
+                              "'Fwidth(v)', how fast a value changes across it; the rest are its fields");
             return T_ERR;
         }
         if (c->statement_call != e || c->short_circuit_depth > 0 || c->branch_depth > 0) {
@@ -8094,18 +8983,20 @@ static type check_method(checker *c, expr *e)
         return check_instance_call(e);
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
+    if (obj.kind == TY_GPU_LIST) return check_gpu_list_method(c, e, obj);
+    if (shared_local(e->object) && is_atomic_name(e->name)) return check_shared_atomic(c, e, obj);
     bool skin_handled;
     const type skin_result = check_skinned_method(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
     if (obj.kind == TY_TEXTURE) {
-        if (str_eq_c(e->name, "Sample")) {
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")) {
             check_sample_args(c, e, false);
             return check_grid_sample(c, e, obj);
         }
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "a Texture has Sample(uv[, filter[, wrap]]), not '" STR_FMT "'", STR_ARG(e->name));
+        diag_error(e->at, "a Texture has Sample(uv[, filter[, wrap]]) and SampleGrad(uv, dx, dy[, filter[, wrap]]), not '" STR_FMT "'", STR_ARG(e->name));
         if (str_eq_c(e->name, "Compare")) diag_note("Compare reads a render target's depth, a DepthTexture: 'target.depth'");
         return T_ERR;
     }
@@ -8119,10 +9010,58 @@ static type check_method(checker *c, expr *e)
         suggest_note(&sg);
         return T_ERR;
     }
+    if (obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) return check_depth_array_read(c, e);
+        diag_error(e->at, "a DepthTextureArray has Sample(uv, layer) and Compare(uv, layer, value), not '" STR_FMT "'", STR_ARG(e->name));
+        return T_ERR;
+    }
+    if (obj.kind == TY_TEXTURE_ARRAY) {
+        const bool resize = str_eq_c(e->name, "Resize");
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")) {
+            check_sample_args(c, e, false);
+            e->object->raw_sampled = true; // A [Raw] array is read here as its numbers (check_raw_uses)
+            return check_array_sample(c, e);
+        }
+        if (!resize && !str_eq_c(e->name, "Dispose")) {
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "a TextureArray has Sample(uv, layer[, filter[, wrap]]) and SampleGrad(uv, dx, dy, layer[, filter[, "
+                              "wrap]]), and one that's drawn into has Resize(width, height) and Dispose(), not '" STR_FMT "'",
+                       STR_ARG(e->name));
+            if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Clear") || str_eq_c(e->name, "Instanced")) {
+                diag_note("an array is drawn into a layer at a time: 'array.layers[0]." STR_FMT "(...)'", STR_ARG(e->name));
+            }
+            return T_ERR;
+        }
+        for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_FLOAT_);
+        if (gpu_refuses(c, e->at, resize ? "resize a TextureArray" : "dispose a TextureArray", "the view owns the array")) return T_ERR;
+        if (e->object->bind == BIND_ASSET) {
+            diag_error(e->at, "an asset's TextureArray is the pack's: it can't be resized or disposed");
+            return T_ERR;
+        }
+        if (e->args.count != (resize ? 2 : 0) || (resize && (!type_assignable(T_FLOAT_, e->args.items[0]->type)
+                                                             || !type_assignable(T_FLOAT_, e->args.items[1]->type)))) {
+            diag_error(e->at, resize ? "Resize takes the layers' width and height, as the array was made with: "
+                                       "'array.Resize(width, height)'"
+                                   : "Dispose takes no arguments: 'array.Dispose()'");
+            return T_ERR;
+        }
+        if (resize) {
+            vec_push(e->arg_want, T_FLOAT_);
+            vec_push(e->arg_want, T_FLOAT_);
+        }
+        e->call = CALL_BUILTIN;
+        e->c_callee = resize ? "tide_texture_array_resize" : "tide_texture_array_dispose";
+        e->resource_operation = true;
+        decl *code = reading_code(c);
+        if (code) code->calls_c = true;
+        return T_VOID_;
+    }
     if (obj.kind == TY_CUBEMAP) {
         const bool resize = str_eq_c(e->name, "Resize");
         if (str_eq_c(e->name, "Sample")) {
             check_sample_args(c, e, true);
+            e->object->raw_sampled = true; // A [Raw] cube is read here as its numbers (check_raw_uses)
             return check_cube_sample(c, e);
         }
         if (!resize && !str_eq_c(e->name, "Dispose")) {
@@ -8251,8 +9190,8 @@ static type check_method(checker *c, expr *e)
         decl called = {0}; // For what the messages call it
         called.name = e->name;
         if (through_element(e->object)) {
-            diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't step it", STR_ARG(e->name));
-            diag_note("take it out, roll, and put it back: 'var r = items[i]; r." STR_FMT "(...); items[i] = r;'", STR_ARG(e->name));
+            diag_error(e->at, "an indexed Random is a copy, so '" STR_FMT "' can't update its state in place", STR_ARG(e->name));
+            diag_note("take it out, roll, and put it back: 'mut var r = items[i]; r." STR_FMT "(...); items[i] = r;'", STR_ARG(e->name));
         } else {
             check_writable(c, e->object, &called, NULL);
         }
@@ -8295,8 +9234,8 @@ static type check_method(checker *c, expr *e)
             }
         }
         if (m->is_mut_method && through_element(e->object)) {
-            diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
-            diag_note("take it out, change it, and put it back: 'var e = items[i]; e." STR_FMT "(...); items[i] = e;'",
+            diag_error(e->at, "an indexed element is a copy, so the mut method '" STR_FMT "' can't change it in place", STR_ARG(m->name));
+            diag_note("take it out, change it, and put it back: 'mut var e = items[i]; e." STR_FMT "(...); items[i] = e;'",
                       STR_ARG(m->name));
         } else if (m->is_mut_method) {
             check_writable(c, e->object, m, NULL);
@@ -8600,9 +9539,14 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
     const bool comparison = op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE;
     if (t.decl && t.decl->asset_ref_of) {
         diag_note("asset references compare with '==' and '!=' between the same Asset<T> type");
-    } else if (t.decl && t.decl->builtin && t.decl->fields.count) { // Random, Vertex: nowhere to declare an operator
-        diag_note("%s is the engine's, and has no operators: work with its fields, like 'a." STR_FMT " %s b." STR_FMT "'",
-                  type_name(t), STR_ARG(t.decl->fields.items[0].name), op_symbol(op), STR_ARG(t.decl->fields.items[0].name));
+    } else if (t.decl && t.decl->builtin) { // Random, Vertex: nowhere to declare an operator
+        const field *shown = NULL;
+        for (int i = 0; !shown && i < t.decl->fields.count; i++) {
+            if (!t.decl->fields.items[i].hidden) shown = &t.decl->fields.items[i];
+        }
+        if (shown) diag_note("%s is the engine's, and has no operators: work with its fields, like 'a." STR_FMT " %s b." STR_FMT "'",
+                             type_name(t), STR_ARG(shown->name), op_symbol(op), STR_ARG(shown->name));
+        else diag_note("%s is the engine's, and has no operators", type_name(t));
     } else if (unary) {
         diag_note("declare it in the struct, like '%s operator %s(%s value)'", type_name(t), op_symbol(op), type_name(t));
     } else if (op == T_EQ || op == T_NE) {
@@ -8742,6 +9686,9 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     }
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
         && l.decl == prog->visibility_group && r.decl == prog->visibility_group) return T_BOOL_;
+    // Two bones are equal when they're the same bone of the same skeleton
+    if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT && l.decl->skin_kind == SKIN_BONE
+        && r.decl->skin_kind == SKIN_BONE) return T_BOOL_;
     // Two audiences are equal when they have the same players
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
         && l.decl == prog->audience && r.decl == prog->audience) return T_BOOL_;
@@ -9002,12 +9949,11 @@ static type check_enum_member(expr *e, decl *d)
     suggestion s = suggest_start(e->member);
     for (int i = 0; i < d->members.count; i++) suggest_consider(&s, d->members.items[i].name);
     suggest_note(&s);
-    if (d->builtin && str_eq_c(d->name, "Font")) {
-        diag_note("the engine's font has two weights, 'Font.Regular' and 'Font.Bold'");
-    }
     if (d->builtin && str_eq_c(d->name, "Depth")) {
         diag_note("a 3D mesh reads depth and writes it, 'Depth.ReadWrite', as each frame starts; only reads it, "
-                  "'Depth.Read', hidden behind what's nearer and hiding nothing; or does neither, 'Depth.None'");
+                  "'Depth.Read', hidden behind what's nearer and hiding nothing; does neither, 'Depth.None'; writes "
+                  "depth and no color, 'Depth.Only' (a pre-pass); or is drawn only where its depth is the one there, "
+                  "'Depth.Equal' (lit after a pre-pass)");
     }
     if (d->builtin && str_eq_c(d->name, "Cull")) {
         diag_note("a 3D mesh's triangles aren't drawn from the back, 'Cull.Back', as each frame starts; or from the "
@@ -9038,10 +9984,8 @@ static decl *named_enum(const checker *c, const expr *e)
         return NULL;
     }
     decl *d = find_type(c, text, e->at);
-    if (!d && str_eq_c(text, "Playback")) {
-        skinned_builtins(c->prog);
-        d = c->prog->playback;
-    }
+    type builtin;
+    if (!d && skinned_type_named(c->prog, text, &builtin) && builtin.kind == TY_ENUM) d = builtin.decl;
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
@@ -9119,6 +10063,12 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         diag_note("read and write them in a view, and keep what the task needs in local state of its own");
         return T_ERR;
     }
+    if (c->parallel && c->parallel->query && row_binding(e->object)) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', which a parallel loop's steps don't read yet",
+                   STR_ARG(f->name), STR_ARG(d->name));
+        diag_note("read it in a 'foreach', which goes in order, or keep what the steps need in the match's fields");
+        return T_ERR;
+    }
     if (c->method && c->method->kind != DECL_FUNCTION && c->method->kind != DECL_SHADER && !row_binding(e->object)) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and methods work on values, which have none",
                    STR_ARG(f->name), STR_ARG(d->name));
@@ -9162,6 +10112,7 @@ static type check_property(checker *c, expr *e, property *prop, const decl *plac
     }
     if (!prop->get) {
         diag_error(e->at, "property '" STR_FMT "' has no getter", STR_ARG(prop->name));
+        diag_note("this property can only be assigned; add a 'get { return ...; }' accessor to read it");
         return T_ERR;
     }
     decl *get = prop->get;
@@ -9192,7 +10143,6 @@ static type check_member(checker *c, expr *e)
         }
         if (builds(c->prog) && !c->prog->quiet_names && named_only(c->prog, e->type_decl)) e->type_decl->named = true;
         const type member = check_enum_member(e, e->type_decl);
-        if (e->type_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
         if (e->type_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
         return member;
     }
@@ -9213,6 +10163,8 @@ static type check_member(checker *c, expr *e)
         }
         if (str_eq_c(e->object->name, "Application") && str_eq_c(e->member, "title")) c->prog->uses_title = true;
         if (str_eq_c(e->object->name, "Clip")) c->prog->uses_clip_values = true;
+        // Font.Bold: the game draws in bold, so it carries the bold's file
+        if (str_eq_c(e->object->name, "Font") && str_eq_c(e->member, "Bold") && builds(c->prog)) c->prog->names_bold = true;
         // Clip.Microphone: the game records, which its Android app's manifest has to say
         if (str_eq_c(e->object->name, "Clip") && str_eq_c(e->member, "Microphone") && builds(c->prog)) c->prog->uses_microphone = true;
         if (builtin_old_draw_owner(e->object->name)) {
@@ -9235,6 +10187,9 @@ static type check_member(checker *c, expr *e)
             diag_note("'Frame.dt' is the seconds since this machine's previous frame started");
         } else if (str_eq_c(e->object->name, "Frame")) {
             if (!check_frame_time_use(c, e->at)) return T_ERR;
+        } else if (str_eq_c(e->object->name, "Font") && member.kind == TY_ERROR) {
+            diag_note("the engine's font has two weights, 'Font.Regular' and 'Font.Bold'; any other font is an asset, "
+                      "'asset Font title = \"fonts/Title.ttf\";', or one 'Font.Decode(bytes)' read");
         } else if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
             diag_note("'Cursor.locked' is whether the window holds the cursor, hidden, which 'Cursor.Lock()' asks for");
         } else if (str_eq_c(e->object->name, "Cursor")) {
@@ -9248,8 +10203,6 @@ static type check_member(checker *c, expr *e)
     decl *const enum_decl = named_enum(c, e->object);
     if (enum_decl) {
         const type member = check_enum_member(e, enum_decl);
-        // Font.Bold: the game draws in bold, so it carries the bold's file
-        if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
         // Filter.Trilinear: the game's textures can be read between their smaller images
         if (enum_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
         return member;
@@ -9292,7 +10245,21 @@ static type check_member(checker *c, expr *e)
     if (skin_handled) return skin_result;
     if (obj.kind == TY_STRUCT && obj.decl->asset_ref_of) {
         if (gpu_code(c)) {
-            diag_error(e->at, "resolve an Asset's Value in CPU code before passing mesh data to a shader");
+            diag_error(e->at, "mesh geometry is read in CPU code; pass its vertices and indices to the draw");
+            return T_ERR;
+        }
+        if (obj.decl->asset_ref_of->kind == DECL_MESH) {
+            if (str_eq_c(e->member, "Value")) { // The Mesh<V> it names
+                e->asset_ref_value = true;
+                return asset_reference_of(c, (type){TY_MESH, obj.decl->asset_ref_of}, e->at, true);
+            }
+            if (str_eq_c(e->member, "vertices") || str_eq_c(e->member, "indices")) {
+                e->mesh_part = str_eq_c(e->member, "vertices") ? 1 : 2;
+                return list_of(c->prog, e->mesh_part == 1 ? obj.decl->asset_ref_of->fields.items[0].type : T_INT_);
+            }
+        }
+        if (!str_eq_c(e->member, "Value") && obj.decl->asset_ref_of->kind == DECL_MESH) {
+            diag_error(e->at, "a Mesh has 'vertices', 'indices' and 'Value', not '" STR_FMT "'", STR_ARG(e->member));
             return T_ERR;
         }
         if (!str_eq_c(e->member, "Value")) {
@@ -9354,12 +10321,53 @@ static type check_member(checker *c, expr *e)
             e->target_colors = true;
             return obj; // What check_index makes a Texture of
         }
+        if (str_eq_c(e->member, "contentRevision")) {
+            c->prog->uses_texture_size = true;
+            decl *code = reading_code(c);
+            if (code) {
+                code->calls_c = true;
+                code->reads_texture_size = true;
+            }
+            return (type){TY_LONG, NULL};
+        }
         if (str_eq_c(e->member, "valid")) return T_BOOL_; // Made and not disposed, or the window
         if (str_eq_c(e->member, "size")) return (type){TY_FLOAT2, NULL}; // In logical pixels
-        diag_error(e->at, "a RenderTarget has 'color', 'colors', 'depth', 'size' and 'valid', not '" STR_FMT "'", STR_ARG(e->member));
+        diag_error(e->at, "a RenderTarget has 'color', 'colors', 'depth', 'size', 'valid' and 'contentRevision', not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
 
+    if (obj.kind == TY_TEXTURE_ARRAY || obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        const bool depths = obj.kind == TY_DEPTH_TEXTURE_ARRAY;
+        const bool metadata = str_eq_c(e->member, "size") || str_eq_c(e->member, "count");
+        if (gpu_code(c) && !metadata) {
+            diag_error(e->at, "a %s reads a %s with '%s', and its 'size' and 'count': its layers%s are the view's",
+                       shader_word(gpu_code(c)), depths ? "DepthTextureArray" : "TextureArray",
+                       depths ? "Sample(uv, layer)' or 'Compare(uv, layer, value)" : "Sample(uv, layer)", depths ? "" : " and its depth");
+            return T_ERR;
+        }
+        if (metadata) e->object->raw_sampled = true; // Metadata does not read or expose Raw pixels
+        if (str_eq_c(e->member, "size")) return (type){TY_INT2, NULL}; // A layer's pixels
+        if (str_eq_c(e->member, "count")) return T_INT_;                 // ...and how many layers
+        if (!depths && str_eq_c(e->member, "depth")) {
+            if (e->object->bind == BIND_ASSET) {
+                diag_error(e->at, "an asset's TextureArray is the pack's images, which nothing draws into: it has no depth");
+                return T_ERR;
+            }
+            return (type){TY_DEPTH_TEXTURE_ARRAY, NULL};
+        }
+        if (!depths && str_eq_c(e->member, "layers")) {
+            if (c->colors_indexed != e) {
+                diag_error(e->at, "an array's layers are drawn into one at a time: 'layers[0]' is the first, as a RenderTarget");
+                return T_ERR;
+            }
+            e->target_colors = true;
+            return obj; // What check_index makes a RenderTarget of
+        }
+        diag_error(e->at, depths ? "a DepthTextureArray has 'size' and 'count', not '" STR_FMT "'"
+                                 : "a TextureArray has 'layers', its layers as targets to draw into, 'depth', 'size' and 'count', "
+                                   "not '" STR_FMT "'", STR_ARG(e->member));
+        return T_ERR;
+    }
     if (obj.kind == TY_CUBEMAP) {
         if (gpu_code(c)) {
             diag_error(e->at, "a %s reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into",
@@ -9437,6 +10445,7 @@ static type check_member(checker *c, expr *e)
         suggest_note(&sg);
         return T_ERR;
     }
+    if (obj.kind == TY_GPU_LIST) return check_gpu_list_member(c, e, obj);
     if (obj.kind == TY_LIST) {
         if (str_eq_c(e->member, "count")) return T_INT_;
         diag_error(e->at, "a list has 'count' and methods like Add(...), not '" STR_FMT "'", STR_ARG(e->member));
@@ -9646,7 +10655,7 @@ static type check_name(checker *c, expr *e)
         e->local = local;
         if (e == c->write_root) local->assigned = true; // `count += 1` alone never uses count
         else local->read = true;
-        if (local->query && (c->parallel || c->block_depth || c->compare)) {
+        if (local->query && ((c->parallel && c->parallel != local) || c->block_depth || c->compare)) {
             diag_error(e->at, "a query row can't be captured by parallel loops or callback blocks");
             diag_note("copy the entity handle or a component binding before the loop or callback");
             return T_ERR;
@@ -9714,6 +10723,17 @@ static type check_name(checker *c, expr *e)
         }
         return p->type;
     }
+    if (c->system && c->system->preparation_owner
+        && (field_named(c->system->preparation_owner, e->name) || find_property(c->system->preparation_owner, e->name))) {
+        expr *self = NEW(expr);
+        self->kind = E_NAME;
+        self->name = str_from("tide_preparation_scene");
+        self->at = e->at;
+        e->kind = E_MEMBER;
+        e->object = self;
+        e->member = e->name;
+        return check_expr(c, e);
+    }
     if (str_eq_c(e->name, "Devices")) {
         e->bind = BIND_DEVICES;
         return check_devices_use(c, e->at) ? (type){TY_RECORD, c->prog->devices} : T_ERR;
@@ -9744,6 +10764,12 @@ static type check_name(checker *c, expr *e)
     k = find_named(c, e->name, e->at, NAME_ASSET);
     if (k) return use_asset(c, e, k);
     decl *function = find_named(c, e->name, e->at, NAME_FUNCTION);
+    if (function && function->kind == DECL_GENERIC) {
+        diag_error(e->at, "'" STR_FMT "' is generic: as a value, it's one of its instantiations, which a name alone doesn't say",
+                   STR_ARG(e->name));
+        diag_note("call it in a lambda, like '(int a, int b) => " STR_FMT "(a, b)'", STR_ARG(e->name));
+        return T_ERR;
+    }
     if (function) {
         if (function->shares_name || function->params.count > 16) {
             diag_error(e->at, "a function reference needs an explicit Func signature to select its overload");
@@ -9814,6 +10840,7 @@ static type check_this(const checker *c, const expr *e)
 {
     decl *m = c->method;
     const decl *shader = gpu_code(c);
+    if (shader && shader->is_compute) return decl_type(c->prog->invocation); // Which invocation of its run
     if (shader && shader->is_frag) return decl_type(c->prog->pixel);
     if (shader) return decl_type(c->prog->placed); // Its vertex, as the engine would place it: this.clip
     if (m && m->kind == DECL_FUNCTION) {
@@ -10001,6 +11028,7 @@ static type check_index(checker *c, expr *e)
     bool skin_handled;
     const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
+    if (obj.kind == TY_GPU_LIST) return check_gpu_list_index(c, e, obj);
     if (obj.kind == TY_RENDER_TARGET && e->object->kind == E_MEMBER && e->object->target_colors) {
         // target.colors[1]: one of its color images, as a Texture. Which ones it has is the target's to say, when
         // it's made, so one it hasn't got is found out as it's sampled: that draw is passed by, and says so
@@ -10015,6 +11043,25 @@ static type check_index(checker *c, expr *e)
             return T_ERR;
         }
         return (type){TY_TEXTURE, NULL};
+    }
+    if (obj.kind == TY_TEXTURE_ARRAY && e->object->kind == E_MEMBER && e->object->target_colors) {
+        // array.layers[2]: that layer, as a RenderTarget. One past its layers is no destination, which is found out as
+        // it's drawn into: those draws are passed by
+        const type index = check_expr(c, e->lhs);
+        if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
+            diag_error(e->lhs->at, "an array's layers are counted from 0, with an int, not %s", type_name(index));
+            return T_ERR;
+        }
+        if (e->lhs->kind == E_INT && (e->lhs->int_value < 0 || e->lhs->int_value >= 256)) {
+            diag_error(e->lhs->at, "an array's layers are counted from 0, and it has 256 at the most");
+            return T_ERR;
+        }
+        if (e->object->object->bind == BIND_ASSET) {
+            diag_error(e->at, "an asset's TextureArray is the pack's images, which nothing draws into: its layers are no targets");
+            diag_note("an array that's drawn into is made in a view: 'TextureArray(1024, 1024, 4)'");
+            return T_ERR;
+        }
+        return (type){TY_RENDER_TARGET, NULL};
     }
     if (obj.kind == TY_CUBEMAP && e->object->kind == E_MEMBER && e->object->target_colors) {
         // cube.faces[2]: that face, as a RenderTarget. One of a cube that isn't drawn into (an asset's) is no
@@ -10258,6 +11305,7 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_LOAD: case CALL_UNLOAD: what = "load or unload scenes"; break;
     case CALL_SESSION: what = "change the session"; break;
     case CALL_CLIPBOARD: what = "use the clipboard"; break;
+    case CALL_QUIT: what = "quit"; break;
     case CALL_AUDIO: what = "play sounds"; break;
     case CALL_DRAW: what = "draw"; break;
     case CALL_GUI: what = gui_call_what(e); break;
@@ -10334,7 +11382,7 @@ static type check_sort(checker *c, expr *e, const type list)
     changer->name = str_from("List.Sort");
     if (through_element(e->object)) {
         diag_error(e->at, "a list that's an element of another is sorted as a copy, taken out and put back");
-        diag_note("'var inner = rows[i]; inner.Sort(a, b) { ... } rows[i] = inner;'");
+        diag_note("'mut var inner = rows[i]; inner.Sort(a, b) { ... } rows[i] = inner;'");
     } else {
         check_writable(c, e->object, changer, NULL);
     }
@@ -10462,6 +11510,16 @@ static bool is_new_grid(const expr *e)
         || ((e->kind == E_CALL || e->kind == E_METHOD) && e->type_alias && e->type_alias->alias_type.kind == TY_GRID);
 }
 
+// What a grid variable, a field or a function's result can take: a grid of its own, never another's (docs/spec.md,
+// Grids). A new one, a copy (`cells.Copy()`), what a call returned, and when a function returns, a local of its own,
+// which it's done with.
+static bool fresh_grid(const expr *e, const bool returning)
+{
+    if (e->kind == E_CONDITIONAL) return fresh_grid(e->lhs, returning) && fresh_grid(e->rhs, returning);
+    if (e->kind == E_DEFAULT || e->kind == E_CALL || e->kind == E_METHOD) return true;
+    return returning && e->kind == E_NAME && e->bind == BIND_LOCAL;
+}
+
 // Grid2(1024, 1024), Grid3(0, 384, 0) or Grid2(): a grid of that size, open
 // on the axes given 0 or left out. Its cell type comes from where it goes.
 static type check_new_grid(checker *c, expr *e, const type want)
@@ -10495,6 +11553,87 @@ static type check_new_grid(checker *c, expr *e, const type want)
     return e->type = want;
 }
 
+static bool is_new_mesh(const checker *c, const expr *e)
+{
+    if (e->kind != E_CALL) return false;
+    if (e->type_alias) return e->type_alias->alias_type.kind == TY_STRUCT && e->type_alias->alias_type.decl->asset_ref_geometry;
+    return str_eq_c(e->name, "Mesh") && !find_local(c, e->name) && !find_param(c, e->name);
+}
+
+// Mesh(vertices, indices): a static Mesh<V> of the game's own geometry, a copy of the two lists that nothing changes
+// after, whatever happens to the lists it was made from. V comes from the vertices, or from where it goes (an alias
+// of a Mesh<V>, or a field's type, which a list literal of vertices needs).
+static type check_new_mesh(checker *c, expr *e, const type want)
+{
+    const type alias = e->type_alias ? e->type_alias->alias_type : T_VOID_;
+    const type into = alias.kind == TY_STRUCT && alias.decl->asset_ref_geometry ? alias
+                    : want.kind == TY_STRUCT && want.decl->asset_ref_geometry ? want : T_VOID_;
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Mesh is made in CPU code, and drawn: 'Draw.Mesh(Mesh(vertices, indices), transform)'");
+        return e->type = T_ERR;
+    }
+    // Mesh(vertices, indices, levels): levels of detail of its own, which the build packs as [LOD]'s
+    const bool levels = e->args.count == 3;
+    if (e->args.count != 2 && !levels) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Mesh takes its vertices and its indices: 'Mesh(vertices, indices)'");
+        diag_note("the vertices are a List<V> of a struct with a 'float3 position', and the indices a List<int>, three a "
+                  "triangle; build code can give it levels of detail too: 'Mesh(vertices, indices, levels)'");
+        return e->type = T_ERR;
+    }
+    if (!order_named_args(e, levels ? "vertices, indices, levels" : "vertices, indices", 0)) return e->type = T_ERR;
+    if (levels) {
+        build_struct_ready(c, c->prog->mesh_level);
+        const type want = list_of(c->prog, (type){TY_STRUCT, c->prog->mesh_level});
+        const type got = check_expr_want(c, e->args.items[2], want);
+        if (got.kind != TY_ERROR && !type_assignable(want, got)) {
+            diag_error(e->args.items[2]->at, "a Mesh's levels are a List<MeshLevel>, not %s", type_name(got));
+            return e->type = T_ERR;
+        }
+        if (!(c->method && c->method->is_build)) {
+            diag_error(e->at, "a Mesh's own levels of detail are made as the game builds: in a 'build' function, or an "
+                              "asset's value");
+            diag_note("a draw makes a made mesh's levels as the game runs: 'Draw.Mesh(mesh, transform, lod: 1)'");
+            return e->type = T_ERR;
+        }
+    }
+    type vertices = into.kind == TY_STRUCT ? check_expr_want(c, e->args.items[0], into.decl->fields.items[1].type)
+                                           : check_expr(c, e->args.items[0]);
+    const type indices = check_expr_want(c, e->args.items[1], list_of(c->prog, T_INT_));
+    if (vertices.kind == TY_ERROR || indices.kind == TY_ERROR) return e->type = T_ERR;
+    if (vertices.kind != TY_LIST || vertices.decl->fields.items[0].type.kind != TY_STRUCT) {
+        diag_error(e->args.items[0]->at, "a Mesh's vertices are a List<V> of a vertex struct, like List<Vertex3>, not %s",
+                   type_name(vertices));
+        return e->type = T_ERR;
+    }
+    const type vertex = vertices.decl->fields.items[0].type;
+    if (into.kind == TY_STRUCT && !same_type(vertex, into.decl->fields.items[1].type.decl->fields.items[0].type)) {
+        diag_error(e->args.items[0]->at, "this makes a Mesh<%s>, and it goes where a %s goes", type_name(vertex),
+                   type_name(into));
+        return e->type = T_ERR;
+    }
+    const int dims = vertex_dims(vertex.decl, e->args.items[0]->at, true);
+    if (dims == 0) return e->type = T_ERR;
+    if (dims != 3) {
+        diag_error(e->args.items[0]->at, "a Mesh is a 3D mesh, and '" STR_FMT "' is a 2D mesh's vertex: its 'position' is a "
+                   "float2", STR_ARG(vertex.decl->name));
+        diag_note("draw 2D geometry from its two lists: 'Draw.Mesh(vertices, indices)'");
+        return e->type = T_ERR;
+    }
+    if (!type_assignable(list_of(c->prog, T_INT_), indices)) {
+        diag_error(e->args.items[1]->at, "a Mesh's indices are a List<int>, three a triangle, not %s", type_name(indices));
+        return e->type = T_ERR;
+    }
+    const type mesh = asset_reference_of(c, mesh_of(c->prog, vertex), e->at, true);
+    e->call = CALL_NEW_MESH;
+    vec_push(e->arg_want, mesh.decl->fields.items[1].type);
+    vec_push(e->arg_want, mesh.decl->fields.items[2].type);
+    if (levels) vec_push(e->arg_want, list_of(c->prog, (type){TY_STRUCT, c->prog->mesh_level}));
+    c->prog->uses_text = true; // It's made in the scratch area, which code clears after it runs
+    return e->type = mesh;
+}
+
 // cells.Clear(): a grid's one method, every cell back to zero.
 // texture.Sample(uv), texture.Sample(uv, Filter.Point) and texture.Sample(uv,
 // Filter.Point, Wrap.Repeat): a grid of colors read as a texture, in a frag or
@@ -10506,7 +11645,16 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
 {
     const decl *shader = gpu_code(c);
     decl *function = shader ? NULL : gpu_function(c); // ...or in a function they call
+    const bool gradients = str_eq_c(e->name, "SampleGrad");
+    if (gradients && shader && !shader->is_frag) {
+        diag_error(e->at, "SampleGrad reads a Texture with UV derivatives per destination pixel: use it in a frag or a function a frag calls");
+        return T_ERR;
+    }
     if (!shader && !function) {
+        if (gradients) {
+            diag_error(e->at, "SampleGrad reads a Texture on the GPU: in a frag or a function a frag calls");
+            return T_ERR;
+        }
         diag_error(e->at, grid.kind == TY_TEXTURE ? "Sample reads a Texture on the GPU: in a frag or a vert"
                                                : "Sample reads a grid as a texture, which the GPU does: in a frag or a vert");
         if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
@@ -10541,6 +11689,34 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
                    "%s in a component or singleton", grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
+    }
+    if (gradients) {
+        if (!order_named_args(e, "uv, dx, dy, filter, wrap", 2)) return T_ERR;
+        for (int i = 0; i < e->args.count; i++) {
+            if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+        }
+        if (e->args.count < 3 || e->args.count > 5
+            || e->args.items[0]->type.kind != TY_FLOAT2 || e->args.items[1]->type.kind != TY_FLOAT2
+            || e->args.items[2]->type.kind != TY_FLOAT2
+            || (e->args.count >= 4 && (e->args.items[3]->type.kind != TY_ENUM || e->args.items[3]->type.decl != c->prog->filter))
+            || (e->args.count >= 5 && (e->args.items[4]->type.kind != TY_ENUM || e->args.items[4]->type.decl != c->prog->wrap))) {
+            diag_error(e->at, "SampleGrad takes float2 uv, float2 dx and float2 dy, then an optional Filter and Wrap: "
+                              "'texture.SampleGrad(uv, dx, dy, Filter.Trilinear, Wrap.Repeat)'");
+            return T_ERR;
+        }
+        if (e->args.count >= 4 && !e->args.items[3]->enum_member) {
+            diag_error(e->args.items[3]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a "
+                                             "texture is read before any pixel runs");
+            return T_ERR;
+        }
+        if (e->args.count >= 5 && !e->args.items[4]->enum_member) {
+            diag_error(e->args.items[4]->at, "the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror': the GPU is told "
+                                             "how a texture is read before any pixel runs");
+            return T_ERR;
+        }
+        e->call = CALL_GRID;
+        e->type_decl = grid.decl;
+        return (type){TY_COLOR, NULL};
     }
     if (!order_named_args(e, "uv, filter, wrap", 2)) return T_ERR;
     for (int i = 0; i < e->args.count; i++) {
@@ -10659,6 +11835,121 @@ static type check_depth_read(const checker *c, expr *e)
     return T_FLOAT_;
 }
 
+// ground.Sample(uv, layer), ground.Sample(uv, layer, Filter.Trilinear, Wrap.Repeat), and SampleGrad(uv, dx, dy, layer,
+// ...): a TextureArray read in a frag or a vert, at a uv of one of its layers, an int of any expression, which may
+// differ from pixel to pixel; one past its layers reads the nearest. The array is an asset by its name or a field of a
+// component or singleton the code takes, where a view put one; in a function they call, a parameter of its own. The
+// filter and the wrap are written there, as a Cubemap's filter is: an array carries no sampling of its own, and one
+// that says none is its declaration's (an asset's [Filter] and [Wrap]), or blended and clamped.
+static type check_array_sample(const checker *c, expr *e)
+{
+    const bool grad = str_eq_c(e->name, "SampleGrad");
+    const decl *shader = gpu_code(c);
+    decl *function = shader ? NULL : gpu_function(c);
+    if (!shader && !function) {
+        diag_error(e->at, "%s reads a TextureArray on the GPU: in a frag or a vert", grad ? "SampleGrad" : "Sample");
+        return T_ERR;
+    }
+    if (grad && shader && !shader->is_frag) {
+        diag_error(e->at, "SampleGrad reads with UV derivatives per destination pixel: use it in a frag or a function a frag calls");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    const bool asset = of->bind == BIND_ASSET;
+    if (function) {
+        if (!function_samples(function, e, of, TY_TEXTURE_ARRAY, true)) return T_ERR;
+    } else if (!asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+                   || of->object->param->function_param)) {
+        diag_error(of->at, "a %s samples a TextureArray that's an asset by its name, or a field of a component or singleton it "
+                           "takes, like 'ground.scans.Sample(uv, layer)'", shader_word(shader));
+        diag_note("a view puts an array there: 'ground.scans = TextureArray(1024, 1024, 4);'");
+        return T_ERR;
+    }
+    if (!function && !asset && of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
+                           "TextureArray in a component or singleton");
+        return T_ERR;
+    }
+    if (!order_named_args(e, grad ? "uv, dx, dy, layer, filter, wrap" : "uv, layer, filter, wrap", grad ? 4 : 2)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
+    }
+    const int at = grad ? 3 : 1; // Where the layer is
+    bool fits = e->args.count >= at + 1 && e->args.count <= at + 3;
+    for (int i = 0; fits && i < at; i++) fits = e->args.items[i]->type.kind == TY_FLOAT2;
+    if (fits) fits = type_assignable(T_INT_, e->args.items[at]->type);
+    if (fits && e->args.count > at + 1) {
+        const type how = e->args.items[at + 1]->type;
+        fits = how.kind == TY_ENUM && how.decl == c->prog->filter;
+    }
+    if (fits && e->args.count > at + 2) {
+        const type how = e->args.items[at + 2]->type;
+        fits = how.kind == TY_ENUM && how.decl == c->prog->wrap;
+    }
+    if (!fits) {
+        diag_error(e->at, grad ? "a TextureArray's SampleGrad takes where to read, a float2, how it changes a pixel across and down, "
+                                 "two float2s, which layer, an int, then how, a Filter and a Wrap: "
+                                 "'ground.SampleGrad(uv, dx, dy, layer)'"
+                               : "a TextureArray's Sample takes where to read, a float2 from (0, 0) to (1, 1), and which layer, an "
+                                 "int, then how, a Filter and a Wrap: 'ground.Sample(uv, layer)' or "
+                                 "'ground.Sample(uv, layer, Filter.Trilinear, Wrap.Repeat)'");
+        if (e->args.count > at && e->args.items[at]->type.kind == TY_FLOAT) {
+            diag_note("the layer is a whole number: 'int(layer)' makes one, to its nearest below");
+        }
+        return T_ERR;
+    }
+    for (int i = at + 1; i < e->args.count; i++) {
+        if (!e->args.items[i]->enum_member) {
+            diag_error(e->args.items[i]->at, "the %s is written here, a member of its enum: the GPU is told how a texture is read "
+                                             "before any pixel runs", i == at + 1 ? "filter" : "wrap");
+            return T_ERR;
+        }
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return (type){TY_COLOR, NULL};
+}
+
+// depths.Sample(uv, layer) and depths.Compare(uv, layer, value): a DepthTextureArray read in a frag or a vert, as a
+// DepthTexture is, at one of its layers.
+static type check_depth_array_read(const checker *c, expr *e)
+{
+    const bool compare = str_eq_c(e->name, "Compare");
+    const decl *shader = gpu_code(c);
+    decl *function = shader ? NULL : gpu_function(c);
+    if (!shader && !function) {
+        diag_error(e->at, "%s reads an array's depth on the GPU: in a frag or a vert", compare ? "Compare" : "Sample");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    if (function) {
+        if (!function_samples(function, e, of, TY_DEPTH_TEXTURE_ARRAY, false)) return T_ERR;
+    } else if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+               || of->object->param->function_param || of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a %s reads a DepthTextureArray that's a field of a component or singleton it takes, like "
+                           "'lamp.cascades.%s'", shader_word(shader), compare ? "Compare(uv, layer, value)" : "Sample(uv, layer)");
+        diag_note("a view puts an array's depth there: 'lamp.cascades = lamp.maps.depth;'");
+        return T_ERR;
+    }
+    if (!order_named_args(e, compare ? "uv, layer, value" : "uv, layer", 0)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+    }
+    const int wanted = compare ? 3 : 2;
+    if (e->args.count != wanted || e->args.items[0]->type.kind != TY_FLOAT2 || !type_assignable(T_INT_, e->args.items[1]->type)
+        || (compare && !type_assignable(T_FLOAT_, e->args.items[2]->type))) {
+        diag_error(e->at, compare ? "Compare takes where to read, a float2, which layer, an int, and the depth to compare what's "
+                                    "stored there with, a number from 0 to 1: 'cascades.Compare(uv, layer, depth)'"
+                                  : "Sample takes where to read, a float2 from (0, 0) to (1, 1), and which layer, an int: "
+                                    "'cascades.Sample(uv, layer)'");
+        if (!compare && e->args.count == 3) diag_note("a depth is read at its nearest pixel: it takes no Filter");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return T_FLOAT_;
+}
+
 // sky.Sample(direction) and sky.Sample(direction, Filter.Trilinear): a
 // Cubemap read in a frag or a vert, by the direction from its middle, of any
 // length. The cube is an asset by its name, or a field of a component or a
@@ -10763,11 +12054,25 @@ static type check_grid_method(checker *c, expr *e, const type grid)
         return check_grid_sample(c, e, grid);
     }
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (str_eq_c(e->name, "Copy")) { // A grid of its own, with these cells (docs/spec.md, Grids)
+        if (e->args.count) {
+            diag_error(e->at, "Copy takes no arguments: 'cells.Copy()'");
+            return T_ERR;
+        }
+        if (gpu_code(c)) {
+            diag_error(e->at, "code the GPU runs reads grids where they are: it can't copy one");
+            return T_ERR;
+        }
+        e->call = CALL_GRID;
+        e->type_decl = grid.decl;
+        return grid;
+    }
     if (!str_eq_c(e->name, "Clear")) {
         diag_error(e->at, "a grid has no method '" STR_FMT "'", STR_ARG(e->name));
         suggestion sg = suggest_start(e->name);
         suggest_consider_c(&sg, "Sample");
         suggest_consider_c(&sg, "Clear");
+        suggest_consider_c(&sg, "Copy");
         suggest_consider_c(&sg, "Decode");
         suggest_note(&sg);
         return T_ERR;
@@ -10808,21 +12113,28 @@ static type check_try(checker *c, expr *e)
     }
     if (t.kind != TY_FAILABLE) {
         diag_error(e->at, "'try' passes on the error of a call that can fail, and %s can't fail", wrapped_what(e->lhs));
+        diag_note("remove 'try' and use the expression directly");
         return T_ERR;
     }
     const type error = wrapped_error(t);
     const decl *m = c->method;
     if (!m) {
         diag_error(e->at, "'try' passes the error to the caller, and %s has none", code_what(c));
-        diag_note("handle it here: '?? fallback', 'is %s', or '!' to carry on with the default",
-                  pattern_example(error, true));
+        if (wrapped_value(t).kind == TY_VOID)
+            diag_note("handle its error here with 'is %s', or write 'call()!;' to continue if it fails", pattern_example(error, true));
+        else
+            diag_note("handle it here: '?? fallback', 'is %s', or '!' to carry on with the default",
+                      pattern_example(error, true));
         return T_ERR;
     }
     if (m->fails.kind == TY_VOID && m->fails_name.len > 0) return T_ERR; // Its `fails` is wrong, and said so
     if (m->fails.kind == TY_VOID) {
         diag_error(e->at, "'" STR_FMT "' doesn't fail, so 'try' can't pass the error on", STR_ARG(m->name));
         if (m->takes_action) {
-            diag_note("a function that takes an Action can't fail yet; handle it here with '?\?', 'is' or '!'");
+            diag_note("a function that takes an Action can't fail; handle the error here with 'is' or '!'");
+        } else if (wrapped_value(t).kind == TY_VOID) {
+            diag_note("declare '" STR_FMT " " STR_FMT "(...) fails %s' to pass the error on, or handle it here with 'is' or '!'",
+                      STR_ARG(m->return_type_name), STR_ARG(m->name), type_name(error));
         } else {
             diag_note("say it fails after its parameters, '" STR_FMT " " STR_FMT "(...) fails %s', or handle it here "
                       "with '?\?', 'is' or '!'", STR_ARG(m->return_type_name), STR_ARG(m->name), type_name(error));
@@ -10832,7 +12144,10 @@ static type check_try(checker *c, expr *e)
     if (!same_type(m->fails, error)) {
         diag_error(e->at, "%s fails with %s, and '" STR_FMT "' fails with %s", wrapped_what(e->lhs), type_name(error),
                    STR_ARG(m->name), type_name(m->fails));
-        diag_note("'try' passes the error on as it is; handle this one here with '?\?', 'is' or '!'");
+        if (wrapped_value(t).kind == TY_VOID)
+            diag_note("'try' passes the error on as it is; handle this one here with 'is' or '!'");
+        else
+            diag_note("'try' passes the error on as it is; handle this one here with '?\?', 'is' or '!'");
         return T_ERR;
     }
     return wrapped_value(t);
@@ -11006,7 +12321,11 @@ static type check_await(checker *c, expr *e)
     c->awaiting = outer;
     if (!async_code(c)) {
         diag_error(e->at, "'await' waits, and only async functions and handlers can");
-        if (in_routine(c) && c->method->kind == DECL_FUNCTION) {
+        if (in_routine(c) && c->method->is_worker) {
+            diag_note("a worker runs to completion; await other work in the local async function that starts it");
+        } else if (in_routine(c) && c->method->takes_action) {
+            diag_note("a function that takes an Action can't be async; move the wait into an async function called outside the callback");
+        } else if (in_routine(c) && c->method->kind == DECL_FUNCTION) {
             diag_note("make it async: 'async " STR_FMT " " STR_FMT "(...)'", STR_ARG(c->method->return_type_name),
                       STR_ARG(c->method->name));
         } else if (!c->method && c->system && c->system->is_handler) {
@@ -11019,6 +12338,7 @@ static type check_await(checker *c, expr *e)
     }
     if (c->block_depth > 0) {
         diag_error(e->at, "a task can't wait inside a block written after a call: the function runs it");
+        diag_note("move the wait before or after the call, or replace the callback with ordinary async control flow");
         return T_ERR;
     }
     if (c->grid_loops > 0) {
@@ -11035,10 +12355,11 @@ static type check_await(checker *c, expr *e)
     }
     if (call->call == CALL_WAIT) return T_VOID_;
     if (call->storage_flush || call->web_fetch) return t;
+    if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT) return t; // A GPU list's read back
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && (call->method->is_async || call->method->is_worker)) return t;
-    diag_error(e->at, "'await' waits for an async function's call, or for Wait, like 'await Wait.Ticks(30)'");
+    diag_error(e->at, "'await' needs a task handle or an async call, like 'await Wait.Ticks(30)'");
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION) {
-        diag_note("'" STR_FMT "' isn't async: it runs to its end as it's called, so there's nothing to wait for",
+        diag_note("'" STR_FMT "' is synchronous; remove 'await' from this call",
                   STR_ARG(call->method->name));
     }
     return T_ERR;
@@ -11220,6 +12541,7 @@ static type check_expr_any_raw(checker *c, expr *e)
         break;
     case E_COALESCE: t = check_coalesce(c, e); break;
     case E_IS: t = check_is(c, e); break;
+    case E_HAS: t = check_has(c, e); break;
     case E_TRY: t = check_try(c, e); break;
     case E_DEFAULTED: t = check_defaulted(c, e); break;
     case E_AWAIT: t = check_await(c, e); break;
@@ -11252,9 +12574,13 @@ static type check_expr_any_raw(checker *c, expr *e)
         c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
         c->method->makes_text_at = e->at;
     }
+    if (holds_mesh_reference(t, 0) && (holds_heap_beside_meshes(t, 0) || t.kind == TY_ARRAY) && reading_code(c))
+        reading_code(c)->borrows_asset_collections = true;
     if ((holds_render_resource(t) || holds_callable(t)) && !gpu_code(c)) {
         decl *code = reading_code(c);
         if (code) {
+            if ((holds_render_resource(t) || holds_mesh_reference(t, 0)) && (holds_heap_beside_meshes(t, 0) || t.kind == TY_ARRAY))
+                code->borrows_asset_collections = true;
             if (!code->render_resources) code->render_resources_at = e->at;
             code->render_resources = true;
             if (!c->method && !local_code(c)) {
@@ -11278,7 +12604,7 @@ static type check_expr_any_raw(checker *c, expr *e)
     }
     e->type = t;
     // Text and lists, including a struct's owned fields, go in the scratch area.
-    if (t.kind == TY_TEXTURE && e->field && declared_raw(e) && builds(c->prog)) vec_push(c->raw_uses, e);
+    if (raw_kind(t) && e->field && declared_raw(e) && builds(c->prog)) vec_push(c->raw_uses, e);
     if (holds_heap(t) && (t.kind != TY_STRING || e->kind != E_STRING)) c->prog->uses_text = true;
     if (!whole_ok) note_device_value(c, e, t);
     return t;
@@ -11345,6 +12671,12 @@ static bool check_step_write(checker *c, const expr *target)
             if (c->locals.items[i] == root->local) return true;
         }
     }
+    if (root && root->bind == BIND_LOCAL && root->local == loop && loop->query) {
+        diag_error(target->at, "query row '" STR_FMT "' is read-only, and a parallel loop's steps change nothing outside them",
+                   STR_ARG(root->name));
+        diag_note("copy a component binding into a 'mut var' to change the copy, or send an event to the row's entity");
+        return false;
+    }
     diag_error(target->at, "a parallel loop's steps run at once, so each changes only its own place (a grid's cell "
                            "or block, a list's element or block), and the variables it declares");
     diag_note("work it out in the step, or in a 'for' loop, which goes in order");
@@ -11380,8 +12712,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     if (arg_of && is_optional_field(target)) {
         diag_error(target->at, "a T? field can't be passed as '%s': the call would change it where it's kept, which isn't as a T?",
                    arg_of->is_out ? "out" : "mut");
-        diag_note("pass a local and assign it after: '%s value%s; ...; " STR_FMT " = value;'", type_name(read_type(target->field->type)),
-                  arg_of->is_out ? "" : " = ...", STR_ARG(target->field->name));
+        if (arg_of->is_out)
+            diag_note("pass 'out mut var value', then assign value back to the field after the call");
+        else
+            diag_note("copy the field into a 'mut' local, pass that local, then assign it back after the call");
         return false;
     }
     if (c->parallel && !check_step_write(c, target)) return false;
@@ -11423,13 +12757,20 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("make the new text of its pieces, like 'name = name.Substring(0, i) + c + name.Substring(i + 1);'");
             return false;
         }
+        if (part->skin_operation == SKIN_OP_HUMANOID_INDEX && (arg_of || through_element(part->object))) {
+            diag_error(target->at, "a humanoid bone assignment is a value, not a writable reference");
+            diag_note("copy the rig to a mutable variable and assign its bone with 'rig[HumanoidBone.LeftHand] = bone'");
+            return false;
+        }
         if (part->kind == E_MEMBER && part->object->type.kind == TY_STRUCT
-            && part->object->type.decl->skin_kind && part->object->type.decl->skin_kind != SKIN_TRANSFORM) {
+            && part->object->type.decl->skin_kind && part->object->type.decl->skin_kind != SKIN_TRANSFORM
+            && part->object->type.decl->skin_kind != SKIN_HUMANOID_RIG && part->object->type.decl->skin_kind != SKIN_RETARGET_MAP) {
             diag_error(target->at, "model members are read-only; edit a Pose's local transforms through a Bone");
             return false;
         }
         // mesh.vertices and mesh.indices, whatever holds the Mesh: a local's too, which only names the pack's
-        if (part->kind == E_MEMBER && part->object->type.kind == TY_MESH) {
+        if (part->kind == E_MEMBER && (part->object->type.kind == TY_MESH || (part->object->type.kind == TY_STRUCT
+            && part->object->type.decl->asset_ref_of && part->object->type.decl->asset_ref_of->kind == DECL_MESH))) {
             diag_error(target->at, "a Mesh's vertices and indices are read-only: they're the file it names, as the game was built");
             diag_note("copy them into a list of your own to change them, like 'mut var mine = mesh.vertices;'");
             return false;
@@ -11447,8 +12788,19 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                 : "a Texture's size is read-only: resize its RenderTarget or change its source grid instead");
             return false;
         }
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_RENDER_TARGET
+            && str_eq_c(part->member, "contentRevision")) {
+            diag_error(target->at, "a render target's contentRevision is read-only; save it in a local field to detect discarded pixels");
+            return false;
+        }
         // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
         const expr *of_target = part->kind == E_INDEX ? part->object : part;
+        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_TEXTURE_ARRAY
+            && (of_target->target_colors || part->type.kind == TY_DEPTH_TEXTURE_ARRAY || part->type.kind == TY_INT
+                || part->type.kind == TY_INT2)) {
+            diag_error(target->at, "an array's layers, its depth, its size and its count are its own: they can't be assigned");
+            return false;
+        }
         if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP && of_target->target_colors) {
             diag_error(target->at, "a cube's faces are its own images, which what's drawn into them changes: they can't be assigned");
             diag_note("draw into one, 'cube.faces[0].Mesh(...)'");
@@ -11540,6 +12892,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("store the value in a 'mut var' first");
         } else {
             diag_error(target->at, "can't assign to this expression");
+            diag_note("assign to a mutable variable, a writable field or an indexed element instead");
         }
         return false;
     }
@@ -11649,8 +13002,14 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     if (root->bind == BIND_LOCAL && root->local->kind == S_FOREACH) {
-        diag_error(root->at, "'" STR_FMT "' is a copy of the list's element, so it can't be changed", STR_ARG(root->name));
-        diag_note("change the list itself: 'for (var i = 0; i < items.count; i++) { ... items[i] = ...; }'");
+        diag_error(root->at, "'" STR_FMT "' is a read-only copy of a foreach element", STR_ARG(root->name));
+        const type_kind source = root->local->value->type.kind;
+        if (source == TY_SET) diag_note("change the source set with Add or Remove instead of assigning its foreach variable");
+        else if (source == TY_MAP) diag_note("assign the source map's value by key: 'items[key] = value;'");
+        else if (source == TY_STRING) diag_note("text is immutable; build a new string instead of assigning its foreach variable");
+        else if (source == TY_LIST || source == TY_ARRAY)
+            diag_note("change the source by index: 'for (var i = 0; i < items.count; i++) { ... items[i] = ...; }'");
+        else diag_note("change the source through its writable fields or indexed storage instead of assigning the foreach variable");
         return false;
     }
     if (root->bind == BIND_LOCAL && root->local->delayed && target == root
@@ -11896,6 +13255,8 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     if (!e) return true;
     if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
         && str_eq_c(e->member, "size")) return false;
+    if (e->kind == E_MEMBER && e->object->type.kind == TY_RENDER_TARGET
+        && str_eq_c(e->member, "contentRevision")) return false;
     if (e->io_operation || e->storage_flush || e->web_fetch) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
@@ -11907,7 +13268,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
         if ((e->visibility_operation & VISIBILITY_MUT) && !step_own(e->object, loop)) return false;
         break;
     case CALL_SKINNED:
-        if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
+        if (skinned_changes_pose(e->skin_operation)
             && (!e->object || !step_own(e->object, loop))) return false;
         if (skinned_lookup(e->skin_operation) && !step_own(e->args.items[1], loop)) return false;
         break; // Read-only sampling and step-local poses use the executing thread's scratch area.
@@ -12101,14 +13462,32 @@ static void check_step_expr(checker *c, const expr *e)
     const char *what = e->io_operation ? "access the filesystem" : NULL;
     if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
         && str_eq_c(e->member, "size")) what = "read frame image metadata";
+    if (e->kind == E_MEMBER && e->object->type.kind == TY_RENDER_TARGET
+        && str_eq_c(e->member, "contentRevision")) what = "read frame image metadata";
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "add, remove or destroy"; break;
-    case CALL_SEND: what = "send events"; break;
+    case CALL_SEND:
+        // A loop over a query's rows records its steps' events in the order
+        // its rows come in, as a foreach would: the match's events, of plain
+        // values, as text can't be made on threads
+        if (!c->parallel->query) what = "send events";
+        else if (e->type_decl && (e->type_decl->is_command || e->local_world)) {
+            diag_error(e->at, "a parallel loop's steps send only the match's events, and '" STR_FMT "' is %s",
+                       STR_ARG(e->type_decl->name), e->type_decl->is_command ? "a command" : "local");
+            diag_note("send it before or after the loop, or from a 'foreach', which goes in order");
+            return;
+        } else if (e->type_decl && decl_holds_text(e->type_decl)) {
+            diag_error(e->at, "a parallel loop's steps run on threads, where text and lists can't be made, and '" STR_FMT
+                       "' holds them", STR_ARG(e->type_decl->name));
+            diag_note("send it from a 'foreach', which goes in order, or keep a number for the text in the event");
+            return;
+        }
+        break;
     case CALL_DRAW: what = "draw"; break;
     case CALL_AUDIO: what = "play sounds"; break;
     case CALL_GUI: what = gui_call_what(e); break;
-    case CALL_SESSION: case CALL_CLIPBOARD: what = "make requests of the host"; break;
+    case CALL_SESSION: case CALL_CLIPBOARD: case CALL_QUIT: what = "make requests of the host"; break;
     case CALL_LOAD: case CALL_UNLOAD: what = "load and unload scenes"; break;
     case CALL_VISIBILITY: if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups"; break;
     case CALL_SNAP: what = "snap"; break;
@@ -12188,13 +13567,59 @@ static void check_step_stmt(checker *c, const stmt *s, const int depth)
     }
 }
 
+// Whether a grid could be one code made, in its thread's scratch area: a local's, or a parameter's, which a caller
+// can pass a local. Only a world's grids go to threads.
+static bool thread_grid(const expr *e)
+{
+    while (e->kind == E_MEMBER) e = e->object;
+    return e->kind == E_NAME && (e->bind == BIND_LOCAL || (e->bind == BIND_PARAM && e->param && e->param->type.kind == TY_GRID));
+}
+
 // parallel (var at in cells) { ... }, or by blocks: parallel (var at in cells by 2 offset shift)
+static void check_parallel_steps(checker *c, stmt *s);
+
+// parallel (var row in query): its rows, as a foreach has them, read-only. The
+// loop gathers them in the foreach's order, and its steps go through them at
+// once; what they send is recorded in that order too.
+static void check_parallel_query(checker *c, stmt *s, const type query)
+{
+    s->query = s->value->param;
+    s->type = (type){TY_STRUCT, query.decl};
+    for (int i = 0; i < 3; i++) s->block[i] = 1;
+    if (s->by || s->offset) {
+        const expr *extra = s->by ? s->by : s->offset;
+        diag_error(extra->at, "a parallel loop over a query goes through its rows one by one: it has no '%s'",
+                   s->by ? "by" : "offset");
+        diag_note("remove it: 'parallel (var " STR_FMT " in " STR_FMT ")'", STR_ARG(s->name), STR_ARG(s->value->name));
+    }
+    if (s->type_name.len > 0) {
+        diag_error(s->type_at, "a query row takes its type from the query: write 'parallel (var " STR_FMT " in ...)'",
+                   STR_ARG(s->name));
+    }
+    for (int i = 0; s->query && i < s->query->query.count; i++) {
+        const param *p = &s->query->query.items[i];
+        if (!param_binding(p) || p->mode != PARAM_MUT) continue;
+        diag_error(s->value->at, "a parallel loop's rows are read-only, and '" STR_FMT "' takes 'mut " STR_FMT " " STR_FMT "'",
+                   STR_ARG(s->value->name), STR_ARG(p->type_name), STR_ARG(p->name));
+        diag_note("change local fields in a 'foreach', which goes in order, or loop over a query without 'mut'");
+        break;
+    }
+    check_parallel_steps(c, s);
+}
+
 static void check_parallel(checker *c, stmt *s)
 {
+    c->query_value = s->value->kind == E_NAME ? s->value : NULL;
     const type grid = check_expr(c, s->value);
+    c->query_value = NULL;
+    if (grid.kind == TY_QUERY) {
+        check_parallel_query(c, s, grid);
+        return;
+    }
     const bool list = grid.kind == TY_LIST; // Its places are its elements' indices
     if (grid.kind != TY_GRID && !list && grid.kind != TY_ERROR) {
-        diag_error(s->value->at, "parallel goes through a grid's cells or a list's elements, and this is %s", type_name(grid));
+        diag_error(s->value->at, "parallel goes through a grid's cells, a list's elements or a query's rows, and this is %s",
+                   type_name(grid));
     }
     const int dims = grid.kind == TY_GRID ? grid.decl->dims : list ? 1 : 2;
     const type position = list ? (type){TY_INT, NULL} : dims == 2 ? (type){TY_INT2, NULL} : (type){TY_INT3, NULL};
@@ -12209,6 +13634,12 @@ static void check_parallel(checker *c, stmt *s)
     }
     const expr *root = s->value;
     while (root->kind == E_MEMBER) root = root->object;
+    if (grid.kind == TY_GRID && thread_grid(s->value) && !(c->method && c->method->is_worker)) {
+        diag_error(s->value->at, "a parallel loop goes through a grid the world keeps: a component's or a singleton's, "
+                                 "and this one is %s", root->bind == BIND_LOCAL ? "a variable's" : "a parameter");
+        diag_note("a grid code makes lives on the thread that made it; keep the grid in a component or singleton, or "
+                  "use a 'foreach' loop");
+    }
     if (list && root->kind == E_NAME && root->bind == BIND_LOCAL && !(c->method && c->method->is_worker)) {
         diag_error(s->value->at, "a parallel loop goes through a list the world keeps: a component's or a singleton's, "
                                  "and '" STR_FMT "' is a variable", STR_ARG(root->name));
@@ -12258,6 +13689,12 @@ static void check_parallel(checker *c, stmt *s)
         }
     }
     s->type = position;
+    check_parallel_steps(c, s);
+}
+
+// What every parallel loop's steps are checked for, whatever it goes through.
+static void check_parallel_steps(checker *c, stmt *s)
+{
     s->parallel = true;
     if (c->parallel) {
         diag_error(s->at, "a parallel loop's step can't hold another parallel loop");
@@ -12324,6 +13761,7 @@ static void check_assign(checker *c, const stmt *s)
         property *prop = s->target->property;
         if (!prop->set) {
             diag_error(s->target->at, "property '" STR_FMT "' has no setter", STR_ARG(prop->name));
+            diag_note("this property can only be read; add a 'set { ... }' accessor to assign it");
             return;
         }
         expr *set = NEW(expr);
@@ -12371,7 +13809,8 @@ static void check_assign(checker *c, const stmt *s)
         vec_push(set->arg_want, target);
         decl *from = reading_code(c);
         if (from) {
-            const call_site site = {from, method, set, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+            const call_site site = {from, method, set, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict,
+                                    true, c->loop_depth > 0 || c->loop_header > 0};
             vec_push(c->calls, site);
         }
         ((stmt *)s)->property_set = set;
@@ -12398,6 +13837,7 @@ static void check_assign(checker *c, const stmt *s)
                   STR_FMT ".Set<" STR_FMT ">(e, c);'", STR_ARG(world), STR_ARG(component), STR_ARG(world), STR_ARG(component));
         return;
     }
+    if (check_gpu_list_write(c, s)) return; // list[i] = v, in a kernel: no 'mut', as it's a handle
     // name[0] = 'x': said by check_writable, as for a mut argument
     if (s->target->kind == E_INDEX && s->target->object->type.kind == TY_STRING) {
         check_writable(c, s->target, NULL, NULL);
@@ -12410,9 +13850,10 @@ static void check_assign(checker *c, const stmt *s)
     } else if (through_element(s->target) && !element_path_in_place(s->target)) {
         return;
     }
-    if (target.kind == TY_GRID && value.kind != TY_ERROR && !is_new_grid(s->value)) {
-        diag_error(s->value->at, "a grid can't be copied: every chunk would be");
-        diag_note("make a new, empty one with 'Grid%d(...)', or change cells one by one", target.decl->dims);
+    if (target.kind == TY_GRID && value.kind != TY_ERROR && !fresh_grid(s->value, false)) {
+        diag_error(s->value->at, "a grid can't be copied: a grid takes one of its own");
+        diag_note("make a new, empty one with 'Grid%d(...)', take what a function returns, or copy this one with '.Copy()'",
+                  target.decl->dims);
         return;
     }
     if (holds_grid(target) && target.kind != TY_GRID && value.kind != TY_ERROR && s->value->kind != E_LITERAL) {
@@ -12820,7 +14261,10 @@ static void check_switch(checker *c, stmt *s)
             if (!fold_int(label, &number)) {
                 diag_error(label->at, "a case is an int, a char or one of an enum's members, like 'case %s:'",
                            value.kind == TY_ENUM ? "Page.Title" : value.kind == TY_CHAR ? "'a'" : "3");
-                diag_note("constants work too, and operators on them, like 'case MAX_LEVEL + 1:'");
+                if (label->bind == BIND_CONST && label->constant && label->constant->build_fn)
+                    diag_note("'" STR_FMT "' is made by build code: its value is the build's, which isn't known while compiling",
+                              STR_ARG(label->constant->qualified));
+                else diag_note("constants work too, and operators on them, like 'case MAX_LEVEL + 1:'");
                 continue;
             }
             label->int_value = number; // What codegen writes, unless it's a literal or a member
@@ -12900,6 +14344,14 @@ static void check_return(checker *c, const stmt *s)
         diag_error(s->value->at, "'" STR_FMT "' returns %s, not %s", STR_ARG(m->name), type_name(m->return_type),
                    type_name(value));
         note_conversion(m->return_type, value);
+    } else if (value.kind == TY_GRID && !fresh_grid(s->value, true) && m->build_owner) { // asset Grid2<Color> a = b;
+        diag_error(s->value->at, "a grid can't be copied: an asset's grid is its own");
+        diag_note("make it with code that returns one, or copy this one: '... = " STR_FMT ".Copy();'",
+                  STR_ARG(s->value->kind == E_NAME ? s->value->name : str_from("grid")));
+    } else if (value.kind == TY_GRID && !fresh_grid(s->value, true)) {
+        diag_error(s->value->at, "a grid can't be copied: a function returns one of its own");
+        diag_note("return a new one, a local, or a copy of this one, like 'return " STR_FMT ".Copy();'",
+                  STR_ARG(s->value->kind == E_NAME ? s->value->name : str_from("grid")));
     }
 }
 
@@ -12964,8 +14416,15 @@ static bool always_returns(const stmt *s)
     }
 }
 
+static decl *kernel_own(const checker *c);
+
 static void check_var(checker *c, stmt *s)
 {
+    if (s->is_shared && !kernel_own(c)) {
+        diag_error(s->shared_at, "a shared local is a kernel's group's: it goes in a 'compute' declaration's own body");
+        diag_note("drop 'shared' for a local of this code's own");
+        s->is_shared = false;
+    }
     expr placeholder = {.kind = E_DEFAULT, .at = s->at};
     if (s->delayed) {
         c->outs++;
@@ -13044,11 +14503,30 @@ static void check_var(checker *c, stmt *s)
         s->type = T_ERR;
     }
 
-    // A grid stays where it's made: a local would be a copy of every chunk
     // In code the GPU runs, a grid's local is a name for the grid, which shader.c follows: a frag, a vert, and a
-    // function that takes a grid, which only those call
+    // function only those call. Anywhere else a local's grid is its own (docs/spec.md, Grids): a new one, a copy or
+    // what a function returned, in the scratch area as a local's list is, and never another's.
     const bool names_grid = s->type.kind == TY_GRID && s->value && (gpu_code(c) || (c->method && c->method->gpu_only));
-    if (holds_grid(s->type) && !names_grid) {
+    if (s->type.kind == TY_GRID && !names_grid) {
+        const loc at = s->type_at.line ? s->type_at : s->value ? s->value->at : s->at;
+        if (async_code(c)) {
+            diag_error(at, "a task can't keep a grid while it waits: a local's grid lasts until the code that made it is done");
+            diag_note("keep it in a component or singleton, or make and use it in a function the task calls");
+            s->type = T_ERR;
+        } else if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
+                   && c->method->kind == DECL_FUNCTION && takes_grid(c->method) && s->value->kind == E_NAME
+                   && s->value->bind == BIND_PARAM) {
+            // A name for a grid it's passed: in a function only code the GPU runs calls, as a frag's local names one,
+            // and otherwise an error, once that's known
+            vec_push(c->grid_names, s);
+            vec_push(c->grid_name_fns, c->method);
+        } else if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false)) {
+            diag_error(s->value->at, "a grid can't be copied: a local's grid is its own");
+            diag_note("make a new one with 'Grid%d(...)', take what a function returns, or copy this one with '.Copy()'",
+                      s->type.decl->dims);
+            s->type = T_ERR;
+        }
+    } else if (holds_grid(s->type) && !names_grid) {
         const loc at = s->type_at.line ? s->type_at : s->value->at;
         if (s->type.kind == TY_GRID) diag_error(at, "a local can't hold a grid");
         else diag_error(at, "a local can't hold '" STR_FMT "': it has a grid in it", STR_ARG(s->type.decl->name));
@@ -13103,11 +14581,6 @@ static type local_type(checker *c, stmt *s)
     const int errors = diag_error_count();
     const type_ref *const r = type_ref_or_text(s->type_ref, s->type_name);
     t = resolve_type(c, r, PLACE_LOOP, at);
-    if (t.kind == TY_GRID) {
-        diag_error(at, "a local can't hold a grid");
-        s->type_name = str_from("");
-        return T_ERR;
-    }
     if (r->args.count > 0 && diag_error_count() > errors) s->type_name = str_from(""); // Reported: it takes the element's type, like var
     return t;
 }
@@ -13118,25 +14591,75 @@ static bool stands_alone(const expr *e)
 {
     const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
     const builtin_call call = called->call;
+    // A GPU list's changes, a run, a barrier, and an atomic, whose old value a statement drops
+    if (called->gpu >= GPU_RESIZE && called->gpu != GPU_READ && called->gpu != GPU_READ_COUNT) return true;
     return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_PARENT
                                          // A Draw call that gives a value only measures or converts
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD
-        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
-        || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_TASK
+        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_QUIT
+        || call == CALL_AUDIO
+        || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_COVER || call == CALL_TASK
         || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
-            || called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
+            || skinned_changes_pose(called->skin_operation)))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
-        || (call == CALL_GRID && !str_eq_c(called->name, "Sample"))
+        || (call == CALL_GRID && !str_eq_c(called->name, "Sample") && !str_eq_c(called->name, "SampleGrad"))
         || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0
         || (call == CALL_VISIBILITY && (called->visibility_operation & VISIBILITY_MUT))
         || e->kind == E_TRY // Passes an error on, even from a variable
         || called->kind == E_AWAIT;
+}
+
+// `T has float3 normal`: whether the type has a field of that name and type, a
+// constant once checked (an E_BOOL from then on), so that generic code writes
+// the fields a type has: `if (V has float3 normal) v.normal = n;`.
+static type check_has(checker *c, expr *e)
+{
+    type_ref of = {0};
+    of.name = of.text = e->lhs->name;
+    of.at = of.name_at = e->lhs->at;
+    const type t = resolve_type(c, &of, PLACE_LOCAL, e->lhs->at);
+    const type want = resolve_type(c, e->pattern_ref, PLACE_LOCAL, e->pattern_ref->at);
+    if (t.kind == TY_ERROR || want.kind == TY_ERROR) return T_ERR;
+    bool has = false;
+    if (t.decl && (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT)) {
+        for (int i = 0; i < t.decl->fields.count && !has; i++) {
+            const field *f = &t.decl->fields.items[i];
+            has = !f->hidden && str_eq(f->name, e->pattern_field) && same_type(f->type, want);
+        }
+    }
+    e->kind = E_BOOL;
+    e->bool_value = has;
+    e->type = T_BOOL_;
+    return T_BOOL_;
+}
+
+// Whether an if's condition is `has` tests alone, with !, && and ||: what it
+// is, then, as its code is checked.
+static bool has_condition(checker *c, expr *e, bool *value)
+{
+    if (e->kind == E_HAS) {
+        const type t = check_has(c, e);
+        *value = t.kind != TY_ERROR && e->bool_value;
+        return true;
+    }
+    if (e->kind == E_UNARY && e->op == T_NOT && e->lhs->kind == E_HAS) {
+        if (!has_condition(c, e->lhs, value)) return false;
+        *value = !*value;
+        return true;
+    }
+    if (e->kind == E_BINARY && (e->op == T_AND || e->op == T_OR)) {
+        bool l, r;
+        if (!has_condition(c, e->lhs, &l) || !has_condition(c, e->rhs, &r)) return false;
+        *value = e->op == T_AND ? l && r : l || r;
+        return true;
+    }
+    return false;
 }
 
 static void check_stmt(checker *c, stmt *s)
@@ -13148,6 +14671,20 @@ static void check_stmt(checker *c, stmt *s)
         pop_scope(c);
         break;
     case S_IF: {
+        bool known;
+        if (has_condition(c, s->cond, &known)) {
+            // `if (V has float3 normal)`: only the side that runs is checked, and it's all that's left of the if
+            stmt *taken = known ? s->then_stmt : s->else_stmt;
+            if (taken) {
+                *s = *taken;
+            } else {
+                s->kind = S_BLOCK;
+                s->stmts.items = NULL;
+                s->stmts.count = s->stmts.cap = 0;
+            }
+            check_stmt(c, s);
+            break;
+        }
         allow_bindings(s->cond);
         push_scope(c);
         const type cond = check_expr(c, s->cond);
@@ -13213,6 +14750,8 @@ static void check_stmt(checker *c, stmt *s)
             }
         } else if (list.kind == TY_LIST) {
             element = list_element(list);
+        } else if (list.kind == TY_GPU_LIST) { // Its elements up to its count, on the GPU
+            if (gpu_list_read_ok(c, s->value->at, "elements")) element = gpu_list_element(list);
         } else if (list.kind == TY_MAP) { // Its entries, in the order their keys were added: each a key and a value
             element = (type){TY_STRUCT, list.decl->entry};
         } else if (list.kind == TY_SET) { // Its keys, in the order they were added
@@ -13262,6 +14801,7 @@ static void check_stmt(checker *c, stmt *s)
             for (int i = 0; i < 3; i++) s->block[i] = 1;
             s->parallel = ((c->system && !c->method) || (c->method && c->method->is_worker))
                        && !async_code(c) && !c->in_input && !c->parallel
+                       && (!thread_grid(s->value) || (c->method && c->method->is_worker)) // A world's grid
                        && own_cell_only(s->then_stmt, s, 0);
             if (s->parallel) plan_window(s);
             if (!s->parallel) c->prog->uses_text = true; // In order, it keeps where it is in the scratch area
@@ -13415,8 +14955,12 @@ static bool is_constant(const checker *c, const expr *e)
     case E_DEFAULT:
         return true;
     case E_NAME:
-        return lookup(c->prog, c->unit, e->name, NAME_CONST, &other) != NULL
-            || (c->assets_constant && lookup(c->prog, c->unit, e->name, NAME_ASSET, &other) != NULL);
+        // A constant build code works out is the build's, read as the game runs, as an asset is
+        {
+            const decl *named = lookup(c->prog, c->unit, e->name, NAME_CONST, &other);
+            if (named) return c->assets_constant || !build_constant(c, named);
+        }
+        return c->assets_constant && lookup(c->prog, c->unit, e->name, NAME_ASSET, &other) != NULL;
     case E_UNARY:
         return is_constant(c, e->lhs);
     case E_BINARY:
@@ -13516,7 +15060,7 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
     return t;
 }
 
-static type constant_type(const checker *c, const decl *k)
+static type constant_type(const checker *c, const decl *k, const bool built)
 {
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
     const type_ref *const r = type_ref_or_text(k->return_type_ref, k->return_type_name);
@@ -13524,7 +15068,12 @@ static type constant_type(const checker *c, const decl *k)
         diag_error(at, "a constant can't be an array yet");
         return T_ERR;
     }
-    if (r->args.count > 0 && !str_eq_c(r->name, "Mesh")) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
+    if (str_eq_c(r->name, "GPUList")) {
+        diag_error(at, "a GPUList is this machine's, made in local code: a constant can't be one");
+        diag_note("keep it in a local field or a local singleton, and make it there: 'GPUList<float4>(1024)'");
+        return T_ERR;
+    }
+    if (r->args.count > 0 && !str_eq_c(r->name, "Mesh") && !(built && str_eq_c(r->name, "List"))) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
         const char *what = str_eq_c(r->name, "List") ? "list" : str_eq_c(r->name, "Map") ? "map" : str_eq_c(r->name, "Set") ? "set" : "grid";
         diag_error(at, "a constant can't be a %s yet", what);
         return T_ERR;
@@ -13535,6 +15084,7 @@ static type constant_type(const checker *c, const decl *k)
         diag_error(at, "a constant can't be an array yet");
         return T_ERR;
     case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
+        if (built && t.kind == TY_LIST) return t; // build_constant_type_ok says what it holds
         diag_error(at, "a constant can't be a %s yet", t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
         return T_ERR;
     case TY_OPTIONAL:
@@ -13548,7 +15098,7 @@ static type constant_type(const checker *c, const decl *k)
             diag_error(at, "a constant can't hold callable or shader bindings: they belong in local state");
             return T_ERR;
         }
-        if (holds_render_resource(t)) {
+        if (holds_resource_but_font(t)) {
             diag_error(at, "a constant can't hold rendering resources, including inside a struct");
             return T_ERR;
         }
@@ -13565,7 +15115,7 @@ static type constant_type(const checker *c, const decl *k)
         diag_note("for the values a component starts with, give its fields defaults: 'int lives = 3;'");
         return T_ERR;
     default:
-        if (holds_render_resource(t)) {
+        if (holds_resource_but_font(t)) {
             diag_error(at, "a constant can't hold rendering resources");
             return T_ERR;
         }
@@ -13589,11 +15139,16 @@ static void check_constant(checker *c, decl *k)
     c->unit = k->unit;
     c->assets_constant = false;
     check_reserved(k->name, k->at);
-    k->return_type = constant_type(c, k);
-    if (!is_constant(c, k->value)) {
+    if (build_constant(c, k)) { // Its value is what build code makes (build_check.inc)
+        k->return_type = constant_type(c, k, true);
+        if (k->return_type.kind != TY_ERROR && build_constant_type_ok(k->return_type, k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at)) {
+            build_constant_function(c, k);
+        }
+    } else if ((void)(k->return_type = constant_type(c, k, false)), !is_constant(c, k->value)) {
         diag_error(k->value->at, "a constant's value must be a constant expression");
         diag_note("use literals, other constants, constructors like float3(...), struct values of constants, Math "
-                  "functions and operators; a constant can't read fields, singletons or Time");
+                  "functions and operators, or a call that build code makes it with; a constant can't read fields, "
+                  "singletons or Time");
         suggest_constant(c, k->value);
     } else {
         const type t = check_constant_expr(c, k->value, true, k->return_type);
@@ -13932,6 +15487,14 @@ static void check_settings(checker *c)
                     prog->shards = known->bool_value;
                     prog->shards_at = f->at;
                 }
+            } else if (str_eq_c(f->name, "predictionRange")) {
+                float range;
+                if (!setting_float(value, &range, 0) || !(range > 0.0f) || range - range != 0.0f) {
+                    diag_error(value->at, "predictionRange is a finite number of world units over 0, like 'predictionRange = 40;'");
+                } else {
+                    prog->predict_range = range;
+                    prog->predict_range_at = f->at;
+                }
             } else if (str_eq_c(f->name, "reach")) {
                 float range;
                 if (!setting_float(value, &range, 0) || !(range > 0.0f) || range - range != 0.0f) {
@@ -13951,6 +15514,48 @@ static void check_settings(checker *c)
         diag_error(prog->shard_range_at, "reach only means something with 'shards = true;'");
     }
     if (prog->shards && prog->shard_range > 0.0) ensure_shards(prog);
+    if (prog->predict_range > 0.0 && prog->delay_prediction) {
+        diag_error(prog->predict_range_at, "predictionRange only means something with 'prediction = Prediction.Rollback;': "
+                   "with Prediction.Delay a client predicts nothing");
+    } else if (prog->predict_range > 0.0) {
+        // An entity a client's predicted ticks leave out: a hidden sparse tag
+        // only its predicted worlds ever have (tide_game.predict_far)
+        decl *far = NEW(decl);
+        far->kind = DECL_COMPONENT;
+        far->builtin = true;
+        far->name = far->qualified = str_from("tide_far");
+        far->c_name = "tide_far";
+        far->index = prog->components.count;
+        vec_push(prog->components, far);
+        prog->predict_far = far;
+    }
+}
+
+// `with Far` and `without Far`: the tag a client's predicted ticks give what's
+// far from its player (predictionRange), for code that steps everything at once
+// (a physics package's step) to leave it out too. Without the setting it's a
+// tag no entity ever has, so a package names it whether the game sets it or not.
+static decl *far_filter(const checker *c, const param *p, const decl *found)
+{
+    if (found || !str_eq_c(p->type_name, "Far")) return NULL;
+    if (p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT) {
+        diag_error(p->type_at.line ? p->type_at : p->at, "'Far' is a filter, with no fields: 'with Far' or 'without Far'");
+        diag_note("it's what a client's predicted ticks leave out under 'predictionRange'");
+        return NULL;
+    }
+    program *prog = c->prog;
+    if (prog->predict_far) return prog->predict_far;
+    if (!prog->far_absent) {
+        decl *far = NEW(decl);
+        far->kind = DECL_COMPONENT;
+        far->builtin = true;
+        far->name = far->qualified = str_from("tide_far");
+        far->c_name = "tide_far";
+        far->index = prog->components.count;
+        vec_push(prog->components, far);
+        prog->far_absent = far;
+    }
+    return prog->far_absent;
 }
 
 static type use_constant(checker *c, expr *e, decl *k)
@@ -13961,6 +15566,17 @@ static type use_constant(checker *c, expr *e, decl *k)
     if (k->index == 1) {
         diag_error(e->at, "'" STR_FMT "' is worked out from itself", STR_ARG(k->name));
         diag_note("a constant's value can name other constants, but not, through them, its own");
+        return T_ERR;
+    }
+    if (k->build_fn && c->constants_only && !c->assets_constant) {
+        diag_error(e->at, "'" STR_FMT "' is made by build code: its value is the build's, read as the game runs", STR_ARG(k->qualified));
+        diag_note("code and field defaults can read it, as they read an asset; what has to be known while compiling, like a "
+                  "case label, a bound or a setting, can't");
+        return T_ERR;
+    }
+    if (k->build_fn && gpu_code(c)) {
+        diag_error(e->at, "'" STR_FMT "' is made by build code, and GPU code can't read it yet", STR_ARG(k->qualified));
+        diag_note("pass its value to the frag or vert in the draw's values");
         return T_ERR;
     }
     return k->return_type;
@@ -13979,8 +15595,14 @@ static type use_asset(checker *c, expr *e, decl *k)
                   "constant can", STR_ARG(k->return_type_name), STR_ARG(k->qualified));
         return T_ERR;
     }
-    if (k->sample_raw && k->return_type.kind == TY_TEXTURE && builds(c->prog)) vec_push(c->raw_uses, e);
-    return k->return_type;
+    if (k->sample_raw && raw_kind(k->return_type) && builds(c->prog)) vec_push(c->raw_uses, e);
+    type t = k->return_type;
+    if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at, true);
+    if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_MESH)
+        return list_of(c->prog, asset_reference_of(c, t.decl->fields.items[0].type, e->at, true));
+    if (t.kind == TY_MAP && t.decl->fields.items[1].type.kind == TY_MESH)
+        return map_of(c->prog, t.decl->fields.items[0].type, asset_reference_of(c, t.decl->fields.items[1].type, e->at, true), false);
+    return t;
 }
 
 // ---------------------------------------------------------------------------
@@ -14015,10 +15637,33 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (inner.kind == TY_GRID && inner.decl->dims == 2 && grid_cell(inner).kind == TY_COLOR) *kind = ASSET_GRID;
     else if (inner.kind == TY_TEXTURE) *kind = ASSET_TEXTURE;
     else if (inner.kind == TY_CLIP) *kind = ASSET_CLIP;
+    else if (inner.kind == TY_STRUCT && inner.decl == c->prog->clip_data) {
+        if (*many) {
+            diag_error(at, "a ClipData asset names one file: declare each clip's samples separately");
+            return false;
+        }
+        *kind = ASSET_CLIP_DATA;
+    }
+    else if (inner.kind == TY_FONT) *kind = ASSET_FONT;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATIONS) *kind = ASSET_ANIMATIONS;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATION) *kind = ASSET_ANIMATION;
+    else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_HUMANOID_RIG) {
+        if (*many) {
+            diag_error(at, "a HumanoidRig asset names one profile: declare each rig separately");
+            return false;
+        }
+        *kind = ASSET_HUMANOID;
+    }
     else if (inner.kind == TY_MESH) *kind = ASSET_MESH;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH) *kind = ASSET_SKINNED;
+    else if (inner.kind == TY_TEXTURE_ARRAY) {
+        if (*many) {
+            diag_error(at, "a TextureArray is many files already, which its glob matches: a list or a map of arrays isn't there");
+            diag_note("declare each array as an asset of its own: 'asset TextureArray ground = \"art/ground/*.png\";'");
+            return false;
+        }
+        *kind = ASSET_TEXTURE_ARRAY;
+    }
     else if (inner.kind == TY_CUBEMAP) {
         if (*many) {
             diag_error(at, "a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet");
@@ -14035,7 +15680,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         }
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '%s'", type_name(inner));
+                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), or a HumanoidRig (.humanoid.json), not '%s'", type_name(inner));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
@@ -14064,15 +15709,17 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
 // shaders are planned from them.
 static void check_raw_attribute(decl *d, const attribute *attr)
 {
-    const char *usage = "it goes before an asset that's one Texture or one Grid2<Color>, like '[Raw] asset Texture masks = "
-                        "\"art/masks.png\";', or before a field that's a Texture or a Grid2<Color>";
+    const char *usage = "it goes before an asset that's one Texture, a TextureArray, a Cubemap or one Grid2<Color>, like '[Raw] "
+                        "asset Texture masks = \"art/masks.png\";', or before a field that's a Texture, a TextureArray, a "
+                        "Cubemap, a Grid2<Color> or a Grid3<Color>";
     if (d->kind != DECL_ASSET) {
         diag_error(attr->at, "Raw says a texture's pixels are numbers, and '" STR_FMT "' isn't a texture", STR_ARG(d->name));
         diag_note("%s", usage);
         return;
     }
     if (d->return_type.kind == TY_ERROR) return; // Its type said why
-    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID) {
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE_ARRAY
+        && d->asset_kind != ASSET_CUBEMAP) {
         diag_error(attr->at, "Raw says a texture's pixels are numbers, and '" STR_FMT "' is %s", STR_ARG(d->name),
                    type_name(d->return_type));
         diag_note("%s", usage);
@@ -14093,6 +15740,37 @@ static void check_raw_attribute(decl *d, const attribute *attr)
         return;
     }
     d->sample_raw = true;
+}
+
+// [Lossless] before a Texture asset (one, or a glob's list or map): its pixels stay exactly as packed, a byte a
+// channel, where an image the build may compress is BC1 or BC3 (docs/game/assets.md, GPU compression). For numbers
+// that must be exact, a lookup table or a flow map, beside [Raw] or alone.
+static void check_lossless_attribute(decl *d, const attribute *attr)
+{
+    const char *usage = "it goes before a Texture asset the build would otherwise compress, like '[Raw, Lossless] asset "
+                        "Texture flow = \"art/flow.png\";'";
+    if (d->kind != DECL_ASSET) {
+        diag_error(attr->at, "Lossless keeps an image asset's pixels exact in the pack, and '" STR_FMT "' isn't an asset",
+                   STR_ARG(d->name));
+        diag_note("%s", usage);
+        return;
+    }
+    if (d->return_type.kind == TY_ERROR) return; // Its type said why
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_TEXTURE_ARRAY) {
+        diag_error(attr->at, "Lossless keeps a Texture asset's pixels exact, and '" STR_FMT "' is %s, which is never compressed",
+                   STR_ARG(d->name), type_name(d->return_type));
+        diag_note("%s", usage);
+        return;
+    }
+    if (attr->args.count || attr->values.count) {
+        diag_error(attr->at, "Lossless takes nothing: '[Lossless]'");
+        return;
+    }
+    if (d->lossless) {
+        diag_error(attr->at, "'" STR_FMT "' already has a Lossless", STR_ARG(d->name));
+        return;
+    }
+    d->lossless = true;
 }
 
 static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
@@ -14118,7 +15796,7 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
                   "blended, Filter.Bilinear");
         return;
     }
-    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID) {
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE_ARRAY) {
         diag_error(attr->at, "%s says how a texture is sampled, and '" STR_FMT "' is %s", name, STR_ARG(d->name),
                    type_name(d->return_type));
         diag_note("an asset that's drawn with is a Texture or a Grid2<Color>");
@@ -14214,26 +15892,8 @@ static bool mesh_wants_skin(const decl *vertex)
 
 #include "skinned_catalogs.inc"
 
-// A blend shape name against a [BlendShapes] pattern: * is any run of
-// characters (none too), everything else itself.
-static bool blend_shape_matches(const str pattern, const char *name, const uint32_t length)
-{
-    int p = 0, star = -1;
-    uint32_t n = 0, resume = 0;
-    while (n < length) {
-        if (p < pattern.len && pattern.ptr[p] == '*') {
-            star = p++;
-            resume = n;
-        } else if (p < pattern.len && pattern.ptr[p] == name[n]) {
-            p++, n++;
-        } else if (star >= 0) {
-            p = star + 1;
-            n = ++resume;
-        } else return false;
-    }
-    while (p < pattern.len && pattern.ptr[p] == '*') p++;
-    return p == pattern.len;
-}
+// A name against a [BlendShapes] or [Parts] pattern (asset_name_matches)
+#define blend_shape_matches asset_name_matches
 
 static bool blend_shape_kept(void *user, const char *name, const uint32_t length)
 {
@@ -14241,6 +15901,63 @@ static bool blend_shape_kept(void *user, const char *name, const uint32_t length
     for (int i = 0; i < k->blend_shape_patterns.count; i++)
         if (blend_shape_matches(k->blend_shape_patterns.items[i], name, length)) return true;
     return false;
+}
+
+static bool part_kept(void *user, const char *name, const uint32_t length)
+{
+    const decl *k = user;
+    for (int i = 0; i < k->part_patterns.count; i++)
+        if (blend_shape_matches(k->part_patterns.items[i], name, length)) return true;
+    return false;
+}
+
+// An attribute's pattern: a text literal or 'const string', its escapes as text has them; false for anything else.
+static bool attribute_pattern(const expr *value, str *out)
+{
+    const expr *literal = text_literal(value);
+    if (!literal) return false;
+    sb decoded = {0};
+    for (int c = 0; c < literal->text.len; c++) {
+        char ch = literal->text.ptr[c];
+        if (ch == '\\' && c + 1 < literal->text.len) {
+            ch = literal->text.ptr[++c];
+            ch = ch == 'n' ? '\n' : ch == 'r' ? '\r' : ch == 't' ? '\t' : ch;
+        }
+        sb_putn(&decoded, &ch, 1);
+    }
+    *out = (str){decoded.data ? decoded.data : "", (int)decoded.len};
+    return true;
+}
+
+// [Parts("Body_Full_LOD0", "GreatHelm_*")]: the parts a skinned model's import keeps, names or * patterns.
+static void check_parts_attribute(decl *k, const attribute *attr, const bool typed, const asset_kind read)
+{
+    if (k->parts_chosen) {
+        diag_error(attr->at, "'" STR_FMT "' already has a Parts", STR_ARG(k->name));
+        return;
+    }
+    if (typed && read != ASSET_SKINNED) {
+        diag_error(attr->at, "Parts chooses which parts of a skinned model's file its import keeps, and '" STR_FMT "' is %s",
+                   STR_ARG(k->name), type_name(k->return_type));
+        diag_note("it goes before a SkinnedMesh<V> asset, like '[Parts(\"Body_LOD0\", \"Helmet*\")] asset SkinnedMesh<Vertex3> knight = \"knight.fbx\";'");
+        return;
+    }
+    if (attr->args.count) {
+        diag_error(attr->at, "Parts takes part names and * patterns, not named arguments: '[Parts(\"Body_LOD0\", \"Helmet*\")]'");
+        return;
+    }
+    if (!attr->values.count) {
+        diag_error(attr->at, "Parts names the parts to keep: '[Parts(\"Body_LOD0\", \"Helmet*\")]'");
+        diag_note("a model with no parts has nothing to draw; leave the attribute out to keep them all");
+        return;
+    }
+    k->parts_chosen = true;
+    for (int i = 0; i < attr->values.count; i++) {
+        str pattern;
+        if (attribute_pattern(attr->values.items[i], &pattern)) vec_push(k->part_patterns, pattern);
+        else diag_error(attr->values.items[i]->at, "a Parts pattern is a text literal or a 'const string': a part's name (a node "
+                        "holding a mesh), where * stands for any run of characters");
+    }
 }
 
 // [BlendShapes("masculineFeminine", "default*")]: names or * patterns, each a constant text.
@@ -14262,22 +15979,10 @@ static void check_blend_shapes_attribute(decl *k, const attribute *attr, const b
     }
     k->blend_shapes_chosen = true;
     for (int i = 0; i < attr->values.count; i++) {
-        const expr *literal = text_literal(attr->values.items[i]);
-        if (!literal) {
-            diag_error(attr->values.items[i]->at, "a BlendShapes pattern is a text literal or a 'const string': a shape's name, "
-                       "where * stands for any run of characters");
-            continue;
-        }
-        sb decoded = {0};
-        for (int c = 0; c < literal->text.len; c++) {
-            char ch = literal->text.ptr[c];
-            if (ch == '\\' && c + 1 < literal->text.len) {
-                ch = literal->text.ptr[++c];
-                ch = ch == 'n' ? '\n' : ch == 'r' ? '\r' : ch == 't' ? '\t' : ch;
-            }
-            sb_putn(&decoded, &ch, 1);
-        }
-        vec_push(k->blend_shape_patterns, ((str){decoded.data ? decoded.data : "", (int)decoded.len}));
+        str pattern;
+        if (attribute_pattern(attr->values.items[i], &pattern)) vec_push(k->blend_shape_patterns, pattern);
+        else diag_error(attr->values.items[i]->at, "a BlendShapes pattern is a text literal or a 'const string': a shape's name, "
+                        "where * stands for any run of characters");
     }
 }
 
@@ -14305,8 +16010,17 @@ static void keep_blend_shapes(decl *k, const loc at)
 // Checks an asset declaration: its type, its path (a constant text) and the
 // files the path resolves to, read and decoded (asset_files.h), which codegen
 // packs. Errors at the path say what to write.
+static void check_asset_decl(checker *c, decl *k);
+#include "retarget_assets.inc"
+
 static void check_asset_decl(checker *c, decl *k)
 {
+    if (k->index == 2) return;
+    if (k->index == 1) {
+        diag_error(k->at, "asset '" STR_FMT "' depends on itself through Retarget", STR_ARG(k->name));
+        return;
+    }
+    k->index = 1;
     const unit *const outer = c->unit;
     c->unit = k->unit;
     check_reserved(k->name, k->at);
@@ -14322,18 +16036,27 @@ static void check_asset_decl(checker *c, decl *k)
     k->asset_kind = kind;
     k->asset_many = many;
     // How its files are read: a Mesh with bones, as a skinned model is
+    // a ClipData's, as a Clip's are, which codegen decodes
     const asset_kind read = typed && fills && kind == ASSET_MESH && mesh_wants_skin(asset_mesh_vertex(k->return_type))
-                          ? ASSET_SKINNED : kind;
+                          ? ASSET_SKINNED : kind == ASSET_CLIP_DATA ? ASSET_CLIP : kind == ASSET_TEXTURE_ARRAY ? ASSET_TEXTURE : kind;
+    attribute *retarget = NULL;
     for (int a = 0; a < k->attributes.count; a++) {
         attribute *attr = &k->attributes.items[a];
-        if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
+        if (str_eq_c(attr->name, "Retarget")) {
+            if (retarget) diag_error(attr->at, "an animation asset has one Retarget attribute");
+            else retarget = attr;
+        } else if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
             check_sampling_attribute(c, k, attr);
+        } else if (str_eq_c(attr->name, "Lossless")) {
+            check_lossless_attribute(k, attr);
         } else if (str_eq_c(attr->name, "BlendShapes")) {
             check_blend_shapes_attribute(k, attr, typed, kind);
+        } else if (str_eq_c(attr->name, "Parts")) {
+            check_parts_attribute(k, attr, typed, read);
         } else if (str_eq_c(attr->name, "LOD")) {
             // Levels of detail (docs/spec.md): a mesh's, made as the game is built
-            if (attr->args.count || attr->values.count) {
-                diag_error(attr->at, "LOD takes nothing: '[LOD]'");
+            if (attr->args.count || attr->values.count > 1) {
+                diag_error(attr->at, "LOD takes an optional error tolerance multiplier: '[LOD]' or '[LOD(2)]'");
             } else if (k->lod) {
                 diag_error(attr->at, "'" STR_FMT "' already has a LOD", STR_ARG(k->name));
             } else if (typed && kind != ASSET_MESH && kind != ASSET_SKINNED) {
@@ -14343,13 +16066,35 @@ static void check_asset_decl(checker *c, decl *k)
                           "'[LOD] asset Mesh<Vertex3> rock = \"art/rock.glb\";'");
             } else {
                 k->lod = true;
+                k->lod_multiplier = 1.0f;
+                if (attr->values.count) {
+                    expr *value = attr->values.items[0];
+                    float multiplier;
+                    if (!is_constant(c, value)) {
+                        diag_error(value->at, "a LOD multiplier must be a positive finite constant number");
+                        suggest_constant(c, value);
+                    } else {
+                        const type t = check_constant_expr(c, value, true, T_FLOAT_);
+                        if (t.kind != TY_ERROR) {
+                            if (!type_assignable(T_FLOAT_, t) || !setting_float(value, &multiplier, 0)
+                                || !(multiplier > 0.0f) || multiplier - multiplier != 0.0f) {
+                                diag_error(value->at, "a LOD multiplier must be a positive finite constant number");
+                            } else k->lod_multiplier = multiplier;
+                        }
+                    }
+                }
             }
         }
     }
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
-    const bool paths = catalog && k->value->kind == E_LIST;
-    const int path_count = paths ? k->value->args.count : 1;
-    if (!path_count) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
+    const bool layered = typed && kind == ASSET_TEXTURE_ARRAY; // A glob's images, or a list of paths, as its layers
+    const bool paths = (catalog || layered) && k->value && k->value->kind == E_LIST;
+    // `asset Texture hero = Outlined(heroSource, Color.red);`: a value build code makes, not a file's path, which is a
+    // constant: as for a constant, one that calls something (build_check.inc)
+    const bool built = k->value && !paths && build_calls(k->value) && !is_constant(c, k->value);
+    const int path_count = !k->value || built ? 0 : paths ? k->value->args.count : 1;
+    if (!path_count && paths) diag_error(k->value->at, "an %s file list can't be empty: name at least one file",
+                                         layered ? "TextureArray" : "AnimationCatalog");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -14365,8 +16110,42 @@ static void check_asset_decl(checker *c, decl *k)
         if (path) vec_push(k->asset_paths, (expr *)path);
         else valid = false;
     }
+    compile_progress("Importing asset", str_to_cstr(k->qualified), 0, 0);
+    const double import_began = build_report_current() ? build_report_clock_ms() : 0.0;
     if (typed && fills && valid) {
-        if (catalog) {
+        if (layered) { // Each path a file or a glob's, in the order they're written, each glob's in its paths' order
+            asset_value *combined = NEW(asset_value);
+            combined->kind = ASSET_TEXTURE_ARRAY;
+            combined->many = true;
+            combined->paths_only = c->prog->asset_metadata_only;
+            VEC(asset_match) matches = {0};
+            for (int i = 0; i < k->asset_paths.count; i++) {
+                const expr *path = k->asset_paths.items[i];
+                asset_value *v = c->prog->asset_metadata_only
+                    ? asset_resolve_paths(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder)
+                    : asset_resolve(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder);
+                if (!v) { valid = false; continue; }
+                for (int n = 0; n < v->count; n++) vec_push(matches, v->items[n]);
+            }
+            combined->items = matches.items;
+            combined->count = matches.count;
+            if (valid && matches.count > 256) {
+                diag_error(k->value->at, "a TextureArray has 256 layers at the most, and '" STR_FMT "' names %d images",
+                           STR_ARG(k->name), matches.count);
+                diag_note("256 is the most every GPU Tide draws with takes");
+                valid = false;
+            }
+            for (int n = 1; valid && !c->prog->asset_metadata_only && n < matches.count; n++) {
+                const asset_match *first = &matches.items[0], *at = &matches.items[n];
+                if (at->image.width == first->image.width && at->image.height == first->image.height) continue;
+                diag_error(k->value->at, "a TextureArray's images are one size, and '%s' is %ux%u where '%s' is %ux%u",
+                           at->key, (unsigned)at->image.width, (unsigned)at->image.height, first->key,
+                           (unsigned)first->image.width, (unsigned)first->image.height);
+                diag_note("make each the same size in the files: an array's layers are images of one size");
+                valid = false;
+            }
+            if (valid) k->asset = combined;
+        } else if (catalog) {
             asset_value *combined = NEW(asset_value);
             combined->kind = read;
             combined->paths_only = c->prog->asset_metadata_only;
@@ -14390,9 +16169,15 @@ static void check_asset_decl(checker *c, decl *k)
             combined->items = matches.items;
             combined->count = matches.count;
             if (valid) k->asset = combined;
-        } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
+        } else if (c->prog->asset_metadata_only && kind == ASSET_HUMANOID) {
             const expr *path = k->asset_paths.items[0];
+            k->asset = asset_resolve_paths(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
+        } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS
+                                                    && kind != ASSET_ANIMATION && kind != ASSET_HUMANOID)) {
+            const expr *path = k->asset_paths.items[0];
+            if (k->parts_chosen) asset_choose_parts(part_kept, k, k->part_patterns.items, k->part_patterns.count);
             k->asset = asset_resolve(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
+            asset_choose_parts(NULL, NULL, NULL, 0);
             if (k->asset && read == ASSET_MESH && !c->prog->asset_metadata_only) {
                 const decl *vertex = asset_mesh_vertex(k->return_type);
                 bool tangents = false;
@@ -14407,7 +16192,13 @@ static void check_asset_decl(checker *c, decl *k)
         if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS)
             skinned_asset_catalogs(c, k, k->asset_paths.items[0]);
         else if (kind == ASSET_ANIMATION) skinned_animation_asset(c, k, k->asset_paths.items[0]);
+        else if (kind == ASSET_HUMANOID && k->asset && !c->prog->asset_metadata_only)
+            if (!humanoid_asset_read(&k->asset->items[0], k->value->at, c->prog->game_folder)) k->asset = NULL;
     }
+    if (build_report_current()) k->import_ms = build_report_clock_ms() - import_began;
+    compile_progress("Checking Tide", k->unit->src->path, 0, 0);
+    if (retarget) check_retarget_attribute(c, k, retarget);
+    if (built && typed && fills) build_asset_function(c, k);
     k->index = 2;
     vec_push(c->prog->assets, k);
     c->unit = outer;
@@ -14445,15 +16236,15 @@ static void check_default(checker *c, const field *f)
         return;
     }
     const expr *saved_raw = c->raw_value;
-    c->raw_value = f->type.kind == TY_TEXTURE && field_is_raw(f) ? value : NULL;
+    c->raw_value = raw_kind(f->type) && field_is_raw(f) ? value : NULL;
     type t = check_constant_expr(c, value, true, f->type);
     if (c->raw_value == value) t = check_raw_field_value(value, t);
     c->raw_value = saved_raw;
     c->assets_constant = false;
     if (f->type.kind == TY_GRID && t.kind == TY_GRID && !own_grid(value)) {
-        diag_error(value->at, "a grid can't be copied: every chunk would be");
-        diag_note("an asset's grid is read where it is, by its name; a field starts as a new, empty one, like 'Grid%d(64, 64)'",
-                  f->type.decl->dims);
+        diag_error(value->at, "a grid can't be copied; initialize a new grid or copy its cells explicitly");
+        diag_note("an asset's grid is read where it is, by its name; a field starts as a new, empty one, like 'Grid%d(%s)'",
+                  f->type.decl->dims, f->type.decl->dims == 2 ? "64, 64" : "64, 64, 64");
         return;
     }
     if (f->type.kind != TY_ERROR && !type_assignable(f->type, t)) {
@@ -14472,7 +16263,8 @@ static void check_bound(checker *c, const field *f, expr *value)
         suggest_constant(c, value);
         return;
     }
-    type ft = f->type; // An array's bound is each element's
+    type ft = f->type; // An array's bound is each element's, and so is a list's
+    if (ft.kind == TY_LIST) ft = ft.decl->fields.items[0].type;
     while (ft.kind == TY_ARRAY) ft = array_element(ft);
     const type t = check_constant_expr(c, value, ft.kind == TY_BYTE, ft.kind == TY_BYTE ? ft : T_ERR);
     if (t.kind == TY_ERROR || ft.kind == TY_ERROR) return;
@@ -14555,13 +16347,14 @@ static void check_dont_predict_attribute(const decl *d, const field *f, const at
 static void check_field_raw(const field *f, const attribute *a)
 {
     if (f->type.kind == TY_ERROR) return;
-    const bool colors = f->type.kind == TY_TEXTURE || (type_is_texture_grid(f->type) && f->type.decl->fields.items[0].type.kind == TY_COLOR);
+    const bool grid = type_is_texture_grid(f->type) || type_is_array_grid(f->type);
+    const bool colors = raw_kind(f->type) || (grid && f->type.decl->fields.items[0].type.kind == TY_COLOR);
     if (!colors) {
         diag_error(a->at, "[Raw] says a texture's pixels are numbers with no alpha worked into them, and '" STR_FMT "' is %s",
                    STR_ARG(f->name), type_name(f->type));
-        diag_note(f->type.kind == TY_GRID && type_is_texture_grid(f->type)
-                      ? "a Grid2<float> has no alpha: its numbers are kept as they are already"
-                      : "it goes on a field that's a Texture or a Grid2<Color>, or before an asset that's a Texture or a Grid2<Color>");
+        diag_note(grid ? "a grid of floats has no alpha: its numbers are kept as they are already"
+                       : "it goes on a field that's a Texture, a TextureArray, a Cubemap, a Grid2<Color> or a Grid3<Color>, or "
+                         "before an asset that's a Texture, a TextureArray, a Cubemap or a Grid2<Color>");
         return;
     }
     for (const attribute *before = f->attributes.items; before < a; before++) {
@@ -14579,6 +16372,11 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
     const char *name = filter ? "Filter" : "Wrap";
     if (f->type.kind == TY_ERROR) return;
     const bool made_here = type_is_texture_grid(f->type) || f->type.kind == TY_RENDER_TARGET;
+    if (f->type.kind == TY_TEXTURE_ARRAY) {
+        diag_error(a->at, "a TextureArray field holds whichever array it's given: '" STR_FMT "' takes no [%s]", STR_ARG(f->name), name);
+        diag_note("say it at the Sample, 'layers.Sample(uv, layer, Filter.Point)', or on an asset's declaration");
+        return;
+    }
     if (f->type.kind == TY_CUBEMAP) {
         diag_error(a->at, "a Cubemap's filter is said where it's sampled, and it has no edge to wrap past: '" STR_FMT
                    "' takes no [%s]", STR_ARG(f->name), name);
@@ -14796,7 +16594,8 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
         has_clamp |= clamp;
         has_min |= min;
         has_max |= max;
-        type bounded = f->type; // An array's bound is each element's
+        type bounded = f->type; // An array's bound is each element's, and so is a list's
+        if (bounded.kind == TY_LIST) bounded = bounded.decl->fields.items[0].type;
         while (bounded.kind == TY_ARRAY) bounded = array_element(bounded);
         if (bounded.kind != TY_ERROR && !type_is_numeric(bounded) && bounded.kind != TY_LONG) {
             diag_error(a->at, "[" STR_FMT "] works on numbers and vectors, not %s", STR_ARG(a->name), type_name(f->type));
@@ -15005,16 +16804,33 @@ static bool holds_list(const type t)
     return false;
 }
 
-// Whether a value of type `t` is or holds a list, map or set, but for
-// List<byte>, a file's bytes, which a command can hold
-static bool holds_list_but_bytes(const type t)
+static bool holds_text(const type t);
+
+// Whether a value of type `t` is or holds a map, a set or a grid, which a
+// command can't hold: in its fields, its structs, arrays and lists
+static bool holds_map_or_grid(const type t)
 {
-    if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind != TY_BYTE;
-    if (t.kind == TY_MAP || t.kind == TY_SET) return true;
-    if (t.kind == TY_ARRAY) return holds_list_but_bytes(t.decl->fields.items[0].type);
+    if (t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) return true;
+    if (t.kind == TY_ARRAY || t.kind == TY_LIST) return holds_map_or_grid(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (holds_list_but_bytes(t.decl->fields.items[i].type)) return true;
+        if (holds_map_or_grid(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+// Whether a value of type `t` holds a list a command can't: one whose elements
+// aren't of a fixed size, as they hold text or lists of their own
+static bool holds_unsized_list(const type t)
+{
+    if (t.kind == TY_LIST) {
+        const type element = t.decl->fields.items[0].type;
+        return holds_list(element) || holds_text(element) || element.kind == TY_GRID;
+    }
+    if (t.kind == TY_ARRAY) return holds_unsized_list(t.decl->fields.items[0].type);
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (holds_unsized_list(t.decl->fields.items[i].type)) return true;
     }
     return false;
 }
@@ -15053,18 +16869,21 @@ static void check_fields(checker *c, const decl *d)
         if (holds_callable(f->type) && d->kind != DECL_STRUCT && !d->is_local && d->kind != DECL_COMPONENT) {
             diag_error(f->at, "callable and shader bindings belong in local state: make this field local");
         }
-        if (d->is_command && (holds_list_but_bytes(f->type) || f->type.kind == TY_GRID)) {
-            diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a list, map, set or grid");
-            diag_note("send numbers, bools, enums, strings, a file's bytes as List<byte>, or structs containing those");
+        if (d->is_command && holds_map_or_grid(f->type)) {
+            diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a map, set or grid");
+            diag_note("send numbers, bools, enums, strings, lists of those, or structs containing them; a map's keys and values can go "
+                      "as two lists");
+        } else if (d->is_command && holds_unsized_list(f->type)) {
+            diag_error(f->type_at.line ? f->type_at : f->at, "a command's list can't hold text or other lists");
+            diag_note("a command's List<T> holds numbers, bools, enums, vectors, entities, or structs of those; send text as string "
+                      "fields or a fixed string[N], or its bytes as a List<byte>");
         }
         if (holds_render_resource(f->type)) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
-                diag_note("Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component "
+                diag_note("Texture, DepthTexture, Cubemap, RenderTarget, GPUList, Clip and Sound belong to this machine: keep the field local, or use a local component "
                           "or singleton");
-            } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
-                diag_error(at, "containers can't hold rendering resources, including inside a struct");
             }
         }
         if (holds_heap(f->type)) {
@@ -15090,7 +16909,8 @@ static void check_fields(checker *c, const decl *d)
                 diag_note("grids stay where they're made: in components, singletons and scenes");
             }
         }
-        check_reserved(f->name, f->at);
+        if (!(d->is_scene && f->hidden && (str_eq_c(f->name, "tide_prepared") || str_eq_c(f->name, "tide_preparationOrder")
+              || str_eq_c(f->name, "tide_preparedPlayers")))) check_reserved(f->name, f->at);
         for (int j = 0; j < i; j++) {
             if (str_eq(d->fields.items[j].name, f->name)) {
                 diag_error(f->at, "field '" STR_FMT "' is declared twice", STR_ARG(f->name));
@@ -15149,6 +16969,8 @@ static void check_local_part(const checker *c, const decl *part)
 static type method_type(const checker *c, const type_ref *r, const loc at, const bool is_return)
 {
     bind_alias_ref(c, r);
+    // A type parameter is its type argument, which is a value (type_arg_ok)
+    if (r->alias && r->alias->type_param && r->args.count == 0 && r->sizes.count == 0 && !r->optional) return r->alias->alias_type;
     if (r->alias && r->args.count == 0 && r->sizes.count == 0 && !r->optional) {
         if (resolve_alias_type(c, r->alias).kind == TY_ERROR) return T_ERR;
         checker scoped = *c;
@@ -15167,11 +16989,11 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
     const type t = resolve_type(c, r, is_return ? PLACE_RETURN : PLACE_FUNCTION, at);
     switch (t.kind) {
     case TY_GRID:
-        if (!is_return && c->grid_param) return t;
+        if (c->grid_param) return t;
         if (is_return) {
-            diag_error(at, "functions can't return grids");
-            diag_note("a function takes a grid to read its cells, in code the GPU runs: change a grid's cells in the system "
-                      "that has its component or singleton");
+            diag_error(at, "this can't return a grid");
+            diag_note("an ordinary function can, like 'Grid2<Color> Make(int size)'; C, a task, an operator, a worker and "
+                      "code the GPU runs can't");
         } else {
             diag_error(at, "this can't take a grid");
             diag_note("a function or a method takes one to read its cells, in code the GPU runs");
@@ -15273,7 +17095,7 @@ static void check_param_default(checker *c, const decl *m, const param *p)
     case TY_INPUT: refused = "the input context, which the caller passes explicitly"; break;
     default: break;
     }
-    if (!refused && holds_render_resource(p->type)) refused = "a rendering resource, which the caller passes";
+    if (!refused && holds_resource_but_font(p->type)) refused = "a rendering resource, which the caller passes";
     if (refused) {
         diag_error(value->at, "'" STR_FMT "' is %s: it takes no default", STR_ARG(p->name), refused);
         diag_note("defaults are for plain values, like 'float multiplier = 1'");
@@ -15329,7 +17151,11 @@ static void check_entity_query(const checker *c, decl *sys, param *query);
 
 static void check_signature(checker *c, decl *m)
 {
+    // A function can return a grid code made (docs/spec.md, Grids): the caller's, in the scratch area, as a list is
+    c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio
+                 && !m->is_worker && m->kind != DECL_SHADER;
     m->return_type = method_type(c, type_ref_or_text(m->return_type_ref, m->return_type_name), m->return_type_qual_at, true);
+    c->grid_param = false;
     if (type_is_asset_collection(m->return_type)) {
         diag_error(m->return_type_qual_at, "functions can't return a borrowed asset collection");
         m->return_type = T_ERR;
@@ -15339,6 +17165,9 @@ static void check_signature(checker *c, decl *m)
                                                         : "a task can't return a Mesh: it's the pack's own memory, which is read within a frame");
         m->return_type = T_ERR;
     }
+    if ((holds_render_resource(m->return_type) || holds_mesh_reference(m->return_type, 0))
+        && (holds_heap_beside_meshes(m->return_type, 0) || m->return_type.kind == TY_ARRAY))
+        m->borrows_asset_collections = true;
     if (holds_render_resource(m->return_type) || holds_callable(m->return_type)) {
         m->render_resources = true;
         m->render_resources_at = m->return_type_at;
@@ -15394,21 +17223,22 @@ static void check_signature(checker *c, decl *m)
             p->type.decl = component_placement(c->prog, p->type.decl, p->placement_local, p->type_at);
         } else if (p->placement_local) diag_error(p->placement_at, "local component access belongs on a system, view, handler, query or async parameter; ordinary functions take values");
         if (world) check_world_param(m, p, k);
-        if (p->type.kind == TY_GRID) { // Read-only shader arguments or isolated worker snapshots.
-            if (p->mode == PARAM_MUT) {
-                diag_error(p->type_at, "a function reads the cells of a grid it takes, and never changes them: '" STR_FMT "' can't be '%s'",
-                           STR_ARG(p->name), p->is_out ? "out" : "mut");
-                diag_note("change a grid's cells in the system that has its component or singleton");
-                p->type = T_ERR;
-            } else if (p->default_value) {
+        if (p->type.kind == TY_GRID) { // A grid the caller names: read, or with `mut` written where it is
+            if (p->default_value) {
                 diag_error(p->name_at, "a grid a function takes has no default: the call names the one it reads");
                 p->type = T_ERR;
-            } else if (!m->is_worker && !m->gpu_only) {
-                m->gpu_only = true;
-                m->gpu_only_at = p->type_at;
-                m->gpu_only_reads = TY_GRID;
+            } else if (p->is_out) {
+                diag_error(p->type_at, "a grid can't be an 'out' parameter: return it, like 'Grid2<Color> Make()', or "
+                                       "take it as 'mut' to change its cells");
+                p->type = T_ERR;
+            } else if (p->mode == PARAM_MUT && (m->is_worker || m->kind == DECL_SHADER)) {
+                diag_error(p->type_at, "'" STR_FMT "' can't be 'mut': %s reads the cells of a grid it takes", STR_ARG(p->name),
+                           m->is_worker ? "a worker" : "code the GPU runs");
+                p->type = T_ERR;
             }
         }
+        if ((holds_render_resource(p->type) || holds_mesh_reference(p->type, 0)) && (holds_heap_beside_meshes(p->type, 0) || p->type.kind == TY_ARRAY))
+            m->borrows_asset_collections = true;
         if (holds_render_resource(p->type) || holds_callable(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
@@ -15421,7 +17251,7 @@ static void check_signature(checker *c, decl *m)
             if (refused) {
                 diag_error(p->type_at, "%s", refused);
                 p->type = T_ERR;
-            } else if (p->mode == PARAM_MUT) {
+            } else if (p->mode == PARAM_MUT && !m->is_build) { // Build code makes the mesh an asset is
                 diag_error(p->at, "a Mesh is read-only, so '" STR_FMT "' can't be '%s'", STR_ARG(p->name), p->is_out ? "out" : "mut");
                 diag_note("it's the file it names, as the game was built: a function takes one to read it or to draw it");
                 p->mode = PARAM_READ;
@@ -16084,6 +17914,10 @@ static void check_handed_struct(const decl *vert, const param *p, const decl *t)
 // A read-only struct is one the draw's vert writes, or an element of an Instanced draw's list: the draw says which (check_shader_binding).
 static void check_shader_decl(const checker *c, decl *d)
 {
+    if (d->is_compute) {
+        check_kernel_decl(c, d);
+        return;
+    }
     const program *prog = c->prog;
     const char *word = shader_word(d);
     const char *vertex_form = d->is_frag ? "frag Name(BoxVertex vertex, out Color color, ...)" : "vert Name(mut BoxVertex vertex, ...)";
@@ -16263,6 +18097,11 @@ static void check_shader_decl(const checker *c, decl *d)
                 // A vert's is an element of the list its Instanced draw is given, or the values its draw gives
                 // after its name. A frag's is either, or what the draw's vert writes for it. The draw says which
                 p->function_param = false; // Supplied by the draw: its instances, its values, or its vert
+            } else if (value.kind == TY_TEXTURE_ARRAY || value.kind == TY_DEPTH_TEXTURE_ARRAY) {
+                diag_error(at, "a %s reads a %s that's %sa field of a component or singleton it takes, not a parameter of its own",
+                           word, type_name(value), value.kind == TY_TEXTURE_ARRAY ? "an asset by its name, or " : "");
+                diag_note("keep it in local state, 'local singleton Ground { TextureArray scans; }', which a view sets, and "
+                          "read it there: 'ground.scans.Sample(uv, layer)'");
             } else if (value.kind == TY_CUBEMAP) {
                 diag_error(at, "a %s reads a Cubemap that's an asset by its name, or a field of a component or singleton it "
                                "takes, not a parameter of its own", word);
@@ -16382,6 +18221,7 @@ static void check_audio_signature(checker *c, decl *m)
 
 static void check_method_body(checker *c, decl *m)
 {
+    if (m->unit && m->unit->src) compile_progress("Checking Tide", m->unit->src->path, 0, 0);
     if (m->body_checked) return;
     m->body_checked = true;
     c->method = m;
@@ -16392,6 +18232,10 @@ static void check_method_body(checker *c, decl *m)
     const int errors = diag_error_count();
     check_stmt(c, m->body);
     check_body_assigned(c, m, m->body, outs, errors);
+    if (m->kind == DECL_SHADER && m->is_compute) {
+        check_group(c, m);
+        if (diag_error_count() == errors) check_kernel_flow(c, m);
+    }
     const type_kind ret = m->return_type.kind;
     if (ret != TY_VOID && ret != TY_ERROR && !always_returns(m->body)) {
         diag_error(m->at, "'" STR_FMT "' doesn't return a value on every path", STR_ARG(m->name));
@@ -16942,6 +18786,14 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             }
         }
         decl *d = find_type(c, p->type_name, p->type_at);
+        if (!d && str_eq_c(p->type_name, "Far")) {
+            d = far_filter(c, p, d);
+            if (!d) {
+                p->type = T_ERR;
+                refused_binding(row, p);
+                continue;
+            }
+        }
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         if (!d || d->kind != DECL_COMPONENT) {
             diag_error(p->type_at, "a query takes only components, and '" STR_FMT "' isn't a component", STR_ARG(p->type_name));
@@ -17091,13 +18943,21 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
         decl *d = p->mode == PARAM_QUERY || p->changed ? NULL : find_type(c, p->type_name, p->type_at);
+        if (!d && p->mode != PARAM_QUERY && !p->changed) {
+            decl *far = far_filter(c, p, d);
+            if (far) d = far;
+            else if (str_eq_c(p->type_name, "Far")) {
+                p->type = T_ERR;
+                continue;
+            }
+        }
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         const bool is_entity = names_type_as(c, p->type_name, "Entity");
         const bool is_local_entity = names_type_as(c, p->type_name, "LocalEntity");
 
         if (p->name.len > 0) {
-            check_reserved(p->name, p->at);
+            if (!(sys->preparation_owner && i == 1)) check_reserved(p->name, p->at);
             for (int j = 0; j < i; j++) {
                 if (str_eq(sys->params.items[j].name, p->name)) {
                     diag_error(p->at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
@@ -17415,12 +19275,14 @@ static void remove_param_fix(checker *c, const param *p)
 // nothing, so it's worth a warning.
 static void warn_unused_params(checker *c, const decl *sys)
 {
+    if (sys->build_owner) return; // An asset's or a constant's code: what it's given is what it makes, which it may leave
     // A virtual declaration's parameters are what its overrides take too, and an override's are those of
     // what it replaces: neither can drop one it doesn't use. 'mut' is each one's own.
     const bool shared = sys->is_virtual || sys->is_override;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         const type_kind kind = p->type.kind;
+        if (sys->preparation_owner && i == 1) continue; // Implicit scene receiver.
         if (shared && !p->read) continue;
         if (kind == TY_QUERY && !p->read) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
@@ -17493,11 +19355,12 @@ static bool call_acts(const expr *e)
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
-    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL: case CALL_TASK:
+    case CALL_CLIPBOARD: case CALL_QUIT: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
+    case CALL_TASK:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_SKINNED: return skinned_lookup(e->skin_operation)
-        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+        || skinned_changes_pose(e->skin_operation);
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
@@ -17700,6 +19563,21 @@ static void add_builtins(program *prog)
     clip.type = (type){TY_FLOAT4, NULL};
     vec_push(placed->fields, clip);
     prog->placed = placed;
+    // A kernel's implicit `this`: which invocation of its run it is (docs/spec.md, Compute on the GPU)
+    static const char *const invocation_fields[][2] = {{"index", "int"}, {"at", "int3"}, {"local", "int3"},
+                                                       {"group", "int3"}, {"count", "int3"}};
+    decl *invocation = NEW(decl);
+    invocation->kind = DECL_RECORD;
+    invocation->name = str_from("Invocation");
+    invocation->builtin = true;
+    for (int i = 0; i < (int)(sizeof invocation_fields / sizeof invocation_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(invocation_fields[i][0]);
+        f.type_name = str_from(invocation_fields[i][1]);
+        builtin_type_named(f.type_name, &f.type);
+        vec_push(invocation->fields, f);
+    }
+    prog->invocation = invocation;
     decl *instance = NEW(decl);
     instance->kind = DECL_RECORD;
     instance->name = str_from("Instance");
@@ -17813,6 +19691,40 @@ static void add_builtins(program *prog)
     audience_word.hidden = true;
     vec_push(audience->fields, audience_word);
     prog->audience = audience;
+    if (prog->uses_prepared) {
+        decl *players = NEW(decl);
+        players->kind = DECL_STRUCT;
+        players->name = str_from("tide_prepared_players");
+        players->builtin = true;
+        vec_push(players->fields, audience_word);
+        prog->prepared_players = players;
+    }
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *scene = prog->decls.items[i];
+        if (!prog->uses_prepared || !scene->is_scene || scene->is_local) continue;
+        scene->has_preparation_state = true;
+        scene->world_set_used = true;
+        if (scene->preparation) {
+            field completed = {0};
+            completed.name = str_from("tide_prepared");
+            completed.type_name = str_from("bool");
+            completed.hidden = true;
+            completed.default_value = NEW(expr);
+            completed.default_value->kind = E_BOOL;
+            completed.default_value->bool_value = true; // Existing activated scenes stay activated during layout migration.
+            vec_push(scene->fields, completed);
+            field order = {0};
+            order.name = str_from("tide_preparationOrder");
+            order.type_name = str_from("long");
+            order.hidden = true;
+            vec_push(scene->fields, order);
+        }
+        field players = {0};
+        players.name = str_from("tide_preparedPlayers");
+        players.type_name = str_from("tide_prepared_players");
+        players.hidden = true;
+        vec_push(scene->fields, players);
+    }
     decl *visibility_group = NEW(decl);
     visibility_group->kind = DECL_STRUCT;
     visibility_group->name = str_from("VisibilityGroup");
@@ -17839,6 +19751,12 @@ static void add_builtins(program *prog)
     // The events the engine sends: to each entity as it's spawned or destroyed,
     // and to the world as players join and leave.
     prog->spawned = builtin_event("Spawned", false);
+    for (int i = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->preparation) {
+            prog->preparing = builtin_event("tide_preparing", false);
+            break;
+        }
+    }
     prog->destroyed = builtin_event("Destroyed", false);
     prog->shown = builtin_event("Shown", false);
     prog->hidden = builtin_event("Hidden", false);
@@ -17895,20 +19813,6 @@ static void add_builtins(program *prog)
         vec_push(anchor->members, m);
     }
     prog->anchor = anchor;
-
-    // enum Font { Regular, Bold }: the weight Draw.Text draws in. Each is a
-    // file of the engine's font, and C names a weight by its file (tide/draw.h:
-    // TIDE_FONT_REGULAR, TIDE_FONT_BOLD), which generated code turns these into.
-    static const char *const fonts[] = {"Regular", "Bold"};
-    decl *font = NEW(decl);
-    font->kind = DECL_ENUM;
-    font->name = str_from("Font");
-    font->builtin = true;
-    for (int i = 0; i < (int)(sizeof fonts / sizeof fonts[0]); i++) {
-        const enum_member m = {str_from(fonts[i]), {0, 0, 0}, NULL, i};
-        vec_push(font->members, m);
-    }
-    prog->font = font;
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
     // a corner of what Draw.Mesh draws, as tide/draw.h's tide_vertex. And
@@ -18035,6 +19939,11 @@ static void add_builtins(program *prog)
         if (color || strcmp(theme_more[i][2], "0") != 0) f.default_value = value;
         vec_push(theme->fields, f);
     }
+    // ...and the font its widgets' text is in: Font.Regular, a Font's default
+    field theme_font = {0};
+    theme_font.name = str_from("font");
+    theme_font.type_name = str_from("Font");
+    vec_push(theme->fields, theme_font);
     prog->gui_theme = theme;
     // GUI.Control's interaction flags and GUI-space pointer position, as
     // tide/gui.h's tide_control. Generated padding stays explicit and zeroed.
@@ -18124,6 +20033,55 @@ static void add_builtins(program *prog)
         vec_push(effect->fields, knobs);
     }
     prog->effect = effect;
+    // struct ClipData { int rate; int channels; List<float> samples; }: a Clip as an asset's build code edits it,
+    // its samples interleaved (docs/spec.md, Build code): in generated C only when named.
+    decl *clip_data = NEW(decl);
+    clip_data->kind = DECL_STRUCT;
+    clip_data->name = str_from("ClipData");
+    clip_data->builtin = true;
+    {
+        field rate = {0}, channels = {0}, samples_field = {0};
+        rate.name = str_from("rate");
+        rate.type_name = str_from("int");
+        channels.name = str_from("channels");
+        channels.type_name = str_from("int");
+        samples_field.name = str_from("samples");
+        samples_field.type_name = str_from("List<float>");
+        type_ref *element = NEW(type_ref);
+        element->name = element->text = str_from("float");
+        type_ref *r = NEW(type_ref);
+        r->name = str_from("List");
+        r->text = samples_field.type_name;
+        vec_push(r->args, element);
+        samples_field.type_ref = r;
+        vec_push(clip_data->fields, rate);
+        vec_push(clip_data->fields, channels);
+        vec_push(clip_data->fields, samples_field);
+    }
+    prog->clip_data = clip_data;
+    // struct MeshLevel { List<int> indices; float error; }: a level of detail a mesh asset's build code makes, its
+    // triangles of the mesh's own vertices and how far its surface is from the full mesh's, in the mesh's units
+    decl *mesh_level = NEW(decl);
+    mesh_level->kind = DECL_STRUCT;
+    mesh_level->name = str_from("MeshLevel");
+    mesh_level->builtin = true;
+    {
+        field indices = {0}, error = {0};
+        indices.name = str_from("indices");
+        indices.type_name = str_from("List<int>");
+        type_ref *element = NEW(type_ref);
+        element->name = element->text = str_from("int");
+        type_ref *r = NEW(type_ref);
+        r->name = str_from("List");
+        r->text = indices.type_name;
+        vec_push(r->args, element);
+        indices.type_ref = r;
+        error.name = str_from("error");
+        error.type_name = str_from("float");
+        vec_push(mesh_level->fields, indices);
+        vec_push(mesh_level->fields, error);
+    }
+    prog->mesh_level = mesh_level;
     // Trilinear is in generated C only for a game that names it (program.names_trilinear)
     static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
     decl *filter = NEW(decl);
@@ -18147,10 +20105,10 @@ static void add_builtins(program *prog)
         vec_push(blend->members, m);
     }
     prog->blend = blend;
-    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth
+    // enum Depth { ReadWrite, Read, None, Only, Equal }: what a 3D mesh does with depth
     // (Draw.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
     // game whose code names it (decl.named).
-    static const char *const depths[] = {"ReadWrite", "Read", "None"};
+    static const char *const depths[] = {"ReadWrite", "Read", "None", "Only", "Equal"};
     decl *depth = NEW(decl);
     depth->kind = DECL_ENUM;
     depth->name = str_from("Depth");
@@ -18232,7 +20190,7 @@ static void add_builtins(program *prog)
     // and local events Connected and Disconnected { DisconnectReason reason; },
     // with a kick's message (see check_member).
     static const char *const states[] = {"Offline", "Connecting", "Connected"};
-    static const char *const reasons[] = {"Left", "TimedOut", "Refused", "ServerLeft", "Failed", "Ended", "Kicked"};
+    static const char *const reasons[] = {"Left", "TimedOut", "Refused", "ServerLeft", "Failed", "Ended", "Kicked", "Banned"};
     decl *state = NEW(decl);
     state->kind = DECL_ENUM;
     state->name = str_from("SessionState");
@@ -18302,7 +20260,6 @@ static void add_builtins(program *prog)
     vec_push(decls, format);
     vec_push(decls, stencil_test);
     vec_push(decls, stencil_op);
-    vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
     vec_push(decls, session);
@@ -18315,6 +20272,13 @@ static void add_builtins(program *prog)
     vec_push(decls, prog->forgotten); // After the others, whose numbers the match's queue keeps
     vec_push(decls, prog->shown);
     vec_push(decls, prog->hidden);
+    if (prog->preparing) vec_push(decls, prog->preparing);
+    if (prog->uses_prepared) {
+        vec_push(decls, prog->prepared_players);
+        prog->prepared_ack = builtin_event("tide_prepared_ack", false);
+        prog->prepared_ack->is_command = true;
+        vec_push(decls, prog->prepared_ack);
+    }
     for (int i = 0; i < prog->decls.count; i++) vec_push(decls, prog->decls.items[i]);
     prog->decls.items = decls.items;
     prog->decls.count = decls.count;
@@ -18609,7 +20573,7 @@ static void collect_decls(program *prog)
         if (!d->builtin) split_local_fields(prog, d);
 
         // An override's name is that of what it replaces: it declares none, so it clashes with none
-        if (!d->builtin && !d->is_override) {
+        if (!d->builtin && !d->is_override && !d->preparation_owner) {
             check_reserved(d->name, d->at);
             if (is_builtin_name(d->name) || (d->kind == DECL_ALIAS && (generic_form_named(d->name) || str_eq_c(d->name, "Func")
                                                                     || str_eq_c(d->name, "void")))) {
@@ -18629,7 +20593,8 @@ static void collect_decls(program *prog)
                 const bool both_types = (is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB)
                                      && (is_kind(other, NAME_TYPE) || other->kind == DECL_PREFAB);
                 const bool both_systems = d->kind == DECL_SYSTEM && other->kind == DECL_SYSTEM;
-                const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION || d->kind == DECL_SHADER
+                const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION || d->kind == DECL_GENERIC
+                                   || other->kind == DECL_GENERIC || d->kind == DECL_SHADER
                                    || other->kind == DECL_SHADER;
                 const bool constant = d->kind == DECL_CONST || other->kind == DECL_CONST;
                 const bool alias = d->kind == DECL_ALIAS || other->kind == DECL_ALIAS;
@@ -18737,11 +20702,13 @@ static void collect_decls(program *prog)
         case DECL_STRUCT: // Ordered once their fields are known; see order_struct
         case DECL_METHOD: // Not in prog->decls
         case DECL_LIST:
+        case DECL_GPU_LIST:
         case DECL_MAP:
         case DECL_GRID:
         case DECL_ARRAY:
         case DECL_MESH:
         case DECL_RESULT:
+        case DECL_GENERIC:
         case DECL_FUNCTION:
         case DECL_CONST:
         case DECL_ASSET:
@@ -18825,7 +20792,8 @@ static bool sparse_component_source(const program *prog, const decl *d)
 
 static bool sparse_component(const program *prog, const decl *d)
 {
-    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || d == prog->shard_anchor || sparse_component_source(prog, d);
+    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || d == prog->shard_anchor
+        || d == prog->predict_far || sparse_component_source(prog, d);
 }
 
 // Whether a system's (or handler's, or view's) filters admit archetype `mask`:
@@ -18910,6 +20878,17 @@ static void append_component_names(const program *prog, const comp_mask mask, ch
     }
 }
 
+// Whether entities with components `mask` can have a position: a [Position]
+// vector, or a Transform (tide_shard_where).
+static bool positioned(const program *prog, const comp_mask mask)
+{
+    if (prog->transform && prog->transform->index >= 0 && mask_has(mask, prog->transform->index)) return true;
+    for (int i = 0; i < prog->positions.count; i++) {
+        if (mask_has(mask, prog->positions.items[i].component->index)) return true;
+    }
+    return false;
+}
+
 // Every spawn creates an archetype, and the Adds and Removes that can reach
 // each archetype's entities (change_site) make the rest, until nothing new
 // appears.
@@ -18941,6 +20920,13 @@ static bool derive_archetypes_once(const checker *c)
     // Any of a sharded match's entities can be a ghost: another shard's, held here read-only
     for (int i = 0; prog->shard_ghost && i < prog->archetypes.count; i++) {
         if (!prog->archetype_local.items[i]) allow_sparse(prog, i, mask_or(mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)), bit(prog->shard_anchor)));
+    }
+    // Any of the match's entities with a position can be far from this player
+    // in a client's predicted ticks (predictionRange)
+    for (int i = 0; prog->predict_far && i < prog->archetypes.count; i++) {
+        if (!prog->archetype_local.items[i] && positioned(prog, mask_or(prog->archetypes.items[i], prog->possible.items[i]))) {
+            allow_sparse(prog, i, bit(prog->predict_far));
+        }
     }
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;
@@ -19095,7 +21081,11 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
                 }
             }
         }
-        if (!matched) {
+        if (!matched && prog->far_absent && mask_has(sys->need_mask, prog->far_absent->index)) {
+            diag_warning(sys->at, "%s '" STR_FMT "' never runs: only a client's predicted ticks tag entities Far, under "
+                         "'predictionRange'", system_what(sys), STR_ARG(sys->name));
+            diag_note("set it, like 'settings { predictionRange = 40; }', or remove the system");
+        } else if (!matched) {
             diag_warning(sys->at, "%s '" STR_FMT "' never runs: no entity matches its parameters", system_what(sys),
                          STR_ARG(sys->name));
             if (mask_any(sys->need_mask)) {
@@ -19566,6 +21556,11 @@ static void check_attributes(checker *c)
                     diag_error(attr->at, "Name selects a clip on an Animation asset: [Name(\"Root|Run\")] asset Animation run = \"run.fbx\";");
                 continue; // The selection was checked with the asset.
             }
+            if (str_eq_c(attr->name, "Retarget")) {
+                if (d->kind != DECL_ASSET)
+                    diag_error(attr->at, "Retarget goes before an Animation or AnimationCatalog asset");
+                continue;
+            }
             if (str_eq_c(attr->name, "Channel") || str_eq_c(attr->name, "Unordered")) {
                 check_channel_attribute(c, d, attr);
                 continue;
@@ -19574,9 +21569,19 @@ static void check_attributes(checker *c)
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
+            if (str_eq_c(attr->name, "Lossless")) {
+                if (d->kind != DECL_ASSET) check_lossless_attribute(d, attr); // An asset's was read with it
+                continue;
+            }
             if (str_eq_c(attr->name, "BlendShapes")) {
                 if (d->kind != DECL_ASSET) // An asset's was read with it
                     diag_error(attr->at, "BlendShapes chooses which blend shapes a SkinnedMesh asset keeps, and '" STR_FMT
+                               "' isn't an asset", STR_ARG(d->name));
+                continue;
+            }
+            if (str_eq_c(attr->name, "Parts")) {
+                if (d->kind != DECL_ASSET) // An asset's was read with it
+                    diag_error(attr->at, "Parts chooses which parts of its file a SkinnedMesh asset keeps, and '" STR_FMT
                                "' isn't an asset", STR_ARG(d->name));
                 continue;
             }
@@ -19613,6 +21618,23 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Group")) { // A kernel's group size, read with it (check_group)
+                if (d->kind != DECL_SHADER || !d->is_compute) {
+                    diag_error(attr->at, "Group says how many invocations of a kernel run together, and '" STR_FMT "' isn't a "
+                               "kernel", STR_ARG(d->name));
+                    diag_note("it goes before a 'compute' declaration: '[Group(8, 8)] compute Blur(...)'");
+                } else if (stage_seen) {
+                    stage_seen = true;
+                }
+                continue;
+            }
+            if (str_eq_c(attr->name, "Cutout")) { // It's code: the frag says it
+                diag_error(attr->at, "a frag says it's a cut-out in its code, with 'this.Cutout(alpha)': there's no "
+                                     "Cutout attribute");
+                diag_note("'this.Cutout(color.a);' in the frag cuts it where the alpha is under 0.5, with edges as smooth "
+                          "as its target's samples");
+                continue;
+            }
             const bool before = str_eq_c(attr->name, "Before");
             if (!before && !str_eq_c(attr->name, "After")) {
                 diag_error(attr->at, "unknown attribute '" STR_FMT "'", STR_ARG(attr->name));
@@ -19624,21 +21646,26 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Name");
+                suggest_consider_c(&s, "Retarget");
                 suggest_consider_c(&s, "Sparse");
                 suggest_consider_c(&s, "Bus");
                 suggest_consider_c(&s, "Channel");
                 suggest_consider_c(&s, "Unordered");
                 suggest_consider_c(&s, "Filter");
                 suggest_consider_c(&s, "Wrap");
-            suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "Lossless");
                 suggest_consider_c(&s, "LOD");
                 suggest_consider_c(&s, "BlendShapes");
+                suggest_consider_c(&s, "Parts");
+                suggest_consider_c(&s, "Group");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
                           "entities gain and lose, Channel and Unordered, which order a command's delivery, Filter and "
-                          "Wrap, which say how an asset that's drawn with is sampled, LOD, which has a mesh asset's levels of "
+                          "Wrap, which say how an asset that's drawn with is sampled, Raw, for an image of numbers, Lossless, which keeps an "
+                          "image asset uncompressed, LOD, which has a mesh asset's levels of "
                           "detail made, and Bus, which marks the enum of the audio buses");
                 continue;
             }
@@ -19991,6 +22018,10 @@ static void mark_c_callers(const checker *c)
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
+            if ((site->to->is_extern || site->to->reaches_extern) && !site->from->reaches_extern) {
+                site->from->reaches_extern = true;
+                changed = true;
+            }
             if (site->from->calls_c || !(site->to->is_extern || site->to->calls_c)) continue;
             site->from->calls_c = true;
             changed = true;
@@ -20087,13 +22118,13 @@ static void check_render_resource_calls(const checker *c)
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
         if (site->from->kind == DECL_SHADER && site->to->borrows_asset_collections) {
-            diag_error(site->call->at, "'" STR_FMT "' borrows asset collections, which synchronous CPU helpers read",
+            diag_error(site->call->at, "'" STR_FMT "' uses resource collections, which CPU helpers read",
                        STR_ARG(site->to->name));
             diag_note("select an individual resource in CPU code and pass it to the draw");
         }
         if (site->parallel && site->to->reads_texture_size) {
             diag_error(site->call->at, "'" STR_FMT "' reads frame image metadata, so it can't run in a parallel loop", STR_ARG(site->to->name));
-            diag_note("read Texture.size before the loop and pass its int2 value to the step");
+            diag_note("read Texture.size or RenderTarget.contentRevision before the loop and pass the value to the step");
         }
         if (!site->to->render_resources || site->from->kind == DECL_FUNCTION || site->from->kind == DECL_METHOD
             || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
@@ -20151,6 +22182,57 @@ static void check_io_calls(const checker *c)
 // A function that plays sounds is local code's to call likewise.
 // Grid-reading helpers also run inside local workers; GPU sampling remains
 // shader-only. Propagate each execution requirement through helper chains.
+static bool takes_grid(const decl *d)
+{
+    for (int i = 0; i < d->params.count; i++) {
+        if (d->params.items[i].type.kind == TY_GRID) return true;
+    }
+    return false;
+}
+
+// A function that takes a grid, which only code the GPU runs calls (or nothing does), is the GPU's, as every function
+// that took a grid was before grids were values (docs/spec.md, Grids): generated C leaves it out, and its locals can
+// name the grids it's passed. Any other caller makes it the CPU's too, where a local can't (grid_names).
+static void settle_grid_functions(checker *c)
+{
+    VEC(decl *) gpu = {0};
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_FUNCTION && !d->is_build && !d->is_worker && !d->is_extern && !d->gpu_only && takes_grid(d))
+            vec_push(gpu, d);
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int k = 0; k < c->calls.count; k++) {
+            const call_site *site = &c->calls.items[k];
+            int at = -1;
+            for (int i = 0; i < gpu.count && at < 0; i++) at = gpu.items[i] == site->to ? i : -1;
+            if (at < 0) continue;
+            const decl *from = site->from;
+            bool gpu_caller = from && (from->kind == DECL_SHADER || from->gpu_only);
+            for (int i = 0; i < gpu.count && from && !gpu_caller; i++) gpu_caller = gpu.items[i] == from;
+            if (gpu_caller) continue;
+            gpu.items[at] = gpu.items[--gpu.count];
+            changed = true;
+        }
+    }
+    for (int i = 0; i < gpu.count; i++) {
+        decl *d = gpu.items[i];
+        d->gpu_only = true;
+        d->gpu_only_reads = TY_GRID;
+        for (int k = 0; k < d->params.count && !d->gpu_only_at.line; k++) {
+            if (d->params.items[k].type.kind == TY_GRID) d->gpu_only_at = d->params.items[k].type_at;
+        }
+    }
+    for (int i = 0; i < c->grid_names.count; i++) {
+        const stmt *s = c->grid_names.items[i];
+        if (c->grid_name_fns.items[i]->gpu_only) continue;
+        diag_error(s->value->at, "a grid can't be copied: a local's grid is its own");
+        diag_note("make a new one with 'Grid%d(...)', take what a function returns, or copy this one with '.Copy()'",
+                  s->type.decl->dims);
+    }
+}
+
 static void check_gpu_only_calls(const checker *c)
 {
     for (int i = 0; i < c->prog->decls.count; i++) {
@@ -20184,7 +22266,15 @@ static void check_gpu_only_calls(const checker *c)
         if (site->from->worker_cpu && !site->to->gpu_sampling && site->to->gpu_only_reads == TY_GRID) continue;
         if (!site->to->gpu_only || site->from->gpu_only || site->from->kind == DECL_SHADER) continue;
         const type_kind reads = site->to->gpu_only_reads;
-        if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP) {
+        if (reads == TY_GPU_LIST) {
+            diag_error(site->call->at, "'" STR_FMT "' reads or writes a GPU list's elements or its count, which only code the GPU "
+                       "runs does: a kernel, a frag, a vert and the functions they call", STR_ARG(site->to->name));
+            diag_note_at(site->to->gpu_only_at, "it does on line %d; the CPU reads a GPU list back with 'await list.Read()'",
+                         site->to->gpu_only_at.line);
+            continue;
+        }
+        if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP && reads != TY_TEXTURE_ARRAY
+            && reads != TY_DEPTH_TEXTURE_ARRAY) {
             diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which shader code and local workers can call",
                        STR_ARG(site->to->name));
             diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "
@@ -20291,6 +22381,10 @@ static void check_audio_bodies(const checker *c)
             }
             if (site->to->calls_c && !site->from->calls_c) {
                 site->from->calls_c = true;
+                changed = true;
+            }
+            if ((site->to->is_extern || site->to->reaches_extern) && !site->from->reaches_extern) {
+                site->from->reaches_extern = true;
                 changed = true;
             }
         }
@@ -20560,6 +22654,12 @@ static void check_local_field_calls(const checker *c)
             if (q->mode == PARAM_MUT && q->match_write && row_binding(arg)) {
                 diag_error(arg->at, "a query row's match fields are read-only, and '" STR_FMT "' changes them", STR_ARG(to->name));
                 diag_note_at(q->match_write_at, "it does on line %d; copy the component to change its value", q->match_write_at.line);
+                continue;
+            }
+            if (q->local_use && site->parallel && row_binding(arg)) {
+                diag_error(arg->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which a parallel loop's steps "
+                           "don't read yet", STR_ARG(to->name), STR_ARG(q->type.decl->name));
+                diag_note("call it from a 'foreach', which goes in order");
                 continue;
             }
             if (q->mode == PARAM_MUT && q->match_write && local_code && own) {
@@ -21233,6 +23333,7 @@ static void add_audience_words(program *prog)
         sb_printf(&name, "players%u", (unsigned)word);
         more.name = (str){name.data, (int)name.len};
         vec_push(prog->audience->fields, more);
+        if (prog->prepared_players) vec_push(prog->prepared_players->fields, more);
     }
 }
 
@@ -21676,6 +23777,28 @@ static void check_replaced(checker *c, decl *v)
 }
 
 #include "worker_check.inc"
+#include "build_check.inc"
+
+// A generic function as declared: what its type parameters are named, and
+// what it can be. Its code is checked in each instantiation.
+static void check_generic_decl(const checker *c, decl *g)
+{
+    for (int k = 0; k < g->type_params.count; k++) {
+        const str name = g->type_params.items[k];
+        type builtin;
+        decl *other;
+        decl *named = lookup(c->prog, g->unit, name, NAME_TYPE, &other);
+        if (named || resolve_builtin_type(c, name, &builtin) || str_eq_c(name, "string")) {
+            diag_error(g->type_param_at.items[k], "'" STR_FMT "' is a type already, so it can't name a type parameter", STR_ARG(name));
+            diag_note("a type parameter's name is its own: 'T', 'V' or 'Vertex' where no type has it");
+        }
+        for (int j = 0; j < k; j++) {
+            if (str_eq(g->type_params.items[j], name)) diag_error(g->type_param_at.items[k], "'" STR_FMT "' is already a type parameter of '" STR_FMT "'", STR_ARG(name), STR_ARG(g->name));
+        }
+    }
+    if (g->is_async) diag_error(g->async_at, "a generic function can't be async yet: write the task's function for its types");
+    if (g->is_worker) diag_error(g->worker_at, "a worker can't be generic yet");
+}
 
 bool check(program *prog)
 {
@@ -21683,14 +23806,31 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull, prog->font);
+    builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull);
     builtins_use_format(prog->format);
     builtins_use_stencil(prog->stencil_test, prog->stencil_op);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
+    if (prog->preparing) {
+        decl *order = NEW(decl);
+        order->kind = DECL_SINGLETON;
+        order->builtin = true;
+        order->name = order->qualified = str_from("tide_preparation_order");
+        order->c_name = "tide_preparation_order";
+        order->index = prog->singletons.count;
+        field value = {0};
+        value.name = str_from("value");
+        value.type = (type){TY_LONG, NULL};
+        vec_push(order->fields, value);
+        prog->preparation_order = order;
+        vec_push(prog->singletons, order);
+    }
     check_units(prog);
     check_packages(prog);
+    for (int i = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->kind == DECL_GENERIC) check_generic_decl(&c, prog->decls.items[i]);
+    }
     // Resolve unused aliases too. Each use still checks its ordinary placement.
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
@@ -21744,8 +23884,33 @@ bool check(program *prog)
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);
     }
-    for (int i = 0; i < prog->decls.count; i++) {
-        if (prog->decls.items[i]->kind == DECL_ASSET) check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
+    // From here, one count for the rest of the compilation (compile_progress_whole): each asset imported, then each
+    // packed (build_pack)
+    int asset_decls = 0;
+    for (int i = 0; i < prog->decls.count; i++) asset_decls += prog->decls.items[i]->kind == DECL_ASSET;
+    // The images the assets' paths name, decoded ahead on several threads, where they'd be decoded as each is
+    // checked (asset_files_decode_ahead): taken from the paths as written, so a path that isn't one only costs time
+    if (!prog->asset_metadata_only && asset_decls) {
+        VEC(const char *) declaring = {0};
+        VEC(str) written = {0};
+        for (int i = 0; i < prog->decls.count; i++) {
+            const decl *k = prog->decls.items[i];
+            if (k->kind != DECL_ASSET || !k->value || !k->unit || !k->unit->src) continue;
+            const bool list = k->value->kind == E_LIST;
+            for (int a = 0; a < (list ? k->value->args.count : 1); a++) {
+                const expr *path = text_literal(list ? k->value->args.items[a] : k->value);
+                if (!path) continue;
+                vec_push(declaring, k->unit->src->path);
+                vec_push(written, path->text);
+            }
+        }
+        asset_files_decode_ahead(declaring.items, written.items, written.count, prog->game_folder);
+    }
+    compile_progress_whole(2 * asset_decls);
+    for (int i = 0, imported = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->kind != DECL_ASSET) continue;
+        check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
+        compile_progress_reach(++imported);
     }
     if (prog->game_folder && prog->assets.count > 0) {
         // The hashes of the named files, in the game's .tide/, so one that moves is found by its bytes
@@ -21933,9 +24098,80 @@ bool check(program *prog)
     }
     settle_heap_passes(&c);
     check_acts(&c);
+    for (int i = 0; prog->preparing && i < prog->handlers.count; i++) {
+        decl *handler = prog->handlers.items[i];
+        if (!handler->is_local) handler->preparation_cpu = true;
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c.calls.count; i++) {
+            const call_site *site = &c.calls.items[i];
+            if (site->from->preparation_cpu && !site->to->is_extern && !site->to->is_async
+                && !site->to->preparation_cpu) site->to->preparation_cpu = changed = true;
+            if (site->to->loads_scenes && !site->from->loads_scenes) site->from->loads_scenes = changed = true;
+            if (prog->preparing && site->to->starts_tasks && !site->from->starts_tasks) {
+                site->from->starts_tasks = changed = true;
+                site->from->starts_at = site->call->at;
+                site->from->starts_what = site->to->starts_what;
+            }
+            if ((site->from->preparation_reads & site->to->preparation_reads) != site->to->preparation_reads) {
+                site->from->preparation_reads |= site->to->preparation_reads;
+                site->from->world_match |= (site->to->preparation_reads & 1u) != 0;
+                site->from->world_local |= (site->to->preparation_reads & 2u) != 0;
+                changed = true;
+            }
+        }
+        for (int i = 0; prog->preparing && i < prog->decls.count; i++) {
+            decl *owner = prog->decls.items[i];
+            for (int k = -1; k < owner->methods.count; k++) {
+                decl *code = k < 0 ? owner : owner->methods.items[k];
+                for (int e = 0; e < code->sent_events.count; e++) {
+                    for (int h = 0; h < prog->handlers.count; h++) {
+                        const decl *handler = prog->handlers.items[h];
+                        if (handler->is_local || handler->event != code->sent_events.items[e]) continue;
+                        if (handler->loads_scenes && !code->loads_scenes) code->loads_scenes = changed = true;
+                        if (handler->starts_tasks && !code->starts_tasks) code->starts_tasks = changed = true;
+                    }
+                }
+            }
+        }
+    }
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *owner = prog->decls.items[i];
+        for (int k = -1; k < owner->methods.count; k++) {
+            decl *code = k < 0 ? owner : owner->methods.items[k];
+            if ((code->preparation_reads & 1u) && code->kind == DECL_SYSTEM && code->is_local
+                && !code->is_view && !code->is_async)
+                diag_error(code->at, "local handlers can't read current match readiness; check Scene.IsPrepared in a view");
+            for (int j = 0; code->preparation_reads && j < prog->components.count; j++) {
+                decl *scene = prog->components.items[j];
+                if (!scene->is_scene || !(code->preparation_reads & (scene->is_local ? 2u : 1u))) continue;
+                bool known = false;
+                for (int u = 0; u < code->world_uses.count; u++) known |= code->world_uses.items[u].component == scene;
+                if (!known) {
+                    const world_use use = {.component = scene, .at = code->at};
+                    vec_push(code->world_uses, use);
+                }
+            }
+        }
+        const decl *h = owner;
+        if (!h->preparation_owner) continue;
+        if (h->loads_scenes) diag_error(h->at, "prepare can't load another scene, including through helpers; load it after preparation");
+        if (h->starts_tasks) diag_error(h->at, "prepare runs to completion and can't start async tasks; start them in Spawned instead");
+        if (prog->shards) diag_error(h->at, "scene preparation requires one match world; sharded scene preparation isn't supported");
+    }
+    for (int i = 0; i < c.calls.count; i++) {
+        const call_site *site = &c.calls.items[i];
+        if (!(site->to->preparation_reads & 2u)) continue;
+        if (site->from->is_async) note_side(site->from, TASK_LOCAL, site->call->at);
+        else if (site->from->kind == DECL_SYSTEM && !is_local_code(site->from))
+            diag_error(site->call->at, "this helper reads local scene readiness; call it from local code");
+    }
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);
+    settle_grid_functions(&c);
+    settle_gpu_list_writes(&c);
     check_gpu_only_calls(&c);
     check_audio_calls(&c);
     check_audio_bodies(&c);
@@ -21996,8 +24232,10 @@ bool check(program *prog)
     }
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
+    plan_loop_indexes(prog);
     collect_device_uses(&c);
     check_workers(&c);
+    check_build_code(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     // So does a field something snaps alone, after the rest.
     for (int i = 0; i < prog->decls.count; i++) {
@@ -22087,7 +24325,38 @@ bool check(program *prog)
         if (d->kind != DECL_SYSTEM || d->is_view || d->listens || !d->per_entity || d->entity_local) continue;
         d->without_mask = mask_or(d->without_mask, mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)));
     }
+    // ...and a client's predicted ticks run them for what's near its player
+    // alone (predictionRange): only its predicted worlds have the tag, so the
+    // server's ticks and its confirmed ones run them for everything. A system
+    // written in C gets the runs of rows between far ones, as it does for a
+    // visibility presence filter (gen_extern_filtered_call).
+    for (int i = 0; prog->predict_far && i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_SYSTEM || d->is_view || d->listens || d->is_local || !d->per_entity || d->entity_local
+            || mask_has(d->need_mask, prog->predict_far->index)) continue; // `with Far` asks for them
+        d->without_mask = mask_or(d->without_mask, bit(prog->predict_far));
+    }
     derive_archetypes(&c);
+    for (int i = 0; i < prog->handlers.count; i++) {
+        const decl *h = prog->handlers.items[i];
+        if (!h->preparation_owner) continue;
+        for (int k = 2; k < h->params.count; k++) {
+            const param *p = &h->params.items[k];
+            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->ownership) {
+                diag_error(p->at, "prepare declares data access, not entity filters; put conditions inside its body");
+                continue;
+            }
+            if (p->type.kind != TY_COMPONENT) continue;
+            for (int a = 0; a < prog->archetypes.count; a++) {
+                if (!mask_has(prog->archetypes.items[a], h->preparation_owner->index)) continue;
+                const comp_mask available = mask_or(prog->archetypes.items[a], prog->possible.items[a]);
+                if (mask_has(available, p->type.decl->index)) continue;
+                diag_error(p->at, "preparation requires '" STR_FMT "' on the scene root; supply it to Scene.Load(" STR_FMT ", " STR_FMT ")",
+                           STR_ARG(p->type.decl->name), STR_ARG(h->preparation_owner->name), STR_ARG(p->type.decl->name));
+                break;
+            }
+        }
+    }
     check_extern_sparse(prog);
     diag_phase("deriving archetypes");
     if (diag_error_count() > 0) return false;

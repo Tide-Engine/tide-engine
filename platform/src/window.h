@@ -1,9 +1,9 @@
 #pragma once
 
 // What the platform layer (platform.c) gets from the system it runs on: a
-// window with what draws in it (Vulkan, or an OpenGL context that's current),
-// and what its input devices say. Each build has one of them: desktop/glfw.c (GLFW), web/canvas.c (the
-// page, through tide.js) or android/activity.c (NativeActivity and EGL).
+// window with what draws in it (Vulkan, or WebGPU on the web), and what its
+// input devices say. Each build has one of them: desktop/glfw.c (GLFW), web/canvas.c (the
+// page, through tide.js) or android/activity.c (NativeActivity).
 //
 // Pixels are the display's logical ones (see tide/platform.h), from the
 // window's top left, y down, but for tide_window_pixel_size.
@@ -15,11 +15,11 @@
 #include "tide/platform.h"
 #include "gpu.h"
 
-// Opens the window, with what draws in it: on desktop Vulkan where the
-// machine has it (TIDE_BACKEND in the environment, `vulkan` or `opengl`,
-// picks one), else an OpenGL 3.3 context that's current; OpenGL ES 3 on
-// Android; and on the web WebGPU where the browser has it, else WebGL 2.
-// False, having said why, if there's none to be had.
+// Opens the window, with what draws in it: Vulkan 1.3 on desktop and
+// Android, and WebGPU on the web. False if there's none to be had, having
+// told whoever's there what the game needs: a dialog of the system's on
+// desktop (none in a quiet run), a screen drawn by the CPU on Android until
+// the player leaves it, and a note in the canvas's place on the web.
 bool tide_window_open(const tide_window_desc *desc);
 void tide_window_close(void);
 
@@ -43,6 +43,11 @@ void tide_window_pixel_size(int *width, int *height);
 // (Vulkan's frame goes to the GPU here), then takes what the system says
 // happened since the last call: the calls below read the devices as of then.
 void tide_window_present(void);
+
+// From platform.c, for desktop Vulkan's end-of-frame fence wait only: runs
+// the host's match-only callback and returns seconds until its next update.
+// Negative means no callback is active. This never pumps window events.
+double tide_window_update_while_waiting(void);
 
 // Waits up to `seconds` for the system to say something, while the window is
 // unseen and has no display's pace to wait for.
@@ -143,4 +148,6 @@ void tide_window_typing(bool typing);
 // The game's pack of assets (tide/pack.h), as its build left it with the
 // program: beside it as <program>.pack on desktop, in its page on the web, in
 // its APK on Android. malloc'd bytes, the caller's to free, or NULL for none.
-uint8_t *tide_window_pack(size_t *size);
+// `progress`, if not NULL, is the bytes read so far and the whole size, which
+// another thread may read while this one reads (tide_platform_pack_counted).
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2]);

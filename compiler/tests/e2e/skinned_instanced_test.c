@@ -17,7 +17,7 @@ TIDE_TEST(skinned_instances_capture_independent_poses_and_bind_only_shader_field
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Calls.order == 123);
     tide_draw_prepare(&draw, NULL);

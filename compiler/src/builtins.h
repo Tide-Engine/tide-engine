@@ -24,9 +24,8 @@ bool builtin_frame_clock(str name);
 
 // The program's Anchor enum, which GUILayout.Area and Draw.Text take, its
 // Shape struct, which Draw.Shape does, its Blend enum, which Draw.Blend
-// does, and its Font enum, a text's weight. Call before resolving calls.
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
-                  const decl *font);
+// does. Call before resolving calls.
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull);
 void builtins_use_io(const decl *bytes, const decl *paths);
 
 // Web.Request's types, which are Tide's own code: WebRequest, with the
@@ -54,6 +53,13 @@ bool web_prelude_wanted(const char *text, size_t len);
 #define DRAW_FILL_SHAPE_SIZED "TideFillShapeSized"
 const char *draw_prelude(size_t *len);
 bool draw_prelude_wanted(const char *const *texts, const size_t *lens, int count);
+// Baked poses' types, methods and vert, Tide's own code the same way: a crowd's
+// animation posed once on the CPU (BakedPoses), kept on the GPU, and each
+// instance skinned there from the rows it shows (BakedFrame, BakedSkin). A
+// program that names one of its types compiles it (baked_prelude_wanted).
+#define BAKED_PRELUDE_PATH "<tide>/baked.tide"
+const char *baked_prelude(size_t *len);
+bool baked_prelude_wanted(const char *const *texts, const size_t *lens, int count);
 // Its Format enum, which RenderTarget.Window takes, the same way.
 void builtins_use_format(const decl *format);
 void builtins_use_stencil(const decl *test, const decl *op);

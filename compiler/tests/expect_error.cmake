@@ -43,9 +43,15 @@ if(expected STREQUAL "")
     message(FATAL_ERROR "${SOURCE}: the first line must be `// expect: <message>`")
 endif()
 
+# BUILD_CC, BUILD_INCLUDE and BUILD_ENGINE: the compiler and engine build code runs with, for errors only running
+# it finds (build_errors/)
+set(build_args "")
+if(BUILD_CC)
+    set(build_args --build-cc "${BUILD_CC}" --build-include "${BUILD_INCLUDE}" --build-engine "${BUILD_ENGINE}")
+endif()
 file(MAKE_DIRECTORY "${OUT}")
 execute_process(
-    COMMAND "${TIDEC}" ${files} ${package_args} -o "${OUT}"
+    COMMAND "${TIDEC}" ${files} ${package_args} -o "${OUT}" ${build_args}
     RESULT_VARIABLE result
     OUTPUT_VARIABLE stdout
     ERROR_VARIABLE stderr)

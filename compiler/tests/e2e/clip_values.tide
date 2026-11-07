@@ -1,7 +1,7 @@
 // Scalar Clip values need no asset declaration or playing voice.
 scene Main { }
 
-local singleton Saved { Clip clip; }
+local singleton Saved { Clip clip; List<Clip> clips; Clip[2] pair; List<Choice> choices; }
 struct Choice { Clip clip; }
 
 Clip Keep(Clip clip) { return clip; }
@@ -13,4 +13,15 @@ view Save(mut Saved saved)
     var inferred = Clip.none;
     saved.clip = Keep(typed);
     saved.clip = Keep(Pick(Choice { clip = inferred }));
+}
+
+List<Clip> Copies(List<Clip> clips) { return clips; }
+void Append(mut List<Clip> clips, Clip clip) { clips.Add(clip); }
+view Store(mut Saved saved)
+{
+    saved.clips = Copies([Clip.none]);
+    Append(saved.clips, saved.clip);
+    saved.pair = [saved.clips[0], saved.clips[1]];
+    saved.choices = [Choice { clip = saved.pair[0] }];
+    _ = saved.choices[0].clip;
 }

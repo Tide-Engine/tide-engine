@@ -1,0 +1,12 @@
+// expect: this draw reads 3984 bytes of singletons (Values), and a draw's hold 3968
+scene Main { }
+singleton Values { float4[249] entries; }
+local singleton Models { List<Vertex3> vertices; List<int> indices; }
+frag Shade(Vertex3 vertex, Values values, out Color color)
+{
+    color = Color.white * values.entries[int(vertex.uv.x)].x;
+}
+view Show(Models models)
+{
+    Draw.Mesh(models.vertices, models.indices, float4x4.identity, Shade);
+}

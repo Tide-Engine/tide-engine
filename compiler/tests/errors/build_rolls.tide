@@ -1,0 +1,4 @@
+// expect: constant 'SEED' is made by build code, which can't roll the match's random numbers
+int Roll() { return Random.NextInt(0, 10); }
+const int SEED = Roll();
+scene Main { }

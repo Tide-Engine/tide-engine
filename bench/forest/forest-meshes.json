@@ -1,0 +1,76 @@
+{
+  "source": "Original authored procedural broadleaf reference",
+  "leafSize": 512,
+  "sourceLeavesPerSpray": 13,
+  "alphaCutoff": 0.32,
+  "leafMaskRGBA": [
+    "ambientOcclusion",
+    "roughness",
+    "metallic",
+    "opticalTransmittance"
+  ],
+  "windVertexRGB": [
+    "response",
+    "branchPhase",
+    "leafPhase"
+  ],
+  "levels": [
+    {
+      "level": 0,
+      "barkTriangles": 530,
+      "leafTriangles": 1140,
+      "barkIndices": 1590,
+      "leafIndices": 3420,
+      "bounds": {
+        "bark": {
+          "horizontal": 4.455366685126679,
+          "minY": -0.02259237945081168,
+          "maxY": 9.922800907439841
+        },
+        "leaves": {
+          "horizontal": 5.637350638145673,
+          "minY": 4.093756089698202,
+          "maxY": 11.374337565845329
+        }
+      }
+    },
+    {
+      "level": 1,
+      "barkTriangles": 212,
+      "leafTriangles": 456,
+      "barkIndices": 636,
+      "leafIndices": 1368,
+      "bounds": {
+        "bark": {
+          "horizontal": 3.9123007555718363,
+          "minY": -0.015552640204233125,
+          "maxY": 9.702504143990275
+        },
+        "leaves": {
+          "horizontal": 5.870259018655346,
+          "minY": 3.775947541879198,
+          "maxY": 11.665212181571187
+        }
+      }
+    },
+    {
+      "level": 2,
+      "barkTriangles": 52,
+      "leafTriangles": 38,
+      "barkIndices": 156,
+      "leafIndices": 114,
+      "bounds": {
+        "bark": {
+          "horizontal": 3.911768878484127,
+          "minY": -0.006829975283490559,
+          "maxY": 9.702283464892036
+        },
+        "leaves": {
+          "horizontal": 6.803405311502193,
+          "minY": 2.8581804096332593,
+          "maxY": 12.598255282296181
+        }
+      }
+    }
+  ]
+}

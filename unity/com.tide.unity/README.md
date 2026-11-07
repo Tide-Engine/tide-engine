@@ -17,15 +17,30 @@ repository's `notes/unity.md`.
    https://github.com/Tide-Engine/tide-engine.git?path=/unity/com.tide.unity#v0.5.0-nightly.12
    ```
 
-   or `#dev` to follow the newest.
+   or `#dev` for engine development (it may be ahead of published compilers).
 2. The package builds with the `tide` of its own commit, which Unity locks in
    `Packages/packages-lock.json`: a release tag is that version, any other
-   commit the newest release at it or before it. The first time, it asks to
+   commit requires a release built at exactly that commit. The first time, it asks to
    install that version, beside any other `tide`, in
    `%LOCALAPPDATA%\Tide\versions` or `~/.tide/versions` (or the folder
    `TIDE_VERSIONS` names). A build server (Unity in batch mode, as GameCI runs
    it) installs it with no question and nothing installed beforehand: keep
    `TIDE_VERSIONS` in its cache to download it once.
+
+   Open **Window > Tide > Versions** (also **Manage Tide versions** in Project
+   Settings > Tide) to see the project's package, compiler and available stable
+   and nightly releases. **Use version** installs that release's compiler and
+   switches the Unity package to its matching Git tag. Unity reloads scripts and
+   resumes automatic builds when enabled. Commit the changed package manifest
+   and lock file so teammates use the same version. A failed download leaves
+   the package pin unchanged.
+
+   **Update / switch to dev** refreshes the development package; it does not
+   substitute an older compiler if that commit has no published release.
+   **Check for updates** retries release resolution after publication. An
+   unpublished commit reports the gap and directs you to this window to choose
+   a release or use a matching development compiler. Local folder packages stay
+   under your control; this window switches Git packages only.
 
    To test a local Tide compiler/runtime, launch Unity with
    `-tide-command "<local Tide>/bin/tide"` (`tide.exe` on Windows). This overrides
@@ -189,9 +204,11 @@ An entity of a Unity prefab shows through an instance of that prefab, made
 when the entity comes; one of the open scene's shows through the scene's own
 GameObject. Any other entity is shown by the first view rule that matches it: a
 Tide prefab's name, or a component it has, and the Unity prefab to show it
-with. An entity with Tide's `Transform` is placed by it. `TideEntityView` on
+with. An entity with Tide's `Transform` is placed by it. `TideEntity` on
 that GameObject reads the entity's components as Tide's views see them this
-frame: `view.Get<Tide.Game.Health>()`. `TideRunner.Current.Send(command)`
+frame: `entity.Get<Tide.Game.Health>()`. The same `TideEntity` holds its authored
+components and live binding; `Showing` says whether it is currently bound. Scripts
+can find it and subscribe to its events before the match starts. `TideRunner.Current.Send(command)`
 sends a command, as local code's `Send`.
 
 Tide's devices are what Unity's keyboard, mouse, gamepad and touches say. For
@@ -223,8 +240,11 @@ and `Release(prefab, made)` replace Instantiate and Destroy.
 
 What the game's Tide views draw with `Draw` is drawn in Unity's frame while
 the runner's "Draw Tide" is on: 2D, text, 3D with the camera's depth, render
-targets and the game's own shaders, in Unity's built-in render pipeline and in
-URP.
+targets, the game's own shaders and its compute kernels (`GPU.Run`, GPU lists
+and `await list.Read()`), in Unity's built-in render pipeline and in URP. That
+takes a GPU that runs compute shaders, as every renderer of Tide's does:
+Direct3D 11 and 12, Vulkan, Metal, desktop OpenGL or WebGPU. On one without
+them (OpenGL ES 3, WebGL 2), the views' 2D is drawn with Unity's GL alone.
 
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
@@ -278,7 +298,7 @@ default).
   as do commands sent while paused). **Resume** goes on from there.
 - The **Tick** slider shows any tick since the match started: its entities and
   their GameObjects, the Tide components' live values in the inspector,
-  `TideEntityView`, singletons and Tide's drawing are that tick's. Ticks
+  `TideEntity`, singletons and Tide's drawing are that tick's. Ticks
   before those kept are made again from the start as they're shown. What's
   clicked or sent on an older tick's picture never reaches the match, and the
   match's own local state is left as it was.

@@ -210,6 +210,22 @@ void b3LinkContact( b3World* world, b3Contact* contact )
 	B3_ASSERT( bodyA->setIndex != b3_disabledSet && bodyB->setIndex != b3_disabledSet );
 	B3_ASSERT( bodyA->setIndex != b3_staticSet || bodyB->setIndex != b3_staticSet );
 
+	// Tide: a body held for a predicted tick (b3World_HoldBodies) is met as a static one: it isn't woken and
+	// its island isn't merged, and the contact is the awake body's island's alone. The solver takes a body
+	// that isn't awake as one that doesn't move (b3DecodeAwakeIndex).
+	if ( world->holding )
+	{
+		bool heldA = b3IsHeldBody( world, bodyA );
+		bool heldB = b3IsHeldBody( world, bodyB );
+		if ( heldA || heldB )
+		{
+			int islandId = heldA ? bodyB->islandId : bodyA->islandId;
+			B3_ASSERT( heldA != heldB && islandId != B3_NULL_INDEX );
+			b3AddContactToIsland( world, islandId, contact );
+			return;
+		}
+	}
+
 	// Wake bodyB if bodyA is awake and bodyB is sleeping
 	if ( bodyA->setIndex == b3_awakeSet && bodyB->setIndex >= b3_firstSleepingSet )
 	{
@@ -444,8 +460,10 @@ void b3SplitIsland( b3World* world, int baseId )
 		B3_VALIDATE( 0 <= bodyIdB && bodyIdB < world->bodies.count );
 		b3Body* bodyA = bodies + bodyIdA;
 		b3Body* bodyB = bodies + bodyIdB;
-		int islandIndexA = bodyA->islandIndex;
-		int islandIndexB = bodyB->islandIndex;
+		// Tide: the island's own bodies, where upstream takes any with an island: a held body
+		// (b3World_HoldBodies) is in another
+		int islandIndexA = bodyA->islandId == baseId ? bodyA->islandIndex : B3_NULL_INDEX;
+		int islandIndexB = bodyB->islandId == baseId ? bodyB->islandIndex : B3_NULL_INDEX;
 
 		// Only connect non-static bodies
 		if ( islandIndexA != B3_NULL_INDEX && islandIndexB != B3_NULL_INDEX )
@@ -473,8 +491,10 @@ void b3SplitIsland( b3World* world, int baseId )
 		B3_VALIDATE( 0 <= bodyIdB && bodyIdB < world->bodies.count );
 		b3Body* bodyA = bodies + bodyIdA;
 		b3Body* bodyB = bodies + bodyIdB;
-		int islandIndexA = bodyA->islandIndex;
-		int islandIndexB = bodyB->islandIndex;
+		// Tide: the island's own bodies, where upstream takes any with an island: a held body
+		// (b3World_HoldBodies) is in another
+		int islandIndexA = bodyA->islandId == baseId ? bodyA->islandIndex : B3_NULL_INDEX;
+		int islandIndexB = bodyB->islandId == baseId ? bodyB->islandIndex : B3_NULL_INDEX;
 
 		// Only connect non-static bodies
 		if ( islandIndexA != B3_NULL_INDEX && islandIndexB != B3_NULL_INDEX )
@@ -608,7 +628,9 @@ void b3SplitIsland( b3World* world, int baseId )
 		// Static bodies don't have an island id.
 		b3Body* bodyA = b3Array_Get( world->bodies, link->bodyIdA );
 		b3Body* bodyB = b3Array_Get( world->bodies, link->bodyIdB );
-		int targetIslandId = bodyA->islandId != B3_NULL_INDEX ? bodyA->islandId : bodyB->islandId;
+		// Tide: the awake body's, where upstream takes any with an island: a held body (b3World_HoldBodies)
+		// is asleep in another
+		int targetIslandId = bodyA->islandId != B3_NULL_INDEX && bodyA->setIndex == b3_awakeSet ? bodyA->islandId : bodyB->islandId;
 
 		b3Island* targetIsland = b3Array_Get( world->islands, targetIslandId );
 		contact->islandId = targetIslandId;

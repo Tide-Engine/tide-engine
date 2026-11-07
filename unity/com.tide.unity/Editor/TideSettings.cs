@@ -48,6 +48,7 @@ namespace Tide.Editor
                 TideBuildService.Restart();
             }
             EditorGUILayout.Space();
+            if (GUILayout.Button("Manage Tide versions...")) TideVersionsWindow.Open();
             var tide = TideToolchain.Find(out var where, false);
             if (TideToolchain.LaunchCommand(Environment.GetCommandLineArgs(), out _) != null)
                 EditorGUILayout.HelpBox("This editor was launched with -tide-command, overriding the package version for this session. Restart Unity without that argument to use the project pin.", MessageType.Warning);

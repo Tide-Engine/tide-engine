@@ -1,4 +1,4 @@
-# tidec: the Tide transpiler. It's a build-time tool, so it doesn't link the engine.
+# tidec: the Tide transpiler. Asset imports and baking share the CPU engine.
 # Everything but main.c is a library, which the language server shares.
 file(GLOB TIDEC_SOURCES CONFIGURE_DEPENDS src/*.c)
 list(REMOVE_ITEM TIDEC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
@@ -25,6 +25,24 @@ set(TIDE_SIMULATION_RUNTIME "${TIDE_SIMULATION_RUNTIME}" PARENT_SCOPE)
 set_source_files_properties(src/version.c PROPERTIES COMPILE_DEFINITIONS
     "TIDE_VERSION=\"${TIDE_VERSION}\";TIDE_SIMULATION_RUNTIME=\"${TIDE_SIMULATION_RUNTIME}\"")
 
+# Private import caches also depend on the vendored decoders/compressor.
+file(GLOB_RECURSE tide_asset_vendors CONFIGURE_DEPENDS LIST_DIRECTORIES false RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "third_party/ufbx/*.c" "third_party/ufbx/*.h" "third_party/dr_libs/*.c" "third_party/dr_libs/*.h"
+    "third_party/stb_image/*.h" "third_party/stb_dxt/*.h")
+list(SORT tide_asset_vendors)
+set(tide_asset_vendor_text "Tide asset cache vendors 1\n")
+foreach(source IN LISTS tide_asset_vendors)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${source}" content)
+    string(REPLACE "\r\n" "\n" content "${content}")
+    string(SHA256 digest "${content}")
+    string(APPEND tide_asset_vendor_text "${source}:${digest}\n")
+endforeach()
+string(SHA256 tide_asset_vendor_hash "${tide_asset_vendor_text}")
+set(TIDE_ASSET_CACHE_VENDORS "${tide_asset_vendor_hash}" PARENT_SCOPE)
+set_source_files_properties(src/asset_cache.c PROPERTIES COMPILE_DEFINITIONS
+    "TIDE_ASSET_CACHE_VENDORS=\"${tide_asset_vendor_hash}\"")
+
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
@@ -32,15 +50,12 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # converts MP3/FLAC into PCM WAV, then writes
     # its pack with the engine's own builder (tide/png.h, tide/pack.h), so what
     # it packs is what the game reads; those files bring the engine's pages and
-    # hashes. The same objects are in the engine's library, so a program that
-    # links both (tide_cli_tests) finds each symbol once.
+    # hashes. Retargeted clips use the runtime's sampler and prepared maps.
+    # Linking that same library keeps bake and runtime math identical, including
+    # in the native host tool used by cross builds; no platform is linked.
     # Meshes: tidec reads glTF and OBJ directly and imports FBX through ufbx,
     # and a file's colors become the screen's with the engine's own pow
     # (tide/math.h), which gives the same bits whichever machine builds.
-    set(TIDEC_ENGINE_SOURCES "${PROJECT_SOURCE_DIR}/engine/src/png_read.c" "${PROJECT_SOURCE_DIR}/engine/src/wav.c" "${PROJECT_SOURCE_DIR}/engine/src/vorbis.c" "${PROJECT_SOURCE_DIR}/engine/src/pack.c"
-        "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/engine/src/page.c" "${PROJECT_SOURCE_DIR}/engine/src/net.c"
-        "${PROJECT_SOURCE_DIR}/engine/src/math.c" "${PROJECT_SOURCE_DIR}/engine/src/skinned_data.c"
-        "${PROJECT_SOURCE_DIR}/engine/src/skinned_decode.c")
     # FBX is a build-time dependency only. Its portable math implementation
     # keeps imported transforms/animations independent of the host's libm.
     add_library(tide_fbx STATIC third_party/ufbx/ufbx.c third_party/ufbx/ufbx_math.c)
@@ -59,8 +74,13 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     install(FILES third_party/dr_libs/LICENSE DESTINATION licenses/dr_libs COMPONENT tide)
     install(FILES third_party/stb_image/LICENSE DESTINATION licenses/stb_image COMPONENT tide)
     install(FILES third_party/stb_dxt/LICENSE DESTINATION licenses/stb_dxt COMPONENT tide)
-    add_library(tidec_core STATIC ${TIDEC_SOURCES} ${TIDEC_ENGINE_SOURCES})
-    target_link_libraries(tidec_core PUBLIC tide_fbx tide_audio_import)
+    add_library(tidec_core STATIC ${TIDEC_SOURCES})
+    target_link_libraries(tidec_core PUBLIC tide tide_fbx tide_audio_import)
+    if(NOT WIN32)
+        # What's made ahead of the pack is made on every processor (build_threads.c)
+        find_package(Threads REQUIRED)
+        target_link_libraries(tidec_core PUBLIC Threads::Threads)
+    endif()
     target_include_directories(tidec_core SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_image")
     target_include_directories(tidec_core SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_dxt")
     # Expected asset digests and emitted loaders share this exact private walker.

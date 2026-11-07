@@ -1,0 +1,146 @@
+asset List<byte> motionBytes = "retargeting/export_runtime.glb";
+asset List<byte> targetBytes = "retargeting/target_runtime.glb";
+asset HumanoidRig sourceRig = "retargeting/source.humanoid.json";
+asset HumanoidRig targetRig = "retargeting/target.humanoid.json";
+asset AnimationCatalog combined = ["retargeting/export.gltf", "retargeting/export_runtime.glb"];
+asset AnimationCatalog incompatible = ["retargeting/export.gltf", "retargeting/source.gltf"];
+
+struct BakedPair
+{
+    Animation clip;
+    AnimationCatalog catalog;
+}
+
+singleton Probe
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    int ticks;
+    int order;
+    Animation baked;
+    AnimationCatalog catalog;
+    BakedPair nested;
+    List<BakedPair> rows;
+    BakedPair[2] fixed;
+    Map<string, BakedPair> named;
+    BakedPair? optional;
+    Pose pose;
+    Bone hips;
+    float height;
+}
+scene Main { }
+extern long StateHash();
+extern int HeapUsed();
+void Expect(mut Probe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+bool Near(float a, float b) { return Math.Abs(a - b) < 0.0001; }
+Animation At(AnimationCatalog source, int index) { source.TryGetAt(index, out var result); return result; }
+Animation BakeThroughHelper(RetargetMap mapping, Animation source, Skeleton target) fails IOError
+{
+    return try mapping.Bake(source, target);
+}
+Animation SourceArgument(mut Probe p, Animation source) { p.order = p.order * 10 + 1; return source; }
+Skeleton TargetArgument(mut Probe p, Skeleton target) { p.order = p.order * 10 + 2; return target; }
+float RateArgument(mut Probe p) { p.order = p.order * 10 + 3; return 30; }
+RetargetMap Receiver(mut Probe p, RetargetMap value) { p.order = p.order * 10 + 4; return value; }
+
+system Verify(mut Probe p)
+{
+    if (p.ticks == 0)
+    {
+        var decoded = SkinnedMesh<Vertex3>.Decode(motionBytes)!;
+        var decodedTarget = SkinnedMesh<Vertex3>.Decode(targetBytes)!;
+        var source = At(decoded.animations, 1);
+        var target = decodedTarget.skeleton;
+        mut var mapping = RetargetMap.Create(source.skeleton, sourceRig, targetRig)!;
+        p.hips = targetRig[HumanoidBone.Hips];
+        var beforeBake = StateHash();
+        var beforeHeap = HeapUsed();
+        var result = BakeThroughHelper(mapping, source, target);
+        Expect(p, StateHash() == beforeBake && HeapUsed() == beforeHeap);
+        if (result is Animation baked)
+        {
+            Expect(p, baked.name == "Second" && baked.duration == source.duration);
+            Expect(p, baked.skeleton.bones.count == target.bones.count);
+            mut var live = targetRig.referencePose;
+            for (int i = 0; i <= 4; i++)
+            {
+                var seconds = float(i) * 0.25;
+                Expect(p, live.Retarget(source.Sample(seconds), mapping));
+                Expect(p, Near(baked.Sample(seconds)[p.hips].position.y, live[p.hips].position.y));
+            }
+            p.baked = baked;
+        }
+        else Expect(p, false);
+
+        // Direct model catalog, an escaped decoded catalog and a combined
+        // multi-source catalog all follow their source/clip order.
+        var direct = mapping.Bake(decoded.animations, target)!;
+        var escaped = decoded.animations;
+        var catalog = mapping.Bake(source: escaped, target: target, sampleRate: 30)!;
+        Expect(p, direct.count == 2 && catalog.count == 2 && At(catalog, 1).name == "Second");
+        p.catalog = mapping.Bake(combined, target)!;
+        p.catalog = p.catalog;
+        Expect(p, p.catalog.count == 3 && At(p.catalog, 0).name == "Move"
+            && At(p.catalog, 1).name == "Move" && At(p.catalog, 2).name == "Second");
+        Expect(p, !p.catalog.TryGetByName("Move", out _) && p.catalog.TryGetByName("Second", out _));
+        p.nested = BakedPair { clip = p.baked, catalog = p.catalog };
+        p.rows.Add(p.nested);
+        p.fixed[0] = p.nested;
+        p.named["saved"] = p.nested;
+        p.optional = p.nested;
+        p.rows[0] = p.rows[0];
+        p.nested = default;
+
+        p.order = 0;
+        var ordered = Receiver(p, mapping).Bake(sampleRate: RateArgument(p), target: TargetArgument(p, target),
+            source: SourceArgument(p, source))!;
+        Expect(p, p.order == 4321 && ordered.name == "Second");
+
+        var original = mapping;
+        mapping.rootScale = 0;
+        mapping.rootOffset = float3(1, 0, 0);
+        var still = mapping.Bake(source, target)!;
+        Expect(p, Near(still.Sample(1)[p.hips].position.x, 1) && Near(still.Sample(1)[p.hips].position.y, 2.4));
+        Expect(p, Near(p.baked.Sample(1)[p.hips].position.y, 4.4));
+
+        RetargetMap missing = default;
+        Expect(p, missing.Bake(source, target) is IOError.InvalidData);
+        Animation empty = default;
+        AnimationCatalog emptyCatalog = default;
+        Expect(p, original.Bake(empty, target) is IOError.InvalidData);
+        Expect(p, original.Bake(source, default) is IOError.InvalidData);
+        Expect(p, original.Bake(source, target, -1) is IOError.InvalidData);
+        Expect(p, original.Bake(source, source.skeleton) is IOError.InvalidData);
+        Expect(p, original.Bake(incompatible, target) is IOError.InvalidData);
+        // Empty catalog handling is defined independently of invalid clips.
+        var emptyResult = original.Bake(emptyCatalog, target);
+        Expect(p, emptyResult is IOError.InvalidData);
+        Expect(p, p.catalog.count == 3 && p.baked.name == "Second");
+    }
+    // No source asset, map or target is needed after the first tick; the C
+    // fixture unloads the pack and continues these samples and snapshots.
+    var beforeCopy = StateHash();
+    var beforeCopyHeap = HeapUsed();
+    mut AnimationCatalog scratch;
+    scratch = p.catalog;
+    var borrowed = At(scratch, 2);
+    Expect(p, StateHash() == beforeCopy && HeapUsed() == beforeCopyHeap && borrowed.name == "Second");
+    p.pose = p.baked.Sample(float(p.ticks % 5) * 0.25);
+    p.height = p.pose[p.hips].position.y;
+    Expect(p, Near(p.height, 2.4 + float(p.ticks % 5) * 0.5));
+    Expect(p, p.catalog.count == 3 && At(p.catalog, 2).name == "Second");
+    Expect(p, p.rows[0].clip.name == "Second" && p.rows[0].catalog.count == 3);
+    Expect(p, Near(p.fixed[0].clip.Sample(1)[p.hips].position.y, 4.4)
+        && At(p.fixed[0].catalog, 2).name == "Second");
+    Expect(p, p.named["saved"].clip.name == "Second" && p.named["saved"].catalog.count == 3);
+    if (p.optional is BakedPair held)
+        Expect(p, held.clip.name == "Second" && held.catalog.count == 3);
+    else Expect(p, false);
+    p.ticks++;
+}

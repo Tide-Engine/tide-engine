@@ -33,6 +33,9 @@ static int32_t went(const tide_world *w, const int32_t at)
 static void frame(const tide_world *w, const float seconds)
 {
     tide_local_frame_time(&local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, seconds);
+#endif
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(640, 480), NULL);
     tide_frame(w, NULL, 1, w, NULL, 1.0f, &local, &draw, &gui);

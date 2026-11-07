@@ -1,5 +1,266 @@
 # Releases, installing and CI
 
+## No real GPU in CI (2026-11-05)
+
+CI tests WebGPU only on software adapters (SwiftShader on Windows and macOS, `gpu=none` on Linux), by the owner's decision: "im not always going to have my computer on and i dont want it stressing it out either so for now i guess CI wont test real GPUs". No self-hosted or GPU job exists, and none gates a release. Real-GPU WebGPU coverage is the local hardware lane (`ctest --preset web-hardware`, `notes/testing.md`, The hardware web lane), which agents run for rendering changes, as they run the native `gpu` tests on Vulkan.
+
+## CI after the GL backends' removal (2026-11-05)
+
+`.github/workflows/check.yml` (Claude's, Provisional; arrangement in `notes/testing.md`, GL backends removed):
+
+- **Web:** every web test draws with the browser's software WebGPU, on every runner: Linux's three web shards no longer leave anything out (they ran `-LE webgpu`), as the runner gives Chrome there SwiftShader's Vulkan for its own drawing, with which a page reads WebGPU's pixels back (checked under WSL, not yet on a hosted runner: `notes/testing.md`). If a hosted Linux runner still reads zeros, `-LE pixels` leaves out the tests that read pixels. There are no WebGL or ANGLE D3D11 (`_d3d11`) runs any more. Native jobs still run `-LE gpu`: no runner has a GPU with Vulkan 1.3.
+- **Android:** the package job's emulator keeps `-gpu swiftshader_indirect` (Vulkan 1.2, short of the 1.3 Tide draws with): its Google Play check starts the bundle's app, which shows the screen saying it needs Vulkan 1.3 (a posted frame, so `am start -W` reports ok, and the activity stays resumed), and checks the bundle's manifest requires Vulkan 1.3 (`bundletool dump manifest`). Since 2026-11-05 the Android job's emulator is `-gpu lavapipe` (Vulkan 1.3), and its suite includes the renderer's apps (label `gpu`) and the app-exit check (`notes/android-and-mingw.md`, An app's end). Not yet run on a hosted runner: the Linux emulator package has the same `lavapipe` mode and `libvulkan_lvp.so` (1.4.318, with its own LLVM), checked by listing it, but this machine's WSL has no KVM to boot it.
+- **Docs:** `npm run test:examples` (Linux) runs the examples on software WebGPU only; `TIDE_EXAMPLE_BACKEND` is gone. It launches Chrome with the same Linux flags, so its screenshot comparisons should see the canvases; that's unconfirmed until the next Docs run.
+
+## Every dev push claims a version (2026-11-04)
+
+The owner, iterating on dev: runs "take long... commits keep blocking each
+other", "i want us iterating to actually publish releases so i can use them
+with tide officially", and "i would rather each push have a version, if it
+fails it doesnt release but it still has the version such that others can
+continue moving without it". The overlapping-runs design (2026-10-30, below)
+had each push cancel the previous run's test and package jobs, and a nightly
+skipped publishing when dev had moved on. With pushes every 3-10 minutes
+against a ~30-minute run, nothing published: of 20 dev runs on 2026-11-04 up
+to 15:00, 14 were cancelled and the rest failed; the last nightly was
+2026-11-03 16:54. (Earlier the same day, runs were briefly serialized with only
+the newest push waiting; the owner chose a version for every push instead.)
+
+- **Every push to dev gets its own run, which nothing cancels** (workflow group
+  per run ID on dev; pull requests still cancel older runs, `release` still
+  goes one run at a time). The per-job dev cancellation (check.yml, JetBrains),
+  the Version/Release publication lock and Release's stale-commit check are
+  gone.
+- **Version claims the push's nightly at the start**:
+  `next-nightly.mjs --reserve` fetches tags, picks the highest version's next
+  number and pushes that tag with its `semantic-release-<tag>` note
+  (`{"channels":["dev"]}`) atomically. A refused push (another run took the
+  number) fetches and takes the next one, 20 tries at most. A commit with a
+  nightly tag already (a re-run) keeps it. Release later finds the tag and
+  note there and only makes the GitHub release.
+- **A run that fails keeps its version, with no release**: a gap in the
+  numbers. `tide upgrade` and the installers take a channel's highest version
+  with this platform's package, so gaps and out-of-order finishes are harmless.
+  "Released" means a GitHub release with that tag (`releasedTags`, `gh api`):
+  whether a push is worth a nightly (`feat`/`fix`/`perf`) and the release
+  notes' baseline (`nightly-notes.mjs`) both count from the newest *released*
+  version behind the commit, so a failed version's changes go into the next
+  release's notes and a `test:` repair after a failed `feat:` still publishes.
+  Without `GITHUB_REPOSITORY` (tests, local runs) every tag counts as released.
+- A commit behind another version's tag claims none: a newer push's Version
+  ran first, and its release covers this one. Normally runs start in push
+  order.
+- A push with no `feat`/`fix`/`perf` since the last release gets no version and
+  publishes nothing, as before.
+- More runs at once share the account's runners (20 jobs at a time, 5 on
+  macOS; one run is about 20), so overlapping runs queue for runners and each
+  takes longer. Every push still gets its release, in push order or near it.
+- **Android's suite is its own test entry** (`linux-x64, android`), off Linux's
+  package job, where it took 8.5 minutes before packaging started. Both jobs
+  boot the emulator in the background (`Start the Android emulator`) while they
+  build; `.github/wait-for-android.sh` waits for it with the old 15-minute
+  limit, before the Android tests and before Linux's Google Play check.
+- **The package's incremental-build test runs in three parts at once**:
+  `cache_test.mjs --part modes|at-once|cache` (build modes and stripping,
+  several compiles at once, cache correctness with web runs and the server).
+  Each part copies its own private installation; only `cache` uses the
+  server's fixed port. One after another they took 9-15 minutes of the
+  ~22-minute package jobs (run 41841843705: Windows 15 min, Linux 11, macOS
+  9). The step prints each part's log in its own group and fails if any did.
+  Without `--part` the script runs everything, as before.
+- Not changed: packages still wait for the JetBrains job (its installer goes in
+  each package), and Docs still runs in the same workflow, so a run lasts at
+  least as long as Docs (~20 minutes in that run, partly waiting for a free
+  runner).
+
+Validation: `.github/next-nightly.test.mjs` runs real Git histories against a
+local bare origin: version order after nightly and stable tags, nothing worth a
+release, a failed version skipped by `released`, an older commit behind a
+newer version, the pushed tag and note, a re-run keeping its version, a tag
+another run pushed, and a push refused because the origin's `pre-receive` hook
+took the number meanwhile (the retry takes the next). A new notes test checks
+a failed version's changes appear in the next release's notes, comparing from
+the last released tag. All workflow-helper tests pass. Read-only against the
+real repository (no `--reserve`), the script says `0.6.0-nightly.25` after the
+latest release `.24`. Both workflows parse as YAML and every Bash step passes `bash -n`
+(the one PowerShell step excepted). The parallel step, run with a stub `node`
+failing one part, prints all three logs, names the failed part and exits 1.
+`--part` refuses unknown parts and the `--*-only` flags; the workflow helpers'
+tests pass. The real timings (CPU sharing among the three parts on 4-vCPU
+runners, emulator boot alongside packaging) are the next push's run.
+
+## LLVM CDN fallback in run 41656098141 (2026-11-03)
+
+Docs' hosted HTTPS-resolver response also reports lookup failure; the cached
+answer observed locally below was not available at that runner's resolver.
+The fallback now connects through apt.llvm.org's observed CNAME,
+`dualstack.l2.shared.us-eu.fastly.net`, independently of llvm.org's unavailable
+authority. This is a hostname fallback, not a hardcoded address. curl --connect-to
+preserves the original apt.llvm.org HTTPS URL, SNI, Host and certificate checks.
+Only a successful direct (no proxy or redirect) key response can publish its
+validated IPv4 peer as the single ephemeral runner hosts mapping for apt.
+Normal runner DNS still takes the original path. The public DNS resolver/API
+dependency is removed. If LLVM changes CDN names, this fallback may fail and
+must be revisited; it does not bypass TLS or signatures to keep installing.
+
+Validation: live certificate-verified requests through that exact CDN alias
+return the official signing key and the Noble LLVM 23 signed InRelease index.
+gpgv verifies that index's signature against the downloaded key in a scratch
+keyring. curl's connection semantics are documented at
+https://curl.se/docs/manpage.html#--connect-to .
+The forced-DNS-failure sandbox invokes the real updated helper and installs
+the complete key/mapping without modifying the local trust store or hosts.
+Six updated regressions cover normal DNS, exact CDN connection and single-host
+mapping, failed ordinary downloads, failed fallback TLS, malformed addresses,
+and empty/IPv6 peer addresses. All nineteen workflow-helper tests, Bash/Node
+syntax and whitespace checks pass. No workflow gate or version changed and
+no manual workflow dispatch/retry occurred. Hosted recovery still needs the
+new push-triggered run; no release is claimed yet.
+
+## LLVM resolver failure in run 41654421794 (2026-11-03)
+
+The diagnostic download correction below exposes the actual hosted failure:
+Docs' five curl attempts all report `Could not resolve host: apt.llvm.org`.
+The official server remains reachable over certificate-verified HTTPS using
+an address returned by a public resolver. Cloudflare's JSON DNS response
+reports a stale answer and `No Reachable Authority at delegation llvm.org`;
+this is evidence of an upstream DNS availability problem, not a compiler or
+test failure. Local DNS and resolver answers can still work intermittently.
+
+Both tool steps now call `.github/llvm-key.sh`. Working runner DNS takes the
+ordinary key-download path. If `getent ahostsv4` fails, the helper queries
+Cloudflare's HTTPS JSON resolver for the same host, requires successful status
+and a valid IPv4 answer, then fetches the same official key using curl --resolve.
+Only after that certificate-verified download succeeds does it append that one
+host/address to the ephemeral runner's hosts file, so apt can use it too, and
+install the complete key. No address is hardcoded. All requests retain bounded
+retries and normal TLS verification; HTTPS apt/signature checks, LLVM versions,
+dependency lists and release gates stay intact. Failed lookup/transfer/validation
+stops setup before any privileged mutation. The normal path makes no resolver
+request and changes no host mapping.
+
+The JSON GET response can use cached answers during the authority outage.
+Live testing found curl's DNS wire-format POST sometimes returned SERVFAIL
+while that cached JSON response still supplied a working, TLS-authenticated
+LLVM endpoint; the native --doh-url attempt was not shipped. Endpoint/flag
+references: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/
+and https://curl.se/docs/manpage.html#--resolve .
+
+Six checked-in helper regressions cover ordinary DNS, fallback and its exact
+single-host mapping, failed ordinary/fallback transfers, malformed addresses,
+and unsuccessful/empty DNS answers. All privileged commands are sandboxed.
+A WSL live test forces the local resolver probe to fail, obtains a real cached
+answer/key over HTTPS and validates the resulting sandbox hosts/key files;
+the machine's real hosts/trust store remains unchanged. All nineteen workflow
+helper tests pass, as do Bash syntax, YAML structural and whitespace checks.
+Only the two install command blocks and helper-test registration change in
+the existing workflows/package metadata. Hosted apt recovery and publication
+remain the new push-triggered run's coverage. No manual run/retry is dispatched.
+
+## LLVM signing-key setup in runs 41652157692 / 41653232593 (2026-11-03)
+
+The owner's requested release follow-up found Linux test/package jobs and Docs
+stopping before compilation at the quiet wget signing-key pipeline (exit 4).
+The missing-ccache end-of-job error is secondary: installation never ran.
+A newer dev merge containing the build-speed work reproduced the same setup
+failure. Other test jobs were superseded by that newer push; no passing engine
+or release result is inferred. The quiet logs do not identify the precise
+network/TLS failure. Local IPv4/IPv6 curl and WSL wget could retrieve the key,
+which does not establish hosted recovery.
+
+Both Linux tool-install steps now fetch the same official HTTPS key with curl,
+visible errors, four bounded retries (including transport errors), a 15-second
+connect limit, 30-second request limit and 120-second retry window. Only a
+successful transfer is installed from RUNNER_TEMP, avoiding a truncated trusted
+key on failed downloads. The apt source now uses HTTPS too. LLVM major/version
+selection, dependency lists, signing trust, platform matrix, tests and publication
+gates are unchanged. Persistent failure still fails setup, with diagnostics.
+
+Validation: YAML structural comparison changes only those two install-step
+command blocks, whose curl/install fragments match. Both Bash blocks parse.
+Under WSL, the exact curl flags retrieve the official armored key; a sandboxed
+install receives its complete bytes. A local HTTP fixture fails twice with 503
+then succeeds, installing only the complete final response; a permanent 503
+stops after five requests, emits its error and never invokes installation.
+All thirteen existing workflow-helper tests and the whitespace check pass.
+No local root trust store or package installation is changed. Actionlint is
+unavailable locally. Actual hosted apt recovery and final publication remain
+the automatically triggered corrective push's coverage; this is not a release
+confirmation. No old workflow was retried or extra workflow dispatched.
+
+## Web room migration in run 41440963320 (2026-11-02)
+
+Only macOS web shard 1 failed independently: a migration joiner timed out
+before the original host left. The early-code fixture startup now waits for
+relay-confirmed registration and tests that boundary explicitly; timestamped
+ICE/connection diagnostics cover future failures. The old log cannot prove
+this startup race caused its timeout. Reproduction limits and passing scoped
+Windows web-release checks are in webrtc-and-rooms.md. No runtime, workflow
+gate, timeout or assertion was relaxed. The fix follows the ordinary direct
+dev merge/push trigger; the owner requested checking that build's outcome.
+
+## MinGW profiler fixture in run 41405770153 (2026-11-02)
+
+The only underlying failure at 4d0d14671 was MinGW's compilation of
+tide_platform_profile: its visualizer debug-type flag had no debug information
+enabled in Release. Aggregate Build failures/cancellation blocked publication;
+all other test/package jobs passed. The fixture now explicitly requests -g,
+as the debugger fixture already does. The target builds and its profile capture
+test passes on Windows ASan and MinGW Release. Details: standard-host.md,
+Profiler fixture Release build. The fix uses the ordinary dev push trigger.
+
+## Migration alignment fix for run 41206262777 (2026-10-31)
+
+Following the Newton removal, the owner requested fixing the independent
+Linux sanitizer failure too. Packed attached local-field rows were handed
+directly to typed generated defaults despite their arbitrary alignment.
+Migration now defaults/carries them in its existing aligned temporary and
+copies the bytes to the writer. A regression fails on the previous runtime
+without needing UBSan, then passes with the fix; all 14 migration cases pass
+on Windows ASan and WASI, plus native embed 17/17 and travel 10/10.
+hot-reload.md records the contract and local coverage. Linux UBSan remains
+the next normal push-triggered CI check; no manual rerun or dispatch is made.
+
+
+## Run 41206262777 and Newton removal (2026-10-31)
+
+At 347df3e6f, Linux sanitizer's only failed test is tide_platform_migrate.
+UBSan reports a misaligned Unit_local store in generated layout defaults,
+called from platform/src/migrate.c's carry_value and tide_migrate_world in
+migrate_carries_local_fields_by_name. This precedes the Unity version-window
+commit. The other platform/package jobs pass; aggregate gates fail/cancel,
+and Release is skipped. Newton's rollback case passes in 216.41 seconds.
+The owner redirected the task to removing Newton for performance; this removal
+does not fix migration alignment. No old run was retried or new run dispatched.
+Removal details and local validation are in newton.md.
+
+
+## Exact release proof for Unity version selection (2026-10-31)
+
+The existing /releases/for/<commit> answer retains its nearest ancestor release
+as a switching suggestion and now includes exact: true only when GitHub's
+comparison says identical. Unity no longer mistakes ahead for a matching
+package/compiler pair; the new Versions window switches both to a chosen tag
+(unity.md). No private repository metadata is added to the response. The list,
+download endpoints, caching and publishing workflow retain their contracts.
+The extended release tests pass 11/11 on Node 24.22.1, including exact vs
+ancestor and refresh after publication; docs production build passes.
+Normal docs deployment supplies the flag after the dev push. Until deployment,
+a response without it cannot prove an exact match; release-tag selections work
+directly. No extra deployment or workflow was dispatched.
+
+
+## Distribution-mode package smoke builds (2026-10-30)
+
+check.yml's two shipping web builds and Google Play AAB build now request
+--distribution, preserving their previous shipping behavior after --release
+becomes optimized testing with symbols. The cache and C++ integration fixtures
+cover all three modes. Parsed YAML comparison confirms exactly these three
+argument changes; no jobs, gates or triggers change. Local native/web artifact,
+watch, C++ and ASan CLI results: cli-and-packages.md. Android/Google Play and
+other OS package confirmation remain the normal push-triggered CI coverage.
+No additional run was dispatched.
+
 ## Stable workflow permission guard (2026-10-30)
 
 Run 41050277648 selected release commit 9b0a2379f and failed in Version's own
@@ -35,6 +296,114 @@ environment inputs and these notes. No development gameplay/compiler/runtime
 changes are promoted. No extra workflow dispatch or old-run retry is requested.
 Tag-push behavior reference (a reproduced report, not a GitHub guarantee):
 https://github.com/orgs/community/discussions/151442
+
+## Bounded compiler-cache retention (2026-10-30)
+
+The owner raised the repository cache limit to 30 GB; the GitHub storage-limit
+API confirms max_cache_size_gb=30. Compute and caching remain on GitHub.
+
+Build's separate cache-cleanup job runs after tests, packages and Docs, even if
+tests failed. It has Actions write permission only in this job and executes only
+on dev/release, not pull requests. Release does not depend on cleanup, and the
+maintenance step is best-effort. Other jobs' permissions and publication gates
+are unchanged.
+
+.github/cache-cleanup.mjs paginates caches for the current ref and recognizes
+only per-commit ccache-* keys ending in a 40-character hex commit. It groups by
+the complete key prefix (platform, architecture, preset/compiler version, or
+Docs), retains the two newest creation times per family, and removes older IDs.
+Recent accesses to an old snapshot do not evict its newer replacement. Other
+branches, dependency downloads, LTO and test-duration caches remain untouched;
+GitHub's normal expiry still applies. Concurrent deletion's 404 is harmless.
+Invalid refs, retention settings or matching-cache metadata prevent deletion.
+
+Validation: five cleanup tests plus the three existing release-note tests pass
+through npm test --prefix .github. Cases cover family/branch isolation, unrelated
+keys, one/two-cache families, shuffled API order, recent restores, timestamp ties,
+invalid inputs, pagination parameters, scoped deletion IDs, concurrent 404s and
+API failures. The exact github-script wrapper imports and runs on Windows.
+Actionlint passes with the existing concurrency.queue exception; parsed YAML
+comparison preserves existing jobs/gates apart from the Version test step's name.
+A real scoped cleanup retained all 15 dev compiler snapshots and removed zero:
+none currently exceeded two per family. No cache was deleted unnecessarily.
+No engine, docs artifact, runtime or platform code changed; the already-passing
+native/web validation from the preceding change need not repeat. The normal
+push-to-dev run exercises the hosted maintenance job; no extra CI is dispatched.
+
+## Faster feedback for overlapping dev builds (2026-10-30)
+
+Superseded on 2026-11-04 (top of this file): dev runs still overlap but no
+longer cancel each other, each claims its version when it starts, and the
+publication lock and stale-commit check are gone.
+The web sharding and cache changes below still stand.
+
+Build gives each dev run its own workflow concurrency group. Its native/web/
+MinGW/sanitizer/package jobs and JetBrains build instead cancel older dev jobs
+with the same platform, preset and shard. A new push can start checking without
+waiting for the previous complete workflow. Pull requests retain whole-workflow
+cancellation, and stable releases retain serialized whole workflows.
+
+Version and Release share a non-cancelling per-ref publication lock with
+`queue: max`: a stale Release cannot replace the pending Version of a newer run.
+Version's full checkout therefore sees tags from a publisher already running. Before a
+nightly publishes, it checks origin/dev under that same lock and skips if the
+built commit is stale. Once it passes the check, publication finishes even if a
+new push arrives; that push's Version job then sees its tag. This prevents two
+built commits choosing the same nightly version while keeping versions embedded
+in packages unchanged. Cancelled/failed tests still block Release. Marketplace
+still requires successful publication. Docs keeps its independent non-cancelling
+concurrency and does not gate publication.
+
+Each platform's web suite now runs on three independent runners using CTest's
+interleaved test indices (-I 1,,3, 2,,3 and 3,,3). Browser CPU reservations remain
+in force within each runner. Every registered test belongs to exactly one shard;
+Linux retained its WebGPU exclusion (removed 2026-11-05, above). All fourteen test matrix entries and all
+three package entries must succeed through the existing aggregate Build gates.
+The extra runners repeat configuration/build work in exchange for running the
+long software-rendered pages in parallel across machines.
+
+In run 41043006631, macOS native tests took 115.34 seconds, but their configure/
+build/test step took 15m42s. The generated tag_fallback C object finished 466
+seconds after the preceding build output. macOS now exports Homebrew's LLVM_ROOT
+for native builds as well as web builds, using its already-installed newer clang
+instead of AppleClang 21. This is a compiler selection change, with no fixture
+reduction or optimization-flag exception. Actual Mac compilation savings remain
+unmeasured locally and need hosted confirmation.
+
+The same run's Linux sanitizer job spent about thirteen minutes building and
+472.26 seconds testing. Its compiler cache was 99.81% full, reported 127 cleanups
+and missed 493 of 2,344 cacheable calls. Only this preset's cache limit increases
+from 500 MB to 2 GB, to retain instrumented objects. The compiled-object cache
+uses separate restore/save actions and saves even when a test fails, so the
+next fix can reuse successful compilation. It skips saving on cancellation,
+when restore never supplied a key, or when the exact key was already restored.
+Native test-duration caching now includes sanitize, so its long tests start
+early on subsequent runs.
+
+Storage follow-up: the owner reported GitHub's repository cache limit warning.
+The API showed 12,387,653,304 bytes across 49 active entries; 21 compiler-cache
+snapshots in the paginated inventory consumed about 8.67 GiB. Raising the local
+sanitizer cache limit alone cannot solve GitHub's repository-wide eviction.
+GitHub supports paid cache capacity above its free 10 GB, subject to the
+organization's cap and billing budget. Its documented rate is $0.07/GB-month
+above the allowance (30 GB fully used: about $1.40/month). The current Blacksmith
+cache documentation ties the service to Blacksmith runners, so no standalone
+backend or runner migration is introduced. No billing settings or cache entries
+are changed by this task. Sources checked 2026-10-30:
+https://docs.github.com/en/billing/concepts/product-billing/github-actions
+https://docs.blacksmith.sh/blacksmith-caching/dependencies-actions
+
+Validation: actionlint 1.7.12 passes, excluding only its pre-existing unsupported
+concurrency.queue key. Parsed YAML checks preserve triggers, permissions, all
+platforms, package checks and publication gates; all Bash blocks parse. The exact
+nightly branch guard passes against isolated local Git remotes for current and
+stale SHAs, a missing ref, and a failed lookup. Real CTest JSON confirms an exact
+disjoint partition of all 2,791 web tests (931/930/930), and of the 2,769 selected
+with Linux's exclusion (923 each), with no cross-test fixtures/dependencies.
+Windows ASan's tag_fallback target builds and its test passes. Web execution
+validation is recorded in testing.md. Actual macOS/Linux/MinGW/Android scheduling,
+cache savings and end-to-end time remain normal push-to-dev CI coverage; no
+extra run is dispatched.
 
 ## Tests alongside JetBrains verification (2026-10-29)
 
@@ -560,7 +929,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - The unpacking's bar follows the bytes of the files unpacked so far, against what the package unpacks to: a zip's directory says (`unzip_size`), and a gzip's last four bytes, the size of its tar.
   - `tide editors --update`, which the new tide runs, says nothing unless an editor refuses the update, and that waits for the upgrade's line. While editors take it, a terminal says so on the line the upgrade's own then takes.
   - `tide_cli_upgrade` checks the line is all there is, where there's no terminal.
-- `.github/workflows/build.yml` is the release workflow, and it runs only when asked to (`workflow_dispatch`, with no inputs: Run workflow on GitHub, or `gh workflow run build.yml --ref <branch>`); pushes and pull requests start nothing (the owner, 2026-10-08: "lets restore it to the proper release workflow except i want to trigger it manually"). Every run does the same: it builds each platform's package (Windows, Linux, macOS) and tries it as a user would (a game built natively, for the web and for Android, a game's C++, incremental builds; on Linux also the build service's page and the checks for Google Play), and runs every suite: native and web on all three, the MinGW target on Windows, Android on the emulator on Linux (KVM), whose image comes through the runner's SDK manager, and the suite once more on Linux under AddressSanitizer and UndefinedBehaviorSanitizer (the `sanitize` preset: see Language, no Tide code can corrupt memory). That job leaves two tests to the others: the relay's, which is Node's, and rooms with the runner's browsers, which nobody has run under sanitizers yet (without browsers it passes). The branch it runs on says what's published once all of that passed: `dev` a nightly pre-release (`0.3.0-nightly.48`), `release` a stable release, with semantic-release committing the new `VERSION` there and the JetBrains plugin going to Marketplace, and any other ref nothing, which is how a branch is checked. Windows and Linux build with the LLVM tide's built-in clang comes from (`TIDE_LLVM_VERSION`): LLVM's own release on Windows, and LLVM's apt packages of that major version on Linux. macOS builds native code with Apple's clang and web code with Homebrew's LLVM. Every platform's Node is 24 (`actions/setup-node`; see Building for why the runners' own won't do on Windows). A failure on any platform fails the run and publishes nothing, so every release has every platform's package and passed every suite; nothing in CI may swallow a failure (no `continue-on-error`). Native tests that need a GPU (label `gpu`) are skipped in CI: no runner can open their window.
+- `.github/workflows/build.yml` is the release workflow. Since 2026-10-21 it also runs on every push to `dev` and `release` and on pull requests (Automatic runs, above), and since 2026-11-04 Android's suite is its own job; what follows is otherwise its 2026-10-08 form. It ran only when asked to (`workflow_dispatch`, with no inputs: Run workflow on GitHub, or `gh workflow run build.yml --ref <branch>`); pushes and pull requests start nothing (the owner, 2026-10-08: "lets restore it to the proper release workflow except i want to trigger it manually"). Every run does the same: it builds each platform's package (Windows, Linux, macOS) and tries it as a user would (a game built natively, for the web and for Android, a game's C++, incremental builds; on Linux also the build service's page and the checks for Google Play), and runs every suite: native and web on all three, the MinGW target on Windows, Android on the emulator on Linux (KVM), whose image comes through the runner's SDK manager, and the suite once more on Linux under AddressSanitizer and UndefinedBehaviorSanitizer (the `sanitize` preset: see Language, no Tide code can corrupt memory). That job leaves two tests to the others: the relay's, which is Node's, and rooms with the runner's browsers, which nobody has run under sanitizers yet (without browsers it passes). The branch it runs on says what's published once all of that passed: `dev` a nightly pre-release (`0.3.0-nightly.48`), `release` a stable release, with semantic-release committing the new `VERSION` there and the JetBrains plugin going to Marketplace, and any other ref nothing, which is how a branch is checked. Windows and Linux build with the LLVM tide's built-in clang comes from (`TIDE_LLVM_VERSION`): LLVM's own release on Windows, and LLVM's apt packages of that major version on Linux. macOS builds native code with Apple's clang and web code with Homebrew's LLVM. Every platform's Node is 24 (`actions/setup-node`; see Building for why the runners' own won't do on Windows). A failure on any platform fails the run and publishes nothing, so every release has every platform's package and passed every suite; nothing in CI may swallow a failure (no `continue-on-error`). Native tests that need a GPU (label `gpu`) are skipped in CI: no runner can open their window.
   - The workflow has no modes, on purpose. In one day (2026-10-07, which began with no hosted minutes and the jobs on the owner's own machines) it had grown an `action` input (`check`, `nightly`, `stable`), a `scope` of the Windows web suite alone, nightlies that ran no suite, and a macOS with no suites; the owner had the workflow from before that day restored, with the manual trigger. A way to run less of it is the owner's to ask for.
   - A run on `release` uses that branch's own copy of the workflow, which is this one once `dev` is merged there for a stable release.
   - Every run also builds the docs site, and a run on `dev` deploys it: the `Docs` job, which calls `docs.yml` (`notes/docs-site.md`).
@@ -637,7 +1006,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - Publishing uses the default `GITHUB_TOKEN` unless repository secret `TIDE_PUBLISH_TOKEN` is configured. The optional token belongs to `Tide-Engine`, selects this repository, and needs Contents and Workflows write permission: Without that token, Version accepts workflow files present at any current branch tip, including release, and Release repeats the check because branch tips can move during a build (2026-10-30 correction above). This publishing token is separate from the docs site's read-only `TIDE_RELEASES_TOKEN`. Nightly retries fetch existing tag and notes refs, reject a tag for another commit, and push both refs atomically so a rejected tag leaves no new notes behind.
 - **All CI jobs use GitHub-hosted runners** (the owner, 2026-10-09: "move the workflows back to pure github for now, not blacksmith"). Windows' package and suites run on `windows-2025`, Linux's on `ubuntu-24.04`, and macOS's (Apple Silicon) on `macos-latest`. The supporting jobs and Docs use `ubuntu-24.04` too. Both workflows use `actions/checkout@v4`, install their tools and restore their caches on fresh checkouts. Manual triggers, suites, publishing gates and `TIDE_HIDDEN` stay as before. The former self-hosted runners' notes were removed on 2026-10-21 (git history, `bf647de4`); `.github/runner/setup-linux.sh` remains for the Linux cross build's xwin setup.
   - Validation: both workflows parse as YAML, a comparison against their previous versions confirms only runner labels, checkout actions and the runner comment changed, and `git diff --check` passes. `actionlint` 1.7.12 passes with only its unsupported existing `queue` key excluded; `queue: single` is supported by [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency). The hosted environments still need a manually requested workflow run; none was dispatched for this change.
-- Manual Build runs on `dev` and `release` finish the current run and keep only the newest pending request; a newer manual request replaces the older pending one. The Build workflow says `queue: single` explicitly in each ref's concurrency group, with `cancel-in-progress: false`. Nightlies are previews published when requested, with no nightly for every intermediate commit (the owner, 2026-10-07).
+- Historical policy, superseded for dev on 2026-10-30 above: manual Build runs on `dev` and `release` finish the current run and keep only the newest pending request; a newer manual request replaces the older pending one. The Build workflow says `queue: single` explicitly in each ref's concurrency group, with `cancel-in-progress: false`. Nightlies are previews published when requested, with no nightly for every intermediate commit (the owner, 2026-10-07).
 - **Windows' package can also be built on Linux** (built 2026-10-07 for the former home-server runner). CI builds it on Windows, and the workflow has no step for the cross build any more: it's done by hand, with the presets below. The cross-build support remains:
   - Its `tide.exe` and `tidels.exe` are for Windows' own target (`x86_64-pc-windows-msvc`), as on Windows, since tide links LLVM's Windows libraries and so Microsoft's C++ runtime: the `windows-package` preset, which is `package` with `cmake/windows-msvc-toolchain.cmake`. clang takes Microsoft's headers and libraries from a folder xwin made (`-Xmicrosoft-windows-sys-root`, `TIDE_XWIN` or `~/xwin`), laid out as a Windows machine has them, so they come after clang's own headers, as system headers: given with `-isystem`, Microsoft's `vadefs.h` came before clang's and `va_arg` was a warning. They're Microsoft's, under Visual Studio's license, which `.github/runner/setup-linux.sh` accepts when told to (`TIDE_ACCEPT_MICROSOFT_LICENSE`): never in the repo or the package, whose programs have the C runtime linked in, as they always had.
   - CMake's own setup for that target wants LLVM's tools named: `llvm-rc`, `llvm-mt`, `lld-link`, and `llvm-ar` (with clang's GNU-style driver CMake writes `ar`'s arguments, which `llvm-lib` doesn't take). Resources are preprocessed without the C flags, so the toolchain gives their tool Microsoft's folders itself (`CMAKE_RC_FLAGS_INIT`): libxml2's has one.
@@ -647,7 +1016,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **A nightly waits for every suite, as a stable release does** (the owner, 2026-10-08, with the workflow's restoring, above). For a day they didn't (2026-10-07: "dev/nightly is meant to move fast; we can introduce them back later, right now its too early for always running it", said while every push started a run and the suites ran on a home server): nightlies went out from the three packages alone, and one could go out with a suite failing somewhere this machine's sessions didn't run it. A run is asked for now, and Windows' and Linux's packages and suites together took about four minutes on Blacksmith's runners (2026-10-08, with the compiler's cache).
   - `gh workflow run build.yml --ref dev` is a nightly, `gh workflow run build.yml --ref release` a stable release, and the same on any other branch checks it and publishes nothing.
   - macOS's suites (native and web) are back with it. They ran on no machine from 2026-10-07 until the first run after this, so what landed in between (audio's CoreAudio, Box3D's resident state) was first run on a Mac then.
-- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. The workflow's `concurrency` group is what keeps two runs from taking one number.
+- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. Since 2026-11-04 (top of this file) the Version job pushes the tag and note when a run starts, so overlapping runs each claim their own number, and the baseline is the last released version behind the commit.
   - Nightlies use commit-based release notes again (2026-10-10, future releases
     only). Switching the publisher to `gh --generate-notes` had replaced the
     Features/Bug Fixes lists with GitHub's merged-PR notes; direct commits to

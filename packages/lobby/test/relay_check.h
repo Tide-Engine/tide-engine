@@ -89,6 +89,9 @@ static void seat_free(seat *s)
 static void seat_frame(seat *s, const float seconds)
 {
     tide_local_frame_time(&s->local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&s->local, seconds);
+#endif
     tide_draw_reset(&s->draw);
     tide_touches_poll(&s->devices.touchscreen);
     tide_pointer_poll(&s->devices, true);

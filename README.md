@@ -97,7 +97,7 @@ Then, in that folder:
 | `tide run` | Builds the game, plays it and reloads when you save |
 | `tide run --web` | Builds it as a web page and opens it |
 | `tide build` | Builds the game into `build/` |
-| `tide build --release --web` | An optimized web page and the game's files beside it, to put online (WebGPU, or WebGL 2 where the browser has none); `--single-file` for one self-contained `.html` |
+| `tide build --distribution --web` | An optimized web page and the game's files beside it, to put online (WebGPU); `--single-file` for one self-contained `.html` |
 | `tide schedule` | Shows which systems can run at the same time, and why the others wait |
 | `tide shaders` | Shows the shaders the game's frags and verts compile to |
 | `tide add github.com/owner/repo` | Adds a package, at its newest commit, to `tide.packages` |
@@ -114,16 +114,11 @@ The [docs](https://tide-engine.dev) go through the language a topic at a time, a
 ## Packages
 
 Optional [packages](docs/packages/index.md) include `render3d`, `box2d`, `box3d`,
-`newton`, `rooms`, `lobby`, `steam` and `voice`. Add only the ones a game uses with
+`rooms`, `lobby`, `steam` and `voice`. Add only the ones a game uses with
 `tide add <name>`. [Render3D](docs/packages/render3d.md) supplies static/skinned
 mesh materials, directional/point/spot lights, shadows, linear PBR, sorted
 transparency, vertex deformation, bloom and HDR effects, with package-owned passes. Baked lighting, area
 lights and probes remain future work.
-
-[Newton](docs/packages/newton.md) is an experimental NVIDIA
-Newton articulation/control integration for the same game and robotics-policy
-simulation. Native and web replay tests agree; collisions, robot importers and
-physical fidelity validation remain future work. Use a checkout or installation containing it.
 
 ## Stay up to date
 

@@ -164,50 +164,17 @@ static void finish(void)
     tide_loopback_destroy(net);
 }
 
-// Whether shard `of` gave an index: it's in one of its ranges
-static bool gave(const uint32_t of, const uint32_t index)
-{
-    const tide_world *w = tide_shards_world(shards, of);
-    if (!w) return false;
-    tide_text_use((tide_heap *)&w->heap, NULL);
-    const tide_list r = w->tide_shard_state.ranges;
-    for (int32_t i = 0; i + 2 <= tide_list_count(r); i += 2) {
-        const int64_t first = *(const int64_t *)tide_list_at(r, i, 8u), end = *(const int64_t *)tide_list_at(r, i + 1, 8u);
-        if ((int64_t)index >= first && (int64_t)index < end) return true;
-    }
-    return false;
-}
-
-// The indices shard `of` gave that are away, living on elsewhere, are its
-// entities alive on the other shards: one destroyed elsewhere was given back
-// (FREED), so a long world spends no index for good
+// Private slots may differ between shards. Every live local key must resolve
+// to exactly its own slot, including ghosts, after handoff and reclamation.
 static void check_away(const uint32_t of)
 {
-    const tide_world *home = tide_shards_world(shards, of);
-    if (!home) return;
-    uint32_t away = 0, elsewhere = 0;
-    for (uint32_t index = 0; index < home->entities.next_unused; index++) {
-        if (!home->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]) {
-            index |= (1u << TIDE_ENTITY_PAGE_SHIFT) - 1u;
-            continue;
-        }
-        const tide_entity_slot *slot =
-            &((const tide_entity_slot *)tide_page_data(home->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]))[index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u)];
-        if (slot->archetype == TIDE_ARCHETYPE_AWAY && gave(of, index)) away++;
+    const tide_world *w = tide_shards_world(shards, of);
+    if (!w) return;
+    for (uint32_t slot = 0; slot < w->entities.next_unused; slot++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, slot);
+        if (tide_entity_is_null(e)) continue;
+        TIDE_CHECK(tide_entity_slot_index(&w->entities, e) == slot);
     }
-    for (uint32_t i = 0; i < tide_shards_count(shards); i++) {
-        const tide_world *w = tide_shards_world(shards, i);
-        if (!w || i == of) continue;
-        for (uint32_t index = 0; index < w->entities.next_unused; index++) {
-            if (!w->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]) {
-                index |= (1u << TIDE_ENTITY_PAGE_SHIFT) - 1u;
-                continue;
-            }
-            const tide_entity e = tide_entity_in_slot(&w->entities, index);
-            if (!tide_entity_is_null(e) && !tide_has_tide_ghost(w, e) && gave(of, index)) elsewhere++;
-        }
-    }
-    TIDE_CHECK(away == elsewhere);
 }
 
 // Once everything that waited got done: at a moment nothing is on its way
@@ -569,4 +536,82 @@ TIDE_TEST(shards_restart_one_shard_where_it_was)
         free(journal.sizes[i]);
     }
     free(journal.checkpoint);
+}
+
+TIDE_TEST(shards_reject_malformed_tagged_dependency_words)
+{
+    for (uint32_t invalid = 0; invalid < 4u; invalid++) {
+        tide_world source = {0}, restored = {0};
+        tide_world_start(&source, 1.0f / 60.0f, NULL);
+        tide_text_use(&source.heap, NULL);
+        tide_shard_word *reference = tide_list_add(&source.tide_shard_state.asked, 24u, TIDE_IN_MATCH);
+        *reference = (tide_shard_word){INT64_C(0x100000001), INT64_C(0x123456789abcdef0), 0};
+        if (invalid == 1) reference->c = 1; // Singleton tag with nonzero Entity words
+        if (invalid == 2) *reference = (tide_shard_word){0, 0, INT64_MAX};
+        if (invalid != 3) {
+            tide_shard_word *tick = tide_list_add(&source.tide_shard_state.asked, 24u, TIDE_IN_MATCH);
+            *tick = (tide_shard_word){0, invalid == 0 ? 0 : 1, 0};
+        }
+        const uint32_t size = tide_world_pack(&source, NULL, 0);
+        uint8_t *bytes = malloc(size);
+        TIDE_REQUIRE(bytes);
+        TIDE_REQUIRE(tide_world_pack(&source, bytes, size) == size);
+        const bool ok = tide_world_unpack(&restored, bytes, size);
+        TIDE_CHECK(ok == (invalid == 0));
+        if (ok) {
+            tide_text_use(&restored.heap, NULL);
+            const tide_shard_word *word = tide_list_at(restored.tide_shard_state.asked, 0, 24u);
+            TIDE_CHECK(word->a == INT64_C(0x100000001) && word->b == INT64_C(0x123456789abcdef0));
+        }
+        free(bytes);
+        tide_world_free(&restored);
+        tide_world_free(&source);
+    }
+}
+
+TIDE_TEST(shards_retry_held_unknown_dependencies_across_tick_wrap_and_drop_unused_requests)
+{
+    for (int boundary = 0; boundary < 2; boundary++) {
+        tide_world world = {0};
+        tide_world_start(&world, 1.0f / 60.0f, NULL);
+        const tide_entity unknown = {UINT64_C(0x100000001), UINT64_C(0xfedcba9876543210)};
+        tide_entity courier = {0};
+        for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+            const tide_entity e = tide_entity_in_slot(&world.entities, slot);
+            if (!tide_entity_is_null(e) && tide_has_Courier(&world, e)) { courier = e; break; }
+        }
+        TIDE_REQUIRE(!tide_entity_is_null(courier));
+        Courier value = tide_get_Courier(&world, courier);
+        value.bank = unknown;
+        value.until = INT32_MIN;
+        TIDE_REQUIRE(tide_set_Courier(&world, courier, value));
+        world.tide_shard_state.shard = 1;
+        world.tide_shard_state.role = TIDE_SHARD_ROOT_ROLE;
+        world.tide_shard_state.singletons = INT64_MAX;
+        // Exercise both UINT32_MAX -> zero and INT32_MAX -> INT32_MIN.
+        const int32_t first_tick = boundary ? INT32_MAX - 15 : -15;
+        world.Time.tick = first_tick;
+        world.tide_identity_clock = UINT64_C(1) << 40;
+        for (uint32_t i = 0; i < 65; i++) tide_world_tick(&world);
+        TIDE_CHECK(world.Time.tick == (int32_t)((uint32_t)first_tick + 65u));
+        TIDE_CHECK(tide_entity_alive(&world.entities, courier));
+        TIDE_CHECK(tide_has_tide_dying(&world, courier));
+        uint32_t size = 0, requests = 0;
+        uint8_t *outbox = tide_game_api.shards->outbox(&world, &size);
+        tide_reader r = {outbox, size, 0, false};
+        tide_shard_outgoing message;
+        while (tide_shard_next_outgoing(&r, &message)) {
+            if (message.data[0] == TIDE_SHARD_BORROW && tide_entity_equal(message.entity, unknown)) requests++;
+        }
+        TIDE_CHECK(requests >= 2 && requests <= 3);
+        free(outbox);
+        tide_text_use(&world.heap, NULL);
+        TIDE_CHECK(tide_list_count(world.tide_shard_state.asked) == 2);
+        // Cancelling the parked work removes its last held dependency next tick.
+        tide_list_clear(&world.tide_shard_state.waits, 1u);
+        tide_world_tick(&world);
+        tide_text_use(&world.heap, NULL);
+        TIDE_CHECK(tide_list_count(world.tide_shard_state.asked) == 0);
+        tide_world_free(&world);
+    }
 }

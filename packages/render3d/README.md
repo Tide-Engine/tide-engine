@@ -278,6 +278,125 @@ additional game resources through ordinary shader parameters: between
 `NextPostTarget(renderer)`, draw and call `CommitPost(renderer)`.
 `defaultPresent = false` suppresses only the stock final presentation.
 
+
+## Foliage
+
+Use `Cutout` and `doubleSided = true` for leaf cards. `ThinLeaf` returns a
+surface callback with shared numeric settings:
+
+```csharp
+material.shader = Render3D.Lit {
+    surface = Render3D.ThinLeaf(Render3D.LeafSettings {
+        transmission = 0.4,
+        transmissionColor = float3(0.75, 1, 0.4),
+        thickness = 0.2
+    })
+};
+```
+
+Transmission defaults to 0.5, with white linear RGB tint and zero thickness.
+Strength/tint clamp to 0..1; nonnegative optical thickness attenuates by
+`exp(-thickness)`. Transmitted diffuse light reduces the reflected diffuse
+fraction; specular stays unchanged. Each light's attenuation and shadow visibility
+apply on both sides. Leaf shadows still use opaque/cutout depth: this thin-sheet
+approximation does not model colored shadows or transport through multiple leaves.
+Ordinary surfaces default to zero transmission. Custom callbacks can call
+`ApplyThinLeaf(surface, settings)` to compose it with their own surface edits.
+
+Capture the same `Wind` values for all plants in a frame through the shared
+vertex hook. Inside a view before `Stages.Prepare`, with a game-owned local
+`seconds` clock:
+
+```csharp
+var wind = Render3D.Wind { time = seconds, strength = 0.3 };
+material.vertex = Render3D.Deform {
+    vertex = (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) =>
+        Render3D.ApplyWind(input, vertex, wind, 0.01, 0.01)
+};
+material.customBounds = true;
+material.boundsCenter = float3(0, 5, 0);
+material.boundsSize = float3(10, 12, 10);
+```
+
+Advance the clock with `Frame.dt` and wrap it periodically. The example bounds
+assume an upright ten-unit tree; fit them to the actual asset and maximum wind
+movement. Bounds are the **full mesh-local size after deformation**, before its
+transform. Attached local `customBounds` defaults false; `boundsCenter` and
+`boundsSize` default zero. They enable culling in color and every shadow pass,
+including skinned materials, restoring destination state afterward. Negative or
+nonfinite sizes retain the draw. Undersized bounds can hide visible branches.
+
+`Wind.direction` is normalized world XZ, default `(1, 0.3)`. `strength` defaults
+to 0.3, `speed` to 1, `gustScale` to 0.04 cycles/world unit, `gustSpeed` to 0.8
+cycles/second, `gustStrength` to 0.5 and `time` to zero seconds. Nearby roots
+sample coherent travelling gusts. `ApplyWind` takes independent bend and flutter
+responses, anchors local y <= 0, and corrects normals/tangents. Bend has world
+distance per squared local height; flutter has world distance per local height.
+Strength clamps to 0..10, responses/gustStrength to 0..1, speed/gustSpeed to
+0..30, gustScale to 0..1 and height to 0..10000. The helper preserves vertex
+color and UVs and infers no asset weight channels. A custom callback using color
+as wind weights must restore its intended material tint/alpha explicitly.
+
+For authored response, the `WindResponse` overload takes `bend`, `flutter`,
+`branchPhase` and `leafPhase`. Phases are cycles; weights/phases are explicitly
+chosen by the caller and should be locally constant for exact analytic normal
+correction. Keep connected branch vertices on compatible responses so joints
+stay connected. Zero phase offsets retain the original wind arithmetic.
+
+The surface callback receives the already-sampled raw mask as `input.mask`
+(AO, roughness, metallic, artist data), defaulting to `(1,1,0,1)`. A leaf's
+alpha channel can hold optical transmittance: multiply the shared transmission
+fraction by it before `ApplyThinLeaf`. Use a normal map for leaf folds and veins.
+
+### Fog and machine-local representations
+
+Configure `renderer.fog = FogSettings { enabled = true, density = 0.00065,
+color = float3(0.4, 0.5, 0.6) }` before `Prepare`. Color is linear HDR radiance.
+`start` is an unfogged distance in world units. Every `Lit` material applies
+the same exponential fog after lighting/emission and before exposure/tonemapping;
+disabled or nonpositive density preserves the unfogged result. Custom shaders
+must apply fog explicitly. To match the HDR sky clear, use
+`SrgbToLinear(float3(renderer.background.r, renderer.background.g, renderer.background.b))`.
+
+Static `MeshRenderer` has attached local `meshOverride`, `hidden` and
+`hideShadows` controls. They select a representation or suppress its color/shadow
+submission without changing match state; defaults retain the authored mesh.
+Configure them before `Prepare`. Color, opaque shadows and cutout shadows use
+the same override. `hidden` suppresses both passes; `hideShadows` only shadows.
+
+`Material.colorOverride` optionally overrides the authored color locally.
+`Material.ditherFade` enables ordered geometry coverage, with `fade = 1` by
+default. A negative fade selects complementary destination-pixel cells for an
+incoming LOD; outgoing `1-t` and incoming `-t` cover complementary cells.
+Cutout texture alpha retains its original threshold. `PrepareMaterial` snapshots
+the effective tint/opacity in `renderColor` before lighting stages, reusing the
+existing instance color attribute instead of adding a varying. Configure these
+controls before `Prepare`; advanced extra draw passes may explicitly update and
+restore the prepared local snapshot. Ordered dithering is not temporal AA.
+
+### Distant-tree prototype
+
+`Material.impostor` configures an optional `ImpostorSettings` atlas path. The
+base map supplies albedo/coverage, raw normal map supplies model normals/depth,
+and raw mask map supplies ordinary ORM/artist data. `ApplyImpostor` orients a
+baked card and reserves its existing corner fields for the projection payload;
+use it only with the atlas material. The current atlas layout is 24 hemisphere
+views in an 8x4 grid of padded 128-pixel tiles. Use the baker's exact center,
+span and depth, and bounds covering the fully rotated/deformed card.
+
+Enabling it selects internal vertex/fragment stages instead of `Material.vertex`;
+the configured surface callback is retained. `ImpostorSettings.wind` and `bend`
+control whole-card sway (wind defaults disabled). Impostors do not cast shadows.
+This prototype uses the three baked maps above; ordinary UV/height/emission-map
+controls do not apply. Constant emission and surface edits remain available.
+
+The repository's [forest stress scene](../../bench/forest/README.md) supplies
+original tree assets, coverage-preserving DDS mip generation, an offline
+source-mesh impostor baker, moving/orbiting cameras and geometry crossfades.
+The impostor is a rest-pose, nearest-visible-layer approximation; it cannot
+recover disoccluded branches or animate individual baked leaves. Gaussian
+splats and a general runtime impostor baking system are outside this slice.
+
 ## Current scope
 
 One camera; static and skinned mesh assets with material maps and scalar values.
@@ -293,6 +412,5 @@ environment specular or automatic occlusion bake.
 It then applies linear exposure, Reinhard tone mapping and one sRGB encode.
 Base-map filtering currently happens in display space before decoding; it is not
 automatic hardware sRGB sampling.
-The engine's existing float-target fallback on older OpenGL/WebGL devices uses
-RGBA8 and clips HDR before tone mapping. Broader rendering features remain future
-work.
+Every backend draws into float targets, so HDR isn't clipped before tone
+mapping. Broader rendering features remain future work.

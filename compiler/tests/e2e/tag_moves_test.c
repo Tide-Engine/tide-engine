@@ -8,7 +8,7 @@ static tide_world world;
 // Main is slot 0; Setup spawns bodies 0..5 in slots 1..6.
 static tide_entity body(const int id)
 {
-    return (tide_entity){(uint32_t)id + 1u, 1};
+    return tide_entity_in_slot(&world.entities, (uint32_t)id + 1u);
 }
 
 static uint32_t archetype_of(const tide_world *w, const int id)

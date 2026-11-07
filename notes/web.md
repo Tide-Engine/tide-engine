@@ -1,4 +1,274 @@
+## Bounded generated view lookups (2026-11-07)
+
+Foldline exposed a V8 module-compilation failure: a large partial-field view
+query forced an all-archetype previous-state lookup into each query branch,
+exceeding the function-local limit before instantiation. Codegen now outlines
+large previous-field lookups while retaining the small inline path. No WASM
+imports, runtime JavaScript, browser flags or view ordering change. The
+`view_lookup_size` regression reproduces the old failure without prototype
+assets; interpolation and unchanged-match checks run on native/WASI. Exact
+heuristic, negative proof and focused validation: language.md, Bounded view
+interpolation lookup expansion.
+
 # Web builds
+
+## Deterministic scene preparation (2026-11-05)
+
+Scene prepare blocks use the existing WASM background worker provider on isolated/threaded pages; main-thread
+networking and views read retained observational snapshots. The same generated deterministic code and readiness
+commands run on native/web. A host/page without background workers falls back synchronously, as local workers do.
+No JavaScript protocol or loader change. Contracts/fixtures and validation: language.md, Deterministic scene preparation.
+
+## GPU lists in pools, on WebGPU (2026-11-05)
+
+A shader's GPU lists are ranges of two pools (`notes/compute.md`, GPU lists in pools): `MAX_STORAGE` in `tide.js` is 4
+(`TIDE_GPU_MAX_STORAGE`), and a pipeline binds the two pools (and a kernel its run record), so a bind group holds 3
+storage buffers at the most, within WebGPU's default 8 a stage. `requestDevice` now asks for the adapter's
+`maxStorageBufferBindingSize` and `maxBufferSize` (`requiredLimits`, those the adapter has, in every request it makes; still no descriptor where nothing is asked), as the pools grow to
+what one binding reaches (`gpu_storage_most`, the least of the two, which `gpu_web.c` takes as a double: a JavaScript
+number). A pool made again bigger frees its old buffer after the copy's submit (each pass and copy is submitted as it
+ends, so a buffer destroyed then is one no unsubmitted work names). Each pool is bound whole; a kernel that writes
+one binds it once, as `storage`, so no binding aliases another (Dawn's writable-aliasing check). Tests (web-debug,
+SwiftShader): `tide_platform_kernels` through its lost device, `_compute`, `_cull`, `_cull_fallback`, `_occlusion`,
+`_draw`. The real-GPU lanes (`web-hardware`, `web-hardware-d3d11`) weren't run (optional). After Textures and
+samplers apart (below), a bind group is the uniforms, 16 textures, 16 samplers and 3 storage buffers at the most.
+
+## Texture arrays (2026-11-05)
+
+Imports `gpu_array`, `gpu_array_depth`, `gpu_array_layer`, and since the gaps were closed `gpu_array_blocks` (BC
+layers, each a whole chain), `gpu_array_of` and `gpu_array_write` (a `Grid3`'s: `writeTexture` at `[x, y, layer]`,
+dropping the bind groups that read its smaller images, made again when next read); reads 6 and 7 are `'2d-array'` in a
+layout. A cube's and an
+array's per-layer views are `layered`. Details: notes/textures.md, Texture arrays: built.
+
+## Textures and samplers apart (2026-11-05)
+
+`gpu_image(slot, id)` and `gpu_sampler(slot, filter, wrap)` replace `gpu_sample`; `gpu_pipeline_samplers(count, low,
+high)` gives each sampler's read, 3 bits each, where a pipeline's samplers aren't its textures' own (`ownSamplers`).
+Layout keys are `reads/samplerReads`. Details: notes/rendering.md, One image a texture.
+
+## Pipelines the browser can't make, and Dawn's Direct3D 11 (2026-11-05)
+
+`tide.js`: a pipeline made at once is made inside `validation` and `internal` error scopes, and one whose scopes
+catch an error or whose background promise rejects is `failed` (`gpu_pipeline_failed`, gpu_web.c's
+`pipeline_failed`), let go and said once; `gpu_pipeline_optional` marks one the renderer can do without (the GPU
+culling's and the depth pyramid's kernels), made in the background whatever `gpu_background` says. `fail-pipeline=`
+in the address makes the named pipelines fail as they're made, for tests. The test runners' adapter probe
+(`cmake/web_gpu.mjs`) also reports `backend`, and `TIDE_WEB_HARDWARE=d3d11` (`ctest --preset web-hardware-d3d11`) runs
+the hardware lane on Dawn's D3D11. The release runtime was regenerated. notes/drawing.md, A culling kernel that can't be
+made; notes/shaders.md, Kernels on Dawn's Direct3D 11; notes/testing.md, The hardware web lane on Direct3D 11.
+
+## Occlusion culling's depth on WebGPU, its samples read (2026-11-05)
+
+`gpu_depth_far` became `gpu_depth_now` with `gpu_depth_samples` (`depth_now` in gpu_web.c): a multisampled target's
+depth is its samples' own texture, wrapped once as a texture of the program's (`t.samples`, let go with its bind
+groups when the target goes), which occlusion's pyramid kernel loads sample by sample (`READ_SAMPLES`, a
+`multisampled` depth binding in `layoutFor`); `depthFarthest` and `t.far` are gone. The release runtime was
+regenerated. drawing.md, Occlusion's measure made cheaper.
+
+## Occlusion culling's depth on WebGPU (2026-11-05)
+
+`gpu_depth_far` (tide.js, `depth_far` in gpu_web.c): a target's depth texture; a multisampled target's every sample's
+farthest, written by a pass of its own (`depthFarthest`) into a texture kept with it (`t.far`, freed with it); the
+canvas's depth, now made `TEXTURE_BINDING` too, as a texture of the program's (`windowTarget.far`, let go, with its
+bind groups, when the canvas's depth is made again; 0 after a lost device). The release runtime was regenerated.
+`tide_platform_occlusion` runs on WebGPU (`pixels`). drawing.md, Occlusion culling from a depth pyramid.
+
+## WebGL removed (2026-11-05)
+
+WebGL 2 went with the other GL backends (`notes/rendering.md`, GL backends removed): compute is guaranteed, and WebGL can't compute. Claude's, Provisional:
+
+- **`tide.js`** has no GL half: no GL functions by C name (the program's `env` imports are its memory alone), no `glGetError` wrapper under `checkGL` (which now means WebGPU validation errors and shader warnings stop a test page), no `forgetGL`, no `KHR_parallel_shader_compile`/`EXT_color_buffer_float`/`WEBGL_compressed_texture_s3tc`. `backend=` in the address and `Tide.backend` are gone; the test shell no longer strips `backend=` or checks `expect-angle=`.
+- **Any adapter will do:** `findDevice` takes whatever adapter the browser gives, its software (fallback) one too, which used to be refused in favour of WebGL on a GPU. Why there's none is kept (`noDevice`: no `navigator.gpu`, no adapter, or the request's error).
+- **`tide_web_init_canvas` returns a `bool`:** true once WebGPU is configured on the canvas with the device found before the program started (the old 0/1/2 of `TIDE_WEB_NO_CANVAS`/`WEBGL`/`WEBGPU` is gone). False: the page hides the canvas and puts a note in its place (`#tide-needs-webgpu`, `role="alert"`) saying the game needs WebGPU (a current Chrome, Edge or Safari, or Firefox where WebGPU is on) and why; the shell's loader (`#tide-loading`) shows the same text as its error, and it's printed. `canvas.c`'s `tide_window_open` then fails, saying so on stderr. `tide_window_gpu` is always `tide_gpu_webgpu`.
+- **Tests:** every `tide_add_web_test` is served (`cmake/run_web_served_test.mjs`) on the browser's software WebGPU; the file-page runner (`cmake/run_web_test.cmake`, `cmake/browser_dump.mjs`) and virtual time are gone. The arrangement, its `pixels` label and what CI runs where are in `notes/testing.md`, GL backends removed. `tide_platform_compute`'s WebGL run (which printed `SKIPPED:`) and every `_d3d11` (ANGLE WARP) run are gone. Custom runners (`web_threads.mjs`, `web_rooms.mjs`, `docs/tests/examples.mjs`) launch with the WebGPU software flags instead of SwiftShader WebGL's.
+
+## Counted indirect draws on WebGPU (2026-11-05)
+
+`gpu_draw_indexed_indirect_count` (gpu.h's `draw_indexed_indirect_count`; notes/drawing.md, Culled runs drawn by a
+count, joined) and `gpu_indirect`. The device asks for `indirect-first-instance`,
+`chromium-experimental-multi-draw-indirect` and `multi-draw-indirect` where the adapter has them (also on the retry
+without timestamps). With multi-draw (and `GPURenderPassEncoder.prototype.multiDrawIndexedIndirect` there) it's one
+`multiDrawIndexedIndirect` with the count buffer; otherwise a `drawIndexedIndirect` per record up to `most`, those past
+the count of no instances. Index buffers gained `COPY_SRC` (the culling's family index buffers are copied from them).
+`Tide.gpuIndirect()` gives the bits. `tide.release.js` regenerated.
+
+## Meshes over GPU lists on WebGPU (2026-11-05)
+
+No page change: a pulled-vertex pipeline's vertex slot has `arrayStride` 0 and no attributes (WebGPU then checks
+nothing of the bound buffer's size), and GPU indices draw `drawIndirect`. `tide_platform_kernels` (label `pixels`)
+passes on Chrome's software WebGPU with them, before and after a lost device: notes/compute.md, Meshes over GPU lists.
+
+## WebGPU compute (2026-11-05)
+
+All of `gpu.h`'s compute (notes/compute.md) on WebGPU: `gpu_web.c` hands each
+function to a `tide.js` import of the same name (`gpu_storage`,
+`gpu_compute_begin`/`end`, `gpu_dispatch`, `gpu_dispatch_indirect`,
+`gpu_draw_indirect`, `gpu_draw_indexed_indirect`, `gpu_buffer_copy`,
+`gpu_buffer_read`, `gpu_buffer_read_done`); `buffer_read_wait` is NULL.
+
+- **Buffers.** `TIDE_GPU_STORAGE` (kind 2) is made with STORAGE | VERTEX | INDEX
+  | INDIRECT | COPY_SRC | COPY_DST; WebGPU zeroes a buffer made without data.
+  Vertex and index buffers keep their old usages.
+- **Layouts.** A pipeline's storage reaches the page through one more import
+  between `gpu_pipeline_begin` and `gpu_pipeline_end`,
+  `gpu_pipeline_storage(count, writes, compute)`, called only for a pipeline
+  with storage or a compute one, so `gpu_pipeline_begin` kept its arguments.
+  `layoutFor(reads, through, storage, compute)` (`through`: which sampler each texture is read through, since
+  2026-11-05: notes/rendering.md, Sixteen textures a draw) adds buffer entries at 33 + i (25 + i before)
+  (`STORAGE_BINDING`), `storage` for one written and `read-only-storage`
+  otherwise. Only compute pipelines write: the C side sends no write bits for
+  a render pipeline and the page ignores any it gets (WebGPU has no written
+  storage in a vertex stage). A compute pipeline's entries, its uniforms and
+  textures too, are visible to COMPUTE; a render pipeline's to VERTEX |
+  FRAGMENT, as before. A pipeline without storage has the same layout key and
+  entries as before. Layouts were already explicit (never `'auto'`), so
+  bindings a shader leaves unused still bind.
+- **Bind groups** add each storage buffer (all of it) to their key, `s<id>`.
+  `storageGroups` maps a buffer's number to the keys of the groups it's in,
+  which `gpu_buffer_free` deletes, as `gpu_texture_free` does for textures;
+  it's cleared with the groups when the uniform buffer grows and on device
+  loss.
+- **Compute pipelines** (`desc.compute`): `createComputePipeline` with entry
+  point `compute`, or `createComputePipelineAsync` while background pipelines
+  are on; `addPipeline` is now shared by render and compute pipelines, and
+  `gpu_pipeline_ready` is unchanged.
+- **Passes and order.** A compute pass is its own encoder and `submit`, as a
+  render pass already was; `buffer_copy` and `buffer_read`'s copy are their
+  own submits too. Uniforms go into the shared uniform buffer with
+  `queue.writeBuffer` as they do in a render pass (`uniformsUsed` restarts at
+  each pass's begin). Queue order is then gpu.h's order: everything recorded
+  before a compute pass was submitted or written before it, and WebGPU places
+  the barriers between passes and between dispatches in a pass. Retired
+  uniform buffers are freed at `compute_end` as at `end`. Compute passes are
+  not timed (`gpu_time_*` and pass tokens are render passes').
+- **Draws and dispatches** bind as draws did (`bind()`, which `beforeDraw`
+  now calls). `draw_indirect`/`draw_indexed_indirect` use `drawIndirect` and
+  `drawIndexedIndirect`; `dispatch` `dispatchWorkgroups` (a count of 0 runs
+  nothing, which WebGPU allows).
+- **Reads.** `gpu_buffer_read` copies into a new MAP_READ buffer, submits and
+  calls `mapAsync`; its token counts from 1, skipping 0 and tokens still held.
+  The mapped bytes are copied out and the buffer destroyed as the promise
+  settles, so `gpu_buffer_read_done` only copies them into the program's
+  memory (1), says 0 before that, and -1 for a read whose map failed, an
+  unknown token, or a read pending when the device was lost (`deviceLost`
+  marks those). A read that landed before the loss still gives its bytes.
+  Nothing waits; a page's frames see a read land a frame or more later. A
+  read nobody polls is kept until the page goes.
+- **Device loss.** Pipelines, buffers, bind groups and `storageGroups` go with
+  the tables as before; the renderer makes them again on the next epoch.
+
+Tests: `tide_platform_compute_webgpu` (since 2026-11-05 `tide_platform_compute`; `platform/tests/compute.c`, WGSL by
+hand) passes on Chrome 156's software WebGPU: two compute passes with four
+pipelines (storage read and written in one pass, workgroup memory and its
+barrier, every atomic on storage and workgroup memory, 3D workgroups and
+`num_workgroups`), an indirect dispatch whose size a dispatch wrote, a zero
+dispatch, `buffer_copy` at offsets, `draw_indirect` and
+`draw_indexed_indirect` whose numbers, indices (a storage buffer as indices)
+and corners compute wrote, storage read in vertex and fragment stages, a
+storage buffer as vertices, and six asynchronous reads. On WebGPU it then
+begins a read, loses the device (`Tide.loseDevice()`), checks that read gives
+-1, waits for the next epoch and does everything again with background
+pipelines on (`createComputePipelineAsync`, waiting on `pipeline_ready`),
+with every result zeroed between. Its WebGL test printed `SKIPPED:` (WebGL 2
+couldn't compute; it went 2026-11-05). `cmake/web_runtime.test.mjs`
+gained a layout check (storage bindings, their types and stages, compute
+visibility, unchanged layouts without storage). The release runtime was
+regenerated (76,179 bytes). The other platform WebGPU tests (draw, targets,
+shaders, prewarm, gpu_time, texture capacity, GPU functions, fills, float
+bits, camera precision, skinned, baked, web stats) pass unchanged.
+
+## Memory grown in big steps (2026-11-04)
+
+Mount & Rifle's web build froze for ~25 s going on foot: wasi-libc's dlmalloc
+asks `sbrk` for only what it lacks, in 64 KiB steps, holding its one lock (a spin
+lock: `sched_yield` is `() => 0` in `tide.js`), and a grow of Chrome's shared
+memory costs time with the memory's size, not the step's (0.25 ms at 62 MB,
+1.5-2.2 ms at 1 GB, 4.5-5 ms at 2.8 GB). A gigabyte taken in small blocks was
+thousands of grows with every other thread, the page's among them, spinning.
+
+The engine's `sbrk` (`engine/src/page.c`) now hands out from a break of its own,
+starting at wasm-ld's `__heap_end` (where dlmalloc's first segment ends), and
+grows the memory by a quarter of its size, 16 MiB at least and 256 MiB at most,
+or what's lacking if more; near the 4 GiB limit, where the big step fails, only
+what's lacking. What's grown and not handed out is untouched. A negative `sbrk`
+(dlmalloc giving back a contiguous extension it couldn't use) moves the break
+back, where it used to abort. `sbrk` has its own small spin lock (dlmalloc
+already calls it under its global lock). Where it hands out memory another
+thread grew, it brings its own thread's view up to date first (`memory.grow(0)`),
+since dlmalloc writes its headers there at once. `grown`/`tide_memory_sync` are
+unchanged. Memory a page made bigger than the program's initial size would now
+be used from `__heap_end` without growing, but no page option sets that (not
+added: the big steps make it unnecessary).
+
+The malloc lock still spins: the page's thread can't block, and with grows rare
+it's held only briefly. Not changed.
+
+Measured in headless Chrome 156 (cross-origin isolated, 24 threads, web-release),
+with a scratch C page (not kept): a held 1.5 GB block, then 23 workers taking
+1 GB in 4-64 KiB blocks (freeing one in eight) while the page's thread runs
+frames with 64 small mallocs each. Before: 79.6 s, 14,414 grows, worst frame gap
+585 ms. After: 104/125/111 ms (three runs), 4 grows, worst gap 10-14 ms; memory
+ends at 2,561 MiB against 2,478 (the last step's unused part).
+
+`page_memory_grows_in_big_steps` (`tests/test_page.c`, WASI only) takes 64 MiB
+in 32 KiB blocks and checks the memory grew at most 6 times; it fails on the old
+`sbrk`. Validation: web-release `tide_tests`, all `tidec_e2e_*`, safety, versus
+and quick benchmarks (335), threads, jobs, Box2D/Box3D and draw tests pass.
+Native is unchanged (the code is WASI only).
+
+## GPU pass timing identities (2026-11-03)
+
+WebGPU's existing pass timestamp readback now optionally retains renderer
+uint32 tokens and queues their completed durations independently of the newest
+frame-total result. C imports reserve/end/read/reset pass observations; the
+reader writes a uint32 token through the supplied current WASM-memory view.
+A 1,024-token budget includes unresolved and unread results. Generation guards
+cancel reset/device-loss callbacks, and invalid/backwards timestamps release
+accepted tokens with an invalid observation rather than invented zero cost.
+No extra pass, query resolve, submission or map is needed for detailed timing.
+JSON --profile export is still desktop-only; custom hosts can use the collector.
+
+The checked-in release runtime is regenerated. Existing WebGPU mocks plus
+attributed-token delay/order/pressure/reset/invalid-result checks pass, and the
+web-debug timing/draw/targets fixtures pass on WebGL and WebGPU. Report tests
+pass under WASI. Contracts and limits are in rendering.md and standard-host.md.
+
+
+## Bounded WebGPU upload views (2026-11-03)
+
+Mount & Rifle reported Firefox's `GPUQueue.writeBuffer` rejection of an
+ArrayBufferView larger than 2 GB (Mozilla bug 2022805). `memoryBytes` now
+constructs a view of just the upload's bytes, with source offset zero, instead
+of passing a view of the entire WASM heap. The view shares the backing memory;
+no additional byte copy or per-upload view allocation is introduced. The
+shared-write capability probe likewise passes a four-byte view, so heap size
+does not cause it to select the copying fallback. Browsers that actually reject
+shared writes retain that fallback. Imported signed i32 pointers are converted
+to unsigned addresses before constructing the view. Buffers, uniforms, textures,
+partial rows, compressed mip levels and cubemap faces already use this helper.
+No GPU import, renderer ABI or game-facing behavior changes. The generated
+release runtime and source manifest were regenerated (72,885 bytes).
+
+Validation: all six `cmake/web_runtime.test.mjs` tests pass on Node 24.22.1.
+The new regression uses real ordinary/shared WASM heaps above 2 GiB and covers
+low addresses, a range crossing 2 GiB, signed upper-half pointers, heap growth,
+aliasing without copying, bounded/cached capability probing and the unsupported
+shared-write fallback. It fails against the previous helper's whole-heap view.
+A scratch headless Chrome 156 WebGPU check uploads and reads back exact buffer
+and RGBA texture bytes at all three address ranges, with both ordinary and
+shared heaps; both retain the original backing memory without copying. Firefox
+159 returns no WebGPU adapter in headless mode on this machine, including with
+WebGPU explicitly enabled and its blocklist bypassed in the isolated test
+profile, so actual Firefox GPU execution remains unverified. Native and WebGL
+paths are unchanged; no game rebuild or prototype playtest was run.
+
+CLI build-mode correction (2026-10-30): --release retains readable tide.js,
+raw embedded payloads and WASM debug symbols. --distribution selects the former
+shipping runtime/compression/stripping policy; watched pages keep their existing
+policy. Historical CLI release references below now mean distribution; CMake
+Release/MinSizeRel and the tide.release.js filename are unchanged. Three-mode
+native/web artifact and debug/release watch validation: cli-and-packages.md.
 
 ## Split pages and the loader (2026-10-27)
 
@@ -61,7 +331,7 @@ self-contained page as an option.
 The existing gpu_pipeline_begin bridge carries two eight-slot banks of three-bit
 read kinds, as two uint32 arguments. JavaScript decodes each bank with shifts
 below thirty-two; no BigInt or retained WASM pointer crosses the call. WebGPU's
-bound arrays hold twelve slots while layouts/bind groups use the actual count.
+bound arrays hold twelve slots (sixteen since 2026-11-05) while layouts/bind groups use the actual count.
 The runtime fixture exercises every read kind independently in slots 8..11;
 the texture-capacity pixel fixture compares high-slot sampling against low-slot
 references and repeats after device loss. The release runtime was regenerated
@@ -192,7 +462,7 @@ Tide program's exports and memory. `tide.release.js` was regenerated. Used by
   - `tide_web_runtime` passed its three checks of generated-source freshness without loading minifier dependencies, inline license/hot-reload exclusion, exact bytes across gzip levels, empty/tiny payloads, corruption/CRC/ISIZE errors and debug/raw versus release/compressed page generation. The generated runtime passed 240 identical thread-test ticks and 24 skinning pixel checks on both file-page WebGL and served WebGPU. A staged CLI release page passed on served WebGL and WebGPU with separately compressed WASM (672,172 -> 271,538 bytes) and BMP pack (16,560 -> 205 bytes), asserting decoded dimensions and exact RGBA values. All browsers were muted. CMake tracks the page writer itself in `LINK_DEPENDS`, so compression/paging changes regenerate existing pages.
 - The `web-debug` and `web-release` presets build everything as WebAssembly with clang's own wasm target and wasi-libc, not Emscripten: `cmake --workflow --preset web-debug` (see `cmake/wasi-toolchain.cmake`). They need clang with `wasm-ld` (LLVM's releases have it; on Linux, the distribution's `lld`) and Node. wasi-sdk's C library is downloaded once into `build/wasi-sdk-<version>`, pinned.
 - Tests run under Node's WASI through CTest (`cmake/run_wasi.mjs`), so the determinism hashes cover exactly what ships. Games generate their C with a native tidec, which web builds build first in `<build>/host` (`cmake/HostTidec.cmake`), with the same `TIDE_VERSION`, which `#if TIDE_0_3_OR_NEWER` reads (`compiler/src/version.c`).
-- In the browser, `platform/web/tide.js` runs the program: the canvas, input and frame loop (`platform/web/tide_web.h`), what the renderer draws with (WebGPU, or the OpenGL ES 3 functions of `platform/src/gl.h` on WebGL 2: see Rendering and platform), and the few WASI functions wasi-libc needs. The platform layer's window there is the page's canvas (`platform/web/canvas.c`). A web page is one self-contained `.html` with the program inside (`cmake/web_page.mjs`, or `tide build --web --single-file`), or since 2026-10-27, by default under `tide build --web`, a page that downloads the program and pack beside it (Split pages and the loader, above).
+- In the browser, `platform/web/tide.js` runs the program: the canvas, input and frame loop (`platform/web/tide_web.h`), what the renderer draws with (WebGPU: see Rendering and platform; WebGL 2's GL functions went 2026-11-05), and the few WASI functions wasi-libc needs. The platform layer's window there is the page's canvas (`platform/web/canvas.c`). A web page is one self-contained `.html` with the program inside (`cmake/web_page.mjs`, or `tide build --web --single-file`), or since 2026-10-27, by default under `tide build --web`, a page that downloads the program and pack beside it (Split pages and the loader, above).
 - A page's address says a few of the things a command line does (`tide.js`, where it makes the program's arguments): `debug-views` is `--debug-views`, and `host` and `join=<code>` are `--host` and `--join <code>` (letters, digits and a slash, so `join=K7QF2M/0` asks for a server's match, as a sharded world's front is), unless the page's own `Tide.arguments` say which match; so a link can be an invitation, and a page that shows games in frames can put them in one match (the docs' examples do: see Docs site). For such a page, `Tide.room` is the code of the room the program hosts or joined, `""` for none, read as it is at that moment. `Tide.lag`, or `lag=<ms>` in the address, is the round trip to its match's server the page's player is to have (2 seconds at most), which the page can change as the game runs: latency to look at with both players at one desk, since nothing else gives a page any. These three are Provisional: picks of the docs' examples' that the owner hasn't confirmed, but for what a lag means (below). `latency=`, `jitter=` and `loss=` (2026-10-27) are `--latency`, `--jitter` and `--loss` in the program's arguments, unless the page's own say them: a fixed delay each way added in the program (`tide_net_conditioned`), not a target ping; see notes/standard-host.md, A slow network to play on.
   - A lag is a ping (agreed 2026-10-05): the session's, the network's whole round trip to the match's server (see Networking), with what the network takes already in it. A lag of 100 reads as a ping of 100: not 100 each way, and not 100 more than the player had.
   - So the page has to know the ping. The session measures it, and a host says it every frame: `tide_platform_room_ping(ping_ms, answer_ms)` (`platform/src/rooms.c`; nothing on desktop), which `tide/host.h` calls with its client's `ping_ms` and `answer_ms`, the ping -1 (none) for a machine that runs the server and for one not in the match yet: the round trips of joining aren't like a match's. A host that never says gets the lag on top of its ping.
@@ -220,7 +490,7 @@ Tide program's exports and memory. `tide.release.js` was regenerated. Used by
   - `TIDE_THREADS=<n>` tells a program under `cmake/run_wasi.mjs` the machine has that many, for measuring. Desktop's pool had the same cost in a smaller measure, and its workers leave a tick and sleep the same way (see Determinism, Systems that touch the same data: the tick runs on threads).
   - `jobs_threads_come_back` (`platform/tests/jobs.c`, where a pool has `more`: on desktop and under Node) runs a system until the other threads have left the tick, then sixteen tasks, and checks threads that had left ran some. `jobs_threads_change_nothing` and `tide_platform_web_threads` run C that works in stages (`stage_out` in `platform/tests/jobs_tasks.c`), whose workers sleep between them where they can: in a page, a wait on its own thread would stop the program.
 - Games keep running where nobody sees them, so a match goes on for the other players when its host switches tabs or minimizes. Browsers stop a hidden page's animation frames and slow its timers to about one a second, so while the page is hidden, frames come from a worker's timers (`tide.js`). Desktop windows keep running while minimized, waiting between frames on GLFW's events (`glfwWaitEventsTimeout`), so a window restored or closed goes on at once. Either way, each frame comes when the host says it next has work (`tide_platform_next_frame`), which for `tide/host.h` is its match's next tick (`tide_session_until_tick`), so frames follow the tick rate; a host that doesn't say gets 60 a second. Neither draws meanwhile (`tide_platform_draw`). `tide_platform_web_rooms` hides the host's page past the players' timeout, with its own timers and animation frames stopped (stricter than browsers, which slow them), and the match has to go on, with frames never faster than its tick rate. Like every test, it can't rest on how fast the machine is: a flaky test is a broken test, fixed rather than loosened or skipped.
-- Web tests that need real time are served to the browser (`cmake/run_web_served_test.mjs`): the WebGPU ones, `tidec_e2e_fetch_web`, and `tide_platform_web_io`, the files test, which goes through seven pages in one browser, a phase each (`platform/tests/web_io.html`). The page's shell sends each line the program prints, and its result, to the runner's server, in order.
+- Web tests are served to the browser in real time (`cmake/run_web_served_test.mjs`): since 2026-11-05 every `tide_add_web_test`, and `tidec_e2e_fetch_web` and `tide_platform_web_io`, the files test, which goes through seven pages in one browser, a phase each (`platform/tests/web_io.html`). The page's shell sends each line the program prints, and its result, to the runner's server, in order.
   - **A served test that fails ends with an account**, each line with when: the pages the server was asked for, and what the browser itself said of the page, which the runner hears over DevTools (`--remote-debugging-pipe`, as `rooms.mjs` has it; the browser opens on an empty page and is sent to the test's once DevTools listens, so nothing goes unheard): where the page went, what it threw, its console's errors, what it couldn't load and why, its process crashing. A crash, or the browser ending, fails the test at once.
   - **A page that gives no result is asked before the test gives up** (`where` and `tries` in the runner). Where it is: its address, how far it loaded, whether it's shown, and `window.tideSteps`, the steps its shell noted as it went (the page started, the program's first line, its exit, a line that couldn't be sent, the page hidden or frozen; `web_io.html` also what IndexedDB was asked and what it answered, as a program that keeps files starts once they're read, so a page that waits there prints nothing). And whether a timer, IndexedDB and a request to the server still come to it, read back 3 seconds later. So "no result" says which it was: a page that never loaded, one that waits for something that never came (and what), one whose thread is busy (no answer at all), one that's frozen (it answers, and none of the three comes), or one that's gone.
   - **A page never ends with nothing said.** The shells (`platform/web/test_shell.html`, `demo/shell.html`, `web_io.html`, and `platform/tests/web_threads.html`, whose runner is its own) send lines one after another in a chain of promises, and one fetch that failed left the chain rejected: no line after it, no next phase and no result. A line that can't be sent is the test's result now, and each answer is read to its end, which is when the browser has a request as done.

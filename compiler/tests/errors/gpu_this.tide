@@ -1,4 +1,4 @@
-// expect: a frag's pixel has one method, 'Discard()', which leaves it undrawn; the rest are its fields
+// expect: a frag's pixel has the methods 'Discard()', which leaves it undrawn, 'Cutout(alpha)' and 'Coverage(share)', which say how much of it the frag covers, and 'Ddx(v)', 'Ddy(v)' and 'Fwidth(v)', how fast a value changes across it; the rest are its fields
 scene Main { }
 
 struct V

@@ -1,0 +1,18 @@
+// expect: 'this.Fwidth' asks how fast a value changes as the frag starts, and this one can't be worked out there: it's made of a variable that changes, or of one a loop counts
+// expect: a GPU says how fast a value changes from pixel to pixel only before any branch or loop: make it of the frag's parameters, constants and variables declared with 'var' and never assigned again
+scene Main { }
+local singleton Art
+{
+    List<Vertex3> mesh;
+    List<int> faces;
+}
+frag Edge(Vertex3 vertex, out Color color)
+{
+    mut float d = vertex.uv.x;
+    if (vertex.uv.y > 0.5) d = 1 - d;
+    color = Color(this.Fwidth(d), 0, 0);
+}
+view Show(Art art)
+{
+    Draw.Mesh(art.mesh, art.faces, float4x4.identity, Edge);
+}

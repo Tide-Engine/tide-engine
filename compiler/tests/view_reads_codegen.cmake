@@ -14,7 +14,7 @@ function(body_of start output)
     set(${output} "${body}" PARENT_SCOPE)
 endfunction()
 # Views that read some of Wide gather and blend only that
-foreach(view IN ITEMS ReadSome Marked)
+foreach(view IN ITEMS ReadSome Marked Figures)
     body_of("static void tide_run_view_${view}(" body)
     if(NOT body MATCHES "tide_gather_some_Wide" OR NOT body MATCHES "tide_blend_some_Wide\\(&tide_v0, tide_prev_some_Wide")
         message(FATAL_ERROR "${view} reads a few of Wide's fields, yet copies all of it")
@@ -28,6 +28,22 @@ endif()
 body_of("static void tide_run_view_ReadAll(" whole)
 if(whole MATCHES "_some_Wide" OR NOT whole MATCHES "tide_gather_Wide\\(")
     message(FATAL_ERROR "ReadAll reads all of Wide, yet copies only some of it")
+endif()
+# ShaderMaterial is also a shader input, but binding only its attached fields
+# reads zero match lanes. Ordinary numeric readers still blend selected lanes;
+# the drawing view keeps the conservative complete shader-input copy.
+body_of("static void tide_run_view_BindMaterial(" binder)
+if(NOT binder MATCHES "tide_gather_some_ShaderMaterial" OR NOT binder MATCHES "UINT64_C\\(0x0\\)"
+    OR binder MATCHES "tide_gather_ShaderMaterial\\(")
+    message(FATAL_ERROR "An attached-only non-drawing binder gathers shader material match lanes")
+endif()
+body_of("static void tide_run_view_ReadMaterial(" reader)
+if(NOT reader MATCHES "tide_gather_some_ShaderMaterial" OR NOT reader MATCHES "tide_blend_some_ShaderMaterial")
+    message(FATAL_ERROR "A non-drawing numeric reader gathers the complete shader material")
+endif()
+body_of("static void tide_run_view_DrawMaterial(" drawing)
+if(drawing MATCHES "_some_ShaderMaterial" OR NOT drawing MATCHES "tide_gather_ShaderMaterial\\(")
+    message(FATAL_ERROR "A drawing view dropped its implicit shader-input lanes")
 endif()
 # A helper given its singleton's lists and another's to change reads them where
 # they are; one changing a list its Shelf holds reads a copy

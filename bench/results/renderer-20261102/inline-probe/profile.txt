@@ -1,0 +1,89 @@
+renderer: Vulkan; fixed 1920x1080; isolated static frames; CPU/GPU overlap; readback is not FPS
+equivalent: 10000 meshes + receiver, mixed, 4 lights, 8 shadow views, 12 calls, digest c883b2d2f95b0ded
+package, mixed, 10000 meshes: record 6.1309, submit 0.4027 ms, GPU 3.1755 ms (600/600 samples)
+
+320904 samples over 11501 rounds (exit 0); 5954 in C:\Users\blenm\.t3\worktrees\PurrEngine\t3-8c449f69\build\release\bin\bench_render3d.exe
+  elsewhere     302426 samples, 5079.38% of the program's  ntdll.dll
+  elsewhere      11133 samples,  186.98% of the program's  win32u.dll
+  elsewhere       1074 samples,   18.04% of the program's  VCRUNTIME140.dll
+  elsewhere        180 samples,    3.02% of the program's  nvoglv64.dll
+  elsewhere        108 samples,    1.81% of the program's  (unknown)
+  elsewhere         13 samples,    0.22% of the program's  KERNELBASE.dll
+  elsewhere          3 samples,    0.05% of the program's  USER32.dll
+  elsewhere          3 samples,    0.05% of the program's  amdvlk64.dll
+
+  innermost function (inlined code counts where it was written), % of the program's samples:
+   25.21%  vk_target_read_part
+   12.28%  ??:0:0
+    5.37%  tide_function_Render3D_DrawMaterialGeometry
+    3.28%  tide_view_Render3D_Cast
+    2.87%  tide_list_cache_fill
+    2.86%  shaded_instances
+    2.54%  tide_function_Render3D_Maps
+    2.45%  tide_hash_more
+    2.42%  shaded_placed
+    2.32%  tide_function_Render3D_CastBatch
+    1.91%  shaded_visible
+    1.63%  tide_function_Render3D_DrawMaterial
+    1.56%  tide_run_view_Render3D_DrawMesh
+    1.39%  cull_load4
+    1.34%  cull_quick
+    1.19%  tide_query_Render3D_DrawTransparent_2
+    1.14%  tide_list_at
+    1.11%  tide_query_Render3D_Cast_2
+    1.04%  mix
+    0.97%  tide_texture_size
+    0.96%  tide_gui_seed
+    0.94%  cull_measure
+    0.89%  cull_box_of
+    0.86%  tide_function_Render3D_Mirrors
+    0.82%  tide_attached_find
+
+  outermost function (what it was inlined into):
+   25.21%  vk_target_read_part
+   12.23%  ??:0:0
+   12.13%  tide_frame
+    7.63%  shaded_placed
+    6.72%  tide_function_Render3D_DrawMaterialGeometry
+    4.50%  tide_list_cache_fill
+    3.41%  shaded_instances
+    3.26%  tide_hash_more
+    2.79%  shaded_visible
+    2.75%  tide_function_Render3D_Maps
+    2.65%  tide_function_Render3D_CastBatch
+    1.63%  tide_function_Render3D_DrawMaterial
+    1.43%  shaded_mesh
+    1.04%  tide_hash_end
+    1.01%  draw_to_version
+    0.97%  tide_texture_size
+    0.96%  tide_gui_seed
+    0.79%  tide_draw_push_cull
+    0.77%  reserve
+    0.66%  tide_draw_shaded_instances
+    0.64%  draw_bounds
+    0.62%  tide_pack_list_version
+    0.60%  list_version
+    0.55%  tide_draw_pop
+    0.54%  frustum_camera
+
+  lines:
+   19.48%  vk_target_read_part                      src\gpu_vk.c:1775:0
+   12.28%  ??:0:0                                   
+    5.73%  vk_target_read_part                      src\gpu_vk.c:1774:0
+    4.50%  tide_function_Render3D_DrawMaterialGeometry render3d\render3d.tide:920:0
+    2.32%  tide_function_Render3D_CastBatch         render3d\render3d.tide:690:0
+    2.30%  tide_function_Render3D_Maps              render3d\render3d.tide:696:0
+    1.63%  tide_list_cache_fill                     src\list.c:74:0
+    1.58%  tide_hash_more                           src\net.c:714:0
+    1.39%  cull_load4                               src\frustum_cull.h:189:0
+    1.11%  tide_list_at                             tide\list.h:97:0
+    0.91%  shaded_placed                            src\draw.c:3251:0
+    0.91%  tide_view_Render3D_Cast                  render3d\render3d.tide:583:0
+    0.89%  tide_run_view_Render3D_DrawMesh          bench_render3d\game.c:45714:0
+    0.87%  shaded_instances                         src\draw.c:2978:0
+    0.86%  tide_function_Render3D_Mirrors           render3d\render3d.tide:548:0
+    0.86%  tide_query_Render3D_DrawTransparent_2    bench_render3d\game.c:45770:0
+    0.82%  tide_view_Render3D_Cast                  render3d\render3d.tide:582:0
+    0.79%  shaded_visible                           src\draw.c:3117:0
+    0.76%  tide_query_Render3D_Cast_2               bench_render3d\game.c:45577:0
+    0.71%  tide_list_cache_fill                     src\list.c:75:0

@@ -1,0 +1,19 @@
+// expect: a GPU list has 'count', 'capacity' and 'contentRevision'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+view Show(Meadow meadow)
+{
+    Draw.Circle(float2(0, 0), float(meadow.blades.length), Color.white);
+}

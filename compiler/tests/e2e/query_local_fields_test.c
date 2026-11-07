@@ -3,7 +3,7 @@
 
 static tide_draw_list draw;
 static tide_gui gui;
-static const tide_entity FIRST = {1, 1}, SECOND = {2, 1};
+static tide_entity FIRST, SECOND;
 static void frame(tide_world *w, const tide_world *verified, tide_local *l)
 {
     tide_draw_reset(&draw);
@@ -12,7 +12,7 @@ static void frame(tide_world *w, const tide_world *verified, tide_local *l)
 TIDE_TEST(query_local_fields_reads_defaults_and_writes_through_borrowed_helpers)
 {
     tide_world w = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
     const uint64_t hash = tide_world_hash(&w);
     l.Control.mode = 1; frame(&w, NULL, &l);
     TIDE_CHECK(l.Seen.total == 18);
@@ -27,7 +27,7 @@ TIDE_TEST(query_local_fields_reads_defaults_and_writes_through_borrowed_helpers)
 TIDE_TEST(query_local_fields_read_rows_resolve_current_local_values)
 {
     tide_world w = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
     l.Control.mode = 3; frame(&w, NULL, &l);
     TIDE_CHECK(l.Seen.before == 8 && l.Seen.after == 12);
     TIDE_CHECK(tide_get_Body_local(&l, FIRST).flash == 7);
@@ -38,7 +38,7 @@ TIDE_TEST(query_local_fields_read_rows_resolve_current_local_values)
 TIDE_TEST(query_local_fields_verified_match_values_keep_current_local_state)
 {
     tide_world w = {0}, confirmed = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l); tide_world_copy(&confirmed, &w);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l); tide_world_copy(&confirmed, &w);
     tide_world_tick(&w);
     l.Control.mode = 4; frame(&w, &confirmed, &l);
     TIDE_CHECK(l.Seen.positions == 3 && tide_get_Body_local(&l, FIRST).flash == 4);
@@ -49,7 +49,7 @@ TIDE_TEST(query_local_fields_verified_match_values_keep_current_local_state)
 TIDE_TEST(query_local_fields_events_record_only_match_values)
 {
     tide_world w = {0}; tide_local l = {0}; tide_event_log events = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
     w.Actions.send = true; tide_world_tick_events(&w, NULL, &events); w.Actions.send = false;
     l.Control.mode = 2; frame(&w, NULL, &l); // Locals change after recording.
     const uint64_t hash = tide_world_hash(&w);
@@ -61,7 +61,7 @@ TIDE_TEST(query_local_fields_events_record_only_match_values)
 TIDE_TEST(query_local_fields_methods_inline_actions_and_operand_order)
 {
     tide_world w = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
     l.Control.mode = 6; frame(&w, NULL, &l);
     TIDE_CHECK(tide_get_Body_local(&l, FIRST).flash == 5);
     l.Control.mode = 7; frame(&w, NULL, &l);
@@ -73,7 +73,7 @@ TIDE_TEST(query_local_fields_methods_inline_actions_and_operand_order)
 TIDE_TEST(query_local_fields_handle_reuse_uses_defaults_and_releases_old_fields)
 {
     tide_world w = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
     l.Control.mode = 2; frame(&w, NULL, &l);
     tide_entity_set_born(&w.entities, FIRST, 12345);
     l.Control.mode = 1; frame(&w, NULL, &l);
@@ -86,7 +86,7 @@ TIDE_TEST(query_local_fields_handle_reuse_uses_defaults_and_releases_old_fields)
 TIDE_TEST(query_local_fields_chunked_iteration_preserves_match_snapshots)
 {
     tide_world w = {0}, snapshot = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
     w.Actions.count = 5000; tide_world_tick(&w); w.Actions.count = 0;
     tide_world_copy(&snapshot, &w);
     const uint64_t hash = tide_world_hash(&w);
@@ -99,8 +99,8 @@ TIDE_TEST(query_local_fields_chunked_iteration_preserves_match_snapshots)
 TIDE_TEST(query_local_fields_birth_reset_preserves_an_active_outer_alias)
 {
     tide_world w = {0}, before = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l); tide_world_copy(&before, &w);
-    const tide_entity first = {3, 1}, second = {4, 1};
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l); tide_world_copy(&before, &w);
+    const tide_entity first = tide_entity_in_slot(&w.entities, 3), second = tide_entity_in_slot(&w.entities, 4);
     tide_entity_set_born(&w.entities, first, 54321);
     frame(&w, NULL, &l); // The outer binding is now the predicted entity's.
     l.Control.mode = 9; frame(&w, &before, &l);
@@ -111,7 +111,7 @@ TIDE_TEST(query_local_fields_birth_reset_preserves_an_active_outer_alias)
 TIDE_TEST(query_local_fields_mixed_verified_bindings_share_current_local_fields)
 {
     tide_world w = {0}, confirmed = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l); tide_world_copy(&confirmed, &w);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l); tide_world_copy(&confirmed, &w);
     tide_world_tick(&w);
     l.Control.mode = 10; frame(&w, &confirmed, &l);
     TIDE_CHECK(l.Seen.total == 4 && l.Seen.positions == 1);
@@ -121,9 +121,9 @@ TIDE_TEST(query_local_fields_mixed_verified_bindings_share_current_local_fields)
 TIDE_TEST(query_local_fields_mutable_reference_is_prepared_before_assignment_operands)
 {
     tide_world w = {0}, confirmed = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l); tide_world_copy(&confirmed, &w);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l); tide_world_copy(&confirmed, &w);
     l.Control.mode = 5; frame(&w, NULL, &l);
-    const tide_entity first = {3, 1}, second = {4, 1};
+    const tide_entity first = tide_entity_in_slot(&w.entities, 3), second = tide_entity_in_slot(&w.entities, 4);
     tide_entity_set_born(&w.entities, first, 54321);
     l.Control.mode = 11; frame(&w, &confirmed, &l);
     TIDE_CHECK(tide_get_Small_local(&l, first).value == 15);
@@ -134,18 +134,18 @@ TIDE_TEST(query_local_fields_readonly_outer_and_row_borrows_observe_query_writes
 {
     for (int mode = 12; mode <= 13; mode++) {
         tide_world w = {0}; tide_local l = {0};
-        tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+        tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
         l.Control.mode = mode; frame(&w, NULL, &l);
         TIDE_CHECK(l.Seen.total == 2);
-        TIDE_CHECK(tide_get_Plain_local(&l, (tide_entity){5, 1}).value == 9);
-        TIDE_CHECK(tide_get_Plain_local(&l, (tide_entity){6, 1}).value == 9);
+        TIDE_CHECK(tide_get_Plain_local(&l, tide_entity_in_slot(&w.entities, 5)).value == 9);
+        TIDE_CHECK(tide_get_Plain_local(&l, tide_entity_in_slot(&w.entities, 6)).value == 9);
         tide_local_free(&l); tide_world_free(&w);
     }
 }
 TIDE_TEST(query_local_fields_separate_loops_read_match_fields_then_attached_helper_defaults)
 {
     tide_world w = {0}; tide_local l = {0};
-    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    tide_world_init(&w, 1.0f / 60); FIRST = tide_entity_in_slot(&w.entities, 1); SECOND = tide_entity_in_slot(&w.entities, 2); tide_local_init(&l);
     const uint64_t hash = tide_world_hash(&w);
     l.Control.mode = 14; frame(&w, NULL, &l);
     TIDE_CHECK(l.Seen.before == 3 && l.Seen.total == 18);

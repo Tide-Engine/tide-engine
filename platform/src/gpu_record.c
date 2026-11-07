@@ -104,10 +104,52 @@ static tide_gpu_id record_texture(const tide_gpu_format format, const int width,
     return id;
 }
 
+static uint32_t block_formats; // 1 << format for each the other program samples (tide_embed_render_formats)
+
+void tide_gpu_record_block_formats(const uint32_t formats)
+{
+    block_formats = formats & (1u << TIDE_BLOCKS_BC1 | 1u << TIDE_BLOCKS_BC3);
+}
+
+// Blocks the other program takes, whole: every level, as tide_texture_blocks_size has them. RGBA8 chains always.
+static bool takes_blocks(const int width, const int height, const tide_texture_blocks blocks)
+{
+    uint32_t levels, bytes;
+    if (!blocks.pixels || width <= 0 || height <= 0) return false;
+    if (blocks.format != TIDE_BLOCKS_RGBA8 && !(blocks.format < 32u && block_formats >> blocks.format & 1u)) return false;
+    return tide_texture_blocks_size(width, height, blocks.format, &levels, &bytes) && levels == blocks.levels
+           && bytes == blocks.bytes;
+}
+
 static tide_gpu_id record_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
 {
-    (void)width, (void)height, (void)blocks;
-    return 0; // The renderer sends RGBA instead
+    if (!takes_blocks(width, height, blocks)) return 0; // The renderer sends RGBA instead
+    const uint32_t id = ++next_id;
+    op(TIDE_EMBED_RENDER_TEXTURE_BLOCKS, 24u + (size_t)blocks.bytes);
+    u32(id);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(blocks.format);
+    u32(blocks.levels);
+    u32(blocks.bytes);
+    bytes(blocks.pixels, blocks.bytes);
+    return id;
+}
+
+static tide_gpu_id record_array_blocks(const int width, const int height, const uint32_t layers, const tide_texture_blocks blocks)
+{
+    if (!layers || layers > TIDE_GPU_MAX_LAYERS || !takes_blocks(width, height, blocks)) return 0;
+    const uint32_t id = ++next_id;
+    op(TIDE_EMBED_RENDER_ARRAY_BLOCKS, 28u + (size_t)blocks.bytes * layers);
+    u32(id);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(layers);
+    u32(blocks.format);
+    u32(blocks.levels);
+    u32(blocks.bytes);
+    bytes(blocks.pixels, (size_t)blocks.bytes * layers);
+    return id;
 }
 
 // A texture's part, its rows one after another: `pixels` is the whole texture's.
@@ -177,8 +219,20 @@ static void record_mipmaps(const tide_gpu_id texture)
     u32(texture);
 }
 
+// Arrays of a format (array_of), by their ids
+typedef struct record_array_format {
+    tide_gpu_id id;
+    tide_gpu_format format;
+    int width;
+} record_array_format;
+static record_array_format array_formats[256];
+static uint32_t array_format_count;
+
 static void record_texture_free(const tide_gpu_id texture)
 {
+    for (uint32_t i = 0; i < array_format_count; i++) {
+        if (array_formats[i].id == texture) array_formats[i].id = 0;
+    }
     for (uint32_t i = 0; i < shape_count; i++) {
         if (shapes[i].id == texture) shapes[i] = shapes[--shape_count];
     }
@@ -229,6 +283,88 @@ static target_textures *find_target(const tide_gpu_id id)
     return NULL;
 }
 
+// An array: its depth array's id is given with it, kept as a target's depth is (array_depth).
+static tide_gpu_id record_array(const tide_gpu_target_format format, const int width, const int height, const uint32_t layers,
+                                const void *const *pixels)
+{
+    const uint32_t id = ++next_id;
+    const size_t layer = (size_t)width * (size_t)height * 4u;
+    target_textures *t = add_target(id);
+    if (!pixels) t->depth = ++next_id;
+    op(TIDE_EMBED_RENDER_ARRAY, 28u + (pixels ? layer * layers : 0u));
+    u32(id);
+    u32((uint32_t)format);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(layers);
+    u32(pixels != NULL);
+    u32(t->depth);
+    for (uint32_t i = 0; pixels && i < layers; i++) bytes(pixels[i], layer);
+    return id;
+}
+
+// An array of a format, written a part at a time (array_formats: its format kept, to know a pixel's bytes)
+
+static tide_gpu_id record_array_of(const tide_gpu_format format, const int width, const int height, const uint32_t layers)
+{
+    const uint32_t id = ++next_id;
+    op(TIDE_EMBED_RENDER_ARRAY_OF, 20u);
+    u32(id);
+    u32((uint32_t)format);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(layers);
+    record_array_format *f = NULL;
+    for (uint32_t i = 0; i < array_format_count && !f; i++) {
+        if (!array_formats[i].id) f = &array_formats[i];
+    }
+    if (!f && array_format_count < 256u) f = &array_formats[array_format_count++];
+    if (f) *f = (record_array_format){id, format, width};
+    return id;
+}
+
+static void record_array_write(const tide_gpu_id array, const uint32_t layer, const void *pixels, const int x, const int y,
+                               const int width, const int height)
+{
+    const record_array_format *f = NULL;
+    for (uint32_t i = 0; i < array_format_count && !f; i++) {
+        if (array_formats[i].id == array) f = &array_formats[i];
+    }
+    if (!f || width <= 0 || height <= 0) return;
+    const size_t pixel = (size_t)tide_gpu_format_bytes(f->format), row = (size_t)width * pixel;
+    const size_t bytes_of = row * (size_t)height;
+    op(TIDE_EMBED_RENDER_ARRAY_WRITE, 24u + (uint32_t)((bytes_of + 3u) & ~(size_t)3u));
+    u32(array);
+    u32(layer);
+    u32((uint32_t)x);
+    u32((uint32_t)y);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    for (int r = 0; r < height; r++) { // Into the room `op` made, the rows one after another, then zeros to 4 bytes
+        memcpy(stream + stream_size + (size_t)r * row, (const uint8_t *)pixels + (((size_t)(y + r) * (size_t)f->width) + (size_t)x) * pixel, row);
+    }
+    const size_t padded = (bytes_of + 3u) & ~(size_t)3u;
+    memset(stream + stream_size + bytes_of, 0, padded - bytes_of);
+    stream_size += padded;
+}
+
+static tide_gpu_id record_array_depth(const tide_gpu_id array)
+{
+    const target_textures *t = find_target(array);
+    return t ? t->depth : 0;
+}
+
+static tide_gpu_id record_array_layer(const tide_gpu_id array, const uint32_t layer)
+{
+    const uint32_t id = ++next_id;
+    add_target(id); // Its color and its depth are the array's: neither is a texture by itself
+    op(TIDE_EMBED_RENDER_ARRAY_LAYER, 12u);
+    u32(id);
+    u32(array);
+    u32(layer);
+    return id;
+}
+
 static tide_gpu_id record_cube_face(const tide_gpu_id cube, const uint32_t face)
 {
     const uint32_t id = ++next_id;
@@ -261,8 +397,10 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     const char *name = desc->name ? desc->name : "";
     const size_t name_size = strlen(name);
     const uint32_t textures = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
+    uint8_t sampler_reads[TIDE_GPU_MAX_TEXTURES];
+    const uint32_t samplers = tide_gpu_samplers(desc, sampler_reads);
     op(TIDE_EMBED_RENDER_PIPELINE, 4u * (3u + 1u + 2u * TIDE_GPU_MAX_SLOTS + 1u + 3u * TIDE_GPU_MAX_ATTRIBUTES + 2u
-                                         + textures + 7u + 1u) + name_size);
+                                         + textures + 1u + samplers + textures + 8u + 1u) + name_size);
     u32(id);
     u32((uint32_t)key);
     u32((uint32_t)(key >> 32));
@@ -281,6 +419,9 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     u32(desc->uniform_size);
     u32(textures);
     for (uint32_t i = 0; i < textures; i++) u32(desc->reads[i]);
+    u32(samplers); // Its samplers, apart from its textures: how each reads (TIDE_GPU_READ_DATA for none)...
+    for (uint32_t j = 0; j < samplers; j++) u32(sampler_reads[j]);
+    for (uint32_t i = 0; i < textures; i++) u32(tide_gpu_texture_samplers(desc, i)); // ...and which read each texture
     u32((uint32_t)desc->blend);
     u32((uint32_t)desc->depth);
     u32((uint32_t)desc->cull);
@@ -288,8 +429,18 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     u32((uint32_t)desc->stencil_op);
     u32(desc->into);
     u32(desc->outputs);
+    u32(desc->alpha_to_coverage);
     u32((uint32_t)name_size);
     bytes(name, name_size);
+    if (desc->compute || desc->storage_count) { // What it binds of storage, and whether it's a kernel's
+        uint32_t writes = 0;
+        for (uint32_t i = 0; i < desc->storage_count && i < TIDE_GPU_MAX_STORAGE; i++) writes |= desc->storage_writes[i] ? 1u << i : 0u;
+        op(TIDE_EMBED_RENDER_PIPELINE_STORAGE, 16u);
+        u32(id);
+        u32(desc->compute);
+        u32(desc->storage_count);
+        u32(writes);
+    }
     return id;
 }
 
@@ -325,11 +476,6 @@ static uint32_t record_target_samples(const tide_gpu_target_format format)
 {
     const uint32_t asked = tide_gpu_target_samples(format);
     return asked >= 8u ? 8u : asked >= 4u ? 4u : asked >= 2u ? 2u : 1u;
-}
-
-static bool record_float_targets(void)
-{
-    return true;
 }
 
 static tide_gpu_id record_target_texture(const tide_gpu_id target, const uint32_t color)
@@ -408,11 +554,17 @@ static void record_uniforms(const void *data, const size_t size)
     bytes(data, size);
 }
 
-static void record_sample(const uint32_t slot, const tide_gpu_id texture, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+static void record_image(const uint32_t slot, const tide_gpu_id texture)
 {
-    op(TIDE_EMBED_RENDER_SAMPLE, 16u);
+    op(TIDE_EMBED_RENDER_IMAGE, 8u);
     u32(slot);
     u32(texture);
+}
+
+static void record_sampler(const uint32_t slot, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+{
+    op(TIDE_EMBED_RENDER_SAMPLER, 12u);
+    u32(slot);
     u32((uint32_t)filter);
     u32((uint32_t)wrap);
 }
@@ -447,6 +599,162 @@ static void record_draw_indexed(const uint32_t count, const uint32_t instances)
     u32(instances);
 }
 
+static void record_storage(const uint32_t slot, const tide_gpu_id buffer)
+{
+    op(TIDE_EMBED_RENDER_STORAGE, 8u);
+    u32(slot);
+    u32(buffer);
+}
+
+static void record_compute_begin(void)
+{
+    op(TIDE_EMBED_RENDER_COMPUTE_BEGIN, 0u);
+}
+
+static void record_compute_end(void)
+{
+    op(TIDE_EMBED_RENDER_COMPUTE_END, 0u);
+}
+
+static void record_dispatch(const uint32_t x, const uint32_t y, const uint32_t z)
+{
+    op(TIDE_EMBED_RENDER_DISPATCH, 12u);
+    u32(x);
+    u32(y);
+    u32(z);
+}
+
+static void record_indirect(const tide_embed_render_op o, const tide_gpu_id buffer, const size_t offset)
+{
+    op(o, 8u);
+    u32(buffer);
+    u32((uint32_t)offset);
+}
+
+static void record_dispatch_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    record_indirect(TIDE_EMBED_RENDER_DISPATCH_INDIRECT, buffer, offset);
+}
+
+static void record_draw_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    record_indirect(TIDE_EMBED_RENDER_DRAW_INDIRECT, buffer, offset);
+}
+
+static void record_draw_indexed_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    record_indirect(TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT, buffer, offset);
+}
+
+static void record_draw_indexed_indirect_count(const tide_gpu_id buffer, const size_t offset, const uint32_t most,
+                                               const tide_gpu_id counts, const size_t count_offset)
+{
+    op(TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT, 20u);
+    u32(buffer);
+    u32((uint32_t)offset);
+    u32(most);
+    u32(counts);
+    u32((uint32_t)count_offset);
+}
+
+// The other program draws each record as it is, but for its first instance: its draws' instances count from 0
+static uint32_t record_indirect_can(void)
+{
+    return 0;
+}
+
+static void record_buffer_copy(const tide_gpu_id from, const size_t from_offset, const tide_gpu_id to, const size_t to_offset,
+                               const size_t size)
+{
+    op(TIDE_EMBED_RENDER_BUFFER_COPY, 20u);
+    u32(from);
+    u32((uint32_t)from_offset);
+    u32(to);
+    u32((uint32_t)to_offset);
+    u32((uint32_t)size);
+}
+
+// Reads back: the other program makes each (BUFFER_READ) and hands its bytes over (tide_embed_render_read), which
+// buffer_read_done gives the renderer as it polls. The renderer has at most TIDE_GPU_READS begun.
+#define RECORD_READS 128u
+
+typedef struct record_read {
+    uint32_t token; // 0 for a free place
+    uint32_t size;
+    int state;      // 0 waiting, 1 here, -1 failed
+    uint8_t *data;
+} record_read;
+
+static record_read reads[RECORD_READS];
+static uint32_t next_token;
+
+static record_read *read_of(const uint32_t token)
+{
+    for (uint32_t i = 0; token && i < RECORD_READS; i++) {
+        if (reads[i].token == token) return &reads[i];
+    }
+    return NULL;
+}
+
+static void let_go(record_read *r)
+{
+    free(r->data);
+    *r = (record_read){0};
+}
+
+static uint32_t record_buffer_read(const tide_gpu_id buffer, const size_t offset, const size_t size)
+{
+    record_read *r = NULL;
+    for (uint32_t i = 0; i < RECORD_READS && !r; i++) {
+        if (!reads[i].token) r = &reads[i];
+    }
+    if (!r || !buffer || (uint64_t)size > UINT32_MAX) return 0; // Asked again next frame
+    if (++next_token == 0) next_token = 1;
+    *r = (record_read){.token = next_token, .size = (uint32_t)size};
+    op(TIDE_EMBED_RENDER_BUFFER_READ, 16u);
+    u32(r->token);
+    u32(buffer);
+    u32((uint32_t)offset);
+    u32((uint32_t)size);
+    return r->token;
+}
+
+static int record_buffer_read_done(const uint32_t token, void *data)
+{
+    record_read *r = read_of(token);
+    if (!r) return -1;
+    const int state = r->state;
+    if (state > 0 && r->size) memcpy(data, r->data, r->size);
+    if (state) let_go(r);
+    return state;
+}
+
+bool tide_gpu_record_read(const uint32_t token, const void *data, const uint32_t size)
+{
+    record_read *r = read_of(token);
+    if (!r || r->state) return false;
+    if (!data || size != r->size) {
+        r->state = -1;
+        return data == NULL;
+    }
+    r->data = malloc(size ? size : 1u);
+    if (!r->data) {
+        r->state = -1;
+        return false;
+    }
+    memcpy(r->data, data, size);
+    r->state = 1;
+    return true;
+}
+
+// Every read waiting goes: the renderer, starting over, fails them itself (a device that's another)
+static void forget_reads(void)
+{
+    for (uint32_t i = 0; i < RECORD_READS; i++) {
+        if (reads[i].token) let_go(&reads[i]);
+    }
+}
+
 const tide_gpu tide_gpu_record = {
     .name = "Unity",
     .epoch = record_epoch,
@@ -461,12 +769,17 @@ const tide_gpu tide_gpu_record = {
     .texture_free = record_texture_free,
     .cube = record_cube,
     .cube_face = record_cube_face,
+    .array = record_array,
+    .array_blocks = record_array_blocks,
+    .array_depth = record_array_depth,
+    .array_of = record_array_of,
+    .array_write = record_array_write,
+    .array_layer = record_array_layer,
     .pipeline = record_pipeline,
     .pipeline_free = record_pipeline_free,
     .target = record_target,
     .target_limit = record_target_limit,
     .target_samples = record_target_samples,
-    .float_targets = record_float_targets,
     .target_texture = record_target_texture,
     .target_depth = record_target_depth,
     .resolve_depth = record_resolve_depth,
@@ -478,11 +791,24 @@ const tide_gpu tide_gpu_record = {
     .use = record_use,
     .stencil = record_stencil,
     .uniforms = record_uniforms,
-    .sample = record_sample,
+    .image = record_image,
+    .sampler = record_sampler,
     .vertices = record_vertices,
     .indices = record_indices,
     .draw = record_draw,
     .draw_indexed = record_draw_indexed,
+    .storage = record_storage,
+    .compute_begin = record_compute_begin,
+    .compute_end = record_compute_end,
+    .dispatch = record_dispatch,
+    .dispatch_indirect = record_dispatch_indirect,
+    .draw_indirect = record_draw_indirect,
+    .draw_indexed_indirect = record_draw_indexed_indirect,
+    .draw_indexed_indirect_count = record_draw_indexed_indirect_count,
+    .indirect = record_indirect_can,
+    .buffer_copy = record_buffer_copy,
+    .buffer_read = record_buffer_read,
+    .buffer_read_done = record_buffer_read_done,
 };
 
 void tide_gpu_record_begin(void)
@@ -498,6 +824,8 @@ const uint8_t *tide_gpu_record_end(uint32_t *size)
 
 void tide_gpu_record_reset(void)
 {
+    forget_reads();
+    array_format_count = 0;
     epoch++;
     next_id = 0;
     shape_count = 0;
@@ -515,6 +843,8 @@ void tide_gpu_record_close(void)
     free(targets);
     targets = NULL;
     target_count = target_capacity = 0;
+    forget_reads();
     epoch++;
     next_id = 0;
+    block_formats = 0; // The next program says its own
 }

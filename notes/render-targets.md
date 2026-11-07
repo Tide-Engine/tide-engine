@@ -1,8 +1,107 @@
 # Render targets and cubemaps
 
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
+Full combined native/web suite results: `notes/rendering.md`, Gap integration validation.
+
+## Cached images detect discarded contents (2026-11-02)
+
+Owner-approved per-target invalidation query: `target.contentRevision`, a
+read-only local `long`, gives a positive token shared by aliases, or zero for
+default/disposed/borrowed targets and the window. Cache the token with a baked
+image and rebake when it differs. Clear and normal drawing do not change it.
+
+`tide_render_target_state` holds the token and last observed device, physical
+extent and draw epoch. The value passed through local state remains 24 bytes.
+Create, explicit resize and recreation allocate a token from a checked positive
+64-bit counter; native adoption invalidates the adopted target conservatively.
+The standard host supplies live metadata through `draw.target_content`; generated
+frame entry installs/restores its thread-local scope, including draw epoch.
+The query observes device loss/recovery and automatic physical resizing before
+the first drawing submission. Renderer target/cube allocations use the same
+observer, so size changes away and back between queries cannot hide a discard.
+The first observation after creation/explicit resize initializes metadata without
+a second invalidation. Hosts providing their own frames should supply both the
+target-content callback and draw epoch; absent a callback, explicit lifetime
+operations and renderer observations still work.
+
+Web saved host state carries the revision counter high-water and restores it
+before generated resource rebinding. Reused WASM addresses and per-module counter
+resets cannot reproduce a cached token. Its host-state magic changed, so reload
+from a build with the previous host header starts afresh; subsequent reloads keep
+local state and invalidate targets. Saved game/world formats are unchanged.
+
+Compiler checking keeps metadata reads ordered and forbids assignment, GPU and
+parallel-step reads; the shared shader-preparation optimization excludes such
+queries because the host callback may have effects. Editor completion and type
+hover expose `long`. Tests cover aliases, clear stability, explicit/automatic
+resize, resize-away/back without queries, device generation and draw epoch,
+high-water restoration and rebind; the WebGPU target test checks the first
+post-device-loss query before rendering. Native ASan and web-release lifecycle,
+sample/rebind and three diagnostic CTests pass, along with the focused runtime
+revision test on native/WASI and native LSP completion/hover. Target GPU tests
+pass on Vulkan, OpenGL, WebGL and WebGPU, including allocation-away/back and
+pre-render device-recovery queries. The authored expression-order regression
+reads the revision before a later argument resizes the alias, on native/WASI.
+
+Embedded frames use the recording backend's current epoch and target limit,
+even before the first render, including the time-travel frame path. Its physical
+extent agrees with actual recording allocations; the native ASan embed regression
+checks reset before rendering, and no extra invalidation during the next render.
+The real web reload fixture replaces the same WASM module three times through
+the production page and host save/resume path. `tide_platform_reload_revision`
+passes on headless WebGL: each fresh instance retains the cached long and bake
+counter, sees a different positive revision, rebakes once, and preserves the
+target alias. This tests saved-header high-water transfer across actual WASM
+counter resets, not a mock of the reload exports.
+
+## Native single-output cutout alpha (2026-11-02)
+
+The Mount & Rifle pale-rim report exposed coverage stored twice: a covered
+sample had opaque RGB but fractional alpha, then resolve averaged both and
+sampling divided RGB by that undersized alpha. Desktop OpenGL now enables
+`GL_SAMPLE_ALPHA_TO_ONE` with alpha-to-coverage for single-output shaders,
+resetting it at every pass and when another pipeline is used. Vulkan requests
+the optional `alphaToOne` feature only where supported and enables it on the
+same pipelines. Hardware coverage selection and shader RGB are unchanged;
+the selected samples store alpha one. No generated-C/runtime API changed.
+
+This correction is deliberately limited. Alpha-to-one also replaces secondary
+outputs' alpha (observed on both local backends), so multi-output shaders retain
+the old path rather than corrupting their other outputs. WebGL/OpenGL ES lack
+this desktop state; WebGPU and Vulkan devices without `alphaToOne` retain the
+old path too. Those cases still need separate coverage and color outputs or a
+different implementation. Premultiplying RGB by coverage again is not a fix:
+it would attenuate color twice. The game checkout and pin were not changed.
+
+`platform/tests/shaders` pass 24 now draws HDR coverage into opaque and
+transparent four-sample targets, resolves and samples their color and alpha,
+and checks a multi-output control's secondary alpha. The corrected native
+Vulkan and OpenGL ASan CTests pass, including repeated and prewarmed checks.
+Disabling only alpha-to-one makes precisely the new HDR checks fail on both:
+opaque probe `EBCF76FF` instead of `BFFF60FF`, transparent `FF8FAAFF` instead
+of `FFBF7FFF`; the secondary-output control stays `7F3040FF`. Unsupported
+backends explicitly report that the stored-alpha correction is unavailable;
+their existing coverage tests are retained. Other GPU vendors, macOS and
+Android hardware have not been exercised.
+
+The web-release shader fixture also builds and passes on WebGL, ANGLE D3D11
+and WebGPU (31.05/45.59/29.51 s), validating the retained fallback and new
+probe shaders, not claiming the stored-alpha defect fixed on those backends.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform
+
+- **Cut-outs and derivatives: `this.Cutout(alpha)`, `this.Coverage(share)`, `this.Ddx/Ddy/Fwidth(v)`** (2026-10-31, for bannerlord-duel's foliage, cut with `this.Discard()` and aliasing in a 4-sample target. A `[Cutout]` attribute was built first and replaced the same day: the owner prefers code, and asked for derivatives and the raw share too. The rules are Claude's picks, Provisional in `docs/spec.md`, A target's samples, Cut-outs and How fast a value changes). `docs/game/shaders.md` (How fast a value changes, Cut-outs) is the users' page. What's built, and what code relies on:
+  - **tidec, checking:** `check_pixel_method` (`compiler/src/check.c`) takes the pixel's new methods: `CALL_DERIVATIVE` (a float, a float vector or a `Color`, giving its type) and `CALL_COVER`, a statement of its own (not in `?:` or `&&`), one float. A frag's first `CALL_COVER` sets `decl.cutout`, and `decl.raw_coverage` for `Coverage`; the other kind in the same frag is an error. Frag bodies are checked before their shaders are written. `[Cutout]` is an error that names `this.Cutout`.
+  - **tidec, shaders** (`compiler/src/shader.c`): **`ex_derivative`** lifts `v` as `ex_sample` lifts a Trilinear uv: `let tide_d<n> = fwidth(v)` (or `dpdx`/`dpdy`, GLSL's `dFdx`/`dFdy`) into `emit.grads`, at the frag's function's start, and the call is `tide_d<n>`. A `v` that isn't `liftable` is refused there (`derivative_changes`). Written while lifting (a derivative of a derivative), it's asked in place. `liftable` takes `CALL_DERIVATIVE` and now any `Sample` filter, Trilinear and a `Texture`'s unknown one too: `ex_sample` while lifting reads those with `textureSample`/`texture`, the GPU's own level, in uniform control flow. No golden moved. **GLSL's `Ddy` is `(tide_gpu_height > 0 ? 1.0 : -1.0) * dFdy(v)`**: `gpu_gl.c` draws a target's pass upside down and hands its frags their rows back (`compile_begin`), so `dFdy` goes down in a target and up in the window. `tide_gpu_height` is that backend's uniform, now part of `gpu.h`'s GLSL contract. **A cut-out:** `tide_cover` (a GLSL global, a WGSL `var<private>`) is 1 as `put_fragment_main` starts, `this.Cutout`/`Coverage` assign it, and the first output's finish is: its tint, `tide_share = tide_cover * tint.a`, sharpened for `Cutout` (`(s - 0.5) / max(fwidth(s), 0.0001) + 0.5`), then where `tide_screen.w < 0` a discard under 0.5 and 1, elsewhere `clamp(s, 0, 1)`, as the color's alpha; no premultiply and no multiply's white. That fwidth is in the fragment entry, after the frag's call: WebGPU took it after a conditional `discard` in the frag (pass 24 has one). Other outputs are finished as ever. Generated C says `.cutout = true` in the `tide_shader`; every other shader and game is byte for byte what it was.
+  - **`tide_shader.cutout`** (`tide/draw.h`, in the padding after `blit`: the struct's size is the same) and `tide_screen.w`'s third meaning: -1 for a cut-out into a target of one sample.
+  - **The renderer** (`platform/src/platform.c`): `covers_by_samples(into)` (colors and more than one sample, as the device gave them) decides both `tide_gpu_pipeline_desc.alpha_to_coverage` in `pipeline_for` and `screen[3] = -1` in `draw_shaded`, from the same `frame_target.into`, so they never disagree. A cut-out's `TIDE_GPU_BLEND_ALPHA` becomes `REPLACE` in its pipeline (the key keeps the draw's blend: the shader id tells the pipelines apart). No key gained a field.
+  - **`gpu.h`: `alpha_to_coverage`** on a pipeline. OpenGL/WebGL: `GL_SAMPLE_ALPHA_TO_COVERAGE` enabled or disabled in `gl_use`, disabled at `gl_begin`. WebGPU: `multisample.alphaToCoverageEnabled` (a new last argument of `gpu_pipeline_begin`; `tide.release.js` regenerated). Vulkan: `alphaToCoverageEnable` where the pipeline has samples. Recorded pipelines (Unity) carry it after `outputs`: **`TIDE_EMBED_ABI` and `TideLibrary.Abi` are 9**; `TideRender.cs` sets `_TideAlphaToMask`, which the ShaderLab `tide unity` writes reads as `AlphaToMask [_TideAlphaToMask]` (`tide_hlsl_unity_shader`).
+  - **Tests:** `compiler/tests/shaders/cutout` and `derivatives` pin GLSL and WGSL (and their SPIR-V and HLSL validate where spirv-val and fxc are); `compiler/tests/errors/cutout_*` and `derivative_*`; `lsp_shaders_complete` offers the methods; pass 24 of `platform/tests/shaders.tide` with `run_cut_checks` in `shaders.c`: a sheet cut out by an alpha climbing a 64th a pixel, into 4 samples (the edge pixel in between, the ones past it whole where the alpha is 0.53), into one sample (cut, and whole), with its bottom rows discarded; a sheet covering three quarters as given (0xBF into 4 samples, whole into one); a card into a target of depth alone (depth on one side only); and `Ddx(position.x)`, `Ddy(uv.y) * 64` and `Fwidth(uv.x) * 32` as (1, 1, 0.5) drawn into the window's pass and into a target, on Vulkan, OpenGL 3.3, WebGL 2, ANGLE's D3D11 and WebGPU. `embed_render_pipeline_carries_actual_texture_reads` reads the new word.
+  - **Not run:** the window's own OpenGL pass, `tide_gpu_height` 0 (reading pixels back draws through a target, so `Ddy`'s sign there is by construction); Unity (the owner's TideUnity project tests it; the Sample's checked-in shaders lack `_TideAlphaToMask` until its next `tide unity` build, which only means no alpha to coverage there); Android and OpenGL on a Mac.
+  - **Not built:** a sample mask of the frag's own; fine and coarse derivatives; derivatives in a vert or a function.
 
 - **A multisampled target's depth is read** (2026-10-13; the owner asked for the engine to be fixed where FOLDLINE wrote distances into a second float image because the read was refused; the rules are Claude's picks, Provisional in `docs/spec.md`, A target's samples). It replaces "A depth read of a multisampled target is refused, not resolved" below, which is kept as the record of what was built before. What's built, and what code relies on:
   - **`gpu.h`: `resolve_depth(target)`**, outside a pass. For a multisampled target it makes the depth texture the first time and fills it from the samples as they are; for any other target it does nothing. `target_depth` of a multisampled target is 0 until the first resolve, then that texture. A backend that gains multisampling has to give both.

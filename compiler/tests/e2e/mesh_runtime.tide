@@ -1,0 +1,81 @@
+// Static meshes a game makes, Mesh(vertices, indices), beside assets': one
+// Mesh<V> type in fields, lists, maps and draws. A made mesh owns copies of
+// its lists, which nothing changes after; its id is what they hold.
+asset Mesh<Vertex3> box = "assets/meshes/box.obj";
+using Model = Mesh<Vertex3>;
+
+singleton Shapes
+{
+    Model made;
+    Model same;
+    Model asset;
+    Asset<Mesh<Vertex3>> reference = box;
+    List<Model> mixed;
+    Map<int, Model> byId;
+    List<Vertex3> source;
+    List<Vertex3> none;
+    int madeCount;
+    int sourceCount;
+    int mixedCount;
+    int referenceCount;
+    bool equal;
+    bool differ;
+    bool emptyIsDefault;
+    int ticks;
+}
+
+scene Main;
+
+List<Vertex3> Triangle(float x)
+{
+    return [Vertex3 { position = float3(x, 0, 0) }, Vertex3 { position = float3(x + 1, 0, 0) },
+            Vertex3 { position = float3(x, 1, 0) }];
+}
+
+Model Make(List<Vertex3> vertices) { return Mesh(vertices, [0, 1, 2]); }
+
+system Tick(mut Shapes shapes)
+{
+    if (shapes.ticks == 0)
+    {
+        shapes.source = Triangle(0);
+        shapes.made = Mesh(shapes.source, [0, 1, 2]);
+        // The mesh has its own copy: changing the list it came from changes nothing of it
+        shapes.source.Add(Vertex3 { position = float3(5, 5, 5) });
+        shapes.same = Make(Triangle(0));
+        shapes.asset = box;
+        shapes.mixed = [box, shapes.made, Model(Triangle(2), [0, 2, 1]), shapes.reference];
+        shapes.byId[1] = Mesh(Triangle(3), [0, 1, 2]);
+        shapes.byId[2] = box;
+    }
+    shapes.madeCount = shapes.made.vertices.count + shapes.made.indices.count;
+    shapes.sourceCount = shapes.source.count;
+    shapes.mixedCount = 0;
+    foreach (var m in shapes.mixed) shapes.mixedCount += m.indices.count;
+    shapes.referenceCount = shapes.reference.Value.indices.count;
+    shapes.equal = shapes.made == shapes.same;
+    shapes.differ = shapes.made != shapes.mixed[2] && shapes.made != shapes.asset;
+    shapes.emptyIsDefault = Mesh(shapes.none, []) == default;
+    shapes.ticks++;
+}
+
+local singleton Seen
+{
+    Model kept;
+    int frames;
+}
+
+// A made mesh drawn from two places, a field of local state and a list in
+// match state, is one mesh on the GPU; so is one made again each frame
+view Draws(mut Seen seen, Shapes shapes)
+{
+    seen.frames++;
+    if (seen.frames == 1) seen.kept = shapes.made;
+    Draw.Mesh(seen.kept, float4x4.identity);
+    Draw.Mesh(shapes.mixed[1], float4x4.Translate(float3(1, 0, 0)));
+    Draw.Mesh(Mesh(Triangle(0), [0, 1, 2]), float4x4.Translate(float3(2, 0, 0)));
+    Draw.Mesh(shapes.byId[1], float4x4.identity);
+    Draw.Mesh(box, float4x4.identity);
+    // Levels asked for: another mesh than the one drawn whole, still by its key
+    Draw.Mesh(seen.kept, float4x4.Translate(float3(0, 0, 50)), lod: 1);
+}

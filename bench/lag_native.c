@@ -93,6 +93,9 @@ static void frame(FILE *raw, const int who, const uint64_t origin, tide_loopback
     tide_loopback_set_time(net, now);
     hands(m, now);
     tide_local_frame_time(m->local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(m->local, seconds);
+#endif
     tide_event_log *heard = tide_session_events(m->session);
     const uint64_t updating = tide_time_now_ns();
     tide_session_update(m->session, now);

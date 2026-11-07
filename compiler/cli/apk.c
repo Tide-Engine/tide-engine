@@ -104,9 +104,9 @@ enum {
     ATTR_VERSION_CODE = 0x0101021b,
     ATTR_VERSION_NAME = 0x0101021c,
     ATTR_TARGET_SDK = 0x01010270,
-    ATTR_GL_ES_VERSION = 0x01010281,
     ATTR_REQUIRED = 0x0101028e,
     ATTR_EXTRACT_NATIVE_LIBS = 0x010104ea,
+    ATTR_VERSION = 0x01010519, // uses-feature's version (Android 16's framework-res.apk, as no public-*.xml names it)
     ATTR_APP_CATEGORY = 0x01010545,
     ATTR_BACK_CALLBACK = 0x0101066c, // enableOnBackInvokedCallback
 };
@@ -118,6 +118,9 @@ enum {
 // Every configuration change the activity takes itself, rather than starting
 // over (the game with it): turns, keyboards, sizes, density, ...
 #define CONFIG_CHANGES 0x5000ffffu
+// The Vulkan apps need, as android.hardware.vulkan.version has it: VkPhysicalDeviceProperties::apiVersion's
+// encoding (major << 22 | minor << 12), so 1.3 is 0x403000 (what `pm list features` says of a 1.3 device).
+#define VULKAN_1_3 0x00403000u
 
 // Res_value's types
 enum { VALUE_REFERENCE = 0x01, VALUE_STRING = 0x03, VALUE_INT = 0x10, VALUE_HEX = 0x11, VALUE_BOOL = 0x12 };
@@ -331,11 +334,6 @@ static void manifest_nodes(const apk_desc *desc, xml *x)
     attr_value(n, ATTR_TARGET_SDK, "targetSdkVersion", VALUE_INT, (uint32_t)desc->target_sdk);
     close_node(x, "uses-sdk");
 
-    n = open_node(x, "uses-feature"); // OpenGL ES 3, which the renderer needs
-    attr_value(n, ATTR_GL_ES_VERSION, "glEsVersion", VALUE_HEX, 0x00030000);
-    attr_value(n, ATTR_REQUIRED, "required", VALUE_BOOL, 0xffffffffu);
-    close_node(x, "uses-feature");
-
     n = open_node(x, "uses-permission"); // Matches go over the network
     attr_text(n, ATTR_NAME, "name", "android.permission.INTERNET");
     close_node(x, "uses-permission");
@@ -344,6 +342,14 @@ static void manifest_nodes(const apk_desc *desc, xml *x)
         attr_text(n, ATTR_NAME, "name", "android.permission.RECORD_AUDIO");
         close_node(x, "uses-permission");
     }
+
+    // Apps draw with Vulkan 1.3 (platform/android/activity.c), so Google Play offers them only to devices that
+    // have it. Android itself installs them anywhere: a device without it is told what the game needs.
+    n = open_node(x, "uses-feature");
+    attr_text(n, ATTR_NAME, "name", "android.hardware.vulkan.version");
+    attr_value(n, ATTR_REQUIRED, "required", VALUE_BOOL, 0xffffffffu);
+    attr_value(n, ATTR_VERSION, "version", VALUE_HEX, VULKAN_1_3);
+    close_node(x, "uses-feature");
 
     // No code of its own, and its libraries straight from the APK, unpacked:
     // they're stored, aligned to pages, as Android maps them. The back button

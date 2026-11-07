@@ -529,7 +529,7 @@ bool tide_skinned_sample_into(const tide_list target_data, const tide_list anima
         close_model(&target);
         return tide_skinned_sample(animation_data, animation, seconds, transforms, where);
     }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     uint8_t *required = valid ? tide_scratch_memory(source.view.nodes) : NULL;
     if (valid) memset(required, 0, source.view.nodes);
     valid = valid && require_clip(&source.view, (uint32_t)animation, required, true);
@@ -566,7 +566,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
     model_seen target, source;
     if (!open_model(target_data, &target)) return false;
     if (!open_model(source_data, &source)) { close_model(&target); return false; }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bool valid = nodes_valid(&target.view) && nodes_valid(&source.view) && tide_list_count(source_transforms) == (int32_t)source.view.nodes;
     const bool exact = valid && target.view.nodes == source.view.nodes
         && memcmp(target.view.skeleton_hash, source.view.skeleton_hash, sizeof target.view.skeleton_hash) == 0;
@@ -619,7 +619,7 @@ bool tide_skinned_blend(const tide_list a, const tide_list b, const float weight
     if (!out) return false;
     const int32_t count = tide_list_count(a);
     if (count < 0 || count != tide_list_count(b)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_bone_transform *made = tide_scratch_memory((size_t)count * sizeof *made);
     const float t = tide_saturate_f(weight);
     tide_list_cache ac = {0}, bc = {0};
@@ -869,7 +869,7 @@ tide_float4x4 tide_skinned_model(const tide_list data, const tide_list transform
     tide_float4x4 out = tide_identity_f4x4();
     model_seen m;
     if (bone < 0 || !open_model(data, &m)) return out;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     if ((uint32_t)bone < m.view.nodes) {
         const tide_float4x4 *global = global_matrices(&m.view, transforms, false, NULL);
         if (global) out = global[bone];
@@ -932,7 +932,7 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     memset(info, 0, 3u * sizeof *info);
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     uint64_t version;
     const bool packed = tide_pack_skinned_version(data, &version);
     bool valid = packed || tide_skinned_data_validate(m.view.data, m.view.size);

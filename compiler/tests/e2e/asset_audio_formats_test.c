@@ -78,7 +78,7 @@ TIDE_TEST(audio_imported_clip_copies_follow_reload_and_retain_playing_samples)
     TIDE_REQUIRE(wav != NULL);
     tide_pack_builder builder = {0};
     const uint8_t hash[32] = {9, 7, 5, 3};
-    const uint32_t at = tide_pack_clip(&builder, hash, wav, (uint32_t)wav_size);
+    const uint64_t at = tide_pack_clip(&builder, hash, wav, (uint32_t)wav_size);
     tide_pack_name(&builder, "cbr", TIDE_PACK_CLIP, at, (uint32_t)wav_size, 0);
     size_t size;
     uint8_t *pack = tide_pack_end(&builder, &size);

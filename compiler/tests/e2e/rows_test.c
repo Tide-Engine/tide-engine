@@ -3,6 +3,7 @@
 // whole or in pieces, and on any thread count. A page no row changed stays the snapshot's, with its hash.
 
 #include <stdio.h>
+#include <string.h>
 
 #include "game.h"
 #include "tide/jobs.h"
@@ -99,11 +100,13 @@ TIDE_TEST(rows_are_the_same_on_every_platform)
         drive(&world, t);
         tide_world_tick(&world);
     }
-    TIDE_CHECK(world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 4990 && world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.chunks == 3);
+    TIDE_CHECK(world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 4990 && world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.chunks ==
+        ((4990u + (1u << tide_columns_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.shift) - 1u) >>
+         tide_columns_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.shift));
     TIDE_CHECK(world.arch2_Owner_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 10);
     TIDE_CHECK(world.arch1_Spark.count > 100);
-    if (tide_world_hash(&world) != UINT64_C(0x0be24710edabca94)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
-    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0x0be24710edabca94));
+    if (tide_world_hash(&world) != UINT64_C(0x007a345ff1a215b5)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
+    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0x007a345ff1a215b5));
     TIDE_CHECK(tide_world_hash(&world) == plain[TICKS - 1]);
     tide_world_free(&world);
 }
@@ -149,12 +152,41 @@ static bool shared(const uint32_t chunk, const uint32_t column)
     return now->pages[at] == then->pages[at] && now->pages[at]->hashed != UINT32_MAX;
 }
 
+// Retain the fixture's COW contracts for readonly Stats, apart-written Still,
+// sparse-filtered Cargo and Label's observed value/handle lanes. Body's World
+// aliases require in-place preparation, so its untouched lanes are not an
+// unchanged-page retention promise. Derive chunk membership from actual bytes.
+static void minimal_cow(void)
+{
+    const tide_table *now = &world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull;
+    const tide_table *then = &kept.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull;
+    const tide_columns *columns = &tide_columns_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull;
+    TIDE_REQUIRE(now->count == then->count && now->chunks == then->chunks);
+    for (uint32_t chunk = 0; chunk < now->chunks; chunk++) {
+        for (uint32_t column = 0; column < columns->count; column++) {
+            const uint32_t stats = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Stats;
+            const uint32_t still = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Still;
+            const uint32_t cargo = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Cargo;
+            const uint32_t label = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Label;
+            const bool observed = (column >= stats && column < stats + sizeof(Stats) / 4u) ||
+                (column >= still && column < still + sizeof(Still) / 4u) ||
+                (column >= cargo && column < cargo + sizeof(Cargo) / 4u) ||
+                column == label || column == label + 2u || column == label + 4u || column == label + 6u;
+            if (!observed) continue;
+            const uint32_t at = chunk * columns->count + column;
+            const size_t bytes = (size_t)tide_table_rows(now, columns->shift, chunk) * columns->sizes[column];
+            const bool same = memcmp(tide_page_data(now->pages[at]), tide_page_data(then->pages[at]), bytes) == 0;
+            TIDE_CHECK((now->pages[at] == then->pages[at]) == same);
+            if (same) TIDE_CHECK(shared(chunk, column));
+        }
+    }
+}
+
 // A tick with a snapshot sharing every page: which pages are still the snapshot's afterwards.
 // Tick 9 is odd, so Rest changes no row.
 static void pages_stay(const tide_jobs *jobs)
 {
     enum {
-        CARGO = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Cargo,
         STILL = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Still,
         LABEL = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Label,
         STATS = tide_column_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull_Stats,
@@ -169,34 +201,33 @@ static void pages_stay(const tide_jobs *jobs)
     }
     // The tick that just ran was tick 9 (Time.tick counts from 0)
     TIDE_REQUIRE(world.Time.tick == 10);
-    for (uint32_t chunk = 0; chunk < 3; chunk++) {
+    for (uint32_t chunk = 0; chunk < world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.chunks; chunk++) {
         // Stats: only read
         TIDE_CHECK(shared(chunk, STATS) && shared(chunk, STATS + 1));
         // Still: taken to change by Rest, which changed no row in an odd tick
         for (uint32_t lane = 0; lane < 7; lane++) TIDE_CHECK(shared(chunk, STILL + lane));
         // Body: Move changes every body's position
         TIDE_CHECK(!shared(chunk, BODY) && !shared(chunk, BODY + 1));
-        // Label: Weigh changes its hits and its weight
-        TIDE_CHECK(!shared(chunk, LABEL) && !shared(chunk, LABEL + 3));
+        // Label: Weigh changes its hits and its weight (lanes 0 and 6: its name and its list are a handle each,
+        // two lanes, after 4 bytes of padding)
+        TIDE_CHECK(!shared(chunk, LABEL) && !shared(chunk, LABEL + 6));
     }
-    // ...and its name and its list are Rename's to change, for the frozen: the second chunk has none
-    TIDE_CHECK(shared(1, LABEL + 1) && shared(1, LABEL + 2));
-    TIDE_CHECK(!shared(0, LABEL + 1) && !shared(0, LABEL + 2));
-    // Cargo, which Shift changes unless the entity is frozen: the first
-    // chunk's all are, so Shift took none of its pages, and Thaw, which is
-    // for the frozen and changes nothing in an odd tick, wrote them all as
-    // they were; the second's none are; the third's every third is, and
-    // those rows went through as they were
-    for (uint32_t lane = 0; lane < 6; lane++) TIDE_CHECK(shared(0, CARGO + lane));
-    TIDE_CHECK(!shared(1, CARGO) && !shared(1, CARGO + 5));
-    TIDE_CHECK(!shared(2, CARGO) && !shared(2, CARGO + 5));
-    for (uint32_t row = 4096; row < 4990; row++) {
+    minimal_cow();
+    for (uint32_t row = 0; row < world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.count; row++) {
         const Cargo now = TIDE_AT(&world, arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull, Cargo, row);
         const Cargo then = TIDE_AT(&kept, arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull, Cargo, row);
+        const Body body = TIDE_AT(&world, arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull, Body, row);
+        const Stats stats = TIDE_AT(&world, arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull, Stats, row);
         const bool frozen = tide_has_Frozen(&world, TIDE_ENTITY_AT(&world, arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull, row));
-        TIDE_REQUIRE(frozen == (row % 3 == 0));
-        TIDE_REQUIRE(now.moves == then.moves + (frozen ? 0 : 1));
-        TIDE_REQUIRE(!frozen || (now.at.x == then.at.x && now.size.x == then.size.x && now.size.y == then.size.y));
+        TIDE_REQUIRE(frozen == (row < 2048 || (row >= 4096 && row % 3 == 0)));
+        if (frozen) TIDE_REQUIRE(memcmp(&now, &then, sizeof now) == 0);
+        else {
+            TIDE_REQUIRE(now.moves == then.moves + 1);
+            TIDE_REQUIRE(now.at.x == then.at.x + body.velocity.x * 0.5f);
+            TIDE_REQUIRE(now.at.y == then.at.y + body.velocity.y * 0.5f);
+            TIDE_REQUIRE(now.at.z == then.at.z + body.velocity.z * 0.5f);
+            TIDE_REQUIRE(now.size.x == then.size.y && now.size.y == then.size.x + stats.mass);
+        }
     }
     // An even tick: Rest changes the rows of one kind in nine, so the lanes
     // it changed are the world's own now, and the ones it didn't still aren't
@@ -204,11 +235,12 @@ static void pages_stay(const tide_jobs *jobs)
     tide_world_copy(&kept, &world);
     tide_world_hash(&kept);
     tick(jobs);
-    for (uint32_t chunk = 0; chunk < 3; chunk++) {
+    for (uint32_t chunk = 0; chunk < world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.chunks; chunk++) {
         TIDE_CHECK(shared(chunk, STILL) && shared(chunk, STILL + 1) && shared(chunk, STILL + 2)); // Where it's at
         TIDE_CHECK(shared(chunk, STILL + 3) && shared(chunk, STILL + 4) && shared(chunk, STILL + 5)); // Where it was: the same since tick 0
         TIDE_CHECK(!shared(chunk, STILL + 6)); // Its count
     }
+    minimal_cow();
     tide_world_free(&world);
     tide_world_free(&kept);
 }

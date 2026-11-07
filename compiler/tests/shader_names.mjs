@@ -35,9 +35,9 @@ for (const file of readdirSync(fixtures).filter((f) => f.endsWith(".tide")).sort
             assert.match(alias, /^q\d+$/, `${file}: readable identifier ${original}`);
         } else assert.equal(alias, original, `${file}: operation or binding changed at token ${i}`);
     }
-    // Within each shader stage, replacements must be a bijection and cannot
+    // Within each shader, replacements must be a bijection and cannot
     // collide with any unchanged identifier. Labels are comments from tidec.
-    const split = (text) => text.split(/^\/\/ .*: (?:GLSL, vertex|GLSL, fragment|WGSL)\r?$/m).slice(1);
+    const split = (text) => text.split(/^\/\/ .*: WGSL\r?$/m).slice(1);
     const a = split(plainText), b = split(hiddenText);
     assert.equal(a.length, b.length);
     for (let stage = 0; stage < a.length; stage++) {

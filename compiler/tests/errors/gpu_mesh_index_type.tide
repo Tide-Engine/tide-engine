@@ -1,0 +1,9 @@
+// expect: a mesh's indices are a List<int>, three for each triangle, or a GPUList<int>, and this is GPUList<float>
+// A GPU list of floats where the indices go
+scene Main { }
+local singleton Made
+{
+    GPUList<Vertex> vertices;
+    GPUList<float> order;
+}
+view Show(Made made) { Draw.Mesh(made.vertices, made.order); }

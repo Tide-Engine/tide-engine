@@ -1,0 +1,132 @@
+// Occlusion from a depth pyramid (notes/drawing.md, Occlusion culling from a depth pyramid): where an instance's box
+// falls in a destination's pyramid, and how near any of its points can come there. Pure numbers, so the same Tide
+// runs in the renderer's culling kernel (cull.tide, which reads the four texels this names) and, in its tests, both
+// on the CPU and on the GPU (platform/tests/occlusion.tide).
+//
+// A pyramid is of a depth `width` by `height` pixels, rows from the top, as the GPU stores depth: (z / w + 1) / 2 of
+// OpenGL's clip space, 0 at the near plane and 1 at the far one. Its level k is HiZSize(width, k) by
+// HiZSize(height, k) texels, each the farthest depth of the 2 by 2 texels of the level before it it covers (the
+// pixels, for level 0), and its levels follow each other in its list from element `first`. A texel at the edge of
+// a level of an odd size covers one texel less: nothing past the edge is drawn.
+
+// What HiZFind found: the four texels (elements of the pyramid's list, maybe the same ones) that cover every pixel
+// the box can touch, at the level where two by two of them do, and the nearest depth any point of the box can have.
+// `sure` is false where nothing can be said: the box comes near or behind the camera's plane of w = 0, or a number
+// is past what it tests.
+struct HiZLook
+{
+    float nearest;
+    int4 texels;
+    int level;
+    bool sure;
+}
+
+// How many texels across level `level` of a pyramid of `size` pixels is.
+int HiZSize(int size, int level)
+{
+    return ((size - 1) >> (level + 1)) + 1;
+}
+
+// How many levels a pyramid of `width` by `height` pixels has: down to one texel.
+int HiZLevels(int width, int height)
+{
+    mut int levels = 1;
+    for (int k = 0; k < 15; k++)
+    {
+        if (HiZSize(width, k) > 1 || HiZSize(height, k) > 1) levels = k + 2;
+    }
+    return levels;
+}
+
+// Where the box `center` +- `extents` (its xyz), at the transform whose columns are c0..c3 (affine), seen through the
+// camera whose world-to-clip columns are m0..m3, is to be looked for in the pyramid. What any GPU draws of it lies
+// within, at a depth no nearer: every corner is projected with an allowance for rounding (of |M| |T| |v|, 2^-17 of
+// it, far past what a GPU's vertex stage or this loses), the rectangle is a pixel wider each way, and the depth a
+// little nearer than what the stored depth's rounding could reach.
+HiZLook HiZFind(int width, int height, int levels, int first, float4 m0, float4 m1, float4 m2, float4 m3,
+                float4 center, float4 extents, float4 c0, float4 c1, float4 c2, float4 c3)
+{
+    HiZLook none = HiZLook { nearest = 0.0, texels = int4(0, 0, 0, 0), level = 0, sure = false };
+    if (width < 1 || height < 1 || levels < 1 || levels > 16) return none;
+    // The box's corners in clip space are A v, with A = M T
+    float4 a0 = m0 * c0.x + m1 * c0.y + m2 * c0.z + m3 * c0.w;
+    float4 a1 = m0 * c1.x + m1 * c1.y + m2 * c1.z + m3 * c1.w;
+    float4 a2 = m0 * c2.x + m1 * c2.y + m2 * c2.z + m3 * c2.w;
+    float4 a3 = m0 * c3.x + m1 * c3.y + m2 * c3.z + m3 * c3.w;
+    float4 n0 = Math.Abs(m0);
+    float4 n1 = Math.Abs(m1);
+    float4 n2 = Math.Abs(m2);
+    float4 n3 = Math.Abs(m3);
+    float4 b0 = n0 * Math.Abs(c0.x) + n1 * Math.Abs(c0.y) + n2 * Math.Abs(c0.z) + n3 * Math.Abs(c0.w);
+    float4 b1 = n0 * Math.Abs(c1.x) + n1 * Math.Abs(c1.y) + n2 * Math.Abs(c1.z) + n3 * Math.Abs(c1.w);
+    float4 b2 = n0 * Math.Abs(c2.x) + n1 * Math.Abs(c2.y) + n2 * Math.Abs(c2.z) + n3 * Math.Abs(c2.w);
+    float4 b3 = n0 * Math.Abs(c3.x) + n1 * Math.Abs(c3.y) + n2 * Math.Abs(c3.z) + n3 * Math.Abs(c3.w);
+    float4 middle = a0 * center.x + a1 * center.y + a2 * center.z + a3;
+    float4 reach = b0 * (Math.Abs(center.x) + extents.x) + b1 * (Math.Abs(center.y) + extents.y)
+        + b2 * (Math.Abs(center.z) + extents.z) + b3;
+    float4 slack = reach * 0.00000762939453125;
+    mut float left = 3.0e38;
+    mut float right = -3.0e38;
+    mut float bottom = 3.0e38;
+    mut float top = -3.0e38;
+    mut float near = 3.0e38;
+    for (int k = 0; k < 8; k++)
+    {
+        float sx = (k & 1) != 0 ? extents.x : -extents.x;
+        float sy = (k & 2) != 0 ? extents.y : -extents.y;
+        float sz = (k & 4) != 0 ? extents.z : -extents.z;
+        float4 p = middle + a0 * sx + a1 * sy + a2 * sz;
+        float low = p.w - slack.w;
+        float high = p.w + slack.w;
+        // At or behind the camera's plane, or near it: what's drawn of it is no box's projection
+        if (!(low > 0.0 && high < 3.0e38)) return none;
+        float x0 = p.x - slack.x;
+        float x1 = p.x + slack.x;
+        float y0 = p.y - slack.y;
+        float y1 = p.y + slack.y;
+        float z0 = p.z - slack.z;
+        float xLow = x0 / (x0 < 0.0 ? low : high);
+        float xHigh = x1 / (x1 < 0.0 ? high : low);
+        float yLow = y0 / (y0 < 0.0 ? low : high);
+        float yHigh = y1 / (y1 < 0.0 ? high : low);
+        float zLow = z0 / (z0 < 0.0 ? low : high);
+        if (xLow < left) left = xLow;
+        if (xHigh > right) right = xHigh;
+        if (yLow < bottom) bottom = yLow;
+        if (yHigh > top) top = yHigh;
+        if (zLow < near) near = zLow;
+    }
+    // A number that isn't one, or past what pixels are counted in
+    if (!(left >= -1.0e9 && right <= 1.0e9 && bottom >= -1.0e9 && top <= 1.0e9 && near >= -1.0e9 && near <= 1.0e9)) return none;
+    // The pixels whose centers it can cover (a sample of a pixel is inside it), one more each way, in the depth
+    float w = width;
+    float h = height;
+    int ix0 = Math.Clamp(int(Math.Floor(Math.Clamp((left + 1.0) * 0.5 * w, -4.0, w + 4.0))) - 1, 0, width - 1);
+    int ix1 = Math.Clamp(int(Math.Floor(Math.Clamp((right + 1.0) * 0.5 * w, -4.0, w + 4.0))) + 1, 0, width - 1);
+    int iy0 = Math.Clamp(int(Math.Floor(Math.Clamp((1.0 - top) * 0.5 * h, -4.0, h + 4.0))) - 1, 0, height - 1);
+    int iy1 = Math.Clamp(int(Math.Floor(Math.Clamp((1.0 - bottom) * 0.5 * h, -4.0, h + 4.0))) + 1, 0, height - 1);
+    // Level 0's texels, then the first level where two of them each way cover it
+    int tx0 = ix0 >> 1;
+    int tx1 = ix1 >> 1;
+    int ty0 = iy0 >> 1;
+    int ty1 = iy1 >> 1;
+    mut int level = levels - 1;
+    for (int k = 15; k >= 0; k--)
+    {
+        if (k < levels && (tx1 >> k) - (tx0 >> k) <= 1 && (ty1 >> k) - (ty0 >> k) <= 1) level = k;
+    }
+    mut int at = first;
+    for (int k = 0; k < 16; k++)
+    {
+        if (k < level) at += HiZSize(width, k) * HiZSize(height, k);
+    }
+    int across = HiZSize(width, level);
+    int x0 = tx0 >> level;
+    int x1 = tx1 >> level;
+    int y0 = ty0 >> level;
+    int y1 = ty1 >> level;
+    // Nearer by more than a 24-bit depth's step and what the division and the halving lose
+    float nearest = (near + 1.0) * 0.5 - 0.00000095367431640625;
+    return HiZLook { nearest = nearest, texels = int4(at + y0 * across + x0, at + y0 * across + x1, at + y1 * across + x0,
+                                                       at + y1 * across + x1), level = level, sure = true };
+}

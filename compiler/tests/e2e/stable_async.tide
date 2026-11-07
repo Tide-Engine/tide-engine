@@ -1,0 +1,23 @@
+settings { maxPlayers = 2; }
+component Actor { bool shown; VisibilityGroup group; }
+component Trail { Entity actor; int ordinal; }
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Actor { shown = true });
+    var hidden = Visibility.CreateGroup(Audience.None);
+    Spawn(Actor { group = hidden }, Visibility { group = hidden });
+    Spawn(Actor { shown = true });
+}
+async void Later(Entity actor, VisibilityGroup group)
+{
+    for (var i = 0; i < 3; i++)
+    {
+        await Wait.Ticks(1);
+        Spawn(Trail { actor = actor, ordinal = i }, Visibility { group = group });
+    }
+}
+system Start(Actor actor, Time time)
+{
+    if (time.tick == 0) Later(this, actor.group);
+}

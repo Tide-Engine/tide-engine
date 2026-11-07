@@ -9,7 +9,8 @@
 
 #define PAGE (1u << TIDE_HEAP_PAGE_SHIFT)
 #define FIRST 16u          // Offset 0 means no block, so blocks start after it
-#define LIMIT 0x40000000u  // Offsets have 30 bits: the top two say whose heap a block is in (see tide/text.h)
+// As far as its places reach: 2^32 of a page each (64 TiB), which memory reaches first
+#define LIMIT (UINT64_C(1) << (32u + TIDE_HEAP_PAGE_SHIFT))
 
 // The references a heap has to `p`: one for each of its places.
 static uint32_t places(const tide_page *p)
@@ -20,8 +21,8 @@ static uint32_t places(const tide_page *p)
 // Bytes of `p` in use: as far as `used` goes.
 static uint32_t in_use(const tide_heap *h, const tide_page *p)
 {
-    const uint32_t left = h->used - (p->first << TIDE_HEAP_PAGE_SHIFT);
-    return left < p->size ? left : p->size;
+    const uint64_t left = h->used - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT);
+    return left < p->size ? (uint32_t)left : p->size;
 }
 
 // A bigger page table, which takes the old one's place as a whole. The old
@@ -64,7 +65,7 @@ static void add_page(tide_heap *h, const uint32_t count)
     h->pages += count;
 }
 
-tide_block *tide_heap_write_shared(tide_heap *h, const uint32_t block)
+tide_block *tide_heap_write_shared(tide_heap *h, const uint64_t block)
 {
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
     tide_page *own = tide_page_own(p, places(p), in_use(h, p));
@@ -75,18 +76,18 @@ tide_block *tide_heap_write_shared(tide_heap *h, const uint32_t block)
     return tide_heap_block(h, block);
 }
 
-tide_block *tide_heap_write_over(tide_heap *h, const uint32_t block, const uint32_t bytes)
+tide_block *tide_heap_write_over(tide_heap *h, const uint64_t block, const uint32_t bytes)
 {
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
     if (p->refs == places(p)) return tide_heap_write(h, block);
-    const uint32_t from = block - (p->first << TIDE_HEAP_PAGE_SHIFT) + (uint32_t)sizeof(tide_block);
+    const uint32_t from = (uint32_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)) + (uint32_t)sizeof(tide_block);
     tide_page *own = tide_page_own_copy_around(p, places(p), in_use(h, p), from, bytes);
     for (uint32_t k = 0; k < places(own); k++) __atomic_store_n(&h->page[own->first + k], own, __ATOMIC_RELEASE);
     __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
     return tide_heap_block(h, block);
 }
 
-uint32_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
+uint64_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
 {
     const uint64_t size = (uint64_t)sizeof(tide_block) + bytes;
     uint32_t c = 0;
@@ -94,35 +95,35 @@ uint32_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
     const uint64_t block_size = (uint64_t)16 << c;
     if (block_size < size) tide_out_of_memory(); // Bigger than any block
     if (h->free[c]) {
-        const uint32_t block = h->free[c];
+        const uint64_t block = h->free[c];
         tide_block *b = tide_heap_write(h, block);
-        h->free[c] = b->next;
-        b->next = 0;
+        h->free[c] = tide_block_next(b);
+        b->link = tide_block_link(c, 0);
         return block;
     }
     if (h->used < FIRST) h->used = FIRST;
     // A block that would cross into the next page starts there instead
-    uint32_t at = h->used;
-    if ((at & (PAGE - 1u)) + block_size > PAGE) at = (at + PAGE - 1u) & ~(PAGE - 1u);
-    if ((uint64_t)at + block_size > LIMIT) tide_out_of_memory();
+    uint64_t at = h->used;
+    if ((at & (PAGE - 1u)) + block_size > PAGE) at = (at + PAGE - 1u) & ~(uint64_t)(PAGE - 1u);
+    if (at + block_size > LIMIT) tide_out_of_memory();
     // Every place before the block's has its page too: a block of a page or
     // more starts past an empty heap's first, which nothing else is in yet
     while (at >> TIDE_HEAP_PAGE_SHIFT > h->pages) add_page(h, 1u);
     if (at >> TIDE_HEAP_PAGE_SHIFT == h->pages) {
         add_page(h, block_size > PAGE ? (uint32_t)(block_size >> TIDE_HEAP_PAGE_SHIFT) : 1u);
     }
-    h->used = at + (uint32_t)block_size;
+    h->used = at + block_size;
     tide_block *b = tide_heap_write(h, at);
-    b->size_class = c;
-    b->next = 0;
+    b->link = tide_block_link(c, 0);
     return at;
 }
 
-void tide_heap_release(tide_heap *h, const uint32_t block)
+void tide_heap_release(tide_heap *h, const uint64_t block)
 {
     if (!block) return;
     tide_asset_origin_clear(h, block);
-    tide_heap_write(h, block)->next = h->pending;
+    tide_block *b = tide_heap_write(h, block);
+    b->link = tide_block_link(tide_block_class(b), h->pending);
     h->pending = block;
     __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
 }
@@ -130,13 +131,12 @@ void tide_heap_release(tide_heap *h, const uint32_t block)
 void tide_heap_flush_pending(tide_heap *h)
 {
     while (h->pending) {
-        const uint32_t block = h->pending;
+        const uint64_t block = h->pending;
         tide_block *b = tide_heap_write(h, block);
-        h->pending = b->next;
-        const uint32_t c = b->size_class;
+        h->pending = tide_block_next(b);
+        const uint32_t c = tide_block_class(b);
         memset(b, 0, (size_t)16u << c); // Freed memory is zero, so it hashes the same everywhere
-        b->size_class = c;
-        b->next = h->free[c];
+        b->link = tide_block_link(c, h->free[c]);
         h->free[c] = block;
     }
 }
@@ -186,7 +186,7 @@ void tide_heap_stale(const tide_heap *heap, tide_stale_pages *s)
     for (uint32_t i = 0; i < heap->pages; i += places(heap->page[i])) tide_page_stale(s, heap->page[i], in_use(heap, heap->page[i]));
 }
 
-uint64_t tide_heap_block_hash(tide_heap *h, const uint32_t block)
+uint64_t tide_heap_block_hash(tide_heap *h, const uint64_t block)
 {
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
     const uint64_t hash = tide_page_hash(p, in_use(h, p));
@@ -218,9 +218,9 @@ uint32_t tide_heap_packed_size(const tide_heap *h)
 void tide_heap_pack(const tide_heap *h, tide_writer *w)
 {
     tide_asset_pack_heap(h, w, false, NULL);
-    tide_write_u32(w, h->used);
-    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) tide_write_u32(w, h->free[c]);
-    tide_write_u32(w, h->pending);
+    tide_write_u64(w, h->used);
+    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) tide_write_u64(w, h->free[c]);
+    tide_write_u64(w, h->pending);
     for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) {
         const tide_page *p = h->page[i];
         tide_write_u32(w, places(p));
@@ -240,20 +240,23 @@ static bool numbers_hold(const tide_heap *h)
 }
 
 // Whether a page `pages` places in can take `count` of them: one place, or a
-// block's own, a power of two of them, within the heap's limit.
+// block's own, a power of two of them no more than the biggest block's,
+// within the heap's limit.
 static bool places_hold(const uint32_t pages, const uint32_t count)
 {
-    return count != 0 && !(count & (count - 1u)) && count <= (LIMIT >> TIDE_HEAP_PAGE_SHIFT) - pages;
+    return count != 0 && !(count & (count - 1u)) && (uint64_t)count << TIDE_HEAP_PAGE_SHIFT <= (uint64_t)16u << (TIDE_HEAP_CLASSES - 1u)
+        && count <= (LIMIT >> TIDE_HEAP_PAGE_SHIFT) - 1u - pages;
 }
 
 bool tide_heap_unpack(tide_heap *h, tide_reader *r)
 {
     if (!tide_asset_unpack_heap(h, r, NULL)) { r->failed = true; return false; }
-    h->used = tide_read_u32(r);
-    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) h->free[c] = tide_read_u32(r);
-    h->pending = tide_read_u32(r);
-    if (!numbers_hold(h)) r->failed = true;
-    while (!r->failed && (h->pages << TIDE_HEAP_PAGE_SHIFT) < h->used) {
+    h->used = tide_read_u64(r);
+    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) h->free[c] = tide_read_u64(r);
+    h->pending = tide_read_u64(r);
+    // Its pages' bytes in use come to what it's handed out, all of them here
+    if (!numbers_hold(h) || h->used > r->size - r->at) r->failed = true;
+    while (!r->failed && ((uint64_t)h->pages << TIDE_HEAP_PAGE_SHIFT) < h->used) {
         const uint32_t count = tide_read_u32(r);
         if (!places_hold(h->pages, count)) {
             r->failed = true;
@@ -284,9 +287,9 @@ static tide_page *base_page(const tide_heap *base, const uint32_t at)
 void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_writer *d)
 {
     tide_asset_pack_heap(h, &d->bytes, d->assets, d->xor ? base : NULL);
-    tide_delta_number(d, h->used);
-    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) tide_delta_number(d, h->free[c]);
-    tide_delta_number(d, h->pending);
+    tide_delta_number64(d, h->used);
+    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) tide_delta_number64(d, h->free[c]);
+    tide_delta_number64(d, h->pending);
     uint32_t run = 0;
     uint32_t count = 0;
     for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) {
@@ -317,15 +320,17 @@ void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_
 bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_reader *d)
 {
     if (!tide_asset_unpack_heap(h, &d->bytes, d->xor ? base : NULL)) return false;
-    h->used = tide_delta_get_number(d);
-    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) h->free[c] = tide_delta_get_number(d);
-    h->pending = tide_delta_get_number(d);
+    h->used = tide_delta_get_number64(d);
+    for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) h->free[c] = tide_delta_get_number64(d);
+    h->pending = tide_delta_get_number64(d);
     if (d->bytes.failed || !numbers_hold(h)) return false;
+    // Each page past the base's takes a byte of the delta at least
+    if ((h->used >> TIDE_HEAP_PAGE_SHIFT) > (uint64_t)(base ? base->pages : 0u) + (d->bytes.size - d->bytes.at)) return false;
     // The runs of places, read once to get past them, then again with the pages
     tide_reader runs = d->bytes;
     uint32_t run = 0;
     uint32_t count = 0;
-    for (uint32_t pages = 0; (pages << TIDE_HEAP_PAGE_SHIFT) < h->used; pages += count, run--) {
+    for (uint32_t pages = 0; ((uint64_t)pages << TIDE_HEAP_PAGE_SHIFT) < h->used; pages += count, run--) {
         if (run == 0) {
             run = tide_delta_get_number(d);
             count = tide_delta_get_number(d);
@@ -333,7 +338,7 @@ bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_read
         if (d->bytes.failed || run == 0 || !places_hold(pages, count)) return false;
     }
     if (run) return false; // More pages than it's handed out
-    while ((h->pages << TIDE_HEAP_PAGE_SHIFT) < h->used) {
+    while (((uint64_t)h->pages << TIDE_HEAP_PAGE_SHIFT) < h->used) {
         if (run == 0) {
             run = tide_read_varint(&runs);
             count = tide_read_varint(&runs);
@@ -342,10 +347,10 @@ bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_read
         make_room(h, h->pages + count);
         tide_page *b = base_page(base, h->pages);
         const uint32_t size = count << TIDE_HEAP_PAGE_SHIFT;
-        const uint32_t left = h->used - (h->pages << TIDE_HEAP_PAGE_SHIFT);
+        const uint64_t left = h->used - ((uint64_t)h->pages << TIDE_HEAP_PAGE_SHIFT);
         const tide_asset_origin *previous = base ? tide_asset_origin_page(base, h->pages) : NULL;
         tide_asset_origin origin = previous ? *previous : (tide_asset_origin){0};
-        tide_page *p = tide_delta_asset_page(d, left < size ? left : size, size, count, b, b ? in_use(base, b) : 0u,
+        tide_page *p = tide_delta_asset_page(d, left < size ? (uint32_t)left : size, size, count, b, b ? in_use(base, b) : 0u,
                                        b && b->size == size, &origin);
         if (!p) {
             tide_heap_settle(h);

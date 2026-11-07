@@ -120,6 +120,22 @@ var TideWebLibrary = {
         if (x) x.tide_unity_render_reset();
     },
 
+    // The block formats Unity's GPU samples (tide_embed_render_formats)
+    TideWebRenderFormats__deps: ['$TideWeb'],
+    TideWebRenderFormats: function (formats) {
+        var x = TideWeb.program();
+        if (x) x.tide_unity_render_formats(formats);
+    },
+
+    // A read back of the replay's (TideRender): its bytes into Tide's memory, or none for one that failed
+    TideWebRenderRead__deps: ['$TideWeb'],
+    TideWebRenderRead: function (token, data, size) {
+        var x = TideWeb.program();
+        if (!x) return;
+        var at = data && size ? TideWeb.copyIn(x, data, size) : 0;
+        x.tide_unity_render_read(token, at, at ? size : 0);
+    },
+
     TideWebRequest__deps: ['$TideWeb'],
     TideWebRequest: function (kind, text, port) {
         var x = TideWeb.program();
@@ -149,12 +165,12 @@ var TideWebLibrary = {
     },
 
     TideWebCommand__deps: ['$TideWeb'],
-    TideWebCommand: function (type, index, generation, value, size) {
+    TideWebCommand: function (type, birthLow, birthHigh, lineageLow, lineageHigh, value, size) {
         var x = TideWeb.program();
         if (!x) return 0;
         var at = size ? TideWeb.copyIn(x, value, size) : 0;
         if (size && !at) return 0;
-        return x.tide_unity_command(type, index, generation, at, size);
+        return x.tide_unity_command(type, birthLow, birthHigh, lineageLow, lineageHigh, at, size);
     },
 
     // Time travel (tide/embed.h): the program's own match, recorded, paused and replayed

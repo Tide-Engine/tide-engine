@@ -8,7 +8,7 @@ static tide_world world, previous, restored;
 static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
-static const tide_entity ITEM = {1, 1};
+static tide_entity ITEM;
 
 double DoubleIdentity(double value) { return value; }
 tide_double3 DoubleVectorIdentity(tide_double3 value) { return value; }
@@ -17,6 +17,7 @@ void DoubleOut(double *value) { *value = 1000000000.125; }
 TIDE_TEST(double_arithmetic_and_containers_retain_precision)
 {
     tide_world_init(&world, 1.0f);
+    ITEM = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     TIDE_CHECK(world.Results.ticks == 1);
     TIDE_CHECK(world.Results.difference == 0.125);
@@ -35,6 +36,7 @@ TIDE_TEST(double_arithmetic_and_containers_retain_precision)
 TIDE_TEST(double_snapshots_packing_projection_and_interpolation)
 {
     tide_world_init(&world, 1.0f);
+    ITEM = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_copy(&previous, &world);
     const uint64_t before = tide_world_hash(&previous);
@@ -77,6 +79,7 @@ TIDE_TEST(double_snapshots_packing_projection_and_interpolation)
 TIDE_TEST(double_commands_keep_scalar_and_vector_payload_bits)
 {
     tide_world_init(&world, 1.0f);
+    ITEM = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_local_init(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(0), 0, false, false, "");
@@ -122,6 +125,7 @@ TIDE_TEST(double_inputs_pack_exactly_and_repair_nonfinite_values)
         base = in;
     }
     tide_world_init(&world, 1.0f);
+    ITEM = tide_entity_in_slot(&world.entities, 1);
     Controls in = {0};
     in.amount = tide_d_from_bits(UINT64_C(0x7FF8123456789ABC));
     in.matrix.c0.x = in.amount;

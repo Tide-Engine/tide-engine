@@ -1,5 +1,18 @@
 # Audio
 
+## Sound and Clip collections (2026-10-30)
+
+Clip, Sound and structs holding them can now be list/array elements and map
+values in local state, nested with text and containers. The earlier borrowed
+Clip collection limitation below is superseded. Ordinary value-copy and helper
+mutation rules apply. Generated frame enumeration visits every live Sound
+element without copying it. Voice identities follow the field/entity plus
+list/array position, or a map entry's insertion order, retained on compaction.
+The mixer and runtime API are unchanged. resource_collections checks five
+separate collected voices, nested storage, reload and local saved state on
+Windows ASan and WASI; scalar sound/audio regressions pass on both.
+
+
 ## Inside another program (2026-10-22)
 
 An embedded game (`tide/embed.h`, Unity) now hands its frames' audio to the

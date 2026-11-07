@@ -1541,6 +1541,7 @@ bool b2World_Restore( b2WorldId worldId, const uint8_t* image, int size )
 	// resolve into the rebuilt world. A truncated payload past here leaves the world
 	// unusable and the caller must destroy it.
 	b2FreeLiveSimElements( world );
+	world->holding = false; // Tide: an image holds no bodies (b2World_HoldBodies)
 
 	return b2DeserializeIntoShell( r, world );
 }

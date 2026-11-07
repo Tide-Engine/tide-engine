@@ -1,0 +1,24 @@
+// expect: 'Keep' writes a GPU list, which kernels do: a frag reads them
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+void Keep(GPUList<int> counts, int i)
+{
+    counts[i] = 1;
+}
+frag Shade(Vertex vertex, out Color color, Meadow meadow)
+{
+    Keep(meadow.counts, 0);
+    color = Color.white;
+}

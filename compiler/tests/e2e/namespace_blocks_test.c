@@ -9,7 +9,7 @@ static tide_world world;
 TIDE_TEST(namespace_blocks_put_declarations_in_their_namespace)
 {
     tide_world_init(&world, 1.0f);
-    const tide_entity e = {1, 1};
+    const tide_entity e = tide_entity_in_slot(&world.entities, 1);
     TIDE_REQUIRE(tide_has_Combat_Health(&world, e) && tide_has_Game_Items_Bag(&world, e));
     TIDE_CHECK(tide_get_Combat_Health(&world, e).hp == 10);
     tide_world_tick(&world);

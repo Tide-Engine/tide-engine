@@ -1,0 +1,35 @@
+// Baked poses (<tide>/baked.tide): BakedSkin skinning a BakedVertex from its instance's frame, and a vert of the
+// game's own placing a prop at a socket, both reading the poses the draw gives after its frag.
+scene Main { }
+
+struct Held
+{
+    float4x4 transform;
+    BakedFrame frame;
+}
+
+frag Tinted(BakedVertex vertex, out Color color, BakedInstance item)
+{
+    color = item.tint * (0.5 + 0.5 * vertex.normal.y);
+}
+
+vert Hold(mut Vertex3 corner, Held item, BakedPoses poses)
+{
+    corner.position = Math.Mul(poses.Socket(item.frame, 0), float4(corner.position, 1)).xyz;
+}
+
+local singleton Crowd
+{
+    BakedPoses poses;
+    List<BakedVertex> body;
+    List<Vertex3> sword;
+    List<int> indices;
+    List<BakedInstance> items;
+    List<Held> held;
+}
+
+view Show(Crowd crowd)
+{
+    Draw.Instanced(crowd.body, crowd.indices, crowd.items, BakedSkin, Tinted, crowd.poses);
+    Draw.Instanced(crowd.sword, crowd.indices, crowd.held, Hold, crowd.poses);
+}

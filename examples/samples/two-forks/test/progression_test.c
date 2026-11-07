@@ -68,6 +68,8 @@ static bool ask_progression(const int sender, const int level)
     tide_bits_put(&bits, TIDE_COMMAND_ID_Goto, 16);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
     tide_bits_put_varint(&bits, tide_zigzag(level));
     const uint32_t size = tide_bits_end(&bits);
     const tide_player_id player = tide_player_from_index(sender);

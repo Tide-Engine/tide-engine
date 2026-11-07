@@ -63,8 +63,8 @@ TIDE_TEST(verified_views_one_world)
 }
 
 // Two worlds that went differently: the one drawn never had the shield. A
-// view that takes an entity from both runs for those that are the same entity
-// in both, by what each was born as, not by its handle alone.
+// The same causal spawn is one entity in both worlds even when its initializer
+// was predicted differently. A spawn omitted from one world still has no join.
 TIDE_TEST(verified_views_two_worlds)
 {
     static tide_world drawn, confirmed;
@@ -73,22 +73,22 @@ TIDE_TEST(verified_views_two_worlds)
     play(&confirmed, 245u, true);
     tide_local_init(&local);
     const tide_entity four = target(&drawn, 4), five = target(&confirmed, 5);
-    TIDE_REQUIRE(!tide_entity_is_null(four) && tide_entity_equal(four, five)); // One handle, two entities
+    TIDE_REQUIRE(!tide_entity_is_null(four) && tide_entity_equal(four, five)); // One spawn, corrected values
     TIDE_REQUIRE(tide_entity_is_null(target(&drawn, 3)) && !tide_entity_is_null(target(&confirmed, 3)));
     tide_draw_reset(&draw);
     tide_frame(&drawn, NULL, 1.0f, &confirmed, NULL, 1.0f, &local, &draw, &gui);
     const Seen *seen = &local.Seen;
     // Drawn: 1 and 2, the target the shield would have kept from coming, and 4
     TIDE_CHECK(seen->drawn == bits(1, 2, 4, 6));
-    // In both, and the same entity: not 3 (gone from the drawn one), 6 (never confirmed), nor 4 and 5
-    TIDE_CHECK(seen->both == bits(1, 2, 0, 0) && seen->mismatch == 0);
+    // In both: 4 and 5 are the same causal entity with differing values.
+    TIDE_CHECK(seen->both == bits(1, 2, 4, 0) && seen->mismatch == 1);
     TIDE_CHECK(seen->ahead == 1); // Target 1 took a hit only the drawn world had
     TIDE_CHECK(seen->plates == 4);
     // The confirmed world's own entities, whatever the drawn one has
     TIDE_CHECK(seen->confirmed == bits(1, 2, 3, 5) && seen->confirmedOnly == 1);
     TIDE_CHECK(tide_get_Target_local(&local, target(&confirmed, 3)).sure == 1);
     // Target 1 is Dead as drawn, and isn't as confirmed
-    TIDE_CHECK(seen->drawnCorpses == bits(1, 2, 0, 0) && seen->corpses == 1 << 2 && seen->fresh == 1 << 1);
+    TIDE_CHECK(seen->drawnCorpses == bits(1, 2, 0, 0) && seen->corpses == 1 << 2 && seen->fresh == bits(1, 4, 0, 0));
     TIDE_CHECK(seen->scoreAhead == 1 && seen->sureMost == 1 && drawn.Score.points == 11);
     tide_local_free(&local);
     tide_world_free(&drawn);

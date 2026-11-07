@@ -312,6 +312,136 @@ TIDE_TEST(fbx_blend_shapes_become_shapes_and_in_betweens_are_refused)
     }
 }
 
+// A channel repeating an earlier one of its mesh exactly is left out, so the
+// model is the one without it; repeating a name with other offsets is refused.
+TIDE_TEST(fbx_blend_shape_channels_repeated_exactly_are_one_shape)
+{
+    static const char *const kinds[] = {"ascii", "binary"};
+    for (uint32_t i = 0; i < 2; i++) {
+        char name[64];
+        size_t plain_size, same_size, other_size;
+        snprintf(name, sizeof name, "shapes/shapes_%s.fbx", kinds[i]);
+        uint8_t *plain = fixture(name, &plain_size);
+        snprintf(name, sizeof name, "shapes/repeated_%s.fbx", kinds[i]);
+        uint8_t *same = fixture(name, &same_size);
+        snprintf(name, sizeof name, "shapes/renamed_%s.fbx", kinds[i]);
+        uint8_t *other = fixture(name, &other_size);
+        TIDE_REQUIRE(plain && same && other);
+        uint8_t *a = NULL, *b = NULL;
+        uint32_t a_size = 0, b_size = 0;
+        TIDE_REQUIRE(decode(plain, plain_size, &a, &a_size));
+        TIDE_REQUIRE(decode(same, same_size, &b, &b_size));
+        TIDE_CHECK(a_size == b_size && memcmp(a, b, a_size) == 0);
+        uint8_t *glb = NULL, *model = NULL;
+        size_t glb_size = 0;
+        uint32_t model_size = 0;
+        char why[256], note[256];
+        TIDE_REQUIRE(fbx_file_to_glb(other, other_size, true, &glb, &glb_size, why, note));
+        TIDE_CHECK(!tide_skinned_data_decode(glb, glb_size, false, NULL, NULL, &model, &model_size, why, note) && !model);
+        TIDE_CHECK(strstr(why, "two morph targets named 'jawOpen'") != NULL);
+        free(glb);
+        tide_skinned_data_free(a);
+        tide_skinned_data_free(b);
+        free(plain);
+        free(same);
+        free(other);
+    }
+}
+
+static bool keep_part(void *user, const char *name, const uint32_t length)
+{
+    return strlen(user) == length && !memcmp(user, name, length);
+}
+
+static bool has_node(const tide_skinned_data_view *v, const char *name)
+{
+    for (uint32_t i = 0; i < v->nodes; i++) {
+        tide_skinned_node_data n;
+        if (tide_skinned_data_node(v, i, &n) && n.name_length == strlen(name) && !memcmp(n.name, name, n.name_length)) return true;
+    }
+    return false;
+}
+
+// [Parts] on an FBX: a part is a node holding a mesh. Keeping one leaves the
+// other's mesh, skin and nodes out (the Hat's Group too), keeps every bone, and
+// keeping none is refused naming the parts there are.
+TIDE_TEST(fbx_parts_keep_their_meshes_and_every_bone)
+{
+    static const char *const kinds[] = {"ascii", "binary"};
+    for (uint32_t i = 0; i < 2; i++) {
+        char name[64];
+        size_t size;
+        snprintf(name, sizeof name, "parts/parts_%s.fbx", kinds[i]);
+        uint8_t *bytes = fixture(name, &size);
+        TIDE_REQUIRE(bytes);
+        static const char *const keeps[] = {"Triangle", "Hat"};
+        for (uint32_t k = 0; k < 2; k++) {
+            uint8_t *glb = NULL, *model = NULL;
+            size_t glb_size = 0;
+            uint32_t model_size = 0;
+            char why[256], note[256];
+            TIDE_REQUIRE(fbx_file_to_glb_parts(bytes, size, true, keep_part, (void *)keeps[k], &glb, &glb_size, why, note));
+            TIDE_REQUIRE(tide_skinned_data_decode(glb, glb_size, false, NULL, NULL, &model, &model_size, why, note));
+            tide_skinned_data_view v;
+            TIDE_REQUIRE(tide_skinned_data_validate(model, model_size) && tide_skinned_data_open(model, model_size, &v));
+            TIDE_CHECK(v.vertices == 3);
+            for (uint32_t c = 0; c < v.vertices; c++) {
+                tide_skinned_vertex_data vertex;
+                TIDE_REQUIRE(tide_skinned_data_vertex(&v, c, &vertex));
+                TIDE_CHECK(k ? vertex.position[1] >= 3.0f : vertex.position[1] <= 2.0f);
+            }
+            TIDE_CHECK(has_node(&v, keeps[k]) && !has_node(&v, keeps[1u - k]) && has_node(&v, "Group") == (k == 1u));
+            TIDE_CHECK(has_node(&v, "Root") && has_node(&v, "Bone0") && has_node(&v, "Bone4"));
+            tide_skinned_data_free(model);
+            free(glb);
+        }
+        uint8_t *glb = NULL;
+        size_t glb_size = 0;
+        char why[256], note[256];
+        TIDE_CHECK(!fbx_file_to_glb_parts(bytes, size, true, keep_part, (void *)"Cape", &glb, &glb_size, why, note) && !glb);
+        TIDE_CHECK(strstr(why, "keeps none of its parts; it has 'Triangle', 'Hat'") != NULL);
+        free(bytes);
+    }
+}
+
+// SkinningType "Blend" whose dual-quaternion weights are all zero is linear
+// skinning: the same model as the rig saying "Linear". A vertex blending in
+// dual-quaternion skinning is refused.
+TIDE_TEST(fbx_blend_skinning_without_dual_quaternion_weights_is_linear)
+{
+    static const char *const kinds[] = {"ascii", "binary"};
+    for (uint32_t i = 0; i < 2; i++) {
+        char name[64];
+        size_t linear_size, blend_size, dq_size;
+        snprintf(name, sizeof name, "models/rig_%s.fbx", kinds[i]);
+        uint8_t *linear = fixture(name, &linear_size);
+        snprintf(name, sizeof name, "skin/blend_%s.fbx", kinds[i]);
+        uint8_t *blend = fixture(name, &blend_size);
+        snprintf(name, sizeof name, "skin/dualquaternion_%s.fbx", kinds[i]);
+        uint8_t *dq = fixture(name, &dq_size);
+        TIDE_REQUIRE(linear && blend && dq);
+        uint8_t *a = NULL, *b = NULL;
+        uint32_t a_size = 0, b_size = 0;
+        TIDE_REQUIRE(decode(linear, linear_size, &a, &a_size));
+        TIDE_REQUIRE(decode(blend, blend_size, &b, &b_size));
+        TIDE_CHECK(a_size == b_size && memcmp(a, b, a_size) == 0);
+        uint8_t *glb = NULL;
+        size_t glb_size = 0;
+        char why[256], note[256];
+        TIDE_CHECK(!fbx_file_to_glb(dq, dq_size, true, &glb, &glb_size, why, note) && !glb);
+        TIDE_CHECK(strstr(why, "blends FBX dual-quaternion skinning") && strstr(note, "linear blend skinning"));
+        // A static mesh reads its rest geometry whatever its skinning is.
+        mesh_file mesh = {0};
+        TIDE_CHECK(read_mesh(dq, dq_size, name, &mesh));
+        mesh_file_free(&mesh);
+        tide_skinned_data_free(a);
+        tide_skinned_data_free(b);
+        free(linear);
+        free(blend);
+        free(dq);
+    }
+}
+
 // Euler rotation keys written wrapped (179 then -179 degrees about z) are a
 // two-degree turn; the 60 Hz bake between them must not sweep back through 0.
 TIDE_TEST(fbx_wrapped_euler_rotation_keys_bake_the_short_way)

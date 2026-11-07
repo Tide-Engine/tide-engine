@@ -1,0 +1,3 @@
+// expect: Parts chooses which parts of its file a SkinnedMesh asset keeps, and 'Hat' isn't an asset
+[Parts("Hat")] component Hat { int x; }
+scene Main { }

@@ -1,0 +1,54 @@
+// Fonts of the game's own: an asset's, a glob's as a list and a map, one
+// decoded from a file's bytes as the game runs, and the GUI's theme in one.
+
+asset Font tuffy = "../../../platform/font/Tuffy.ttf";
+asset List<Font> both = "../../../platform/font/*.ttf";
+asset Map<string, Font> named = "../../../platform/font/*.ttf";
+asset List<byte> boldBytes = "../../../platform/font/Tuffy_Bold.ttf";
+asset List<byte> notFont = "fonts.tide";
+
+local singleton Fonts
+{
+    Font decoded;
+    bool decodedOk;
+    bool refused;      // Bytes that aren't a font fail
+    int listed;
+    float2 measured;   // "abcd" at 10 in the asset's font
+    Font kept;         // A Font is a value: a field, a local, a parameter
+}
+
+scene Main { }
+
+// A font passed on, and the shorthand where a Font goes.
+void Label(string text, float2 at, Font font)
+{
+    Draw.Text(text, at, 15, Color.red, Anchor.MiddleLeft, font);
+}
+
+Font Pick(bool bold)
+{
+    return bold ? .Bold : .Regular;
+}
+
+view Show(mut Fonts fonts)
+{
+    Draw.SetScreen();
+    if (!fonts.decodedOk) {
+        fonts.decoded = Font.Decode(boldBytes)!;
+        fonts.decodedOk = true;
+        fonts.refused = Font.Decode(notFont) is IOError.InvalidData;
+    }
+    fonts.listed = both.count;
+    fonts.kept = named["../../../platform/font/Tuffy_Bold.ttf"];
+    Draw.Text("asset", float2(1, 2), 10, Color.white, tuffy);
+    Draw.Text("decoded", float2(3, 4), 11, Color.white, Anchor.UpperLeft, fonts.decoded);
+    Draw.Text("listed", float2(5, 6), 12, Color.white, both[1]);
+    Draw.Text("keyed", float2(7, 8), 13, Color.white, fonts.kept);
+    Draw.Text("engine", float2(9, 10), 14, Color.white, Pick(false));
+    Label("passed", float2(11, 12), tuffy);
+    fonts.measured = Draw.MeasureText("abcd", 10, tuffy);
+    GUI.Theme(GUITheme { font = fonts.decoded })
+    {
+        GUI.Label(Rect(0, 0, 100, 20), "themed");
+    }
+}

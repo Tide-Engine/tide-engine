@@ -1,0 +1,16 @@
+// expect: a GPUList is this machine's, made in local code: a constant can't be one
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+const GPUList<int> NONE = default;

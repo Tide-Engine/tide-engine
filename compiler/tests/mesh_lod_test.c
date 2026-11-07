@@ -1,4 +1,4 @@
-// A mesh's levels of detail (compiler/src/mesh_lod.h), on their own: that
+// A mesh's levels of detail (engine/include/tide/internal/mesh_lod.h), on their own: that
 // each level is fewer of the mesh's own triangles' corners, that open edges
 // and seams stay whole, and that what a level says it's off by is so.
 
@@ -22,9 +22,9 @@ static void shape_free(shape *s)
     *s = (shape){0};
 }
 
-static mesh_lod_source source_of(const shape *s)
+static tide_mesh_lod_source source_of(const shape *s)
 {
-    return (mesh_lod_source){.vertices = s->vertices, .position = s->position, .normal = s->normal, .uv = s->uv,
+    return (tide_mesh_lod_source){.vertices = s->vertices, .position = s->position, .normal = s->normal, .uv = s->uv,
                              .color = s->color, .tangent = s->tangent, .index = s->index, .indices = s->indices};
 }
 
@@ -110,7 +110,7 @@ static double area_of(const shape *s, const uint32_t *index, const uint32_t coun
 
 // Whether every level names the mesh's own vertices, in whole triangles, each no more than three
 // quarters of the one before and off by no less.
-static bool levels_hold(const shape *s, const mesh_lod *lod)
+static bool levels_hold(const shape *s, const tide_mesh_lod *lod)
 {
     uint32_t before = s->indices;
     float off = 0.0f;
@@ -132,9 +132,9 @@ static bool levels_hold(const shape *s, const mesh_lod *lod)
 TIDE_TEST(mesh_lod_flat_square_keeps_its_surface)
 {
     shape s = grid(32);
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     TIDE_REQUIRE(lod.levels >= 5u);
     TIDE_CHECK(levels_hold(&s, &lod));
     TIDE_CHECK(lod.count[lod.levels - 1u] <= s.indices / 32u);
@@ -144,7 +144,7 @@ TIDE_TEST(mesh_lod_flat_square_keeps_its_surface)
     }
     TIDE_CHECK(fabsf(lod.center[0] - 0.5f) < 1e-6f && fabsf(lod.center[1]) < 1e-6f && fabsf(lod.center[2] - 0.5f) < 1e-6f);
     TIDE_CHECK(lod.radius >= 0.70710677f && lod.radius < 0.7072f);
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     shape_free(&s);
 }
 
@@ -154,9 +154,9 @@ TIDE_TEST(mesh_lod_flat_square_keeps_its_surface)
 TIDE_TEST(mesh_lod_ball_stays_closed_and_says_how_far_off_it_is)
 {
     shape s = ball(32, 64);
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     TIDE_REQUIRE(lod.levels >= 4u);
     TIDE_CHECK(levels_hold(&s, &lod));
     TIDE_CHECK(fabsf(lod.radius - 1.0f) < 1e-4f);
@@ -180,7 +180,7 @@ TIDE_TEST(mesh_lod_ball_stays_closed_and_says_how_far_off_it_is)
         TIDE_CHECK(lost > 0.0 && lost < 0.6);
     }
     TIDE_CHECK(lod.error[lod.levels - 1u] > lod.error[0]);
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     shape_free(&s);
 }
 
@@ -207,9 +207,9 @@ TIDE_TEST(mesh_lod_keeps_a_seam_of_colors_whole)
         }
         for (uint32_t i = 0; i < left.indices; i++) s.index[half * left.indices + i] = left.index[i] + half * left.vertices;
     }
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     TIDE_REQUIRE(lod.levels >= 3u);
     TIDE_CHECK(levels_hold(&s, &lod));
     for (uint32_t level = 0; level < lod.levels; level++) {
@@ -225,7 +225,7 @@ TIDE_TEST(mesh_lod_keeps_a_seam_of_colors_whole)
         TIDE_CHECK(fabs(red - 1.0) < 1e-9);
         TIDE_CHECK(fabs(area_of(&s, index, lod.count[level]) - 2.0) < 1e-9);
     }
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     shape_free(&left);
     shape_free(&s);
 }
@@ -252,20 +252,20 @@ TIDE_TEST(mesh_lod_keeps_opposite_tangent_handedness_separate_without_weighing_i
         }
         for (uint32_t i = 0; i < half.indices; i++) s.index[part * half.indices + i] = half.index[i] + part * half.vertices;
     }
-    mesh_lod_source source = source_of(&s);
-    mesh_lod plain, same, split;
+    tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod plain, same, split;
     source.tangent = NULL;
-    mesh_lod_make(&source, &plain);
+    tide_mesh_lod_make(&source, &plain);
     source.tangent = s.tangent;
     // Direction changes alone do not make hard seams or add approximation error.
     for (uint32_t v = half.vertices; v < s.vertices; v++) s.tangent[v * 4u] = 0.0f, s.tangent[v * 4u + 2u] = 1.0f;
-    mesh_lod_make(&source, &same);
+    tide_mesh_lod_make(&source, &same);
     TIDE_REQUIRE(plain.levels >= 3u && same.levels == plain.levels && same.indices == plain.indices);
     TIDE_CHECK(memcmp(plain.index, same.index, plain.indices * sizeof(uint32_t)) == 0);
     TIDE_CHECK(memcmp(plain.error, same.error, sizeof plain.error) == 0);
     TIDE_CHECK(memcmp(plain.count, same.count, sizeof plain.count) == 0);
     for (uint32_t v = half.vertices; v < s.vertices; v++) s.tangent[v * 4u + 3u] = -1.0f;
-    mesh_lod_make(&source, &split);
+    tide_mesh_lod_make(&source, &split);
     TIDE_REQUIRE(split.levels >= 3u);
     TIDE_CHECK(levels_hold(&s, &split));
     TIDE_CHECK(split.radius == plain.radius && memcmp(split.center, plain.center, sizeof split.center) == 0);
@@ -282,7 +282,7 @@ TIDE_TEST(mesh_lod_keeps_opposite_tangent_handedness_separate_without_weighing_i
         TIDE_CHECK(fabs(positive - 1.0) < 1e-9 && fabs(negative - 1.0) < 1e-9);
         TIDE_CHECK(split.error[level] < 1e-5f);
     }
-    mesh_lod_free(&plain), mesh_lod_free(&same), mesh_lod_free(&split);
+    tide_mesh_lod_free(&plain), tide_mesh_lod_free(&same), tide_mesh_lod_free(&split);
     shape_free(&half);
     shape_free(&s);
 }
@@ -302,15 +302,15 @@ TIDE_TEST(mesh_lod_takes_triangles_with_corners_of_their_own)
         s.normal[i * 3u + 1u] = 1.0f;
         s.index[i] = i;
     }
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     TIDE_REQUIRE(lod.levels >= 4u);
     TIDE_CHECK(levels_hold(&s, &lod));
     for (uint32_t level = 0; level < lod.levels; level++) {
         TIDE_CHECK(fabs(area_of(&s, &lod.index[lod.first[level]], lod.count[level]) - 1.0) < 1e-9);
     }
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     shape_free(&shared);
     shape_free(&s);
 }
@@ -319,12 +319,12 @@ TIDE_TEST(mesh_lod_takes_triangles_with_corners_of_their_own)
 TIDE_TEST(mesh_lod_leaves_a_simple_mesh_alone)
 {
     shape s = grid(1);
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     TIDE_CHECK(lod.levels == 0 && lod.indices == 0 && lod.index == NULL);
     TIDE_CHECK(lod.radius >= 0.70710677f && lod.radius < 0.7072f);
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     shape_free(&s);
 }
 
@@ -332,15 +332,15 @@ TIDE_TEST(mesh_lod_leaves_a_simple_mesh_alone)
 TIDE_TEST(mesh_lod_is_the_same_each_time)
 {
     shape s = ball(24, 48);
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod a, b;
-    mesh_lod_make(&source, &a);
-    mesh_lod_make(&source, &b);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod a, b;
+    tide_mesh_lod_make(&source, &a);
+    tide_mesh_lod_make(&source, &b);
     TIDE_REQUIRE(a.levels == b.levels && a.indices == b.indices && a.levels > 0);
     TIDE_CHECK(memcmp(a.index, b.index, a.indices * sizeof(uint32_t)) == 0);
     TIDE_CHECK(memcmp(a.error, b.error, sizeof a.error) == 0 && memcmp(a.count, b.count, sizeof a.count) == 0);
-    mesh_lod_free(&a);
-    mesh_lod_free(&b);
+    tide_mesh_lod_free(&a);
+    tide_mesh_lod_free(&b);
     shape_free(&s);
 }
 
@@ -354,21 +354,21 @@ TIDE_TEST(mesh_lod_takes_whatever_a_mesh_holds)
     s.index[7] = s.index[6];
     s.position[3 * 5 + 1] = NAN;
     s.position[3 * 9] = INFINITY;
-    mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     for (uint32_t i = 0; i < lod.indices; i++) TIDE_CHECK(lod.index[i] < s.vertices);
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     for (uint32_t v = 0; v < s.vertices * 3u; v++) s.position[v] = 2.0f; // Every corner in one place
-    mesh_lod_make(&source, &lod);
+    tide_mesh_lod_make(&source, &lod);
     TIDE_CHECK(lod.levels == 0 && lod.radius >= 0.0f);
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     source.vertices = 0;
-    mesh_lod_make(&source, &lod);
+    tide_mesh_lod_make(&source, &lod);
     TIDE_CHECK(lod.levels == 0 && lod.radius == 0.0f);
     source = source_of(&s);
     source.indices = 0;
-    mesh_lod_make(&source, &lod);
+    tide_mesh_lod_make(&source, &lod);
     TIDE_CHECK(lod.levels == 0);
     shape_free(&s);
 }
@@ -386,12 +386,12 @@ static float halves_apart(void *user, const uint32_t from, const uint32_t to)
 TIDE_TEST(mesh_lod_counts_what_a_source_says_is_apart)
 {
     shape s = grid(16);
-    mesh_lod_source source = source_of(&s);
-    mesh_lod plain, bent;
-    mesh_lod_make(&source, &plain);
+    tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod plain, bent;
+    tide_mesh_lod_make(&source, &plain);
     source.apart = halves_apart;
     source.user = &s;
-    mesh_lod_make(&source, &bent);
+    tide_mesh_lod_make(&source, &bent);
     TIDE_REQUIRE(plain.levels > 0 && bent.levels > 0);
     TIDE_CHECK(levels_hold(&s, &bent));
     TIDE_CHECK(plain.error[plain.levels - 1u] < 1e-5f);
@@ -399,8 +399,8 @@ TIDE_TEST(mesh_lod_counts_what_a_source_says_is_apart)
     // move one into another band
     TIDE_CHECK(bent.error[0] < 1e-5f);
     TIDE_CHECK(bent.levels < plain.levels || bent.error[bent.levels - 1u] > 0.01f);
-    mesh_lod_free(&plain);
-    mesh_lod_free(&bent);
+    tide_mesh_lod_free(&plain);
+    tide_mesh_lod_free(&bent);
     shape_free(&s);
 }
 
@@ -437,7 +437,7 @@ static void copy_file(const char *from, const char *to, const long keep, const l
 TIDE_TEST(mesh_lod_is_kept_for_later_builds)
 {
     shape s = ball(12, 24);
-    const mesh_lod_source source = source_of(&s);
+    const tide_mesh_lod_source source = source_of(&s);
     // Keys nothing else has: the tests may run again over the same folder
     uint8_t first[32] = {1, 2, 3}, second[32] = {4, 5, 6}, third[32] = {7, 8, 9}, fourth[32] = {10, 11, 12}, none[32] = {13};
     char path[4][600];
@@ -446,7 +446,7 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
     for (int i = 0; i < 4; i++) remove(path[i]);
 
     const uint32_t before = mesh_lod_made();
-    const mesh_lod *made = mesh_lod_cached(first, &source, MESH_LOD_WORK);
+    const tide_mesh_lod *made = mesh_lod_cached(first, &source, MESH_LOD_WORK);
     TIDE_REQUIRE(made && made->levels >= 3 && mesh_lod_made() == before + 1u);
     const long size = file_size(path[0]);
     TIDE_REQUIRE(size > 0);
@@ -454,7 +454,7 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
 
     // A file another build left is read, not made
     copy_file(path[0], path[1], -1, -1);
-    const mesh_lod *read = mesh_lod_cached(second, &source, MESH_LOD_WORK);
+    const tide_mesh_lod *read = mesh_lod_cached(second, &source, MESH_LOD_WORK);
     TIDE_REQUIRE(read && read != made && mesh_lod_made() == before + 1u);
     TIDE_CHECK(read->levels == made->levels && read->indices == made->indices && read->radius == made->radius);
     TIDE_CHECK(memcmp(read->index, made->index, made->indices * sizeof(uint32_t)) == 0);
@@ -462,7 +462,7 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
 
     // One that's cut short is made again, and written whole
     copy_file(path[0], path[2], size - 5, -1);
-    const mesh_lod *again = mesh_lod_cached(third, &source, MESH_LOD_WORK);
+    const tide_mesh_lod *again = mesh_lod_cached(third, &source, MESH_LOD_WORK);
     TIDE_REQUIRE(again && mesh_lod_made() == before + 2u);
     TIDE_CHECK(again->indices == made->indices && memcmp(again->index, made->index, made->indices * sizeof(uint32_t)) == 0);
     TIDE_CHECK(file_size(path[2]) == size);
@@ -470,18 +470,66 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
     // ...and so is one of a mesh with fewer vertices than its indices name
     copy_file(path[0], path[3], -1, -1);
     shape small = ball(4, 6);
-    const mesh_lod_source other = source_of(&small);
-    const mesh_lod *checked = mesh_lod_cached(fourth, &other, MESH_LOD_WORK);
+    const tide_mesh_lod_source other = source_of(&small);
+    const tide_mesh_lod *checked = mesh_lod_cached(fourth, &other, MESH_LOD_WORK);
     TIDE_REQUIRE(checked && mesh_lod_made() == before + 3u);
     for (uint32_t i = 0; i < checked->indices; i++) TIDE_CHECK(checked->index[i] < small.vertices);
 
     // With no game folder, they're made and kept for the process alone
-    const mesh_lod *loose = mesh_lod_cached(none, &source, NULL);
+    const tide_mesh_lod *loose = mesh_lod_cached(none, &source, NULL);
     TIDE_CHECK(loose && loose->levels == made->levels && mesh_lod_made() == before + 4u);
     TIDE_CHECK(mesh_lod_cached(none, &source, NULL) == loose && mesh_lod_made() == before + 4u);
     for (int i = 0; i < 4; i++) remove(path[i]);
     shape_free(&small);
     shape_free(&s);
+}
+
+// Levels wanted ahead are made at once, on several threads, and are the levels one made alone would be: the asking
+// after finds them, and makes nothing. One a file holds is read, not made.
+TIDE_TEST(mesh_lod_wanted_ahead_are_the_same_levels)
+{
+    enum { SHAPES = 6 };
+    shape shapes[SHAPES];
+    tide_mesh_lod_source sources[SHAPES];
+    uint8_t ahead[SHAPES][32], alone[SHAPES][32];
+    char path[SHAPES][600];
+    for (int i = 0; i < SHAPES; i++) {
+        shapes[i] = ball(8u + 2u * (uint32_t)i, 16u + 3u * (uint32_t)i);
+        sources[i] = source_of(&shapes[i]);
+        memset(ahead[i], 0, 32), memset(alone[i], 0, 32);
+        ahead[i][0] = 40, ahead[i][1] = (uint8_t)i, alone[i][0] = 41, alone[i][1] = (uint8_t)i;
+        key_path(path[i], sizeof path[i], ahead[i]);
+        remove(path[i]);
+    }
+    // The first's file is there already
+    TIDE_REQUIRE(mesh_lod_cached(alone[0], &sources[0], MESH_LOD_WORK));
+    char first[600];
+    key_path(first, sizeof first, alone[0]);
+    copy_file(first, path[0], -1, -1);
+
+    const uint32_t before = mesh_lod_made();
+    for (int i = 0; i < SHAPES; i++) mesh_lod_want(ahead[i], &sources[i], NULL, 0u, MESH_LOD_WORK);
+    mesh_lod_want(ahead[1], &sources[1], NULL, 0u, MESH_LOD_WORK); // Wanted twice: made once
+    mesh_lod_make_wanted();
+    TIDE_CHECK(mesh_lod_made() == before + SHAPES - 1u);
+    for (int i = 0; i < SHAPES; i++) {
+        const tide_mesh_lod *got = mesh_lod_cached(ahead[i], &sources[i], MESH_LOD_WORK);
+        TIDE_REQUIRE(got && levels_hold(&shapes[i], got));
+        const tide_mesh_lod made = *got; // The table it's in may move as the next is kept; its indices stay
+        TIDE_CHECK(file_size(path[i]) > 0);
+        const tide_mesh_lod *own = mesh_lod_cached(alone[i], &sources[i], NULL);
+        TIDE_REQUIRE(own);
+        TIDE_CHECK(own->levels == made.levels && own->indices == made.indices && own->radius == made.radius);
+        TIDE_CHECK(memcmp(own->index, made.index, made.indices * sizeof(uint32_t)) == 0);
+        TIDE_CHECK(memcmp(own->error, made.error, sizeof made.error) == 0);
+    }
+    // Asking for the ahead ones made none; the ones alone are made but the first, whose file was read
+    TIDE_CHECK(mesh_lod_made() == before + SHAPES - 1u + SHAPES - 1u);
+    for (int i = 0; i < SHAPES; i++) {
+        remove(path[i]);
+        shape_free(&shapes[i]);
+    }
+    remove(first);
 }
 
 // A level only pays by the triangles it takes off, so none is made with
@@ -490,34 +538,34 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
 TIDE_TEST(mesh_lod_makes_no_level_under_the_fewest_triangles)
 {
     shape s = ball(32, 64); // 3,968 triangles
-    mesh_lod_source source = source_of(&s);
-    mesh_lod all, some, none;
-    mesh_lod_make(&source, &all);
+    tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod all, some, none;
+    tide_mesh_lod_make(&source, &all);
     source.triangles_least = 500;
-    mesh_lod_make(&source, &some);
+    tide_mesh_lod_make(&source, &some);
     // 1,984 and 992, and not the 496 after them
     TIDE_REQUIRE(all.levels > 2u && some.levels == 2u);
     TIDE_CHECK(some.count[0] == all.count[0] && some.count[1] == all.count[1] && some.error[1] == all.error[1]);
     TIDE_CHECK(some.count[1] >= 500u * 3u && all.count[2] < 500u * 3u);
     TIDE_CHECK(memcmp(some.index, all.index, some.indices * sizeof(uint32_t)) == 0);
-    mesh_lod_free(&some);
+    tide_mesh_lod_free(&some);
     // A game's: on to levels of a few dozen triangles, none under the floor
-    source.mesh_least = MESH_LOD_MESH_LEAST;
-    source.triangles_least = MESH_LOD_TRIANGLES_LEAST;
-    mesh_lod_make(&source, &some);
+    source.mesh_least = TIDE_MESH_LOD_MESH_LEAST;
+    source.triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST;
+    tide_mesh_lod_make(&source, &some);
     TIDE_REQUIRE(some.levels > 3u);
-    TIDE_CHECK(some.count[some.levels - 1u] >= MESH_LOD_TRIANGLES_LEAST * 3u && some.count[some.levels - 1u] < 500u * 3u);
+    TIDE_CHECK(some.count[some.levels - 1u] >= TIDE_MESH_LOD_TRIANGLES_LEAST * 3u && some.count[some.levels - 1u] < 500u * 3u);
     TIDE_CHECK(memcmp(some.index, all.index, some.indices * sizeof(uint32_t)) == 0);
     shape light = ball(16, 32); // 960
-    mesh_lod_source other = source_of(&light);
-    other.mesh_least = MESH_LOD_MESH_LEAST;
-    other.triangles_least = MESH_LOD_TRIANGLES_LEAST;
-    mesh_lod_make(&other, &none);
+    tide_mesh_lod_source other = source_of(&light);
+    other.mesh_least = TIDE_MESH_LOD_MESH_LEAST;
+    other.triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST;
+    tide_mesh_lod_make(&other, &none);
     TIDE_CHECK(none.levels == 0 && none.index == NULL && none.radius > 0.99f);
     other.mesh_least = 960; // Just enough
-    mesh_lod_make(&other, &none);
+    tide_mesh_lod_make(&other, &none);
     TIDE_CHECK(none.levels > 0);
-    mesh_lod_free(&all), mesh_lod_free(&some), mesh_lod_free(&none);
+    tide_mesh_lod_free(&all), tide_mesh_lod_free(&some), tide_mesh_lod_free(&none);
     shape_free(&light);
     shape_free(&s);
 }
@@ -539,16 +587,16 @@ TIDE_TEST(mesh_lod_weighs_what_a_surface_shows_by_the_patch_it_is_on)
             n[0] = 0.6f, n[1] = 0.8f, n[2] = 0.0f;
         }
     }
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     TIDE_REQUIRE(lod.levels >= 4u);
     TIDE_CHECK(levels_hold(&s, &lod));
     TIDE_CHECK(lod.count[lod.levels - 1u] <= s.indices / 16u);
     TIDE_CHECK(lod.error[0] < 1e-5f); // The rest of the square is as flat as it was
     // Taking the patch away is off by about the patch's size, not the square's
     for (uint32_t level = 0; level < lod.levels; level++) TIDE_CHECK(lod.error[level] < 2.0f * patch);
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     // Leaning one way and the other from each corner to the next, all over: a level that smooths it is off by
     // about the lean over the whole square
     for (uint32_t v = 0; v < s.vertices; v++) {
@@ -556,11 +604,11 @@ TIDE_TEST(mesh_lod_weighs_what_a_surface_shows_by_the_patch_it_is_on)
         float *n = &s.normal[v * 3u];
         n[0] = x % 2u ? 0.42f : -0.42f, n[1] = 0.8f, n[2] = z % 2u ? 0.42f : -0.42f;
     }
-    mesh_lod_make(&source, &lod);
+    tide_mesh_lod_make(&source, &lod);
     TIDE_REQUIRE(lod.levels > 0u);
     TIDE_CHECK(levels_hold(&s, &lod));
     TIDE_CHECK(lod.error[lod.levels - 1u] > 2.0f * patch);
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     shape_free(&s);
 }
 
@@ -584,15 +632,15 @@ static double cache_misses(const uint32_t *index, const uint32_t count)
 TIDE_TEST(mesh_lod_orders_levels_for_the_vertex_cache)
 {
     shape s = ball(32, 64);
-    const mesh_lod_source source = source_of(&s);
-    mesh_lod lod;
-    mesh_lod_make(&source, &lod);
+    const tide_mesh_lod_source source = source_of(&s);
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
     TIDE_REQUIRE(lod.levels >= 4u);
     for (uint32_t level = 0; level < lod.levels; level++) {
         const double misses = cache_misses(&lod.index[lod.first[level]], lod.count[level]);
         // Unordered, as the collapses left them, the bigger ones were 1.0 to 1.5
         if (lod.count[level] >= 100u * 3u) TIDE_CHECK(misses < 0.75);
     }
-    mesh_lod_free(&lod);
+    tide_mesh_lod_free(&lod);
     shape_free(&s);
 }

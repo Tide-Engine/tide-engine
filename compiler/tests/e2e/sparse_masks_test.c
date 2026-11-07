@@ -3,6 +3,7 @@
 #include "game.h"
 #include "tide/jobs.h"
 #include "tide_test.h"
+#include "entity_order_test.h"
 
 enum { TICKS = 3 };
 static tide_world world, kept;
@@ -28,11 +29,22 @@ static const tide_jobs eight = {.threads = 8, .run = alone};
 static void check_world(const int count, const int tick)
 {
     int seen = 0, items = 0;
-    for (int i = 0; i < count; i++) {
+    entity_order_value *expected = malloc((size_t)(count ? count : 1) * sizeof *expected);
+    TIDE_REQUIRE(expected);
+    int selected = 0;
+    for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+        if (!tide_has_Item(&world, entity)) continue;
+        const int i = tide_get_Item(&world, entity).ordinal;
         if (!wanted(i, count) || (tick > 1 && i % 3 == 0)) continue;
-        const int32_t *value = tide_list_at(world.Rules.seen, seen++, sizeof *value);
-        TIDE_REQUIRE(value && *value == i);
+        expected[selected++] = (entity_order_value){entity, i};
     }
+    qsort(expected, (size_t)selected, sizeof *expected, entity_order_compare);
+    for (; seen < selected; seen++) {
+        const int32_t *value = tide_list_at(world.Rules.seen, seen, sizeof *value);
+        TIDE_REQUIRE(value && *value == expected[seen].value);
+    }
+    free(expected);
     TIDE_CHECK(tide_list_count(world.Rules.seen) == seen);
     for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
         const tide_entity entity = tide_entity_in_slot(&world.entities, slot);

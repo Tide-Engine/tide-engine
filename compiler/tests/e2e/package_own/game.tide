@@ -1,8 +1,35 @@
-// A game with a global function named as the package's enum.
+// A game whose global names are its packages' too: a function Side and a
+// function Box, a component Wheel beside Shapes' (which Combat's code spawns),
+// a function Lit beside Combat's frag, and a command handler
+// Shake beside Combat's function. Inside the packages their own names win, and
+// the game's code finds each of theirs by what it uses it as.
+using Combat;
+using Shapes;
+
 singleton Seen
 {
     int facing;
     int side;
+    int shaken;
+    int boxes;
+    float lit;
+    int spokes;
+}
+
+component Wheel
+{
+    float radius = 1;
+}
+
+local singleton Art
+{
+    List<Combat.Corner> corners;
+    List<int> faces;
+}
+
+command Ping
+{
+    int amount;
 }
 
 int Side(int a, int b)
@@ -10,10 +37,43 @@ int Side(int a, int b)
     return a + b;
 }
 
+void Box(mut Seen seen, int count)
+{
+    seen.boxes += count;
+}
+
+Color Lit(Color color)
+{
+    return color * 0.5;
+}
+
 scene Main { }
 
-system Look(mut Seen seen)
+event(Spawned) Setup(with Main)
 {
+    Crate(2);
+}
+
+command(Ping ping, PlayerID sender) Shake(mut Seen seen)
+{
+    seen.shaken += ping.amount;
+}
+
+system Look(Shapes.Box box, Shapes.Wheel wheel, mut Seen seen)
+{
+    seen.spokes = wheel.spokes;
     seen.facing = Combat.FacingOf(1);
     seen.side = Side(3, 4);
+    seen.shaken = Shake(5); // Combat's function, not the command handler
+    Box(seen, int(box.size.x));
+    seen.lit = Lit(Color.white).r;
+}
+
+view Show(mut Art art)
+{
+    if (art.corners.count == 0) {
+        art.corners = [Combat.Corner { }, Combat.Corner { position = float3(1, 0, 0) }, Combat.Corner { position = float3(0, 1, 0) }];
+        art.faces = [0, 1, 2];
+    }
+    Draw.Mesh(art.corners, art.faces, float4x4.identity, Lit); // Combat's frag
 }

@@ -1,0 +1,6 @@
+// expect: 'Use' doesn't fail, so 'try' can't pass the error on
+// expect: declare 'int Use(...) fails Error' to pass the error on, or handle it here with 'is' or '!'
+enum Error { Failed }
+void Save() fails Error { fail Error.Failed; }
+int Use() { try Save(); return 1; }
+scene Main;

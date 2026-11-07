@@ -7,6 +7,7 @@
 #include "tide/color.h"
 #include "tide/audio.h"
 #include "tide/draw.h"
+#include "tide/font.h"
 #include "tide/grid.h"
 #include "tide/list.h"
 #include "tide/map.h"
@@ -20,23 +21,24 @@
 // maps of those, laid out as the heap lays them out, in one read-only region
 // every world can name (see docs/spec.md, Assets).
 //
-// Where the region is: the top of the scratch area's offsets, from
+// Where the region is: the top half of the scratch area's offsets, from
 // TIDE_PACK_BASE on (tide/text.h), so a handle into it is a scratch handle
 // (TIDE_IN_SCRATCH) that reads through tide_scratch_at like any other, with
 // no code of its own on the paths that read text, lists and maps; grids read
 // their chunks the same way where their handle says the scratch area (see
 // tide_grid_chunk_at). No world holds the region, so nothing copies, hashes
 // or sends it, and the checker refuses every write, so the runtime never sees
-// one. Each thread maps the region into its slots the first time it runs
-// code after a load (tide_pack_use, which generated code calls where it sets
-// the thread's heaps).
+// one. Each thread finds the region the first time it runs code after a load
+// (tide_pack_use, which generated code calls where it sets the thread's
+// heaps). Its offsets are 64 bits, in the file as in handles, so a pack holds
+// what memory does.
 //
 // The file: a header, a table of the declarations by name (a SHA-256 of the
 // qualified name, so a build and a pack of different times still meet, and
 // a stale one is found by its kind), and the region.
 
 #define TIDE_PACK_MAGIC "TIDEPACK"
-#define TIDE_PACK_VERSION 2u
+#define TIDE_PACK_VERSION 4u
 
 // What a name's entry is: the kind the declaration's type resolves to.
 enum {
@@ -76,6 +78,14 @@ enum {
     TIDE_PACK_SKINNED = 14,
     TIDE_PACK_SKINNEDS = 15, // List<SkinnedMesh<V>>: three handles per element; `size` is its count
     TIDE_PACK_SKINNED_MAP = 16, // Map<string, SkinnedMesh<V>>: live, key, three handles; `size` is its index offset
+    // Font: font data (tide/font.h), a font file as the build read it (tide_pack_font), in a block laid out as a
+    // clip's is. Loading adds it to the font registry, and a Font names it there (tide_pack_font_of). A list's
+    // elements' kind too (`extra`)
+    TIDE_PACK_FONT = 17,
+    TIDE_PACK_FONTS = 18, // Map<string, Font> of a glob: as TIDE_PACK_MAP, its values' blocks fonts
+    // TextureArray: a block of handles, as a list's, each a texture's block (tide_pack_texture): its layers' images
+    // in order, all of one size and uncompressed, 1 to TIDE_TEXTURE_ARRAY_LAYERS of them
+    TIDE_PACK_TEXTURE_ARRAY = 19,
 };
 
 // The hidden portable model bytes followed by ordinary typed geometry lists.
@@ -85,11 +95,11 @@ typedef struct tide_skinned_lists {
 } tide_skinned_lists;
 
 typedef struct tide_pack_entry {
-    uint8_t name[32];  // SHA-256 of the declaration's qualified name
-    uint32_t kind;     // TIDE_PACK_*
-    uint32_t offset;   // Its block in the region (a map's: its entries' block)
-    uint32_t size;     // The block's bytes after its header (a map's: its index block's offset)
-    uint32_t extra;    // By kind, above (a map's: its live count)
+    uint8_t name[32]; // SHA-256 of the declaration's qualified name
+    uint32_t kind;    // TIDE_PACK_*
+    uint32_t extra;   // By kind, above (a map's: its live count)
+    uint64_t offset;  // Its block in the region (a map's: its entries' block)
+    uint64_t size;    // The block's bytes after its header (a map's: its index block's offset)
 } tide_pack_entry;
 
 // The file's header, before the entries and the region.
@@ -97,8 +107,12 @@ typedef struct tide_pack_header {
     char magic[8];
     uint32_t version;
     uint32_t entries;
-    uint32_t region_at; // Where the region starts in the file
-    uint32_t region_size;
+    uint64_t region_at; // Where the region starts in the file
+    uint64_t region_size;
+    // SHA-256 of the whole file with these 32 bytes zero: the pack's identity
+    // (tide_pack_digest), worked out once by the build that wrote it
+    // (tide_pack_end), so a game that loads it doesn't hash it again.
+    uint8_t digest[32];
     uint32_t reserved[2];
 } tide_pack_header;
 
@@ -107,12 +121,13 @@ typedef struct tide_pack_header {
 
 typedef struct tide_pack_shared {
     uint8_t content[32];
-    uint32_t kind, offset, size, extra;
+    uint32_t kind, extra;
+    uint64_t offset, size;
 } tide_pack_shared;
 
 typedef struct tide_pack_builder {
     uint8_t *region;
-    uint32_t size, room;
+    uint64_t size, room;
     // Blocks by their content's hash and their kind: a file in the pack once for each kind of block it's read
     // as, however many name it
     tide_pack_shared *shared;
@@ -126,7 +141,13 @@ typedef struct tide_pack_builder {
 // a list's block, of as many bytes: what a List<byte> reads, and never text
 // whose characters aren't a byte each, as a text's block says its characters
 // where a list's says its room (tide_pack_string is for text).
-uint32_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size, uint32_t *chars);
+uint64_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size, uint32_t *chars);
+
+// A list's block of `count` elements of `element` bytes each, side by side,
+// shared by `content` (which should cover the element size as well as the
+// bytes): its offset, which a tide_list of those elements reads. What a
+// constant list that build code made is in the pack (tidec's build code).
+uint64_t tide_pack_values(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t element, uint32_t count);
 
 // Text of `size` bytes of UTF-8, with a NUL after them, shared by `content`:
 // its block's offset, which a tide_text reads as any text's (its header says
@@ -135,29 +156,32 @@ uint32_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const 
 // it's the block tide_pack_bytes gives the same content, which says the same
 // of it; otherwise a block of its own, so a file read as text and as bytes is
 // then in the pack as each.
-uint32_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size, uint32_t *chars);
+uint64_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size, uint32_t *chars);
 
 // A grid of `width` by `height` colors, as a Grid2<Color> of `shape` is laid
 // out (its directory, then the chunks that have a color in them), shared by
 // `content`: its directory's offset. `version` is what the draw list tells
 // the grid by (tide_draw_grid_texture): the content's first bytes do.
-uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const tide_color *pixels,
+uint64_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const tide_color *pixels,
                         const tide_grid_shape *shape);
 
 // An image of `width` by `height` pixels to draw with: red, green, blue and
 // alpha, a byte each, rows from the top, shared by `content`. Its block's
 // offset: the version the draw list tells it by in its header (the content's
 // first bytes, never 0), then its width and its height, then its pixels.
-uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const uint8_t *rgba);
+uint64_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const uint8_t *rgba);
 // Build-tool support: exact RGBA plus validated-format, complete BC mip chain.
 // The blocks are copied; generated game code needs no new runtime call.
-uint32_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height,
+uint64_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height,
                                  const uint8_t *rgba, tide_texture_blocks blocks);
 
 // A sound's file of `size` bytes as it is (a WAV), shared by `content`. Its
 // block's offset: the version it's told by in its header (the content's
 // first bytes, never 0), then its size, then the bytes.
-uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size);
+uint64_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size);
+// A font's font data of `size` bytes (tide/font.h), shared by `content`. Its
+// block's offset, laid out as a clip's: a version, its size, then the bytes.
+uint64_t tide_pack_font(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size);
 
 // A mesh: `count` vertices of `vertex` bytes each, as the game's vertex
 // struct lays one out, and `index_count` ints, three a triangle. Two blocks,
@@ -171,7 +195,7 @@ uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const v
 // (`content`'s, never 0), then an element's bytes. A draw tells a mesh of the
 // pack's by those (tide_pack_list_version), with none of its elements read.
 void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void *vertices, uint32_t vertex, uint32_t count,
-                    const uint32_t *indices, uint32_t index_count, uint32_t offsets[2]);
+                    const uint32_t *indices, uint32_t index_count, uint64_t offsets[2]);
 
 // The same, with the mesh's levels of detail (a mesh marked [LOD]: see
 // tide_mesh_levels), or NULL for none: a block of their own, which the
@@ -180,35 +204,35 @@ void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void 
 // then of the levels too, so the same file with and without them is two
 // meshes. The lists code reads are the full mesh's either way.
 void tide_pack_mesh_levels(tide_pack_builder *b, const uint8_t content[32], const void *vertices, uint32_t vertex, uint32_t count,
-                           const uint32_t *indices, uint32_t index_count, const tide_mesh_levels *levels, uint32_t offsets[2]);
+                           const uint32_t *indices, uint32_t index_count, const tide_mesh_levels *levels, uint64_t offsets[2]);
 
 // A list of `count` meshes, whose `offsets` are two each (tide_pack_mesh's):
 // its block's offset. Not shared: a declaration's own.
-uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
+uint64_t tide_pack_mesh_list(tide_pack_builder *b, const uint64_t *offsets, uint32_t count);
 
 // A map from text to meshes: `keys` are offsets of text blocks, and
 // `offsets` two a mesh. Its entries' block, with its index's in *index, as
 // tide_pack_map's.
-uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, uint32_t count, uint32_t *index);
+uint64_t tide_pack_mesh_map(tide_pack_builder *b, const uint64_t *keys, const uint64_t *offsets, uint32_t count, uint64_t *index);
 
 // Three offsets per model: bytes (tide_pack_bytes), vertices and indices
 // (tide_pack_mesh). A singleton uses this builder with count 1 too.
-uint32_t tide_pack_skinned_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
-uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, uint32_t count, uint32_t *index);
+uint64_t tide_pack_skinned_list(tide_pack_builder *b, const uint64_t *offsets, uint32_t count);
+uint64_t tide_pack_skinned_map(tide_pack_builder *b, const uint64_t *keys, const uint64_t *offsets, uint32_t count, uint64_t *index);
 
 // A list of `count` handles (offsets of blocks in this pack, which it tags):
 // its block's offset. Not shared: a declaration's own.
-uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
+uint64_t tide_pack_list(tide_pack_builder *b, const uint64_t *offsets, uint32_t count);
 
 // A map from text to values: `keys` are offsets of text blocks
 // (tide_pack_string), `values` of the values' blocks. Its entries' block,
 // with its index's block in *index. The keys are hashed as
 // tide_map_hash_bytes does, so the game's own lookups find them.
-uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *values, uint32_t count, uint32_t *index);
+uint64_t tide_pack_map(tide_pack_builder *b, const uint64_t *keys, const uint64_t *values, uint32_t count, uint64_t *index);
 
 // Names a block: the declaration `qualified` (like "Game.hero") of `kind` is
 // the block at `offset`.
-void tide_pack_name(tide_pack_builder *b, const char *qualified, uint32_t kind, uint32_t offset, uint32_t size, uint32_t extra);
+void tide_pack_name(tide_pack_builder *b, const char *qualified, uint32_t kind, uint64_t offset, uint64_t size, uint32_t extra);
 
 // The pack as a file's bytes (to free()), and its size. The builder is freed.
 uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size);
@@ -224,10 +248,11 @@ bool tide_pack_load(const uint8_t *bytes, size_t size);
 // Lets go of the loaded pack: before a game's library is unloaded.
 void tide_pack_unload(void);
 // Exact source-pack identity for negotiating asset-relative state transfers.
-// Zero with no loaded pack. Computed once when loading, never per tick.
+// Zero with no loaded pack. The build that wrote the pack worked it out
+// (tide_pack_header.digest); loading copies it, and no tick asks for it.
 void tide_pack_digest(uint8_t digest[32]);
 // Internal: only the original portable file region, before runtime relocation.
-const uint8_t *tide_pack_file_span(uint32_t offset, uint64_t bytes);
+const uint8_t *tide_pack_file_span(uint64_t offset, uint64_t bytes);
 
 // The entry a declaration's name has in the loaded pack, of `kind`, or NULL:
 // for a pack from another build of the game, or none loaded.
@@ -239,7 +264,7 @@ const tide_pack_entry *tide_pack_find_id(const uint8_t name[32], uint32_t kind);
 
 // What an entry resolves to, as the value the game reads: a handle (a tagged
 // offset, for a grid's or a list's `at`, or a text's), a tide_str, or a map.
-uint32_t tide_pack_handle(const tide_pack_entry *e);
+tide_handle tide_pack_handle(const tide_pack_entry *e);
 tide_str tide_pack_text(const tide_pack_entry *e);
 tide_map tide_pack_map_of(const tide_pack_entry *e);
 
@@ -262,7 +287,9 @@ tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e);
 // The loaded pack's image that a Texture names (`named`: its
 // `image.version`), as pixels: width * height * 4 bytes, rows from the top,
 // and a version that's what's in them (the file's hash). False when the
-// pack has no image under that name. The pixels stay where they are until
+// pack has no image under that name. A compressed image is its blocks alone,
+// with `pixels` NULL and its size as ever (tide_pack_texture_blocks_find;
+// tide_texture_blocks_decode). The pixels stay where they are until
 // another pack is loaded or this one is let go, and a draw list draws with
 // them there (TIDE_PIXELS_PACK), with no copy of its own: a list that drew
 // with one isn't rendered after its pack went.
@@ -281,12 +308,26 @@ tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e);
 // faces aren't six squares of one size. The pointers and the pixels stay
 // where they are until another pack is loaded, as an image's do.
 bool tide_pack_cubemap_find(uint64_t named, int32_t *size, uint64_t *version, const uint8_t *const **faces);
+// A texture array's entry as the value the game reads: a TextureArray of the pack's, by its declaration's name.
+tide_texture_array_ref tide_pack_texture_array_of(const tide_pack_entry *e);
+// The loaded pack's array that a TextureArray names: a layer's pixels, how many layers, a version that's what's
+// in them, and a pointer to each layer's pixels, 4 bytes each, rows from the top. False when the pack has none
+// under that name, or one whose layers aren't of one size. They stay where they are until another pack is loaded.
+bool tide_pack_texture_array_find(uint64_t named, int32_t *width, int32_t *height, uint32_t *layers, uint64_t *version,
+                                  const uint8_t *const **pixels);
+// ...and each layer's blocks (compressed, or authored mip chains), as long as its pixels stay: a layer kept as blocks
+// alone has NULL pixels above, and one kept as RGBA alone no blocks. NULL for no array under that name.
+const tide_texture_blocks *tide_pack_texture_array_blocks(uint64_t named);
 
 // A clip's entry as the value the game reads: a Clip that names its sound by
 // its declaration, as a Texture names its image (above). Lists and maps of
 // clips are laid out after the region as textures' are. The default Clip for
 // no entry.
 tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e);
+// The Font an `asset Font` resolves to: its font data, which loading the pack
+// checked and added to the font registry (tide/font.h). Font.Regular for an
+// entry that's no font, or whose data isn't font data.
+tide_font_ref tide_pack_font_of(const tide_pack_entry *e);
 
 // The loaded pack's sound that a Clip names: the file's bytes as they are,
 // and a version that's what's in them (the file's hash). False when the pack
@@ -377,6 +418,12 @@ bool tide_pack_skinned_proof(tide_list data, uint64_t *identity, uint64_t *versi
 // invalid. The output is unchanged when no current proof exists.
 bool tide_pack_skinned_sample_proof(tide_list data, bool *nonnegative_first_times);
 
+// Changes whenever a byte of the loaded pack could have: each load, unload
+// and geometry-default write. A block within the file's bytes
+// (tide_pack_file_span) holds the same bytes for as long as this is the
+// same, so runtime caches of what was read from it key on both.
+uint64_t tide_pack_generation(void);
+
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps
 // (tide_text_use), so every thread that runs Tide code reads the pack.
@@ -386,16 +433,15 @@ void tide_pack_use(void);
 // block header, where the builder put it.
 uint64_t tide_pack_grid_version(tide_grid g);
 
-// `bytes` bytes of the loaded region at a scratch offset (a handle's low 30
-// bits), where they're all in it: NULL otherwise, as for a handle kept from a
-// pack that's gone.
-const uint8_t *tide_pack_span(uint32_t offset, uint64_t bytes);
+// `bytes` bytes of the loaded region at a scratch offset (a handle's
+// tide_handle_offset), where they're all in it: NULL otherwise, as for a
+// handle kept from a pack that's gone.
+const uint8_t *tide_pack_span(uint64_t offset, uint64_t bytes);
 
 // Has every texture of a list's or a map's entry sampled as `sampling` says
 // (tide_sampling_bits): what the asset's declaration says of them, which
 // generated code gives after each load.
 void tide_pack_sample_textures(const tide_pack_entry *e, uint32_t sampling);
 
-// How many scratch slots the loaded region takes, from TIDE_PACK_BASE: 0 for
-// none. The scratch area stops short of them (text.c).
-extern uint32_t tide_pack_region_slots;
+// The bytes of the loaded region, from TIDE_PACK_BASE on: 0 for none.
+extern uint64_t tide_pack_region_size;

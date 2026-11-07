@@ -8,6 +8,9 @@ asset Mesh<Vertex3> triangle = "fbx/static/triangle_ascii.fbx";
 asset List<Mesh<Vertex3>> triangles = "fbx/static/*.fbx";
 asset Map<string, Mesh<Vertex3>> trianglesByName = "fbx/static/*.fbx";
 asset SkinnedMesh<Vertex3> inferred = "fbx/models/rig_ascii.fbx";
+// [Parts]: one part of a file of two (the other under a group), each leaving the other's mesh and nodes out
+[Parts("Hat")] asset SkinnedMesh<Vertex3> hat = "fbx/parts/parts_ascii.fbx";
+[Parts("Tri*", "Cape")] asset SkinnedMesh<Vertex3> body = "fbx/parts/parts_binary.fbx";
 asset SkinnedMesh<Vertex3, FbxContract> rig = "fbx/models/rig_binary.fbx";
 asset List<SkinnedMesh<Vertex3, FbxContract>> rigs = "fbx/models/*.fbx";
 asset Map<string, SkinnedMesh<Vertex3, FbxContract>> rigsByName = "fbx/models/*.fbx";
@@ -50,6 +53,9 @@ system CheckAndAnimate(mut FbxProbe p)
         Expect(p, trianglesByName["fbx/static/triangle_ascii.fbx"].indices.count == 3);
         Expect(p, inferred.animations.move.name == "Move" && inferred.animations.move.duration == 1);
         Expect(p, inferred.skeleton.TryGetByName("Bone0", out _));
+        Expect(p, hat.vertices.count == 3 && hat.skeleton.TryGetByName("Group", out _) && !hat.skeleton.TryGetByName("Triangle", out _));
+        Expect(p, body.vertices.count == 3 && body.skeleton.TryGetByName("Triangle", out _) && !body.skeleton.TryGetByName("Group", out _));
+        Expect(p, hat.skeleton.TryGetByName("Bone4", out _) && body.skeleton.TryGetByName("Bone4", out _));
         Expect(p, inferred.skeleton.TryGetByName("Root", out _));
         Expect(p, rig.animations.move.name == "Move" && rig.skeleton.TryGetByName("Bone0", out _));
         Expect(p, rigs.count == 2 && rigs[1].animations.move.duration == 1);

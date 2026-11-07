@@ -12,7 +12,9 @@
   // the exit code into <body data-exit>, and a mistake in how the program
   // draws (a GL error, or one of WebGPU's) stops it. Served rather than opened
   // from disk (cmake/run_web_served_test.mjs), the page also sends both back
-  // to its server, in order. A line that can't be sent doesn't stop the ones
+  // to its server, in order. Queued lines share a request so a synchronous
+  // test's output cannot leave its result behind thousands of round trips.
+  // A line that can't be sent doesn't stop the ones
   // after it or the result, which would leave the page with nothing said:
   // it's the result. `tideSteps` is how far the page got, which the server
   // asks a page that gives no result.
@@ -23,22 +25,43 @@
   step('the page started');
   for (const name of ['visibilitychange', 'freeze', 'resume'])
     document.addEventListener(name, () => step(`${name}: the page is ${document.visibilityState}`));
-  let sent = Promise.resolve(), lost = '', said = false;
-  const post = (path, body) => {
-    if (served) sent = sent.then(() => fetch(path, { method: 'POST', body })).then(answer => answer.arrayBuffer()).catch(error => {
+  let lost = '', said = false, sending = false;
+  const lines = [], results = [];
+  const post = async (path, body) => {
+    try {
+      const answer = await fetch(path, { method: 'POST', body });
+      await answer.arrayBuffer();
+    } catch (error) {
       lost = lost || `${path} (${body}): ${error}`;
       step(`${path} couldn't be sent: ${error}`);
+    }
+  };
+  const flush = () => {
+    if (!served || sending) return;
+    sending = true;
+    queueMicrotask(async () => {
+      while (lines.length || results.length) {
+        if (lines.length) await post('log', lines.splice(0).join('\n'));
+        else {
+          const code = results.shift();
+          await post('result', lost ? `couldn't send ${lost}` : code);
+        }
+      }
+      sending = false;
     });
   };
-  const result = code => sent.then(() => post('result', lost ? `couldn't send ${lost}` : code));
+  const result = code => {
+    if (served) { results.push(code); flush(); }
+  };
   const show = text => {
     if (!said) step('the program printed its first line');
     said = true;
-    console.log(text); log.textContent += text + '\n'; post('log', String(text));
+    console.log(text); log.textContent += text + '\n';
+    if (served) { lines.push(String(text)); flush(); }
   };
   // ?bench is --bench; renderer options belong to the page (see tide.js).
   const words = location.search ? location.search.slice(1).split('&')
-    .filter(word => !word.startsWith('backend=') && !word.startsWith('texture-compression=') && !word.startsWith('expect-angle=')) : [];
+    .filter(word => !word.startsWith('texture-compression=') && !word.startsWith('gpu=')) : [];
   var Tide = {
     canvas: document.getElementById('canvas'),
     checkGL: !words.includes('bench'), // Timings can't: each check waits for the GPU
@@ -46,14 +69,6 @@
     print: show,
     printErr: show,
     onExit: code => {
-      const expected = new URLSearchParams(location.search).get('expect-angle');
-      if (expected) {
-        const gl = Tide.canvas.getContext('webgl2');
-        const debug = gl?.getExtension('WEBGL_debug_renderer_info');
-        const renderer = debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : 'unavailable';
-        show(`ANGLE renderer: ${renderer}`);
-        if (!renderer.includes(expected)) { show(`Expected ANGLE renderer ${expected}`); code = 1; }
-      }
       step(`the program exited with ${code}`); document.body.dataset.exit = code; result(String(code));
     },
     onAbort: reason => {

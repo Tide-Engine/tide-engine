@@ -1,4 +1,4 @@
-// expect: an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not 'int'
+// expect: an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), or a HumanoidRig (.humanoid.json), not 'int'
 asset int count = "../e2e/assets/table.bin";
 
 scene Main

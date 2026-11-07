@@ -91,7 +91,7 @@ TIDE_TEST(events_alike_in_one_tick_are_each_heard_once)
     tide_event_log_free(&out);
 }
 
-TIDE_TEST(events_the_same_entity_is_told_by_what_it_was_born_as)
+TIDE_TEST(events_targets_use_full_permanent_identity)
 {
     tide_event_log out = {.taken = true};
     tide_hearing h = {0};
@@ -103,7 +103,7 @@ TIDE_TEST(events_the_same_entity_is_told_by_what_it_was_born_as)
     TIDE_CHECK(out.count == 2);
     tide_event_log_clear(&out);
 
-// The replay gave handle 10 to another entity: the event to the other is heard, and the first isn't heard twice.
+// Changing old presentation metadata cannot change identity; a new target with the same metadata is distinct.
     run = tide_hearing_begin(&h, 9);
     sent(run, 1, 10, 200, 0xA, TIDE_HEARD_PREDICTED);
     sent(run, 1, 12, 100, 0xA, TIDE_HEARD_PREDICTED);
@@ -112,7 +112,7 @@ TIDE_TEST(events_the_same_entity_is_told_by_what_it_was_born_as)
     TIDE_CHECK(out.count == 1);
     uint32_t at = 0;
     const tide_heard *heard = tide_event_log_next(&out, &at);
-    TIDE_CHECK(heard && heard->born == 200 && heard->tick == 9);
+    TIDE_CHECK(heard && tide_entity_equal(heard->target, (tide_entity){12, 1}) && heard->tick == 9);
     tide_hearing_free(&h);
     tide_event_log_free(&out);
 }

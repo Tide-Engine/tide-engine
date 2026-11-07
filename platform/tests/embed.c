@@ -7,10 +7,12 @@
 
 #include "game.h"
 #include "tide/embed.h"
+#include "tide/platform.h"
 #include "tide/run.h"
 #include "tide/voice.h"
 #include "tide_test.h"
 #include "gpu.h"
+#include "embedded.h"
 #if !defined(__wasm__)
 #include "shaders_spirv.h"
 #endif
@@ -280,7 +282,7 @@ static const uint8_t *section(const uint8_t *p, const uint32_t size, const uint3
 }
 
 // The text or list a packet's handle names, in its STRINGS.
-static const uint8_t *strings_entry(const uint8_t *p, const uint32_t size, const uint32_t handle, uint32_t *length)
+static const uint8_t *strings_entry(const uint8_t *p, const uint32_t size, const tide_handle handle, uint32_t *length)
 {
     uint32_t count = 0;
     const uint8_t *entries = section(p, size, TIDE_PACKET_STRINGS, 0, &count, NULL);
@@ -310,10 +312,10 @@ TIDE_TEST(embed_view_packet)
     const uint8_t *values = section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows);
     TIDE_CHECK(values != NULL && count == 1u && u32_at(rows, 0) < 2u);
     const uint32_t entity = TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY;
-    TIDE_CHECK(u32_at(p, entity + 8) == 3u); // Owned, and by this machine's player
-    TIDE_CHECK(u32_at(p, entity + 16) == TIDE_PACKET_NONE); // A root
+    TIDE_CHECK(u32_at(p, entity + 16) == 3u); // Owned, and by this machine's player
+    TIDE_CHECK(u32_at(p, entity + 24) == TIDE_PACKET_NONE); // A root
     // What it was spawned as: known, as this machine spawned it, and the same frame after frame
-    const uint32_t born = u32_at(p, entity + 20);
+    const uint32_t born = u32_at(p, entity + 28);
     TIDE_CHECK(born != 0u);
     Counter counter;
     memcpy(&counter, values, sizeof counter);
@@ -336,7 +338,7 @@ TIDE_TEST(embed_view_packet)
     TIDE_REQUIRE(p != NULL && u32_at(p, 36) == 2u);
     values = section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows);
     TIDE_REQUIRE(values != NULL && count == 1u);
-    TIDE_CHECK(u32_at(p, TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY + 20) == born);
+    TIDE_CHECK(u32_at(p, TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY + 28) == born);
     tide_embed_destroy(e);
 }
 
@@ -451,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_DRAW_INDEXED + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_ARRAY_BLOCKS + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -475,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DRAW_INDEXED) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_ARRAY_BLOCKS) {
             r.whole = false;
             break;
         }
@@ -505,18 +507,210 @@ TIDE_TEST(embed_render_pipeline_carries_actual_texture_reads)
         const tide_gpu_id pipeline = tide_gpu_record.pipeline(&desc);
         uint32_t size;
         const uint8_t *packet = tide_gpu_record_end(&size);
-        // Independent ABI 6 offsets: id/key (3), slots (7), attributes (49), uniform size/count (2).
+        // Independent offsets: id/key (3), slots (7), attributes (49), uniform size/count (2).
         const uint32_t reads_at = 61;
-        TIDE_REQUIRE(size >= 8u + (reads_at + textures + 8u) * 4u);
+        // Samplers said with none apart: texture i's own, a list's none (TIDE_GPU_READ_DATA), and each texture's mask
+        const uint32_t samplers_at = reads_at + textures, after = samplers_at + 1u + 2u * textures;
+        TIDE_REQUIRE(size >= 8u + (after + 9u) * 4u);
         TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_PIPELINE);
         TIDE_CHECK(u32_at(packet, 4) + 8u == size && u32_at(packet, 8) == pipeline);
         TIDE_CHECK(u32_at(packet, 8u + (reads_at - 1u) * 4u) == textures);
         for (uint32_t i = 0; i < textures; i++)
             TIDE_CHECK(u32_at(packet, 8u + (reads_at + i) * 4u) == i % 5u);
-        TIDE_CHECK(u32_at(packet, 8u + (reads_at + textures) * 4u) == TIDE_GPU_BLEND_ALPHA);
-        const uint32_t name_at = 8u + (reads_at + textures + 8u) * 4u;
+        TIDE_CHECK(u32_at(packet, 8u + samplers_at * 4u) == textures);
+        for (uint32_t i = 0; i < textures; i++) {
+            TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 1u + i) * 4u) == i % 5u);
+            TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 1u + textures + i) * 4u) == (i % 5u == TIDE_GPU_READ_DATA ? 0u : 1u << i));
+        }
+        TIDE_CHECK(u32_at(packet, 8u + after * 4u) == TIDE_GPU_BLEND_ALPHA);
+        TIDE_CHECK(u32_at(packet, 8u + (after + 7u) * 4u) == 0u); // alpha_to_coverage
+        const uint32_t name_at = 8u + (after + 9u) * 4u;
         TIDE_CHECK(u32_at(packet, name_at - 4u) == 8 && memcmp(packet + name_at, "capacity", 8) == 0);
     }
+}
+
+// A texture read two ways and another read alike: two textures, three samplers apart from them, each texture's
+// samplers by bits, and the draw's texture and sampler binds as ops of their own (IMAGE, SAMPLER).
+TIDE_TEST(embed_render_pipeline_carries_samplers_apart)
+{
+    tide_gpu_pipeline_desc desc = {.name = "ways", .texture_count = 2, .sampler_count = 3,
+        .blend = TIDE_GPU_BLEND_ALPHA, .depth = TIDE_GPU_DEPTH_NONE};
+    desc.reads[0] = TIDE_GPU_READ_DEPTH, desc.reads[1] = TIDE_GPU_READ_COLOR;
+    desc.sampler_reads[0] = TIDE_GPU_READ_DEPTH, desc.sampler_reads[1] = TIDE_GPU_READ_COMPARE;
+    desc.sampler_reads[2] = TIDE_GPU_READ_COLOR;
+    desc.texture_samplers[0] = 3, desc.texture_samplers[1] = 4;
+    tide_gpu_record_begin();
+    const tide_gpu_id pipeline = tide_gpu_record.pipeline(&desc);
+    tide_gpu_record.image(1, 7);
+    tide_gpu_record.sampler(2, TIDE_GPU_FILTER_MIPMAPS, TIDE_GPU_WRAP_MIRROR);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    const uint32_t samplers_at = 61u + 2u;
+    TIDE_REQUIRE(size > 8u + (samplers_at + 6u) * 4u);
+    TIDE_CHECK(u32_at(packet, 8) == pipeline);
+    TIDE_CHECK(u32_at(packet, 8u + samplers_at * 4u) == 3u);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 1u) * 4u) == TIDE_GPU_READ_DEPTH);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 2u) * 4u) == TIDE_GPU_READ_COMPARE);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 3u) * 4u) == TIDE_GPU_READ_COLOR);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 4u) * 4u) == 3u && u32_at(packet, 8u + (samplers_at + 5u) * 4u) == 4u);
+    const uint32_t ops = 8u + u32_at(packet, 4);
+    TIDE_REQUIRE(size == ops + 8u + 8u + 8u + 12u);
+    TIDE_CHECK(u32_at(packet, ops) == TIDE_EMBED_RENDER_IMAGE && u32_at(packet, ops + 4u) == 8u);
+    TIDE_CHECK(u32_at(packet, ops + 8u) == 1u && u32_at(packet, ops + 12u) == 7u);
+    TIDE_CHECK(u32_at(packet, ops + 16u) == TIDE_EMBED_RENDER_SAMPLER && u32_at(packet, ops + 20u) == 12u);
+    TIDE_CHECK(u32_at(packet, ops + 24u) == 2u && u32_at(packet, ops + 28u) == TIDE_GPU_FILTER_MIPMAPS
+               && u32_at(packet, ops + 32u) == TIDE_GPU_WRAP_MIRROR);
+}
+
+// An array written a part at a time (a Grid3's): made of its format and layers, then a part of a layer, its rows
+// one after another, read out of the layer's whole image.
+TIDE_TEST(embed_render_array_written_in_parts)
+{
+    tide_gpu_record_begin();
+    const tide_gpu_id array = tide_gpu_record.array_of(TIDE_GPU_R16F, 4, 3, 2);
+    uint16_t layer[3][4];
+    for (uint16_t y = 0; y < 3; y++) {
+        for (uint16_t x = 0; x < 4; x++) layer[y][x] = (uint16_t)(y * 10u + x);
+    }
+    tide_gpu_record.array_write(array, 1, layer, 1, 1, 3, 2);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 8u + 20u + 8u + 24u + 12u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_ARRAY_OF && u32_at(packet, 4) == 20u);
+    TIDE_CHECK(u32_at(packet, 8) == array && u32_at(packet, 12) == TIDE_GPU_R16F && u32_at(packet, 16) == 4u
+               && u32_at(packet, 20) == 3u && u32_at(packet, 24) == 2u);
+    TIDE_CHECK(u32_at(packet, 28) == TIDE_EMBED_RENDER_ARRAY_WRITE && u32_at(packet, 32) == 36u);
+    TIDE_CHECK(u32_at(packet, 36) == array && u32_at(packet, 40) == 1u && u32_at(packet, 44) == 1u && u32_at(packet, 48) == 1u
+               && u32_at(packet, 52) == 3u && u32_at(packet, 56) == 2u);
+    uint16_t part[6];
+    memcpy(part, packet + 60, sizeof part);
+    TIDE_CHECK(part[0] == 11 && part[2] == 13 && part[3] == 21 && part[5] == 23);
+}
+
+// A pack's blocks go to the other program as they are where it said it samples their format, else not (the renderer
+// then sends them decoded, as RGBA8 chains, which it always takes), a texture's and an array's alike.
+TIDE_TEST(embed_render_blocks_where_the_other_program_samples_them)
+{
+    uint8_t bc1[32 + 8 + 8 + 8]; // 8 by 8: a level of four blocks, then one block for each of 4, 2 and 1
+    for (size_t i = 0; i < sizeof bc1; i++) bc1[i] = (uint8_t)i;
+    const tide_texture_blocks blocks = {bc1, TIDE_BLOCKS_BC1, 4, 56};
+    uint32_t levels, bytes;
+    TIDE_REQUIRE(tide_texture_blocks_size(8, 8, TIDE_BLOCKS_BC1, &levels, &bytes) && levels == 4 && bytes == 56);
+    uint8_t chains[2 * 56] = {0};
+    memcpy(chains + 56, bc1, sizeof bc1);
+    tide_gpu_record_block_formats(0);
+    tide_gpu_record_begin();
+    TIDE_CHECK(tide_gpu_record.texture_blocks(8, 8, blocks) == 0);
+    TIDE_CHECK(tide_gpu_record.array_blocks(8, 8, 2, (tide_texture_blocks){chains, TIDE_BLOCKS_BC1, 4, 56}) == 0);
+    uint32_t size;
+    (void)tide_gpu_record_end(&size);
+    TIDE_CHECK(size == 0);
+
+    tide_gpu_record_block_formats(1u << TIDE_BLOCKS_BC1 | 1u << TIDE_BLOCKS_BC3);
+    tide_gpu_record_begin();
+    const tide_gpu_id texture = tide_gpu_record.texture_blocks(8, 8, blocks);
+    const tide_gpu_id array = tide_gpu_record.array_blocks(8, 8, 2, (tide_texture_blocks){chains, TIDE_BLOCKS_BC1, 4, 56});
+    TIDE_CHECK(tide_gpu_record.texture_blocks(8, 8, (tide_texture_blocks){bc1, TIDE_BLOCKS_BC1, 3, 56}) == 0); // Not whole
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(texture && array && size == (8u + 24u + 56u) + (8u + 28u + 112u));
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_TEXTURE_BLOCKS && u32_at(packet, 4) == 80u);
+    TIDE_CHECK(u32_at(packet, 8) == texture && u32_at(packet, 12) == 8u && u32_at(packet, 16) == 8u
+               && u32_at(packet, 20) == TIDE_BLOCKS_BC1 && u32_at(packet, 24) == 4u && u32_at(packet, 28) == 56u);
+    TIDE_CHECK(memcmp(packet + 32, bc1, sizeof bc1) == 0);
+    const uint32_t at = 88u;
+    TIDE_CHECK(u32_at(packet, at) == TIDE_EMBED_RENDER_ARRAY_BLOCKS && u32_at(packet, at + 4u) == 140u);
+    TIDE_CHECK(u32_at(packet, at + 8u) == array && u32_at(packet, at + 20u) == 2u && u32_at(packet, at + 24u) == TIDE_BLOCKS_BC1
+               && u32_at(packet, at + 28u) == 4u && u32_at(packet, at + 32u) == 56u);
+    TIDE_CHECK(memcmp(packet + at + 36u + 56u, bc1, sizeof bc1) == 0); // The second layer's
+
+    // RGBA8 chains whatever it said
+    tide_gpu_record_block_formats(0);
+    uint8_t rgba[8 * 8 * 4 + 4 * 4 * 4 + 2 * 2 * 4 + 4] = {0};
+    tide_gpu_record_begin();
+    TIDE_CHECK(tide_gpu_record.texture_blocks(8, 8, (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8, 4, sizeof rgba}) != 0);
+    (void)tide_gpu_record_end(&size);
+    tide_gpu_record_reset();
+}
+
+// gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds
+// of storage, a compute pass, direct and indirect dispatches and draws, a draw of records as many as a count says, a
+// copy, and a read back the other program answers (tide_embed_render_read) for buffer_read_done to give, once. The
+// other program draws records' first instances as 0.
+TIDE_TEST(embed_render_compute)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    tide_gpu_record_begin();
+    const tide_gpu tide = tide_gpu_record;
+    const tide_gpu_id storage = tide.buffer(TIDE_GPU_STORAGE, 64, NULL);
+    tide_gpu_pipeline_desc desc = {.name = "kernel", .compute = true, .storage_count = 3};
+    desc.storage_writes[1] = true;
+    const tide_gpu_id kernel = tide.pipeline(&desc);
+    tide.compute_begin();
+    tide.use(kernel);
+    tide.storage(1, storage);
+    tide.dispatch(2, 3, 4);
+    tide.dispatch_indirect(storage, 16);
+    tide.compute_end();
+    tide.draw_indexed_indirect_count(storage, 20, 3, storage, 8);
+    TIDE_CHECK(tide.indirect() == 0u);
+    tide.buffer_copy(storage, 4, storage, 32, 8);
+    const uint32_t token = tide.buffer_read(storage, 8, 12);
+    TIDE_REQUIRE(token != 0);
+    uint32_t size = 0;
+    const uint8_t *p = tide_gpu_record_end(&size);
+    // Each command, in order: its op and words
+    const uint32_t expected[][7] = {
+        {TIDE_EMBED_RENDER_BUFFER, 4, storage, TIDE_GPU_STORAGE, 64, 0},
+        {TIDE_EMBED_RENDER_PIPELINE, 1, kernel},
+        {TIDE_EMBED_RENDER_PIPELINE_STORAGE, 4, kernel, 1, 3, 2},
+        {TIDE_EMBED_RENDER_COMPUTE_BEGIN, 0},
+        {TIDE_EMBED_RENDER_USE, 1, kernel},
+        {TIDE_EMBED_RENDER_STORAGE, 2, 1, storage},
+        {TIDE_EMBED_RENDER_DISPATCH, 3, 2, 3, 4},
+        {TIDE_EMBED_RENDER_DISPATCH_INDIRECT, 2, storage, 16},
+        {TIDE_EMBED_RENDER_COMPUTE_END, 0},
+        {TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT, 5, storage, 20, 3, storage, 8},
+        {TIDE_EMBED_RENDER_BUFFER_COPY, 5, storage, 4, storage, 32, 8},
+        {TIDE_EMBED_RENDER_BUFFER_READ, 4, token, storage, 8, 12},
+    };
+    uint32_t at = 0;
+    for (size_t c = 0; c < sizeof expected / sizeof expected[0]; c++) {
+        TIDE_REQUIRE(at + 8u <= size);
+        TIDE_CHECK(u32_at(p, at) == expected[c][0]);
+        const uint32_t length = u32_at(p, at + 4u);
+        TIDE_REQUIRE(at + 8u + length <= size);
+        for (uint32_t w = 0; w < expected[c][1]; w++) TIDE_CHECK(u32_at(p, at + 8u + 4u * w) == expected[c][2 + w]);
+        if (expected[c][0] != TIDE_EMBED_RENDER_PIPELINE) TIDE_CHECK(length == 4u * expected[c][1]);
+        at += 8u + length;
+    }
+    TIDE_CHECK(at == size);
+    // Not here yet; then here, once
+    uint8_t got[12] = {0};
+    TIDE_CHECK(tide.buffer_read_done(token, got) == 0);
+    const uint8_t bytes[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    tide_embed_render_read(e, token, bytes, 11); // Another size: let go of, as a failed read
+    TIDE_CHECK(tide.buffer_read_done(token, got) == -1);
+    TIDE_CHECK(tide.buffer_read_done(token, got) == -1); // ...and forgotten
+    tide_gpu_record_begin();
+    const uint32_t second = tide.buffer_read(storage, 0, 12);
+    TIDE_REQUIRE(second != 0 && second != token);
+    tide_embed_render_read(e, second, bytes, 12);
+    tide_embed_render_read(e, second, NULL, 0); // Answered already: nothing changes
+    TIDE_CHECK(tide.buffer_read_done(second, got) == 1);
+    TIDE_CHECK(memcmp(got, bytes, sizeof bytes) == 0);
+    TIDE_CHECK(tide.buffer_read_done(second, got) == -1);
+    // One the other program couldn't make fails; one a reset made old is gone
+    const uint32_t failed = tide.buffer_read(storage, 0, 4);
+    tide_embed_render_read(e, failed, NULL, 0);
+    TIDE_CHECK(tide.buffer_read_done(failed, got) == -1);
+    const uint32_t old = tide.buffer_read(storage, 0, 4);
+    tide_embed_render_reset(e);
+    tide_embed_render_read(e, old, bytes, 4);
+    TIDE_CHECK(tide.buffer_read_done(old, got) == -1);
+    tide_gpu_record_end(&size);
+    tide_embed_destroy(e);
 }
 
 static rendered render(tide_embed *e)
@@ -538,6 +732,35 @@ static uint64_t fnv(const uint32_t *words, const uint32_t count)
 // target, which asks to be cleared as a window's first pass does, pipelines named by their SPIR-V's hash (what
 // tide unity names the shaders it writes by), the text's atlas, buffers and draws. The next frame makes nothing
 // again, and after a reset everything is made again, numbered from 1.
+TIDE_TEST(embed_render_target_revision_sees_reset_before_render)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 1, NULL);
+    const tide_render_target target = tide_render_target_make(12, 9);
+    const tide_target_content_scope previous = tide_render_target_content_resolver(
+        (tide_target_content_scope){.resolve = tide_platform_target_content});
+    const tide_target_content metadata = tide_platform_target_content(target.size);
+    TIDE_CHECK(metadata.device != 0 && metadata.pixels.x == 24 && metadata.pixels.y == 18);
+    const int64_t before = tide_render_target_content_revision(target);
+    tide_draw_list draw = {0};
+    tide_draw_render_target(&draw, target);
+    tide_draw_clear(&draw, TIDE_COLOR_RED);
+    uint32_t size = 0;
+    tide_platform_embed_render(&draw, &size);
+    TIDE_CHECK(size > 0 && tide_render_target_content_revision(target) == before);
+    tide_embed_render_reset(e);
+    const int64_t reset = tide_render_target_content_revision(target);
+    TIDE_CHECK(reset != before);
+    tide_platform_embed_render(&draw, &size);
+    TIDE_CHECK(tide_render_target_content_revision(target) == reset);
+    tide_render_target_content_resolver(previous);
+    tide_draw_free(&draw);
+    tide_render_target_dispose(target);
+    tide_embed_destroy(e);
+}
+
 TIDE_TEST(embed_render)
 {
     char *argv[] = {program};
@@ -704,7 +927,7 @@ TIDE_TEST(embed_heard_events)
         uint32_t at = 0;
         for (uint32_t i = 0; i < count; i++) {
             const uint32_t record = u32_at(records, at), type = u32_at(records, at + 4), flags = u32_at(records, at + 8);
-            const uint32_t tick = u32_at(records, at + 12), place = u32_at(records, at + 24);
+            const uint32_t tick = u32_at(records, at + 12), place = u32_at(records, at + 32);
             TIDE_REQUIRE(record >= TIDE_PACKET_EVENT && record % 8u == 0u);
             if (type == ticked) {
                 Ticked heard;
@@ -718,7 +941,7 @@ TIDE_TEST(embed_heard_events)
                 }
                 // Sent to the counter, which is among the packet's entities, at its handle
                 targets &= place < u32_at(p, 36)
-                           && u32_at(p, TIDE_PACKET_HEADER + place * TIDE_PACKET_ENTITY) == u32_at(records, at + 16);
+                           && memcmp(p + TIDE_PACKET_HEADER + place * TIDE_PACKET_ENTITY, records + at + 16, sizeof(tide_entity)) == 0;
                 uint32_t length = 0;
                 const uint8_t *label = strings_entry(p, size, heard.label.at, &length);
                 labels &= label && length == 7u && memcmp(label, "counted", 7) == 0 && heard.ticks % 10 == 0;
@@ -774,12 +997,13 @@ TIDE_TEST(embed_containers)
     uint32_t handle;
     memcpy(&handle, &shelf.counts, sizeof handle);
     const uint8_t *counts = strings_entry(p, size, handle, &length);
-    TIDE_REQUIRE(counts && length == 8u + 8u + 2u * 4u && u32_at(counts, 0) == 2u);
+    TIDE_REQUIRE(counts && length == 8u + 2u * sizeof(tide_text) + 2u * 4u && u32_at(counts, 0) == 2u);
     tide_text key;
     memcpy(&key, counts + 8u + sizeof key, sizeof key);
     const uint8_t *pears = strings_entry(p, size, key.at, &length);
     TIDE_CHECK(pears && length == 5u && memcmp(pears, "pears", 5) == 0);
-    TIDE_CHECK(u32_at(counts, 16) == 2u && u32_at(counts, 20) == 5u);
+    const uint32_t values = 8u + 2u * (uint32_t)sizeof(tide_text);
+    TIDE_CHECK(u32_at(counts, values) == 2u && u32_at(counts, values + 4u) == 5u);
     // Set<int>: count, 0, keys
     memcpy(&handle, &shelf.ids, sizeof handle);
     const uint8_t *ids = strings_entry(p, size, handle, &length);

@@ -110,12 +110,13 @@ namespace Tide.Editor
             if (!string.IsNullOrEmpty(set))
                 return $" This session's -tide-command overrides the package's version: {set}. Restart Unity without -tide-command to use the project pin, or rebuild that development compiler to match the package.";
             var tide = Find(out var where, false);
-            return $" Selected tide: {tide ?? where}. In Project Settings > Tide, install the package's version and Build now. A package following dev may be newer than the latest published compiler; use a matching release tag or a matching development build.";
+            return $" Selected tide: {tide ?? where}. Open Window > Tide > Versions to install the matching compiler or switch the package and compiler together, then Build now.";
         }
 
         static string FindCommand(string[] arguments, out string where, bool install, bool wait)
         {
             Pinned = false;
+            if (TideVersionsWindow.Switching) { where = "Installing the selected Tide package; builds resume after Unity reloads it"; return null; }
             var set = LaunchCommand(arguments, out var argumentError);
             if (argumentError != null) { where = argumentError; return null; }
             if (!string.IsNullOrEmpty(set))

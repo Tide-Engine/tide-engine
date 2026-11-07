@@ -14,6 +14,135 @@ extern const tide_layout tide_game_layout;
 
 #define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f)}
 
+TIDE_TEST(migrate_preserves_logical_entity_clock_at_a_changed_header_offset)
+{
+    typedef struct before_header { uint64_t padding, clock, occurrences[2], main_occurrence; } before_header;
+    typedef struct after_header { uint64_t padding[3], clock, occurrences[3], main_occurrence; } after_header;
+    tide_layout before = {.match = {.size = sizeof(before_header), .input = -1,
+        .identity_clock = offsetof(before_header, clock),
+        .lifecycle_occurrences = offsetof(before_header, occurrences), .lifecycle_count = 2,
+        .main_occurrence = offsetof(before_header, main_occurrence)}};
+    tide_layout after = {.match = {.size = sizeof(after_header), .input = -1,
+        .identity_clock = offsetof(after_header, clock),
+        .lifecycle_occurrences = offsetof(after_header, occurrences), .lifecycle_count = 3,
+        .main_occurrence = offsetof(after_header, main_occurrence)}};
+    uint8_t bytes[128] = {0};
+    const uint64_t clock = (UINT64_C(1) << 40) + 73;
+    memcpy(bytes + before.match.identity_clock, &clock, sizeof clock);
+    const uint64_t occurrences[2] = {7, (UINT64_C(1) << 38) + 11};
+    memcpy(bytes + before.match.lifecycle_occurrences, occurrences, sizeof occurrences);
+    const uint64_t main_occurrence = (UINT64_C(1) << 34) + 9;
+    memcpy(bytes + before.match.main_occurrence, &main_occurrence, sizeof main_occurrence);
+    tide_writer writer = {bytes, sizeof bytes, before.match.size, false, false};
+    tide_entities empty = {0};
+    tide_entities_pack(&empty, &writer);
+    tide_write_u32(&writer, 0);
+    TIDE_REQUIRE(!writer.overflow);
+    void *migrated = NULL;
+    uint32_t size = 0;
+    tide_migration result;
+    TIDE_REQUIRE(tide_migrate_world(&before, &before.match, bytes, writer.size, &after, &after.match, &migrated, &size, &result));
+    uint64_t actual = 0;
+    memcpy(&actual, (const uint8_t *)migrated + after.match.identity_clock, sizeof actual);
+    TIDE_CHECK(actual == clock);
+    uint64_t carried[3];
+    memcpy(carried, (const uint8_t *)migrated + after.match.lifecycle_occurrences, sizeof carried);
+    TIDE_CHECK(carried[0] == occurrences[0] && carried[1] == occurrences[1] && carried[2] == 0);
+    memcpy(&actual, (const uint8_t *)migrated + after.match.main_occurrence, sizeof actual);
+    TIDE_CHECK(actual == main_occurrence);
+    free(migrated);
+
+    after.match.main_occurrence = after.match.size - 1;
+    uint32_t layout_size = 0;
+    void *layout_bytes = tide_layout_pack(&after, &layout_size);
+    TIDE_REQUIRE(layout_bytes != NULL);
+    TIDE_CHECK(tide_layout_unpack(layout_bytes, layout_size) == NULL);
+    free(layout_bytes);
+    TIDE_CHECK(!tide_migrate_world(&before, &before.match, bytes, writer.size, &after, &after.match, &migrated, &size, &result));
+    after.match.main_occurrence = offsetof(after_header, main_occurrence);
+    before.match.main_occurrence = 0;
+    TIDE_CHECK(!tide_migrate_world(&before, &before.match, bytes, writer.size, &after, &after.match, &migrated, &size, &result));
+    before.match.main_occurrence = offsetof(before_header, main_occurrence);
+
+    // A missing, zero or out-of-bounds clock cannot silently restart IDs.
+    memset(bytes + before.match.identity_clock, 0, sizeof clock);
+    TIDE_CHECK(!tide_migrate_world(&before, &before.match, bytes, writer.size, &after, &after.match, &migrated, &size, &result));
+    TIDE_CHECK(migrated == NULL && size == 0 && strstr(result.failed, "clock") != NULL);
+    before.match.identity_clock = before.match.size - 1;
+    TIDE_CHECK(!tide_migrate_world(&before, &before.match, bytes, writer.size, &after, &after.match, &migrated, &size, &result));
+    before.match.identity_clock = 0;
+    TIDE_CHECK(!tide_migrate_world(&before, &before.match, bytes, writer.size, &after, &after.match, &migrated, &size, &result));
+    before.match.identity_clock = offsetof(before_header, clock);
+    before.match.lifecycle_count = UINT32_MAX;
+    TIDE_CHECK(!tide_migrate_world(&before, &before.match, bytes, writer.size, &after, &after.match, &migrated, &size, &result));
+}
+
+typedef struct aligned_local {
+    int64_t kept, added;
+} aligned_local;
+
+static void aligned_local_defaults(void *value)
+{
+    // Fail portably before a typed store: Windows ASan does not check alignment.
+    TIDE_REQUIRE((uintptr_t)value % _Alignof(aligned_local) == 0);
+    *(aligned_local *)value = (aligned_local){.added = 99};
+}
+
+TIDE_TEST(migrate_local_defaults_are_aligned_at_every_packed_offset)
+{
+    const tide_layout_field fields[] = {
+        FIELD(aligned_local, kept, "long", TIDE_LAYOUT_LONG, 1, -1),
+        FIELD(aligned_local, added, "long", TIDE_LAYOUT_LONG, 1, -1),
+    };
+    const tide_layout_type old_type = {"Unit local", sizeof(int64_t), false, 1, fields, NULL};
+    const tide_layout_type new_type = {"Unit local", sizeof(aligned_local), false, 2, fields, aligned_local_defaults};
+    const tide_layout_place attached = {0, 0, false};
+    tide_layout before = {.type_count = 1, .types = &old_type,
+        .local = {.input = -1, .attached_count = 1, .attached = &attached}};
+    tide_layout after = {.type_count = 1, .types = &new_type, .local = before.local};
+    const tide_entity entities[] = {{3, 1}, {7, 5}, {9, 3}};
+    const int64_t values[] = {INT64_C(0x1122334455667788), -7, 42};
+    const uint32_t born[] = {15, 27, 39};
+    for (uint32_t prefix = 1; prefix <= _Alignof(aligned_local); prefix++) {
+        before.local.size = after.local.size = prefix;
+        for (uint32_t count = 1; count <= 3; count++) {
+            uint8_t packed[256] = {0};
+            tide_writer writer = {packed, sizeof packed, prefix, false, false};
+            tide_entities empty = {0};
+            tide_entities_pack(&empty, &writer);
+            tide_write_u32(&writer, 0); // No queued changes
+            tide_write_u32(&writer, count);
+            tide_write_bytes(&writer, entities, count * sizeof *entities);
+            tide_write_bytes(&writer, values, count * sizeof *values);
+            tide_write_bytes(&writer, born, count * sizeof *born);
+            TIDE_REQUIRE(!writer.overflow);
+            void *bytes = NULL;
+            uint32_t size = 0;
+            tide_migration migration;
+            TIDE_REQUIRE(tide_migrate_world(&before, &before.local, packed, writer.size,
+                &after, &after.local, &bytes, &size, &migration));
+            tide_reader reader = {bytes, size, prefix, false};
+            TIDE_REQUIRE(tide_entities_unpack(&empty, &reader));
+            TIDE_CHECK(tide_read_u32(&reader) == 0);
+            TIDE_CHECK(tide_read_u32(&reader) == count);
+            const void *ids = tide_read_bytes(&reader, count * sizeof *entities);
+            TIDE_REQUIRE(ids != NULL);
+            TIDE_CHECK(memcmp(ids, entities, count * sizeof *entities) == 0);
+            for (uint32_t row = 0; row < count; row++) {
+                aligned_local value;
+                const void *at = tide_read_bytes(&reader, sizeof value);
+                TIDE_REQUIRE(at != NULL);
+                memcpy(&value, at, sizeof value);
+                TIDE_CHECK(value.kept == values[row] && value.added == 99);
+            }
+            for (uint32_t row = 0; row < count; row++) TIDE_CHECK(tide_read_u32(&reader) == born[row]);
+            TIDE_CHECK(!reader.failed && reader.at == size);
+            tide_entities_free(&empty);
+            free(bytes);
+        }
+    }
+}
+
 typedef struct byte_before {
     uint8_t a, b, c, keep;
     int32_t narrow;
@@ -256,7 +385,7 @@ static const tide_layout_place old_singletons[] = {{OLD_RULES, offsetof(old_worl
 static const tide_layout old_layout = {
     5, old_types, 1, old_enums,
     {sizeof(old_world), 1, old_singletons, 4, old_archetypes, OLD_IN, offsetof(old_world, inputs),
-     offsetof(old_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL},
+     offsetof(old_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0},
     {0},
 };
 
@@ -358,7 +487,7 @@ static const tide_layout_place new_singletons[] = {{NEW_RULES, offsetof(new_worl
 
 #define NEW_MATCH(archetypes, count)                                                                                \
     {sizeof(new_world), 1, new_singletons, count, archetypes, NEW_IN, offsetof(new_world, inputs),                  \
-     offsetof(new_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL}
+     offsetof(new_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL, 0, 0, 0, 0}
 
 static const tide_layout new_layout = {4, new_types, 1, new_enums, NEW_MATCH(new_archetypes, 2), {0}};
 
@@ -439,7 +568,7 @@ static old_match make_old(const uint32_t waiting)
 
 static bool same_entity(const tide_entity a, const tide_entity b)
 {
-    return a.index == b.index && a.generation == b.generation;
+    return tide_entity_equal(a, b);
 }
 
 // A table of the new world's bytes: its count, where its entities' and
@@ -740,7 +869,7 @@ TIDE_TEST(migrate_a_games_defaults_are_its_declared_ones)
     TIDE_REQUIRE(t->size == sizeof(Unit));
     Unit u;
     memset(&u, 0xFF, sizeof u);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     t->defaults(&u);
     TIDE_CHECK(tide_scratch_mark() == mark); // The borrowed default text is gone again
     TIDE_CHECK(u.position.x == 0.0f && u.position.y == 0.0f);

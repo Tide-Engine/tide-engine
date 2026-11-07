@@ -18,11 +18,11 @@ static bool close_to(const float a, const float b)
 static struct {
     float size;
     bool target;
-    const unsigned char *font;
+    const tide_font *font;
 } asked[16];
 static int asks;
 
-static tide_float2 measure(const char *text, const float size, const tide_target_size *target, const unsigned char *font)
+static tide_float2 measure(const char *text, const float size, const tide_target_size *target, const tide_font *font)
 {
     if (asks < 16) asked[asks].size = size, asked[asks].target = target != NULL, asked[asks].font = font;
     asks++;
@@ -54,7 +54,7 @@ static bool drawn(const tide_draw_list *draw, const char *text, const float x, c
 {
     const tide_draw_command *c = text_command(draw, text);
     return c && close_to(c->a.x, x) && close_to(c->a.y, y) && close_to(c->b.x, size) && c->words.anchor == (uint32_t)anchor
-        && c->words.bold == (bold ? 1u : 0u);
+        && (c->words.font != 0) == bold;
 }
 
 TIDE_TEST(text_takes_an_anchor_and_a_weight)
@@ -90,7 +90,7 @@ TIDE_TEST(text_takes_an_anchor_and_a_weight)
     TIDE_CHECK(local.Probe.asked == 2);
 
     // The list has the bold weight's file for its renderer
-    TIDE_CHECK(draw.bold == tide_font_bold_ttf);
+    TIDE_CHECK(draw.font_count == 1 && draw.fonts[0] == TIDE_FONT_BOLD);
 
     tide_draw_free(&draw);
     tide_local_free(&local);
@@ -112,7 +112,7 @@ TIDE_TEST(text_measures_in_its_weight)
     TIDE_CHECK(close_to(probe->target.x, 8) && close_to(probe->target.y, 2));
     TIDE_REQUIRE(asks == 5);
     TIDE_CHECK(asked[0].font == NULL && asked[1].font == NULL && asked[3].font == NULL);
-    TIDE_CHECK(asked[2].font == tide_font_bold_ttf && asked[4].font == tide_font_bold_ttf);
+    TIDE_CHECK(asked[2].font == TIDE_FONT_BOLD && asked[4].font == TIDE_FONT_BOLD);
     TIDE_CHECK(asked[4].target && close_to(asked[4].size, 3));
     for (int i = 0; i < 4; i++) TIDE_CHECK(!asked[i].target && asked[i].size == 10);
 
@@ -127,7 +127,7 @@ TIDE_TEST(text_measures_in_its_weight)
     TIDE_CHECK(local.Probe.asked == 2);
     TIDE_CHECK(local.Probe.chosen.x == 40);
     TIDE_REQUIRE(asks == 5);
-    TIDE_CHECK(asked[3].font == tide_font_bold_ttf);
+    TIDE_CHECK(asked[3].font == TIDE_FONT_BOLD);
 
     tide_draw_free(&draw);
     tide_local_free(&local);
@@ -140,14 +140,14 @@ TIDE_TEST(text_keeps_its_anchor_and_weight_when_lists_join)
     tide_draw_list from = {0}, to = {0};
     tide_draw_text_at(&from, "joined", tide_f2(4, 5), 20, TIDE_COLOR_WHITE, TIDE_ANCHOR_LOWER_CENTER, TIDE_FONT_BOLD);
     tide_draw_text(&from, "plain", tide_f2(1, 2), 10, TIDE_COLOR_WHITE);
-    TIDE_CHECK(to.bold == NULL);
+    TIDE_CHECK(to.font_count == 0);
     tide_draw_append(&to, &from);
     TIDE_CHECK(drawn(&to, "joined", 4, 5, 20, TIDE_ANCHOR_LOWER_CENTER, true));
     TIDE_CHECK(drawn(&to, "plain", 1, 2, 10, TIDE_ANCHOR_UPPER_LEFT, false));
-    TIDE_CHECK(to.bold == tide_font_bold_ttf);
+    TIDE_CHECK(to.font_count == 1 && to.fonts[0] == TIDE_FONT_BOLD);
     // A frame that draws nothing in bold has no file for it
     tide_draw_reset(&to);
-    TIDE_CHECK(to.bold == NULL);
+    TIDE_CHECK(to.font_count == 0);
     tide_draw_free(&from);
     tide_draw_free(&to);
 }

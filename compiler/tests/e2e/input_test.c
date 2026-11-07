@@ -6,10 +6,10 @@
 static tide_world world;
 
 // The Main scene is slot 0, and its Setup spawns these in order, so they get slots 1 to 4.
-static const tide_entity FIRST = {1, 1};  // Owned by player 0
-static const tide_entity SECOND = {2, 1}; // Owned by player 1
-static const tide_entity NOBODY = {3, 1}; // Owned by no player
-static const tide_entity UNOWNED = {4, 1}; // No Owner
+static tide_entity FIRST;  // Owned by player 0
+static tide_entity SECOND; // Owned by player 1
+static tide_entity NOBODY; // Owned by no player
+static tide_entity UNOWNED; // No Owner
 
 static PlayerInput moving_right(const bool jump)
 {
@@ -46,6 +46,10 @@ TIDE_TEST(input_sample_starts_from_defaults_each_time)
 TIDE_TEST(input_moves_the_owners_entity)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    NOBODY = tide_entity_in_slot(&world.entities, 3);
+    UNOWNED = tide_entity_in_slot(&world.entities, 4);
     tide_world_set_input(&world, tide_player_from_index(0), moving_right(false));
     tide_world_tick(&world);
 
@@ -61,6 +65,10 @@ TIDE_TEST(input_moves_the_owners_entity)
 TIDE_TEST(input_pressed_and_released_compare_with_last_tick)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    NOBODY = tide_entity_in_slot(&world.entities, 3);
+    UNOWNED = tide_entity_in_slot(&world.entities, 4);
     tide_world_set_input(&world, tide_player_from_index(0), moving_right(true));
     tide_world_tick(&world); // jump goes down: pressed
     tide_world_tick(&world); // still down: not pressed again
@@ -76,6 +84,10 @@ TIDE_TEST(input_pressed_and_released_compare_with_last_tick)
 TIDE_TEST(input_changing_owner_changes_whose_input_applies)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    NOBODY = tide_entity_in_slot(&world.entities, 3);
+    UNOWNED = tide_entity_in_slot(&world.entities, 4);
     tide_world_set_input(&world, tide_player_from_index(0), moving_right(false));
     world.Swap.now = true;
     tide_world_tick(&world); // Move runs before the swap: player 0 still has FIRST
@@ -90,6 +102,10 @@ TIDE_TEST(input_changing_owner_changes_whose_input_applies)
 TIDE_TEST(input_ignores_players_out_of_range)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    NOBODY = tide_entity_in_slot(&world.entities, 3);
+    UNOWNED = tide_entity_in_slot(&world.entities, 4);
     tide_world_set_input(&world, tide_player_from_index((int32_t)TIDE_GAME_PLAYERS), moving_right(false));
     tide_world_tick(&world);
     TIDE_CHECK(tide_get_TestTransform(&world, FIRST).position.x == 0.0f);
@@ -98,6 +114,10 @@ TIDE_TEST(input_ignores_players_out_of_range)
 TIDE_TEST(input_unowned_entities_and_once_per_tick_systems_read_the_server)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    NOBODY = tide_entity_in_slot(&world.entities, 3);
+    UNOWNED = tide_entity_in_slot(&world.entities, 4);
     tide_world_set_server_input(&world, moving_right(false));
     tide_world_tick(&world);
 
@@ -110,6 +130,10 @@ TIDE_TEST(input_unowned_entities_and_once_per_tick_systems_read_the_server)
 TIDE_TEST(input_sanitize_runs_before_the_simulation_sees_input)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    NOBODY = tide_entity_in_slot(&world.entities, 3);
+    UNOWNED = tide_entity_in_slot(&world.entities, 4);
     PlayerInput cheating = moving_right(false);
     cheating.move.x = 50.0f;
     cheating.speed = 10.0f;
@@ -125,6 +149,10 @@ TIDE_TEST(input_sanitize_runs_before_the_simulation_sees_input)
 TIDE_TEST(input_nan_and_infinity_become_the_defaults)
 {
     tide_world_init(&world, 1.0f);
+    FIRST = tide_entity_in_slot(&world.entities, 1);
+    SECOND = tide_entity_in_slot(&world.entities, 2);
+    NOBODY = tide_entity_in_slot(&world.entities, 3);
+    UNOWNED = tide_entity_in_slot(&world.entities, 4);
     PlayerInput attack = moving_right(false); // move.x = 1
     attack.move.y = NAN;
     attack.speed = INFINITY;

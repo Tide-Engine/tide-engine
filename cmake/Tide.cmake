@@ -1,5 +1,5 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
-#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [WARNINGS <text>...]
+#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [SPLIT_PLUMBING] [SPLIT_CODE] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
 #               [DEFINES <SYMBOL>...] [SHELL <page.html>])
 #
@@ -46,6 +46,13 @@
 # .pdb carries, and <name>_lldb.py for LLDB (`command script import` it).
 # The TIDE_VISUALIZERS option gives every native game it.
 #
+# SPLIT_PLUMBING compiles the game's generated C as tide's debug builds do: the
+# game's own code (<name>.c) with the target's flags, and the rest, the
+# generated plumbing (<name>_plumbing.c), optimized (-O2).
+# SPLIT_CODE partitions generated C into four stable files of code and one of its
+# large constants (<name>_data.c), compiled/linked with ThinLTO.
+# With SPLIT_PLUMBING it partitions the optimized plumbing and leaves game code debuggable.
+#
 # The generated files land in the build tree and are regenerated whenever a
 # .tide file or tidec changes. Every game is also listed in
 # TIDE_GAMES_MANIFEST, so editors know which files belong together.
@@ -64,8 +71,8 @@
 # text, and has to be there.
 
 # The bold weight's file (platform/font/Tuffy_Bold.ttf) as a library of that
-# one object. A game that says Font.Bold names the file in its C
-# (tide_font_bold_ttf, tide/draw.h), and a linker takes it out of a library for
+# one object. A game that says Font.Bold names it in its C (tide_font_bold,
+# TIDE_FONT_BOLD in tide/draw.h), and a linker takes it out of a library for
 # such a game alone: out of the platform layer's, which has it too, for a game
 # with a window, and out of this one for a HOST's program, which may link no
 # platform layer. So a game builds whichever program it's in, and one that
@@ -73,14 +80,27 @@
 set(TIDE_FONT_BOLD_C "${PROJECT_BINARY_DIR}/tide_font_bold/tide_font_bold.c")
 add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf"
-        "-DOUTPUT=${TIDE_FONT_BOLD_C}" -DNAME=tide_font_bold_ttf -P "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
-    DEPENDS "${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf" "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+        "-DOUTPUT=${TIDE_FONT_BOLD_C}" -DNAME=tide_font_bold_ttf
+        "-DAPPEND=${PROJECT_SOURCE_DIR}/platform/font/tide_font_bold.inc" -P "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf" "${PROJECT_SOURCE_DIR}/platform/font/tide_font_bold.inc"
+        "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
     COMMENT "The bold font as C"
     VERBATIM)
 add_library(tide_font_bold STATIC "${TIDE_FONT_BOLD_C}")
+target_include_directories(tide_font_bold PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../engine/include")
 
 set(TIDE_GAMES_MANIFEST "${PROJECT_SOURCE_DIR}/build/tools/games.txt")
 set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
+# Build code (docs/spec.md, Build code): tidec compiles the program that runs a game's build code with the machine's
+# own clang (the one the toolchain found, which a cross build's target flags don't reach) and the engine's sources.
+if(TIDE_CLANG)
+    set(TIDE_BUILD_CC "${TIDE_CLANG}")
+else()
+    set(TIDE_BUILD_CC "${CMAKE_C_COMPILER}")
+endif()
+get_filename_component(_tide_engine_dir "${CMAKE_CURRENT_LIST_DIR}/../engine" ABSOLUTE)
+set(TIDE_BUILD_CODE_FLAGS --build-cc "${TIDE_BUILD_CC}" --build-include "${_tide_engine_dir}/include"
+    --build-engine "${_tide_engine_dir}/src")
 
 # A game's C++ is the language alone, as tide builds it (cpp_flags in
 # compiler/cli/build.c): no standard library, exceptions or RTTI, since tide
@@ -126,7 +146,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -240,6 +260,36 @@ function(tide_add_game target)
     set(out_h "${out_dir}/${name}.h")
     set(out_pack "${out_dir}/${name}.pack")
     set(out_pack_c "${out_dir}/${name}_pack.c")
+    set(out_depfile "${out_dir}/${name}.d")
+    set(split "")
+    set(split_c "")
+    if(ARG_SPLIT_PLUMBING)
+        set(split --split-plumbing)
+        set(split_c "${out_dir}/${name}_plumbing.c")
+        set_source_files_properties("${split_c}" PROPERTIES COMPILE_OPTIONS -O2)
+    endif()
+    if(ARG_SPLIT_CODE)
+        list(APPEND split --split-code)
+        foreach(part _part1 _part2 _part3 _data)
+            if(ARG_SPLIT_PLUMBING)
+                list(APPEND split_c "${out_dir}/${name}_plumbing${part}.c")
+                set_property(SOURCE "${out_dir}/${name}_plumbing${part}.c" APPEND PROPERTY COMPILE_OPTIONS -O2)
+            else()
+                list(APPEND split_c "${out_dir}/${name}${part}.c")
+            endif()
+        endforeach()
+        set(thin_sources ${split_c})
+        if(NOT ARG_SPLIT_PLUMBING)
+            list(APPEND thin_sources "${out_c}")
+        endif()
+        set_property(SOURCE ${thin_sources} APPEND PROPERTY COMPILE_OPTIONS -flto=thin)
+    endif()
+    # NO_LOOP_INDEXES: every loop goes through all of its rows, none through an index (notes/indexed-loops.md),
+    # for tests and benchmarks that compare the two
+    set(loop_indexes "")
+    if(ARG_NO_LOOP_INDEXES)
+        set(loop_indexes --no-loop-indexes)
+    endif()
     set(pack_c "")
     set(pack_outputs "")
     if(ARG_HOST)
@@ -342,21 +392,45 @@ function(tide_add_game target)
         set(visualizers --visualizers)
         set(visualizer_outputs "${out_dir}/${name}.natvis" "${out_dir}/${name}_lldb.py")
     endif()
+    # CMake's Ninja depfile transformation drops Make escapes for '$' and '#'.
+    # Give Ninja the compiler's correctly escaped file directly. Its output
+    # target is relative to the top build directory, as Ninja's target is.
+    set(tidec_out_dir "${out_dir}")
+    set(tidec_working_dir "${CMAKE_CURRENT_BINARY_DIR}")
+    cmake_policy(PUSH)
+    if(CMAKE_GENERATOR MATCHES "^Ninja")
+        # Until CMake preserves these escapes, NEW produces invalid dependencies.
+        # Suppress only this workaround's policy deprecation, restoring the
+        # caller's warning setting immediately afterward.
+        set(tidec_warn_deprecated YES)
+        if(DEFINED CMAKE_WARN_DEPRECATED)
+            set(tidec_warn_deprecated "${CMAKE_WARN_DEPRECATED}")
+        endif()
+        set(CMAKE_WARN_DEPRECATED NO)
+        cmake_policy(SET CMP0116 OLD)
+        set(CMAKE_WARN_DEPRECATED "${tidec_warn_deprecated}")
+        file(RELATIVE_PATH tidec_out_dir "${CMAKE_BINARY_DIR}" "${out_dir}")
+        set(tidec_working_dir "${CMAKE_BINARY_DIR}")
+    endif()
     add_custom_command(
-        OUTPUT "${out_c}" "${out_h}" ${pack_outputs} ${visualizer_outputs}
+        OUTPUT "${out_c}" "${out_h}" ${split_c} ${pack_outputs} ${visualizer_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" "-DSTRIP_NAMES=${strip_names}" -P "${TIDE_RUN_TIDEC}"
-            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
+            -- "@${listed}" -o "${tidec_out_dir}" --name "${name}" --depfile "${out_depfile}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
+               ${split} ${loop_indexes} ${TIDE_BUILD_CODE_FLAGS}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${asset_list}" "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
+        DEPFILE "${out_depfile}"
+        WORKING_DIRECTORY "${tidec_working_dir}"
         COMMENT "tidec ${target}"
         VERBATIM)
+    cmake_policy(POP)
 
     if(ARG_HOST AND ARG_WINDOW AND TIDE_ANDROID)
-        add_library(${target} SHARED ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
+        add_library(${target} SHARED ${ARG_HOST} "${out_c}" ${split_c} "${out_h}" "${out_pack_c}" ${c_sources})
         target_link_libraries(${target} PRIVATE tide tide_platform)
         tide_android_app(${target} LABEL "${title}")
     elseif(ARG_HOST)
-        add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
+        add_executable(${target} ${ARG_HOST} "${out_c}" ${split_c} "${out_h}" "${out_pack_c}" ${c_sources})
         if(ARG_EMBED)
             target_compile_definitions(${target} PRIVATE TIDE_HAS_EMBED=1)
         endif()
@@ -391,11 +465,11 @@ int main(int argc, char **argv)
 ]])
         endif()
         if(TIDE_ANDROID)
-            add_library(${target} SHARED "${main}" "${out_c}" "${out_h}" ${c_sources})
+            add_library(${target} SHARED "${main}" "${out_c}" ${split_c} "${out_h}" ${c_sources})
             target_link_libraries(${target} PRIVATE tide_platform)
             tide_android_app(${target} LABEL "${title}" PACK "${out_pack}")
         else()
-            add_executable(${target} "${main}" "${out_c}" "${out_h}" ${c_sources})
+            add_executable(${target} "${main}" "${out_c}" ${split_c} "${out_h}" ${c_sources})
             target_link_libraries(${target} PRIVATE tide_platform)
             # Its assets beside it, as <target>.pack, when it has any (tide/run.h loads it)
             add_custom_command(TARGET ${target} POST_BUILD
@@ -408,6 +482,12 @@ int main(int argc, char **argv)
             else()
                 tide_web_page(${target} PACK "${out_pack}")
             endif()
+        endif()
+    endif()
+    if(ARG_SPLIT_CODE)
+        target_link_options(${target} PRIVATE -flto=thin)
+        if(NOT APPLE AND NOT TIDE_WEB)
+            target_link_options(${target} PRIVATE -fuse-ld=lld)
         endif()
     endif()
     if(NOT ARG_HOST)

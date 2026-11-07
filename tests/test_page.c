@@ -51,6 +51,35 @@ TIDE_TEST(page_same_bytes_is_what_memcmp_says)
     free(b);
 }
 
+#if defined(__wasm__) && defined(__wasm_atomics__)
+// Malloc asks sbrk for what it lacks, 64 KiB at a time, and the engine's sbrk grows the memory by 16 MiB at least, so
+// 64 MiB taken in 32 KiB blocks grows it a few times, not a thousand (a grow of a browser's big shared memory takes
+// milliseconds).
+TIDE_TEST(page_memory_grows_in_big_steps)
+{
+    enum { BLOCKS = 2048, BLOCK = 32 * 1024 };
+    void **blocks = malloc(BLOCKS * sizeof *blocks);
+    TIDE_REQUIRE(blocks);
+    size_t pages = __builtin_wasm_memory_size(0);
+    int grows = 0;
+    for (int i = 0; i < BLOCKS; i++) {
+        blocks[i] = malloc(BLOCK);
+        TIDE_REQUIRE(blocks[i]);
+        memset(blocks[i], i & 0xFF, BLOCK);
+        if (__builtin_wasm_memory_size(0) != pages) {
+            pages = __builtin_wasm_memory_size(0);
+            grows++;
+        }
+    }
+    TIDE_CHECK(grows <= 6);
+    for (int i = 0; i < BLOCKS; i++) {
+        TIDE_CHECK(((const uint8_t *)blocks[i])[BLOCK - 1] == (i & 0xFF)); // Each its own
+        free(blocks[i]);
+    }
+    free(blocks);
+}
+#endif
+
 // A table with megabytes in it: an entity and four numbers a row, in chunks
 // of 2,048 rows, so a chunk is a page of 16 KiB and four of 8.
 static const uint32_t wide_sizes[] = {sizeof(tide_entity), 4, 4, 4, 4};
@@ -102,14 +131,14 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
 
     uint64_t bytes = 0;
     const uint32_t pages = stale_in(&a, &bytes);
-    TIDE_CHECK(pages == a.chunks * wide.count && bytes == 60000u * 24u);
+    TIDE_CHECK(pages == a.chunks * wide.count && bytes == 60000u * 32u);
 
     turns pool = {0};
     const tide_jobs jobs = {.self = &pool, .threads = 12, .run_some = take_turns};
     tide_stale_pages stale = {0};
     tide_table_stale(&a, &wide, &stale);
     TIDE_CHECK(tide_pages_hash(&stale, &jobs) == pages && stale.pages == NULL && stale.count == 0);
-    TIDE_CHECK(pool.rounds == 1 && pool.others == 2);
+    TIDE_CHECK(pool.rounds == 1 && pool.others == 3);
     TIDE_CHECK(stale_in(&a, NULL) == 0);
     TIDE_CHECK(tide_table_hash(TIDE_HASH_START, &a, &wide) == alone);
 
@@ -127,13 +156,13 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
     const tide_jobs one = {.self = &pool, .threads = 1, .run_some = take_turns};
     for (int kind = 0; kind < 3; kind++) {
         for (uint32_t row = 0; row < 60000u; row += 2048u) {
-            ((tide_entity *)tide_table_cell(&a, &wide, row, 0))->generation += 1;
-            ((tide_entity *)tide_table_cell(&b, &wide, row, 0))->generation += 1;
+            ((tide_entity *)tide_table_cell(&a, &wide, row, 0))->lineage += 1;
+            ((tide_entity *)tide_table_cell(&b, &wide, row, 0))->lineage += 1;
             *(uint32_t *)tide_table_cell(&a, &wide, row, 1) ^= 0x5Au;
             *(uint32_t *)tide_table_cell(&b, &wide, row, 1) ^= 0x5Au;
         }
         tide_table_stale(&a, &wide, &stale);
-        TIDE_CHECK(stale.count == 2u * a.chunks && stale.bytes == 60000u * 12u);
+        TIDE_CHECK(stale.count == 2u * a.chunks && stale.bytes == 60000u * 20u);
         const uint32_t rounds = pool.rounds;
         const uint32_t hashed = tide_pages_hash(&stale, kind == 0 ? &two : kind == 1 ? &every : &one);
         TIDE_CHECK(hashed == (kind == 0 ? 2u * a.chunks : 0u));
@@ -143,4 +172,24 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
     }
     tide_table_free(&a, &wide);
     tide_table_free(&b, &wide);
+}
+
+// Waiting for memory (tide_memory_wait): a little longer each time, and no
+// more once it has waited ten seconds in all; on the web, not at all.
+TIDE_TEST(page_memory_wait_stops_after_ten_seconds)
+{
+    uint32_t waited = 0;
+#ifdef __wasm__
+    TIDE_CHECK(!tide_memory_wait(16u, &waited) && waited == 0);
+#else
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 1u);
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 2u);
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 4u);
+    waited = 9998u;
+    TIDE_CHECK(tide_memory_wait(16u, &waited) && waited == 10000u); // The last step is what's left
+    TIDE_CHECK(!tide_memory_wait(16u, &waited) && waited == 10000u);
+#endif
+    char figures[512];
+    TIDE_CHECK(tide_memory_figures(figures, sizeof figures) > 0 && strncmp(figures, "this program has ", 17) == 0);
+    TIDE_CHECK(tide_memory_figures(figures, 8u) == 7u && figures[7] == '\0'); // Cut short to fit
 }

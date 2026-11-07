@@ -1,0 +1,8 @@
+100% tests passed, 0 tests failed out of 2797
+
+Label Time Summary:
+safety         =  21.04 sec*proc (24 tests)
+webgl_d3d11    = 2433.29 sec*proc (12 tests)
+webgpu         = 2364.59 sec*proc (26 tests)
+
+Total Test time (real) = 361.81 sec

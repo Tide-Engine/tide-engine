@@ -35,7 +35,7 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
 // (tide_world_pack, tide_local_pack), its GUI, and a sharded match's every
 // shard as a checkpoint (tide_session_save_shards), each 8-aligned. What the
 // host keeps of its own goes too: whether the stats' drawer is open.
-#define SAVED_MAGIC 0x53525550u // "PURS"
+#define SAVED_MAGIC 0x53525551u // Versioned host state, including target revision high-water.
 
 typedef struct saved {
     uint32_t size; // Of it all, first, for the page
@@ -50,6 +50,7 @@ typedef struct saved {
     uint64_t cookie;              // ...whose player comes back with this
     uint32_t stats_open; // The stats' drawer is, as the player left it
     uint32_t pad;
+    uint64_t render_revision;
 } saved;
 
 static uint32_t align8(const uint32_t n)
@@ -89,6 +90,7 @@ __attribute__((export_name("tide_reload_save"))) uint32_t tide_reload_save(void)
     const int32_t player = tide_player_index(status.client.player);
     saved h = {0};
     h.magic = SAVED_MAGIC;
+    h.render_revision = tide_render_target_revision_highwater();
     h.hash = game->game->hash;
     if (world && player >= 0) tide_players_add(&h.players, (uint32_t)player);
     h.layout = align8(sizeof h);
@@ -211,6 +213,7 @@ static bool resume(void)
         return false;
     }
 
+    tide_render_target_revision_resume(h.render_revision);
     if (game->rebind_resources) game->rebind_resources(local, false);
     tide_run_local = local;
     tide_run_start = calloc(1, game->game->start_size);
@@ -246,6 +249,7 @@ _Noreturn void tide_host_run_web(const tide_run_desc *desc, const tide_host_game
     tide_run_open(desc);
     tide_run_load_assets();
     if (!resume()) tide_run_begin();
+    tide_platform_update_while_waiting(tide_run_wait_update, NULL);
     tide_platform_run(tide_run_frame, NULL);
 }
 
@@ -262,6 +266,8 @@ static void restart_input(tide_devices *devices)
 
 static int reload_frame(void *user, const float seconds)
 {
+    // While the first pack loads on the pool, nothing has begun to reload: the frame shows how far it got
+    if (tide_run_loading.on) return tide_run_frame(user, seconds);
     reload.since_check += seconds;
     if (reload.since_check >= 0.1f) {
         reload.since_check = 0.0f;
@@ -290,8 +296,9 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
     tide_run_game = game;
     tide_run_input = restart_input;
     tide_run_open(desc);
-    check_pack(); // The pack tide wrote with the first build, where the game has assets
-    tide_run_begin();
+    check_pack(true); // The pack tide wrote with the first build, where the game has assets
+    tide_run_begin_loaded();
+    tide_platform_update_while_waiting(tide_run_wait_update, NULL);
     tide_platform_run(reload_frame, NULL);
 }
 

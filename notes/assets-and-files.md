@@ -1,5 +1,1337 @@
 # Assets and local files
 
+## Build code beside runtime fonts (2026-11-05)
+
+Fixed mount-and-rifle's build-code link failure with Font.Bold. The build executable compiles the whole
+generated game and engine/src, without platform libraries or game C. Its font stand-in still defined the
+old tide_font_bold_ttf byte array after fonts switched to the tide_font object. gen_build_main now defines
+the correctly typed, zero-initialized tide_font_bold instead. Build code cannot draw; this only satisfies
+references from unused runtime routines. Actual games still link the real optional bold-font object.
+No language semantics, runtime API or build-code permissions change.
+
+Audited external engine data declarations: audio settings, mesh limits, task queue, pack region, shard
+and text/heap globals are defined in engine/src; __heap_end is WASM linker-provided. Bold is the optional
+platform data exception. Game extern functions and C systems already receive aborting build-program stubs.
+No missing general engine-library link or additional missing data provider was found.
+
+Regression: e2e/build_code.tide now draws bold text through an ordinary helper called from a GUI view,
+alongside its existing plain/text/list constants, generated assets and game extern C call. Existing value
+checks verify the results. Replacing the fixed stub in its generated build program with the old definition
+reproduces undefined symbol tide_font_bold with Windows Clang 23.1.2.
+
+Validation: built tidec_e2e_build_code in sanitize (Windows ASan) and web-debug (WASM); both
+tidec_e2e_build_code and tidec_build_code_strip pass in each preset (4 CTests total). Configured with
+TIDE_PLATFORM=OFF and TIDE_EXTERNAL_DIRS empty; no game windows or external prototype builds.
+git diff --check passes. Other native operating systems remain CI coverage. mount-and-rifle was not edited.
+
+## Tide compilation progress labels (2026-11-05)
+
+The terminal build display now receives synchronous compiler progress through
+`compile_set_progress`/`compile_progress` in common.h. The CLI installs the receiver
+only around source generation and copies labels under its existing feedback lock.
+Parsing and method checking name the Tide source; imports name each resolved file
+(including individual glob matches); packing names the qualified asset declaration.
+Generating C has its own label. The terminal uses basenames so absolute directory
+prefixes cannot hide the filename. Redirected output and build-report stages stay
+unchanged. This is host-tool feedback only; no generated code/runtime contract changes.
+
+Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
+CLI unit/help and recompile CTests pass. The recompile regression checks actual
+parsing, checking, file import, asset packing and C-generation notifications.
+Correction (2026-11-06): after parsing, imports and packing share one count for the whole step
+(cli-and-packages.md, One count for the Tide step).
+Docs production build passes with the usual unstaged example-page 404s.
+Other OS terminals remain CI/manual coverage; no web runtime code changed.
+
+Progress counts follow-up (2026-11-05): the compiler callback now includes
+completed/total item counts (zero total means indeterminate). Parsing counts input
+files, importing counts each resolved set of files (glob matches included), and
+packing counts asset declarations. The existing terminal bar shows those stage
+counts and percentages; checking and C generation retain activity animation.
+Counts describe work items, not time estimates or whole-build completion.
+Redirected output is unchanged. ASan CLI unit/help and compiler recompile checks
+pass, including notification count bounds and parsing/import completion. Docs
+production build passes; other host terminals remain CI/manual coverage.
+
+
+## Font assets (2026-11-03)
+
+`asset Font`, `List<Font>` and `Map<string, Font>` (`ASSET_FONT`): tidec reads the file with the engine's checked reader (`tide_font_data_make`, `tide/font.h`) in `asset_resolve` (`compiler/src/asset_files.c`, kept per file as `font_data`), an error at the declaration with the reader's reason; the pack keeps the font data, not the file, in a clip-shaped block (`tide_pack_font`, `TIDE_PACK_FONT`/`TIDE_PACK_FONTS`, fingerprinted as a clip's block in `pack_fingerprint.inc`), and loading adds each to the font registry (`note_font` in `engine/src/pack_load.c`), whose number the asset's `tide_font_ref` holds. Details, `Font.Decode` and tests: `notes/rendering.md`, Fonts of a game's own.
+
+## Build code (2026-11-03)
+
+Assets and constants made by Tide code that runs while the game builds (docs/spec.md, Build code; user page
+docs/game/build-code.md). The owner's decisions are in the spec's Decided; everything below is how it's built, and
+each choice beyond those decisions is Provisional there. Reworked the same day: the first version's block after an
+asset or a constant, which edited a `mut` parameter named for it, became an initializer that returns the value, with
+grids values in all code (notes/language.md, Grids as values) and `ClipData` an asset type for a sound code reads.
+
+**Front end.** `build` is a declaration word before a function (parser.c's modifier loop; `is_decl_word`). An asset
+and a constant take `= <expression>;` only: a block after either is a parse error that says to call a function
+(parse_asset, parse_const). An asset's value is build code when it calls something and isn't a constant
+(`build_calls`, as a constant's is), checked before its path in `check_asset_decl`; otherwise it's a path, as before.
+The checker makes each one's code a function of its own, `T TideBuild_<name>()` with the body `{ return <value>; }`,
+in the owner's namespace and in no name table, so nothing can call it by name (build_check.inc, build_function).
+Each owner is in `program.build_roots`, with `decl.build_fn`, and its function has `build_owner`. Assets with code have
+no files: `k->asset` stays NULL until the code runs.
+
+- What it returns (build_result): the asset's own type for text, bytes, `Grid2<Color>`, `Mesh<V>` and `ClipData`;
+  `Grid2<Color>` for a `Texture`; `ClipData` for a `Clip`. A list or map of a glob's files, a cubemap, a skinned mesh
+  and the animation types are refused with a message naming what can be made. The return is checked as any
+  function's, so a grid has to be one of its own (`check_return`, "an asset's grid is its own").
+- `ClipData { int rate; int channels; List<float> samples; }` and `MeshLevel { List<int> indices; float error; }`
+  are built-in structs made in `add_builtins` but only joined to the program, with their fields resolved and put in
+  struct order, when a game's code names them (`find_named` calls build_struct_ready, which `order_struct`s one named
+  after the structs were ordered) or a `Clip`'s code needs `ClipData`. They're gated in codegen as `Sound` is
+  (builtin_struct_unnamed). As ordinary built-ins they made `List<float>`/`List<int>` in every game, renumbering
+  every game's lists, and shifted the declaration count built-in async helpers are named by.
+- `asset ClipData x = "file";` (`ASSET_CLIP_DATA`, the last asset kind): its files are read as a Clip's
+  (`read == ASSET_CLIP`, so MP3/FLAC import too), one file each. Codegen decodes it (WAV, Vorbis) into a
+  `tide_pack_values` block of floats named for the asset, kind TIDE_PACK_BYTES (`asset_decl_pack_kind`, which the
+  asset fingerprint's shape uses now too), the rate in the entry's `size` and the channels in its `extra`; the loader
+  makes the struct from them. One code made is packed as a float WAV, as a Clip's is, and decoded the same way.
+- `Mesh(vertices, indices, levels)` (`check_new_mesh`): a third argument, a `List<MeshLevel>`, only directly in a
+  build function (`c->method->is_build`, the made functions among them); anywhere else an error that points at the
+  draw's `lod:`.
+- `check_build_code` (after `check_workers`) walks each build function's calls (c->calls) and refuses what needs a
+  running game (build_effect: drawing, audio, frame time, I/O, worlds, acts, tasks/async/workers, the match's random
+  numbers or seed, devices, queries, GPU/audio-only code, and extern C), reporting at the owner or the `build` word
+  with a note at the callee. A call site whose callee is a user `build` function and whose caller isn't build code
+  is an error at the call.
+- Built constants: `is_constant` treats a constant build code makes as constant only where assets are
+  (`assets_constant`), so a value naming one becomes build code too and constant-only places refuse it
+  (use_constant's message; a `case` label's note). GPU code reading one is refused. `constant_type(..., built)`
+  admits `List<T>`, and build_constant_type_ok limits it to plain elements. Asset paths still resolve before
+  constants that build code makes are known, so a built `const string` can't be a path.
+- `warn_unused_params` skips the made functions.
+
+**Codegen.** `generating_build` (codegen_options.build_program) makes the game's C into the program that runs
+build code. `cpu_routine` emits `build` functions only there; in the game they're left out. Extern C functions and
+C systems are `{ abort(); }` stubs there, as the program links none of the game's C and build code calls none. Its
+pack is the game's assets (all of them, as the build program is generated without stripping); assets with code
+aren't looked up there. Its main (build_codegen.inc, gen_build_main) loads the pack, makes TIDE_IN_MATCH a heap of
+its own, and for each root in order calls its function and writes `u32 index` then its value's blobs (u64 size,
+bytes): one for text, bytes and constants, two for images (`int32 w, h`, then `tide_color` cells row by row) and
+clips (`int32 rate, channels`, then floats), three for meshes (vertices as the struct lays them out, `int32` indices,
+then levels: `float error, int32 n, n indices` each). After a root it sets the asset's or constant's global, so later
+roots read what it made (a Texture's and a Clip's aren't set: code reads data assets). A mesh made with levels:
+the build program's `tide_mesh_leveled_<ref>` makes it with `tide_mesh_make_<ref>` and keeps the levels by its id
+(`tide_build_levels_keep`, a table only the build program has, emitted once with the first geometry ref,
+`build_levels_table`), and main writes `tide_build_levels_of(id)`; a mesh with none writes an empty blob.
+
+In the game: a plain built constant is `static const union { uint8_t bytes[N]; T value; } tide_const_X` with its
+bytes, read as `(tide_const_X.value)`, which C folds; text is a `static const tide_str` over a C string literal; a
+list is a hidden asset (asset_kind ASSET_VALUES), packed by `tide_pack_values` and loaded as
+`(tide_list){tide_pack_handle(e)}` (asset_decl_pack_kind). Built assets go through the pack as files do:
+`asset_match.built` meshes pack their vertex bytes directly (built_mesh derives positions/normals/UVs/colors for
+`[LOD]` from the fields a file would fill) and skip the vertex-default pass; their own levels become the
+`tide_mesh_levels` an `[LOD]` mesh has, around an AABB-centred ball of the vertices, multiplier 1. A Texture's
+pixels take the ordinary premultiply/`[Raw]`/compression path; a Clip is a float32 WAV (audio_float_wav).
+Asset dependency walks don't follow a built constant's value, and `game_info.assets_affect_match` is set when a
+game has built constants, so `tide run` rebuilds rather than repacks when their files change.
+
+**Stripping.** `strip_assets` (asset_usage.c, `--strip-unused-assets`) walks the game, not build code: it starts at
+no `is_build` function and follows neither a built root's `build_fn` nor its value, so a file only build code reads
+(`heroSource`) is left out of a stripped game. The hashing walks (simulation identity, `program_build_key`) still
+follow both.
+
+**Running it** (build_code.c). `build_code_run` keys each root with `program_build_key` (asset_usage.c: the canonical
+graph hash program_simulation_id uses, from the root, so its code, everything it reaches, the files it reads and
+other roots it reads; plus tidec's version and runtime identity) and orders roots so what one reads runs first (a
+cycle is an error). `declaration()` queues `build_fn` and hashes `built` values, so simulation identity covers
+both. When every key is in the in-process memo or the asset cache (`asset_cache_*`, kind-less keys, in the game's
+`.tide/assets/imports`, or under the output folder for tidec without `--game`), the values are applied
+(apply: validation, then asset values and `decl.built`; a mesh's vertex type is its function's return type's).
+Otherwise it runs codegen in build mode into `<folder>/.tide/build-code/`, compiles the engine's sources once per
+compiler, flags and source contents (`engine-<hash>/`, up to 8 compiles at once, below normal priority on Windows),
+compiles and links `build.c` with them (`-std=c17 -O1 -fno-fast-math -ffp-contract=off -w`, the include folder and
+the tools' flags), runs it with a ten-minute limit, keeps each whole root it wrote, and asks compile.c to compile the
+game again from its sources (codegen changed the program), which then finds every value. A second miss is an error
+rather than a loop. Processes are started directly (CreateProcessA with Microsoft's quoting, posix_spawnp), output
+to a log file whose last lines become notes.
+
+Correction (2026-11-06, cold builds of Mount & Rifle): the program's C is split as the CLI splits a game's
+(`split_code`, 4 MiB and up, up to 16 parts of 512 KiB, then `build_data.c`), listed in `build_parts.txt`; the parts
+compile as many at once as there are processors (`compile_all`, which the engine's objects use too) and link with
+the engine. Its shaders' arrays are empty (`gen_shader_text`/`gen_shader_spirv` with `build_program`: build code
+draws nothing, and no WGSL is translated). Mount & Rifle's 108 MB single file took 33-37 s at -O1 (only 3 s of it
+the shaders); now ~32 MB in 17 parts, 4 s. Its cold `tide build --release` went 98 s to 69 s. What's left of the
+cold "running build code" is mostly the build pack's levels of detail: 229 [LOD] meshes made one after another,
+~24 s, cached in .tide/assets/lod/ after. Small fixtures stay one file; the split was checked on Mount & Rifle.
+
+Its compiles overlap the program's generation (2026-11-06, the owner: "what about the generate + compile time?").
+Measured on a cold Mount & Rifle build: generating 9.1 s (its C 1.2, images 1.9 and levels 1.4 made ahead for the
+first time, the pack loop 2.3, split and write 1.7, the 739 MB pack 0.4), then the engine 3.4 s and the parts 4.1 s,
+each at most 8 compiles at once, link 0.1, run 0.7. `engine_objects` became `engine_start`/`engine_finish`
+around codegen: the flags are worked out first, a compile per processor starts before the program is generated, the
+rest as those end once it is (`compile_start`/`compile_finish`, a `compile_batch`; no thread, as starting a process
+uses the arena); a generation that fails waits for the compiles it started. `processors()` no longer stops at 8
+(they're below normal priority on Windows, as the game's are already at TIDE_JOBS). After: the engine 1.3 s past
+generation, the parts 2.4 s; build code's whole step 17.4 s to ~13.5 s, the cold build ~43 s to 36 s on a quiet
+machine (single cold runs vary by 10 s with other load). Its pack now holds only what build code reaches (same day): `program_strip_build_assets` (asset_usage.c) walks from
+the roots' `build_fn` and marks `decl.server_asset` as a server's walk does; codegen strips `prog->assets` to them,
+filters asset dependencies and skinned fingerprints as for a server, and declares the others with
+`gen_asset_storage(..., left_out)`, which gen_assets uses too, so a list or map of meshes' `_refs`/`_geometry` and
+a stripped name's `tide_id_` are declared as well (a server's left-out assets got only their value before; none of
+the fixtures named those). The program's pack has no levels of detail either (`want_levels` and pack_mesh's
+multiplier skip them in build mode). Mount & Rifle's build pack: 720 MB to 3.9 MB. The images and levels the
+build pack made first, cold, are made by the game's pack instead, so a cold build gains ~1 s overall (36.1 s
+against 37.1 s, the same machine and run order). A/B on the same cold build: build code's results.bin and the
+game's pack are the same bytes stripped and not. Tests: the build-code, build-error, asset-usage, scene-startup and
+server fixtures (smoke, pack, room, shards, entry, visual) and the CLI build report pass under ASan.
+
+Its C is only what its main reaches (same day, the owner: "yeah let's try that next"). Codegen still makes the whole
+game's C in build mode, then `split_prune(&g.c, "main", ...)` (plumbing_split.inc) keeps the functions and variables
+main reaches through bodies, initializers and macros' bodies (a name after `.`/`->` is a field's), every item that
+defines neither (types, prototypes, directives, macros), and the conditional directives of what it drops; C it
+can't cut stays whole. Nothing of the engine names generated code, so the link needs nothing else. Mount & Rifle's
+program: 32 MB in 17 parts to 795 KB in one file; build code's step 12.3 s to 8.2 s cold; results.bin and the game's
+pack the same bytes. The fixtures' programs are 9-43 KB. Tests: the same 18 as above.
+
+Made ahead, on every processor (2026-11-06, the owner on the cold build: "lots into lod, can we improve that
+process?"). Measured on Mount & Rifle with a cold cache: the levels of 229 meshes (1.88 M triangles; 155 under the
+1,000 that get any) took 14.4 s one after another, the biggest 1.2 s; BC1/BC3 compression of its images ~14 s.
+`build_pack` now first calls `want_textures` and `want_levels` (codegen.c): each walks the assets as the pack loop
+does, with the same arguments pack_item and pack_mesh take (raw/compress per kind; a mesh at rest, a built mesh's
+fields, tangent handedness, the skinned model), and notes what the caches don't have yet. Images: `texture_make`
+(pack_item's code, moved out) runs on at most 8 threads (one image in flight holds ~100 MB at 4096 square) and
+writes `texture_cache_write`; pack_item reads them back. Levels: `mesh_lod_want` copies a source's numbers and
+`mesh_lod_make_wanted` makes them on every processor (the bones' weights are worked out on the thread, from the
+model's bytes), writes their files and keeps them, so `mesh_lod_cached` finds them. Each item is made on one thread
+by the same code, so the results are the same bytes: all 229 level files and the 742 MB pack compared equal to
+serial ones. A key the walk got differently from the pack only costs making that item in the pack, as before.
+Threads are `build_threads_each` (build_threads.c: Windows threads or pthreads, with an atomic counter; tidec links
+Threads::Threads off Windows); `asset_cache_write`'s temporary names take an atomic counter; `asset_cache_has` asks
+whether an entry's file is there without reading it. Diagnostics stay the pack loop's: an image that won't decode is
+skipped ahead and said when packed. With no game folder nothing's kept, so images aren't made ahead.
+WASI builds (the docs' playground tidec, which runs in a browser host without `wasi.thread-spawn`) do every item on
+the caller's thread, with no thread code compiled in: the docs workflow failed on the import from 17275e76e until
+2026-11-06 (`docs_playground` refuses tools with imports its host lacks).
+
+Images decoded ahead (2026-11-06, the owner: "try to improve asset imports next"). Of the cold first pass's 12.2 s
+of imports, 10.3 s was 334 texture declarations' files decoded one at a time by `read_item` (200-560 ms for each
+4096-square one); meshes were 1.5 s. Before check.c's asset loop, the literal paths of every asset (one, or a
+list's; `text_literal`, so constants too, which are checked by then) go to `asset_files_decode_ahead`: it finds their
+files as asset_resolve would (a glob's keys from the same walk), keeps those named as images, reads them
+(`read_at`), and where `use_build_cache` looks for a prepared texture as read_item does (same keys), so a warm
+build takes those and decodes nothing; the rest are decoded on at most 8 threads into their `read_file` entries
+(`decoded`, `image`, `image_mips`, `image_why`), which read_item then takes. Nothing about the asset's type is known
+yet: a file read as bytes is decoded for nothing, a Grid's file is decoded as read_item would. A file that won't
+decode is said by read_item, at the asset, as before; a path naming nothing is skipped. Not done ahead: URLs, meshes
+(1.5 s), models' skins. Measured: "declarations" 10.7 s to 3.6 s cold, the same 1.2 s warm; the pack is the same
+bytes. Test: `asset_images_decoded_ahead_are_the_ones_read` (asset_files_test.c: a file's and a glob's BMPs decoded
+ahead equal decoded inline, a missing path says nothing, a later read takes the same pixels).
+
+Cold `tide build --release` of Mount & Rifle: 65 s to 47 s (levels ~1.5 s, images ~2 s), then ~43 s with images
+decoded ahead. What's left: asset imports ~3.6 s, build code's program 4 s to write and 8 s to compile, the second
+pass of the front end ~6 s, the game's C ~11 s. Test: `mesh_lod_wanted_ahead_are_the_same_levels` (levels wanted
+ahead equal ones made alone, a file there is read instead, a want twice is made once, asking after makes none).
+
+The tools come from codegen_options: `build_cc` (NULL-terminated command), `build_flags` (compile and link),
+`build_libs` (link only), `build_include`, `build_engine`. tidec's flags are `--build-cc`, `--build-flag`,
+`--build-lib`, `--build-include`, `--build-engine`. `tide_add_game` passes `TIDE_CLANG` (else CMAKE_C_COMPILER), so
+cross builds run it natively, and the engine's folders. The CLI (build.c, generate) passes its compiler (`tide cc`
+with clang built in), the native target and sysroot on Windows (MinGW, with `-nodefaultlibs`, the native libraries
+and the builtins archive), and the installation's `include/` and `src/engine/`, whatever the game's target. The
+language server only checks, so it never runs build code; inspection modes (`--schedule` and the rest) don't
+either.
+
+**Tests.**
+- `tidec_e2e_build_code` (e2e/build_code.tide, build_code_c.c, build_code_test.c): every kind code makes, from a
+  data asset of a file (`heroSource`, `beepSource`, `rulesSource`, `quadSource`) and from nothing, a texture's
+  pixels, a clip from code and one from a ClipData's samples, a mesh doubled with a field the code set, its own
+  levels read back through `tide_pack_list_levels`, plain/text/list/struct constants, a constant from an asset's
+  code's value, code reading another root's value, a ClipData asset read by match code (rate, channels, samples
+  against the file), and match code calling the game's own C, which the build program links without.
+- `tidec_build_code_strip` (build_code_strip.cmake): the same game with `--strip-unused-assets` loads `beepSource`
+  and `hero` and not `heroSource`.
+- `tidec_error_build_*` (errors/): a runtime call of a build function, rolling, a glob made by code, a built constant
+  as a case label, `build` before a struct, a build function calling C, spawning, a block after an asset and after a
+  constant, levels on a mesh made outside build code, and an asset's grid that isn't its own.
+- `tidec_build_error_*` (build_errors/, expect_error.cmake with BUILD_CC/BUILD_INCLUDE/BUILD_ENGINE): what only
+  running finds: an image with no size, a triangle past the vertices, a NaN sample, errors out of order, and `[LOD]`
+  with the code's own levels.
+- The docs' examples (build-code.md, grids.md's Grids in code) were compiled together with the build program run.
+- The first version's CLI path was run by hand with a scratch installation (this checkout's `tide.exe`, the engine's
+  headers and sources, the installed MinGW sysroot): `tide build` ran the program through MinGW and linked the game.
+  The rework didn't change that path.
+- Codegen diff: see notes/language.md, Grids as values, for the rework's run over every game.
+
+**Gaps.** No C in build code; no animation, skinned mesh, cubemap or glob code; built constants in GPU code; no
+memory limit; the whole game's C is compiled into the program when any root misses, so a big game pays its compile
+then (later builds hit the cache unless build code's graph changes). A non-stripped game packs data assets only build
+code reads, as it packs every asset. Web and Android test runs of the e2e fixture are CI's for Android, and Linux and
+macOS run them in CI.
+
+## Mesh names in profile captures (2026-11-03)
+
+Generated diagnostic lookup matches current static/skinned geometry handles to
+asset declarations without changing packs, asset IDs or loading behavior.
+Static glob elements retain their key; skinned collections retain the declaration
+name, with distinct geometry/version rows. Physically shared packed aliases use
+the first matching name. Names are opaque under strip-names. Draw recording
+copies names/sources into bounded host-owned geometry rows before reload/unload.
+Contracts: drawing.md, language.md and standard-host.md.
+
+
+## Persistent build-time asset imports (2026-11-03)
+
+Owner requested faster fresh `tide run` launches after progress feedback exposed
+repeat asset work. `asset_cache.c`, `asset_import_cache.c` and `texture_cache.c`
+keep content-addressed results in `<game>/.tide/assets/imports` for ordinary
+CLI builds/runs and tidec builds with a game folder. No new CLI switch, runtime
+function, pack format, asset semantics or deterministic expectation is introduced.
+
+- Static meshes retain every canonical stream, attribute flag, part count,
+  content hash and per-vertex provenance. A stream whose tuples are bit-identical
+  is stored once and expanded exactly on read; no quantization. Generated tangent
+  variants key the complete canonical representation, including provenance.
+- Full skinned/animation imports and `[Parts]` selections retain canonical bytes.
+  Pattern lists are part of selected-import keys, including profile reference
+  selections. Full canonical validation runs on read. Later clip/shape selection,
+  rig processing and retargeting keep their existing paths/caches.
+- Models retain external-buffer paths and content digests. A hit re-reads/hashes
+  dependencies and rebuilds their watcher/depfile records. A mismatch discards
+  tentative dependencies and reimports. Primary source bytes are still read and
+  hashed, so fresh processes detect same-size/same-time edits too.
+- Audio retains validation results and converted PCM WAV bytes. Converted cache
+  payloads are checked as WAV before use; raw byte assets still use source bytes.
+- Texture preparation retains exact RGBA8 or BC/authored-mip payloads, separately
+  for Raw and compression modes and written filename context (TGA format selection).
+  Code-writing compilations can resolve a draw-only Texture to checked dimensions
+  and an owned prepared payload without decoding float pixels. A newly requested
+  variant decodes its original source lazily. Direct importer/editor callers and
+  inspection-only compilations retain their float-pixel contract. Grid images
+  continue through the exact image decoder; other declarations still discover,
+  lay out and assemble their current pack on each build.
+
+Keys include compiler/runtime source identity, a CMake hash of vendored importers
+and compressors, host scalar byte order, source content and import context.
+Entries include the expected key and a SHA-256 of their payload. Counts, lengths,
+stream masks, indices, texture dimensions/mips and expanded mesh allocation sizes
+are checked. Cache entries over 1 GiB are skipped, not a new import-size refusal.
+Unreadable, incompatible, malformed and unwritable entries are ordinary misses;
+only successful imports are stored. Unique PID/serial temporary names and atomic
+replacement keep concurrent compilers from publishing partial entries. The cache
+is disposable and content-addressed; total-size eviction is not implemented.
+
+Tests: `asset_disk_cache_test.c` checks exact model-stream/provenance round trips,
+every cache-file byte flip and truncation, malformed counts/indices, and direct
+pixel imports after prepared-texture use. `asset_cache_test.mjs` runs real separate
+compiler processes for identical cold/warm C/header/pack bytes, no writes after
+code-only edits, same-size/time external-buffer edits and retained dependencies,
+image edits, newly requested Raw variants against full imports, part selections,
+vertex layouts, glob additions/removals, damaged/truncated/structurally malformed
+entries, a blocked cache directory, concurrent writers, removed sources and TGA
+suffix diagnostics. Existing source-notification and typed-variant tests remain.
+
+Performance, Windows Ryzen 9 7900X / Clang 23.1.2 Release, no sanitizers: three
+fresh-process samples per case, median wall milliseconds for complete tidec
+generation/packing, not game startup. Baseline is this checkout at `6ba206338`.
+A 2048x2048 RGBA8 PNG texture took 90.0 ms before, 99.5 ms to populate the new
+cache and 17.0 ms warm. A 128x128 quad-grid OBJ with generated float4 tangents
+took 71.1 / 97.7 / 41.1 ms respectively. Each new cold/warm pack was byte-identical
+to the baseline (2,796,352 and 5,112,000 bytes). Raw samples and fixture parameters
+are in `asset-cache-20261103.json`. These synthetic cases do not establish a
+speedup for the owner's entire game. First builds pay cache-write cost.
+
+The implementation deliberately caches prepared textures rather than decoded
+float-image dumps: a trial RGBA8 pixel cache made this texture's warm build
+73 ms, versus about 47 ms caching compression alone and 17.0 ms retaining the
+prepared payload before image decode. Plain uncompressed mesh dumps likewise
+regressed the OBJ case; constant-stream storage removes that overhead.
+
+Validation: strict Windows ASan tool builds, the 16 focused importer/cache/asset
+E2E CTests and 23 asset-related language-server checks pass; production docs
+build and Node/diff checks pass. Cold/warm pack parity includes models, selected
+parts, authored DDS mips, raw textures and MP3. No runtime/WASM implementation
+changed; actual browser/Android execution and other host OSes remain CI coverage.
+
+## Authored RGBA8 DDS mip imports (2026-11-02)
+
+The approved foliage quality pass adds narrow legacy DDS image import: a single
+tightly packed RGBA8/BGRA8 2D full chain, POT sides 4..16384, through 1x1.
+No compressed/DX10 DDS, array/cube/volume payload, padding or inferred missing
+levels. Header/masks/pitch/caps/count/exact payload bounds are validated before
+allocation under existing 512 MiB image limits. The compiler cache owns both
+base float colors and independent straight RGBA mip bytes; invalidation frees
+both. Ordinary Texture/list/map packing premultiplies each authored color mip;
+Raw packing keeps independent channels. Grids and cubemap faces consume the
+base image only. Signatures override source suffixes; runtime Decode remains
+PNG-only. Existing declarations and generated calls are unchanged.
+
+The pack's existing immutable mip trailer accepts RGBA8 format 4 and preserves
+the supplied chain instead of recompressing it. Complete upload/fallback
+contracts, finite alpha coverage algorithm and focused pending central
+validation are in `notes/textures.md`, Authored foliage mip coverage. Public
+asset/texture pages and spec format lists describe the file contract. Compressed
+DDS and KTX remain unbuilt. Unity's recorder currently retains only the base
+image; native OpenGL/Vulkan and WebGL2/WebGPU retain every authored level.
+
+## Meshes the game makes beside assets' (2026-11-02)
+
+`Mesh<V>` is now 24 bytes: an asset's id, or a made mesh's content key (negative)
+and its own two lists; `Asset<Mesh<V>>` is the 8-byte id alone and converts to
+it. Glob `#mesh-values` metadata rows grew to that layout (built with the
+skinned list/map builders, then overwritten); pack kinds and geometry are
+unchanged, and unknown ids still resolve empty. Server pruning is unaffected:
+made ids never reach the resolver switch. Compiler contracts and tests are in
+language.md, Meshes the game makes.
+
+## Levels of detail for meshes a game makes (2026-11-02)
+
+The owner took the proposal whole ("go with you recommendations"): opt-in on the draw (`lod: multiplier`, last,
+on a 3D `Draw.Mesh`/`Draw.Instanced`), the same levels as `[LOD]`, made in the background, never blocking a frame,
+kept by contents. `mesh.WithLOD()` waits for runtime `Mesh<V>` values (another thread's design). Spec: Levels of
+detail, Decided and Provisional; users' page: `docs/game/assets.md`, Levels of detail.
+
+- **One simplifier.** `compiler/src/mesh_lod.c`'s maker moved to `engine/src/mesh_lod.c` with its header
+  `engine/include/tide/internal/mesh_lod.h`, renamed `tide_mesh_lod_*`/`TIDE_MESH_LOD_*` (the engine is linked into
+  games, so no unprefixed symbols). tidec links the engine and calls the same function; `compiler/src/mesh_lod.c`
+  keeps only the cache (`mesh_lod_cached`, `.tide/assets/lod/`). Arithmetic, order, weights and floors are
+  unchanged, so asset levels and cache keys are the same bytes (`tidec_mesh_lod`, `tidec_asset_files`,
+  `tidec_e2e_lod` pass as they were).
+- **Changes for arbitrary game values:** out of memory gives no levels instead of `abort()` (each allocation is
+  checked; `order_for_cache` leaves a level in its order where it has no room; a failed heap or index growth sets
+  `maker.failed`); `source.stop` (atomic, checked every 4,096 collapses and at each level) gives no levels at all;
+  meshes past `TIDE_MESH_LOD_VERTICES_MOST`/`_TRIANGLES_MOST` (2^26 each, where the maker's 32-bit counts could
+  overflow) get none. The existing rules still hold: indices past the vertices and degenerate triangles are left
+  out, positions that are no number make no plane, a nonfinite extent gives no levels.
+- **The draw list** (`engine/src/mesh_levels.c`, private `mesh_levels.h`; contracts in drawing.md, Levels for
+  meshes a game makes): generated code brackets the draw with `tide_draw_want_levels(d, multiplier, &layout)` and
+  `tide_draw_want_levels(d, 0, NULL)`; the mesh paths of `mesh.c` (`mesh3_slot`, `tide_draw_mesh_shaded_instances`)
+  mix the request into the slot's version (`tide_draw_lod_version`) and, after filling, ask
+  (`tide_draw_lod_request`): a kept result is given at once, otherwise a job copies positions and the weighed
+  fields out of the list's copy. `tide_draw_prepare` submits (`tide_draw_lod_submit`, two running, 256 waiting),
+  `tide_draw_reset` keeps what's done and gives it to every slot with that `lod_key` (`tide_draw_lod_collect`),
+  `tide_draw_free` stops, helps and waits (`tide_draw_lod_free`).
+- **The checker** (`check_mesh_draw`): a last argument named `lod` is taken off before the arguments are matched
+  by kind (`expr.mesh_lod`, and `mesh_lod_vertex` once the vertex is known); any other name on a mesh draw's
+  argument is an error naming `lod:`; `lod:` on a 2D mesh or of a non-number type is an error. Codegen
+  (`gen_expr`, `gen_lod_layout`) writes the comma expression and the vertex's `tide_mesh_lod_layout` (1 +
+  `offsetof` of `position`, `normal`, `uv`, `uv2`, `color`, `tangent` with matching names and types), and for a
+  model with bones `tide_draw_want_bones(tide_draw, (model).data)`. A game without `lod:` generates the C it did.
+- **Models with bones** (same day, the follow-up): tidec's `bone_weights_of`/`bones_apart` moved into the engine
+  beside the maker (`tide_mesh_lod_bones_of`, `_apart`, `_free`; allocation failure gives no bones instead of
+  aborting), and tidec's `mesh_levels` calls them, so asset levels are the same bytes. `tide_draw_want_bones`
+  (`tide/mesh.h`) borrows the model's canonical bytes for the draw (`tide_draw_list.lod_model`, cleared with the
+  want and at reset); `tide_draw_lod_request` flattens them, reads the influences of the slot's vertex count (a
+  model that isn't one of that many weighs none), hashes them into the key and hands them to the job, whose
+  `make_levels` passes `tide_mesh_lod_bones_apart`. So `SkinnedMesh<V>.Decode` models, with no declaration to
+  mark, get the levels their file's `[LOD]` gets.
+- **Tests:** `tidec_e2e_lod_generated` (`e2e/lod_generated.tide`, `_test.c`, with a background the test runs by
+  hand): levels bit for bit `tide_mesh_lod_make`'s for the list's copy, the far draw at a level and the near one
+  (around the camera) whole, the same lists without `lod:` whole, gathering order; instances of a game's vertex
+  through a frag with multiplier 2; 800 triangles never asking; kept levels given in the frame a mesh comes back
+  and for a scratch mesh, superseded lists stopping (only two given to the background at once, the stopped ones
+  keeping nothing), a NaN multiplier being 1; NaN positions with indices under 0 and past the vertices; a list
+  freed with jobs queued (freeing helps them through); a skinned asset and a model decoded from the same file's
+  bytes, each drawn with `lod:` beside the file marked `[LOD]`: levels bit for bit the build's, and other than
+  the same mesh's weighed without bones. `jobs_levels_of_detail_are_made_on_background_threads`
+  (`platform/tests/jobs.c`): the platform pool's own threads make them while frames go on (87 ms, 781 frames of
+  a bare loop, Windows ASan), bit for bit the maker's, and a list freed while another is being made waits.
+  Three diagnostics: `draw_mesh_lod_2d`, `_text`, `_misspelled`. `lsp_generated_levels_of_detail`: completion
+  offers `lod:` after a mesh draw's lists (Mesh, Instanced, SkinnedMesh) and once only, signature help shows it
+  last on 3D forms and follows it, not on 2D ones. Native ASan (Windows) and WASI pass, with `tidec_e2e_lod`,
+  `tidec_mesh_lod`, `tidec_asset_files`, the language server's suite and the engine's draw (98), skinned (74) and
+  frustum tests.
+- **Not exercised:** GPU pixels of a picked generated level (the pick and the renderer's level path are the
+  assets', already covered by `levels_of_detail` in `platform/tests/draw.c`), and timings of a real game's
+  generated meshes.
+- **Gaps:** `mesh.WithLOD()`, which waits for the runtime `Mesh<V>` value (the `Mesh<V>.Decode` reader landed
+  the same day with its language surface held for the same reason); a decoded static mesh drawn with `lod:` will
+  get levels through the same path once it's a value a draw takes.
+
+## The static mesh reader in the engine, for Mesh<V>.Decode (2026-11-02)
+
+Design approved by the owner the same day: `Mesh<V>.Decode(List<byte> bytes)`
+giving `Mesh<V> fails IOError` (InvalidData), as `SkinnedMesh<V>.Decode` is
+spelled, pure, in match and local code, refused on the GPU; formats "the more
+the better" (GLB, a .gltf with its buffers inside it, OBJ; FBX's cost is
+brought to the owner separately, as it would put ufbx in the runtime); a new
+runtime function (agent-maintained, notes/runtime-ownership.md); and this
+order: the reader moves first, with no language change, and the language
+surface follows once the `Mesh<V>(vertices, indices)` thread settles what a
+runtime Mesh value is. Decode's result is that value: it decodes into scratch
+`List<V>` and `List<int>` (fields filled by `mesh_fills`, the importer's
+names, the rest from the struct's default, the default closure seeded into
+game identity as `SkinnedMesh.Decode` does) and builds the Mesh from them. If
+that thread chooses a separate type for runtime meshes, Decode is that type's
+method with the same signature; only the generated wrapper changes.
+
+What's built (step 1):
+
+- **The reader is the engine's** (`tide/mesh_data.h`, `engine/src/mesh_decode.c`):
+  `compiler/src/mesh_files.c`'s glTF/OBJ code moved whole. tidec's
+  `mesh_files.c` is now the file-name and FBX front (glTF magic, then
+  `fbx_file_is` and its converter, then the extension) over
+  `tide_mesh_data_decode` with an explicit `tide_mesh_format`, so every
+  build-time import reads as before and `mesh_file` is `tide_mesh_data`.
+  Allocation is `tide_alloc_zeroed`/`tide_realloc` (old sizes tracked), as the
+  skinned decoder's, so a wasm worker can decode.
+- **Limits are the caller's** (`tide_mesh_limits`: bytes, JSON values,
+  vertices, indices, reads, each define's prefix and who holds them).
+  `tide_mesh_decode_limits` is Decode's: SkinnedMesh.Decode's numbers
+  (512 MiB, 4,194,304 JSON values, 1,048,576 vertices, 6,291,456 corners,
+  67,108,864 numbers read), one `#define` each in `tide/mesh_data.h`. tidec
+  passes `compiler/src/mesh_files.h`'s, and its messages are what they were
+  ("... one Mesh holds (TIDE_MESH_MAX_VERTICES)"); Decode's say "Mesh.Decode
+  takes (TIDE_MESH_DECODE_MAX_VERTICES)". `*past_limit` says a limit refused,
+  for the runtime's stderr line. The shared glTF readers' `VERTICES_MOST` and
+  friends read the reader's limits through the `gltf *g` in reach. Limits are
+  held under 2^30 so room doubling stays within a uint32 and arrays within a
+  32-bit size_t at Decode's numbers.
+- **New refusals, found moving it to wasm32:** an OBJ's v/vn/vt numbers now
+  count against the read limit (a v line six: its color is kept, white when
+  unwritten), where only a 2^30-number list cap stood, whose `room * 4` wraps a
+  32-bit size_t; and a face with more corners than the indices limit allows
+  triangles is refused before it's kept (its corner array grew with the line).
+  Neither changes a file the build read before short of gigabytes.
+- **Format by bytes** (`TIDE_MESH_ANY`, Decode's): GLB magic, then `{` after an
+  optional byte order mark and spaces (the mark is skipped for the JSON), else
+  OBJ. An FBX's signature (binary or `; FBX ` ASCII) is refused saying it's
+  read at build time only; a .gltf naming a buffer file has no side callback
+  and is refused; bytes with no triangles are refused as before.
+- **Finite output** (`tide_mesh_limits.finite`, Decode's only): a mesh with a
+  number no float holds (a node transform overflowing to infinity, then NaN
+  normals) is refused, as Decode's result is match state. Build-time imports
+  keep their rule (the tangent generator's overflow regression depends on it).
+
+Tests: `tests/test_mesh_decode.c` (native ASan and WASI): one triangle as GLB,
+embedded .gltf, .gltf behind a byte order mark and spaces, and OBJ, all the
+same hash and the same as GLB named; refusals (buffer file, FBX binary and
+ASCII, text, no bytes, JSON that's no glTF, an overflowing transform, which a
+build's limits still read); each limit by small limits and Decode's own
+vertices and corners by their names, with `past_limit` set only for limits;
+every cut length and four spoilings of every byte of all three from exact
+allocations, every result's indices under its vertices and numbers finite.
+`tidec_mesh_files`, `tidec_asset_files` and `tidec_fbx_files` pass unchanged,
+with their pinned limit messages.
+
+### Step 2: the language surface (2026-11-02)
+
+Built once the `Mesh(vertices, indices)` value landed (notes/language.md,
+Meshes the game makes). The owner: wait for that thread, leave FBX for now.
+Language contracts are in notes/language.md, Mesh<V>.Decode; what the engine
+side gained:
+
+- **Meshes with bones decode too.** A vertex with `joints` or `weights` is
+  imported at build time through the skinned decoder, posed at rest, with its
+  four heaviest bones. Those three steps (`skin_geometry` in asset_files.c,
+  `rest_mesh` and `fill_bones` in codegen.c) moved into the engine as
+  `tide_mesh_data_of_model`, `tide_mesh_data_rest` and `tide_mesh_data_bones`,
+  verbatim (one guard added: a node the getter can't read no longer reads its
+  uninitialized parent), so Decode's bits are the asset's. tidec calls them;
+  pack bytes are unchanged (asset_meshes, mesh_bones, lod, baked_poses pins).
+- `tide_mesh_data_finite`, which Decode's bones path checks after resting.
+- `tide_mesh_limits.report`: a limit's refusal printed on stderr by the
+  engine, as the PNG and skinned decoders do ("tide: Mesh.Decode refused a
+  mesh: it ..."); tidec's limits have none, as it says a diagnostic.
+
+LOD for decoded meshes needs nothing: `lod:` on the draw works for any made
+mesh (notes/language.md, `lod:` on mesh draws). Still not built: FBX at
+runtime (the owner: leave it for now).
+
+## Baked poses for crowds (2026-10-31)
+
+Asked for from bannerlord-duel (the owner: "would it make sense to put this
+GPU accelerated skinning stuff in Tide? ... its the second time we are
+building something similar"), whose Combat package (`combat/crowd.tide`,
+`combat/farmen.tide`) posed a few thousand rows once, kept every row's skin
+matrices in `List<float4x4>`s and skinned far fighters in a vert. API, names
+and storage were left to the engine; all are Provisional in the spec (Skinned
+meshes and animation). Users' docs: `docs/game/animation.md`, Crowds: baked
+poses, with the `crowd` example (4,096 stalks, `docs/examples/assets/crowd/`,
+made by `make_stalk.mjs`).
+
+- **Tide code that comes with the compiler,** as fills are: `<tide>/baked.tide`
+  (`baked_prelude_lines` in `compiler/src/builtins.c`), compiled with a game
+  whose text names `BakedPoses`, `BakedFrame`, `BakedClip`, `BakedFader`,
+  `BakedSkin`, `BakedInstance` or `BakedVertex` (`baked_prelude_wanted`, also
+  in the language server). No runtime function, generated-C change or engine
+  storage: the table is an ordinary `List<BakedBone>` the draw's values carry,
+  which the draw list keeps on the GPU by its version (uploaded once). Its
+  methods take the table whole on the GPU through Structs that hold lists
+  (`notes/shaders.md`).
+- **Storage:** a row is each bone's `pose.Model(bone) * inverse(rest.Model(bone))`
+  as its top three rows (`BakedBone`, 48 bytes, three pixels of the list's
+  texture, one read). A mesh with bones is the model at rest, so this is the
+  right skinning where rest is the bind pose (the game's assumption too).
+  `Add` refuses another skeleton (by bone count) and past 699,050 bone-rows
+  (1024 x 2048 pixels / 3). Quaternion + translation (32 bytes) was not
+  chosen: it can't hold the scale exporters put in skin matrices, and the
+  game blended matrices already.
+- **Frames:** `BakedFrame { int4 rows; float4 blend; }`, two instance
+  attributes. `SkinRows` (what `BakedSkin` and `Skin` go through) reads each
+  of the four joints' two rows (`Weighed`), lerps and sums them by weight in
+  row form, and does it again for the fade pair only when fading; the
+  per-instance branches (fade, `HeaviestBone`'s one-bone path in `blend.w`)
+  are the same for every corner of an instance. No per-bone range check (a
+  joint past the skeleton reads another bone's row or zeros, never outside
+  the list) and no per-weight branch: both cost more than they saved
+  (notes/benchmarks.md, Baked poses, the second round). `BoneSkin` and
+  `Socket` keep their identity for a bone that isn't there. `BakedBone.Point`
+  and `Direction` apply rows without making a matrix.
+- **AddClip:** `steps = max(1, ceil(duration * rate - 1e-4))`, rows at
+  `duration * k / steps`, `steps + 1` of them, or `steps` for a loop; one for
+  a clip with no duration. `At` clamps, wraps a loop, and NaN reads row 0.
+- **Sockets** cost nothing a row: `Socket = BoneSkin(bone) * (rest.Model(bone)
+  * offset)`, the constant kept a socket (`BakedSocket`), so they can be added
+  after rows.
+- **BakedFader** follows the game's rule: a change of kind (a clip's first row)
+  starts a fade over `fadeSeconds` eased by SmoothStep; a jump with the fade
+  under half done keeps the old `from`.
+- The struct holds a `Pose` (rest, for `AddClip`) and CPU-only lists; only
+  `bones`, `skins` and `sockets` are sent.
+- Tests: `tidec_e2e_baked_poses` (`baked_poses_make.mjs`'s two-bone
+  `arm.glb`: row counts, frames at ends/loops/NaN, positions from rows and
+  between them against hand-worked values, fades, the heaviest bone, sockets
+  against `pose.Model`, every corner of every row against the CPU's own
+  skinning of that pose, refusals, the fader), `tide_platform_baked` (pixels
+  on Vulkan, OpenGL, WebGL, WebGPU, twice), `tidec_shaders_baked`, and
+  `bench_skinned_baked` (residency: no upload once warm, one draw).
+- Measured: `notes/benchmarks.md`, Baked poses.
+- Gaps: per-bone layers (lower body one row, upper another, joined at a bone:
+  Combat's `Joined`/`Shift`) are a separate design; baking at build time;
+  automatic culling bounds (a custom vert has none: `Draw.Bounds`); the
+  heaviest bone by distance in the vert; tangents in `BakedSkin`.
+  Rows are made with `pose.Models()` (one pass; notes/runtime-ownership.md):
+  3,000 rows of the benchmark's 64-deep chain 134 ms -> 19 ms at load.
+
+## Asset LOD tolerance multiplier (2026-10-31)
+
+The owner chose multiplication: `[LOD(2)]` with `SetLODPixels(4)` allows 8
+pixels of estimated error. `[LOD]`, `[LOD()]` and `[LOD(1)]` mean 1. The
+optional argument is a positive finite constant float/int expression (named
+constants and arithmetic included); invalid/extra arguments are errors. Lists,
+maps, static meshes, weighted Mesh layouts and SkinnedMesh use the same pack
+path. Draws through the original vertex/index lists retain the multiplier.
+
+The simplifier, cached chain keys, levels, errors and floors are unchanged.
+Nondefault multipliers enter the packed mesh's content hash after its chain
+hash, preventing shared geometry identities from hiding different selection
+rules. Default mesh identities and pack bytes stay unchanged. The levels
+block's formerly unused word 27 stores the float multiplier; zero means 1.
+Block size and pack version remain unchanged. `tide_pack_list_levels` rejects
+negative/nonfinite multipliers and returns a normalized positive value.
+The draw mesh keeps it and multiplies the allowed error; forced levels win.
+
+Validation: 84 drawing and 26 pack-related C tests pass on native Windows ASan
+and WASM, as does the expanded LOD e2e on both. They cover composition,
+fractions, all asset collection forms, skinned/instanced/list draws, unchanged
+chain errors, malformed metadata and zero/default metadata. Native compiler
+LOD maker and asset-file/variant suites, ten attribute diagnostic fixtures and
+the full language-server suite pass. Production docs build passes with the
+usual unstaged-example 404s. No GPU backend changed or GPU pixel tests run;
+other native platforms remain CI coverage.
+
+## Exposed automatic LOD tolerance (2026-10-31)
+
+The pixel tolerance previously listed as missing below is now available as
+`Draw.LODPixels` / `Draw.SetLODPixels`, also on render targets, default 1.
+The owner's goal is a quality/performance tradeoff; increasing tolerance permits
+coarser existing levels at the same distance. No importer, simplifier, cache,
+pack, triangle floor or error weight changes. Triangle density remains outside
+the selection rule. Runtime contracts and native ASan/WASM validation are in
+drawing.md; language/editor integration is in language.md. The LOD e2e fixture
+checks changed picks, nested/default scopes, target independence, restoration
+and forced-level priority against the imported mesh's recorded errors.
+
+## Pack format 4: the build writes the pack's digest (2026-11-04)
+
+The owner's pick, after Mount & Rifle's 1.38 GB pack spent about 6 s of every
+start in `tide_pack_load`'s SHA-256 of the whole file (notes/standard-host.md,
+Loading screen): do both, the CPU's SHA instructions and a digest the build
+writes, so the game pays nothing for it.
+
+- `TIDE_PACK_VERSION` is 4. `tide_pack_header` gains `digest[32]` before
+  `reserved` (72 bytes; an empty pack is 80 with the region's 16-byte
+  alignment). It's the SHA-256 of the whole file with those 32 bytes zero,
+  which `tide_pack_end` works out last; `tide_pack_load` copies it into
+  `tide_pack_digest` and hashes nothing of the file. Packs of version 3 are
+  refused as any other version is: games and packs rebuild together.
+- What changes: the session's pack identity (HELLO, wants/lacks; netcode.md) is
+  the build's word, not a hash of the bytes this machine loaded. Two machines of
+  one build agree as before, and different builds' packs differ as before. A
+  pack damaged after it was built now claims its build's identity, so that
+  machine would take asset references it resolves to other data, and the
+  per-tick world hash then finds and repairs the divergence, where it used to
+  get self-contained state. Nothing else reads the digest.
+- `engine/src/sha256.c` runs whole blocks through x86's SHA extensions
+  (cpuid leaf 7 EBX bit 29, with SSSE3 and SSE4.1) or Armv8's SHA-2 (always on
+  Apple, `getauxval(AT_HWCAP) & HWCAP_SHA2` on Linux and Android), chosen once,
+  else the portable code, which now also takes whole blocks straight from the
+  caller's bytes. Windows on Arm and the web keep the portable code. Measured
+  over 1.38 GB on this machine while a build ran: 1.21 s through the
+  instructions, 8.97 s portable; the same digests. `tide_sha256_portable(true)`
+  forces the portable code for tests, `tide_sha256_hardware()` says which runs.
+  Builds gain the most: names, shared blocks and dependency fingerprints all hash.
+- Tests: `tests/test_sha256.c` (FIPS 180-4's four examples both ways, and every
+  length to 260 then every 61st to 4,100, whole and in 1..97-byte pieces,
+  hardware against portable). The CLI's empty-pack size check is 80.
+
+## Pack format 3: 64-bit offsets and handles (2026-10-30)
+
+`TIDE_PACK_VERSION` is 3 (notes/ecs.md, 64-bit handles). The header's region
+place and size and each entry's offset and size are `uint64_t`
+(`tide_pack_header` 40 bytes, `tide_pack_entry` 56), the builder's sizes and
+every offset it takes or gives are 64 bits, and `past_handles` is gone: a pack
+holds what memory does (wasm32's 4 GiB on the web). Handles in the region are
+8 bytes, tagged from `TIDE_PACK_BASE` (2^61): a glob's list is a block of them,
+a text map's row is order, key, value (24 bytes, value at 16), a mesh map's 32
+and a skinned map's 40 (value at 16), `tide_mesh_lists` 16 and
+`tide_skinned_lists` 24. A versioned list's trailer (`versioned_list`, a
+mesh's vertices or indices) is 24 bytes after its elements: version, an
+element's bytes and 1 + its levels block's place, 8 each (`VERSIONED_TRAILER`
+in `pack_load.c`). A block's trailer distance (textures with blocks, versioned
+lists) is its header's `tide_block_next`. At load the region is one allocation
+of whole 1 MiB slots, and `tide_scratch_at` reads it from `tide_pack_memory`,
+which `tide_pack_use` sets, where each thread mapped it into its slots before;
+`tide_pack_region_slots` is `tide_pack_region_size` (bytes). The loader's
+checks are those of before with 64-bit arithmetic (`region_at` and
+`region_size` against the file's size without overflow, each handle inside the
+region, `tide_pack_span` without overflow). tidec's mesh-glob metadata
+(`mesh_reference_pack_entry`, a Map<string, long>'s 24-byte rows) is now made
+in the place of the 32-byte mesh rows it comes from, row by row from the
+first, the rest zeroed. `pack_fingerprint.inc` reads the new layout; the
+fingerprints it gives didn't change, as they hash content, not handles.
+
+## [Parts], and retargeting past non-uniform helpers (2026-10-30)
+
+The owner took both recommendations from the entry below: an asset attribute
+choosing a model's parts, and retargeting that ignores non-uniform scale where
+no role needs it. Rules are my picks, Provisional in the spec.
+
+- **`[Parts("Body_Full_LOD0", "GreatHelm_*")]`** (`check_parts_attribute`,
+  `decl.part_patterns`, matched by `asset_name_matches`, now shared with
+  `[BlendShapes]`). `check_asset_decl` sets `asset_choose_parts` around its
+  `asset_resolve`; `read_item` then decodes the file for that declaration into
+  the arena, never into the file's skin cache (which holds the whole file for
+  other declarations). FBX: `fbx_file_to_glb_parts` skips unkept parts in
+  `fbx_mesh` before reading or checking anything of them (a part is a node
+  holding a mesh, a geometry helper's name being its parent's), and
+  `fbx_drop_parts`/`fbx_drop_below` leave nodes out of the written GLB through
+  `node_index` (scene root, children, skin joints and fallback nodes, animation
+  channels all remapped; a channel of a node left out is dropped). glTF:
+  `tide_skinned_data_decode_parts` (build-time only) skips unkept mesh nodes in
+  `place_geometry`, gives skins no kept part uses no palettes (`read_skins`),
+  and `drop_parts`/`drop_below` leave nodes out in `order_node` (remap
+  UINT32_MAX; their channels skipped). The FBX GLB goes to the decoder
+  unfiltered: its parts were already chosen.
+- **Which nodes go**, bottom up: a node is left out when it isn't needed, every
+  child of it is left out, and it holds a part left out or is a group (has
+  children). Needed: a part kept, a skin's joint that isn't itself a part left
+  out (FBX: a bone, and the joints of kept parts' skins). So a node left out
+  never has a child kept (the first version dropped by subtree and could leave
+  `root` out above kept bones: the decoder test caught it under ASan), and
+  sockets and empties holding no part stay.
+- **Measured on the Medieval Civilians & Soldiers Complete FBX** (175 MB, 676
+  parts, 1,431 nodes): `[Parts("Body_Full_LOD0", "GreatHelm_LOD0",
+  "Gambeson_LOD0")]` gives 35,346 vertices and 147 nodes and builds in about 4 s
+  (the whole file was past four decoder limits). With a profile whose reference
+  has the same `"parts"`, Kubold's longsword idle and attack bake through
+  `[Retarget]` and play on it.
+- **Profiles:** a `reference` may have `"parts"`, a non-empty list of patterns
+  (`read_profile`, `profile_part_kept`): its model is read as `[Parts]` reads
+  it, so the rig is that model's skeleton and the bake's output its exact one.
+- **Non-uniform scale in retargeting** (`engine/src/retarget.c`). `open_rig`
+  accepts any finite positive scale and marks nodes at or below a non-uniform
+  one (`rig_node.free_scale`). Auto keeps its matches; `read_roles` refuses a
+  required role there (`UnsupportedScale`, the console naming the role) and
+  unmaps an optional one; Create refuses when a needed source node or a needed
+  or driven target node is marked. Apply checks uniform scale only on needed
+  (or driven) nodes, positive finite scale elsewhere, and bounds the unneeded
+  ones' positions by their largest scale component (`bounding_scale`, which is
+  the old `scale.x` for uniform scale, so every uniform rig computes the same
+  bits: no pin moved). The plan's layout is unchanged. Found with the pack:
+  its parts' FBX geometry helpers have scales like (1.06, 1.08, 1.68).
+  The profile error for scale now says "positive scale" (non-finite or not
+  positive), naming the bone.
+
+Tests: `skinned_parts_keep_their_meshes_skins_and_every_bone`
+(tests/test_skinned_shapes.c: a body and a hat under a group, each skinned;
+all kept is the whole model's bytes; each kept leaves the other's mesh,
+palettes, nodes and channel out and keeps the spare node and bones; none kept
+is refused naming both), `fbx_parts_keep_their_meshes_and_every_bone`
+(`fbx_make.mjs`'s `parts/`, ASCII and binary), three `[Parts]` declarations in
+`e2e/fbx_assets.tide` (its pin moved with its check count, 25 to 28), five
+`parts_attribute_*` diagnostics, `lsp_levels_of_detail` (offered, hover,
+misuse, misspelling), and `retarget_non_uniform_scale_where_no_role_needs_it`
+(an odd helper on the target and a noisy IK node on the source give the same
+output bits as without them, the helper's local untouched; a required role
+under one refuses, an optional one is left out). `retarget_asset_scale` is now
+a bake whose target LeftHand is scaled, refused `UnsupportedScale`.
+
+## A bought character pack's FBX, and which bone is which (2026-10-30, bugs)
+
+From bannerlord-duel's notes/gaps.md: The Tales Factory's "Medieval Civilians
+& Soldiers" (Unity), whose `MedievalCivil&Soldier_Complete.FBX` (175 MB) has
+every clothing part, each at LOD0..LOD5, on one UE4-mannequin skeleton.
+
+- **"Dual-quaternion skinning" was linear.** All 676 skins say `SkinningType:
+  Blend` (3ds Max's and Unreal's default), with a `BlendWeights` array whose
+  every value is 0: no vertex blends in dual-quaternion skinning, so it is
+  linear, which Unity reads it as. `fbx_mesh` now accepts
+  `UFBX_SKINNING_METHOD_BLENDED_DQ_LINEAR`; `fbx_skin_vertex_has_weights`
+  refuses such a skin's vertex whose `dq_weight` isn't 0 ("blends FBX
+  dual-quaternion skinning into some vertices"). `DualQuaternion` is still
+  refused. ufbx gives a Blend skin's vertices without a weight 0.
+- **An exact repeat of a blend channel is one shape.** The next refusal was
+  "two morph targets named 'DaggerSheath_MK_Armor02' in one mesh": its
+  DaggerSheath_LOD0 has the channel twice, the same 40 offsets, both at weight
+  0 (the only repeat among the file's 1,612 channels). `fbx_channel_repeats`
+  leaves out a channel whose resolved name, offsets (vertices, positions,
+  normals) and zero default weight equal an earlier channel's of the mesh: the
+  rest geometry and what the name moves are what they were. Any other
+  repeated name is still refused by the decoder (`mesh_shapes`). My pick,
+  Provisional in the spec.
+- **The posed garbling was Blender's export, not the importer.** Their
+  Blender 4.4 glTF (tools/characters outfit.py: FBX import, parts joined,
+  `export_scene.gltf`) is self-consistent at rest (every joint's world times
+  its inverse bind is identity to 6e-7, weights sum to 1), but its skeleton
+  lies along -Z (head joint at (0, 0.01, -1.655)) while the mesh stands along
+  +Y. Rotating `head` then pivots 2.4 m from the helmet, in any glTF reader.
+  Cause: this FBX's cluster bind poses (TransformLink) lie 90 degrees from its
+  nodes' transforms; Blender makes the armature's rest from the bind pose and
+  its pose from the nodes, and its glTF exporter writes the rest as the
+  skeleton. ufbx with the importer's options puts the original's head at
+  (0, 1.655, 0.01), in the mesh; three of its parts imported by Tide
+  (Body_Full, GreatHelm, Gambeson) pose correctly: the helmet tilts with the
+  head and the arm turns about its shoulder. The retargeted clips garbled for
+  the same reason, the target rig being Blender's glTF.
+- **Blender's FBX re-export** failed the HumanoidRig profile because
+  `ik_foot_r` and its end have scale (99.9934, 100, 99.9995), 6.6e-5 apart,
+  past `retarget.c`'s 1e-5 uniformity tolerance (Blender's decomposition of a
+  0.01-scaled armature). The profile's error now names the first such bone and
+  its scale (`read_profile`, `humanoid_assets.c`); the rule changed after, in
+  the entry above.
+- **The whole Complete FBX isn't one model:** 1,059,522 vertices (all parts,
+  all LODs; 2.1 million once parts with shapes split corners), 565 MB decoded,
+  past `TIDE_SKINNED_MAX_VERTICES`, `_READS`, `_SHAPE_DELTAS` and `_BYTES`.
+  Bringing such a pack in needs its parts chosen at import (a Unity prefab
+  enables a few renderers of it): `[Parts]`, above.
+- **Bone.** `$"{bone}"` (and Pose, Skeleton, BoneTransform, Animation) made C
+  that didn't compile: the engine's skinned structs aren't `prog->decls`, so
+  `gen_show_helpers` never wrote their `tide_text_` functions. It now walks
+  `prog->skinned_types` too (`shown_decl`): visible fields as for any struct,
+  `Bone { index = 93 }`, `Animation { name = "Idle" }`, `BlendShape { name =
+  ... }`, `Pose { }`. New, my picks (Provisional in the spec): `bone.index`
+  (read-only, `SKIN_OP_BONE_INDEX`), `skeleton.NameOf(bone)` and
+  `skeleton.bones.NameOf(bone)` (`SKIN_OP_BONE_NAME`, generated
+  `tide_skin_bone_name`: the name only when the bone's fingerprint is the
+  skeleton's, else empty) and `==`/`!=` on Bones (`binary_result`, generated
+  `tide_skin_bone_equal`: fingerprint and index). The note for an engine
+  struct with no operators names its first visible field, or none, instead of
+  a hidden one (it suggested `a.fingerprint`). Editors complete and hover both.
+
+Tests: `fbx_blend_skinning_without_dual_quaternion_weights_is_linear` (a
+"Blend" rig with zero weights decodes to the "Linear" rig's bytes; a weight of
+0.5 is refused, ASCII and binary, from `fbx_make.mjs`'s `skin/`),
+`fbx_blend_shape_channels_repeated_exactly_are_one_shape` (`shapes/repeated_*`
+decodes to `shapes_*`'s bytes; `shapes/renamed_*` is refused), the
+`retarget_asset_scale` diagnostic (a profile whose `LeftHand` is scaled
+(1, 1.001, 1)), and six checks in `e2e/skinned.tide` (names, index, equality,
+texts; its world hash pin moved with the probe's check count, 38 to 44).
+Existing fixtures regenerate byte for byte. The licensed files aren't in the
+repository; the probes above were scratch programs.
+
+## Animation sampling performance follow-up (2026-10-30)
+
+The owner's follow-up asked for substantially lower build-baked, runtime-baked
+and live-retargeted batch costs. The shared sampler now prepares the value of
+each unique single-key STEP/LINEAR channel once in its retained immutable plan
+and copies it with the starting pose. Duplicate destination/path writers keep
+their original order and per-frame evaluation. The actual baked idle clip has
+41 channels: 17 single-key channels and 24 changing channels with 123 keys.
+The raw source has 205 channels, which spills past the retained 192-channel
+stack threshold. Temporary spill arrays are now reclaimed after each sample
+when the output's flat scratch storage was allocated before the temporary mark.
+Cache lifetime, failure behavior and exact arithmetic are unchanged; the
+ownership proof and focused regression coverage are in runtime-ownership.md.
+
+The generated-code changes also recognize independently constructed default
+poses and fresh conditional results without extra copies, and ask for clip
+duration only for Loop playback: the sampler already clamps ordinary playback.
+Their value/alias contracts and tests are recorded in language.md. These are
+internal changes; there is no public API, canonical format or algorithm-version
+change. Release assembly was inspected to keep channel interpolation inline:
+an accidental out-of-line call per channel caused a measured raw-sampling
+regression, which explicit inlining removed. The 256-channel stack experiment
+was reverted after measurement. Earlier measurements below remain the
+historical public-Bake baseline.
+
+Final paired release measurements used clang 23 on Ryzen 9 7900X and the same
+89-source/55-target-node idle fixture, after the correctness suites completed.
+Three before/after processes ran in order B1, A1, A2, B2, B3, A3, with nine
+rounds per process; the table reports medians of the three process medians.
+For 1,000 poses, microseconds per pose is numerically equal to milliseconds
+per batch. Runtime Bake is stored before playback timing.
+
+| Tide playback path | 100 calls, microseconds/pose before → after | 1,000-call batch, milliseconds before → after | Batch reduction |
+| --- | ---: | ---: | ---: |
+| Build-time baked | 0.6889 → 0.4354 | 1.67623 → 0.86836 | 48.20% |
+| Stored runtime Bake | 0.7189 → 0.4531 | 1.69946 → 0.88639 | 47.84% |
+| Live sample and retarget | 4.5526 → 4.1858 | 7.16384 → 5.26832 | 26.46% |
+
+C baked sampling measured 0.524 → 0.383867 microseconds per pose. Raw C sampling
+measured 1.329733 → 1.355767; the three-process ranges overlap (before
+1.276633–1.3513, after 1.277067–1.414367). Combined C sampling/retargeting was
+essentially unchanged at 4.2059 → 4.202267 microseconds. These compare equivalent
+animation work, with no drawing, skinning, IK or gameplay. Raw rounds and
+reproduction details are in `bench/results/retarget-playback-20261030/`.
+
+Complete native ASan validation passed 2,906 enabled tests in 127.42 seconds,
+including 61 GPU and 29 safety checks. Complete WASM validation passed 2,794
+enabled tests in 373.97 seconds, including 22 WebGPU, 10 D3D11 and 24 safety
+checks. Each retains one preexisting disabled MicroDuck test. The new sampler
+fixtures pass in these suites, and every existing deterministic hash pin is
+unchanged.
+
+The one-time map/Bake/first-sample measurement was 30.4332 → 29.7465 ms,
+approximately unchanged; this pass targets recurring playback. Read-only audit
+identified extra work outside the
+C Auto/Create timing: the first generated HumanoidRig.Auto reference-pose
+copies call `tide_list_copy`, whose packed-list check eagerly materializes the
+complete model through `tide_asset_pack`. That copies/hashes the payload and
+validates its geometry/influences too, before returning the borrowed pack
+handle. It is a plausible substantial contributor to the cold-frame gap,
+not a measured phase attribution. Shared list ownership is unchanged; isolating
+those phases is needed before claiming how much of the load time it explains.
+
+## Baking dynamically loaded animations (2026-10-30)
+
+The approved `RetargetMap.Bake` instance method accepts an Animation or
+AnimationCatalog, an explicit target Skeleton and optional `sampleRate`
+(default 60), returning the corresponding Animation/plain AnimationCatalog
+with `fails IOError`. It uses the prepared map and its current root, heading,
+spine and twist settings. Source bytes must match the map's actual source
+skeleton, and target bytes its target identity. Bake is a cold operation;
+the returned target-skeleton clips use ordinary sampling afterward. Catalog
+order, clip names and durations survive. Empty/invalid catalogs, incompatible
+maps, unsupported animated scale, invalid settings and resource limits fail
+without publishing a partial catalog.
+
+The shared C baker now accepts an optional shared-operation path,
+`tide_retarget_bake_with_budget`, used across separate catalog source models.
+Its actual sample, transform, sampled-key and encoded-byte totals use the same
+limits documented below for the complete catalog, rather than granting each
+source another allowance. Outputs and the caller's budget change only after
+that part succeeds; the generated wrapper stages all parts in scratch and
+discards them if a later part fails. All source lists are borrowed only during
+the call. Successful output contains no retained source/map dependency.
+
+Temporary bake results are ordinary scratch values. Storing an Animation or
+catalog in match/local state promotes each valid canonical model into the
+existing immutable content-addressed asset pool with independent descriptor
+leases. This also applies to stored decoded Animation values. Ordinary
+snapshot, packing, reload and copy-on-write lifetime rules therefore apply,
+and subsequent playback uses existing cached sampling plans instead of
+revalidating every key per frame. There is no global runtime-bake registry.
+Scratch-only playback remains the checked cold path. The new ownership
+boundary and lifecycle tests are recorded in runtime-ownership.md.
+
+Three new runtime ownership fixtures and one shared-budget fixture supplement
+the generated dynamic-bake API coverage. The complete native ASan and WASM
+engine suites pass, including all three ownership tests and the 26-test
+retarget filter. Stored decoded Animation values now use immutable descriptors;
+their intentional physical world-hash pin change is recorded in
+runtime-ownership.md, with unchanged pose bits and passing snapshot/pack/replay
+checks on both platforms. Final affected checks pass 23/23 natively and 22/22
+on WASM, including the complete engine suites; all 17 related LSP checks and
+the docs build pass. The existing skinned world-hash check also passes in
+release with the intentional representation pin. The canonical byte format,
+math and bake algorithm version (2) are unchanged.
+
+Final public-Bake playback measurements used release clang 23 on Ryzen 9
+7900X, the same actual idle clip with 89 source and 55 target nodes, after
+all tests finished. These are the median of three process medians, each
+process taking nine rounds. Runtime Bake ran once and its result was stored
+in a local Animation before steady-state timing:
+
+| Tide playback path | 100 calls, microseconds per pose | 1,000 calls, microseconds per pose | 1,000-call batch, milliseconds |
+| --- | ---: | ---: | ---: |
+| Build-time baked | 0.681000 | 1.631050 | 1.631050 |
+| Live sample and retarget | 4.296400 | 7.032780 | 7.032780 |
+| Stored runtime Bake | 0.703400 | 1.661290 | 1.661290 |
+
+Runtime-baked and build-time-baked sampled hips-position sums match for
+1, 100 and 1,000 calls with a starting time of 0.2 seconds; every run reports
+`FAILURES 0`. Separate native/WASM deterministic fixtures check complete pose
+and world-state parity. This benchmark measures animation
+work without drawing, skinning, IK or gameplay. The first frame, including
+map creation, Bake and the first sample, took 29.4236, 29.4824 and 29.7660 ms
+(median 29.4824 ms). That is combined cold load work, not a measurement of
+Bake alone or a recurring per-frame cost. Historical live/runtime optimization
+measurements below remain separate from this final public-API comparison.
+
+## Profile assets and retargeted animation baking (2026-10-30)
+
+The owner chose reusable `.humanoid.json` rig profiles and
+`[Retarget(sourceRig, targetRig)]` on Animation/AnimationCatalog assets, with
+Tide independent of tide-motion. Build-time conversion produces ordinary
+target-skeleton animation bytes: playback uses existing sampling and has no
+per-frame retarget pass. The live Pose API remains available for dynamic
+poses. The subsequent approved Bake method above also uses the shared C baker
+for dynamically loaded clips.
+
+A singular `asset HumanoidRig` names a profile. Its `reference` selects either
+`{"file":"reference.fbx","pose":"rest"}` or
+`{"file":"reference.fbx","clip":"exact clip name","seconds":0}` with
+seconds inside that clip's duration. Paths resolve relative to the profile;
+the importer never guesses an animation's first frame as its calibration.
+Optional `referenceEdits` maps exact bone names to `positionOffset` (three
+numbers), `rotationOffsetDegrees` (three X/Y/Z degree components, applied
+Z then X then Y and postmultiplied)
+and `scaleMultiplier` (positive uniform scalar). Edits precede automatic role
+discovery. Optional `bones` maps HumanoidBone role names to exact bone names
+or null to unmap, applying those assignments last as Manual. Unknown and
+duplicate keys fail. Profiles pack a stripped original skeleton, calibrated
+reference transforms and 55 role/status values in an immutable byte payload;
+loading does no JSON parsing or automatic discovery.
+
+The Retarget attribute supports constant named `rootScale`, `rootOffset`,
+`headingDegrees`, `spineDistribution`, `twistDistribution` and `sampleRate`;
+the latter defaults to 60 Hz. Root scale otherwise uses Create's calibrated
+leg ratio. Every source export prepares its own existing retarget plan using
+the selected source/target profiles. A catalog bakes every clip; a selected
+Animation bakes its selected clip. Original clip names, durations and source
+ordering survive, while every output uses the target's original node names,
+order, parent links, source-node indices, rest transforms and skeleton hash.
+Calibration edits become output channels, not a different target identity.
+
+The compiler's `.tide/assets/retarget` cache hashes the source canonical
+content, both complete imported profile payloads, settings and algorithm
+version. Cached output has its own SHA-256 and full canonical validation;
+damaged entries are rebuilt. Retargeting changes per-declaration asset data,
+leaving the raw import cache available unchanged to other declarations.
+Dependencies include both profile files, their reference files and external
+glTF buffers even on a cache hit. Their edits therefore reach watched rebuilds
+and asset identity. Release pruning can omit profiles used only by the build.
+The compiler fixture covers profile import and ordinary baked sampling;
+diagnostics and a Node cache/identity fixture cover configuration, reuse and
+transitive edits. The actual Ninja regression checks that profile, reference
+model and external-buffer changes rebuild the pack, including escaped paths.
+Metadata-only editor checks retain profile paths/types without importing FBX or
+running Auto; C-definition navigation emits only a placeholder profile value.
+
+`engine/src/retarget_bake.c` and `tide/retarget_bake.h` are shared cold-path C
+support. They call the same `tide_skinned_sample` and `tide_retarget_apply`
+math as live poses, then write geometry-free canonical version-1 bytes.
+Sampling includes endpoints, a regular grid and all authored key times within
+the clip. Each STEP change also samples the preceding representable float;
+LINEAR output then preserves the jump without an interpolated float time
+inside it. Consecutive output quaternions share a hemisphere. Rest-equal
+constant channels disappear; other constant channels have one key; changing
+channels share their clip's time array. Interpolation between baked samples
+is an approximation to live retargeting, not an arbitrary-time bit guarantee.
+Increase sampleRate when that approximation needs improvement.
+
+The helper borrows input lists and returns free-compatible independent bytes
+only after complete success. Failure preserves both output parameters,
+caller scratch and world state. It checks packed descriptor spans before
+reading them, relevant skeleton/clip/channel contents and all selected key
+values; source scale channels must stay at static export scale with zero
+cubic tangents. Geometry is not needed or traversed. Failures identify invalid
+settings, the clip/time of a failed application, animated-scale bones or the
+named work limit. Limits are individual defines in the header: 1,048,576
+distinct samples across clips, 4,194,304 evaluated source-plus-target node
+transforms, 1,073,741,824 sampled input-key numbers and 128 MiB encoded output,
+plus the existing canonical channel/key limits. Limits are implementation
+picks, not new language requirements; exhaustion uses the ordinary engine
+allocation policy. Mutable inputs revalidate sampling keys each frame,
+so the explicit key-read budget bounds that remaining cold-path cost.
+
+Seven `tests/test_retarget_bake.c` fixtures cover independent root travel and
+STEP expectations, live-math agreement at bake samples, original target rest
+and identity, calibrated constants, clip names/durations, selected and zero
+duration clips, quaternion signs, deterministic repeated bytes, stripped
+geometry, output lifetime after input disposal, every source-blob cut length,
+malformed channels/keys, static versus animated scale, invalid settings and
+limits, and unchanged scratch/owned heap/snapshot state on success or failure.
+Native ASan and WASM pass all seven; with the runtime follow-up's additional
+fixtures, the combined retarget filter passes 25/25 on each. The native full suite
+passed 2,923 tests; two fixture errors were then fixed (the asset-type diagnostic
+expectation and an asset-only directory accidentally registered as an error
+program), with all nine affected checks passing. Humanoid asset LSP regressions
+pass 2/2 and asset-type completion 1/1; the production docs build passes. The
+ignored real-asset probe compares five baked clips with live transfer at 1,181
+60 Hz grid/midpoint samples and passes. It retains no licensed assets in the
+repository. The full web suite passes all 2,812 enabled tests, with one existing disabled
+Newton test; its real-asset bake/live printed maxima match native exactly.
+Final integration details are in tide-programs.md. Relative URL profiles strip
+query/fragment text before resolving a parent or root-relative reference; a
+focused HTTP regression covers slashes in signed-query and fragment text.
+
+## Static mesh IDs in ordinary collections (2026-10-30)
+
+Ordinary Mesh<V> values now use the existing Asset<Mesh<V>> checked ID type.
+Lists/arrays/maps own or share only ID storage; geometry is borrowed from the
+current pack when read. Static Value preserves the handle. Raw imported geometry
+and runtime pack/mesh APIs are unchanged. Private ID metadata accompanies static
+glob imports, keyed by declaration plus authored file key. Generated load caches
+bind actual geometry rows by ID, preserving retained selections across row-order
+changes. Unknown IDs resolve empty. Server pruning retains matching collections.
+Detailed compiler/storage contracts and validation: language.md, Static mesh
+values keep stable IDs. mesh_values covers snapshots, packing, async retention,
+unknown IDs and reordered replacement packs on Windows ASan and WASI; import,
+LOD, weighted-mesh and typed-reference regressions pass too.
+
+## Humanoid pose retargeting (2026-10-30)
+
+The owner approved a standalone runtime path, without a tide-motion dependency:
+`HumanoidRig.Auto(referencePose)`, editable `rig[HumanoidBone]`,
+`rig.GetStatus(role)`, `RetargetMap.Create(actualAnimation.skeleton, sourceRig,
+targetRig)` failing with `RetargetError`, and `pose.Retarget(sampledPose, map)`
+returning a bool. A rig keeps its reference pose and role assignments. Status is
+Missing, Automatic, Uncertain or Manual; uncertain required roles prevent map
+creation, and runtime diagnostics identify the side and role to assign. Manual
+assignments can complete a partial automatic result before creating a map.
+Assigning a default Bone explicitly unmaps the role. Bone provenance and the
+reference pose's skeleton identity are checked; replacing a rig's reference
+with an incompatible skeleton cannot silently reuse its old indices.
+
+Automatic mapping combines common Unity/Mixamo, UE4 and Synty anatomical names,
+namespaces, side markers and hierarchy. Explicit geometry/mesh name tokens,
+IK, twist and helper names are excluded from semantic candidates. Clavicle plus
+Shoulder recognizes the Synty upper arm, whereas Mixamo Shoulder is the clavicle.
+Ball followed by Toes selects the proximal toe joint. Unsided fingers inherit
+their mapped hand, including Synty's right-hand numeric suffix; a single generic
+Finger_01/02/03 chain represents a mitten's middle finger, while competing or
+branched generic chains remain uncertain. A known bilateral pair supplies a
+reference-geometry side axis for anatomically named unsided limbs. A unique
+intermediate non-helper node can fill a missing elbow or knee. This is not
+recognition of arbitrary unnamed skeletons: ambiguity is exposed for manual
+assignment. Hips, head, upper/lower arms and legs, hands and feet are required;
+spine, chest, upper chest, neck, clavicles, toes and fingers are optional.
+
+Map creation binds the actual animation export separately from the calibration
+pose, by unique exact node names and the shared named ancestor chains. Reordered
+nodes, extra uniform armature wrappers and different authored node defaults are
+supported. The reference must describe that same source rig in its intended
+calibration pose; an FBX whose node defaults are idle can use a sampled T-pose
+clip as its explicit reference. Optional source roles absent or ambiguous in
+the actual export are omitted from the prepared mapping, without modifying the
+rig. Required roles must bind uniquely. Exporter axis/unit conversion must
+already place the actual source and its reference in the same model space.
+
+Transfer uses reference-calibrated global rotation deltas, aligned body facing
+and outgoing limb directions. It handles T/A reference differences and keeps
+target local translations and scales, so target segment lengths survive. Two
+finger rays can determine palm roll; leaves or hands without that secondary
+frame retain reference roll. Extra torso nodes interpolate source-chain global
+rotation deltas by reference arc length. Limb helpers receive only axial twist,
+never interpolation of elbow/knee swing; common sibling twist/roll bones receive
+half the distal axial delta. Off-axis serial helpers follow the proximal joint.
+`spineDistribution` and `twistDistribution` default to 1 and clamp to [0,1].
+The latter settings control intermediate helpers; mapped semantic endpoints
+still follow their source roles.
+
+`rootScale` starts at target/source average leg length, `rootOffset` at zero,
+and `headingDegrees` at zero. Hips travel includes source ancestor movement,
+is scaled in model space and turned by the calibrated facing plus requested
+heading about target up. Root offset uses target model space; rootScale zero
+removes hips travel. There is no separate root-motion extraction/controller.
+Reference-pose edits are calibration adjustments; geometric alignment can
+cancel a swing edit. For an artistic per-bone output offset, edit the resulting
+Pose after Retarget. Retarget a full target rig, then use existing compatible
+binding to draw sparse modular pieces; incomplete body rigs do not guess a leg
+ratio. Contact IK, ground locking, weapon/hand constraints and non-root position
+animation transfer are outside this pass. Nonuniform, reflected, zero or
+animated source scale is refused; positive uniform static unit wrappers work.
+
+Preparation owns a pointer-free byte plan and the API keeps ordinary list-backed
+value state, including snapshots. Apply checks immutable skeleton headers and
+walks source/target nodes once, without scanning mesh or animation payloads each
+frame. It stages results before mutation, allows source/output pose aliasing,
+and leaves the output unchanged on invalid identity, counts, options or nonfinite
+transforms. The runtime boundary is recorded in runtime-ownership.md. Original
+synthetic C fixtures cover naming/ambiguity/manual assignments, T/A and roll,
+root and facing calibration, different spine counts, axial helpers, independent
+export defaults/order/unit wrappers, missing optional export bones, atomic
+failure and snapshots, and deterministic pose bits. Public compiler fixtures
+exercise the API separately; licensed local meshes are not repository fixtures.
+
+Private validation used the owner's UE4 Kubold source with the sampled frame-0
+T-pose calibration and Synty POLYGON target. Five clips (idle, right cut, top
+cut, thrust and death), 593 sampled frames, all applied successfully. Every
+required role and the 18 supported target finger roles mapped automatically,
+without ambiguity. Independent model-space segment comparisons found a worst
+core limb-direction difference of 0.16902 degrees; retained branch geometry
+still differs (clavicle attachment rays up to 35.32 degrees, wrist-to-thumb-root
+36.61, wrist-to-index-root 20.22). These are not contact or weapon-alignment
+guarantees: differing attachment offsets and hand proportions remain target
+geometry. Matching-camera 1600x1200 source/target renders for all five clips were
+visually inspected, without an observed collapse or limb flip; hand contacts
+still need the game's constraints/IK. Native and WASM private probes each
+applied all 593 frames with zero failures; their 256 status, scale, direction
+and completion lines matched at the recorded precision. All twelve new C
+fixtures passed on native ASan and WASM (the retarget filter also runs one
+existing test, 13/13 total); the 13-frame synthetic pose hash matched exactly,
+`a669d398066dafa5`, and was pinned before the performance follow-up below. The two public API e2e cases also
+passed on both platforms. Existing skinned CPU coverage passed 62/62 on each.
+
+After merging the incoming Pose.Sample cache and codegen changes, overlap
+validation rebuilt the affected targets. Native ASan and WASM each passed the
+retarget filter (13/13), expanded skinned CPU coverage (65/65), and all seven
+affected e2e CTests, including retargeting and net_alone_seen. Both private
+probes again applied all 593 frames successfully; all 256 measurement lines
+were identical before/after the merge and between native and WASM.
+
+### Runtime performance follow-up (2026-10-30)
+
+The owner rejected the initial roughly 10 microseconds per live pose. Phase
+measurements put nearly all of that in quaternion and hierarchy arithmetic
+(source 4.49 microseconds, target 5.39; setup/commit together 0.154). The final
+solver prepares local calibration for matching direct parent chains and keeps
+the global solver for hips and differing helper chains. Global transforms only
+needed to validate otherwise-unused branches use a conservative finite-position
+proof, with complete original hierarchy evaluation when that proof is
+inconclusive. Every input local and accumulated scale remains checked; failures
+are still atomic. Preparation also normalizes static calibration once, and
+Apply reads one list view, writes contiguous runs and reclaims staging when
+reusing a scratch output. The C ABI is unchanged. Implementation and proof:
+runtime-ownership.md, Humanoid retargeting boundary.
+
+Cancelling global rotations algebraically changes rounding intentionally. An
+alternating old/new comparison of the five private clips and all 593 frames
+found at most 0.000051027 degrees of local quaternion difference and
+0.000001372 metres of model-position difference. Omitting proven-unused global
+transforms produced exactly the same output bytes as evaluating them with the
+new local solver. The new 13-frame synthetic pose hash is `1c354e8036dca9f4`,
+verified on native ASan and WASM and pinned; the previous hash above records the
+earlier global arithmetic. Private plan magic is v3; `TIDE_RETARGET_BAKE_VERSION`
+is 2 so previously cached bakes cannot hide this intentional arithmetic change.
+No temporary timing hooks, experimental global switches or alternate-build
+defines remain in the production implementation.
+
+The release benchmark uses the owner's 89-source-node/55-target-node rigs, a
+10,004-byte owned map, nine timing rounds per run and three production runs.
+Median-of-run-medians: C Apply 2.776 microseconds (initial 9.933), raw sampling
+plus Apply 4.189 microseconds. The same-process experimental comparison was
+9.067 versus 2.815 microseconds. Freshly baked profile output samples in 0.527
+microseconds; the separately reported legacy game bake samples in 0.552.
+Generated Tide view work measured 0.716 microseconds per baked pose versus
+4.519 per live-retargeted pose at 100 calls, and 1.775 versus 7.217 at 1,000.
+These include pose construction/sampling and the view's accumulation of one
+bone value, not drawing or IK; the higher large-batch cost remains visible.
+For prepared clips, `[Retarget]` removes live retarget work altogether. The
+private benchmark sources/results and licensed inputs remain ignored under
+`build/retarget-perf`; fresh profile output and the legacy bake are distinct
+cases, not interchangeable baselines.
+
+All 25 combined runtime/bake tests pass native ASan and WASM. Added runtime
+coverage checks scratch reuse, multi-chunk lists and snapshots, conservative
+proof fallbacks that accept finite large transforms and reject unused overflow,
+non-unit/signed rotations, skipped-node scale/nonfinite validation and forged
+specialization metadata. Existing tests still cover changed facing and heading,
+different spine/helper chains and explicit reference/export separation.
+
+Final post-merge measurements at `43916e9fc` include the incoming Pose-index
+cache and its compatibility-collision repair. These release runs used clang
+23.1.2 on Ryzen 9 7900X, after all tests finished, with nine rounds per process
+and the median of three process medians. C Apply measured 2.686300 microseconds
+(process medians 2.686300, 2.682033, 2.886133), versus the original 9.932867.
+Raw sampling plus Apply measured 4.112733 microseconds; fresh profile-baked
+sampling 0.511133; separately measured legacy-baked sampling 0.526867; automatic
+discovery plus map creation 50.143. Every benchmark reported zero failures.
+
+At 100 calls, generated Tide measured 0.670100 microseconds per baked pose and
+4.324100 per live-retargeted pose: 0.067010 and 0.432410 milliseconds per batch,
+respectively. At 1,000 calls those were 1.664750 and 7.197000 microseconds per
+pose, or 1.664750 and 7.197000 milliseconds per batch. Original live-retargeted
+baselines were 12.7336 microseconds per pose at 100 calls and 14.56212 at 1,000.
+The workload includes pose construction, sampling and indexing, but excludes
+drawing, skinning, IK and gameplay. The earlier measurements above remain the
+pre-merge history; these are the final merged measurements.
+
+Final merged native and WASM suites passed, including the forced cache-collision
+regression and exact retarget pose hash; the private 1,181-sample bake-probe
+metrics still match between platforms. Full enabled/disabled test counts and
+integration coverage are recorded in notes/tide-programs.md.
+
+## Kept sample plans and model facts (2026-10-30)
+
+bannerlord-duel measured `Pose.Sample` of an FBX clip onto its Synty
+character at 12 µs a call: before sampling anything, each call checked both
+node tables and every key of the clip (an ordinary packed `Animation` has no
+load-time proof), built two name tables and bound the rigs. Timings:
+notes/benchmarks.md, Pose.Sample, indexing and Model a call at a time.
+
+`tide_skinned_sample` and `tide_skinned_sample_into` (`engine/src/skinned.c`)
+now make a sample plan: whether the clip binds, each bound channel's
+descriptor and output node (or folded slot), the pose before any channel
+(target rest with the required source defaults over it), folded nodes'
+starting locals and the folds to finish with. It's made by the same code
+that made those decisions per call before: `plan_own` is the old
+`tide_skinned_sample` preflight (the pack proofs included), `plan_bound` the
+separate binding (`require_clip`, `bind_nodes`, `clip_folds_uniform`), and a
+refusal still reports once through `report_binding`. `plan_apply` then
+sizes the output, copies the starting pose, samples every channel in clip
+order and applies the folds. Its arithmetic is the samplers' own: the same
+search result, span, `t`, lerp, slerp, Hermite terms and the two rotation
+normalizations, in the same order. What changed is only where they happen:
+channels whose key times are the same bytes share one search and one
+(span, t) (`plan_groups`, kept plans only); keys decode as fixed three or
+four lanes, a zero in the fourth as before; and every channel's value is
+made before the rotations are normalized in a loop of their own, then
+written in channel order. `linear_rotation` is `tide_slerp_q` with its
+nlerp branch's normalizing left to that loop (the wide-angle branch still
+calls `tide_slerp_q`).
+
+A plan is kept when both models' bytes have a key that can't name other
+bytes:
+
+- A pack block within the file's bytes (`tide_pack_file_span`), keyed by its
+  offset and `tide_pack_generation()`, a new runtime function (not called by
+  generated code) that changes on every load, unload and
+  `tide_pack_mesh_updated`. Generated code never writes the pack; the
+  runtime's writes are the load's and geometry defaults', each followed by
+  `tide_pack_mesh_updated`, so a forged pack whose geometry write overlaps a
+  model plans again, as its proof is dropped.
+- An asset-held list (`tide_asset_list`: a component's copy of an asset),
+  keyed by its SHA-256 id, which names its bytes.
+
+Owned lists (scratch, decoded, edited) plan for each call and free the plan,
+as they checked for each call before. The key has the mode (own skeleton or
+into another), the clip index and both models' keys; a kept plan also
+checks both views' sizes on use. Refusals are kept too. 64 sets of 4 plans,
+least recently used replaced, under a spinlock, shared by every thread; a
+caller holds a reference while applying, so eviction by another thread frees
+nothing in use. Plans are malloc'd (a 55-node, 156-channel plan is about
+7 KB) and live until evicted. Pose bits, refusals, output ownership (scratch
+and world outputs, heap/chunked through the list cache), the
+untouched-output-on-refusal rule and `tide_skinned_pose_into` are unchanged.
+
+The same keys keep a model's facts on each thread (`known_model`: node count,
+skeleton hash and fingerprint, size, node table offset, and node validity
+once asked; 16 slots, the last hit checked first), which
+`tide_skinned_fingerprint`, `tide_skinned_bone_count`,
+`tide_skinned_compatible` and `tide_skinned_model` read rather than opening
+the model: a Pose's indexing and Model check its identity on every use
+(`tide_skin_pose_has`). Names looked up by `tide_skinned_find_bone`,
+`_find_animation` and `_find_shape` (a rig's members, each read) are kept
+too, up to 40 bytes, 64 slots, matched by the model's key and the name's
+bytes. Keyless bytes, and a failed open, take the old paths. `Model`
+multiplies only the bone's ancestors, root down, with the same TRS and
+products as the all-node pass (`chain_model`); bits are unchanged.
+
+Tests (`tests/test_skinned.c`): `skinned_known_models_answer_as_their_bytes_do`
+(pack- and asset-held bytes give the same names, counts, fingerprints,
+compatibility and every bone's Model, bit for bit against the all-node
+product, as owned bytes, before and after a reload at the same offsets
+renaming a bone and changing the skeleton; it fails without the generation
+in the key); `skinned_kept_sample_plans_match_plans_made_for_one_call`
+(pack- and asset-held bytes against owned copies: the exact rig, separate
+bindings both ways, an armature folded in and out, refused bindings and
+clips, scratch and world outputs, twice so the second pass reads kept
+plans); `skinned_kept_sample_plans_follow_reloaded_packs` (another pack at
+the same offsets with a changed key and rest plans again);
+`skinned_kept_sample_plans_survive_eviction` (2,400 refused keys among valid
+samples). Leaving the generation out of the key fails the reload test and
+the two existing proof-invalidation tests. `bench_pose --quick` checks kept
+against single-call plans over a 192-channel clip. The pinned cross-platform
+pose bits (`skinned_crossplatform_pose_bits`) are unchanged.
+
 ## FBX keys closer than a float are one key (2026-10-29, bug)
 
 Reported by the owner from the duel (`bannerlord-duel`'s `notes/gaps.md`):
@@ -74,7 +1406,6 @@ without the fix) and `skinned_linear_rotation_between_opposite_signs_takes_the_s
 (a glTF clip q to -q samples q throughout). No existing expectation or pinned
 hash changed.
 
-
 ## Choosing which blend shapes an asset imports (2026-10-27)
 
 The owner chose an asset attribute (verbatim in docs/spec.md): Sidekick heads
@@ -110,7 +1441,6 @@ defaults and Shaped, plus a pack scan finding exactly one version 1 model
 `lsp_levels_of_detail` checks completion, hover, misuse and the misspelling
 suggestion.
 
-
 ## Clips skip nodes the model lacks (2026-10-27)
 
 The owner chose lenient separate-rig binding for modular characters (verbatim
@@ -141,7 +1471,6 @@ elbow refused by both routes with the pose unchanged; another rig and a
 duplicate name refused). `skinned_separate_poses_bind_procedural_edits_...`
 now expects an edited node the model lacks to bind and move nothing (it
 formerly expected refusal). All 60 skinned runtime tests pass.
-
 
 ## Blend shapes: imported and baked on the CPU (2026-10-27)
 
@@ -260,7 +1589,6 @@ for shapes; FBX in-between shapes and Blender's per-vertex offset weights
 aren't read; flat-shaded parts' generated normals don't follow shapes;
 normals aren't renormalized after baking; Synty's own files were not
 imported here (licensed; the owner's tool will be the first real use).
-
 
 ## Prehashed release asset loading (2026-10-27)
 
@@ -609,7 +1937,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 ## Levels of detail (agreed and built 2026-10-11)
 
 - `docs/spec.md`, Levels of detail, has the design: the owner decided opt-in with `[LOD]` on a mesh asset's declaration (opt-out was the first proposal; "that way no surprises for the user"), everything else automatic and made at build time with a cache, a pick for each instance of `Draw.Instanced`, skinned meshes included, and two overrides (a level by its number, and a camera for a target to pick through; "they probably want it to match the visuals the main camera rendered"). Every other rule there is a pick, Provisional. `docs/game/assets.md` (Levels of detail) is the users' page. What's built, and what code relies on:
-  - **The language** (`compiler/src/check.c`): `[LOD]` is read with the asset's other attributes, in the loop that reads `[Filter]`, and sets `decl.lod`; it takes nothing, goes once, and is an error on an asset that isn't `ASSET_MESH` or `ASSET_SKINNED`, and on any declaration that's no asset (in the declarations' attribute loop, which also suggests it for `[Lod]`). `Draw.LOD`, `Draw.SetLOD`, `Draw.LODCamera` and `Draw.SetLODCamera` are `add_setting` signatures in `builtins.c`, so both forms, each one's misuse and quick fix, a target's own and the editors' completion and hover are the family's code. The forms with no arguments are settings of no parameters, as `Screen` is, whose block form is `tide_draw_push_no_lod` or `tide_draw_push_no_lod_camera`.
+  - **The language** (`compiler/src/check.c`): `[LOD]` is read with the asset's other attributes, in the loop that reads `[Filter]`, and sets `decl.lod`; it originally took nothing and now accepts an optional multiplier (2026-10-31, above), goes once, and is an error on an asset that isn't `ASSET_MESH` or `ASSET_SKINNED`, and on any declaration that's no asset (in the declarations' attribute loop, which also suggests it for `[Lod]`). `Draw.LOD`, `Draw.SetLOD`, `Draw.LODCamera` and `Draw.SetLODCamera` are `add_setting` signatures in `builtins.c`, so both forms, each one's misuse and quick fix, a target's own and the editors' completion and hover are the family's code. The forms with no arguments are settings of no parameters, as `Screen` is, whose block form is `tide_draw_push_no_lod` or `tide_draw_push_no_lod_camera`.
   - **Nothing in generated draw code changed.** A level is found by the mesh's indices' list (below), so `Draw.Mesh(rock, ...)`, `Draw.Mesh(rock.vertices, rock.indices, ...)`, a list's element and a map's value are all the same calls they were. A game with no `[LOD]` and none of the settings generates the C it did.
   - **Making the levels** (`compiler/src/mesh_lod.c`, `mesh_lod.h`; tidec's alone, nothing of it is in the engine or a game): edges collapsed onto one of their ends, the cheapest first from a heap, by quadrics. Vertices are numbered by their position's bits (`place`), and again by position with uvs and colors (`chart`): topology and the planes are a position's, so a mesh whose every triangle has corners of its own is still a surface, and a seam is a position with two charts. A collapse is refused where the edge isn't a side of one triangle (for a position on an open edge) or of two (inside), where another position is next to both ends (the surface would fold), where a vertex's chart has nothing beside it along the edge (a seam would tear) and where a triangle that stays would turn more than `TURN_LEAST` or go flat. A position gathers its triangles' planes by area, and ten times an open edge's own plane; a vertex gathers what its values (uv, uv2 and color times their weights, then the normal times its) do over its triangles, as a slope and where from, Hoppe's way. What a collapse costs is both ends' planes at the end it goes to, over their weight, plus what the moved vertices' values were against the ones they take, summed over the area they held them on (not averaged: see the crowd's two gaps below), plus, for a skinned mesh, the edge's length times how differently the two follow their bones (`mesh_lod_source.apart`). A level's error is the square root of the dearest collapse so far, times the mesh's extent. Corners at a position are a linked list through their triangles' corners, so a collapse splices two lists; a position with more than `FAN_MOST` (96) corners stays.
     - **Everything is `+ - * /` and `sqrt` on doubles in a fixed order**, with `#pragma STDC FP_CONTRACT OFF`, and ties in the heap go by the positions' numbers, so a file gives the same levels wherever it's built. Nothing reads a level but a draw, so this is for packs that are the same bytes, not for the match.
@@ -649,7 +1977,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 
       Picked is no slower than whole in any row now. The first row's mesh has no levels, so its three numbers are the same draws as an unmarked mesh's (its two a-draw-each numbers differ by the run's noise; the instanced one is faster as one call records in 0.18 ms where 40,000 take 2.2). The machine was busier than for the numbers above, so set rows against each other, not against those.
   - **Validation:** full native debug (2,135 tests) and web debug (2,106) suites pass after merging `origin/dev` through `e6a4133a` (texture compression and idle GPU assets among it, in the same renderer and pack files), with the pixel test on OpenGL 3.3, WebGL 2 and WebGPU, and the docs site builds. Linux, macOS, MinGW, Android and the sanitizers are a requested CI run's.
-  - **Not built:** a setting in the language for the pixels a level may be off by (`tide_draw_lod_pixels` is there for C); levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. The first real exporter's model measured is the crowd's below; the weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) were tuned on it alone.
+  - **Not built:** levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. The pixel tolerance is now exposed (2026-10-31, above). The first real exporter's model measured is the crowd's below; the weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) were tuned on it alone.
   - **A crowd's two gaps: the pick kept the full mesh, and the chain ended at its first level** (2026-10-30; the Bannerlord duel's battle of 20,000, `tools/army` in that repository, Tide 0.5.0-nightly.59). Its far fighters are `[LOD] asset Mesh<CrowdCorner>` of Synty's `PolygonSyntyCharacter.fbx` (4,896 triangles; `joints` and `weights`, so read skinned, at rest, in metres, radius 1.12) drawn as one `Draw.Instanced` through a vert that skins on the GPU, about 10,600 of them 30 to 150 m off at 960 by 540.
     - **The cause of both was the values' share of a collapse's cost.** It was the area-weighted mean of how far a vertex's values (normal, uv, color, times their weights) were from what they became, in the mesh's whole extent: a normal turned 28 degrees on a 4 cm patch of the model (a bevel or a buckle, its corners sharing a position and a uv but not a normal) cost as much as a surface 0.49 m off. One such collapse, at 4,136 triangles left, made the 2,448-triangle level 1 say 0.495 m (the pick allows 0.06 m at 30 m), and the next level would have said 0.63, over half the reach, so the chain ended. Traced by the cost's three parts: the planes' share stayed under 2 cm, the bones' (`bones_apart`) under 3 cm, and uvs gave nothing (their share was 0 throughout); with normals unweighed the chain went on to 611 triangles at 2 cm. The rest bounds and the instance's transform through the vert's struct were right: once levels said what they're off by, the same draw picked them.
     - **Now** (`weigh` in `mesh_lod.c`): the values' share is summed over the area they held, not averaged, so a value off by e over a patch L across costs as much as a surface off by e times L, and `WEIGHT_NORMAL` and `WEIGHT_COLOR` are 2 (they were 0.5): a normal 30 degrees off, or a color off by half, over a pixel is a pixel off. The weights were picked on the crowd: at 0.5 the far fighters' shading went darker and the far band's color moved (mean red 111 to 103) at 24.9 M vertices; at 1, 31.3 M and still darker; at 2, 45.6 M with each band's color as close to the full mesh's as `Draw.LOD(1)`'s (which the duel's agent found the same by eye); at 4, 81.1 M. Pixels more than 32 off the full mesh in the furthest band: 8% for level 1 forced, 16% for level 3, 21% picked at 2. Most of that is the crowd's aliasing, a figure there being a few pixels.
@@ -679,7 +2007,6 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 - Static/skinned glTF and editor metadata share required-extension validation in `tide/internal/gltf_extensions.h`: only required KHR_mesh_quantization is supported. Required Draco/EXT or KHR meshopt compression gives export guidance; optional compression may use valid core fallback buffers/accessors. Static attribute widths, nonfinite data, invalid modes/missing POSITION, invalid negative child indices and GLB headers/chunk bounds are checked rather than silently accepted. Malformed `.glb` paths select GLB diagnostics, including original URL suffixes. Failed OBJ/DAE/other skinned source formats give glTF2/FBX export guidance; recognized-content feature errors survive misleading suffixes.
 - USD/Collada/Alembic/STL/PLY/Blender project imports, WebP/TIFF/SVG/animated images, HDR/EXR assets, DDS/KTX GPU compression and AIFF/Opus/AAC audio remain unbuilt. Embedded model materials/textures still aren't imported. Existing static versus skinned feature distinctions above still apply.
 - Validation: importer unit and compiler diagnostic fixtures, native/web asset pack round trips and language-server completion/diagnostic regressions cover the added formats and unchanged raw bytes. Final suite results are recorded after validation below.
-
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 

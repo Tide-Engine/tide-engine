@@ -1,6 +1,6 @@
 // What tidec writes for a frag with several outputs, each an `out Color`
-// parameter: in GLSL, an `out vec4` for each at the location that's its
-// place among them; in WGSL, a struct of them that the fragment stage returns.
+// parameter: in WGSL, a struct of them that the fragment stage returns,
+// each at the location that's its place among them.
 // Each goes through what the draw finishes a color with, its tint and what a
 // draw that multiplies needs. The frag's function takes each as it takes its
 // one color (inout, or a pointer in WGSL), in its parameters' order, wherever

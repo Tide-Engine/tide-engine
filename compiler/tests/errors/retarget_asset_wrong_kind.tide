@@ -1,0 +1,4 @@
+// expect: Retarget goes before an Animation or AnimationCatalog asset
+[Retarget(source, source)]
+asset string text = "../e2e/retargeting/source.humanoid.json";
+scene Main { }

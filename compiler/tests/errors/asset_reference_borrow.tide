@@ -1,4 +1,0 @@
-// expect: takes Asset<Mesh<Vertex3>>
-void Keep(Asset<Mesh<Vertex3>> value) { Debug.Assert(value.Value.indices.count == 0); }
-void Copy(Mesh<Vertex3> mesh) { Keep(mesh); }
-scene Main { }

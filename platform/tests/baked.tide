@@ -1,0 +1,104 @@
+// Baked poses on the GPU (docs/game/animation.md, Crowds): skinned.gltf's square, one bone that its Move clip
+// carries 24 pixels across in a second, baked into rows and drawn through BakedSkin and verts of the test's own.
+scene Main { }
+
+asset SkinnedMesh<Vertex3> model = "skinned.gltf";
+asset Mesh<BakedVertex> square = "skinned.gltf";
+
+local singleton BakedView
+{
+    bool made;
+    BakedPoses poses;
+    BakedClip move;
+    RenderTarget shadow;
+    DepthTexture depth;
+}
+
+// A singleton holding a list, which a frag passes to a function whole
+local singleton Marks
+{
+    List<Color> colors;
+}
+
+struct Held
+{
+    float4x4 transform;
+    BakedFrame frame;
+}
+
+float4x4 Place(float x, float y)
+{
+    return float4x4.Translate(float3(x - 64, 64 - y, 10));
+}
+
+frag Tinted(BakedVertex vertex, out Color color, BakedInstance item)
+{
+    color = item.tint;
+}
+
+frag Shadowed(BakedVertex vertex, out Color color, BakedView state)
+{
+    float depth = state.depth.Sample(float2(this.position.x / 128, this.position.y / 128));
+    color = depth < 0.5 ? Color.magenta : Color.red;
+}
+
+// Where the socket is: through a function the poses are passed to whole
+float4x4 HeldBy(BakedPoses poses, BakedFrame frame)
+{
+    return poses.Socket(frame, 0);
+}
+
+vert Hold(mut Vertex3 corner, Held item, BakedPoses poses)
+{
+    corner.position = Math.Mul(HeldBy(poses, item.frame), float4(corner.position, 1)).xyz;
+}
+
+Color Mark(Marks marks, int which)
+{
+    return marks.colors[which];
+}
+
+frag Marked(Vertex3 corner, out Color color, Marks marks)
+{
+    color = Mark(marks, 1);
+}
+
+view Crowd(mut BakedView state, mut Marks marks)
+{
+    if (!state.made)
+    {
+        state.made = true;
+        state.shadow = RenderTarget.Window(Format.Depth);
+        state.poses = BakedPoses.Of(model.defaultPose);
+        state.move = state.poses.AddClip(model.animations.move, 4);
+        state.poses.AddSocket(model.skeleton.bones.arm);
+        marks.colors = [Color.red, Color.cyan];
+    }
+    var move = state.move;
+    Draw.Clear(Color.black);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(128, 128, 0.1, 100));
+    Draw.Cull(Cull.None)
+    {
+        Draw.Instanced(square, [
+            BakedInstance { transform = Place(20, 20), frame = move.At(0), tint = Color.red },
+            BakedInstance { transform = Place(20, 52), frame = move.At(1), tint = Color.green },
+            BakedInstance { transform = Place(20, 84), frame = move.At(0.5), tint = Color.blue },
+            BakedInstance { transform = Place(84, 20), frame = move.At(1).FadedFrom(move.At(0), 0.5), tint = Color.yellow },
+            BakedInstance { transform = Place(84, 52), frame = move.At(1).HeaviestBone(true), tint = Color.white }
+        ], BakedSkin, Tinted, state.poses);
+        List<Vertex3> small = [Vertex3 { position = float3(-4, -4, 0) }, Vertex3 { position = float3(4, -4, 0) },
+                               Vertex3 { position = float3(4, 4, 0) }, Vertex3 { position = float3(-4, 4, 0) }];
+        Draw.Instanced(small, [0, 1, 2, 0, 2, 3], [Held { transform = Place(20, 116), frame = move.At(1) }], Hold, Marked,
+                       state.poses);
+        state.shadow.Clear(Color.white);
+        state.shadow.SetCamera(float4x4.identity, float4x4.Ortho(128, 128, 0.1, 100));
+        state.shadow.Cull(Cull.None)
+        {
+            state.shadow.Instanced(square, [BakedInstance { transform = Place(84, 84), frame = move.At(1) }], BakedSkin,
+                                   state.poses);
+        }
+        state.depth = state.shadow.depth;
+        Draw.Instanced(square, [BakedInstance { transform = Place(84, 84), frame = move.At(1) }], BakedSkin, Shadowed,
+                       state.poses);
+    }
+}

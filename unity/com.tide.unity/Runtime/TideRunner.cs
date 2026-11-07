@@ -112,7 +112,12 @@ namespace Tide
             }
         }
 
-        // A kick's message, once this machine was kicked
+        // The game asked to quit (Application.Quit). Without a handler, play mode ends in the editor and the
+        // player quits (UnityEngine.Application.Quit); with one, the handler decides, and the game runs on until
+        // the runner is destroyed.
+        public event Action QuitAsked;
+
+        // A kick's or a ban's message, once this machine was kicked or banned
         public string Message
         {
             get
@@ -127,10 +132,11 @@ namespace Tide
         TideEmbedStatus status;
         bool cursorLocked;
         bool schemaWarned;
+        bool quitHeard;
 
-        readonly Dictionary<ulong, TideEntityView> shown = new Dictionary<ulong, TideEntityView>();
-        readonly List<ulong> gone = new List<ulong>();
-        TideEntityView[] byRow = Array.Empty<TideEntityView>();
+        readonly Dictionary<TideEntityId, TideEntity> shown = new Dictionary<TideEntityId, TideEntity>();
+        readonly List<TideEntityId> gone = new List<TideEntityId>();
+        TideEntity[] byRow = Array.Empty<TideEntity>();
 
         // Where each type's rows are: rows[type][entity] is the entity's row in that type's section, or -1, as of
         // frame rowsAt[type]
@@ -189,6 +195,7 @@ namespace Tide
                 return;
             }
             embed = Create();
+            quitHeard = false;
             if (embed == IntPtr.Zero)
             {
                 Debug.LogError("Tide: the game didn't start: see the Console for what tide said.", this);
@@ -211,6 +218,7 @@ namespace Tide
                 render = Ensure<TideRender>(gameObject);
                 render.Runner = this;
                 render.enabled = true;
+                library.RenderFormats(embed, TideRender.BlockFormats); // The pack's compressed images go as they are
             }
             else if (drawTide)
             {
@@ -241,6 +249,14 @@ namespace Tide
             var commands = library.RenderView(embed, transform, projection, width, height, &got);
             size = got;
             return commands;
+        }
+
+        // A read back Tide's renderer asked for (TideRender's), for the game's GPU list reads: `size` bytes, or null
+        // for one Unity couldn't make (tide_embed_render_read).
+        public void RenderRead(uint token, byte* data, uint size)
+        {
+            if (embed == IntPtr.Zero) return;
+            library.RenderRead(embed, token, data, size);
         }
 
         // What the embedded game takes (tide/embed.h), each with the values it's followed by: the first word it
@@ -446,6 +462,7 @@ namespace Tide
             fixed (TideTravel* p = &travel) library.Travel(embed, p);
             if (audio != null) audio.Listen(status.microphone != 0);
             FollowCursor();
+            FollowQuit();
             uint size = 0;
             var bytes = library.View(embed, &size);
             frames++;
@@ -466,6 +483,22 @@ namespace Tide
             Show(true);
         }
 
+        void FollowQuit()
+        {
+            if (status.quit == 0 || quitHeard) return;
+            quitHeard = true;
+            if (QuitAsked != null)
+            {
+                QuitAsked();
+                return;
+            }
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
+        }
+
         void FollowCursor()
         {
             var locked = status.cursorLocked != 0;
@@ -484,7 +517,7 @@ namespace Tide
                 view.Row = -1;
             }
             var count = read ? Packet.EntityCount : 0;
-            if (byRow.Length < count) byRow = new TideEntityView[Math.Max(count, byRow.Length * 2)];
+            if (byRow.Length < count) byRow = new TideEntity[Math.Max(count, byRow.Length * 2)];
             for (var i = 0; i < count; i++) byRow[i] = null;
             FollowScenes(count);
             for (var i = 0; i < count; i++) ViewOf(i);
@@ -591,7 +624,7 @@ namespace Tide
         // What hears the match's event `T` as this machine's local handlers would: each one, as soon as this machine
         // has it (as `local event(Hit hit)` does), which a correction can turn out not to have happened; or once the
         // server confirmed its tick (OnVerified, as `local event(verified Hit hit)`). Before scripts' Update, after the
-        // frame's components are live. An entity's TideEntityView.On hears only those sent to it.
+        // frame's components are live. An entity's TideEntity.On hears only those sent to it.
         public void On<T>(Action<T> heard) where T : TideEvent
         {
             Listen(hearing, heard, true);
@@ -652,7 +685,7 @@ namespace Tide
                 var e = (TideEvent)Activator.CreateInstance(kind);
                 e.Tick = record.Tick;
                 e.Verified = record.Verified;
-                e.TargetEntity = new TideEntityId { index = record.TargetIndex, generation = record.TargetGeneration };
+                e.TargetEntity = new TideEntityId { birth = record.TargetBirth, lineage = record.TargetLineage };
                 var view = record.HasTarget && record.TargetPlace < (uint)count ? byRow[record.TargetPlace] : null;
                 e.Target = view != null ? view.gameObject : null;
                 e.ReadLive(values, Packet, this);
@@ -665,19 +698,19 @@ namespace Tide
         public TideEntityId EntityOf(GameObject shown)
         {
             if (shown == null) return default;
-            var view = shown.GetComponent<TideEntityView>();
+            var view = shown.GetComponent<TideEntity>();
             return view != null && view.Runner == this && view.Row >= 0 ? (TideEntityId)view.Entity : default;
         }
 
         // The GameObject an entity shows through this frame, for an entity field of a TideComponent: null for none.
         public GameObject GameObjectOf(TideEntityId entity)
         {
-            return !entity.IsNull && shown.TryGetValue(entity.Id, out var view) && view != null && view.Row >= 0 ? view.gameObject : null;
+            return !entity.IsNull && shown.TryGetValue(entity, out var view) && view != null && view.Row >= 0 ? view.gameObject : null;
         }
 
         // The view of the packet's entity `row`, made or found the first time it's seen: by its UnityEngine.Source if it
         // has one, else by the view rules.
-        TideEntityView ViewOf(int row)
+        TideEntity ViewOf(int row)
         {
             if (byRow[row] != null) return byRow[row];
             var entity = Packet.Entity(row);
@@ -709,7 +742,7 @@ namespace Tide
 
         // Whether `view` shows the packet's entity `row`, the one it was made for: what it was spawned as, where both
         // are known, and its UnityEngine.Source are the same.
-        bool Same(TideEntityView view, TideEntityRow entity, int row)
+        bool Same(TideEntity view, TideEntityRow entity, int row)
         {
             if (view.Born != 0 && entity.Born != 0 && view.Born != entity.Born) return false;
             SourceOf(row, out var asset, out var node);
@@ -718,7 +751,7 @@ namespace Tide
 
         // Lets go of an entity's GameObject: a scene's, or one in a prefab's instance, hidden till its entity's back;
         // one made from a prefab, to the spawner, the pool or destroyed.
-        void Release(TideEntityView view)
+        void Release(TideEntity view)
         {
             if (view == null) return; // Its instance went with its root's entity
             view.Row = -1;
@@ -766,11 +799,11 @@ namespace Tide
                 }
             }
             if (made == null) made = Instantiate(prefab);
-            made.name = $"{prefab.name} ({entity.Index})";
+            made.name = $"{prefab.name} ({entity.Id})";
             return made;
         }
 
-        TideEntityView Make(TideEntityRow entity, int row)
+        TideEntity Make(TideEntityRow entity, int row)
         {
             var view = MakeView(entity, row);
             if (view == null) return null;
@@ -780,13 +813,13 @@ namespace Tide
             return view;
         }
 
-        TideEntityView MakeView(TideEntityRow entity, int row)
+        TideEntity MakeView(TideEntityRow entity, int row)
         {
             if (!SourceOf(row, out var asset, out var node))
             {
                 var prefab = RuleFor(entity, row);
                 if (prefab == null) return null;
-                var made = Ensure<TideEntityView>(MakeFrom(prefab, entity));
+                var made = Ensure<TideEntity>(MakeFrom(prefab, entity));
                 made.Authored = false;
                 made.MadeFrom = prefab;
                 return made;
@@ -809,7 +842,7 @@ namespace Tide
                     Debug.LogWarning($"Tide: an entity of {a.path} came, which this build can't find: the scene links the prefabs the game spawns as it builds.", this);
                     return null;
                 }
-                var root = Ensure<TideEntityView>(MakeFrom(prefab, entity));
+                var root = Ensure<TideEntity>(MakeFrom(prefab, entity));
                 root.Authored = false;
                 root.MadeFrom = prefab;
                 return root;
@@ -829,7 +862,7 @@ namespace Tide
                 }
             }
             if (found == null) return null;
-            var view = Ensure<TideEntityView>(found.gameObject);
+            var view = Ensure<TideEntity>(found.gameObject);
             view.Authored = true;
             if (!found.gameObject.activeSelf) found.gameObject.SetActive(true);
             return view;
@@ -851,7 +884,7 @@ namespace Tide
         // Tide's Transform, where the entity has one: its local placement under its parent's GameObject.
         // A GameObject of Unity's scene or prefab instance stays where it is in Unity's hierarchy: its placement is
         // Tide's under its parent entity's, through the GameObjects between them. Its parent is placed first.
-        void Place(TideEntityView view, int row)
+        void Place(TideEntity view, int row)
         {
             if (view.PlacedAt == frames) return;
             view.PlacedAt = frames;
@@ -904,12 +937,12 @@ namespace Tide
         // The match's scenes are Tide's to load (owner, 2026-10-22). One loaded by hand while this runs, in the editor or
         // by the game's C#, is local: nothing of it goes to the match, and no entity shows through it. One of the match's
         // that something else unloads is loaded again, as the match still has it.
-        readonly Dictionary<ulong, int> sceneRoots = new Dictionary<ulong, int>(); // This frame's roots, and their assets
-        readonly Dictionary<ulong, UnityEngine.SceneManagement.Scene> sceneOf = new Dictionary<ulong, UnityEngine.SceneManagement.Scene>();
-        readonly List<(ulong root, string path)> sceneLoads = new List<(ulong, string)>(); // Begun, for roots, in order
+        readonly Dictionary<TideEntityId, int> sceneRoots = new Dictionary<TideEntityId, int>(); // This frame's roots, and their assets
+        readonly Dictionary<TideEntityId, UnityEngine.SceneManagement.Scene> sceneOf = new Dictionary<TideEntityId, UnityEngine.SceneManagement.Scene>();
+        readonly List<(TideEntityId root, string path)> sceneLoads = new List<(TideEntityId, string)>(); // Begun, for roots, in order
         readonly HashSet<UnityEngine.SceneManagement.Scene> sceneUnloads = new HashSet<UnityEngine.SceneManagement.Scene>(); // Scenes this unloads
         readonly HashSet<UnityEngine.SceneManagement.Scene> scenesStarted = new HashSet<UnityEngine.SceneManagement.Scene>(); // Open as this started
-        readonly List<ulong> scenesGone = new List<ulong>();
+        readonly List<TideEntityId> scenesGone = new List<TideEntityId>();
         bool openSent;
         readonly List<string> scenesOpen = new List<string>(); // What the editor has open as this started, till that's sent
 
@@ -950,7 +983,7 @@ namespace Tide
             OpenEditorScenes();
         }
 
-        bool Loading(ulong root)
+        bool Loading(TideEntityId root)
         {
             foreach (var load in sceneLoads)
             {
@@ -1284,7 +1317,7 @@ namespace Tide
             var bytes = writer.Bytes();
             if (bytes.Length < Schema.types[type].size) return false;
             var to = EntityOf(target);
-            fixed (byte* p = bytes) return library.Command(embed, (uint)type, to.index, to.generation, p, (uint)bytes.Length) != 0;
+            fixed (byte* p = bytes) return library.Command(embed, (uint)type, to.birth, to.lineage, p, (uint)bytes.Length) != 0;
         }
 
         // ...to a component's GameObject's entity
@@ -1303,15 +1336,15 @@ namespace Tide
         // ...sent to an entity, as local code's entity.Send: its handlers run for that entity.
         public bool Send<T>(T value, TideEntityRow target) where T : unmanaged
         {
-            return Send(value, target.Index, target.Generation);
+            return Send(value, target.Birth, target.Lineage);
         }
 
-        bool Send<T>(T value, uint index, uint generation) where T : unmanaged
+        bool Send<T>(T value, ulong birth, ulong lineage) where T : unmanaged
         {
             if (embed == IntPtr.Zero || Schema == null) return false;
             var type = TypeOf<T>.Index(Schema);
             if (type < 0) return false;
-            return library.Command(embed, (uint)type, index, generation, &value, (uint)sizeof(T)) != 0;
+            return library.Command(embed, (uint)type, birth, lineage, &value, (uint)sizeof(T)) != 0;
         }
 
         static string Utf8(byte* bytes, int capacity)

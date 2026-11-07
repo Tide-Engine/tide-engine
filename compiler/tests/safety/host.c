@@ -203,6 +203,9 @@ static void frame(const float alpha)
     tide_pointer_poll(&devices, true);
     tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), measure);
     tide_local_frame_time(&local, 1.0f / 60.0f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 1.0f / 60.0f);
+#endif
     tide_local_events(&local, &events);
 #ifdef TIDE_HAS_AUDIO
     tide_audio_reset(&audio);

@@ -1,0 +1,4 @@
+{
+  "reference": { "file": "../e2e/retargeting/source.gltf", "pose": "rest" },
+  "bones": { "LeftHand\u0000suffix": "LeftHand" }
+}

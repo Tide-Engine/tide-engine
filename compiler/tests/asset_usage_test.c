@@ -368,6 +368,8 @@ TIDE_TEST(asset_usage_server_retains_dynamic_match_asset_reference_targets)
         "struct V { float3 position; int extra = defaults.length; }\n"
         "asset Mesh<V> first = \"assets/meshes/quad.glb\";\n"
         "asset Mesh<V> second = \"assets/meshes/quad.glb\";\n"
+        "asset List<Mesh<V>> choices = \"assets/meshes/*.glb\";\n"
+        "asset Map<string, Mesh<V>> catalog = \"assets/meshes/*.glb\";\n"
         "asset Texture picture = \"assets/hero.png\";\n"
         "input Controls { Asset<Mesh<V>> choice; }\n"
         "singleton State { int count; }\nscene Main { }\n"
@@ -376,6 +378,7 @@ TIDE_TEST(asset_usage_server_retains_dynamic_match_asset_reference_targets)
     TIDE_REQUIRE(p);
     program_strip_server_assets(p);
     TIDE_CHECK(has_asset(p, "first") && has_asset(p, "second") && has_asset(p, "defaults"));
+    TIDE_CHECK(has_asset(p, "choices") && has_asset(p, "catalog"));
     TIDE_CHECK(!has_asset(p, "picture"));
     done();
 }
@@ -603,6 +606,13 @@ TIDE_TEST(release_diagnostic_names_preserve_identity_and_keep_the_map_private)
         else { TIDE_CHECK(strcmp(header, first_header) == 0); free(header); }
         TIDE_CHECK((strstr(c, "\"SecretSimulation_47db\"") != NULL) == (stripped != 1));
         TIDE_CHECK((strstr(c, "\"SecretPresentation_8fa2\"") != NULL) == (stripped != 1));
+        if (stripped == 1) {
+            TIDE_CHECK(strstr(c, "{\"system 0\", NULL, 0u, 0u}") != NULL);
+            TIDE_CHECK(strstr(c, "{\"view 0\", NULL, 0u, 0u}") != NULL);
+        } else {
+            TIDE_CHECK(strstr(c, "asset_usage.tide\", 3u, 8u}") != NULL);
+            TIDE_CHECK(strstr(c, "asset_usage.tide\", 6u, 6u}") != NULL);
+        }
         TIDE_CHECK((strstr(c, "\"Debug.Assert(s.value >= 0);\"") != NULL) == (stripped != 1));
         TIDE_CHECK(strstr(c, "\"keep authored messages\"") != NULL);
         TIDE_CHECK((strstr(c, "\"SecretAsset_319a\"") != NULL) == (stripped != 1));

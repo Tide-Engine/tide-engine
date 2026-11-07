@@ -1,5 +1,5 @@
 ---
-description: "Import skinned glTF or FBX models, sample and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
+description: "Import skinned glTF or FBX models, sample, retarget and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
 ---
 
 # Skinned meshes and animation
@@ -93,11 +93,11 @@ view Crowd()
 
 The optional `float4x4 transform` field follows the existing 3D instance convention; leaving the field out uses identity. The optional `Pose pose` field supplies that item's animation. Leaving the field out uses authored rest, including on a model with no clips; an explicitly invalid or incompatible pose skips its item. A `List<float4x4>` draws all items at rest. Pose data stays on the CPU, while shaders receive only the ordinary instance fields they read. Textures, custom vertex stages, shared values and render targets use the usual `Instanced` argument order. Each item captures its pose before the call returns.
 
-A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMesh<Vertex3> hero = "art/hero.glb";` has simpler versions of the model made as the game builds, and each draw picks one by how big the character is on screen. The pose, the bones and every lookup are the full model's; only the triangles drawn change. The model's size for the pick is its size at rest. See [Levels of detail](./assets.md#levels-of-detail).
+A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMesh<Vertex3> hero = "art/hero.glb";` has simpler versions of the model made as the game builds, and each draw picks one by how big the character is on screen. The pose, the bones and every lookup are the full model's; only the triangles drawn change. The model's size for the pick is its size at rest. See [Levels of detail](./assets.md#levels-of-detail). A model decoded while the game runs has no declaration to mark: draw it with `lod: 1` for the same levels, made in the background.
 
 An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Rotation curves are Euler angles that exporters often write wrapped (-182° then 178°, one degree apart): each key is first moved by whole turns to within half a turn of the key before it, and written as the nearer of its two equivalent triples (x + 180°, 180° − y, z + 180° is the same rotation) where all three axes are keyed together, as an Euler filter does, so resampled keys between them take the short way. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
 
-Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Blend shapes (morph targets) are kept: see [Blend shapes](#blend-shapes). Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
+Export polygon meshes with linear or rigid skinning. A skin 3ds Max or Unreal marks `Blend` imports as linear when none of its vertices blends in dual-quaternion skinning, as is usual. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Blend shapes (morph targets) are kept: see [Blend shapes](#blend-shapes); a channel repeated exactly on a mesh (same name and offsets, weight 0) is one shape. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
 
 ## Blend shapes
 
@@ -139,6 +139,17 @@ Weight `i` of `Shaped` is shape `i`'s weight. 0 to 1 is the authored range, and 
 Bake a character's shapes once, when its body changes, and keep the shaped model in a field: `Shaped` copies the vertices, and drawing a shaped model sends its vertices to the GPU like other models made while playing. Shapes are not animated on the GPU, and imported shape-weight animation is not read.
 
 To keep only some of a file's shapes, and so a smaller pack, write `[BlendShapes("masculineFeminine", "default*")]` before the asset: names, or patterns where `*` is any run of characters. The others aren't imported; `[BlendShapes()]` keeps none. See [Blend shapes to keep](./assets.md#blend-shapes-to-keep).
+
+### Parts of a file
+
+Character packs often ship every outfit piece, at every level of detail, on one skeleton in one file, where a game wears a few of them. `[Parts(...)]` before a `SkinnedMesh<V>` asset keeps only the parts it names: a part is a node holding a mesh, written by its name or a pattern where `*` is any run of characters.
+
+```csharp
+[Parts("Body_Full_LOD0", "GreatHelm_LOD0", "Gambeson_LOD0")]
+asset SkinnedMesh<Vertex3> knight = "art/MedievalCivil&Soldier_Complete.FBX";
+```
+
+The other parts' meshes and skins are left out before they're read, so a file far past what one model can hold imports as the few parts it's asked for. Their nodes go with them, but every bone stays, and so do sockets and empty nodes that hold no part. An FBX geometry helper's mesh is its parent node's part. A file whose parts none of the patterns match is an error that names some of the parts it has. To retarget onto such a model, give its humanoid profile's `reference` the same list as `"parts"` (below), so the rig is that model's skeleton.
 
 In a glTF file, targets with the same name in `extras.targetNames` are one shape across all of the file's meshes, and must have the same default weight in `weights`; an unnamed target is a shape of its own, found with `TryGetAt`. POSITION, NORMAL and TANGENT targets are read, including sparse accessors. In an FBX file, each blend shape channel is a shape named after its target shape (`smile` in a channel `Blends.smile`), with the channel's default percentage as its weight. Export each channel as one target at full weight: a channel with in-between shapes is refused. The importer's own flat normals, made for a part exported without normals, don't follow shapes.
 
@@ -247,6 +258,198 @@ When a clip doesn't bind, the first failed sample or draw for each model and cli
 
 This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
 
+## Retarget between humanoids
+
+For imported clips, bake retargeting during the build. The result is an ordinary
+`Animation` on the target skeleton, so playback only samples the baked clip:
+
+```tide
+asset HumanoidRig motionRig = "rigs/motion.humanoid.json";
+asset HumanoidRig heroRig = "rigs/hero.humanoid.json";
+
+[Retarget(motionRig, heroRig)]
+asset AnimationCatalog movement = "motion/*.fbx";
+
+[Name("Root|Run"), Retarget(motionRig, heroRig, sampleRate: 60)]
+asset Animation run = "motion/run.fbx";
+```
+
+A `.humanoid.json` profile chooses an explicit anatomical reference, then
+overrides automatic assignments where needed:
+
+```json
+{
+  "reference": { "file": "../art/hero.glb", "pose": "rest" },
+  "bones": { "LeftHand": "hand_l", "LeftToes": null },
+  "referenceEdits": {
+    "upperarm_l": { "rotationOffsetDegrees": [0, 0, 5] }
+  }
+}
+```
+
+Reference paths are relative to the profile. For a model imported with
+[`[Parts]`](#parts-of-a-file), write the same patterns in the reference,
+`"reference": { "file": "../art/pack.fbx", "pose": "rest", "parts": ["Body_LOD0", "Helmet*"] }`,
+so the rig is the skeleton the model has. To use a calibration clip instead
+of rest transforms, write `"reference": { "file": "reference.fbx", "clip":
+"T-Pose", "seconds": 0 }`. The clip name is exact and unambiguous, and seconds
+must lie within its duration. The calibration file may be separate from the
+animation export; its default pose is never guessed from the first frame.
+
+`bones` uses `HumanoidBone` names and exact source bone names. Omitted roles keep
+their automatic assignment; `null` explicitly unmaps a role. `referenceEdits`
+names exact bones and accepts `positionOffset` in local metres,
+`rotationOffsetDegrees` as local X/Y/Z Euler angles (applied Z, X, then Y, as
+`quaternion.Euler`), and a positive uniform
+`scaleMultiplier`. Edits apply before discovery; explicit mappings apply last.
+Rotation offsets postmultiply the existing local rotation. These edits calibrate
+anatomy; use ordinary pose edits after sampling for persistent artistic offsets.
+
+`Retarget` accepts named `rootScale`, `rootOffset`, `headingDegrees`,
+`spineDistribution` and `twistDistribution` with the same meaning as the runtime
+map below. Omitted root scale uses the leg-length ratio. Other defaults are zero
+offset/heading and unit distributions. `sampleRate` defaults to 60 samples per
+second. The baker also preserves source key times, endpoints and STEP boundaries;
+between samples the target clip's interpolation approximates live retargeting.
+Raise the rate when fast motion needs more precision.
+
+Builds cache derived clips by source content, both profiles and bake options.
+Changing a profile, reference model or external buffer rebuilds dependent clips.
+Invalid required mappings fail the build. The source imports remain unchanged,
+and clips retain their original names and duration. A profile asset is also an
+ordinary `HumanoidRig` value: inspect its statuses or copy it and edit its mapping
+before creating a runtime map. Each profile is a separate asset declaration.
+
+For dynamically loaded motion, prepare a map and bake once when loading it:
+
+```csharp
+Animation BakeLoaded(RetargetMap mapping, Animation source, Skeleton target) fails IOError
+{
+    return try mapping.Bake(source, target);
+}
+
+AnimationCatalog BakeLoadedCatalog(RetargetMap mapping, AnimationCatalog source, Skeleton target) fails IOError
+{
+    return try mapping.Bake(source, target, sampleRate: 60);
+}
+```
+
+The target is the skeleton used to prepare the map, such as `hero.skeleton`.
+Keep the returned animation or catalog in a field and use ordinary `Sample`
+during playback. The baked data remains valid after the source, target and map
+are discarded, and later map edits do not change it. Catalog baking keeps source
+order, names and durations and returns a plain catalog with dynamic lookup. All
+its source skeletons must match the map's actual source skeleton.
+
+`Bake` defaults to 60 samples per second and uses the same sampling rules as
+build-time baking. Invalid inputs, incompatible skeletons, empty catalogs or
+excessive bake work return `IOError.InvalidData` with a diagnostic explaining
+the reason; a catalog failure returns no partial result. Use live pose
+retargeting below when the mapping or corrections need to change during playback.
+
+Runtime retargeting adapts a source humanoid's motion to a character's proportions
+and bone axes. It is part of Tide and does not require Tide Motion. Prepare a
+`RetargetMap` once, then use it for every sampled pose from that animation export.
+
+Start with a reference pose for each rig. Use an authored T-pose or A-pose that
+describes the character's anatomy; an animation file's defaults can be its first
+frame instead. Keep that calibration separate from the actual clip's skeleton:
+
+```csharp
+asset SkinnedMesh<Vertex3> sourceCharacter = "art/source-reference.glb";
+asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
+asset Animation run = "art/run.fbx";
+
+RetargetMap PrepareRun() fails RetargetError
+{
+    mut var sourceRig = HumanoidRig.Auto(sourceCharacter.defaultPose);
+    mut var targetRig = HumanoidRig.Auto(hero.defaultPose);
+
+    // Correct an uncertain or missing assignment with a typed bone.
+    targetRig[HumanoidBone.LeftHand] = hero.skeleton.bones.leftHand;
+
+    // Optional calibration edits belong to the reusable reference pose.
+    var shoulder = hero.skeleton.bones.leftShoulder;
+    targetRig.referencePose[shoulder].rotation = quaternion.identity;
+
+    return try RetargetMap.Create(run.skeleton, sourceRig, targetRig);
+}
+
+void Animate(mut Pose destination, RetargetMap mapping, float seconds)
+{
+    var source = run.Sample(seconds, Playback.Loop);
+    if (!destination.Retarget(source, mapping)) return;
+
+    // Artistic offsets are ordinary edits after retargeting.
+    var hand = hero.skeleton.bones.leftHand;
+    destination[hand].rotation = Math.Mul(destination[hand].rotation,
+        quaternion.Euler(0, 0, 5deg));
+}
+```
+
+Initialize `destination` from `hero.defaultPose`, and keep the successful
+`PrepareRun()` result in a field. Handle preparation failures with Tide's normal
+`fails` handling. `animation.skeleton` and `pose.skeleton` expose each value's
+original skeleton, with `RestPose`, `TryGetByName` and `bones` enumeration.
+
+`HumanoidRig.Auto(referencePose)` discovers roles using names, hierarchy and
+reference geometry. Inspect `rig.GetStatus(HumanoidBone.LeftHand)`: the result is
+`HumanoidBoneStatus.Automatic`, `Uncertain`, `Missing` or `Manual`. Automatic
+discovery can be partial. Check the assignments and improve the reference pose
+when a rig needs help; it does not silently rerun after an edit.
+
+`rig[role]` returns a `Bone`, or `default` when unset. Assigning a bone from that
+rig sets `Manual`; assigning `default` explicitly unmaps the role. A bone from
+another skeleton is ignored. For fully manual mapping, initialize
+`HumanoidRig { referencePose = yourReference }` and assign its roles. Role names
+follow Unity's `HumanBodyBones`: `Hips`, `Spine`, `Chest`, `UpperChest`, `Neck`,
+`Head`, left/right upper and lower arms and legs, hands, feet, shoulders and toes,
+eyes, jaw, and each finger's proximal, intermediate and distal bones. Hips, head,
+upper/lower limbs, hands and feet are required; other roles are optional.
+
+`RetargetMap.Create(actualSourceSkeleton, sourceRig, targetRig)` validates and
+freezes the mapping and reference poses. It supports source exports whose node
+order, scene wrappers and default transforms differ from the calibration file.
+Rebuild the map after changing assignments or reference transforms. Replacing a
+rig's reference pose with another skeleton requires a new rig.
+
+Preparation returns `RetargetError.InvalidRig`, `MissingBone`, `AmbiguousBone`,
+`InvalidReferencePose`, `IncompatibleSkeleton` or `UnsupportedScale` on failure.
+The console gives the failing role or skeleton detail. Required uncertain roles
+need a manual assignment. References must have finite transforms and positive
+scale. A node of non-uniform scale (an exporter's geometry helper, or an IK bone
+a little off uniform) is fine where no role is at or below it and the transfer
+needs nothing under it; a required role there gives `UnsupportedScale`, and an
+optional one is left out. Malformed hierarchies and ambiguous correspondence are
+rejected.
+
+These mutable settings remain available on a prepared map:
+
+| Field | Meaning |
+|---|---|
+| `rootScale` | Root travel multiplier, initially the target/source leg-length ratio; zero removes travel |
+| `rootOffset` | Model-space translation in metres, initially zero |
+| `headingDegrees` | Rotation about the target reference hips and up axis, initially zero |
+| `spineDistribution` | Extra spine and neck chain interpolation, from zero to one; initially one |
+| `twistDistribution` | Longitudinal twist transferred to helper bones, from zero to one; initially one |
+
+`destination.Retarget(source, mapping)` returns `true` on success. It preserves
+the target's bone lengths and skeleton identity, so its normal bone edits,
+sockets, blending and drawing work afterward. Invalid settings, unsupported
+source scale animation or a source/destination from the wrong skeleton return
+`false` and leave the destination unchanged. Calibration profiles and prepared
+maps are ordinary owned values and can be stored in match or local fields,
+copied and snapshotted with poses.
+
+Retargeting transfers motion without foot planting or contact correction.
+It transfers rotations and hips translation; other animated local translations
+are not copied, preserving the target's segment lengths. A palm or leaf bone
+with too little geometry to determine its roll may need calibration or a
+post-transfer rotation edit.
+Different body proportions can still produce foot sliding or a hand missing a
+prop; those need game-specific pose correction or IK. Existing `pose.Sample`
+binding remains useful for separate exports of the same rig.
+
 ## Sample, blend and edit
 
 Time is explicit. `Sample(seconds)` clamps to the clip's endpoints. `Playback.Loop` wraps positive and negative time; an exact loop endpoint becomes time zero. Every sample begins from the authored rest transforms, so unanimated properties never retain a previous clip's values.
@@ -276,9 +479,133 @@ var weaponTransform = Math.Mul(characterTransform, pose.Model(hand));
 Draw.Mesh(sword, weaponTransform);
 ```
 
+For many bones at once, `pose.Models()` gives every bone's model matrix in one pass from the root, a `List<float4x4>` indexed by `bone.index`, each exactly what `Model` gives: cheaper than a `Model` call for each bone, which walks that bone's ancestors every time.
+
 Systems can use the same matrices for sockets or hitboxes. Sampling leaves entity movement to your own systems; it does not extract root-motion deltas or send animation events. Bone references carry their skeleton identity, so use the character's pose when accessing its bones. An incompatible blend leaves the destination unchanged.
 
+A `Bone` says which bone it is: `bone.index` is its place in the skeleton (`skeleton.bones.TryGetAt(bone.index, out var same)` gives it back), `skeleton.NameOf(bone)` its source name (empty for a default `Bone` or one of another skeleton), and `a == b` whether two are the same bone of the same skeleton. In text a bone shows its index, and an animation its name:
+
+```csharp
+var head = rig[HumanoidBone.Head];
+Debug.Log($"head is {hero.skeleton.NameOf(head)} ({head})"); // head is head (Bone { index = 93 })
+```
+
 Imported model and animation content participates in the game's match compatibility, including assets read by its vertex defaults. Those dependencies include reads through constants, implicit struct defaults, operators and helper functions, and through another mesh's defaults. Changing their content requires the corresponding game build; a mismatched pack is refused before it replaces the running pack. Unrelated images and other visual assets can still reload without changing model compatibility.
+
+## Crowds: baked poses
+
+A character drawn with its own `Pose` costs a sample and a palette on the CPU every frame. A crowd seen from afar doesn't need that: every pose it can show (each clip's frames, idles, the poses your own code makes) is worked out once, kept on the GPU, and each instance only says which of them it shows. Thousands of characters are then one instanced draw, with nothing sampled or uploaded per frame.
+
+::: tide-example crowd A field of 4,096 animated stalks
+
+<<< @/examples/crowd.tide
+
+:::
+
+Read the model twice: as a `SkinnedMesh` for its skeleton and clips, and as a [mesh with bones](./assets.md#meshes), whose vertices carry `joints` and `weights`, for the GPU to skin. `BakedVertex` is such a vertex struct (`position`, `normal`, `uv`, `joints`, `weights`); `[LOD]` on the mesh gives each instance its level as usual.
+
+```csharp
+asset SkinnedMesh<Vertex3> knightModel = "art/knight.fbx";
+[LOD] asset Mesh<BakedVertex> knight = "art/knight.fbx";
+
+local singleton Crowd
+{
+    BakedPoses poses;
+    BakedClip walk;
+    BakedClip strike;
+    List<BakedInstance> items;
+}
+
+void Bake(mut Crowd crowd)
+{
+    crowd.poses = BakedPoses.Of(knightModel.defaultPose);
+    crowd.walk = crowd.poses.AddClip(knightModel.animations.walk, 30, Playback.Loop);
+    crowd.strike = crowd.poses.AddClip(knightModel.animations.strike, 15);
+}
+
+view DrawCrowd(mut Crowd crowd, Fighter fighter)
+{
+    crowd.items.Add(BakedInstance { transform = fighter.transform, frame = crowd.walk.At(fighter.walked) });
+}
+
+[After(DrawCrowd)]
+view DrawAll(mut Crowd crowd)
+{
+    Draw.Instanced(knight, crowd.items, BakedSkin, KnightLit, crowd.poses);
+    crowd.items.Clear();
+}
+```
+
+### Rows
+
+A `BakedPoses` is a table of rows: each row is one pose of the skeleton, kept as each bone's skinning. Make it with `BakedPoses.Of(model.defaultPose)`, then fill it once:
+
+- `poses.AddClip(clip, rate[, playback])` adds a clip's rows, `rate` a second in whole steps over its duration, and returns a `BakedClip` (`first`, `count`, `duration`, `loops`). A clip of another file plays on the model as `pose.Sample` binds it; a retargeted clip is an ordinary clip. `Playback.Loop` leaves out the row at the clip's end, which is its start.
+- `poses.Add(pose)` adds any pose of the model's skeleton and returns its row's number: a clip blended, layered or edited with your own IK, sampled where you like. It returns -1 for a pose of another skeleton, or once the table is full.
+- `poses.AddSocket(bone[, offset])` returns a socket's number: a place on a bone, such as a sword's grip in a hand, which every row then carries (below).
+
+Rows are made at load, wherever your code first fills the table: each is one `pose.Models()` and a multiply a bone, so 3,000 rows of a 64-bone character take about 19 ms. Hand the table to each draw after its frag: the GPU keeps it as long as it doesn't change, so filling it again every frame would send it every frame.
+
+### Frames
+
+A `BakedFrame` says what an instance shows: a row, the row it's going on to and how far, and another such pair it fades from. Make one with `clip.At(seconds)` (between the two rows round that time, held at the clip's ends or wrapped where it loops), `BakedFrame.Row(row)` or `BakedFrame.Between(row, next, t)`. `frame.FadedFrom(from, shown)` shows `frame` that much (0 to 1) over `from`; `frame.HeaviestBone(true)` has each corner follow its heaviest bone alone, cheaper for instances far enough away that joints blending can't be seen.
+
+A jump between clips snaps unless it fades. Keep a `BakedFader` for each instance, in a local field, and let it fade for you:
+
+```csharp
+component Fighter { local BakedFader fader; }
+
+var frame = attacking ? fighter.fader.Play(crowd.strike, sinceStrike, Frame.dt)
+                      : fighter.fader.Play(crowd.walk, walked, Frame.dt);
+```
+
+`Play` knows a clip by its first row. For rows of your own, `fader.Show(frame, kind, dt)` takes your number for what the frame is: a change of it is a jump. A jump fades from what was shown over `fadeSeconds` (0.2 by default), eased; a second jump while the first is less than half done fades from what the first was fading from. After an instance was out of sight, `fader.Cut()` makes its next frame snap.
+
+### Your own vert, and props
+
+`BakedSkin` draws `BakedVertex` meshes for `BakedInstance` items. With a vertex or an item of your own, write the vert, which calls the same skinning:
+
+```csharp
+struct Soldier
+{
+    float4x4 transform;
+    BakedFrame frame;
+    float team;
+}
+
+vert Skinned(mut SoldierCorner corner, Soldier item, BakedPoses poses)
+{
+    var skin = poses.SkinRows(item.frame, corner.joints, corner.weights);
+    corner.position = skin.Point(corner.position);
+    corner.normal = Math.Normalize(skin.Direction(corner.normal));
+}
+```
+
+`SkinRows` gives the corner's skinning as the top three rows of its matrix (a `BakedBone`), whose `Point` and `Direction` move a position and a direction; `poses.Skin` gives the same as a `float4x4`. Each reads every one of the corner's four bones, as a branch on a weight costs the GPU more than the reads it would save.
+
+`poses.Socket(frame, socket)` is where a socket is in the model in that frame. A prop drawn instanced over the same items follows its bearer's hand with it:
+
+```csharp
+vert InHand(mut Corner corner, Soldier item, BakedPoses poses)
+{
+    corner.position = Math.Mul(poses.Socket(item.frame, SWORD), float4(corner.position, 1)).xyz;
+}
+```
+
+`SkinRows`, `Skin`, `BoneSkin` and `Socket` are ordinary methods, the same on the CPU: a system can ask where a far soldier's sword is from the rows it's drawn with.
+
+The poses go to helpers whole (`float4x4 Grip(BakedPoses poses, BakedFrame frame)`), as any struct that holds lists can in code the GPU runs: see [Passing on what holds a list](./shaders.md#passing-on-what-holds-a-list).
+
+### Shadows and culling
+
+Draw the same items into a shadow map's target with the same vert and no frag: `shadow.Instanced(knight, crowd.items, BakedSkin, crowd.poses)`. Skinned in a vert, instances have no bounds the engine can cull by: give the draw [`Draw.Bounds`](./draw-settings.md) that hold a character in any pose, or cull them yourself before adding them.
+
+### What it costs
+
+- **Memory:** 48 bytes a bone a row. A 65-bone character with 3,000 rows is 9.4 MB. One table holds 699,050 bones' rows (a list on the GPU is at most 1024 by 2048 pixels, three a bone): about 10,700 rows of 65 bones. Use a table for each model, or fewer rows, past that.
+- **Rate:** between rows the matrices blend linearly. That's smooth for most motion at 15 to 30 rows a second; a joint turning fast between two rows comes out short of its length halfway (a quarter turn between two rows shortens a limb by about 30% halfway; an eighth by 8%). More rows a second is the remedy, at their memory. A fade between two clips blends the same way.
+- **Bind pose:** a mesh with bones is the model at rest, so rows are right where the rest pose is the pose the model was bound in, as exported models usually are.
+- **GPU:** each corner reads two rows of each of its four bones, four in a fade, one bone's with `HeaviestBone`. 10,000 characters of 3,072 vertices and 64 bones took 4.4 to 4.7 ms of an RTX 4080 SUPER, where the same mesh drawn unskinned took 4.3 and each character sampled on the CPU took 10.5 ms of the CPU and 7.8 of the GPU, with 41 MB sent each frame; recording them took 0.38 ms.
 
 ## Load while playing
 
@@ -310,4 +637,4 @@ Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files
 
 Decoded vertices use your vertex struct's defaults too. Assets those defaults read have the same compatibility requirement even when the game declares no imported skinned model.
 
-glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights, blend shapes and baked node transforms; textures remain separate assets. Animated or GPU blend shapes, retargeting, IK, animation events and an automatic playback controller are not implemented.
+glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights, blend shapes and baked node transforms; textures remain separate assets. Animated or GPU blend shapes, IK, animation events and an automatic playback controller are not implemented.

@@ -8,7 +8,7 @@
 static tide_world world;
 static tide_world copy;
 
-static const tide_entity THING = {1, 1};
+static tide_entity THING;
 
 // Whether two worlds hold the same: the same bytes and the same hash.
 static bool same(const tide_world *a, const tide_world *b)
@@ -28,6 +28,7 @@ static bool same(const tide_world *a, const tide_world *b)
 TIDE_TEST(maps_all_checks_pass)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     const Results r = tide_get_Results(&world, THING);
     if (r.passed != r.checks) printf("first failed check: %d\n", r.firstFailure);
@@ -44,6 +45,7 @@ TIDE_TEST(maps_all_checks_pass)
 TIDE_TEST(maps_snapshot_and_hash_like_the_rest_of_the_world)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     tide_world_init(&copy, 1.0f);
     for (int i = 0; i < 20; i++) {
         tide_world_tick(&world);

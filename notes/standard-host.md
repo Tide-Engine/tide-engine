@@ -1,5 +1,446 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Views while scenes prepare (2026-11-05)
+
+Sessions expose observational scene-preparation progress endpoints through their existing view API, including initial
+baseline preparation before connection finishes; these are never verified worlds. Networking/local views continue
+while match ticks and Time wait. Standard hosts already supply background jobs; custom hosts without them prepare
+synchronously. Leaving/restart/reload cancels and drains owned work. No host loading percentage/timeout is inferred:
+game components supply progress and Scene.IsPrepared supplies completion. Contracts/tests: language.md and netcode.md.
+
+## Crash reports sent to a hosting project, masked (2026-11-05)
+
+The owner's decisions:
+- a game linked to a hosting project sends reports "directly without even prompting the user"
+- the window still shows, with "some preview of the reports/logs" so a player may see what led to the crash
+- personal data is avoided automatically ("full paths for example can include their name")
+- all relevant data is sent, the dump included
+- reports are billed
+
+The service side is in `Tide-Engine/tide-services` (`notes/managed-hosting.md` there): ingestion, grouping, the console and billing.
+
+**Masking** (`platform/crash/scrub.c`, `scrub.h`)
+- Same-length `*` masking, so a dump's structure stays.
+- Rules:
+  - the path folder after `Users`/`home`/`Documents and Settings`, with spaces allowed in it (`John Smith`); `Public`, `Default`, `Default User`, `All Users` and `Shared` are kept
+  - the user's name, the home folder's last name and the machine's name, as whole words, where only ASCII letters/digits/`_` continue a word. That applies only to names of 3 or more characters and not to common words like `user`, `admin` or `player`.
+  - IPv4, except `127.*`, `0.0.0.0` and broadcast, and not inside a longer dotted run such as `1.2.3.4.5`, or with a part over 255
+  - IPv6, with one `::` or all 8 groups; not `::1`, times, or C++ `a::b::c`
+  - email addresses, with a final label of 2+ letters
+- Text files get every rule.
+- `crash.dmp` gets the path and name rules over the whole file, in bytes and in UTF-16 from both offsets.
+- The text rules also apply inside the memory ranges of `MemoryListStream` and `Memory64ListStream`.
+- Two findings during testing:
+  - The dump's UTF-16 module paths sat at odd file offsets, so even-only scanning missed 3 of 4.
+  - A stack held a truncated `s\<name>` followed by binary, which a "≥0x80 continues a word" rule left unmasked.
+  - With both fixed, the log test asserts the zip's dump never contains the home folder's name in either encoding.
+- Only the zip is masked; the crash folder keeps the originals.
+
+**tide-crash** (`crash.c`)
+- It reads the folder's files into memory, with Player.log's last 4 MiB cut to a line start, masks them, and builds the stored zip in memory. It writes that zip beside the folder and sends the same bytes.
+- `crash.json` beside the program holds `{origin, reports, build}`:
+  - `origin`: https, or `http://localhost`/`127.0.0.1`
+  - `reports`: a 16–64 character base64url key
+  - `build`: lowercase hex
+- With `crash.json`, it starts `POST <origin>/api/reports` at once, using the engine's HTTP client (`src/fetch.c` over `src/rtc/tls.c`'s system TLS, linked into tide-crash with `net.c` and the engine library). The request carries:
+  - headers `X-Tide-Report-Key`, `X-Tide-Build` and `Content-Type: application/zip`
+  - a 30 s limit
+- If the player closes the window first, the send still finishes.
+- Modes:
+  - `--zip`, and hidden runs, only zip and never send, as with telemetry.
+  - `--send <folder>` zips and sends with no window, printing the zip's path and then `sent` or `not sent: <why>`.
+- The window is `crash_show(view, status, user)`:
+  - heading `<title> stopped unexpectedly.`
+  - a status line polled every 100 ms: Sending… / sent / couldn't be sent, or the old "A report was saved…" line without a link
+  - a read-only monospace preview of `crash.txt` plus the log's last 80 lines
+  - **Show report** (reveal the zip) and **Close**
+- Per system:
+  - Win32: an EDIT control (selectable, copyable), resizable window, Enter/Escape caught in the loop.
+  - X11: drawn lines, scrolled with the wheel, arrows, PgUp/PgDn and Home/End; no selection.
+  - Mac: an `NSAlert` with an `NSScrollView`/`NSTextView` accessory, shown after the status settles, because an alert's text can't change while it runs modally. It has never been built or run here, and only CI compiles it.
+
+**Linking**
+- `tide deploy` saves the account's `projects[].reports` key in `tide.deploy.json` as `"reports"`, rewriting it on every deploy, so a key turned off or replaced reaches the file.
+- `tide build`, for desktop non-server builds, writes `crash.json` beside the game from that file, with `build` set to the program's SHA-256 (`place_report_link`). It removes a stale `crash.json` when the folder isn't linked.
+
+**Tests**
+- `tide_platform_scrub` (`tests/scrub.c`): every rule, plus a synthetic dump with a UTF-16 path at an odd offset, addresses inside a memory range, and an unchanged header and directory.
+- `log.mjs`:
+  - the zip's log has the home folder's name masked
+  - the dump never names it
+  - a copy of tide-crash with no `crash.json` reports "not sent"
+  - with a `crash.json` pointing at a local server, it sends: the POST path and headers are checked, and the body is byte-identical to the zip beside the folder
+  - a 402 answer reports "not sent: the service answered 402"
+
+**Validation**
+- Windows debug: passed.
+- Windows sanitize (ASan): passed. The crash case is skipped there, so the send runs on the abort's folder.
+- The docs build passes.
+- WSL clang 18: `ui_x11.c` and `scrub.c` pass `-Werror`, and the scrub test passes there. `crash.c` was checked against a stub `fetch.h`, because WSL's clang 18 can't read the engine headers.
+- The macOS window and Linux's full link are CI's.
+
+**Gaps**
+- Builds have no symbols upload, so the console shows module+offset.
+- The build ID is the program's hash, not the simulation identity.
+- A game's own personal data in its log (a player's chosen name, chat) is the game's to keep out. The docs say so.
+
+## A machine that slept, and the game's keyboard (2026-11-05)
+
+Steam Deck work, asked for by the owner ("lets work on touchscreen support, on-screen keyboard stuff and the sleep/resume"). Touch is in `notes/input-devices.md`, Steam's keyboard in `notes/lobby-steam-package.md`.
+
+**Sleep.** `tide_platform_slept` (`platform/src/sleep.c`, `tide/platform.h`) is true once after each sleep. Seconds asleep are a clock that counts sleep less one that doesn't (Linux and Android `CLOCK_BOOTTIME - CLOCK_MONOTONIC`, macOS `mach_continuous_time - mach_absolute_time`, Windows `GetTickCount64` less `QueryUnbiasedInterruptTime`), and it's a sleep when that grew by a second or more since the last call (`SLEPT_LEAST`, above the clocks' reading noise: Windows' tick count moves in steps of about 16 ms). Always false on the web. The engine's clock (`tide_time_now_ns`) doesn't count sleep, so before this a session saw no gap at all: a woken client predicted alone until its own 5-second timeout, and a woken host went on with a match its players had left or migrated away from.
+
+`tide_run_frame` asks right after the script's player actions, before the session's update, and `tide_run_slept` leaves (`TIDE_REQUEST_LEAVE`, as `Session.Leave`: `Disconnected` with `Left`) a match others can be in: a client's (`client.state` not offline, or migrating), a server's that's open or has `tide_session_remote_players`, or a hosted one (`tide_run_hosting`). A server alone and closed (single-player) goes on. Not inside another program's frame (`tide_run_embedded`), whose host decides.
+
+**My picks, Provisional, awaiting the owner:** leaving on wake rather than pausing, as AGENTS.md has a phone that goes to the background leave; `Left` as the reason (a new `DisconnectReason` would be a language change); single-player going on; leaving only after the wake. **A goodbye before the sleep, on Linux** (the owner asked for it next, 2026-11-05): logind's `PrepareForSleep` on the system bus, with a `delay` lock on sleep (`Inhibit`), in `sleep.c`. libdbus is `dlopen`ed (`platform/src/dbus.c`, `dbus.h`, declared by hand as its headers aren't everywhere). The connection is made at the first `tide_platform_slept`, never in a quiet run unless `TIDE_SLEEP_BUS` names another bus (tests only), with `exit_on_disconnect` off. The match takes `sender='org.freedesktop.login1'`, which the bus resolves to logind's own connection, so nobody else's signal counts. Inhibit is sent without waiting and its reply found among the popped messages by its serial: `pop_message` hands replies over as ordinary messages, so a pending call never completes (the first version used one and never got its lock). `PrepareForSleep(true)` makes `tide_platform_slept` true; the host leaves that frame, the goodbye going out as the client or server is destroyed, and the lock is closed at the next call. `PrepareForSleep(false)` asks for a new lock; the clock's wake check then finds the machine out of its match already. A bus that goes away closes the connection and the lock. Not on Android (no logind for apps), Windows or macOS, which still leave on waking.
+
+`tide_platform_sleep_logind` (`tests/sleep_logind.c`, Linux, skipped with 77 without `dbus-daemon` or libdbus) starts a `dbus-daemon` of its own and owns logind's name on it: the lock asked for is a sleep delay, held from the start; another connection's `PrepareForSleep` is ignored; logind's is said once, with the lock held that frame and closed at the next; waking takes a second lock; the bus going away lets it go and ends nothing. Passed under ASan and UBSan in WSL (Ubuntu, clang 23), three runs. Against WSL's real logind, an unprivileged program's lock was listed by `systemd-inhibit --list` ("Tide ... sleep, Leaving the match, delay"). Not done: a real suspend; whether Steam's container (pressure-vessel) passes the system bus through.
+
+**Running in the background** (the owner, 2026-11-05: "if we can run it in the background without sacrificing tick rate then we should, we do it for the web"): desktop and Android already do. A window nobody sees waits for the frame the session asks for instead of the display (`step` in `platform.c`), so matches tick at their rate, drawing nothing; the web's hidden page has its worker heartbeat. What stops it is the system: Android freezes apps in the background, which keeping running would need a foreground service for (Java, a notification and Play's foreground-service rules).
+
+A script's `sleep` line (`script.c`, `EVENT_SLEEP`) calls `tide_platform_pretend_sleep`. In a run of several players it needs `player <n>`; in a run of one it takes none. `tide_platform_players` (`players.mjs`, `players_leave.tide`, which now draws a cyan block for `Left`) checks that a sleeping joiner leaves at once, not timing out, and the match hears `PlayerLeft`; that it rejoins as the same seat; that a sleeping host leaves its open match and the other gets `ServerLeft`; and that a run of one, in a closed match, stays connected through a sleep. User docs: Matches, A machine that sleeps; CLI Scripts and Several players; the AI overview.
+
+**The game's keyboard.** `tide/screen_keyboard.h` (`engine/src/screen_keyboard.c`): a game's C registers a `tide_screen_keyboard` (`self`, `typing`) in its own engine copy, as with `tide/voice.h` (`tide_keyboard` is the keyboard device's type), and the host table gains an optional `screen_keyboard` getter (`tide_screen_keyboard_get` in `tide/run.h`). `tide_run_typing`, where `tide_platform_typing` was called, tells it once each time `tide_gui_typing` changes, and tells one that's new (another `self` or function, as after a reload) the current state at once. Never in a run with no window, inside another program's frame, or a quiet run (`TIDE_HIDDEN`): Steam's keyboard is a window of its own. That leaves the host's part without a test; the package's is in its test.
+
+## GPU culling asked each frame (2026-11-05)
+
+The standard host sets `tide_run_draw.gpu_culling = tide_platform_gpu_culling()` beside the screen's scale before
+the views record: listed draws are then recorded for the GPU to cull where the backend computes and isn't the
+recorder, unless `TIDE_GPU_CULLING=0` (`decide`: recorded so, decided by the CPU as they're drawn, for tests). A
+custom host leaves it false and keeps the CPU path. drawing.md, Listed runs culled on the GPU.
+
+## Application.Quit (2026-11-04)
+
+The owner's ask, from mount-and-rifle, whose workaround was C `exit(0)`, which
+skipped engine shutdown: a clean quit from local code. The behavior per
+platform is the agent's pick (spec, Provisional; docs `game/local-state.md`,
+Quitting).
+
+- **Language**: `Application.Quit()`, checked like `Clipboard.Copy`
+  (`check_quit_call`, `CALL_QUIT`): views, local handlers and functions they
+  call; never match code, `Sample`, a comparison or a parallel step; a
+  statement; no arguments. Generated: `tide_l->tide_quit = true`, and
+  `tide_local_take_request` gives `TIDE_REQUEST_QUIT` once, after every other
+  request of the frame (copy included). No new runtime function.
+- **Host** (`tide/host.h`): `TIDE_REQUEST_QUIT` sets `tide_run_quit` and,
+  outside another program, calls the new `tide_platform_quit()`. `tide_run_open`
+  registers `tide_run_close` with the new `tide_platform_on_close`: it runs
+  `tide_run_end` (voice stop, hosted admission left, session destroyed, so the
+  server says BYE or hands the match over and a client says it leaves; local
+  state freed) when a session exists. `TIDE_DISCONNECT_BANNED` isn't a drop.
+- **Platform** (`platform.c`): `quit_asked` / `closing_asked`. A window that
+  closes now sets `closing_asked` before `finish(0)`, so the host's closing
+  runs on window close too: both paths leave the match before the platform
+  writes its used shader keys, closes audio and the window and exits.
+  `finish` runs the hook once, first. The frame a game quits in is the last:
+  headless runs treat it as the script's `quit` (`headless_drawn`'s `last`,
+  so `--capture`/`--capture-audio`/recordings are that frame's); windowed
+  runs present it and end with 0 (no between-frames wait update after it).
+  Not called for a frame function's own exit code or `--frames`' end.
+- **Web**: the same `finish`: the hook, `tide_web_stop`, `exit(0)`, so
+  `tide.js` stops the loop and calls `Tide.onExit(0)`; the canvas keeps the
+  last frame. A page can't close its tab.
+- **Android**: `finish` closes the window, which finishes the activity, and
+  the process exits.
+- **Embedded** (`tide/embed.h`, ABI 10): no exit; `tide_embed_status.quit`
+  (a pad byte, so the struct's size is unchanged) stays set until the embed
+  ends (`tide_run_end` clears `tide_run_quit`). Unity's `TideRunner` reads it:
+  a `QuitAsked` handler decides, otherwise play mode ends in the editor and
+  the player calls `Application.Quit` (notes/unity.md).
+- **Dedicated servers** have no local code, so nothing quits that way.
+- **Several players** (`--players`): a player that quits ends its process at
+  that frame, which ends the run as a process that stopped does (Ending,
+  below); a quit of the whole run is the script's `quit`.
+- **Tests**: `tide_platform_quit` (`platform/tests/quit.mjs` over `quit.tide`,
+  label `gpu`): a match runs and a view quits at frame 30 of a 600-frame run;
+  exit 0, frame 20's capture taken, frame 100's not, the run's `--capture` is
+  the green frame it quit in. `tide_platform_web_quit` (served, real-time
+  animation frames): the page ends with exit 0, which only the quit makes.
+  Generated requests: `net_local_code_joins_rooms_and_connects_to_addresses`.
+  Errors: `tidec_error_application_quit_in_system`, `_takes_nothing`.
+- **Gaps**: no "are you sure" or cancel; a web page's own after-exit screen is
+  the page's; `Application.Quit` in the reload host ends `tide run`'s game
+  with 0 as a closed window does.
+
+## Loading screen while the pack loads (2026-11-04)
+
+The owner's ask: Mount & Rifle opened a white window that didn't answer for
+seconds before its first frame, unlike a web page's loader. Measured on this
+machine: its pack is 1.38 GB; reading it takes about 0.6 s warm (more cold), and
+`tide_pack_load`'s SHA-256 of the whole file (`pack.digest`, the session's pack
+identity) about 6 s at the portable hash's 217 MB/s; the region copy 0.6 s.
+All of it ran on the main thread after the window opened.
+
+- `tide_run_load_shown(path)` (`tide/host.h`) starts the first pack load as a
+  pool background job (`tide_jobs.background`): read (`tide_platform_pack_counted`
+  for the program's own pack, `tide_platform_read_counted` for `tide run`'s
+  `pack-<n>`) then `game->assets`, which may take its time on that thread. Only
+  with a window and a pool with background threads, not on the web (the page
+  has the pack and its own loader) and never headless or embedded: those load in
+  place as before, so scripted frames are unchanged. A pack that changes during
+  a run, and builds swapped in, still load in place.
+- Until the job is done, `tide_run_frame` is `tide_run_loading_frame`: polls and
+  consumes the devices (input during loading isn't the game's), then draws the
+  shell's loader (platform/web/shell.html colors, 220 by 4 bar, 14 px text 16 px
+  under it): `Loading x / y MB` with a known bar while reading, then `Preparing`
+  with a third of the bar easing side to side every 1.2 s. The frame the job is
+  done in keeps the pack (`tide_run_assets_kept`), runs `tide_run_begin` and then
+  the game's first frame. Nothing calls the game before that: no session exists,
+  so `tide_run_wait_update` does nothing, and `reload_frame` skips build checks.
+- The pack's memory is mapped per thread (`tide_pack_use`); the loading thread
+  maps its own, and the main thread's is mapped by generated `tide_local_init`.
+- Pack reads are 64-bit on Windows (`_ftelli64`): `long` limited them to 2 GB.
+  Android reads its APK asset in 16 MB pieces (`AASSET_MODE_STREAMING`).
+- Test: `tide_platform_loading` (Vulkan, label `gpu`; its `_opengl` twin went 2026-11-05;
+  `platform/tests/loading.c`): a C game table whose `assets()` waits for the test,
+  in the real loop and a hidden window. Frames go on while it waits; the loader
+  reads back with the shell's background, a bar and text; the game begins in the
+  frame the pack is in, once, with the pack kept, loaded off the main thread.
+  A negative control that skips drawing the loader fails it.
+- 2026-11-05: after the pack, the loader stays up while the game's pipelines
+  are prewarmed (`Compiling shaders n / total`), and also shows for games with
+  no pack; see notes/rendering.md, Vulkan pipelines on the pool's threads.
+- Not built: an icon on the loader, a game's own loader, async loading of a pack
+  that changes during a run. The SHA-256 that was most of a big pack's load is
+  gone from it: the build writes the digest (pack format 4, the owner's pick,
+  notes/assets-and-files.md), and hashing uses the CPU's SHA instructions.
+
+## Clicking widgets by name (2026-11-04)
+
+The owner noticed that agents miss clicks because they guess a button's pixels from a picture at a resolution they assumed, and proposed listing the buttons and pressing one by index. Built for `--interactive` (the names are Claude's picks, Provisional in docs/tools/cli.md, Clicking widgets by name):
+
+- **`controls`** prints `tide: control <n> <kind> "<label>" <x> <y> <w> <h> at <x> <y>[ disabled][ covered][ focused]` for each widget the current frame drew, then `tide: controls <count>`, then the usual `ok`. Logical pixels, the units of `mouse` lines. The label is quoted with `\"`, `\\`, `\n`, `\t` and `\xNN` escapes. The GUI's side is in gui.md, Widget listing.
+- **`click <n>`, `click "label"`, `click label`**, optionally after `<frame>` and `player <n>`: the target player works out the point (by number, then by exact label, label ignoring case, part of a label; refusing an ambiguous label, a disabled or covered widget, a number not listed). Each of those processes then queues `<frame> [player n ]mouse x y` and `<frame> [player n ]button left` through `interactive_event`, so the replay has ordinary lines and the click is identical on replay. The coordinates go through text (`%.9g`, which round-trips a float) before every process parses them. It prints `tide: click <frame> <x> <y>`. With no frame it goes at the next frame.
+- **Host and platform**: `tide_platform_list_controls(&tide_run_gui)` (`tide/platform.h`, in `script.c`) runs each frame after `tide_gui_begin`. It remembers the host's GUI and gives it a listing (allocated once) only in an interactive run, and sets NULL otherwise, so ordinary runs, the embed and the web describe nothing.
+- **Several players**: `tide_platform_players_control_done(ok, reply, from, answer, capacity)` now carries one player's answer to the first player. A child's acknowledgement blob is its result byte followed by its reply, which is its listing, its click point or its error. The first player keeps player `from`'s reply (or its own). So `player 2 controls` lists the second player's widgets, `player 2 click ...` clicks there, and a child's error text reaches the controller, where it used to say only "see stderr". An answer larger than the room (1 MiB for the GUI commands) arrives empty.
+- Tests: `tide_platform_interactive` lists capture.tide's Go button with its exact line, refuses `5 controls`, `controls now`, an unknown label, a number not listed, unclosed quotes and a past frame, clicks `go` by label (case-insensitive) at frame 2 with the green witness at frame 5, checks the replay has `2 mouse 80 40` / `2 button left` and no `click`, and checks that the byte-identical replay still holds. With two players, `player 2 controls` gives `controls 0`, and `player 2 click 1` returns the second player's own error. `tide_platform_players_net_control` checks the answers of three processes (each round from another player, and one too large for its room).
+- Validation: Windows Clang 23.1.2 ASan: all 627 engine tests, the GUI/rooms e2e and safety tests (10), interactive, capture, players and the players-net tests; the WASI engine suite in web-debug. Other desktops are CI's. The docs build passes.
+- Gaps: `tap` with a finger for touch-only games, a `GUI.Control` label, and listing what a game draws and reads through `Devices` itself.
+
+## Geometry profile reports (2026-11-03)
+
+The additive `geometry` object in tide.profile version 1 exports actual submitted
+cached 3D/shader mesh work, independent of timestamp support. Rows carry asset
+name, mesh/version identity, originating view source, destination, selected LOD,
+stored vertices/selected indices and submitted instances/vertices/triangles.
+Only draws actually issued by the renderer contribute; rejected/skipped draws
+and overlays do not. Repeated submissions/passes count again. Names are copied
+before game unload. Empty/unsubmitted rows are omitted. Bounded attribution loss
+is `geometry.dropped_instances`, counted at recording, not GPU submission.
+F7/F8 presentation and the existing GPU timing objects are unchanged. Reference,
+coverage limits and ranking example: docs/tools/debug-views.md.
+
+Validation: all 620 engine runtime tests pass on Windows ASan and WASI, including
+six draw-profile and twelve report tests. Focused asset-mesh, skinned-rest and
+profile-source E2Es pass native/web; native profile capture passes warmup, exact
+asset/source/geometry counts, overlays and identical measured/unmeasured PNGs.
+Renderer checks pass Vulkan/OpenGL/WebGL/WebGPU, including LOD regrouping and
+repeated submissions. Stripped asset-mesh generated C passes strict C17 syntax
+checking and hides asset names/glob keys. Production docs build passes on Node
+24.22.1. Other OSes/Android and Unity itself were not run locally.
+
+
+## GPU pass profile reports (2026-11-03)
+
+`--profile` now installs the optional GPU pass collector after warmup and drains
+it after rendering and once at final export, without waiting. The additive
+`gpu_passes` object in tide.profile version 1 contains rows grouped by target,
+pass encounter order, pixel size and exact shader-membership labels. Each has
+its own bounded distribution (mean/p50/p95/max, counts and reservoir semantics)
+and submitted draw/vertex totals for those completed observations. CPU views
+and the existing asynchronous frame GPU distribution remain separate.
+
+`pending`, `unmeasured` and `dropped_observations` expose incomplete coverage.
+The report owns its labels; 1,024 rows and 1 MiB of labels bound storage, while
+existing rows keep collecting after saturation. Pending query metadata has its
+own 1,024-slot/4,096-label-byte-per-slot bound. Closing/reloading/cancelling
+cannot give a delayed query another pass's identity. Backend details and pixel
+checks are in rendering.md. Native desktop export, other platform export
+refusals and F7/F8 aggregate presentation retain their existing behavior.
+
+Validation: all 11 profile_report tests pass on native Windows ASan and WASI,
+including copied/mutated labels, distinct targets/pass ordinals, exact work,
+mean/p95/max, invalid samples and row-limit loss. Native profile E2E passes
+warmup, panels, empty captures, per-player and interactive runs with the new
+pass rows, as well as byte-identical measured/unmeasured pictures. User reference
+and ranking example: docs/tools/debug-views.md, Finding expensive GPU passes.
+
+
+## Host-wait accounting fixture clock (2026-11-03)
+
+Run 41547870181's Windows web-release shard failed the new host-wait fixture's
+two positive-work assertions. A short update can start and finish at the same
+browser clock value, so measured work need not be positive. That test now
+substitutes a controlled nanosecond clock only for its own inline host copy;
+the real session and generated game still run. It checks an exact 1,250,000 ns
+stats increment and 1.25 ms profiler increment, without extra rendered frames.
+Repeated, backward and invalid elapsed values read no additional clock and add
+no work. No runtime clock, scheduling or accounting behavior changed.
+
+Validation: the target builds and all three cases pass on Windows ASan,
+web-debug and a scoped optimized web-release build with Clang 23.1.2 and muted
+Chrome. A negative control zeroing just the host's two wait-work additions
+builds, runs and fails the exact accounting assertions; restoring the host
+byte-for-byte makes the browser test pass again. There is no runtime diff.
+Hosted coverage on other platforms remains the ordinary push-triggered run.
+
+## Match updates during desktop Vulkan presentation waits (2026-11-03)
+
+The standard and native reload hosts register `tide_run_wait_update` through
+`tide_platform_update_while_waiting`. Only the next-frame Vulkan fence wait
+after a complete frame calls it. It advances the custom network and session
+on the same thread, returning the next tick deadline. No view, event handler,
+audio submission, reload, migration request or GPU work runs from this hook.
+Queued local events and session connection events remain for the next frame;
+only rendered views call `tide_session_mark_presented`.
+
+`tide_run_frame_now` sums rendered frame seconds; `tide_run_now` is the latest
+serviced time, including elapsed time inside a wait. The next render frame
+already includes that elapsed time, so it advances only the remaining interval.
+Neither a repeated wait callback nor a rounded-short frame moves time backward.
+`frame_time` still receives the full frame interval once. Optional `age_views`
+ages existing visual corrections before each session update, so a new correction
+does not age for time before its arrival. Generated-host details and the manual
+host migration are recorded in language.md and runtime-ownership.md.
+
+Input polling remains once per rendered frame. Wait updates use the last polled
+device state, with sample consumption preserving held input and preventing a
+second use of an edge or mouse delta. This improves receipt/simulation of remote
+input while a local GPU is busy; it does not raise local device polling or view
+rates. Extra polling would need separate accumulation of view-facing motion,
+wheel, text and GUI claims. Hidden fixed-time runs, embeds, web and Android
+retain their existing scheduling (OpenGL, which did too, is gone since 2026-11-05). The profile capture path is headless
+and therefore has no between-frame updates to account for.
+The live F8 CPU total and F7 Match total include measured wait-update work
+without adding rendered frames; GPU sleeping time remains outside CPU work.
+
+`tide_platform_host_wait` exercises synthetic elapsed waits through the real
+generated game and host without a GPU: continuing ticks, consumed input edges,
+ordered once-only events, clocks, full Frame.dt, presentation stamps and errors
+arriving partway through a wait. GPU boundary/resource tests are in rendering.md.
+Validation and real-game measurements are recorded in netcode.md.
+
+## Profiler fixture Release build (2026-11-02)
+
+Run 41405770153 failed compiling tide_platform_profile on MinGW Release:
+VISUALIZERS supplied -fno-eliminate-unused-debug-types without debug information,
+which Clang 23.1.2 rejects as an unused argument under -Werror. The fixture now
+explicitly compiles with -g, following tidec_debugger_fixture. Its optimization,
+visualizer/source metadata checks and normal Release link policy are unchanged.
+Only this desktop test target changes; runtime, CLI and web builds are untouched.
+
+Validation: the target builds and its full profile capture test passes under
+Windows ASan and MinGW Release, with Clang 23.1.2 and Node 24.22.1. Both runs
+use TIDE_HIDDEN. Other platforms remain normal push-triggered workflow coverage.
+
+## Render phases (2026-11-06)
+
+`--profile` reports `render_phases`: the renderer's parts of `cpu_phases.render` (`tide_render_part` in
+`tide/profiler.h`: prepare, steps, uploads, culling, record, finish) and `other`, the render phase less them (the
+host's prewarm, overlays, audio hand-off). `tide_platform_render_parts` gives the last list's (`platform.c` times
+`draw_list`'s parts with six clock reads a list, overlays aside; zero for a frame that drew nothing);
+`tide_run_frame` hands them to `tide_profile_report_render` after marking the render phase, not when embedded. The
+report samples them only for frames that gave them, so an unseen window's frames don't count as zero. Present (where
+Vulkan submits and waits for frames in flight) is outside the phase, as before. Why and what it found:
+rendering.md, The render phase's CPU, measured and cut. Docs: `docs/tools/debug-views.md`.
+
+## Agent-readable profile captures (2026-11-02)
+
+Cheaper draw diagnostics (2026-11-05): `--profile` tripled Mount & Rifle's views (4.05 ms a
+frame against 1.34-1.46 without it; notes/benchmarks.md, Mount & Rifle's views). Main-thread samples put
+22% of the program's own in `geometry_row`, which went through every geometry row comparing names for each
+recorded draw (1,024 rows, full on that route), and 9% in the generated `tide_profile_mesh_name`, which went
+through every mesh asset for each draw. Now (engine/src/draw_profile.c): the rows are found through an index
+by a hash of the key's text and numbers (`tide_draw_diagnostics.geometry_index`, 4,096 places for the 1,024
+rows, emptied by `tide_draw_diagnostics_clear`), each hit compared with its row, and a key the index hasn't
+is one no row has, so a full table drops it without a scan; and a mesh slot keeps the name it was given with
+the list handles, version and naming function it was given for (`tide_draw_mesh_data.profile_name` and
+`profile_named_*`), asked again only when one changes (tide_draw_forget frees the slots and clears the
+function, so a reloaded library's names are asked anew). Rows, counts and names are what they were; text
+changed in place is another key, as before. With `--profile` the route's views took 1.50 / 1.68 ms against
+1.44 without (noisy machine). `draw_profile_geometry_rows_go_by_text_and_names_by_mesh`
+(tests/test_draw_profile.c) pins rows by text across addresses, changed text, a full table and clearing,
+and one name asked for a mesh drawn 100 times.
+
+Owner-approved first profiling slice: `--profile <file.json>` captures the
+ordinary desktop host independently of F7/F8. `--profile-warmup <n>` excludes
+the first n frames (default zero, integer 0..1,000,000,000). It requires a
+profile path; profiling requires `--frames`, `--script` or `--interactive`.
+The existing runner still enforces a script's quit/frame cap. Profile alone
+does not open a window or select an endless run. CLI paths are made absolute
+before changing to the game folder. Web, Android and dedicated-server export
+are explicitly refused; the engine collectors are portable C and tested on WASI.
+
+The report is `schema: "tide.profile", version: 1`. It contains actual timed
+CPU work and input/match/views/render/other distributions, all measured
+system/view rows with full declaration source locations, existing worker
+queue/compute/copy categories, tick totals, asynchronous GPU samples, submitted
+draw/vertex totals, and view/destination/camera-attributed mesh-recording
+diagnostics. Drawing contracts and exact counter definitions are in drawing.md.
+Mesh-recording time includes bounds, frustum tests, LOD and instance recording
+after acquisition; it is not an isolated frustum timer. It is part of the view,
+not additional time to add to that view. Source metadata contracts are in
+language.md and runtime-ownership.md. Shipping builds retain opaque identities.
+
+`tide/profile_report.h` owns copied timing identities, bounded distributions
+and a draw collector. At each measured frame, begin snapshots cumulative row
+counters before starting its clock; end stops its clock before collecting
+deltas, then the overlay may clear its own totals. Table/row revisions identify
+counter replacement even when new totals exceed the old baseline. F7/F8 clears
+and opening/closing panels therefore preserve capture totals. No report pointer,
+timing or counter enters simulation state or affects scheduling. With profiling
+and panels disabled, generated views and draw recording read no diagnostic clocks.
+
+CPU work excludes interactive stdin waits, window presentation, headless audio
+mixing, scripted PNG readback and report collection/writing. It includes instrumentation and any
+enabled overlay work. In particular, the hidden runner's fixed simulation
+seconds are never exported as measured FPS. System rows retain their first-job
+start to last-job end span, and overlapping systems/workers must not be summed.
+GPU timing starts afresh after warmup so previous drawer samples cannot leak
+into capture. It is drained once for both report and stats, without waits or
+forced synchronization. Available means completed samples were observed; pending,
+unsupported and skipped samples are absent, not zero, and no originating frame
+or pass identity is claimed. CPU and GPU distributions are never paired or added.
+
+Metadata records executable SHA-256 when argv[0] can be opened (otherwise null),
+layout and simulation identities separately, compiler, optimization/sanitizer
+flags, renderer, dimensions/scale, thread count and process player/exit status.
+Each player gets the normal filename suffix. `tide_headless_desc.finished` lets
+the host write after replay/captures close, before GPU shutdown and the join of
+other players' exit codes. Write/close failures turn an otherwise successful
+process into exit 1 and name the report path. This is normal-run finalization,
+not crash recovery. A warmup covering the whole run writes an explicitly empty
+report with zero samples and null unknown timings.
+
+Capture storage is bounded: 8,192 timing identities with a 1 MiB string budget,
+1,024 draw rows with a separate 1 MiB string budget, and 4,096 samples per
+distribution. Longer captures retain deterministic reservoir samples for
+estimated quantiles; counts, sums, means and maxima cover every observation.
+Limits report dropped observations/calls/candidates rather than aliasing rows.
+The JSON and user docs state these semantics. No automatic redundancy claim is
+made from a low rejection rate; compare an optimized scripted workload with the
+scoped opt-out and inspect images, including other cameras/shadow destinations.
+
+Validation: full Windows ASan and optimized WebAssembly builds pass, followed
+by all 2,925 native and 2,810 web tests (including WebGL and WebGPU) on Node
+24.22.1. Focused coverage includes 23 profile/draw/worker tests, generated source
+attribution and stripped-name regressions, and CLI argument/help checks.
+`tide_platform_profile` verifies exact warmup/source/culling counts, identical
+measured/unmeasured and culling-on/off PNGs, F7/F8 transitions, empty and failed
+reports, two-player suffixes and interactive observations. The docs production
+build passes. Logs are build/profile-native-tests.log, profile-web-tests.log
+and profile-docs-build.log. Other native platforms and Android were not run
+locally. These diagnostics establish no performance improvement.
+
+Integration with dev through 4dce92689 preserves its mesh-version hints, shared
+shader preparation and CLI diagnostic improvements. Only independent notes
+sections conflicted. Affected native/web targets rebuild cleanly; all 16 native
+and 11 web integration tests pass, covering the profile report, engine/draw
+tests, mesh values/runtime/LOD, shared bindings and native CLI/source stripping.
+The merged docs production build also passes. Logs use the
+build/profile-merge-{native,web}-{build,tests}.log and
+build/profile-merge-docs-build.log names.
+
 ## Compact vertex counts (2026-10-30)
 
 The stats drawer formats vertices with decimal K/M/B/T/P/E suffixes, rounded
@@ -240,6 +681,9 @@ send nothing for voice. The actual three-process headless capture regression
 and all C/API/lifetime contracts are in `notes/voice-package.md`.
 
 ## Leave, drop and rejoin in a run of several players (2026-10-21)
+
+A fourth line, `sleep`, came later: see A machine that slept, and the game's keyboard (2026-11-05).
+
 
 The owner approved Claude's proposal after AI trials could not test
 `PlayerLeft` or seat reuse: three script lines, each needing `player <n>` and
@@ -556,7 +1000,7 @@ submitted-geometry counter's scope.
   - Open or closed is the host's (`tide_run_drawer`), never a build's, so a hot reload keeps it: on desktop the host outlives the game's library, and on the web it goes with what a program leaves the next one (`saved.stats_open` in `platform/src/reload.c`).
   - **A press on it is the host's, as the pointer on a widget is the GUI's,** but by where the press began, not where the pointer is now: a button that goes down with the cursor on the drawer, and a finger that touches it, are the drawer's until they're let go, wherever they go meanwhile, and a press that began elsewhere stays the game's when it crosses the drawer (a brush that paints across the corner isn't cut). A mouse whose cursor is locked is on nothing. `tide_stats_hide` takes the drawer's presses out of a copy of the devices: the copy `tide_run_sample` samples the game's input from, after `tide_gui_hide`, and the copy the frame's GUI and views read (`tide_gui_begin` is given it while a press is on the drawer), so neither sees the press, from the frame it lands in. The drawer keeps a press once it's let go while the devices still say it was down (a button's `pressed`, `down` and `up` stay until a sample consumes them, and a finger's slot until then), or the next tick's sample would take it for a click; in a host that never consumes, it's the drawer's until the button goes down elsewhere. The GUI knows nothing of the drawer: a widget under it still shows the pointer on it, and games keep the corner free (the line's rect is about 84 by 40 logical pixels, and up to about 190 wide with a ping).
   - **Nothing is measured that isn't shown.** Closed, the frame rate is frames counted over made-up or real seconds the host has anyway, and the ping is the session's: no clock is read, ticks get no `tide_profile`, and the memory isn't asked for. Open, a frame's work is timed (`began`), the pool gets the profile (`tide_run_debug_views`), and the memory is read: the list's `cpu` line shows once a frame was timed. The numbers that are rates change once a second, and the first time after a quarter of one: the drawer shows from then (`tide_run_stats_known`), never a frame rate of 0.
-  - Timings refresh every half second (2026-10-06, the owner asked for readable system times and GPU timing): the three slowest systems are ranked by their average measured run, with names and rows held between updates (above), rather than by the last tick. Their counters survive the F7 profiler clearing its own totals. The CPU total includes rendering; `render`, under `cpu`, shows preparing and submitting the draw list, and `gpu` shows GPU drawing with its render targets, without the drawer or display wait. Desktop uses core OpenGL elapsed queries after draw preparation; WebGPU sums render-pass timestamps when the optional timestamp-query feature is available. Both read results asynchronously and skip samples when their small queues are full; WebGL 2 and OpenGL ES 3 show no GPU line. Closing or reloading discards old samples. Timers run only while the drawer is open. CPU and GPU overlap, so their times aren't added. `platform/tests/gpu_timing.c` and `gpu_timing_web.mjs` cover delayed results, full queues and cleanup; `tide_platform_gpu_time` checks real devices, natively and on both web backends.
+  - Timings refresh every half second (2026-10-06, the owner asked for readable system times and GPU timing): the three slowest systems are ranked by their average measured run, with names and rows held between updates (above), rather than by the last tick. Their counters survive the F7 profiler clearing its own totals. The CPU total includes rendering; `render`, under `cpu`, shows preparing and submitting the draw list, and `gpu` shows GPU drawing with its render targets, without the drawer or display wait. Vulkan (desktop and Android) uses timestamps around the game's drawing where the device times; WebGPU sums render-pass timestamps when the optional timestamp-query feature is available (until 2026-11-05 desktop OpenGL used elapsed queries, and WebGL 2 and OpenGL ES 3 had none). Both read results asynchronously and skip samples when their small queues are full; a device without timestamps shows no GPU line. Closing or reloading discards old samples. Timers run only while the drawer is open. CPU and GPU overlap, so their times aren't added. `gpu_timing_web.mjs` covers delayed results, full queues and cleanup (`platform/tests/gpu_timing.c`, the GL mock, went with OpenGL); `tide_platform_gpu_time` checks real devices, on Vulkan and on WebGPU.
   - It's drawn into a list of the host's own (`tide_run_over`), over the frame (`tide_platform_draw_over`, as `tide_platform_draw_overlay` draws a host's text: neither counts in the frame's draw calls, nor moves its camera). So a run with no window has it in its pictures, and a script's click or `key f8` opens it as a player's would. Closed, it shows nothing this machine measured, so such a run still repeats byte for byte (a frame is a 60th of a second, so the line says 60); open, it shows this machine's clock, and pictures differ there.
   - Tests: `tests/test_stats.c` has the drawer with made-up numbers and devices, each frame in the host's order (closed and open, the key, a click, a tap, a tap shorter than a frame, a second finger, whose each press is, a game that samples nothing, small screens); `tide_platform_stats` (`platform/tests/stats.mjs` with `stats.tide`, label `gpu`) runs the standard host with no window and reads the drawer and what the game read off its pictures; `tide_platform_web_stats` (`platform/tests/web_stats.c`) does it in a page with the DOM's own events, and checks nothing is measured while it's closed, and that it's open as it was left when the setting goes and comes back.
   - Examples that ask for the stats keep their own things out of that corner by their own numbers: Duel (`examples/duel`, `StatsCorner` in `hud.tide`) has its Menu button in the top right corner on every layout, its touch ring above the line, and its row of keys as far left as the line needs.
@@ -575,3 +1019,31 @@ submitted-geometry counter's scope.
 ## Confirmed presentation interval ABI (2026-10-11)
 
 Generated `tide_frame` and standard/custom-host callback signatures now take verified_previous and verified_alpha after verified. The standard host forwards the separate session interval and marks the frame presented, which stamps the next input's confirmed viewTime when maxRewind is enabled. Existing prediction correction snapshot bookkeeping remains independent. Manual single-world callers pass NULL/1 for the additional interval. Repository hosts/tests were migrated together; saved benchmark results were left unchanged. Full native/web coverage exercises the ABI, hidden-run safeguards and existing capture/browser hosts.
+
+## Player.log and crash folders (2026-11-05)
+
+The owner asked, from a shipping angle, how a player's crash or problem gets investigated; nothing was kept until then (stderr only, lost for a GUI-subsystem build). Approved: a log file and crash capture. Names and limits are Claude's picks, Provisional in `docs/spec.md` (Debug.Log); Unity's names where no Tide convention applied.
+
+- **`tide_platform_log_begin(app_id, directory)`** (`tide/platform.h`, `platform/src/log.c`): the standard host calls it from `tide_run_bind_io` after `tide_platform_name_game`, except in a run with no window (`tide_run_headless`: tests' output is theirs and must not land in a developer's AppData) and inside another program (`tide_run_embedded`). Once a program; reloads call it again and nothing happens. The folder is `tide_platform_data_folder` (`files.h`, `io.c`: the persistent save folder by app ID, or `--data-dir`, made), the same `Application.persistentDataPath` the game sees. TIDE_HIDDEN doesn't turn it off: a hidden run with a window is refused anyway, and the test needs the hidden runs' dialog suppression.
+- **The log**: `Player.log`, the last run's renamed to `Player-prev.log` first. stderr's descriptor becomes a pipe's writing end, and a thread copies what it reads to the original stderr and the file, so everything written there arrives (Debug.Log, every `fprintf(stderr)` of engine and platform, a game's C), not only what goes through one function. A first line names `TIDE_VERSION` (a compile definition of `log.c` alone, `platform/CMakeLists.txt`), the app ID, the system and the UTC start. Stops at 100 MB with a line saying so. On Windows a program with no console (distribution's GUI subsystem) gets `NUL` as stderr first, and `SetStdHandle` points at the pipe; the file is opened `FILE_APPEND_DATA` with every share mode, so a player can open it while the game runs and the crash handler's writes don't overwrite the thread's. At exit (`atexit`) stderr goes back, the thread reads to the pipe's end and is joined. On Android stderr is already the activity's pipe to logcat (`log_output`): the thread forwards to it and closes its copy at the end, so `end_output`'s join still finishes.
+- **A crash** (desktop only: Android has tombstones, `CRASHES` is undefined there) writes `Crashes/Crash_<UTC yyyy-mm-dd_hhmmss>[_n]` (a number where a second has two), with `crash.txt` (what, then for an abort `said before it:` and the last line on stderr, then `memory:` and the memory's figures, then the stack as `module+offset`: notes/memory-safety.md, Running out of memory), a copy of the log, and on Windows `crash.dmp` (`MiniDumpWriteDump` from `dbghelp.dll`, loaded at the start; unloaded modules, indirectly referenced memory, thread info, and since 2026-11-06 the memory regions without their contents; ~110 KB, ~190 KB with the regions in an ASan test program). The ten newest folders are kept, pruned at start. The log gets the crash's line and where the folder is, and so does the original stderr. The handler allocates nothing and formats its own text (`text`, `put_*`). It first hands stderr back so the thread reaches the pipe's end, and waits for it up to two seconds before writing (so the abort message precedes the crash's line), bounded because a crash must never hang. Windows: `SetUnhandledExceptionFilter` (dump first, then the stack by `RtlLookupFunctionEntry`/`RtlVirtualUnwind` from the exception's context, x64 and ARM64), plus a `SIGABRT` handler that captures a context and goes through the same path, since `abort()` is no exception. It returns `EXCEPTION_CONTINUE_SEARCH`, so WER and the exit code are as before. The dump is written by a thread of its own, waited for 10 s at the most (`DUMP_MOST_MS`, 2026-11-06): `MiniDumpWriteDump` suspends the other threads, and from the aborting thread on MinGW it sometimes never returned (CI's `tide_platform_log` timed out on the abort case in 3 of 16 `dev` runs, its folder made and no `crash.txt`); past the wait the report goes on, the dump perhaps cut short. POSIX: `sigaction` for SEGV/BUS/ILL/FPE/ABRT/TRAP with `SA_ONSTACK` on a 64 KB alternate stack (the main thread's only), `backtrace`/`backtrace_symbols_fd` (called once at the start so its first use doesn't load in a signal), then the default action is restored and the signal raised again (core files and macOS's crash reporter as before). A second crashing thread waits forever while the first writes.
+- **Tests**: `tide_platform_log` (`platform/tests/log.c` + `log.mjs`, no window or GPU, desktop): stderr still reaches the caller, the header, the rotation, a null write and an `abort()` each leave a folder with `crash.txt`, a stack, the log copy and on Windows an `MDMP` dump. AddressSanitizer catches a crash before the handler and ends the program itself, so in the `sanitize` build the null-write case is skipped (the program prints `sanitized`); `debug` runs it. Verified on Windows (debug and sanitize) and, built by hand with WSL's clang 18 and a stub `tide_platform_data_folder`, on Linux (log, rotation, SEGV and ABRT folders and backtraces); macOS and Linux CI run the test.
+- **tide-crash** (2026-11-05, the owner: a program of its own, "if their game is big it might take too long to open the handler"; "our own UI ... no fancy stuff"; no Send button until the services have one). `platform/crash/`: `crash.c` (arguments, a stored zip with CRC-32 and the central directory patched sizes, `system.txt`, revealing the zip) and one window a system: `ui_win32.c` (GDI, flat buttons, DPI from LOGPIXELSY, Enter/Escape; `UNICODE` for the IDC_/IDI_ resources; `WinMain`, which MSVC and MinGW links both start a Windows-subsystem program at, with the command line read wide), `ui_x11.c` (Xlib, core fonts with `fixed` last; -1 with no display), `ui_mac.c` (an `NSAlert` through `objc_msgSend`, the one window that isn't drawn by hand: never built or run locally, only CI compiles it). `tide-crash <folder> <title>` asks; `tide-crash --zip <folder>`, and any run under TIDE_HIDDEN, zips with no window and prints the zip's path, which is how `log.mjs` checks the whole chain (the crash starts it from beside the program, it zips both crashes' folders, `crash.txt` byte for byte, `system.txt`). `log.c` finds it at the start (`find_reporter`: `GetModuleFileNameW`, `/proc/self/exe`, `_NSGetExecutablePath`) and starts it once the folder is written: `CreateProcessW`, or `fork`/`execv` in the signal. Pruning removes a crash's zip and `system.txt` with its folder. CMake builds it with `tide_platform` (a dependency, so repository games in `bin/` have it beside them) and installs it into `TIDE_PACKAGE_LIBS` (`lib/native`; on Windows the MinGW build's, as with the platform library); `tide build` copies it beside a desktop game unless `--server` (`place_crash_reporter`, `sys_make_executable`), `tide run` doesn't. `cache_test.mjs` checks it's beside a native build, runnable; only CI's package jobs run that, as this machine has no package layout. The window itself was not shown by an agent (no screen takeover): the owner runs `build/debug/bin/tide-crash.exe <a crash folder> "Game"` to see it. The owner ran it on Windows the same day: "it seems to work fine".
+- **The GPU in the log**: `tide_platform_log_note` writes a line to the log alone, not stderr, so no test's output changes; `gpu_vk.c` notes the device, Vulkan version, driver, vendor and device IDs once picked. The web notes nothing.
+- **The crash it didn't record** (2026-11-05): the owner's Mount & Rifle crash at 15:20 local (WER: `game.exe`,
+  `loaded-1.dll`, 0xc0000005 at +0x69733e) ran a host and library built by nightly.67, pinned then; `log.c` came in
+  nightly.69 (the tag of the commit that added it), and nightlies 67 and 68 have no `tide_platform_log_begin`. The
+  dump loads no `dbghelp.dll`, which `prepare_crashes` would have. The `dev.tide.game` Player.log files beside it
+  (16:06 and 17:40 local) are later runs': a log with only its first line is an ordinary run that wrote nothing to
+  stderr (a reload's lines go to stdout). Nothing in the reporter missed it: the filter is the process's, and a crash
+  inside a loaded library reaches it like any other; it also stays installed through Vulkan's instance and devices
+  made on both of this machine's GPUs (NVIDIA and AMD, checked with a scratch program). The crash itself was the
+  GPU culling's (drawing.md, A culled set's join past its top level), symbolized from WER's own dump in
+  `%LOCALAPPDATA%\CrashDumps`.
+- **Gaps**: worker threads have no alternate stack, so a stack overflow off the main thread on POSIX dies without a folder; `__fastfail` and `/GS` failures on Windows bypass the filter; the web keeps nothing (the console has it). The owner's next steps (2026-11-05): keeping symbols and names so a shipped build's reports can be read (distribution strips them, `notes/cli-and-packages.md`), a build ID in the header, and a replay/reporting service that needs the exact build: open.
+
+## Native world-transfer diagnostics (2026-11-06)
+
+The open stats drawer now shows remote clients' cumulative resyncs, repairs and world data in MB. Resyncs count full-world replacement after initial join; repairs count accepted authoritative projected repairs. World data comes from the existing world_bytes counter and includes deltas and page hashes, so comparing captures separates state-transfer traffic from the total network rate. The same drawer works on native and web; no platform callback override is needed. Hosts and runtime rebuild together for the stats value layout. The 19-line capacity preserves slow-system rows when space allows; small screens retain normal truncation.
+
+Validation: Windows ASan stats 14/14 and visibility 9/9 pass, including a cumulative world count above 4 GiB and remote-only rows. Web stats validation and the host build are recorded by the integrating task. No simulation data, wire format or tick behavior changes in this diagnostic presentation.

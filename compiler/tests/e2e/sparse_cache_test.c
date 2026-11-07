@@ -5,10 +5,12 @@
 #include "game.h"
 #include "tide/jobs.h"
 #include "tide_test.h"
+#include "entity_order_test.h"
 
 enum { COUNT = 2051, MOST = COUNT + 17 };
 typedef struct expected_item {
     Item value;
+    tide_entity key;
     bool needed, blocked;
 } expected_item;
 typedef struct model {
@@ -55,6 +57,17 @@ static void model_birth(model *m, const int ordinal, const bool last)
     };
 }
 
+static void remember_keys(const tide_world *w, model *m)
+{
+    for (uint32_t slot = 0; slot < w->entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&w->entities, slot);
+        if (!tide_has_Item(w, entity)) continue;
+        const int ordinal = tide_get_Item(w, entity).ordinal;
+        TIDE_REQUIRE(ordinal >= 0 && ordinal < MOST);
+        m->items[ordinal].key = entity;
+    }
+}
+
 static void init(tide_world *w, model *m, const int bias)
 {
     memset(m, 0, sizeof *m);
@@ -64,6 +77,7 @@ static void init(tide_world *w, model *m, const int bias)
     w->Rules.bias = bias;
     tide_world_tick(w);
     for (int i = 0; i < COUNT; i++) model_birth(m, i, i == COUNT - 1);
+    remember_keys(w, m);
 }
 
 static void model_tick(model *m, const int mode)
@@ -79,6 +93,13 @@ static void model_tick(model *m, const int mode)
         e->value.small = (uint8_t)(e->value.small + 19u);
         m->seen[m->seen_count++] = e->value.ordinal;
     }
+    entity_order_value ordered[MOST];
+    for (int i = 0; i < m->seen_count; i++) {
+        const int ordinal = m->seen[i];
+        ordered[i] = (entity_order_value){m->items[ordinal].key, ordinal};
+    }
+    qsort(ordered, (size_t)m->seen_count, sizeof *ordered, entity_order_compare);
+    for (int i = 0; i < m->seen_count; i++) m->seen[i] = ordered[i].value;
     for (int row = 0; row < m->count; row++) {
         if (m->rows[row] == HOLE) continue;
         expected_item *e = &m->items[m->rows[row]];
@@ -91,12 +112,14 @@ static void model_tick(model *m, const int mode)
         if (mode == 3) e->needed = false;
     }
     if (mode == 4) {
-        // Commands were recorded in pre-removal row order. Each removal leaves
-        // a hole, but the last row's, which goes with the holes before it.
-        const int gone[] = {1, 1023, 2048};
+        // Commands apply in logical-key order. Retain the independent physical
+        // hole model, including trimming the final run of holes.
+        entity_order_value gone[] = {{m->items[1].key, 1}, {m->items[1023].key, 1023},
+                                     {m->items[2048].key, 2048}};
+        qsort(gone, sizeof gone / sizeof *gone, sizeof *gone, entity_order_compare);
         for (size_t g = 0; g < sizeof gone / sizeof *gone; g++) {
             for (int row = 0; row < m->count; row++) {
-                if (m->rows[row] != gone[g]) continue;
+                if (m->rows[row] != gone[g].value) continue;
                 m->rows[row] = HOLE;
                 while (m->count && m->rows[m->count - 1] == HOLE) m->count--;
                 break;
@@ -176,6 +199,7 @@ static void play(const bool snapshot, const tide_jobs *jobs, uint64_t hashes[STE
         }
         model_tick(m, modes[step]);
         tide_world_tick_on(&world, jobs);
+        remember_keys(&world, m);
         check_world(&world, m);
         hashes[step] = tide_world_hash(&world);
         if (snapshot) TIDE_REQUIRE(tide_world_hash(&kept) == before);

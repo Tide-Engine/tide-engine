@@ -21,7 +21,7 @@ static const char game_wgsl[] =
     "}\n";
 
 typedef struct listed {
-    int shaders, metas;
+    int shaders, computes, metas;
     bool stale;
 } listed;
 
@@ -43,6 +43,7 @@ static void count(void *user, const char *name, const bool is_dir)
     if (is_dir) return;
     const size_t n = strlen(name);
     if (n > 7 && strcmp(name + n - 7, ".shader") == 0) l->shaders++;
+    if (n > 8 && strcmp(name + n - 8, ".compute") == 0) l->computes++;
     if (n > 5 && strcmp(name + n - 5, ".meta") == 0) l->metas++;
     if (strncmp(name, "0000000000000000", 16) == 0) l->stale = true;
 }
@@ -73,8 +74,9 @@ TIDE_TEST(unity_shaders_written)
     listed l = {0};
     sys_list(shaders, count, &l);
     TIDE_CHECK(l.shaders == 11); // The renderer's 10, and the game's
+    TIDE_CHECK(l.computes == 6); // ...and the renderer's kernels, a .compute each
     TIDE_CHECK(l.metas == 0 && !l.stale);
-    TIDE_CHECK(key_lines(shaders) == 11);
+    TIDE_CHECK(key_lines(shaders) == 17);
 
     snprintf(path, sizeof path, "%s/%016llx.shader", shaders, (unsigned long long)key);
     char *text = sys_read_file(path, NULL);
@@ -85,14 +87,18 @@ TIDE_TEST(unity_shaders_written)
     TIDE_CHECK(strstr(text, title) != NULL);
     TIDE_CHECK(strstr(text, "#pragma vertex tidehl_vertex") != NULL);
     TIDE_CHECK(strstr(text, "cbuffer TideUniforms") != NULL);
+    // One SubShader, for GPUs that compute: Unity's OpenGL ES 3.0 and WebGL 2 get none
+    const char *sub = strstr(text, "    SubShader\n");
+    TIDE_CHECK(sub && !strstr(sub + 1, "    SubShader\n") && strstr(text, "#pragma exclude_renderers gles3") != NULL);
+    TIDE_CHECK(strstr(text, "TIDEHL_TEXTURE_BUFFERS") == NULL);
     free(text);
 
     // The game's shader gone, its file goes too
     TIDE_REQUIRE(unity_shaders_write(dir, NULL, 0));
     l = (listed){0};
     sys_list(shaders, count, &l);
-    TIDE_CHECK(l.shaders == 10);
+    TIDE_CHECK(l.shaders == 10 && l.computes == 6);
     TIDE_CHECK(!sys_exists(path));
-    TIDE_CHECK(key_lines(shaders) == 10);
+    TIDE_CHECK(key_lines(shaders) == 16);
     sys_remove_tree(dir);
 }

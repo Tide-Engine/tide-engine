@@ -1,5 +1,173 @@
 # The schedule and the tick on threads
 
+## Final logical spawn keys and canonical row ranges (2026-11-06)
+
+Owner-approved Entity128 migration supersedes temporary handles and their
+settlement below. A spawn returns its complete causal key immediately. Runtime
+split tasks record those exact keys and register private storage in deterministic
+source order when the system joins; Entity fields and queued values are never
+rewritten. Generated match systems with ordered effects traverse admitted entities
+in canonical logical-key order across archetypes. Independent numeric row work
+retains its existing chunk/piece execution. C retains the complete final key.
+
+Canonical traversal can visit a small run inside a physical chunk. Such a run
+must use ordinary in-place copy-on-write, preserving the untouched rows; the
+uninitialized apart-page optimization applies only when the run fills the whole
+chunk. Otherwise each partial run erased other rows, repeatedly resetting a
+Pack component and spawning another bag every tick. The shard movement test
+exposed this; the canonical_rows fixture also checks untouched wide fields and
+C writes across archetypes and retained snapshots.
+
+Validation so far: scoped Windows ASan jobs/attached/protocol tests, the nine
+existing shard movement/checkpoint/recovery cases, canonical_rows, stable_entities,
+stable_async, handler_queries and visibility_predicted pass. Final native/web
+coverage is recorded with the completed migration. Tagged shard borrowing and
+its retry/clock contracts are in sharding.md.
+
+
+## Scene preparation outside ticks (2026-11-05)
+
+The approved prepare block (language.md) runs on the existing owned background worker provider, on one private match
+world, with normal deterministic helpers/parallel loops. No system tick runs concurrently on that world. Pending
+roots run in recorded load order. Source/complete world adoption stays on the session thread. Top-level preparation
+statement boundaries flush mutable components and publish locked retained snapshots for observational views; loops
+and helper interiors need not publish. Cancellation checks are at loops, helper entry and handler statements,
+avoiding a check for every ordinary assignment in a hot helper. Leaving/reload waits for provider completion after
+abandoning work, so trusted extern C must finish. Hosts without background/help support fall back synchronously,
+as local workers do. Threaded publication/running-helper cancellation and exact generation counts are fixture-tested.
+Readiness declares global scene reads even without an explicit World/query parameter, including through helpers;
+`schedule/preparation` pins the resulting dependency. Schedule output lists authored preparation separately from
+tick-end handlers. Parallel preparation callbacks bind packed constants on each helper thread; the assets fixture
+checks exact results against serial preparation on native and WASI pools.
+
+## Parallel loops over a query's rows (2026-11-05)
+
+Owner's decision (notes/indexed-loops.md, the indexed-loops design): parallel
+loops over a query's rows exist, and one-sided effects between entities go
+through `Send`. Built: `parallel (var f in fighters)` in systems, views and
+handlers (match and local). Picks, Provisional in `docs/spec.md` (Read-only
+entity queries):
+
+- **Checker** (`check_parallel_query`, `check_parallel_steps` in
+  `compiler/src/check.c`). The loop sets `stmt.query` as a query foreach does,
+  and its variable is the foreach's row type. `by`/`offset` and a typed
+  variable are errors. The row is read-only: `check_step_write` names it
+  (`query row 'f' is read-only ...`); `check_name` lets the loop's own row in
+  (other rows stay refused in steps). Not yet: a query with a `mut` binding
+  (refused at the loop), and attached local fields read in a step, directly
+  (`check_local_field`) or through a helper (`check_local_field_calls`, by
+  `call_site.parallel`). Steps keep every other parallel-step rule, with one
+  exception in `check_step_expr`: a query loop's step may `Send` a match event
+  of plain values; a command, a local event, or an event holding text or lists
+  is an error naming why. Helpers that send are still refused (the `acts`
+  check), as in every parallel step.
+- **Codegen** (`gen_parallel_query_call`, `gen_par_query_steps`, the query
+  branch of `gen_par_heads` in `compiler/src/codegen.c`). The rows are an
+  array in the foreach's order: a view's or a local handler's own row array
+  (`tide_q<n>`, `tide_q<n>n`), or, for a system or match handler, rows gathered
+  into a `tide_par<n>_row` array (malloc'd, freed after the loop) by the
+  foreach's own table walk (`gen_query_walk` with `gather`, which copies each
+  row instead of running a body). Tasks are runs of `per` rows: `ceil(n/1024)`,
+  at least `ceil(4096/step cost)` clamped to 1..16, as `tide_par_list_begin`
+  picks blocks. `tide_parallel_for` runs them with the usual cost
+  (`rows * step cost`). Each task's step function walks its run, binding the
+  row as a copy; rolls are `tide_random_step(tide_par_dice, row index, 0, 0)`.
+- **Order of sends.** When a step sends, the loop allocates one zeroed
+  `tide_queue` per task; the step function points the thread-local
+  `tide_task_queue` at its task's queue (restoring the previous value after),
+  so `tide_cmd_push`'s `tide_recording` records there. After the join
+  (`tide_memory_sync`), the queues are appended to
+  `tide_recording(&tide_w->commands)` in task order and freed. Tasks are
+  contiguous runs in row order, so the result is exactly what the foreach
+  records, on any number of threads; in a split system the task queue is the
+  system task's, which `jobs.c` merges and settles as before. In a match
+  handler it's the world's queue being dispatched: appended items come after
+  the current one, as ordinary pushes do (`tide_queue_append` keeps places).
+  No runtime function was added: `tide_task_queue`, `tide_queue_append`,
+  `tide_queue_free`, `tide_parallel_for`, `tide_realloc` are existing API.
+- Work estimate: a query loop's work can't be told before the tick
+  (`gen_parallel_work` returns false), so a tick with one runs on threads, as
+  for a component's list.
+
+Tests: `tidec_e2e_parallel_query` (`compiler/tests/e2e/parallel_query.tide`):
+6,000 bodies over four matching and unmatched archetypes, a foreach, a system
+parallel loop and a match handler's parallel loop with the same guard each send
+a world event (with a costly computed value) and the system ones an entity
+event; the logs written by the handlers must be identical in order and value,
+on one thread, on a fake two-thread pool, and on the platform pool (5 runs,
+hashes equal to one thread each tick). Reversing the queue merge was caught. A
+view loop over its row array builds. Errors: `compiler/tests/errors/
+parallel_query_*.tide` (by, typed row, row write, outer write, mut query, local
+field, send of text, send of a local event, in a function, spawn). Passing:
+sanitize (ASan) natively and `web-debug` (with threads).
+
+Gaps: spawning, `Add`/`Remove`/`Destroy` from steps (the same per-task queues
+would order them, but spawn handles need settling per loop task); helpers
+that send; local-field reads; `mut` bindings; local events from view steps
+(the local world's queue isn't `tide_recording`'s); the gathered array is
+allocated each run (no cache across ticks yet; the indexed-loops cache would
+own it).
+
+## Parallel loops in ticks on one thread, and costly steps (2026-11-04)
+
+Gap (nightly.21-32): a match `parallel` loop over a singleton's list ran at one
+thread's speed. Cause: `tide_run_systems` decides threads before the systems
+run, from each system's `count` (its parallel loops' terms read the list's
+count or the grid's chunks as they are then). A list a system resizes that
+tick, or a sized grid with no chunks yet, counts as empty, the tick runs on
+one thread with `current` NULL, and `tide_parallel_for` ran the steps in
+order. (The reported grid speedup came from a grid that already had chunks.)
+Second, `stmt_cost` counts any call as 30, so a step that calls one costly
+function was reckoned as nothing: 80-1,500 such steps stayed below both the
+tick's `PARALLEL_WORK` and the loop's `LOOP_WORK`.
+
+Fix, with results unchanged (steps are independent; random rolls are by
+place; `tide_par_list_end` writes in order):
+- In a tick on one thread, `tide_parallel_for` calls the pool in for the loop
+  alone (`round_loop`, `engine/src/jobs.c`) when the loop's own cost, from its
+  real step count, is at least `ROUND_WORK` (`PARALLEL_WORK / 10`: 2M units
+  native, 6M web). Each joining thread runs `tick->prepare` before its first
+  step, as a tick thread does; the caller's thread is already prepared.
+  `serial_jobs` is cleared during the round, so a loop inside a step (helper
+  C, which the checker can't see) runs in order. The decision is the static
+  estimate against a constant: no timing.
+- `step_cost` (`compiler/src/codegen.c`) is `stmt_cost` with the bodies of
+  called Tide functions and methods counted, four calls deep (`cost_callees`),
+  capped as before. It's used only for parallel loop steps (the tick term in
+  `gen_parallel_work` and the cost passed to `tide_parallel_for`); system row
+  costs are unchanged, and so is `loop_work_known` (a callee's unknown loop
+  counts 8 trips, as in the system cost).
+- `tide_par_list_begin` takes the step cost: tasks get at least
+  `ceil(4096 / cost)` blocks, clamped to 1..16 (16 as before for cheap steps),
+  still at most 1,024 tasks, so a list of a few hundred costly steps makes
+  enough tasks for every thread.
+
+Repro (`Probe` from the report, 361,201 elements, `Heavy` 400 Sin+Cos), release,
+12 threads, `--profile`, systems' total ms over the run: before Par 2,494, Ser
+2,498, Grid 2,490 (all on one thread: the grid had no chunks either); after
+Par 450-483, Ser 2,458-2,662, Grid 228-249. Par's first round came out on the
+home cache group (six cores) and Grid's on every group: the desktop pool times
+both ways per work function (`choice`), so it's the trial order, not the loop.
+Persistent short lists, mean per tick over 58 ticks: 80 steps 0.574 to 0.088
+ms; 1,500 steps 10.3 to 1.04 ms.
+
+Tests: `tidec_e2e_parallel_fill` (`compiler/tests/e2e/parallel_fill.tide`):
+a list resized and looped in the same tick, and a 400-element list of costly
+steps; a counting two-thread pool whose rounds run thread 1 first must see two
+loop rounds in the first (one-thread) tick and one tick round in the second,
+with hashes and every element equal to one thread; with the platform pool,
+threads other than the caller's must join a first tick's loop rounds (all 12
+did here), and hashes match. `jobs_costly_loops_in_a_tick_on_one_thread_call_threads_in`
+(`tests/test_jobs.c`) pins one round for a costly loop, none for a cheap one or
+a loop inside a step, `prepare` on the joining thread, every step once.
+The existing `parallel_work*` fixtures still pin rounds (the constant variant
+stays at none).
+
+Language-level option not taken: a per-loop cost hint (an attribute on the
+loop, or on a function, saying its steps are expensive) would let a game
+force sharing where tidec's static estimate is still low (steps whose cost is
+in C, or in loops with unknown bounds). Not added; the owner's call.
+
 ## Started operations and worker admission (2026-10-25)
 
 Task registry reads/writes participate in static scheduling and propagate
@@ -229,7 +397,7 @@ Named `[Stage(Enum.Member, offset)]` phases and the reported schedule stage are 
 - Two systems conflict when one writes a component or singleton the other reads or writes, unless they can never touch the same entity: the compiler proves that from the archetypes (`with Player` against `with Enemy`). From the archetypes alone (2026-10-06): a sparse component one system needs and the other excludes keeps them off the same entity, but not off the same pages, as both go through the archetype's chunks, so they wait for each other like any two (`can_meet` is `share_archetypes`). They used not to, and a chunk's page that a snapshot shares is replaced by whoever writes it (`tide_table_lanes_begin`): two such systems in one chunk at once each took a page of their own, and the one that ended last dropped what the other wrote. Made to meet there (a C function both call, which waits for the other), one of two entities lost its writes every tick. Nothing else may rest on two systems writing one chunk's lanes at once: a loop writes a page apart, and a chunk in pieces has a half-written page in the table while they run (see ECS and simulation state). A system that takes its entities' input, or their devices, reads whose each is, their `Owner` (`accesses_of`), so it waits for a system that changes `Owner`, which it didn't either. `compiler/tests/schedule/pages.tide` pins both. What code reaches through its `World` parameter (`world.Get<Health>(e)`, `Has`, `TryGet` and, with `mut World`, `Set`) is access to every entity's component, so it conflicts regardless; the checker takes it from the calls in the body (`decl.world_uses`, `check_world_call` in `check.c`) and in the functions the code passes its World to (`check_world_passing`: see Language), as the signature doesn't name the components, and `tidec --schedule` and the language server's hover and lens say it. A system that calls `Set`, or that reads through its `World` a component it also changes through a parameter, runs on one thread, and the latter writes its rows in place so what it reads of the rows it changed is the same on every machine (`world_reads_own_writes`). `Set<T>` is allowed beside read-only `T`, on any target and through helpers (extended 2026-10-18): each row reloads affected page addresses and takes its value on entry, including preceding rows' writes. Its value stays as entered until it returns, including copied containers whose stored allocations Set may reuse. Implicit Owner reads for input follow the current pages too. Mutable `T` still refuses overlapping Set, because its write-back could overwrite the same entity's Set (`compiler/tests/e2e/world_set_own.tide` and `world_set_read.tide`). Two systems that change the match's text or lists conflict too, as they share its heap. `Add`, `Remove`, `Destroy` and `Send` never conflict, because they're recorded and applied at the end of the tick in order. `Spawn` is recorded too, and only makes a spawning system that runs on one thread wait for those that spawn before it (below). What a function or method the system calls sends, spawns or changes is the system's own in all of this (`check_acts` in `check.c` sets `decl.spawns` and `decl.writes_text` on the system that calls one: see Language, in `notes/language.md`), recorded through the same `tide_w` into the same queue, a task's own on a thread. Event handlers run at the end of the tick too, as each event's turn comes, so they aren't part of the tick's schedule. Input and `Time` are only read.
 - The tick runs on threads (`tide/jobs.h`): the schedule (`analyze_parallelism` in `compiler/src/parallel.c`) becomes a task graph, a task per system, or per chunk for a system that splits its entities. A system with fewer chunks than threads runs each chunk in pieces (`pieces_for` in `engine/src/jobs.c`: about two tasks a thread, each worth a few microseconds, up to 16 a chunk), its rows in order piece by piece, so a few heavy chunks keep every thread busy with the same results. Pieces of one chunk write the same pages at once, so none of them can take a page for it: before them, the system's `own` function begins every chunk's lanes of what it changes for all its pieces, and after them its `done` function ends them (`tide_system_tasks.own` and `done`, generated as `tide_own_<System>` and `tide_done_<System>`: `tide_table_lanes_begin_pieces` and `tide_table_lanes_end_pieces`). `own` is called by the first thread that comes for one of the system's tasks once what it waits for is done (`system_state.owned` in `engine/src/jobs.c`), never as the tick is set up: a system before it in the tick would find the pages `own` took, with nothing in them yet. `done` is called by the thread that ends the last piece, before the system's spawns settle and before anything that waits for it starts. A system written in C still has its pages made the world's own, copied, by its `own`, and has no `done`. `tests/test_jobs.c` checks the order of the calls with a pool of one thread that says it has eight. The platform layer has the threads (`tide_platform_jobs`, one per physical core: two threads of a tick on one core share its units and slow each other; on the web, one for each processor the browser counts, which is all it says: see Web builds); sessions take them in their desc and pass them to `tide_game.tick`. Each task records into a queue of its own, merged in the order one thread would have recorded it; the thread that runs ticks keeps the tasks' queues, pages and all, for the next tick. A tick with little work runs on one thread: tidec reckons each system's cost per entity (`stmt_cost`, counting a `for` from one number to another as many times as it runs, other loops as 8), and a parallel loop's steps as the world is now when its grid or list is a singleton's (`tide_grid_cells_about`, times 4 for what cells cost to read and write), and threads only start past about half a millisecond's work (one and a half on the web), as waking them and then reading on one thread what they changed in their caches costs more than they'd save below that. A worker with nothing to do looks for work 256 times in a row (`IDLE_LOOKS`, with the CPU's pause between looks where there's one), then leaves the tick and sleeps until there's work for it, which whatever makes the work asks it back for (`tide_jobs.more`: see Web builds, where it was first built, for what asks and why no call is lost). Desktop's pool sleeps its workers on a condition variable (`worker_loop` and `more` in `platform/src/jobs.c`), since 2026-10-05: before, a worker stayed in the tick until it was over, looking for work and yielding its core, and that slowed the threads that had work, most in ticks that mostly run on one. Measured on desktop (a release build on Windows, 12 cores, the least of runs taken in turn with the build before; saved as `desktop-idle-threads` and `desktop-idle-threads-before`): with 2,400 crates, Box3D's tick on 12 threads went from 1.62 ms to 1.32 and Box2D's from 0.84 to 0.74, which is what it takes on one thread; `bench_sand`'s clients simulate for 29 ms a second where it was 50 (191 where it was 236 at 1024 cells a side); `versus_life`'s tick went from 0.31 to 0.24 and `versus_sand`'s from 0.27 to 0.24; `bench_gallery` and the other versus benchmarks are as they were. More looks before sleeping were tried: 2,048 were no quicker, and 16,384 slower. The caller's thread can't leave a tick, which is its to finish: with nothing to do it yields its core after as many looks (`tide_yield`), so that a thread the system pushed aside doesn't hold the tick up for a time slice while this one spins. Web pages run on threads when they're cross-origin isolated. `platform/tests/jobs.tide` checks threads against one thread, tick by tick, natively and under Node.
 - Besides components and singletons, systems wait for each other over what's the whole match's: changing text or lists (its heap; reading it alongside is safe, as the heap's page table is read atomically and replaced ones are freed once systems are done, `tide_heap_settle`), and spawning by a system that runs on one thread (entity IDs are handed out in order, and it hands them out as it runs). C is trusted and counts for neither. A system only splits its entities across threads when it changes no text, list, grid or singleton (`system_splits`).
-- A parallel loop (`parallel (var at in cells by 2 offset o)` over a grid or `parallel (var i in items)` over a list, and a foreach over a grid whose steps only touch their own cell, `own_cell_only` in `compiler/src/check.c`) runs inside its system, a fork and join (`tide_parallel_for`): its steps go to a function of their own after the system's, with what they read of the code around them copied into a struct, and the pool's threads that have nothing else to do help (`help_loop` in `engine/src/jobs.c`) unless it's next to no work, as they're awake already and tidec can't tell how long the loops inside a step go on; outside a threaded tick, or for a small loop, the system's thread runs them alone. A loop's steps count as its tick's work where they can be told (a singleton's grid or list, above); a tick with a loop whose steps can't runs on threads. Its tasks are tiles, the blocks that start in one chunk's place (`tide_par_tile`): every place a sized grid's blocks start in, or for a grid with an open axis, the places of the chunks it has and of those before them whose blocks get into them, where a block that takes in none of its chunks is skipped (`tide_par_live`). A step writes into a copy of its chunk (`tide_par_buffer`, made with a compare-and-swap, the first one's for all, from a pool kept across loops), and reads the grid itself, which doesn't change while the steps run; the loop's end puts the copies into the grid in chunk order (`tide_par_end`). Where it can (`plan_window` in `compiler/src/check.c`), a task reads the cells its blocks reach at their place plus constants once, into a window (`tide_par_window`), and its steps read and write a copy of it as plain memory, which the C compiler can run with SIMD; the rows that changed go into their chunks' copies (`tide_par_window_put`). A task's blocks are numbered from its own first one, and a window is where it starts and how many cells it is across, so nothing in a step's setup goes past an int wherever the loop's offset and cells are (see Language: no Tide code can corrupt memory). A parallel loop over a list (`parallel (var i in items)`, `tide/list.h`) gives each task a copy of its blocks' elements, which its steps write while they read the list itself, and the loop's end puts the runs that changed into the list, chunk by chunk (`tide_par_list_end`). A foreach over a grid that goes in order goes row by row (`tide_grid_rows`), over a grid with an open axis through the chunks it has, sorted, in the scratch area (`tide_scratch_memory`, freed with the area's mark).
+- A parallel loop (`parallel (var at in cells by 2 offset o)` over a grid or `parallel (var i in items)` over a list, and a foreach over a grid whose steps only touch their own cell, `own_cell_only` in `compiler/src/check.c`) runs inside its system, a fork and join (`tide_parallel_for`): its steps go to a function of their own after the system's, with what they read of the code around them copied into a struct, and the pool's threads that have nothing else to do help (`help_loop` in `engine/src/jobs.c`) unless it's next to no work, as they're awake already and tidec can't tell how long the loops inside a step go on; in a tick on one thread, a loop worth it calls the pool in for itself (`round_loop`, 2026-11-04 above); outside a tick, or for a small loop, the system's thread runs them alone. A loop's steps count as its tick's work where they can be told (a singleton's grid or list, above); a tick with a loop whose steps can't runs on threads. Its tasks are tiles, the blocks that start in one chunk's place (`tide_par_tile`): every place a sized grid's blocks start in, or for a grid with an open axis, the places of the chunks it has and of those before them whose blocks get into them, where a block that takes in none of its chunks is skipped (`tide_par_live`). A step writes into a copy of its chunk (`tide_par_buffer`, made with a compare-and-swap, the first one's for all, from a pool kept across loops), and reads the grid itself, which doesn't change while the steps run; the loop's end puts the copies into the grid in chunk order (`tide_par_end`). Where it can (`plan_window` in `compiler/src/check.c`), a task reads the cells its blocks reach at their place plus constants once, into a window (`tide_par_window`), and its steps read and write a copy of it as plain memory, which the C compiler can run with SIMD; the rows that changed go into their chunks' copies (`tide_par_window_put`). A task's blocks are numbered from its own first one, and a window is where it starts and how many cells it is across, so nothing in a step's setup goes past an int wherever the loop's offset and cells are (see Language: no Tide code can corrupt memory). A parallel loop over a list (`parallel (var i in items)`, `tide/list.h`) gives each task a copy of its blocks' elements, which its steps write while they read the list itself, and the loop's end puts the runs that changed into the list, chunk by chunk (`tide_par_list_end`). A foreach over a grid that goes in order goes row by row (`tide_grid_rows`), over a grid with an open axis through the chunks it has, sorted, in the scratch area (`tide_scratch_memory`, freed with the area's mark).
 - A system that splits and spawns gives temporary handles (`TIDE_ENTITY_TEMPORARY` in the generation, with its task's number; `tide_new_entity`). Once its tasks are done, it settles them (`tide_settled`): its entities get IDs in the order one thread would have given them, and its tasks' queues (`tide_settle_item`) and the entity fields of its `mut` components (`tide_settle_<system>`) get the real handles. Settling keeps the tick's order among spawning systems (each settles after the one before it that spawns is done) and comes before anything waiting for the system starts, so the IDs are the same as on one thread. Systems look entities up while one makes them, so the entity table's page table is read atomically like the heap's (`tide_entities_settle`). Text shows a temporary handle as `Entity(new)`, and C tells with `tide_entity_is_temporary`.
 - The language server shows each system's stage and waits above it and on hover, and `tidec --schedule` (or the `<game>_schedule` build target) prints it as text for CI and agents. `compiler/tests/schedule/` pins its output. `tidec --outline` (`compiler/src/outline.c`, 2026-10-21) gives the same per system as JSON beside every other declaration (each stage, wait with its `describe_wait` reason, and the first few alongside, with the counts of the rest), for tide unity's `outline.json`; `compiler/tests/outline/` pins it.
 - The analysis keeps who runs after whom as bits, a row a system, and whether two systems conflict as a yes or no; it only works out what a wait is over for the waits it lists. Those are every wait that's a system's own and the first 32 that go through another system, and it lists the first 32 systems each runs alongside, counting the rest (`decl.waits_unlisted`, `decl.alongside_count`): a game with thousands of systems has millions of pairs. Generated code names only a system's own waits (`tide_waits_<system>`), as one that goes through another system is done by the time that system is.

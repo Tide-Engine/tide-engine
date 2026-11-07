@@ -1,0 +1,20 @@
+// expect: GPUList<Blade> holds Blade, not int
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Keep(Meadow meadow)
+{
+    meadow.blades.Add(3);
+}
+view Show(Meadow meadow) { GPU.Run(Keep, 4); }

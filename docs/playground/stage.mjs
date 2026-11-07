@@ -18,7 +18,7 @@ async function checkImports(name, bytes) {
     for (const item of WebAssembly.Module.imports(module)) {
         if (item.module === 'wasi_snapshot_preview1' && item.kind === 'function' &&
             typeof wasiImports[item.name] === 'function') continue;
-        if (name === 'tidec' && item.module === 'env' && item.name === 'memory' && item.kind === 'memory') continue;
+        if ((name === 'tidec' || name === 'tidels') && item.module === 'env' && item.name === 'memory' && item.kind === 'memory') continue;
         throw new Error(`${name} imports unsupported ${item.module}.${item.name} (${item.kind}). ` +
             'Build the docs with the LLVM version in cmake/LLVM.cmake; these tools run in a WASI browser host.');
     }
@@ -27,6 +27,8 @@ async function checkImports(name, bytes) {
 // Older LLVM emits Emscripten setjmp helpers that this WASI host cannot call.
 const tidec = await readFile(args.compiler);
 await checkImports('tidec', tidec);
+const tidels = await readFile(args.server);
+await checkImports('tidels', tidels);
 const cache = path.join(root, 'build/playground-tools');
 const output = path.join(root, 'docs/static/playground/generated');
 await mkdir(cache, { recursive: true });
@@ -94,9 +96,13 @@ for (const [source, target] of [
 ]) files[target] = (await readFile(source)).toString('base64');
 files['main.c'] = (await readFile(new URL('main.c', import.meta.url))).toString('base64');
 const bundle = Buffer.from(JSON.stringify(files));
+// The language server needs only the engine headers, so the editor gets its
+// completions and diagnostics without the compiler's 25 MiB download.
+const headers = Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(files).filter(([name]) => name.startsWith('include/tide/')))));
 const assets = {
     'clang.bin': clang, 'lld.bin': linker,
     'tidec.bin': tidec, 'files.bin': bundle,
+    'tidels.bin': tidels, 'headers.bin': headers,
 };
 const manifest = { toolchain: 'clang/LLD 22.1.8', assets: {} };
 for (const [name, bytes] of Object.entries(assets)) {

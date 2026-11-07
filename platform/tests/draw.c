@@ -1,5 +1,5 @@
 // The renderer, through the whole drawing path (the draw list, the platform
-// layer, OpenGL or WebGL), read back from an offscreen render.
+// layer, Vulkan or WebGPU), read back from an offscreen render.
 //
 // It checks that each shape lands where it should, that commands draw in
 // the order they were recorded whatever the renderer batches together, that
@@ -21,6 +21,7 @@
 #include <time.h>
 
 #include "tide/gui.h"
+#include "tide/draw_profile.h"
 #include "tide/mesh.h"
 #include "tide/net.h" // tide_hash
 #include "tide/pack.h"
@@ -373,13 +374,22 @@ static void resident_pack_textures(void)
     selected = 0;
     for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
     expect(selected == (1u << 1), "idle texture slot pressure has a stable tie order and safe byte arithmetic");
+    // The budget: 128 MiB, or a sixteenth of a device's own memory where that's more
+    expect(tide_texture_idle_budget(0) == TIDE_TEXTURE_IDLE_BYTES, "a device that says no memory of its own keeps 128 MiB of idle images");
+    expect(tide_texture_idle_budget(UINT64_C(1) << 30) == TIDE_TEXTURE_IDLE_BYTES, "a 1 GiB GPU keeps 128 MiB");
+    expect(tide_texture_idle_budget(UINT64_C(16) << 30) == UINT64_C(1) << 30, "a 16 GiB GPU keeps a sixteenth, 1 GiB");
+    expect(tide_texture_idle_budget(UINT64_MAX) == UINT64_MAX / TIDE_TEXTURE_IDLE_SHARE, "the share of any size doesn't overflow");
+    expect(tide_texture_idle_bytes() == tide_texture_idle_budget(tide_texture_device_memory()),
+           "the renderer weighs idle images by its device's budget");
+    printf("idle image budget on this device: %llu MiB, of %llu MiB its own\n",
+           (unsigned long long)(tide_texture_idle_bytes() >> 20), (unsigned long long)(tide_texture_device_memory() >> 20));
 
     uint8_t pixels[32 * 32 * 4], hash[32] = {37};
     for (uint32_t i = 0; i < sizeof pixels; i += 4u) {
         pixels[i] = 255, pixels[i + 1] = 0, pixels[i + 2] = 0, pixels[i + 3] = 255;
     }
     tide_pack_builder pack = {0};
-    const uint32_t block = tide_pack_texture(&pack, hash, 32, 32, pixels);
+    const uint64_t block = tide_pack_texture(&pack, hash, 32, 32, pixels);
     tide_pack_name(&pack, "resident", TIDE_PACK_TEXTURE, block, 0, 0);
     size_t size;
     uint8_t *bytes = tide_pack_end(&pack, &size);
@@ -432,6 +442,87 @@ static void resident_pack_textures(void)
     expect(tide_platform_gpu_memory() == base_memory, "a changed draw epoch clears idle pack images after unload");
 }
 
+// Big pack images, together over 128 MiB as a forest's 4096 by 4096 maps are,
+// stay while a frame doesn't draw them, where the device's budget has room
+// for them (a discrete GPU's share of its memory). Under 128 MiB they went as
+// soon as a frame left them out, and were sent again when they came back.
+static void resident_large_pack_textures(void)
+{
+    enum { SIDE = 4096, COUNT = 2 };
+    const uint64_t each = (uint64_t)SIDE * SIDE * 4u, mipped = each + each / 3u;
+    if (tide_texture_idle_budget(tide_texture_device_memory()) < COUNT * mipped + (UINT64_C(16) << 20)) {
+        printf("big idle images: this device's budget hasn't room for them, so they aren't checked here\n");
+        return;
+    }
+    uint8_t *pixels = malloc(each);
+    expect(pixels != NULL, "big idle images: memory for their pixels");
+    if (!pixels) return;
+    tide_pack_builder pack = {0};
+    const tide_color colors[COUNT] = {red, blue};
+    for (uint32_t t = 0; t < COUNT; t++) {
+        const uint8_t color[4] = {(uint8_t)(colors[t].r * 255.0f), (uint8_t)(colors[t].g * 255.0f),
+                                  (uint8_t)(colors[t].b * 255.0f), 255};
+        for (uint64_t i = 0; i < each; i += 4u) memcpy(pixels + i, color, 4);
+        uint8_t hash[32] = {91, (uint8_t)t};
+        const uint64_t block = tide_pack_texture(&pack, hash, SIDE, SIDE, pixels);
+        tide_pack_name(&pack, t ? "big1" : "big0", TIDE_PACK_TEXTURE, block, 0, 0);
+    }
+    free(pixels);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&pack, &size);
+    const bool loaded = tide_pack_load(bytes, size);
+    free(bytes);
+    expect(loaded, "big idle images: the fixture pack loads");
+    if (!loaded) return;
+    tide_texture_ref images[COUNT];
+    for (uint32_t t = 0; t < COUNT; t++) {
+        images[t] = tide_texture_filtered(tide_pack_texture_of(tide_pack_find(t ? "big1" : "big0", TIDE_PACK_TEXTURE)),
+                                          TIDE_FILTER_TRILINEAR);
+    }
+    const tide_float2 points[COUNT] = {{8.5f, 8.5f}, {40.5f, 8.5f}};
+    const int32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    uint32_t got[COUNT];
+    tide_platform_read_pixels(&list, points, COUNT, got);
+    const uint64_t base_memory = tide_platform_gpu_memory();
+    uint64_t drawn_memory = 0;
+    for (uint32_t frame = 0; frame < 4; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_set_screen(&list);
+        tide_draw_clear(&list, background);
+        const bool visible = frame != 1 && frame != 2;
+        for (uint32_t t = 0; visible && t < COUNT; t++) {
+            const float x = 32.0f * (float)t;
+            const tide_vertex vertices[] = {
+                {{x, 0}, {0, 0}, {1, 1, 1, 1}}, {{x + 16, 0}, {1, 0}, {1, 1, 1, 1}},
+                {{x + 16, 16}, {1, 1}, {1, 1, 1, 1}}, {{x, 16}, {0, 1}, {1, 1, 1, 1}},
+            };
+            tide_draw_mesh_texture(&list, tide_list_from(vertices, 4, sizeof *vertices), triangles, images[t]);
+        }
+        const uint64_t before = tide_platform_gpu_written();
+        tide_platform_read_pixels(&list, points, COUNT, got);
+        const uint64_t sent = tide_platform_gpu_written() - before;
+        char what[160];
+        snprintf(what, sizeof what, "big idle images: frame %u sends %llu bytes", frame, (unsigned long long)sent);
+        expect(sent == (frame == 0 ? COUNT * each : 0u), what);
+        for (uint32_t t = 0; t < COUNT; t++) {
+            expect(near(got[t], rgba(visible ? colors[t] : background), 8), "big idle images: their pixels, drawn or not");
+        }
+        if (frame == 0) drawn_memory = tide_platform_gpu_memory();
+        else expect(tide_platform_gpu_memory() == drawn_memory, "big idle images keep their whole allocations while unused");
+    }
+    expect(drawn_memory >= base_memory + COUNT * mipped, "big idle images are counted with their smaller images");
+    tide_pack_unload();
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, points, COUNT, got);
+    expect(tide_platform_gpu_memory() == base_memory, "big idle images go once the pack does");
+}
+
 static void compressed_pack_textures(void)
 {
     const tide_float2 point = {8.5f, 8.5f};
@@ -443,12 +534,17 @@ static void compressed_pack_textures(void)
     const int32_t indices[] = {0, 1, 2, 0, 2, 3};
     const tide_list corners = tide_list_from(vertices, 4, sizeof *vertices);
     const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
-    for (uint32_t alpha = 0; alpha < 2; alpha++) {
+    // Each format beside its RGBA, then as its blocks alone (as tidec packs it), which a device without them decodes
+    for (uint32_t run = 0; run < 4; run++) {
+        const uint32_t alpha = run & 1u;
+        const bool alone = run >= 2u;
         const uint32_t format = alpha ? TIDE_BLOCKS_BC3 : TIDE_BLOCKS_BC1;
         uint32_t levels, compressed_bytes;
         expect(tide_texture_blocks_size(128, 128, format, &levels, &compressed_bytes), "compressed fixture size is valid");
+        uint32_t rgba_levels, rgba_bytes;
+        expect(tide_texture_blocks_size(128, 128, TIDE_BLOCKS_RGBA8, &rgba_levels, &rgba_bytes), "RGBA mip fallback size is valid");
         uint8_t pixels[128 * 128 * 4], hash[32] = {41};
-        hash[1] = (uint8_t)alpha;
+        hash[1] = (uint8_t)run;
         for (uint32_t i = 0; i < sizeof pixels; i += 4u) {
             pixels[i] = alpha ? 128 : 255, pixels[i + 1] = 0, pixels[i + 2] = 0, pixels[i + 3] = alpha ? 128 : 255;
         }
@@ -463,7 +559,7 @@ static void compressed_pack_textures(void)
             blocks[i + (alpha ? 8u : 0u) + 1u] = alpha ? 0x80 : 0xF8;
         }
         tide_pack_builder pack = {0};
-        const uint32_t block = tide_pack_texture_blocks(&pack, hash, 128, 128, pixels,
+        const uint64_t block = tide_pack_texture_blocks(&pack, hash, 128, 128, alone ? NULL : pixels,
             (tide_texture_blocks){blocks, format, levels, compressed_bytes});
         free(blocks);
         tide_pack_name(&pack, "compressed", TIDE_PACK_TEXTURE, block, 0, 0);
@@ -478,6 +574,9 @@ static void compressed_pack_textures(void)
         const tide_texture_blocks captured = tide_pack_texture_blocks_find(image.image.version & TIDE_TEXTURE_NAME);
         expect(captured.bytes == compressed_bytes && captured.levels == levels && captured.format == format,
                "the loaded pack exposes a complete validated compressed mip chain");
+        tide_texture exact;
+        expect(tide_pack_texture_find(image.image.version & TIDE_TEXTURE_NAME, &exact) && (exact.pixels == NULL) == alone,
+               "an image of blocks alone has no RGBA");
         tide_draw_forget(&list);
         tide_draw_reset(&list);
         tide_draw_clear(&list, background);
@@ -497,7 +596,7 @@ static void compressed_pack_textures(void)
             if (frame == 0) {
                 first_sent = sent;
                 first_memory = tide_platform_gpu_memory();
-                expect(sent == compressed_bytes || sent == sizeof pixels, "BC upload uses blocks or the exact RGBA fallback");
+                expect(sent == compressed_bytes || sent == rgba_bytes, "BC upload uses blocks, or every decoded RGBA mip");
                 expect(first_memory - base_memory == sent, "GPU memory accounts the complete uploaded representation");
                 printf("BC%u fixture: %llu upload bytes, %llu GPU bytes; RGBA base %zu\n", format,
                        (unsigned long long)sent, (unsigned long long)(first_memory - base_memory), sizeof pixels);
@@ -515,6 +614,82 @@ static void compressed_pack_textures(void)
         tide_platform_read_pixels(&list, &point, 1, &got);
         expect(tide_platform_gpu_memory() == base_memory, "compressed pack allocations clear on epoch changes");
     }
+}
+
+static void authored_mip_textures(void)
+{
+    const tide_float2 point = {8.5f, 8.5f};
+    const int32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
+    const bool previous = tide_texture_force_rgba;
+    static const uint8_t colors[4][4] = {{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}, {255, 255, 255, 255}};
+    for (uint32_t run = 0; run < 6; run++) {
+        const uint32_t format = run % 3u == 0 ? TIDE_BLOCKS_RGBA8 : run % 3u == 1 ? TIDE_BLOCKS_BC1 : TIDE_BLOCKS_BC3;
+        tide_texture_force_rgba = run >= 3u;
+        uint32_t levels, bytes, rgba_levels, rgba_bytes;
+        expect(tide_texture_blocks_size(8, 8, format, &levels, &bytes), "authored mip fixture shape is valid");
+        expect(tide_texture_blocks_size(8, 8, TIDE_BLOCKS_RGBA8, &rgba_levels, &rgba_bytes), "authored RGBA mip shape is valid");
+        uint8_t *data = calloc(bytes, 1u);
+        if (!data) abort();
+        uint32_t offset = 0, w = 8, h = 8;
+        for (uint32_t level = 0; level < levels; level++) {
+            const uint32_t count = tide_texture_level_bytes(w, h, format);
+            if (format == TIDE_BLOCKS_RGBA8) {
+                for (uint32_t i = 0; i < count; i += 4u) memcpy(data + offset + i, colors[level], 4u);
+            } else {
+                const uint32_t stride = format == TIDE_BLOCKS_BC1 ? 8u : 16u;
+                const uint16_t rgb = level == 0 ? 0xf800u : level == 1 ? 0x07e0u : level == 2 ? 0x001fu : 0xffffu;
+                for (uint32_t i = 0; i < count; i += stride) {
+                    const uint32_t color = offset + i + (format == TIDE_BLOCKS_BC1 ? 0u : 8u);
+                    if (format == TIDE_BLOCKS_BC3) data[offset + i] = data[offset + i + 1u] = 255u;
+                    data[color] = (uint8_t)rgb, data[color + 1u] = (uint8_t)(rgb >> 8);
+                }
+            }
+            offset += count;
+            w = w > 1u ? w / 2u : 1u, h = h > 1u ? h / 2u : 1u;
+        }
+        tide_pack_builder pack = {0};
+        uint8_t hash[32] = {63};
+        hash[1] = (uint8_t)run;
+        const uint64_t at = tide_pack_texture_blocks(&pack, hash, 8, 8, NULL,
+            (tide_texture_blocks){data, format, levels, bytes});
+        free(data);
+        tide_pack_name(&pack, "authored-mips", TIDE_PACK_TEXTURE, at, 0, 0);
+        size_t size;
+        uint8_t *file = tide_pack_end(&pack, &size);
+        const bool loaded = tide_pack_load(file, size);
+        free(file);
+        expect(loaded, "authored mip fixture pack loads");
+        if (!loaded) continue;
+        const tide_texture_ref image = tide_pack_texture_of(tide_pack_find("authored-mips", TIDE_PACK_TEXTURE));
+        tide_draw_forget(&list);
+        for (uint32_t frame = 0; frame < 4; frame++) {
+            tide_draw_reset(&list);
+            tide_draw_set_screen(&list);
+            tide_draw_clear(&list, background);
+            if (frame != 2u) {
+                const float side = frame ? 2.0f : 16.0f;
+                const tide_vertex corners[] = {{{8, 8}, {0, 0}, {1, 1, 1, 1}}, {{8 + side, 8}, {1, 0}, {1, 1, 1, 1}},
+                    {{8 + side, 8 + side}, {1, 1}, {1, 1, 1, 1}}, {{8, 8 + side}, {0, 1}, {1, 1, 1, 1}}};
+                tide_draw_mesh_texture(&list, tide_list_from(corners, 4, sizeof *corners), triangles,
+                    tide_texture_filtered(image, frame ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_POINT));
+            }
+            const uint64_t before = tide_platform_gpu_written();
+            uint32_t pixel;
+            tide_platform_read_pixels(&list, &point, 1, &pixel);
+            const uint64_t sent = tide_platform_gpu_written() - before;
+            if (!frame) {
+                expect(sent == bytes || sent == rgba_bytes, "authored mip upload accounts every stored level");
+                if (tide_texture_force_rgba || format == TIDE_BLOCKS_RGBA8)
+                    expect(sent == rgba_bytes, "no BC support uploads every decoded authored mip as RGBA");
+            } else expect(sent == 0, "mip filter changes and hidden frames retain authored images without upload");
+            expect(near(pixel, rgba(frame == 2u ? background : frame ? blue : red), 3),
+                   "point reads red base; minification reads authored blue mip, including BC fallback and return after hiding");
+        }
+        tide_pack_unload();
+        tide_draw_forget(&list);
+    }
+    tide_texture_force_rgba = previous;
 }
 
 static void meshes(void)
@@ -830,9 +1005,9 @@ static void primitives(void)
 // A pixel in the color its corners hand it, finished as every shader of a
 // game's is (see tide_shader): times the draw's tint, and where the draw
 // multiplies what's there, towards white as it clears.
-#define GLSL_TINT_FRAGMENT                                                                                             \
+#define GLSL_TINT_FRAGMENT_WITH(own)                                                                                   \
     "in vec4 tint;\n"                                                                                                  \
-    GLSL_UNIFORMS("")                                                                                                  \
+    GLSL_UNIFORMS(own)                                                                                                  \
     "out vec4 pixel;\n"                                                                                                \
     "void main() {\n"                                                                                                  \
     "    vec4 c = tint * tide_tint;\n"                                                                                 \
@@ -840,6 +1015,7 @@ static void primitives(void)
     "    if (tide_screen.w > 0.0) c.rgb = c.rgb + (1.0 - c.a);\n"                                                \
     "    pixel = c;\n"                                                                                                 \
     "}\n"
+#define GLSL_TINT_FRAGMENT GLSL_TINT_FRAGMENT_WITH("")
 #define WGSL_TINT_CORNER                                                                                               \
     "struct Corner {\n"                                                                                                \
     "    @builtin(position) position: vec4f,\n"                                                                        \
@@ -867,25 +1043,13 @@ typedef struct lit_instance {
 
 static const tide_shader lit_shader = {
     .name = "lit",
-    .glsl_vertex = "layout(location = 0) in vec3 position;\n"
-                   "layout(location = 1) in vec3 normal;\n"
-                   "layout(location = 2) in vec4 model0;\n"
-                   "layout(location = 3) in vec4 model1;\n"
-                   "layout(location = 4) in vec4 model2;\n"
-                   "layout(location = 5) in vec4 model3;\n"
-                   "layout(location = 6) in vec4 color;\n"
-                   GLSL_UNIFORMS("")
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    tint = vec4(color.rgb * -normal.z, color.a);\n"
-                   "    gl_Position = tide_camera * (mat4(model0, model1, model2, model3) * vec4(position, 1.0));\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
-    .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
+    .wgsl = WGSL(WGSL_UNIFORMS("origin: vec4f, ") WGSL_TINT_CORNER
         "@vertex fn vertex(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) model0: vec4f,\n"
         "                  @location(3) model1: vec4f, @location(4) model2: vec4f, @location(5) model3: vec4f,\n"
         "                  @location(6) color: vec4f) -> Corner {\n"
-        "    let p = u.tide_camera * (mat4x4f(model0, model1, model2, model3) * vec4f(position, 1.0));\n"
+        "    let relative = mat4x4f(model0 - u.origin * model0.w, model1 - u.origin * model1.w,\n"
+        "                          model2 - u.origin * model2.w, model3 - u.origin * model3.w);\n"
+        "    let p = u.tide_camera * (relative * vec4f(position, 1.0));\n"
         "    var out: Corner;\n"
         "    out.tint = vec4f(color.rgb * -normal.z, color.a);\n"
         "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n" // The camera's clip space is OpenGL's
@@ -904,15 +1068,6 @@ static const tide_shader lit_shader = {
 // In 2D: a position, in its instance's color.
 static const tide_shader flat_shader = {
     .name = "flat",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in vec4 color;\n"
-                   GLSL_UNIFORMS("")
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    tint = color;\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
     .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
         "@vertex fn vertex(@location(0) position: vec2f, @location(1) color: vec4f) -> Corner {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -940,19 +1095,6 @@ typedef struct picked_uniforms {
 
 static const tide_shader picked_shader = {
     .name = "picked",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   PICKED_GLSL_UNIFORMS
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = PICKED_GLSL_UNIFORMS
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    vec4 c = tint;\n"
-                     "    if (pick.x == 1) c = c.gbra;\n"
-                     "    if (pick.w == -3) c.rgb = 1.0 - c.rgb;\n"
-                     "    pixel = vec4(c.rgb * c.a, c.a);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("tint: vec4f, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -986,16 +1128,6 @@ _Static_assert(sizeof(many_uniforms) == TIDE_SHADER_UNIFORM_BYTES, "all the unif
 
 static const tide_shader many_shader = {
     .name = "many",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   MANY_GLSL_UNIFORMS
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = MANY_GLSL_UNIFORMS
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    pixel = vec4(colors[pick.x].rgb * colors[pick.x].a, colors[pick.x].a);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 248>, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -1028,18 +1160,6 @@ typedef struct counted_instance {
 
 static const tide_shader counted_shader = {
     .name = "counted",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in int bits;\n"
-                   "layout(location = 2) in vec4 shift;\n"
-                   "layout(location = 3) in ivec4 mask;\n"
-                   GLSL_UNIFORMS("")
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    int c = (bits & mask.x) ^ mask.w;\n"
-                   "    tint = vec4(float((c >> 16) & 255), float((c >> 8) & 255), float(c & 255), 255.0) / 255.0;\n"
-                   "    gl_Position = tide_camera * vec4(position + shift.xy + vec2(mask.yz), 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
     .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
         "@vertex fn vertex(@location(0) position: vec2f, @location(1) bits: i32, @location(2) shift: vec4f,\n"
         "                  @location(3) mask: vec4i) -> Corner {\n"
@@ -1069,23 +1189,6 @@ typedef struct uv_vertex {
 
 static const tide_shader halves_shader = {
     .name = "halves",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in vec2 uv;\n"
-                   GLSL_UNIFORMS("")
-                   "out vec2 at;\n"
-                   "void main() {\n"
-                   "    at = uv;\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = "in vec2 at;\n"
-                     "uniform sampler2D pixels0;\n"
-                     "uniform sampler2D pixels1;\n"
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    vec4 left = texture(pixels0, vec2(at.x * 2.0, at.y));\n"
-                     "    vec4 right = texture(pixels1, vec2(at.x * 2.0 - 1.0, at.y));\n"
-                     "    pixel = at.x < 0.5 ? left : right;\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("")
         "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
         "@group(0) @binding(2) var how0: sampler;\n"
@@ -1115,20 +1218,80 @@ static const tide_shader halves_shader = {
     .texture_count = 2,
 };
 
+// The same, but both textures are read through one sampler (tide_shader.sampler_count), which the compiler gives
+// two textures every draw samples the same way: the draw says how sampler 0 samples, and that's both.
+static const tide_shader shared_shader = {
+    .name = "shared",
+    .wgsl = WGSL(WGSL_UNIFORMS("")
+        "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+        "@group(0) @binding(2) var how0: sampler;\n"
+        "@group(0) @binding(3) var pixels1: texture_2d<f32>;\n"
+        "struct Corner {\n"
+        "    @builtin(position) position: vec4f,\n"
+        "    @location(0) at: vec2f,\n"
+        "}\n"
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) uv: vec2f) -> Corner {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    var out: Corner;\n"
+        "    out.at = uv;\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return out;\n"
+        "}\n"
+        "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
+        "    let left = textureSample(pixels0, how0, vec2f(in.at.x * 2.0, in.at.y));\n"
+        "    let right = textureSample(pixels1, how0, vec2f(in.at.x * 2.0 - 1.0, in.at.y));\n"
+        "    return select(right, left, in.at.x < 0.5);\n"
+        "}\n"),
+    .id = 0x7E575A4E,
+    .dims = 2,
+    .vertex_size = sizeof(uv_vertex),
+    .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(uv_vertex, position)}, {TIDE_SHADER_FLOAT2, offsetof(uv_vertex, uv)}},
+    .texture_count = 2,
+    .sampler_count = 1,
+    .sampler_reads = {TIDE_SHADER_READ_COLOR},
+    .texture_samplers = {1, 1},
+};
+
+// One texture read two ways, one image through two samplers (tide_shader.sampler_count): the nearest pixel on the
+// left and blended on the right, as halves_shader reads one texture given twice.
+static const tide_shader two_ways_shader = {
+    .name = "two ways",
+    .wgsl = WGSL(WGSL_UNIFORMS("")
+        "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+        "@group(0) @binding(2) var how0: sampler;\n"
+        "@group(0) @binding(4) var how1: sampler;\n"
+        "struct Corner {\n"
+        "    @builtin(position) position: vec4f,\n"
+        "    @location(0) at: vec2f,\n"
+        "}\n"
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) uv: vec2f) -> Corner {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    var out: Corner;\n"
+        "    out.at = uv;\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return out;\n"
+        "}\n"
+        "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
+        "    let left = textureSample(pixels0, how0, vec2f(in.at.x * 2.0, in.at.y));\n"
+        "    let right = textureSample(pixels0, how1, vec2f(in.at.x * 2.0 - 1.0, in.at.y));\n"
+        "    return select(right, left, in.at.x < 0.5);\n"
+        "}\n"),
+    .id = 0x7E5702A5,
+    .dims = 2,
+    .vertex_size = sizeof(uv_vertex),
+    .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(uv_vertex, position)}, {TIDE_SHADER_FLOAT2, offsetof(uv_vertex, uv)}},
+    .texture_count = 1,
+    .sampler_count = 2,
+    .sampler_reads = {TIDE_SHADER_READ_COLOR, TIDE_SHADER_READ_COLOR},
+    .texture_samplers = {3},
+};
+
 // A texture read for each corner: an instance says where it goes, then where
 // in the texture its color is.
 static const tide_shader sampled_shader = {
     .name = "sampled",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in vec4 place;\n"
-                   GLSL_UNIFORMS("")
-                   "uniform sampler2D pixels0;\n"
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    tint = textureLod(pixels0, place.zw, 0.0);\n"
-                   "    gl_Position = tide_camera * vec4(position + place.xy, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
     .wgsl = WGSL(WGSL_UNIFORMS("")
         "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
         "@group(0) @binding(2) var how0: sampler;\n"
@@ -1155,17 +1318,6 @@ static const tide_shader sampled_shader = {
 // green above 256. OpenGL counts rows from the bottom.
 static const tide_shader placed_shader = {
     .name = "placed",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   GLSL_UNIFORMS("")
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_UNIFORMS("")
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    vec2 p = vec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y) / tide_screen.xy;\n"
-                     "    pixel = vec4(p.x < 32.0 ? 1.0 : 0.0, p.y < 256.0 ? 1.0 : 0.0, 0.0, 1.0);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -1288,6 +1440,12 @@ static void shaded_scene(void)
                      (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot, pair_slot}, 2);
     tide_draw_shaded(&list, &halves_shader, quad_uv(7, at(176, 112), at(240, 144)), NULL, NULL,
                      (const uint32_t[TIDE_SHADER_TEXTURES]){0, quarters_slot}, 0);
+    // ...and the second through the first's sampler: blended, as the first is, though the draw says it's nearest
+    tide_draw_shaded(&list, &shared_shader, quad_uv(37, at(96, 240), at(160, 272)), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot, pair_slot}, 1);
+    // ...and one texture, bound once, read through two samplers: the nearest pixel, then blended (sampler 1's bit)
+    tide_draw_shaded(&list, &two_ways_shader, quad_uv(38, at(176, 240), at(240, 272)), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot}, 2);
 
     // A texture read in the vertex shader: each instance its pixel
     const uint32_t sampled_quad = quad_2d(8, at(16, 160), at(32, 176));
@@ -1351,6 +1509,13 @@ static void shaded_checks(void)
         {144, 128, between, "blended with its last, between them"},
         {159, 128, red, "and its last"},
         {192, 128, white, "a shader's texture that's none: white"},
+        {129, 256, yellow, "a texture read through another's sampler: its first pixel"},
+        {144, 256, between, "blended as the other is, though its draw said the nearest pixel"},
+        {159, 256, red, "and its last"},
+        {184, 248, red, "one texture read through two samplers: the first's nearest pixel"},
+        {200, 248, green, "the one beside it"},
+        {184, 264, blue, "the one below it"},
+        {224, 256, blend, "the same texture through the second sampler, blended"},
         {216, 120, red, "and the second beside it, the nearest pixel"},
         {232, 120, green, "and the one beside that"},
         {24, 168, red, "a texture read in the vertex shader"},
@@ -2193,7 +2358,7 @@ static int dump(const char *path)
 // own pixels whatever the display's scale is: text measures as it's fitted
 // there.
 static tide_float2 measure_read_back(const char *text, const float size, const tide_target_size *target,
-                                     const unsigned char *font)
+                                     const tide_font *font)
 {
     (void)target;
     // As a target of the window's size with one pixel of its own to a logical one, which is what's read back
@@ -2229,7 +2394,7 @@ static void text_area(uint32_t *out)
 // to, and their ink ends where the measure says. One size is halfway between
 // two whole numbers of pixels, where measuring and drawing have to round the
 // same way.
-static void text_measures_as_drawn(const unsigned char *font, const char *weight)
+static void text_measures_as_drawn(const tide_font *font, const char *weight)
 {
     static const float scales[] = {0.0f, 1.0f, 2.75f, 0.4f, 7.3f};
     static const tide_float2 centers[] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.3f, 0.7f}, {-40.0f, 12.5f}, {3.0f, -2.0f}};
@@ -2291,7 +2456,7 @@ static void text_bold_is_heavier(void)
     int ink[2] = {0, 0}, right[2] = {-1, -1};
     float width[2];
     for (int bold = 0; bold < 2; bold++) {
-        const unsigned char *font = bold ? TIDE_FONT_BOLD : TIDE_FONT_REGULAR;
+        const tide_font *font = bold ? TIDE_FONT_BOLD : TIDE_FONT_REGULAR;
         text_frame(0.0f, tide_f2(0.0f, 0.0f));
         width[bold] = tide_draw_measure_text(&list, "Hill time", 24.0f, font, screen, measure_read_back).x;
         tide_draw_text_at(&list, "Hill time", tide_f2(6.0f, 6.0f), 24.0f, white, TIDE_ANCHOR_UPPER_LEFT, font);
@@ -2315,7 +2480,7 @@ static void text_bold_is_heavier(void)
 // to the pixel, its lines drawn one by one from the top left corners that box
 // puts them at; and upper is towards the top of the screen under a camera
 // too, where y goes up.
-static void text_anchors(const unsigned char *font, const char *weight)
+static void text_anchors(const tide_font *font, const char *weight)
 {
     static const char *const names[] = {"upper left", "upper center", "upper right", "middle left", "middle center",
                                         "middle right", "lower left", "lower center", "lower right"};
@@ -3340,6 +3505,80 @@ static void frustum_culling(void)
     // Later tests use the host's usual screen size; culling settings reset each frame.
 }
 
+// A 3D mesh a frame skips stays on the GPU for when it's drawn again, as
+// the list keeps it (tide/draw.h, the idle budget), and goes once it's been
+// unused for longer than the renderer keeps one (set lower here).
+static const tide_vertex3 idle_left[] = {
+    {{-8, 8, 0}, {0, 0}, {1, 0, 0, 1}}, {{8, 8, 0}, {0, 0}, {1, 0, 0, 1}},
+    {{8, -8, 0}, {0, 0}, {1, 0, 0, 1}}, {{-8, -8, 0}, {0, 0}, {1, 0, 0, 1}},
+};
+static const tide_vertex3 idle_right[] = {
+    {{-8, 8, 0}, {0, 0}, {0, 0, 1, 1}}, {{8, 8, 0}, {0, 0}, {0, 0, 1, 1}},
+    {{8, -8, 0}, {0, 0}, {0, 0, 1, 1}}, {{-8, -8, 0}, {0, 0}, {0, 0, 1, 1}},
+};
+static const uint32_t idle_indices[] = {0, 1, 2, 0, 2, 3};
+
+// A frame of the left mesh where `left` says, and the right one always: the
+// uploads it took, and its two pixels.
+static uint64_t idle_frame(const bool left, uint32_t got[2])
+{
+    const tide_mesh meshes[2] = {{idle_left, 4, idle_indices, 6, 0x1D1E1u}, {idle_right, 4, idle_indices, 6, 0x1D1E2u}};
+    const tide_float2 places[2] = {{16, 32}, {48, 32}};
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    tide_draw_set_cull(&list, TIDE_CULL_NONE);
+    for (int i = left ? 0 : 1; i < 2; i++) {
+        const tide_float2 p = at(places[i].x, places[i].y);
+        tide_float4x4 transform = tide_identity_f4x4();
+        transform.c3 = tide_f4(p.x, p.y, 5, 1);
+        tide_draw_mesh_3d(&list, &meshes[i], transform, NULL, TIDE_FILTER_POINT);
+    }
+    const uint64_t before = tide_mesh_uploads;
+    tide_platform_read_pixels(&list, places, 2, got);
+    return tide_mesh_uploads - before;
+}
+
+static void idle_meshes_kept(void)
+{
+    tide_draw_forget(&list); // No other fixture's meshes
+    uint32_t got[2];
+    expect(idle_frame(true, got) == 2u, "two new meshes are sent to the GPU");
+    expect(near(got[0], rgba(red), 0) && near(got[1], rgba(blue), 0), "and drawn");
+    expect(idle_frame(true, got) == 0u, "drawn again, neither is sent again");
+    const uint64_t both = tide_platform_gpu_memory();
+    expect(idle_frame(false, got) == 0u, "a frame that skips one sends nothing");
+    expect(near(got[0], rgba(background), 0) && near(got[1], rgba(blue), 0), "and draws the other alone");
+    expect(tide_platform_gpu_memory() == both, "the skipped mesh stays on the GPU, counted in its memory");
+    expect(idle_frame(true, got) == 0u, "drawn again after a frame without it, it isn't sent again");
+    expect(near(got[0], rgba(red), 0) && near(got[1], rgba(blue), 0), "and draws as it did");
+    const uint32_t frames = tide_mesh_idle_frames;
+    tide_mesh_idle_frames = 2;
+    idle_frame(false, got);
+    idle_frame(false, got);
+    expect(tide_platform_gpu_memory() == both, "unused for as long as the renderer keeps it, it's still there");
+    idle_frame(false, got);
+    expect(tide_platform_gpu_memory() < both, "unused for longer, its buffers go");
+    expect(idle_frame(true, got) == 1u, "then it's sent again from the list's copy when it's drawn");
+    expect(near(got[0], rgba(red), 0) && tide_platform_gpu_memory() == both, "and drawn, with its buffers back");
+    tide_mesh_idle_frames = frames;
+    // A mesh one frame drew stays too, for TIDE_MESH_ONCE_FRAMES: drawn every other frame, it isn't sent again
+    tide_draw_forget(&list);
+    expect(idle_frame(true, got) == 2u, "after forgetting, both are sent again");
+    const uint64_t once = tide_platform_gpu_memory();
+    expect(idle_frame(false, got) == 0u && tide_platform_gpu_memory() == once,
+           "a mesh one frame drew stays on the GPU through a frame without it");
+    expect(idle_frame(true, got) == 0u, "drawn every other frame, it isn't sent again");
+    expect(near(got[0], rgba(red), 0) && near(got[1], rgba(blue), 0), "and draws as it did");
+    // ...and one drawn once goes after TIDE_MESH_ONCE_FRAMES frames without it
+    tide_draw_forget(&list);
+    idle_frame(true, got);
+    for (uint32_t i = 0; i <= TIDE_MESH_ONCE_FRAMES; i++) idle_frame(false, got);
+    expect(tide_platform_gpu_memory() < once, "a mesh drawn once is let go after TIDE_MESH_ONCE_FRAMES frames");
+    expect(idle_frame(true, got) == 1u && near(got[0], rgba(red), 0), "then it's sent again when it's drawn");
+}
+
+
 // Levels of detail: a mesh whose levels are other triangles of its corners,
 // so a pixel says which was drawn. The full mesh is two squares side by side,
 // its first level the left one alone, and its second the top right half of
@@ -3451,6 +3690,8 @@ static void lod_scene(void)
 
 static void levels_of_detail(void)
 {
+    tide_draw_diagnostics geometry = {0};
+    list.diagnostics = &geometry;
     static const char *const kinds[2] = {"a 3D mesh", "a 3D mesh through a shader"};
     static const char *const parts[3] = {"its left square", "the top of its right square", "the bottom of its right square"};
     // Which of those each level draws
@@ -3460,6 +3701,7 @@ static void levels_of_detail(void)
     char what[200];
     // Twice: the second frame draws with the buffers the first made
     for (int frame = 0; frame < 2; frame++) {
+        tide_draw_diagnostics_clear(&geometry);
         lod_scene();
         for (int kind = 0; kind < 2; kind++) {
             const float top = 20.0f + 170.0f * (float)kind;
@@ -3477,6 +3719,9 @@ static void levels_of_detail(void)
             }
             check_pixels(checks, LOD_CELLS * 3);
         }
+        uint64_t geometry_vertices = 0;
+        for (uint32_t i = 0; i < geometry.geometry_count; i++) geometry_vertices += geometry.geometry[i].vertices;
+        expect(geometry_vertices == 264, "geometry attribution counts both pixel-check submissions of every LOD instance");
         expect(tide_platform_draw_vertices() == 135,
                "submitted vertices count each instance at its selected LOD, through built-in and custom shaders");
     }
@@ -3486,15 +3731,24 @@ static void levels_of_detail(void)
         tide_draw_clear(&list, background);
         tide_draw_screen_size(&list, screen);
         pixel_camera_3d();
+        tide_draw_diagnostics_clear(&geometry);
         lod_alone(kind != 0, 20.0f);
         tide_platform_read_pixels(&list, &(tide_float2){0, 0}, 1, &(uint32_t){0});
         const uint32_t calls = tide_platform_draw_calls();
         snprintf(what, sizeof what, "%s drawn four times at three levels of detail is three draw calls, and the clear (%u)",
                  kinds[kind], (unsigned)calls);
         expect(calls == 4u, what);
+        uint64_t geometry_vertices = 0, geometry_instances = 0;
+        for (uint32_t i = 0; i < geometry.geometry_count; i++) {
+            geometry_vertices += geometry.geometry[i].vertices;
+            geometry_instances += geometry.geometry[i].instances;
+        }
+        expect(geometry_vertices == 24 && geometry_instances == 4, "LOD regrouping preserves geometry provenance and exact work");
         expect(tide_platform_draw_vertices() == 27,
                "LOD counts submitted indices, including repeats, rather than the mesh's stored corners");
     }
+    list.diagnostics = NULL;
+    tide_draw_diagnostics_free(&geometry);
 }
 
 // What the stats read: geometry submitted in every pass, with overlays left out.
@@ -3562,7 +3816,7 @@ static void changed_textures(void)
 {
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid_set(&changing_colors, tide_grid_new(2, 80, 48, 0), &changing_color_cells, TIDE_IN_LOCAL);
     tide_grid_set(&changing_floats, tide_grid_new(2, 80, 48, 0), &changing_float_cells, TIDE_IN_LOCAL);
     for (int32_t y = 0; y < 48; y++) {
@@ -3702,13 +3956,15 @@ static const char *bench_names[] = {"nothing", "65536 rects", "65536 circles", "
                                    "a list of 65536 lights a shader reads 7 of 25 numbers of, 16 written a frame",
                                    "a list of 1024 lights made again each frame",
                                    "a 3D mesh of 16384 corners, every one moved each frame",
-                                   "65536 sprites"};
+                                   "65536 sprites",
+                                   "8 of 32 3D chunks of 16384 corners each, a chunk leaving the view and one coming back each frame"};
 enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 
 // 0: nothing (what reading back costs), 1: rects, 2: circles, 3: rects with text between, 4: quads of one mesh,
 // 5: instances of a 3D cube, 6: smooth shapes, 7: rects in one run with a few smooth shapes, which all go
 // through the smooth shapes' pipeline then, 8 to 12: what a game keeps and the GPU reads, of which a frame
-// changes a little or all (bench_kept), 13: the quads of 4 drawn as sprites (tide_draw_sprite), the same frame
+// changes a little or all (bench_kept), 13: the quads of 4 drawn as sprites (tide_draw_sprite), the same frame,
+// 14: chunks of a terrain the view pans over (bench_chunks_drawn)
 static int bench_kind;
 static bool bench_one; // --only: that workload alone
 static int bench_frame;
@@ -3865,24 +4121,6 @@ static void bench_light_read(const void *element, int32_t *words)
 // texture each takes, and which of an element's numbers its color starts at.
 static const tide_shader lights_shader = {
     .name = "lights",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   GLSL_UNIFORMS("ivec4 lights; ")
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_UNIFORMS("ivec4 lights; ")
-                     "uniform highp isampler2D pixels0;\n"
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    int light = (int(gl_FragCoord.x) + int(gl_FragCoord.y) * 256) % max(lights.x, 1);\n"
-                     "    int word = light * lights.y + lights.z;\n"
-                     "    int first = word >> 2;\n"
-                     "    ivec4 a = texelFetch(pixels0, ivec2(first & 1023, first >> 10), 0);\n"
-                     "    ivec4 b = texelFetch(pixels0, ivec2((first + 1) & 1023, (first + 1) >> 10), 0);\n"
-                     "    int at = word & 3;\n"
-                     "    ivec3 color = at == 0 ? a.xyz : at == 1 ? a.yzw : at == 2 ? ivec3(a.zw, b.x) : ivec3(a.w, b.xy);\n"
-                     "    pixel = vec4(intBitsToFloat(color), 1.0);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("lights: vec4i, ")
         "@group(0) @binding(1) var pixels0: texture_2d<i32>;\n"
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
@@ -3950,7 +4188,9 @@ static void transient_data_textures(void)
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) points[y * width + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
     }
-    // Start without another fixture's mesh buffer capacities or textures.
+    // Start without another fixture's mesh buffer capacities, textures, or
+    // meshes kept unused (an earlier fixture's would go at phase 7's forget).
+    tide_draw_forget(&list);
     tide_draw_reset(&list);
     tide_draw_clear(&list, background);
     tide_platform_read_pixels(&list, points, 1, got);
@@ -3965,7 +4205,7 @@ static void transient_data_textures(void)
         tide_draw_set_screen(&extra);
         uint32_t active = 0;
         uint64_t bytes = 0, uploaded = 0;
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         for (uint32_t place = 0; place < cells; place++) {
             const uint32_t cell = phase & 1u ? cells - 1u - place : place;
             if (phase == 4u || (phase == 3u && (cell & 1u))) continue;
@@ -3998,17 +4238,22 @@ static void transient_data_textures(void)
                  (unsigned long long)(tide_platform_gpu_written() - before), (unsigned long long)uploaded);
         expect(tide_platform_gpu_written() - before == uploaded, what);
         // Each quad has 32 vertex bytes and 12 narrowed index bytes. No
-        // transient spare allocation remains counted after a frame ends.
+        // transient spare allocation remains counted after a frame ends. The
+        // quads phases 0 to 2 drew are kept while phases 3 and 4 skip them
+        // (the idle budget, tide/draw.h); phase 7's are new after forgetting.
+        const uint32_t meshes = phase == 3u || phase == 4u ? cells : active;
         if (phase == 0u) base_memory = tide_platform_gpu_memory() - cells * 44u - bytes;
-        expect(tide_platform_gpu_memory() == base_memory + active * 44u + bytes,
-               "transient shader data keeps only current textures and meshes after each frame");
+        snprintf(what, sizeof what, "transient shader data phase %u keeps only current textures and its meshes after the frame "
+                 "(%llu bytes, expected %llu)", phase, (unsigned long long)tide_platform_gpu_memory(),
+                 (unsigned long long)(base_memory + meshes * 44u + bytes));
+        expect(tide_platform_gpu_memory() == base_memory + meshes * 44u + bytes, what);
     }
     // A separate list has its own mesh places and epoch. Draw changed data
     // at a different shape after the appended list, then retire everything.
     tide_draw_reset(&extra);
     tide_draw_clear(&extra, background);
     tide_draw_set_screen(&extra);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     for (uint32_t cell = cells / 2u; cell < cells; cell++) transient_data_cell(&extra, cell, 89u, 2u);
     tide_scratch_reset(mark);
     const uint64_t before = tide_platform_gpu_written();
@@ -4030,6 +4275,134 @@ static void transient_data_textures(void)
     tide_platform_read_pixels(&list, points, 1, got);
     expect(tide_platform_gpu_memory() == base_memory, "an empty frame releases all transient shader data and meshes");
     tide_draw_free(&extra);
+}
+
+// A frame of a world's square where `drawn` says: the uploads it took, its pixel, and the mesh's place.
+static uint64_t hollow_frame(const bool drawn, const tide_list corners, const tide_list faces, uint32_t *got,
+                             uint32_t *place)
+{
+    const tide_float2 p = at(16, 32);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    tide_draw_set_cull(&list, TIDE_CULL_NONE);
+    if (drawn) {
+        tide_float4x4 transform = tide_identity_f4x4();
+        transform.c3 = tide_f4(p.x, p.y, 5, 1);
+        tide_draw_mesh3_lists(&list, corners, faces, transform);
+        if (place) *place = list.commands[list.count - 1u].mesh3.mesh;
+    }
+    const uint64_t before = tide_mesh_uploads;
+    const tide_float2 point = tide_f2(16, 32);
+    tide_platform_read_pixels(&list, &point, 1, got);
+    return tide_mesh_uploads - before;
+}
+
+// A mesh of a world's lists that a frame skips keeps no copy in the list while the GPU has it (tide/draw.h): drawn
+// again it's drawn from the GPU's, sending nothing; once the GPU lets it go, the list copies it again.
+static void hollow_meshes_kept(void)
+{
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_list corners = {0}, faces = {0};
+    tide_list_resize(&corners, 4, sizeof(tide_vertex3), TIDE_IN_LOCAL);
+    for (int32_t i = 0; i < 4; i++) *(tide_vertex3 *)tide_list_at_mut(corners, i, sizeof(tide_vertex3)) = idle_left[i];
+    tide_list_resize(&faces, 6, sizeof(uint32_t), TIDE_IN_LOCAL);
+    for (int32_t i = 0; i < 6; i++) *(uint32_t *)tide_list_at_mut(faces, i, sizeof(uint32_t)) = idle_indices[i];
+    tide_draw_forget(&list);
+    uint32_t got, place = 0;
+    expect(hollow_frame(true, corners, faces, &got, &place) == 1u && near(got, rgba(red), 0), "a world's mesh is sent and drawn");
+    const uint64_t memory = tide_platform_gpu_memory();
+    hollow_frame(false, corners, faces, &got, NULL);
+    expect(hollow_frame(true, corners, faces, &got, &place) == 0u && near(got, rgba(red), 0),
+           "skipped a frame, it's drawn again from the GPU's copy, sending nothing");
+    expect(place && list.meshes[place - 1u].hollow && list.meshes[place - 1u].vertices == NULL,
+           "and the list kept no copy of its own");
+    expect(tide_platform_gpu_memory() == memory, "its buffers stayed counted");
+    // Unused for longer than any budget keeps others, it stays while its lists are as they were
+    const uint32_t frames = tide_mesh_idle_frames;
+    tide_mesh_idle_frames = 1;
+    for (int i = 0; i < 3; i++) hollow_frame(false, corners, faces, &got, NULL);
+    tide_mesh_idle_frames = frames;
+    expect(tide_platform_gpu_memory() == memory, "unused for many frames, its buffers stay while its lists do");
+    // The device running short lets it go
+    tide_mesh_held_most = 0;
+    hollow_frame(false, corners, faces, &got, NULL);
+    tide_mesh_held_most = UINT64_MAX;
+    expect(tide_platform_gpu_memory() < memory, "the device running short, its buffers go");
+    expect(hollow_frame(true, corners, faces, &got, &place) == 1u && near(got, rgba(red), 0),
+           "then the list copies it again from its lists, and it's sent and drawn");
+    expect(place && !list.meshes[place - 1u].hollow, "with a copy of the list's own again");
+    // Its list changed and drawn again: the old mesh goes as the frame ends, and its buffers with it
+    hollow_frame(false, corners, faces, &got, NULL);
+    hollow_frame(false, corners, faces, &got, NULL); // Its copy goes, the GPU's stays
+    const uint32_t old = place;
+    ((tide_vertex3 *)tide_list_at_mut(corners, 0, sizeof(tide_vertex3)))->position.x -= 1.0f;
+    expect(hollow_frame(true, corners, faces, &got, &place) == 1u && place != old, "its list changed, it's another mesh");
+    hollow_frame(false, corners, faces, &got, NULL);
+    expect(old && list.meshes[old - 1u].space == TIDE_MESH_NONE, "and the old one went");
+    expect(tide_platform_gpu_memory() <= memory, "with its buffers");
+    tide_draw_forget(&list);
+    tide_list_release(&corners, TIDE_IN_LOCAL);
+    tide_list_release(&faces, TIDE_IN_LOCAL);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
+// A texture the list holds though no step draws with it (a page of listed
+// regions, tide_draw_texture.held) stays on the GPU as it is, counted in its
+// memory, and isn't sent again when it's drawn again; once let go, it goes.
+static void held_data_textures(void)
+{
+    const tide_float2 point = tide_f2(4.5f, 4.5f);
+    uint32_t got;
+    tide_draw_forget(&list); // No other fixture's meshes or textures
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, &point, 1, &got);
+    const uint64_t base = tide_platform_gpu_memory();
+    uint64_t drawn = 0;
+    for (int frame = 0; frame < 3; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_draw_set_screen(&list);
+        if (frame != 1) {
+            const uint64_t mark = tide_scratch_mark();
+            transient_data_cell(&list, 0, 5u, 1u);
+            tide_scratch_reset(mark);
+        }
+        const uint64_t before = tide_platform_gpu_written();
+        tide_platform_read_pixels(&list, &point, 1, &got);
+        const bool data = frame != 1;
+        expect(near(got, rgba(data ? transient_data_color(0, 5u) : background), 8), "held data: each frame's pixels");
+        if (frame == 0) {
+            drawn = tide_platform_gpu_memory();
+            expect(drawn > base, "held data: the data and its mesh are on the GPU");
+            bool found = false;
+            for (uint32_t i = 0; i < list.texture_count; i++) {
+                if (list.textures[i].space != TIDE_PIXELS_LIST) continue;
+                list.textures[i].held = 1u; // As a page with regions that stay is held
+                found = true;
+            }
+            expect(found, "held data: the frame's data texture");
+        } else {
+            expect(tide_platform_gpu_memory() == drawn, "held data: a frame without it keeps it on the GPU");
+            if (frame == 2) expect(tide_platform_gpu_written() == before, "held data: drawn again, nothing is sent");
+        }
+    }
+    // Let go: the list frees it at its next reset that doesn't draw it, and the renderer at its next frame
+    for (uint32_t i = 0; i < list.texture_count; i++) list.textures[i].held = 0;
+    for (int frame = 0; frame < 2; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_platform_read_pixels(&list, &point, 1, &got);
+    }
+    expect(tide_platform_gpu_memory() < drawn, "held data: let go, it leaves the GPU");
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, &point, 1, &got);
+    expect(tide_platform_gpu_memory() == base, "held data: and nothing else stays");
 }
 
 static void bench_keep(void)
@@ -4077,7 +4450,7 @@ static void bench_lights_drawn(const tide_list lights, const bool whole)
 static void bench_kept(void)
 {
     bench_keep();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const uint32_t turn = bench_turn++;
     if (bench_kind == 8) { // A brush of 8 by 8 cells, somewhere else each frame
         tide_grid_cache cache = {0};
@@ -4114,11 +4487,44 @@ static void bench_kept(void)
     tide_scratch_reset(mark);
 }
 
+// Chunks of terrain a game keeps, each a list of corners of its own over the sheet's triangles, of which it
+// draws those in view: 8 of 32 side by side, the view panning across them and back a chunk a frame, so one
+// leaves the view and another comes back into it each frame.
+enum { BENCH_CHUNKS = 32, BENCH_CHUNKS_SEEN = 8 };
+static tide_list bench_chunks[BENCH_CHUNKS];
+
+static void bench_chunks_drawn(void)
+{
+    bench_keep();
+    if (!bench_chunks[0].at) {
+        for (int32_t c = 0; c < BENCH_CHUNKS; c++) {
+            for (int32_t i = 0; i < BENCH_CORNERS; i++) {
+                tide_vertex3 *corner = tide_list_add(&bench_chunks[c], sizeof(tide_vertex3), TIDE_IN_LOCAL);
+                const float x = (float)(i % 128), z = (float)(i / 128);
+                *corner = (tide_vertex3){{x, (float)((i + c * 7) % 16) * 0.25f, z}, {0, 0},
+                                         {(float)c / BENCH_CHUNKS, x / 128.0f, z / 128.0f, 1.0f}};
+            }
+        }
+    }
+    const uint32_t turn = bench_turn++ % (2u * (BENCH_CHUNKS - BENCH_CHUNKS_SEEN));
+    const uint32_t first = turn <= BENCH_CHUNKS - BENCH_CHUNKS_SEEN ? turn : 2u * (BENCH_CHUNKS - BENCH_CHUNKS_SEEN) - turn;
+    tide_draw_set_frustum_culling(&list, false); // What's drawn is what the game chose to
+    tide_draw_set_camera_3d(&list, tide_f3((float)first * 127.0f + 508.0f, 500.0f, -300.0f),
+                            tide_axisangle_q(tide_f3(1, 0, 0), 0.8f), 70.0f);
+    for (uint32_t c = first; c < first + BENCH_CHUNKS_SEEN; c++) {
+        tide_draw_mesh3_lists(&list, bench_chunks[c], bench_triangles, tide_translate_f4x4(tide_f3((float)c * 127.0f, 0, 0)));
+    }
+}
+
 static void bench_scene(void)
 {
     tide_draw_reset(&list);
     if (bench_kind >= 8 && bench_kind <= 12) {
         bench_kept();
+        return;
+    }
+    if (bench_kind == 14) {
+        bench_chunks_drawn();
         return;
     }
     if (bench_kind == 5) {
@@ -4273,8 +4679,9 @@ static const char *dump_path;
 // Pipelines made in the background (tide_platform_background_pipelines), across frames, as a game's are: the shaders'
 // pipelines let go of (the list forgot them, and a frame drew without them), then drawn again with background on.
 // On WebGPU the first frame can't have made them (that takes the page's turn), so it leaves the shaded draws out, and
-// the rest draw; on every backend they show, drawn right, within BACKGROUND_FRAMES. A backend that makes them as
-// they're asked for draws them in the first.
+// the rest draw; on every backend they show, drawn right, within BACKGROUND_FRAMES: all of them, in a frame that
+// began with every pipeline the first one asked for made, as Vulkan's pool threads finish them in any order. A
+// backend that makes them as they're asked for draws them in the first.
 enum { BACKGROUND_FRAMES = 600 };
 
 static int background_frame(void)
@@ -4290,9 +4697,10 @@ static int background_frame(void)
     } else {
         tide_float2 point = tide_f2(orange_quad.x, orange_quad.y);
         uint32_t got = 0;
+        const bool made = tide_platform_shader_pipelines_waiting() == 0;
         shaded_scene();
         tide_platform_read_pixels(&list, &point, 1, &got);
-        const bool drawn = near(got, rgba(orange), 8);
+        const bool drawn = near(got, rgba(orange), 8) && made && !tide_platform_shader_pipelines_waiting();
 #ifdef __wasm__
         if (frames == 1 && strcmp(tide_platform_renderer(), "WebGPU") == 0)
             expect(!drawn && near(got, rgba(background), 8), "a shader's first frame with background pipelines leaves its draws out on WebGPU");
@@ -4322,7 +4730,9 @@ static int background_frame(void)
 // pipeline, and draw every one: on WebGPU too, whose first frame through a shader that wasn't made leaves it out
 // (background_frame). A pipeline made for a table stays when another build's first frame lets go of the last one's
 // (forget_pipelines), till another table is given.
-enum { PREWARM_FRAMES = 600 };
+// Headless frames that draw only a clear take a millisecond or two, and the pool's threads compiling ten pipelines
+// with the driver's cache cold under ASan took more than 600 of them (2026-11-06): the number bounds a hang, not speed.
+enum { PREWARM_FRAMES = 6000 };
 
 // A lit square through `shader`, green, where shaded_3d_scene has its middle instance.
 static void lit_square(const tide_shader *shader)
@@ -4340,7 +4750,7 @@ static int prewarm_frame(void)
     static uint32_t warmed; // The pipelines the table's prewarming made
     static tide_shader drawn_blit, warm_blit; // Blits through the flat shader: the instance's color over the window
     static tide_shader lit_again; // The lit shader's name, with other code
-    static const tide_shader *table[8];
+    static const tide_shader *table[10];
     const tide_float2 orange_at = tide_f2(32, 32), lit_at = seen(0, 2, 0);
     uint32_t got = 0;
     if (frames == 0) {
@@ -4354,8 +4764,9 @@ static int prewarm_frame(void)
         warm_blit.id = 0x7E57B1A5;
         lit_again = lit_shader;
         lit_again.id = 0x7E57A6A1;
-        const tide_shader *const shaders[8] = {&picked_shader, &many_shader, &counted_shader, &halves_shader,
-                                               &sampled_shader, &placed_shader, &lit_again, &warm_blit};
+        const tide_shader *const shaders[10] = {&picked_shader, &many_shader, &counted_shader, &halves_shader,
+                                                &sampled_shader, &placed_shader, &lit_again, &warm_blit, &shared_shader,
+                                                &two_ways_shader};
         memcpy(table, shaders, sizeof table);
         tide_draw_forget(&list);
         tide_draw_reset(&list);
@@ -4365,14 +4776,14 @@ static int prewarm_frame(void)
         tide_platform_draw(&list); // Through one shader of each kind: the others' pipelines go
         const uint32_t before = tide_platform_shader_pipelines();
         tide_platform_background_pipelines(true);
-        tide_platform_prewarm(table, 8);
+        tide_platform_prewarm(table, 10);
         warmed = tide_platform_shader_pipelines() - before;
-        expect(warmed >= 8u, "prewarming makes a pipeline for each shader it's given");
+        expect(warmed >= 10u, "prewarming makes a pipeline for each shader it's given");
 #ifdef __wasm__
         if (strcmp(tide_platform_renderer(), "WebGPU") == 0)
             expect(tide_platform_prewarm_waiting() > 0, "WebGPU makes prewarmed pipelines in the background");
 #endif
-        tide_platform_prewarm(table, 8);
+        tide_platform_prewarm(table, 10);
         expect(tide_platform_shader_pipelines() == before + warmed, "prewarming the same table again makes nothing");
         frames++;
         return TIDE_KEEP_RUNNING;
@@ -4464,11 +4875,13 @@ static int frame(void *user, const float seconds)
         many_cached_textures();
         resident_pack_textures();
         compressed_pack_textures();
+        authored_mip_textures();
         changed_textures();
         meshes_3d();
         primitives();
         shaded();
         transient_data_textures();
+        held_data_textures();
         wraps();
         mipmaps();
         smooth_shapes();
@@ -4481,6 +4894,8 @@ static int frame(void *user, const float seconds)
         depth_settings();
         cull_settings();
         frustum_culling();
+        idle_meshes_kept();
+        hollow_meshes_kept();
         levels_of_detail();
         vertex_counts();
 #ifdef DRAW_VULKAN
@@ -4497,12 +4912,15 @@ static int frame(void *user, const float seconds)
         meshes();
         many_cached_textures();
         resident_pack_textures();
+        resident_large_pack_textures();
         compressed_pack_textures();
+        authored_mip_textures();
         changed_textures();
         meshes_3d();
         primitives();
         shaded();
         transient_data_textures();
+        held_data_textures();
         wraps();
         mipmaps();
         smooth_shapes();
@@ -4515,6 +4933,8 @@ static int frame(void *user, const float seconds)
         depth_settings();
         cull_settings();
         frustum_culling();
+        idle_meshes_kept();
+        hollow_meshes_kept();
         levels_of_detail();
         vertex_counts();
         code = run_checks();

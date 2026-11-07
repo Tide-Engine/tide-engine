@@ -3,6 +3,7 @@
 #endif
 
 #include "common.h"
+#include "build_report.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -180,6 +181,41 @@ static bool muted;
 
 // With TIDEC_TIMES set in the environment, says on stderr how long each phase
 // of a compile took: the time since the last call, under `what`.
+static compile_progress_sink progress_sink;
+
+void compile_set_progress(compile_progress_sink receiver)
+{
+    progress_sink = receiver;
+}
+
+static int progress_total, progress_done; // compile_progress_whole's
+
+void compile_progress(const char *stage, const char *detail, const int completed, const int total)
+{
+    if (!progress_sink) return;
+    if (progress_total > 0) progress_sink(stage, detail, progress_done, progress_total);
+    else progress_sink(stage, detail, completed, total);
+}
+
+void compile_progress_whole(const int total)
+{
+    // The same count again (the game compiled again once build code has run) goes on from where it was
+    if (total > 0 && total == progress_total) return;
+    progress_total = total > 0 ? total : 0;
+    progress_done = 0;
+}
+
+void compile_progress_reach(const int done)
+{
+    const int at = done < progress_total ? done : progress_total;
+    if (at > progress_done) progress_done = at;
+}
+
+int compile_progress_total(void)
+{
+    return progress_total;
+}
+
 void diag_phase(const char *what)
 {
     static int enabled = -1;
@@ -189,11 +225,13 @@ void diag_phase(const char *what)
         enabled = set && set[0] && set[0] != '0';
         timespec_get(&last, TIME_UTC);
     }
-    if (!enabled) return;
+    // ...and for tide build --report (build_report.h), which keeps the phases by name
+    if (!enabled && !build_report_current()) return;
     struct timespec now;
     timespec_get(&now, TIME_UTC);
     const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
-    if (what) fprintf(stderr, "tidec: %-22s %9.1f ms\n", what, ms);
+    if (what) build_report_phase(what, ms);
+    if (what && enabled) fprintf(stderr,"tidec: %-22s %9.1f ms\n", what, ms);
     last = now;
 }
 

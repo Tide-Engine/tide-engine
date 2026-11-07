@@ -1,0 +1,29 @@
+scene Main { }
+
+local singleton Cached
+{
+    RenderTarget target;
+    RenderTarget alias;
+    long revision;
+    int bakes;
+}
+
+extern void RevisionSeen(long previous, long current, long alias, int bakes);
+
+view Bake(mut Cached cached)
+{
+    if (cached.bakes == 0)
+    {
+        cached.target = RenderTarget(16, 16, 1);
+        cached.alias = cached.target;
+    }
+    long previous = cached.revision;
+    long current = cached.target.contentRevision;
+    if (previous != current)
+    {
+        cached.target.Clear(Color.red);
+        cached.revision = current;
+        cached.bakes += 1;
+    }
+    RevisionSeen(previous, current, cached.alias.contentRevision, cached.bakes);
+}

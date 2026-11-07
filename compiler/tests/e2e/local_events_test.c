@@ -294,20 +294,20 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
 
     // Past tick 241. Target 2 went at 200, for good. At 241 the first player's
     // machine predicted target 4, and the server had target 5 there, on the
-    // same handle: another entity, so its spawn is another event, and what the
-    // handler kept for 4 isn't 5's.
+    // same causal spawn: corrected values do not create another lifetime or
+    // replay the local Spawned handler. Verified handlers use confirmed values.
     run(4.6);
     match = tide_server_world(server);
     const tide_entity five = target(match, 5);
     TIDE_REQUIRE(match->Time.tick > 250 && !tide_entity_is_null(five) && tide_entity_is_null(target(match, 4)));
     TIDE_CHECK(heard->destroyed == ((1 << 3) | (1 << 2)) && heard->sureDestroyed == 1 << 2 && heard->destroyedHealth == 5);
-    TIDE_REQUIRE(tide_entity_equal(five, predicted_spawn)); // One handle, two entities
-    TIDE_CHECK((heard->spawned & ((1 << 4) | (1 << 5))) == ((1 << 4) | (1 << 5)));
+    TIDE_REQUIRE(tide_entity_equal(five, predicted_spawn));
+    TIDE_CHECK((heard->spawned & ((1 << 4) | (1 << 5))) == (1 << 4));
     TIDE_CHECK(heard->sureSpawned == (0xE | 1 << 5) && spawn_sure_at > 241u);
-    TIDE_CHECK(tide_get_Target_local(&local, five).born == 5);
-    TIDE_CHECK(heard->shielded == 1); // The singleton as the spawn's turn left it, in the tick the server ran
+    TIDE_CHECK(tide_get_Target_local(&local, five).born == 4);
+    TIDE_CHECK(heard->shielded == 0); // The local handler ran at the original predicted spawn.
     // The machine that joined late predicted the same, and put it right the same
-    TIDE_CHECK(late.Heard.sureSpawned == (0xE | 1 << 5) && tide_get_Target_local(&late, five).born == 5);
+    TIDE_CHECK(late.Heard.sureSpawned == (0xE | 1 << 5) && tide_get_Target_local(&late, five).born == 4);
     TIDE_CHECK(late.Heard.destroyed == 1 << 2 && late.Heard.sureDestroyed == 1 << 2);
     check_rang(heard);
     TIDE_CHECK(heard->sureRang == 11 && heard->struck == 4 && heard->sureStruck == 2);

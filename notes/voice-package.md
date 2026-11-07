@@ -1,5 +1,11 @@
 # Optional session voice (2026-10-22)
 
+Entity128/protocol-25 validation (2026-11-06): the hand-built malformed/rate
+packet fixture now uses the session's protocol byte 25. Its former byte 24
+caused every raw packet, including the valid burst, to be rejected before the
+tested authentication and rate checks. All eight voice cases pass on Windows
+ASan and WASI with their existing bounds and wrong-cookie/attempt assertions intact.
+
 Protocol-19 follow-up (2026-10-24): local subscription/data packets now carry
 the current connection attempt after their existing cookie, in both directions,
 as part of the common session proof. Payload bytes, rate limits, subscriptions,

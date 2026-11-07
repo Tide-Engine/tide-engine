@@ -4,8 +4,8 @@
 static tide_world world;
 
 // Main is slot 0; Setup spawns the picked marker, then the other.
-static const tide_entity PICKED = {1, 1};
-static const tide_entity OTHER = {2, 1};
+static tide_entity PICKED;
+static tide_entity OTHER;
 
 static uint32_t archetype_of(const tide_entity e)
 {
@@ -15,6 +15,8 @@ static uint32_t archetype_of(const tide_entity e)
 TIDE_TEST(tag_fallback_keeps_every_tag_within_the_limit)
 {
     tide_world_init(&world, 1.0f);
+    PICKED = tide_entity_in_slot(&world.entities, 1);
+    OTHER = tide_entity_in_slot(&world.entities, 2);
     tide_world_tick(&world); // Tick 0
     tide_world_tick(&world); // Tick 1: every tag
     TIDE_CHECK(tide_has_T0(&world, PICKED) && tide_has_T5(&world, PICKED) && tide_has_T11(&world, PICKED));

@@ -1,0 +1,64 @@
+// Pose.Sample from a separate animation export into a model's pose, timed by
+// bench/pose/main.c. Nothing is drawn.
+local scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color;
+}
+
+struct Chain
+{
+    [Name("Bone32")] Bone middle;
+}
+
+asset SkinnedMesh<Corner, Chain> character = "../skinned/model.gltf";
+asset Animation idle = "clip.gltf";
+
+local singleton Bench
+{
+    int calls;
+    int mode; // 0 Sampled(), 1 copying 40 bones by index, 2 Model of a bone 33 deep
+    float seconds;
+    float sum;
+}
+
+// A fresh pose of the clip at a time, as a character's view samples several.
+Pose Sampled(Animation clip, float seconds)
+{
+    mut var pose = character.defaultPose;
+    pose.Sample(clip, seconds);
+    return pose;
+}
+
+view SampleMany(mut Bench bench)
+{
+    var bones = character.skeleton.bones;
+    var middle = bones.middle;
+    var rest = character.defaultPose;
+    mut var copy = character.defaultPose;
+    mut float sum = 0;
+    for (int i = 0; i < bench.calls; i++)
+    {
+        if (bench.mode == 0)
+        {
+            var pose = Sampled(idle, bench.seconds + float(i) * 0.001);
+            sum += pose[middle].position.y;
+        }
+        else if (bench.mode == 1)
+        {
+            for (int b = 0; b < 40; b++)
+            {
+                bones.TryGetAt(b + 1, out var bone);
+                copy[bone] = rest[bone];
+            }
+        }
+        else
+        {
+            sum += rest.Model(bones.middle).c3.y;
+        }
+    }
+    bench.sum = sum + copy[middle].position.y;
+}

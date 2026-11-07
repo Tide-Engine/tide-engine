@@ -26,7 +26,7 @@ string StampName(mut Probe p) { p.order = p.order * 10 + 3; return "Root|Run"; }
 system Check(mut Probe p) {
     if (p.ticks == 0) {
         Expect(p, movement.TryGetByName("Root|Run", out var run) && run.name == "Root|Run");
-        Expect(p, movement.TryGetAt(3, out Animation indexed) && indexed.name == run.name);
+        Expect(p, movement.TryGetAt(3, out Animation atIndex) && atIndex.name == run.name);
         Expect(p, !movement.TryGetByName("rootRun", out var missing) && missing.name == "" && missing.duration == 0);
         Expect(p, !movement.TryGetByName("Root|0.Targeting Pose", out _));
         Expect(p, !movement.TryGetByName("", out _));

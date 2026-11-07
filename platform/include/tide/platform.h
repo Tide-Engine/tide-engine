@@ -7,12 +7,14 @@
 #include "tide/devices.h"
 #include "tide/draw.h"
 #include "tide/gui.h"
+#include "tide/gpu_profile.h"
 #include "tide/io.h"
 #include "tide/jobs.h"
 #include "tide/net.h"
+#include "tide/profiler.h"
 
 // The platform layer: a window, the frame loop, input devices and a renderer
-// for draw lists, on OpenGL (3.3, ES 3 or WebGL 2) or, on the web, WebGPU.
+// for draw lists, on Vulkan 1.3 (desktop and Android) or, on the web, WebGPU.
 // Hosts use it; the simulation never does. This header includes no system
 // header, nor GLFW's, and a file that includes a game's generated header
 // shouldn't either: their names would clash with the game's components
@@ -96,6 +98,9 @@ typedef struct tide_headless_desc {
     uint32_t player, hub;
     int argc;
     char **argv;
+    // Optional host report finalization, before GPU shutdown and before other
+    // players' exit codes are joined. Return the process's final exit code.
+    int (*finished)(int code);
 } tide_headless_desc;
 
 // Opens a headless window, in tide_platform_open's place. Ends the program
@@ -178,12 +183,33 @@ typedef int (*tide_frame_fn)(void *user, float seconds);
 // nothing then, and come when the frame function asks (tide_platform_next_frame).
 _Noreturn void tide_platform_run(tide_frame_fn frame, void *user);
 
+// The program ends after this frame, as when its window closes: exit code 0
+// (Application.Quit). A headless run ends at it as at its script's `quit`,
+// with its pictures. On the web, the page stops running the program and
+// hears its exit (Tide.onExit(0)); on Android the activity finishes.
+void tide_platform_quit(void);
+
+// What the host does as the program ends because its window closed or it
+// quit (tide_platform_quit), before the platform closes anything: what it
+// began, such as leaving its match, ends cleanly. Not when a frame function
+// returns an exit code, or a headless run ends at its count of frames. NULL
+// for nothing.
+void tide_platform_on_close(void (*closing)(void));
+
 // While nobody sees the window, the next frame comes `seconds` after this one
 // started: when the host next has work, such as its match's next tick
 // (tide_session_until_tick). Called from the frame function; the soonest of
 // several calls counts, and a frame that makes none has the next one in a
 // 60th of a second. Frames others see come at the display's pace.
 void tide_platform_next_frame(double seconds);
+
+// Optional match-only work while desktop Vulkan waits for a frame's GPU
+// resources. Called on the frame thread, after the frame function returned;
+// elapsed is seconds since that frame began. Return seconds from that point
+// until the next update is due. Never poll input, draw, reload or change GPU
+// or window resources here. NULL disables it. Headless runs and other backends
+// never call it.
+void tide_platform_update_while_waiting(double (*update)(void *user, double elapsed), void *user);
 
 // Updates the devices with the input since the previous frame. Call once per
 // frame, before sampling input. The characters typed are only the ones since
@@ -233,6 +259,11 @@ tide_float2 tide_platform_world_to_screen(tide_float2 world);
 // are. Does nothing elsewhere.
 void tide_platform_typing(bool typing);
 
+// Before each frame's views: the host's GUI, whose widgets an interactive
+// run lists and clicks (`controls`, `click`). Gives it a listing to describe
+// them in during such a run, and none otherwise.
+void tide_platform_list_controls(tide_gui *g);
+
 // Puts `text` on the system's clipboard. A browser takes it only shortly
 // after the player clicked or pressed a key, as when a button is pressed.
 void tide_platform_copy(const char *text);
@@ -250,15 +281,19 @@ void tide_platform_draw_over(const tide_draw_list *list);
 // Frames per second, averaged over the last frames.
 int tide_platform_fps(void);
 
-// What the open window draws with: "WebGPU", "WebGL 2", "OpenGL 3.3" or
-// "OpenGL ES 3". The web draws with WebGPU where the browser has it on a GPU,
-// and with WebGL 2 where it doesn't.
+// What the open window draws with: "Vulkan" or "WebGPU" (or, inside another
+// program, its recorder's name).
 const char *tide_platform_renderer(void);
 
 // Measure the GPU work of tide_platform_draw, including its render targets,
 // while the stats drawer is open. Overlays and the wait for display aren't
 // included. Disabling discards pending samples and releases query resources.
 void tide_platform_gpu_timing(bool enabled);
+// Detailed pass collection, independently enabled for a capture. Also enable
+// gpu_timing; WebGPU shares its frame's timestamp readback. NULL cancels.
+void tide_platform_gpu_profile(tide_gpu_pass_collect collect, void *user);
+void tide_platform_gpu_profile_read(void); // Drain ready results; never waits.
+uint32_t tide_platform_gpu_profile_pending(void);
 
 // A newly completed GPU sample, in milliseconds; -1 while none is ready or
 // the backend has no timer. Never waits for the GPU. Results arrive later
@@ -279,9 +314,31 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory);
 // across runs (Vulkan's pipelines), the game's temporary cache folder, which
 // is only made once something's kept there. tide_platform_io_init names it too.
 void tide_platform_name_game(const char *app_id);
+// The program's log, and what a crash leaves, for whoever looks into a
+// player's problem: in the game's folder of saved data by its app ID, or in
+// `directory` (--data-dir) in its place. Everything the program writes to
+// stderr (Debug.Log, the engine's messages, a game's C) goes on to where it
+// went and to Player.log there too, and the last run's log is kept as
+// Player-prev.log. A crash writes a folder, Crashes/Crash_<UTC time>, with a
+// copy of the log, the stack and, on Windows, a minidump (crash.dmp); the ten
+// newest are kept. Where tide-crash is beside the program (tide build puts
+// it there), a crash starts it, which asks the player, in a window titled
+// `title`, whether to zip the folder for the game's makers. Begins once a
+// program, later calls do nothing. Nothing on the web, where the browser's
+// console has the output. The standard host begins it for a run with a
+// window, not one with none (--frames, --capture, --script) nor inside
+// another program. Android's system log keeps the output too, and its own
+// crash reports what a crash leaves.
+void tide_platform_log_begin(const char *app_id, const char *title, const char *directory);
+// Player.log's path once tide_platform_log_begin made it, else NULL.
+const char *tide_platform_log_path(void);
+// A line in the log alone, not on stderr: what's worth knowing of a player's
+// problem and nothing to whoever runs the game (the GPU it draws with).
+// Nothing before tide_platform_log_begin, or where there's no log.
+void tide_platform_log_note(const char *text);
 // Whether a GPU pipeline (a shader with how it blends, tests depth and culls)
-// is made in the background where the backend can: WebGPU, and WebGL where
-// the browser compiles shaders in parallel. Making one takes tens of
+// is made in the background where the backend can: WebGPU, and Vulkan on the
+// job pool's threads, several at once. Making one takes tens of
 // milliseconds; in the background, nothing that draws with it shows till it's
 // made, a frame or a few later, where otherwise the frame that first draws it
 // waits for it. Off at first, so a frame read back draws everything it's
@@ -313,13 +370,33 @@ uint32_t tide_platform_prewarm_waiting(void);
 // from what was drawn over it (tide_platform_draw_overlay,
 // tide_platform_draw_over): a run of shapes, of text, or of one mesh's
 // instances is one.
+// A culled listed run the GPU decides (notes/drawing.md, Listed runs culled on the GPU) is one call with the runs
+// one after another that draw alike, however many it draws, and an indirect draw over a GPU list is one.
 uint32_t tide_platform_draw_calls(void);
+
+// How many draws the GPU made of those calls: one a call, but for the calls the GPU decides, whose draws that drew
+// any instance are counted as the GPU says, read back a frame or two later (the newest frame read back's, or none
+// where this frame had no such call).
+uint32_t tide_platform_draws(void);
+
+// How many render passes the last list drawn began, with the same scope as
+// draw calls: one for each destination drawn into in a row, and another
+// after a kernel's run or a GPU list's Set, Clear or SetCount that a draw
+// after it waits for (one nothing drawn before it reads goes before them).
+uint32_t tide_platform_render_passes(void);
+
+// The CPU's time in milliseconds in each part of drawing the last list (tide_render_part), the host's overlays
+// aside: what --profile's render_phases are. All zero before a list is drawn, or while the window is unseen.
+void tide_platform_render_parts(double ms[TIDE_RENDER_PARTS]);
 
 // Vertices submitted by the last list drawn, with the same scope as draw
 // calls above: all render-target passes, without the host's overlays. Each
 // index counts once per instance, including repeated indices; this isn't a
 // count of unique vertices or of GPU vertex-shader invocations after caching.
 // Includes shapes, text, blits and clear triangles, even if clipped or culled.
+// What the GPU decides (culled listed runs, indirect draws over GPU lists) is
+// counted as the GPU's numbers say, read back a frame or two later, as
+// tide_platform_draws has it.
 uint64_t tide_platform_draw_vertices(void);
 
 // How much memory the program has, in bytes, as the system counts it: what it
@@ -347,6 +424,13 @@ uint64_t tide_platform_gpu_written(void);
 // in its APK on Android. malloc'd bytes, the caller's to free, or NULL for
 // none. The standard host loads it before the game runs (tide/host.h).
 uint8_t *tide_platform_pack(size_t *size);
+// The same, saying as it goes how far it has read: progress[0] the bytes read
+// so far, progress[1] the whole pack's, each stored atomically, so another
+// thread can show them while this one reads (the host's loading screen).
+uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2]);
+// A file read whole the same way, counting as it goes; NULL for one that
+// can't be read. Desktop and Android: the web has no files to read this way.
+uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t progress[2]);
 
 // 64 bits from the system's random number generator, which nobody could guess:
 // what a session makes the seeds of the matches it starts from
@@ -360,16 +444,20 @@ uint64_t tide_platform_entropy(void);
 tide_float2 tide_platform_screen_size(void);
 // Physical pixels per logical pixel on each axis, as the renderer fits them.
 tide_float2 tide_platform_screen_scale(void);
+// Whether the renderer culls listed runs on the GPU (tide_draw_list.gpu_culling), which a host sets each frame
+// before its views record: unless it records for another program (tide/embed.h) or TIDE_GPU_CULLING is 0.
+bool tide_platform_gpu_culling(void);
 tide_int2 tide_platform_target_pixels(tide_target_size size);
+tide_target_content tide_platform_target_content(tide_target_size size);
 
-// How big `text` is drawn `size` tall with the platform's font, in the same
-// units, logical pixels: its widest line's width and its lines' height, on
-// the window's pixels (NULL) or on those of a render target of the size
-// `target` says, as the window's display has them, in the weight `font` is
-// the file of: TIDE_FONT_REGULAR or TIDE_FONT_BOLD. It's the tide_measure_fn
+// How big `text` is drawn `size` tall in `font`, in the same units, logical
+// pixels: its widest line's width and its lines' height, on the window's
+// pixels (NULL) or on those of a render target of the size `target` says, as
+// the window's display has them. `font` is TIDE_FONT_REGULAR, TIDE_FONT_BOLD
+// or one of the registry's (tide/font.h). It's the tide_measure_fn
 // that tide_gui_begin takes (tide/draw.h), and needs no window open.
 tide_float2 tide_platform_measure_text(const char *text, float size, const tide_target_size *target,
-                                       const unsigned char *font);
+                                       const tide_font *font);
 
 // Renders `list` offscreen at the window's size, then reads the pixels at
 // `points` (window pixels from the top left) as 0xRRGGBBAA. For tests: proves
@@ -387,6 +475,42 @@ void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *po
 // tide_platform_measure_text with a target of that size and scale.
 void tide_platform_read_pixels_as(const tide_draw_list *list, int width, int height, float scale,
                                   const tide_float2 *points, int count, uint32_t *rgba);
+
+// What the GPU culled of the listed runs of the frame drawn last (tide_draw_list.gpu_culling), read back and set
+// beside the CPU's decisions for the same runs (tide_draw_culled_places), for tests and diagnostics: false where
+// it can't be (no run of it was culled on the GPU, or a backend that can't wait for a read: the web's). `list` is
+// the one drawn, as it was.
+typedef struct tide_platform_cull_report {
+    uint32_t runs;      // Culled on the GPU
+    uint32_t listed;    // Ordinary listed runs drawn by the same calls, beside culled ones that draw alike
+    uint64_t gpu, cpu;  // The instances each drew
+    uint64_t missing;   // The CPU's that the GPU's leave out, or have out of order: none where the decisions agree
+    uint64_t extra;     // The GPU's that the CPU's leave out: its slack at the frustum's edges, picks at a threshold
+    uint32_t calls;     // The calls that drew them: runs one after another that draw alike are one
+    uint32_t joined;    // The runs drawn by calls of more than one, listed ones too
+    uint32_t draws;     // The draws those calls made: runs that kept any instance, listed ones too
+    uint32_t misdrawn;  // Draw records that aren't each such run's, in order, then none, with how many
+    bool failed;        // The device can't make the culling's kernels (its driver refused them): every run recorded to
+                        // be culled is decided on the CPU, as it's drawn
+} tide_platform_cull_report;
+bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
+
+// Occlusion culling (Draw.Occlusion; notes/drawing.md, Occlusion culling from a depth pyramid): what the GPU's
+// culling counted, as it came back from the GPU (a frame or two after it was drawn; with `wait`, it waits for the
+// last frame's, where the backend can), and the last frame's spans and pyramids made. False until counts have come.
+typedef struct tide_platform_occlusion_report {
+    uint64_t tested; // Instances the frustum kept that a pyramid of the depth drawn before them was asked about
+    uint64_t hidden; // ...that it surely hid: not drawn
+    uint32_t spans;  // Runs of draws testing it in the last frame drawn (none where nothing was drawn before to hide them)...
+    uint32_t measured; // ...those culled again against a pyramid (none where a destination gave no depth to measure, or
+                       // had none yet)...
+    uint32_t pyramids; // ...and the pyramids made for them: one serves those of a destination nothing was drawn into between
+    uint32_t breaks;   // Passes ended for them, where the destination's had ended for nothing else since it was drawn in
+    uint64_t serial;   // How many frames' counts have come back: a new number, new counts
+    bool counted;
+    bool failed;       // The device can't make the pyramid's kernel: draws testing occlusion are culled without it
+} tide_platform_occlusion_report;
+bool tide_platform_occlusion(tide_platform_occlusion_report *report, bool wait);
 
 // Networking for sessions (tide/session.h): a UDP transport, taking datagrams
 // on `port` (0: any free one). False where there's no network, like the web
@@ -473,6 +597,9 @@ bool tide_platform_host_open(uint16_t port, tide_transport *out);
 // below in such a run, in the place of what's above.
 uint32_t tide_platform_players(void);
 uint32_t tide_platform_player(void);
+// A capture/report filename with this player's suffix in a multi-player run.
+// The returned string is owned by the caller (free).
+char *tide_platform_players_file(const char *path);
 // Takes the players who join a match this process hosts, in
 // tide_platform_host_open's place: in its room, and on `port`.
 bool tide_platform_players_open(uint16_t port, tide_transport *out);
@@ -506,6 +633,15 @@ typedef enum tide_players_action {
     TIDE_PLAYERS_REJOIN,
 } tide_players_action;
 tide_players_action tide_platform_players_action(void);
+
+// Whether the machine slept since the last call (a Steam Deck's or a laptop's
+// sleep): true once for each sleep, at the first call after it woke. Desktop
+// and Android; always false on the web, where the browser freezes a hidden
+// page instead. The standard host asks once a frame, and leaves a match other
+// machines can be in (tide/host.h, tide_run_slept).
+bool tide_platform_slept(void);
+// The next tide_platform_slept says the machine slept: a script's `sleep`.
+void tide_platform_pretend_sleep(void);
 
 // Threads to run ticks on (tide/jobs.h): a pool with one for each of the
 // CPU's cores, the caller's among them, made on first use. NULL with one core.

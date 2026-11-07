@@ -18,6 +18,8 @@ struct MaterialMaps
     bool mask;
     bool emission;
     bool height;
+    bool ditherFade;
+    ImpostorSettings impostor;
     float handedness = 1;
 }
 
@@ -135,6 +137,61 @@ Coverage MaterialCoverage(SurfaceInput input, float alpha, float cutoff,
     return coverage;
 }
 
+// Ordered coverage is stable in destination pixels. A negative fraction keeps
+// the complementary cells, for the incoming half of a geometry LOD crossfade.
+bool DitherKeep(float2 pixel, float fraction)
+{
+    float amount = Math.Clamp(Math.Abs(fraction), 0, 1);
+    if (amount >= 1) return true;
+    if (!(amount > 0)) return false;
+    int x = int(Math.Floor(pixel.x)) & 3;
+    int y = int(Math.Floor(pixel.y)) & 3;
+    int low = 2 * ((x & 1) ^ (y & 1)) + (y & 1);
+    int high = 2 * ((x >> 1) ^ (y >> 1)) + (y >> 1);
+    float threshold = (float(4 * low + high) + 0.5) / 16;
+    return fraction < 0 ? threshold >= 1 - amount : threshold < amount;
+}
+
+// Both material paths keep the same light order and arithmetic. Resources are
+// explicit so a helper never samples a texture field of a given Renderer.
+float3 MaterialRadiance(SurfaceInput input, Surface result, Renderer renderer,
+                         DepthTexture shadow, bool receiveShadows)
+{
+    float3 viewDirection = input.viewDirection;
+    mut float3 radiance = Math.Max(result.emission, float3(0));
+    // Preserve the original opaque path's arithmetic when indirect is disabled.
+    if (renderer.ambientIrradiance.x > 0 || renderer.ambientIrradiance.y > 0 || renderer.ambientIrradiance.z > 0)
+        radiance += EvaluateIndirectPbr(result, renderer.ambientIrradiance);
+    foreach (var light in renderer.lights)
+    {
+        float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(light.position - input.world);
+        mut float attenuation = 1;
+        if (light.kind != LightKind.Directional)
+        {
+            attenuation = PointAttenuation(Math.Length(light.position - input.world), light.range);
+            if (light.kind == LightKind.Spot)
+                attenuation *= SpotAttenuation(Math.Dot(light.direction, -toward), light.innerCosine, light.outerCosine);
+        }
+        if (attenuation <= 0) continue;
+        mut float visibility = 1;
+        if (renderer.shadows && receiveShadows && light.shadowIndex >= 0)
+        {
+            int face = light.kind == LightKind.Point ? PointFace(input.world - light.position) : 0;
+            float facing = Math.Saturate(Math.Dot(input.normal, toward));
+            float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
+            if (light.cascadeCount > 0)
+                visibility = DirectionalVisibility(shadow, renderer.shadowViews, light, input.world,
+                    Math.Dot(input.world - renderer.eye, renderer.shadowForward), bias, renderer.shadowTexel);
+            else
+                visibility = ShadowVisibility(shadow, renderer.shadowViews[light.shadowIndex + face], input.world, bias, renderer.shadowTexel,
+                                              light.kind == LightKind.Point);
+        }
+        radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
+    }
+    radiance = ApplyFog(radiance, input.world, renderer.eye, renderer.fog);
+    return radiance;
+}
+
 frag Lit(MeshVertex vertex, out Color color, Instance instance, Material material, Renderer renderer,
          MaterialMaps maps, Func<SurfaceInput, mut Surface, void> surface)
 {
@@ -146,14 +203,14 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
         maps.handedness, vertex.uv, viewDirection, material.doubleSided);
     float2 hookedUV = MaterialUV(frame, material.uvScale, material.uvOffset, material.uv);
     float2 uv = MaterialParallax(material.heightMap, frame, hookedUV, maps.height, material.heightScale);
-    SurfaceInput input = MaterialUVInput(frame, uv);
+    mut SurfaceInput input = MaterialUVInput(frame, uv);
     Color sampled = material.baseMap.Sample(uv);
-    Coverage coverage = MaterialCoverage(input, sampled.a * material.baseColor.a * vertex.color.a,
+    Coverage coverage = MaterialCoverage(input, sampled.a * (maps.ditherFade ? 1 : material.renderColor.a) * vertex.color.a,
                                          material.alphaCutoff, material.coverage);
     if (material.mode == SurfaceMode.Cutout && coverage.alpha < coverage.cutoff) this.Discard();
-
+    if (maps.ditherFade && !DitherKeep(this.position, material.renderColor.a)) this.Discard();
     float3 texel = SrgbToLinear(float3(sampled.r, sampled.g, sampled.b));
-    float3 tint = SrgbToLinear(float3(material.baseColor.r, material.baseColor.g, material.baseColor.b));
+    float3 tint = SrgbToLinear(float3(material.renderColor.r, material.renderColor.g, material.renderColor.b));
     float3 vertexColor = SrgbToLinear(float3(vertex.color.r, vertex.color.g, vertex.color.b));
     mut Surface result = Surface {
         albedo = texel * tint * vertexColor, normal = input.normal,
@@ -167,6 +224,7 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
     if (maps.mask)
     {
         Color mask = material.maskMap.Sample(uv);
+        input.mask = float4(mask.r, mask.g, mask.b, mask.a);
         result.occlusion = Math.Lerp(1, Math.Clamp(mask.r, 0, 1), Math.Clamp(material.occlusionStrength, 0, 1));
         result.roughness *= mask.g;
         result.metallic *= mask.b;
@@ -177,36 +235,52 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
         result.emission *= SrgbToLinear(float3(emission.r, emission.g, emission.b));
     }
     surface(input, result);
-    mut float3 radiance = Math.Max(result.emission, float3(0));
-    // Preserve the original opaque path's arithmetic when indirect is disabled.
-    if (renderer.ambientIrradiance.x > 0 || renderer.ambientIrradiance.y > 0 || renderer.ambientIrradiance.z > 0)
-        radiance += EvaluateIndirectPbr(result, renderer.ambientIrradiance);
-    foreach (var light in renderer.lights)
+    float3 radiance = MaterialRadiance(input, result, renderer, renderer.shadow, material.receiveShadows);
+    float alpha = material.mode == SurfaceMode.Transparent ? coverage.alpha : 1;
+    color = Color(radiance.x, radiance.y, radiance.z, alpha);
+}
+
+// A separate internal program keeps optional atlas sampling out of ordinary
+// Lit pipelines. Four affine vertex projections provide compact mip gradients;
+// depth reprojection changes the lookup, not the authored source footprint.
+frag ImpostorLit(MeshVertex vertex, out Color color, Instance instance, Material material, Renderer renderer,
+                  MaterialMaps maps, Func<SurfaceInput, mut Surface, void> surface)
+{
+    ImpostorUVs coordinates = ImpostorUVs {
+        a = vertex.uv, b = vertex.normal.xy, c = vertex.tangent.xy, d = vertex.tangent.zw,
+        dxA = this.Ddx(vertex.uv), dyA = this.Ddy(vertex.uv),
+        dxB = this.Ddx(vertex.normal.xy), dyB = this.Ddy(vertex.normal.xy),
+        dxC = this.Ddx(vertex.tangent.xy), dyC = this.Ddy(vertex.tangent.xy),
+        dxD = this.Ddx(vertex.tangent.zw), dyD = this.Ddy(vertex.tangent.zw)
+    };
+    ImpostorAtlas sampled = SampleImpostor(material.baseMap, material.normalMap, material.maskMap,
+        coordinates, float3(vertex.normal.z, vertex.color.b, vertex.color.a),
+        float2(vertex.color.r, vertex.color.g), maps.impostor, maps.mask);
+    float3 viewDirection = Math.Normalize(renderer.eye - this.world);
+    mut float3 normal = instance.Normal(sampled.normal);
+    if (Math.Dot(normal, viewDirection) < 0) normal = -normal;
+    float3 tangent = FallbackTangent(normal);
+    SurfaceInput input = SurfaceInput {
+        world = this.world, normal = normal, tangent = tangent, bitangent = Math.Cross(normal, tangent),
+        uv = vertex.uv, viewDirection = viewDirection, mask = sampled.mask
+    };
+    Coverage coverage = MaterialCoverage(input, sampled.opacity * (maps.ditherFade ? 1 : material.renderColor.a),
+        material.alphaCutoff, material.coverage);
+    if (coverage.alpha < coverage.cutoff) this.Discard();
+    if (maps.ditherFade && !DitherKeep(this.position, material.renderColor.a)) this.Discard();
+    float3 tint = SrgbToLinear(float3(material.renderColor.r, material.renderColor.g, material.renderColor.b));
+    mut Surface result = Surface { albedo = sampled.albedo * tint, normal = normal,
+        metallic = material.metallic, roughness = material.roughness, emission = material.emission };
+    if (maps.mask)
     {
-        float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(light.position - this.world);
-        mut float attenuation = 1;
-        if (light.kind != LightKind.Directional)
-        {
-            attenuation = PointAttenuation(Math.Length(light.position - this.world), light.range);
-            if (light.kind == LightKind.Spot)
-                attenuation *= SpotAttenuation(Math.Dot(light.direction, -toward), light.innerCosine, light.outerCosine);
-        }
-        if (attenuation <= 0) continue;
-        mut float visibility = 1;
-        if (renderer.shadows && material.receiveShadows && light.shadowIndex >= 0)
-        {
-            int face = light.kind == LightKind.Point ? PointFace(this.world - light.position) : 0;
-            float facing = Math.Saturate(Math.Dot(input.normal, toward));
-            float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
-            if (light.cascadeCount > 0)
-                visibility = DirectionalVisibility(renderer.shadow, renderer.shadowViews, light, this.world,
-                    Math.Dot(this.world - renderer.eye, renderer.shadowForward), bias, renderer.shadowTexel);
-            else
-                visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
-                                              light.kind == LightKind.Point);
-        }
-        radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
+        result.occlusion = Math.Lerp(1, Math.Clamp(sampled.mask.x, 0, 1), Math.Clamp(material.occlusionStrength, 0, 1));
+        result.roughness *= sampled.mask.y;
+        result.metallic *= sampled.mask.z;
     }
+    // The atlas prototype has albedo, model-normal/depth and mask maps only.
+    // Constant emission and the surface hook remain available.
+    surface(input, result);
+    float3 radiance = MaterialRadiance(input, result, renderer, renderer.shadow, material.receiveShadows);
     float alpha = material.mode == SurfaceMode.Transparent ? coverage.alpha : 1;
     color = Color(radiance.x, radiance.y, radiance.z, alpha);
 }
@@ -224,8 +298,9 @@ frag ShadowCutout(MeshVertex vertex, out Color color, Instance instance, Materia
     float2 uv = MaterialParallax(material.heightMap, frame, hookedUV, tile.maps.height, material.heightScale);
     SurfaceInput input = MaterialUVInput(frame, uv);
     Color sampled = material.baseMap.Sample(uv);
-    Coverage coverage = MaterialCoverage(input, sampled.a * material.baseColor.a * vertex.color.a,
+    Coverage coverage = MaterialCoverage(input, sampled.a * (tile.maps.ditherFade ? 1 : material.renderColor.a) * vertex.color.a,
                                          material.alphaCutoff, material.coverage);
     if (coverage.alpha < coverage.cutoff) this.Discard();
+    if (tile.maps.ditherFade && !DitherKeep(this.position, material.renderColor.a)) this.Discard();
     color = Color.white;
 }

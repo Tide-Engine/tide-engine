@@ -19,11 +19,13 @@ static void check_rows(tide_world *w, const int tick)
 {
     for (int i = 0; i < 5000; i++) {
         const tide_entity e = entity_at(w, i);
+        const tide_entity predecessor = entity_at(w, (i + 4999) % 5000);
+        const bool overwritten_after_visit = tide_entity_compare(predecessor, e) > 0;
         const Counter counter = tide_get_Counter(w, e);
         const Seen seen = tide_get_Seen(w, e);
-        TIDE_REQUIRE(counter.index == i && counter.value == (i == 0 ? 22 : 21));
+        TIDE_REQUIRE(counter.index == i && counter.value == (overwritten_after_visit ? 22 : 21));
         TIDE_REQUIRE(seen.own == 21 && seen.other == 21 && seen.stored == 20);
-        TIDE_REQUIRE(seen.entered == (i == 0 && tick == 1 ? 1 : 22));
+        TIDE_REQUIRE(seen.entered == (overwritten_after_visit && tick == 1 ? 1 : 22));
         if (i >= 2048 || i % 2 == 0) {
             TIDE_REQUIRE(tide_get_Indirect(w, e).value == 72);
             TIDE_REQUIRE(seen.helper == 41 && seen.ordered == 107);
@@ -39,7 +41,7 @@ TIDE_TEST(world_set_mut_updates_self_and_helpers_without_overwriting_other_rows)
     tide_world_init(&world, 1.0f);
     tide_world_init(&shared, 1.0f);
     const tide_entity valid = entity_at(&world, 0);
-    world.Roster.absent = (tide_entity){valid.index, valid.generation + 1u};
+    world.Roster.absent = (tide_entity){valid.birth, valid.lineage ^ UINT64_C(1)};
     shared.Roster.absent = world.Roster.absent;
     for (int tick = 0; tick < 3; tick++) {
         tide_world_copy(&kept, &shared);

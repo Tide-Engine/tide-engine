@@ -61,6 +61,7 @@ tide_gui_theme tide_gui_theme_default(void)
         .text_size = 16.0f,
         .padding = 12.0f,
         .spacing = 5.0f,
+        .font = TIDE_FONT_REGULAR,
     };
 }
 
@@ -180,7 +181,7 @@ static float clamp_f(const float v, const float lo, const float hi)
 
 static float text_width(const tide_gui *g, const char *text)
 {
-    return g->measure(text, FONT, NULL, TIDE_FONT_REGULAR).x; // The GUI draws in the window
+    return g->measure(text, FONT, NULL, g->theme.font).x; // The GUI draws in the window
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +287,10 @@ static void body(tide_gui *g, const uint32_t id, const tide_rect r, const tide_c
 // Text starting at `x`, centered on `middle` vertically.
 static void text_at(tide_gui *g, const char *text, const float x, const float middle, const tide_color color)
 {
-    if (text[0]) tide_draw_text(&g->list, text, tide_f2(x, middle - FONT * 0.5f), FONT, shade(g, color));
+    if (text[0]) {
+        tide_draw_text_at(&g->list, text, tide_f2(x, middle - FONT * 0.5f), FONT, shade(g, color), TIDE_ANCHOR_UPPER_LEFT,
+                          g->theme.font);
+    }
 }
 
 static void text_centered(tide_gui *g, const char *text, const tide_rect r, const tide_color color)
@@ -1014,6 +1018,15 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
             r->rect = intersect(r->rect, g->list.clips[clip - 1u].rect);
     }
     memcpy(g->rects, g->rects_next, g->rect_count_next * sizeof g->rects[0]);
+    tide_gui_listing *listing = g->listing;
+    if (listing) {
+        memcpy(listing->places, listing->places_next, g->rect_count_next * sizeof listing->places[0]);
+        memcpy(listing->labels, listing->labels_next, listing->label_size_next);
+        listing->label_size = listing->label_size_next;
+        listing->label_size_next = 0;
+    }
+    g->listed = listing != NULL;
+    g->describing = TIDE_GUI_KIND_NONE;
     g->rect_count = g->rect_count_next;
     g->rect_count_next = 0;
     g->rects_full = g->rects_full_next;
@@ -1046,6 +1059,54 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
         // Whatever the views left set, the GUI isn't drawn with: the list starts from the defaults
         tide_draw_append(draw, &g->list);
     }
+}
+
+// A point of place `r` where it's on top (on_top says it): its center, or
+// else the first of a 5 by 5 grid over it, row by row. False where none is.
+static bool point_on_top(const tide_gui *g, const tide_gui_rect *r, tide_float2 *at)
+{
+    tide_rect where;
+    uint32_t scroll;
+    const tide_float2 center = {r->rect.x + r->rect.width * 0.5f, r->rect.y + r->rect.height * 0.5f};
+    *at = center;
+    if (on_top(g, center, &where, &scroll) == r->id) return true;
+    for (int y = 0; y < 5; y++) {
+        for (int x = 0; x < 5; x++) {
+            const tide_float2 p = {r->rect.x + r->rect.width * ((float)x + 0.5f) / 5.0f,
+                                   r->rect.y + r->rect.height * ((float)y + 0.5f) / 5.0f};
+            if (on_top(g, p, &where, &scroll) == r->id) {
+                *at = p;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+uint32_t tide_gui_controls(const tide_gui *g, tide_gui_listed *out, const uint32_t capacity)
+{
+    const tide_gui_listing *listing = g->listing;
+    if (!listing || !g->listed) return 0;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < g->rect_count; i++) {
+        const tide_gui_rect *r = &g->rects[i];
+        const tide_gui_described *d = &listing->places[i];
+        // An area, or a widget a scroll's clip hides whole
+        if (r->content != WIDGET || !d->kind || !(r->rect.width > 0.0f) || !(r->rect.height > 0.0f)) continue;
+        if (n < capacity) {
+            tide_gui_listed *c = &out[n];
+            c->rect = r->rect;
+            c->covered = !point_on_top(g, r, &c->at);
+            c->kind = (tide_gui_kind)d->kind;
+            c->label = listing->labels + d->label;
+            c->label_length = d->label_length;
+            c->id = r->id;
+            c->disabled = d->disabled;
+            c->focused = g->focus == r->id;
+        }
+        n++;
+    }
+    return n;
 }
 
 bool tide_gui_typing(const tide_gui *g)
@@ -1187,8 +1248,38 @@ static tide_float2 screen_mouse(const tide_gui *g)
 // content's.
 static void remember_place(tide_gui *g, const uint32_t id, const tide_rect r, const uint32_t content)
 {
-    if (g->rect_count_next < TIDE_GUI_MAX_RECTS) g->rects_next[g->rect_count_next++] = (tide_gui_rect){on_screen(g, r), id, content, g->scroll_clip, g->scroll_id};
-    else g->rects_full_next = true;
+    const uint8_t kind = g->describing_id == id ? g->describing : TIDE_GUI_KIND_NONE;
+    const char *label = g->describing_label;
+    g->describing = TIDE_GUI_KIND_NONE;
+    if (g->rect_count_next >= TIDE_GUI_MAX_RECTS) {
+        g->rects_full_next = true;
+        return;
+    }
+    tide_gui_listing *listing = g->listing;
+    if (listing) {
+        tide_gui_described d = {.kind = content == WIDGET ? kind : TIDE_GUI_KIND_NONE, .disabled = grayed(g)};
+        const size_t length = d.kind && label ? strlen(label) : 0;
+        const uint32_t room = TIDE_GUI_LABELS - listing->label_size_next;
+        if (length && length <= UINT16_MAX && length <= room) {
+            memcpy(listing->labels_next + listing->label_size_next, label, length);
+            d.label = listing->label_size_next;
+            d.label_length = (uint16_t)length;
+            listing->label_size_next += (uint32_t)length;
+        }
+        listing->places_next[g->rect_count_next] = d;
+    }
+    g->rects_next[g->rect_count_next++] = (tide_gui_rect){on_screen(g, r), id, content, g->scroll_clip, g->scroll_id};
+}
+
+// What widget `id`'s place is, for a listing: its outermost call says, and
+// what that calls for the same widget ("" for a label from a layout call)
+// keeps the first. Its place takes it; another widget's describes itself.
+static void describe(tide_gui *g, const uint32_t id, const tide_gui_kind kind, const char *label)
+{
+    if (g->describing && g->describing_id == id) return;
+    g->describing = (uint8_t)kind;
+    g->describing_id = id;
+    g->describing_label = label;
 }
 
 // Whether the mouse is on the widget. Where widgets overlap, the one drawn
@@ -1197,7 +1288,10 @@ static void remember_place(tide_gui *g, const uint32_t id, const tide_rect r, co
 // the game, but it's never hovered itself.
 static bool hovered(tide_gui *g, const uint32_t id, const tide_rect r)
 {
-    if (under_modal(g)) return false;
+    if (under_modal(g)) {
+        g->describing = TIDE_GUI_KIND_NONE;
+        return false;
+    }
     remember_place(g, id, r, WIDGET);
     if (!contains(r, g->mouse) || (g->scroll_clip && !contains(g->input_clip, g->mouse))) return false;
     g->hot_next = id;
@@ -1967,6 +2061,7 @@ void tide_gui_layout_label_sized(tide_gui *g, const char *text, const float size
 
 bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const char *text)
 {
+    describe(g, id, TIDE_GUI_KIND_BUTTON, text);
     bool hover, down, focused;
     const bool pressed_now = clicked(g, id, rect, &hover, &down, &focused);
     if (focused) fill_around(g, rect, BORDER, g->theme.accent);
@@ -1977,6 +2072,7 @@ bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const
 
 tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect rect)
 {
+    describe(g, id, TIDE_GUI_KIND_CONTROL, NULL);
     const bool was_active = g->active == id;
     const bool gesture_cancelled = g->gesture_cancel == id;
     if (gesture_cancelled) g->gesture_cancel = 0;
@@ -2005,12 +2101,14 @@ tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect re
 
 bool tide_gui_layout_button(tide_gui *g, const uint32_t id, const char *text)
 {
+    describe(g, id, TIDE_GUI_KIND_BUTTON, text);
     const float width = text_width(g, text);
     return tide_gui_button(g, id, reserve(g, width + 2.0f * PAD, width + PAD, true), text);
 }
 
 bool tide_gui_toggle(tide_gui *g, const uint32_t id, const tide_rect rect, const char *text, bool *value)
 {
+    describe(g, id, TIDE_GUI_KIND_TOGGLE, text);
     bool hover, down, focused;
     const bool changed = clicked(g, id, rect, &hover, &down, &focused);
     if (changed) *value = !*value;
@@ -2029,6 +2127,7 @@ bool tide_gui_toggle(tide_gui *g, const uint32_t id, const tide_rect rect, const
 
 bool tide_gui_layout_toggle(tide_gui *g, const uint32_t id, const char *text, bool *value)
 {
+    describe(g, id, TIDE_GUI_KIND_TOGGLE, text);
     const float width = BOX + 8.0f + text_width(g, text);
     return tide_gui_toggle(g, id, reserve(g, width, width, true), text, value);
 }
@@ -2086,6 +2185,7 @@ static tide_rect track(tide_gui *g, const tide_rect rect, const char *label, con
 bool tide_gui_slider(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, float *value,
                      const float min, const float max)
 {
+    describe(g, id, TIDE_GUI_KIND_SLIDER, label);
     char text[32];
     snprintf(text, sizeof text, "%.2f", (double)*value);
     const double moved = slider(g, id, track(g, rect, label, text), fraction(*value, min, max), 20.0, NULL);
@@ -2099,6 +2199,7 @@ bool tide_gui_slider(tide_gui *g, const uint32_t id, const tide_rect rect, const
 bool tide_gui_layout_slider(tide_gui *g, const uint32_t id, const char *label, float *value, const float min,
                             const float max)
 {
+    describe(g, id, TIDE_GUI_KIND_SLIDER, label);
     const tide_rect r = labelled(g, label, SLIDER_WIDTH + VALUE_WIDTH, LEAST_TRACK + VALUE_WIDTH);
     return tide_gui_slider(g, id, r, "", value, min, max);
 }
@@ -2106,6 +2207,7 @@ bool tide_gui_layout_slider(tide_gui *g, const uint32_t id, const char *label, f
 bool tide_gui_int_slider(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, int32_t *value,
                          const int32_t min, const int32_t max)
 {
+    describe(g, id, TIDE_GUI_KIND_SLIDER, label);
     char text[32];
     snprintf(text, sizeof text, "%d", (int)*value);
     const double range = (double)max - (double)min;
@@ -2135,6 +2237,7 @@ bool tide_gui_int_slider(tide_gui *g, const uint32_t id, const tide_rect rect, c
 bool tide_gui_layout_int_slider(tide_gui *g, const uint32_t id, const char *label, int32_t *value, const int32_t min,
                                 const int32_t max)
 {
+    describe(g, id, TIDE_GUI_KIND_SLIDER, label);
     const tide_rect r = labelled(g, label, SLIDER_WIDTH + VALUE_WIDTH, LEAST_TRACK + VALUE_WIDTH);
     return tide_gui_int_slider(g, id, r, "", value, min, max);
 }
@@ -2479,11 +2582,14 @@ static bool float_parts(tide_gui *g, const uint32_t id, const tide_rect r, float
                         const number_kind kind, bool *entered)
 {
     const float w = max_f((r.width - SPACING * (float)(n - 1)) / (float)n, 0.0f);
+    const char *label = g->describing && g->describing_id == id ? g->describing_label : NULL; // Each box's
     bool changed = false;
     for (int i = 0; i < n; i++) {
         const tide_rect box = {r.x + (float)i * (w + SPACING), r.y, w, r.height};
         double v = parts[i];
-        if (number_box(g, tide_gui_seed(id, (uint32_t)i + 1u), box, &v, kind, entered) && (float)v != parts[i]) {
+        const uint32_t part = tide_gui_seed(id, (uint32_t)i + 1u);
+        describe(g, part, TIDE_GUI_KIND_NUMBER, label);
+        if (number_box(g, part, box, &v, kind, entered) && (float)v != parts[i]) {
             parts[i] = (float)v;
             changed = true;
         }
@@ -2494,6 +2600,7 @@ static bool float_parts(tide_gui *g, const uint32_t id, const tide_rect r, float
 bool tide_gui_int_field_entered(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, int32_t *value,
                                 bool *entered)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     double v = *value;
     if (!number_box(g, id, after_label(g, rect, label), &v, NUMBER_INT, entered) || (int32_t)v == *value) return false;
     *value = (int32_t)v;
@@ -2509,6 +2616,7 @@ bool tide_gui_int_field(tide_gui *g, const uint32_t id, const tide_rect rect, co
 bool tide_gui_float_field_entered(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, float *value,
                                   bool *entered)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     float parts[1] = {*value};
     if (!float_parts(g, id, after_label(g, rect, label), parts, 1, NUMBER_FLOAT, entered)) return false;
     *value = parts[0];
@@ -2523,6 +2631,7 @@ bool tide_gui_float_field(tide_gui *g, const uint32_t id, const tide_rect rect, 
 
 bool tide_gui_float2_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, tide_float2 *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     float parts[2] = {value->x, value->y};
     if (!float_parts(g, id, after_label(g, rect, label), parts, 2, NUMBER_FLOAT, NULL)) return false;
     *value = tide_f2(parts[0], parts[1]);
@@ -2531,6 +2640,7 @@ bool tide_gui_float2_field(tide_gui *g, const uint32_t id, const tide_rect rect,
 
 bool tide_gui_float3_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, tide_float3 *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     float parts[3] = {value->x, value->y, value->z};
     if (!float_parts(g, id, after_label(g, rect, label), parts, 3, NUMBER_FLOAT, NULL)) return false;
     *value = tide_f3(parts[0], parts[1], parts[2]);
@@ -2539,6 +2649,7 @@ bool tide_gui_float3_field(tide_gui *g, const uint32_t id, const tide_rect rect,
 
 bool tide_gui_float4_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, tide_float4 *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     float parts[4] = {value->x, value->y, value->z, value->w};
     if (!float_parts(g, id, after_label(g, rect, label), parts, 4, NUMBER_FLOAT, NULL)) return false;
     *value = tide_f4(parts[0], parts[1], parts[2], parts[3]);
@@ -2547,6 +2658,7 @@ bool tide_gui_float4_field(tide_gui *g, const uint32_t id, const tide_rect rect,
 
 bool tide_gui_color_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, tide_color *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     const tide_rect r = after_label(g, rect, label);
     const tide_rect swatch = {r.x, r.y, min_f(r.height, r.width), r.height};
     body_paint(g, swatch, shade(g, g->theme.control), g->theme.radius);
@@ -2585,6 +2697,7 @@ static bool type_text(tide_gui *g) { return edit_apply(g, NUMBER_NONE); }
 bool tide_gui_text_field_entered(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label,
                                  const tide_textref value, bool *entered)
 {
+    describe(g, id, TIDE_GUI_KIND_TEXT, label);
     const tide_rect box = after_label(g, rect, label);
     const bool hover = hovered(g, id, box);
     if (hover && g->mouse_pressed && !g->claimed) {
@@ -2639,6 +2752,7 @@ bool tide_gui_text_field(tide_gui *g, const uint32_t id, const tide_rect rect, c
 bool tide_gui_layout_text_field_entered(tide_gui *g, const uint32_t id, const char *label, const tide_textref value,
                                         bool *entered)
 {
+    describe(g, id, TIDE_GUI_KIND_TEXT, label);
     const tide_rect rect = labelled(g, label, 2.0f * FIELD_WIDTH, 2.0f * LEAST_FIELD);
     return tide_gui_text_field_entered(g, id, rect, "", value, entered);
 }
@@ -2651,6 +2765,7 @@ bool tide_gui_layout_text_field(tide_gui *g, const uint32_t id, const char *labe
 
 bool tide_gui_layout_int_field_entered(tide_gui *g, const uint32_t id, const char *label, int32_t *value, bool *entered)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     return tide_gui_int_field_entered(g, id, labelled(g, label, FIELD_WIDTH, LEAST_FIELD), "", value, entered);
 }
 
@@ -2662,6 +2777,7 @@ bool tide_gui_layout_int_field(tide_gui *g, const uint32_t id, const char *label
 
 bool tide_gui_layout_float_field_entered(tide_gui *g, const uint32_t id, const char *label, float *value, bool *entered)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     return tide_gui_float_field_entered(g, id, labelled(g, label, FIELD_WIDTH, LEAST_FIELD), "", value, entered);
 }
 
@@ -2678,24 +2794,28 @@ static float parts_width(const tide_gui *g, const int n, const float each)
 
 bool tide_gui_layout_float2_field(tide_gui *g, const uint32_t id, const char *label, tide_float2 *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     const tide_rect r = labelled(g, label, parts_width(g, 2, PART_WIDTH), parts_width(g, 2, LEAST_PART));
     return tide_gui_float2_field(g, id, r, "", value);
 }
 
 bool tide_gui_layout_float3_field(tide_gui *g, const uint32_t id, const char *label, tide_float3 *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     const tide_rect r = labelled(g, label, parts_width(g, 3, PART_WIDTH), parts_width(g, 3, LEAST_PART));
     return tide_gui_float3_field(g, id, r, "", value);
 }
 
 bool tide_gui_layout_float4_field(tide_gui *g, const uint32_t id, const char *label, tide_float4 *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     const tide_rect r = labelled(g, label, parts_width(g, 4, PART_WIDTH), parts_width(g, 4, LEAST_PART));
     return tide_gui_float4_field(g, id, r, "", value);
 }
 
 bool tide_gui_layout_color_field(tide_gui *g, const uint32_t id, const char *label, tide_color *value)
 {
+    describe(g, id, TIDE_GUI_KIND_NUMBER, label);
     const float swatch = LINE + SPACING;
     const tide_rect r =
         labelled(g, label, swatch + parts_width(g, 4, COLOR_PART_WIDTH), swatch + parts_width(g, 4, LEAST_PART));

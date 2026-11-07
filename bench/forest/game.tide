@@ -1,0 +1,354 @@
+// Production Render3D forest. Match setup is outside the measured interval;
+// every frame still uses the package's normal ECS collection and passes.
+scene Main;
+asset Render3D.Mesh3D barkNear = "bark-0.obj";
+asset Render3D.Mesh3D barkMiddle = "bark-1.obj";
+asset Render3D.Mesh3D barkFar = "bark-2.obj";
+asset Render3D.Mesh3D leavesNear = "leaves-0.obj";
+asset Render3D.Mesh3D leavesMiddle = "leaves-1.obj";
+asset Render3D.Mesh3D leavesFar = "leaves-2.obj";
+asset Render3D.Mesh3D ground = "terrain.obj";
+[Filter(Filter.Trilinear)] asset Texture leafAlbedo = "leaf-albedo.dds";
+[Raw, Filter(Filter.Trilinear)] asset Texture leafNormal = "leaf-normal.dds";
+[Raw, Filter(Filter.Trilinear)] asset Texture leafMask = "leaf-mask.dds";
+asset Render3D.Mesh3D treeSprite = "impostor-card.obj";
+[Filter(Filter.Trilinear)] asset Texture treeAlbedo = "impostor-albedo.dds";
+[Raw, Filter(Filter.Trilinear)] asset Texture treeNormalDepth = "impostor-normal-depth.dds";
+[Raw, Filter(Filter.Trilinear)] asset Texture treeMask = "impostor-mask.dds";
+
+singleton Forest
+{
+    int count = 10000;
+    int camera; // ground, canopy, wide
+    bool shadows = true;
+    bool wind = true;
+    bool distanceLevels = true;
+    int impostors = 1; // 0 meshes, 1 distant atlas, 2 forced atlas reference.
+    bool fog = true;
+    int shadowResolution = 1024;
+    bool built;
+    int nearTrees;
+    int middleTrees;
+    int farTrees;
+}
+component ForestPart { bool leaf; Color tint = Color.white; }
+local singleton ForestFrame
+{
+    float time;
+    float travel;
+    bool orbiting;
+    float orbit;
+    float orbitRadius;
+    float orbitHeight;
+    float parallax = 1;
+    float3 eye;
+    int nearTrees;
+    int middleTrees;
+    int farTrees;
+    int impostorTrees;
+    int transitions;
+    Render3D.Deform barkVertex = Render3D.Deform { vertex = Render3D.StandardVertex };
+    Render3D.Deform leafVertex = Render3D.Deform { vertex = Render3D.StandardVertex };
+    Render3D.Lit barkShader = Render3D.Lit { surface = Render3D.StandardSurface };
+    Render3D.Lit leafShader = Render3D.Lit { surface = Render3D.StandardSurface };
+    Render3D.ImpostorSettings sprite;
+}
+
+float ForestHeight(float x, float z)
+{
+    return Math.Sin(x * 0.008) * 5 + Math.Sin(z * 0.012 + x * 0.003) * 3;
+}
+
+float ForestExtent(int count)
+{
+    return Math.Sqrt(float(count)) * 5.5;
+}
+
+float3 ForestEye(int count, int camera)
+{
+    float extent = ForestExtent(count);
+    if (camera == 1) return float3(-extent * 0.24, 38, -extent * 0.46);
+    if (camera == 2) return float3(extent * 0.45, Math.Max(80, extent * 0.32), -extent * 0.58);
+    return float3(0, 3.3 + ForestHeight(0, -extent * 0.5 - 10), -extent * 0.5 - 10);
+}
+
+system PlantForest(mut Forest forest)
+{
+    if (forest.built) return;
+    forest.built = true;
+    Spawn(Render3D.MeshRenderer { mesh = ground, castShadows = false },
+          Render3D.Material { baseColor = Color(0.28, 0.34, 0.18), roughness = 1 });
+    Spawn(Render3D.DirectionalLight { direction = float3(0.7, -0.8, 0.3), radiance = float3(5.2, 4.5, 3.5) });
+    mut int columns = 1;
+    while (columns * columns < forest.count) columns++;
+    int rows = (forest.count + columns - 1) / columns;
+    float3 eye = ForestEye(forest.count, forest.camera);
+    // Leaf depth is recorded before the bark rows that become distant
+    // impostors, so nearby foliage can reject hidden atlas fragments early.
+    // Keep each geometry/material tier contiguous for ordinary batching.
+    for (var part = 1; part >= 0; part--)
+    for (var level = 0; level < 3; level++)
+    for (var i = 0; i < forest.count; i++)
+    {
+        float jitterX = float((i * 73 + 19) % 101) / 101.0 - 0.5;
+        float jitterZ = float((i * 47 + 31) % 103) / 103.0 - 0.5;
+        mut float x = (float(i % columns) - float(columns - 1) * 0.5 + jitterX * 0.7) * 5.5;
+        float z = (float(i / columns) - float(rows - 1) * 0.5 + jitterZ * 0.7) * 5.5;
+        // A narrow winding ride opens the close view without dropping trees:
+        // shift their positions sideways instead of skipping their instances.
+        float ride = Math.Sin(z * 0.014) * 5;
+        if (Math.Abs(x - ride) < 3) x += x < ride ? -3.5 : 3.5;
+        float3 position = float3(x, ForestHeight(x, z) - 0.12, z);
+        float distance = Math.Length(position - eye);
+        int selected = !forest.distanceLevels || distance < 90 ? 0 : distance < 280 ? 1 : 2;
+        if (selected != level) continue;
+        if (part == 0)
+        {
+            if (level == 0) forest.nearTrees++;
+            else if (level == 1) forest.middleTrees++;
+            else forest.farTrees++;
+        }
+        float scale = 0.8 + float((i * 29 + 7) % 97) / 97.0 * 0.55;
+        mut Asset<Render3D.Mesh3D> mesh = part == 0 ? barkNear : leavesNear;
+        if (level == 1) mesh = part == 0 ? barkMiddle : leavesMiddle;
+        if (level == 2) mesh = part == 0 ? barkFar : leavesFar;
+        float shade = float((i * 61 + 11) % 89) / 89.0;
+        float tone = 0.88 + shade * 0.12;
+        float3 barkColor = Render3D.LinearToSrgb(Render3D.SrgbToLinear(float3(0.3, 0.22, 0.14))
+            * Render3D.SrgbToLinear(float3(tone)));
+        Spawn(ForestPart { leaf = part == 1, tint = Color(tone, tone, tone) },
+            Render3D.MeshRenderer { mesh = mesh },
+            Render3D.Material {
+                mode = part == 1 ? Render3D.SurfaceMode.Cutout : Render3D.SurfaceMode.Opaque,
+                doubleSided = part == 1, alphaCutoff = 0.32,
+                baseColor = part == 1 ? Color(tone, tone, tone) : Color(barkColor.x, barkColor.y, barkColor.z),
+                roughness = 0.88
+            },
+            Transform { localPosition = position, localScale = float3(scale),
+                        localRotation = quaternion.Euler(0, float((i * 137) % 360) * 1deg, 0) });
+    }
+}
+
+void ForestBend(Render3D.VertexInput input, mut Render3D.MeshVertex vertex, Render3D.Wind wind, bool leaf)
+{
+    // This asset's RGB convention is explicit and confined to this callback.
+    Render3D.ApplyWind(input, vertex, wind, Render3D.WindResponse {
+        bend = 0.012 * vertex.color.r, flutter = leaf ? 0.012 * vertex.color.r : 0,
+        branchPhase = vertex.color.g, leafPhase = vertex.color.b
+    });
+    vertex.color = Color.white;
+}
+
+Func<Render3D.VertexInput, mut Render3D.MeshVertex, void> ForestVertex(Render3D.Wind wind, bool leaf)
+{
+    return (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) => ForestBend(input, vertex, wind, leaf);
+}
+
+void ForestSurface(Render3D.SurfaceInput input, mut Render3D.Surface surface, Render3D.LeafSettings settings)
+{
+    mut var mapped = settings;
+    // Alpha is exp(-additional optical depth), including zero for baked bark.
+    mapped.transmission *= Math.Clamp(input.mask.w, 0, 1);
+    Render3D.ApplyThinLeaf(surface, mapped);
+}
+
+Func<Render3D.SurfaceInput, mut Render3D.Surface, void> ForestShader(Render3D.LeafSettings settings)
+{
+    return (Render3D.SurfaceInput input, mut Render3D.Surface surface) => ForestSurface(input, surface, settings);
+}
+
+struct ForestLevel { int source; int next; float blend; }
+
+ForestLevel ForestLOD(float distance, Forest forest)
+{
+    if (forest.impostors == 2) return ForestLevel { source = 3, next = 3 };
+    if (!forest.distanceLevels) return ForestLevel {};
+    if (distance < 80) return ForestLevel {};
+    if (distance < 100) return ForestLevel { source = 0, next = 1, blend = (distance - 80) / 20 };
+    if (distance < 250) return ForestLevel { source = 1, next = 1 };
+    if (distance < 310) return ForestLevel { source = 1, next = 2, blend = (distance - 250) / 60 };
+    if (forest.impostors == 0 || distance < 430) return ForestLevel { source = 2, next = 2 };
+    if (distance < 510) return ForestLevel { source = 2, next = 3, blend = (distance - 430) / 80 };
+    return ForestLevel { source = 3, next = 3 };
+}
+
+Asset<Render3D.Mesh3D> ForestMesh(bool leaf, int level)
+{
+    if (level == 3) return treeSprite;
+    if (level == 0) return leaf ? leavesNear : barkNear;
+    if (level == 1) return leaf ? leavesMiddle : barkMiddle;
+    return leaf ? leavesFar : barkFar;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureForest(Forest forest, mut ForestFrame frame, mut Render3D.Renderer renderer)
+{
+    mut float3 eye = ForestEye(forest.count, forest.camera);
+    eye.z += frame.travel;
+    if (forest.camera == 0)
+    {
+        eye.x = Math.Sin(eye.z * 0.014) * 5;
+        eye.y = ForestHeight(eye.x, eye.z) + 3.3;
+    }
+    if (frame.orbiting)
+    {
+        float radius = frame.orbitRadius > 0 ? frame.orbitRadius : Math.Max(ForestExtent(forest.count) * 0.7, 80);
+        float height = frame.orbitHeight > 0 ? frame.orbitHeight : Math.Max(30, radius * 0.35);
+        eye = float3(Math.Sin(frame.orbit) * radius, height, Math.Cos(frame.orbit) * radius);
+    }
+    float3 target = forest.camera == 0 && !frame.orbiting ? eye + float3(0, 2.5, 70) : float3(0, 7, 0);
+    frame.eye = eye;
+    frame.nearTrees = 0; frame.middleTrees = 0; frame.farTrees = 0; frame.impostorTrees = 0; frame.transitions = 0;
+    renderer.camera = Render3D.Camera { position = eye,
+        rotation = quaternion.LookRotation(target - eye, float3(0, 1, 0)),
+        near = 0.15, far = 4000, verticalFov = 62deg };
+    renderer.background = Color(0.69, 0.76, 0.82);
+    renderer.ambientIrradiance = float3(0.65, 0.8, 1.05);
+    renderer.exposure = 1.15;
+    renderer.fog = Render3D.FogSettings { enabled = forest.fog, density = 0.00065,
+        color = Render3D.SrgbToLinear(float3(renderer.background.r, renderer.background.g, renderer.background.b)) };
+    renderer.shadows = forest.shadows;
+    renderer.shadowResolution = forest.shadowResolution;
+    renderer.shadowRange = 160;
+    renderer.shadowDistance = 35;
+    renderer.shadowCascades = 4;
+    // Construct the shared captures once. Each factory has one lambda site,
+    // so bark and leaves share its capture layout as well as its shader code.
+    // BindForest only copies the two shared material bindings.
+    var wind = Render3D.Wind { time = frame.time, strength = forest.wind ? 0.45 : 0 };
+    frame.sprite = ForestImpostorSettings();
+    frame.sprite.parallax = frame.parallax;
+    frame.sprite.wind = wind;
+    frame.sprite.bend = 0.012;
+    frame.barkVertex = Render3D.Deform {
+        vertex = ForestVertex(wind, false)
+    };
+    frame.leafVertex = Render3D.Deform {
+        vertex = ForestVertex(wind, true)
+    };
+    var barkSettings = Render3D.LeafSettings { transmission = 0 };
+    var leafSettings = Render3D.LeafSettings { transmission = 0.4,
+        transmissionColor = float3(0.75, 1, 0.4), thickness = 0.2 };
+    frame.barkShader = Render3D.Lit {
+        surface = ForestShader(barkSettings)
+    };
+    frame.leafShader = Render3D.Lit {
+        surface = ForestShader(leafSettings)
+    };
+}
+
+[Before(Render3D.Stages.Prepare)]
+[After(ConfigureForest)]
+view BindForest(Forest forest, mut ForestFrame frame, ForestPart part, Transform transform,
+                mut Render3D.MeshRenderer mesh, mut Render3D.Material material)
+{
+    bool leaf = part.leaf;
+    float distance = Math.Length(transform.localPosition - frame.eye);
+    ForestLevel level = ForestLOD(distance, forest);
+    mesh.meshOverride = ForestMesh(leaf, level.source);
+    mesh.hidden = leaf && level.source == 3;
+    mesh.hideShadows = distance >= 260 || level.source == 3;
+    material.fade = 1 - level.blend;
+    material.ditherFade = true;
+    material.colorOverride = default;
+    material.impostor = default;
+    material.vertex = leaf ? frame.leafVertex : frame.barkVertex;
+    material.customBounds = true;
+    material.boundsCenter = float3(0, 6, 0);
+    material.boundsSize = float3(16, 17, 16);
+    material.baseMap = leaf ? leafAlbedo : Render3D.White;
+    material.normalMap = default;
+    material.maskMap = default;
+    if (leaf) { material.normalMap = leafNormal; material.maskMap = leafMask; }
+    material.shader = leaf ? frame.leafShader : frame.barkShader;
+    if (level.source == 3)
+    {
+        material.baseMap = treeAlbedo; material.normalMap = treeNormalDepth; material.maskMap = treeMask;
+        material.shader = frame.leafShader; material.vertex = default;
+        material.impostor = frame.sprite; material.colorOverride = part.tint;
+        material.boundsCenter = frame.sprite.center; material.boundsSize = float3(24, 16, 24);
+    }
+    if (!leaf)
+    {
+        if (level.source == 0) frame.nearTrees++;
+        else if (level.source == 1) frame.middleTrees++;
+        else if (level.source == 2) frame.farTrees++;
+        else frame.impostorTrees++;
+        if (level.blend > 0) frame.transitions++;
+    }
+}
+
+// Extra geometry exists only in a transition band. It uses the same ordinary
+// package draw helpers and live entity's local material, then restores it.
+void DrawForestTransition(ForestLevel level, ForestFrame frame, ForestPart part,
+                          mut Render3D.MeshRenderer mesh, mut Render3D.Material material,
+                          Render3D.Renderer renderer, float4x4 placement)
+{
+    var savedMesh = mesh.meshOverride;
+    var savedVertex = material.vertex;
+    var savedShader = material.shader;
+    var savedBase = material.baseMap;
+    var savedImpostor = material.impostor;
+    var savedColor = material.renderColor;
+    var savedCenter = material.boundsCenter; var savedSize = material.boundsSize;
+    mesh.meshOverride = ForestMesh(part.leaf, level.next);
+    material.renderColor.a = -level.blend;
+    if (level.next == 3)
+    {
+        material.baseMap = treeAlbedo; material.normalMap = treeNormalDepth; material.maskMap = treeMask;
+        material.shader = frame.leafShader; material.vertex = default; material.impostor = frame.sprite;
+        material.renderColor = Color(part.tint.r, part.tint.g, part.tint.b, -level.blend);
+        material.boundsCenter = frame.sprite.center; material.boundsSize = float3(24, 16, 24);
+    }
+    Render3D.DrawMaterial(renderer, mesh, material, placement);
+    mesh.meshOverride = savedMesh; material.vertex = savedVertex; material.shader = savedShader;
+    material.baseMap = savedBase;
+    material.normalMap = default; material.maskMap = default;
+    if (part.leaf) { material.normalMap = leafNormal; material.maskMap = leafMask; }
+    material.impostor = savedImpostor; material.renderColor = savedColor;
+    material.boundsCenter = savedCenter; material.boundsSize = savedSize;
+}
+
+[Stage(Render3D.Stages.Opaque, 1)]
+view DrawForestTransitions(Forest forest, ForestFrame frame, Render3D.Renderer renderer, World world,
+    query (ForestPart part, Transform transform, mut Render3D.MeshRenderer mesh, mut Render3D.Material material) meshes)
+{
+    if (frame.transitions <= 0 || !renderer.enabled || !renderer.ready) return;
+    foreach (var object in meshes)
+    {
+        ForestLevel level = ForestLOD(Math.Length(object.transform.localPosition - frame.eye), forest);
+        if (!(level.blend > 0) || (object.part.leaf && level.next == 3)) continue;
+        DrawForestTransition(level, frame, object.part, object.mesh, object.material,
+            renderer, world.LocalToWorld(object.entity));
+    }
+}
+
+[Stage(Render3D.Stages.Shadows, 1)]
+view CastForestTransitions(Forest forest, ForestFrame frame, Render3D.Renderer renderer, World world,
+    query (ForestPart part, Transform transform, mut Render3D.MeshRenderer mesh, mut Render3D.Material material) casters)
+{
+    if (frame.transitions <= 0 || !renderer.enabled || !renderer.ready) return;
+    foreach (var shadow in renderer.shadowViews)
+    {
+        renderer.shadowMap.SetCamera(shadow.camera, shadow.projection);
+        renderer.shadowMap.Screen()
+        {
+            renderer.shadowMap.SetClip(Rect(shadow.uvRect.x * renderer.atlasSize, shadow.uvRect.y * renderer.atlasSize,
+                shadow.uvRect.z * renderer.atlasSize, shadow.uvRect.w * renderer.atlasSize));
+        }
+        foreach (var caster in casters)
+        {
+            if (caster.mesh.hideShadows || caster.mesh.hidden) continue;
+            ForestLevel level = ForestLOD(Math.Length(caster.transform.localPosition - frame.eye), forest);
+            if (!(level.blend > 0) || level.next == 3) continue;
+            var savedMesh = caster.mesh.meshOverride;
+            var savedColor = caster.material.renderColor;
+            caster.mesh.meshOverride = ForestMesh(caster.part.leaf, level.next);
+            caster.material.renderColor.a = -level.blend;
+            Render3D.CastMasked(renderer, caster.mesh, caster.material, world.LocalToWorld(caster.entity), shadow.uvRect);
+            caster.mesh.meshOverride = savedMesh;
+            caster.material.renderColor = savedColor;
+        }
+    }
+    renderer.shadowMap.SetCull(); renderer.shadowMap.SetClip();
+}

@@ -112,25 +112,26 @@ TIDE_TEST(render_colors_targets_hold_several_and_frags_write_them_in_order)
     TIDE_CHECK(stage->pass.into.id == stage->exact.id && tide_render_target_whole(stage->pass.read.target.id) == stage->exact.id
                && tide_render_target_image(stage->pass.read.target.id) == 1);
     const tide_entity entity = prop();
-    TIDE_REQUIRE(entity.generation != 0);
+    TIDE_REQUIRE(!tide_entity_is_null(entity));
     const uint64_t seen = tide_get_Prop_local(&local, entity).seen.target.id;
     TIDE_CHECK(tide_render_target_whole(seen) == stage->exact.id && tide_render_target_image(seen) == 1);
 
     // A frag's outputs are its shader's, in the order it takes them: the pixel's color, then one
-    // for each image after a target's first. Both languages say where each goes
+    // for each image after a target's first. Its WGSL (a build keeps it on the web) says where each goes
     const tide_draw_run *fill = run_through("Fill on Corner");
     TIDE_REQUIRE(fill && fill->shader->outputs == 2 && tide_shader_outputs(fill->shader) == 2);
-    TIDE_CHECK(strstr(fill->shader->glsl_fragment, "layout(location = 0) out vec4 tide_pixel;\n") != NULL);
-    TIDE_CHECK(strstr(fill->shader->glsl_fragment, "layout(location = 1) out vec4 tide_pixel1;\n") != NULL);
     const tide_draw_run *split = run_through("Split on Vertex");
     TIDE_REQUIRE(split && split->shader->outputs == 4 && split->shader->texture_count == 1);
-    TIDE_CHECK(strstr(split->shader->glsl_fragment, "layout(location = 3) out vec4 tide_pixel3;\n") != NULL);
     TIDE_CHECK(samples(split, stage->two.id, TIDE_WRAP_CLAMP));
     // One output is as a frag always was: its shader says nothing of them
     const tide_draw_run *light = run_through("Light on Vertex");
     TIDE_REQUIRE(light && light->shader->outputs == 0 && tide_shader_outputs(light->shader) == 1);
-    TIDE_CHECK(strstr(light->shader->glsl_fragment, "out vec4 tide_pixel;\n") != NULL);
-    TIDE_CHECK(strstr(light->shader->glsl_fragment, "layout(location = 0) out") == NULL);
+#ifdef __wasm__
+    TIDE_CHECK(strstr(fill->shader->wgsl, "    @location(0) tide_color: vec4f,\n    @location(1) tide_color1: vec4f,\n}\n") != NULL);
+    TIDE_CHECK(strstr(split->shader->wgsl, "    @location(3) tide_color3: vec4f,\n") != NULL);
+    TIDE_CHECK(strstr(light->shader->wgsl, "@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {\n") != NULL);
+    TIDE_CHECK(strstr(light->shader->wgsl, "tide_colors") == NULL);
+#endif
     // It reads the images another frag wrote, each a texture of the list's: the first target's
     // first and second, and the four's last, repeated
     TIDE_REQUIRE(light->shader->texture_count == 3);

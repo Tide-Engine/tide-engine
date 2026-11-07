@@ -4,7 +4,7 @@
 // expect: shrinking 12502500 100
 // expect: growing 50 24950
 // expect: emptied 0 0 0
-// expect: sizes 0 0 5 0
+// expect: sizes 0 5 0
 // expect: copies [1, 2, 3] [9, 2, 3] 3
 // expect: structs 0 4 [Pair { a = 1, b = 2 }]
 // expect: text ["b", "b", "a"] "" 3
@@ -92,17 +92,14 @@ system Run(mut Bag bag)
     bag.big.Clear();
     Debug.Log($"emptied {bag.big.count} {bag.big[0]} {Sum(bag.big, 20000)}");
 
-    // Sizes nothing can have leave the list as it is, and those under 0 are 0
+    // Sizes under 0 are 0. Every other size is one a list can have, as far as memory goes: a list of
+    // bag.most ints is 8 GiB, which this run hasn't got, so ends the program, as running out of memory does
     bag.big.Resize(-1);
     var none = bag.big.count;
-    bag.big.Resize(bag.most);
-    bag.bytes.Resize(bag.most);
-    var still = bag.big.count + bag.bytes.count;
     bag.bytes.Resize(5);
-    bag.bytes.Resize(bag.most);
     var five = bag.bytes.count;
     bag.bytes.Resize(bag.least);
-    Debug.Log($"sizes {none} {still} {five} {bag.bytes.count}");
+    Debug.Log($"sizes {none} {five} {bag.bytes.count}");
 
     // A list is a value: a copy stays as it was, and a list assigned to itself is itself
     bag.small.Resize(3);

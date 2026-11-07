@@ -289,6 +289,67 @@ TIDE_TEST(lod_skinned_meshes_have_levels)
     finish();
 }
 
+// Tolerance changes selection, with scoped restoration and independent destinations.
+TIDE_TEST(lod_pixel_tolerance_controls_automatic_quality)
+{
+    start();
+    frame(6);
+    run runs[20];
+    const uint32_t count = runs_of(runs, 20);
+    const uint32_t tolerance[12] = {4, 0, 1, 0, 4, 100, 4, 1, 100, 1, 0, 1};
+    const uint32_t targets[12] = {0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0};
+    uint32_t drawn = 0;
+    TIDE_REQUIRE(count > 0);
+    const tide_draw_mesh_data *ball = whole_of(&runs[0]);
+    TIDE_REQUIRE(level_at(ball, 6.0f, window_scale / 100.0f) > level_at(ball, 6.0f, window_scale));
+    for (uint32_t i = 0; i < count; i++) {
+        TIDE_CHECK(whole_of(&runs[i]) == ball);
+        for (uint32_t k = 0; k < runs[i].count; k++) {
+            TIDE_REQUIRE(drawn < 12);
+            const float pixels = tolerance[drawn] ? (float)tolerance[drawn] : 0.25f;
+            const uint32_t expected = drawn == 10 ? 0 : level_at(ball, 6.0f, window_scale / pixels);
+            TIDE_CHECK(mesh_of(&runs[i])->level == expected);
+            TIDE_CHECK((runs[i].target != 0) == (targets[drawn] != 0));
+            drawn++;
+        }
+    }
+    TIDE_CHECK(drawn == 12);
+    finish();
+}
+
+// Asset variants retain their chains while multiplying each destination's tolerance.
+TIDE_TEST(lod_asset_multipliers_compose_and_preserve_chains)
+{
+    start();
+    frame(7);
+    run runs[24];
+    const uint32_t count = runs_of(runs, 24);
+    TIDE_REQUIRE(count > 0);
+    const tide_draw_mesh_data *base = whole_of(&runs[0]);
+    TIDE_REQUIRE(base->lod_multiplier == 1.0f);
+    uint32_t drawn = 0, coarse_count = 0, tight_count = 0, skinned_count = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_draw_mesh_data *m = whole_of(&runs[i]);
+        const float multiplier = m->lod_multiplier;
+        TIDE_CHECK(multiplier == 1.0f || multiplier == 2.0f || multiplier == 0.25f);
+        if (!runs[i].shaded) {
+            TIDE_CHECK(m->levels == base->levels && m->index_count == base->index_count);
+            TIDE_CHECK(memcmp(m->level_error, base->level_error, base->levels * sizeof(float)) == 0);
+        }
+        for (uint32_t k = 0; k < runs[i].count; k++) {
+            const float z = runs[i].shaded ? 2.2f : draw.matrices[runs[i].first + k].c3.z;
+            const uint32_t expected = z == 901.0f ? 0 : level_at(m, z, window_scale / (4.0f * multiplier));
+            TIDE_CHECK(mesh_of(&runs[i])->level == expected);
+            if (multiplier == 2.0f) coarse_count++;
+            if (multiplier == 0.25f) tight_count++;
+            if (runs[i].shaded) skinned_count++;
+            drawn++;
+        }
+    }
+    TIDE_CHECK(drawn == 14 && coarse_count == 11 && tight_count == 1 && skinned_count == 1);
+    finish();
+}
+
 // A pack loaded again has the same levels, and a mesh drawn after it is
 // filled from it as before.
 TIDE_TEST(lod_levels_come_back_with_the_pack)

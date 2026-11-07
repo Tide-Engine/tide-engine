@@ -1,0 +1,55 @@
+// Large partial-field view lookup: many storage shapes must not multiply
+// the previous-world lookup into every query branch.
+component Value
+{
+    float v0;
+    float v1;
+    float v2;
+    float v3;
+    float v4;
+    float v5;
+    float v6;
+    float v7;
+    float v8;
+    float v9;
+    float v10;
+    float v11;
+    float v12;
+    float v13;
+    float v14;
+    float v15;
+    float v16;
+    float v17;
+    float v18;
+    float v19;
+}
+component Tag0 { }
+component Tag1 { }
+component Tag2 { }
+component Tag3 { }
+component Tag4 { }
+scene Main { }
+local singleton Seen { float sum; int count; }
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < 32; i++)
+    {
+        Entity e = Spawn(Value { v0 = 1, v1 = 2, v2 = 3, v3 = 4, v4 = 5, v5 = 6, v6 = 7, v7 = 8, v8 = 9, v9 = 10, v10 = 11, v11 = 12, v12 = 13, v13 = 14, v14 = 15, v15 = 16, v16 = 17, v17 = 18, v18 = 19, v19 = 20 });
+        if ((i & 1) != 0) e.Add(Tag0);
+        if ((i & 2) != 0) e.Add(Tag1);
+        if ((i & 4) != 0) e.Add(Tag2);
+        if ((i & 8) != 0) e.Add(Tag3);
+        if ((i & 16) != 0) e.Add(Tag4);
+    }
+}
+system Move(mut Value value) { value.v0 += 2; }
+view Read(mut Seen seen, query (Value value) values)
+{
+    seen.sum = 0;
+    seen.count = 0;
+    foreach (var row in values)
+    {
+        seen.sum += row.value.v0 + row.value.v1 + row.value.v2 + row.value.v3 + row.value.v4 + row.value.v5 + row.value.v6 + row.value.v7 + row.value.v8 + row.value.v9 + row.value.v10 + row.value.v11 + row.value.v12 + row.value.v13 + row.value.v14 + row.value.v15 + row.value.v16 + row.value.v17 + row.value.v18;
+        seen.count++;
+    }
+}

@@ -209,6 +209,7 @@ const cases = {
         ['asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";', [['asset', 'storage.modifier'], ['SkinnedMesh', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['Locomotion', 'entity.name.type'], ['hero', 'variable.other']]],
         ['List<float> Weights()', [['Weights', 'entity.name.function'], ['Weights', '!entity.name.function.call']]],
         ['mut void Heal(', [['mut', 'storage.modifier'], ['Heal', 'entity.name.function']]],
+        ['prepare(mut Geography geography)', [['prepare', 'entity.name.function'], ['mut', 'storage.modifier']]],
         ['Stats operator +(', [['operator', 'keyword.other.operator'], ['+', 'keyword.operator']]],
     ],
     'declaration words are keywords only where a declaration starts': [
@@ -403,6 +404,7 @@ const cases = {
     ],
     "loops' headers": [
         ['parallel (var at in field.cells by 2 offset o)', [['parallel', 'keyword.control'], ['in', 'keyword.control'], ['by', 'keyword.control'], ['offset', 'keyword.control']]],
+        ['indexed foreach (var near in field.items)', [['indexed', 'keyword.control'], ['foreach', 'keyword.control'], ['in', 'keyword.control']]],
         ['foreach (var tick in Both(Ticks(), Ticks()))', [['in', 'keyword.control'], ['Both', 'entity.name.function.call'], ['in', '!keyword', 2]]],
     ],
     'query is a modifier in system parameters and a name elsewhere': [
@@ -538,6 +540,10 @@ const cases = {
             ['vert', 'storage.type'], ['Wave', 'entity.name.function'], ['Wave', '!entity.name.function.call'],
             ['mut', 'storage.modifier'], ['out', 'storage.modifier'], ['FromLamp', 'entity.name.type'], ['lamp', '!storage'],
             ['Time', 'support.class'], ['Instance', 'entity.name.type'],
+        ]],
+        ['compute Cull(', [
+            ['compute', 'storage.type'], ['Cull', 'entity.name.function'], ['Cull', '!entity.name.function.call'],
+            ['Meadow', 'entity.name.type'],
         ]],
         ['float Blend(', [['Blend', 'entity.name.function'], ['frag', '!storage'], ['vert', '!storage']]],
         ['float both = frag + vert;', [['frag', '!storage'], ['frag', '!entity'], ['vert', '!storage'], ['vert', '!entity']]],

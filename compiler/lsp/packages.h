@@ -42,7 +42,7 @@ typedef struct packages_file {
     char *name;   // `package Physics`: the package this folder is; NULL for a game
     int tide[3];  // `tide 0.3`: the oldest tide it builds with; zeros for any
     int tide_line;
-    char *pinned; // A game's `tide = 0.5.0-nightly.12`: the one tide it builds with, without the `v`; NULL for none
+    char *pinned; // A game's `tide = 0.5.0-nightly.12`: an exact version without `v`, or nightly/stable; NULL for none
     int pinned_line;
     package_line *lines;
     int count;
@@ -65,9 +65,10 @@ bool packages_read(const char *folder, packages_file *out, packages_report_fn re
 
 // Whether `text` is a whole version, as `tide = ...` pins one: 0.5.0, or 0.5.0-nightly.12
 bool packages_exact_version(const char *text);
+bool packages_channel(const char *text); // nightly or stable
 
-// Whether a tide of `version` builds a game that pins `pinned` (`tide = ...`): that one alone, everyone working on
-// the game building the same; or a build of tide's own source (`-dev`), which is someone working on tide
+// Whether `version` builds a game that pins `pinned`: that release alone, a
+// channel resolved by the CLI, or an engine source build (`-dev`).
 bool packages_pin_kept(const char *pinned, const char *version);
 void packages_free_file(packages_file *f);
 

@@ -1,0 +1,410 @@
+// The renderer's own kernels: listed runs culled on the GPU (notes/drawing.md, Listed runs culled on the GPU).
+// tidec --kernels writes them into the platform layer as it builds (cull_kernels.h): their WGSL, their SPIR-V,
+// and which storage slot, texture and uniform word each field of Culling is. Nothing here is a game's.
+//
+// A frame's culled runs are buckets: one a level of a set of draws one after another (what the CPU path would
+// have gathered into one run a level, tide_draw_gather_levels). A bucket's candidates are its parts', a draw's
+// candidates each, in order, each part a whole number of groups of 64. CullListed keeps a group's candidates the
+// bucket's level picks and the frustum doesn't cull, in order, in its room of `scratch`, with how many in `groups`;
+// CullOffsets gives each group of a bucket where its kept ones go, after those of the groups before it, and the
+// bucket's count to `counts`; CullScatter puts them there. So a bucket's places are in the candidates' order, whatever
+// order the GPU ran them in. Then CullDraws writes each join's draws (buckets one after another that one call draws:
+// cull.inc, cull_joins): an indirect draw record for each of its buckets that kept any, in order, records of none up
+// to its buckets' count, and how many it wrote to `draws`, the count its draw_indexed_indirect_count reads.
+//
+// Occlusion (notes/drawing.md, Occlusion culling from a depth pyramid): before the first of a run of draws that test
+// it, the renderer makes a pyramid of the depth drawn so far into their destination (its hiz kernel, shaders.h: one
+// dispatch), and CullListed runs again over the run's groups (phase 1), leaving out what that depth surely hides as
+// well, before any of them draws.
+// Depth only gets nearer until the destination is cleared, so whatever it hides then fails the depth test when it's
+// drawn: the frame's pixels are the same, whatever was drawn before, in whatever order.
+//
+// Every number is as the engine wrote it (platform/src/cull.inc): an element's floats, then its ints.
+
+scene Main { }
+
+// A camera as the draws culled through it had it: their frustum's planes and how levels are picked.
+struct CullCamera
+{
+    // Each plane's three: its normal and constant (x, y, z, w); its normal's magnitudes and the coefficient of the
+    // box's size in the test (x, y, z, w); and what the test compares with (x). Planes past the camera's pass
+    float4[18] planes;
+    float4 lodW;     // What gives how far along the view a place is (pick_level's w row)...
+    float4 lodX;     // ...and out to the side, and up
+    float4 lodY;
+    float4 lodSizes; // How many times the pixels a level may be off a unit of the world is, and the three rows' lengths
+    float4 toClip0;  // Its world-to-clip matrix, column by column: what occlusion projects a box with
+    float4 toClip1;
+    float4 toClip2;
+    float4 toClip3;
+    int4 flags;      // x: 1 where the planes cull; y: 1 where levels are picked; z: 1 + the level every mesh draws at
+}
+
+// A draw's candidates: the places of its instances in a page of listed numbers, and what they're tested with.
+struct CullJob
+{
+    float4 center;  // The mesh's box, as the frustum test takes it
+    float4 extents;
+    float4 ball;    // The ball its levels are picked by: center, radius
+    float4 errors;  // How far its levels are off, the first four...
+    float4 errorsMore; // ...the other three, and its asset's tolerance multiplier
+    int4 at;        // x: its camera; y: its page; z: the place of the first; w: how many
+    int4 more;      // x: 16-byte packs an instance; y: its levels; z: 1 where its box is tested; w: 1 where occlusion is
+}
+
+// A draw's candidates in a bucket: x its job, y the bucket's level, z its first group, w its bucket.
+struct CullPart
+{
+    int4 a;
+}
+
+// A bucket: a.x its first group, a.y how many, a.z where its places start in `places`, a.w how many places the CPU
+// wrote there (an ordinary listed run's, drawn by its join's call: no groups); b.x its mesh's index count, b.y where
+// its indices start in its join's index buffer.
+struct CullBucket
+{
+    int4 a;
+    int4 b;
+}
+
+// A join: x its first bucket, y how many, z 1 where its records' first instances are where their places start (the
+// call's places bound from the first), 0 where they're 0 (a join of one bucket, its places bound from its own).
+struct CullJoin
+{
+    int4 a;
+}
+
+struct Culling
+{
+    GPUList<CullCamera> cameras;
+    GPUList<CullJob> jobs;
+    GPUList<CullPart> parts;     // In the order of their groups
+    GPUList<CullBucket> buckets;
+    GPUList<int2> groups;        // Each group's: how many it kept, and where they go in `places`
+    GPUList<int> scratch;        // 64 a group: the places it kept, in order
+    GPUList<int> places;         // Each bucket's, from where it starts
+    GPUList<int> counts;         // Each bucket's: how many it kept
+    GPUList<CullJoin> joins;
+    GPUList<int> args;           // Indirect draw records, five words, as many as buckets: each join's from its first's
+    GPUList<int> draws;          // Each join's: how many of its records draw
+    List<int4> page0;            // The pages of listed numbers (tide_draw_listed), 1024 pixels a row
+    List<int4> page1;
+    List<int4> page2;
+    List<int4> page3;
+    // Words 0 to 3 the frame's counts (instances tested for occlusion, and hidden), then a depth pyramid's levels from
+    // `pyramid`, the farthest depths as bits (occlusion.tide)
+    GPUList<int> depths;
+    int phase;                   // CullListed: 0 the frame's culling, 1 a run of draws' that test occlusion
+    int first;                   // Where this run's groups start (CullListed, CullScatter), its buckets (CullOffsets)
+                                 // or its joins (CullDraws)
+    int width;                   // CullListed's phase 1: the pyramid's depth's pixels
+    int height;
+    int levels;                  // ...its levels, and where level 0 starts in `depths`
+    int pyramid;
+}
+
+// Whether a float's bits are a number under 2^40 each way: finite, and small enough that nothing the test or the
+// pick works out from it overflows (exponent field under 127 + 40).
+bool Small(int bits)
+{
+    return ((bits >> 23) & 255) < 167;
+}
+
+bool SmallAll(int4 q)
+{
+    return Small(q.x) && Small(q.y) && Small(q.z) && Small(q.w);
+}
+
+// How many bits of `x` are 1.
+int Bits(int x)
+{
+    mut int v = x - ((x >> 1) & 0x55555555);
+    v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
+    v = (v + (v >> 4)) & 0x0F0F0F0F;
+    return ((v * 0x01010101) >> 24) & 255;
+}
+
+float LevelError(CullJob job, int level)
+{
+    if (level == 0) return job.errors.x;
+    if (level == 1) return job.errors.y;
+    if (level == 2) return job.errors.z;
+    if (level == 3) return job.errors.w;
+    if (level == 4) return job.errorsMore.x;
+    if (level == 5) return job.errorsMore.y;
+    return job.errorsMore.z;
+}
+
+// The level an instance at the columns c0..c3 draws at: pick_level's rule (engine/src/draw.c), in floats.
+int Pick(CullCamera camera, CullJob job, float4 c0, float4 c1, float4 c2, float4 c3)
+{
+    int levels = job.more.y;
+    if (camera.flags.z > 0) return Math.Min(camera.flags.z - 1, levels);
+    if (camera.flags.y == 0 || levels == 0) return 0;
+    float x = job.ball.x;
+    float y = job.ball.y;
+    float z = job.ball.z;
+    float cx = c0.x * x + c1.x * y + c2.x * z + c3.x;
+    float cy = c0.y * x + c1.y * y + c2.y * z + c3.y;
+    float cz = c0.z * x + c1.z * y + c2.z * z + c3.z;
+    float sx = c0.x * c0.x + c0.y * c0.y + c0.z * c0.z;
+    float sy = c1.x * c1.x + c1.y * c1.y + c1.z * c1.z;
+    float sz = c2.x * c2.x + c2.y * c2.y + c2.z * c2.z;
+    float most = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+    float big = Math.Sqrt(most);
+    float r = job.ball.w * big;
+    float4 w4 = camera.lodW;
+    float4 x4 = camera.lodX;
+    float4 y4 = camera.lodY;
+    float4 sizes = camera.lodSizes;
+    float w = w4.x * cx + w4.y * cy + w4.z * cz + w4.w;
+    mut float away = w - r * sizes.y;
+    float side = x4.x * cx + x4.y * cy + x4.z * cz + x4.w;
+    float rise = y4.x * cx + y4.y * cy + y4.z * cz + y4.w;
+    float outX = (side < 0.0 ? -side : side) - r * (sizes.z + 2.0 * sizes.y);
+    float outY = (rise < 0.0 ? -rise : rise) - r * (sizes.w + 2.0 * sizes.y);
+    float behind = -w - 3.0 * r * sizes.y;
+    if (outX > away) away = outX;
+    if (outY > away) away = outY;
+    if (behind > away) away = behind;
+    if (!(away > 0.0)) return 0;
+    float allowed = away / (big * sizes.x) * job.errorsMore.w;
+    mut int level = 0;
+    for (int k = 0; k < 7; k++)
+    {
+        if (level == k && k < levels && LevelError(job, k) <= allowed) level = k + 1;
+    }
+    return level;
+}
+
+// Whether the frustum surely culls the box at the columns c0..c3: the CPU's quick reject test (frustum_cull.h,
+// cull_quick) with more slack in its numbers, so it never culls what the CPU's exact test would draw.
+bool Outside(CullCamera camera, CullJob job, float4 c0, float4 c1, float4 c2, float4 c3)
+{
+    float4 a0 = Math.Abs(c0);
+    float4 a1 = Math.Abs(c1);
+    float4 a2 = Math.Abs(c2);
+    float4 at = ((c3 + c0 * job.center.x) + c1 * job.center.y) + c2 * job.center.z;
+    float4 radius = (a0 * job.extents.x + a1 * job.extents.y) + a2 * job.extents.z;
+    float4 magnitude = (((Math.Abs(c3) + a0 * Math.Abs(job.center.x)) + a1 * Math.Abs(job.center.y))
+        + a2 * Math.Abs(job.center.z)) + radius;
+    float size = (magnitude.x + magnitude.y) + magnitude.z;
+    mut bool outside = false;
+    for (int p = 0; p < 6; p++)
+    {
+        float4 n = camera.planes[p * 3];
+        float4 s = camera.planes[p * 3 + 1];
+        float4 b = camera.planes[p * 3 + 2];
+        float distance = n.w + n.x * at.x + n.y * at.y + n.z * at.z + s.x * radius.x + s.y * radius.y + s.z * radius.z;
+        if (distance + s.w * size < b.x) outside = true;
+    }
+    return outside;
+}
+
+// Whether the candidate whose transform's columns are the bits q0..q3 is drawn at `level`: 0 not, 1 drawn, 2 drawn
+// where occlusion can be tested (its box is tested against the frustum).
+int Decide(CullCamera camera, CullJob job, int level, int4 q0, int4 q1, int4 q2, int4 q3)
+{
+    // A transform with a number past what floats test safely is drawn whole, untested: the CPU draws one that's
+    // infinite or NaN too, and picks its full mesh where it's NaN
+    if (!(SmallAll(q0) && SmallAll(q1) && SmallAll(q2) && SmallAll(q3))) return level == 0 ? 1 : 0;
+    float4 c0 = Math.AsFloat(q0);
+    float4 c1 = Math.AsFloat(q1);
+    float4 c2 = Math.AsFloat(q2);
+    float4 c3 = Math.AsFloat(q3);
+    if (Pick(camera, job, c0, c1, c2, c3) != level) return 0;
+    // What isn't affine isn't tested
+    if (camera.flags.x == 0 || job.more.z == 0 || c0.w != 0.0 || c1.w != 0.0 || c2.w != 0.0 || c3.w != 1.0) return 1;
+    return Outside(camera, job, c0, c1, c2, c3) ? 0 : 2;
+}
+
+
+[Group(64)]
+compute CullListed(Culling c)
+{
+    shared int[2] kept;
+    shared int[2] tested;
+    shared int[2] hidden;
+    int g = c.first + this.group.x;
+    int t = this.local.x;
+    // The part this group is of: the last whose first group is no later
+    mut int low = 0;
+    mut int high = c.parts.count - 1;
+    for (int step = 0; step < 24; step++)
+    {
+        if (low < high)
+        {
+            int middle = (low + high + 1) / 2;
+            if (c.parts[middle].a.z <= g) low = middle;
+            else high = middle - 1;
+        }
+    }
+    CullPart part = c.parts[low];
+    CullJob job = c.jobs[part.a.x];
+    int i = (g - part.a.z) * 64 + t;
+    mut bool keep = false;
+    mut bool tests = false;
+    mut bool hides = false;
+    if (i < job.at.w)
+    {
+        // Its transform: the first four of its packs in its page
+        int first = (job.at.z + i) * job.more.x;
+        int page = job.at.y;
+        mut int4 q0 = int4(0, 0, 0, 0);
+        mut int4 q1 = int4(0, 0, 0, 0);
+        mut int4 q2 = int4(0, 0, 0, 0);
+        mut int4 q3 = int4(0, 0, 0, 0);
+        if (page == 0)
+        {
+            q0 = c.page0[first];
+            q1 = c.page0[first + 1];
+            q2 = c.page0[first + 2];
+            q3 = c.page0[first + 3];
+        }
+        else if (page == 1)
+        {
+            q0 = c.page1[first];
+            q1 = c.page1[first + 1];
+            q2 = c.page1[first + 2];
+            q3 = c.page1[first + 3];
+        }
+        else if (page == 2)
+        {
+            q0 = c.page2[first];
+            q1 = c.page2[first + 1];
+            q2 = c.page2[first + 2];
+            q3 = c.page2[first + 3];
+        }
+        else
+        {
+            q0 = c.page3[first];
+            q1 = c.page3[first + 1];
+            q2 = c.page3[first + 2];
+            q3 = c.page3[first + 3];
+        }
+        CullCamera camera = c.cameras[job.at.x];
+        int decided = Decide(camera, job, part.a.y, q0, q1, q2, q3);
+        keep = decided != 0;
+        if (c.phase != 0 && decided == 2 && job.more.w != 0)
+        {
+            // Behind the depth drawn so far into its destination: nearer depths hold every pixel its box could
+            // cover (occlusion.tide, HiZFind), so every fragment of it would fail the depth test
+            tests = true;
+            HiZLook look = HiZFind(c.width, c.height, c.levels, c.pyramid, camera.toClip0, camera.toClip1, camera.toClip2,
+                                   camera.toClip3, job.center, job.extents, Math.AsFloat(q0), Math.AsFloat(q1),
+                                   Math.AsFloat(q2), Math.AsFloat(q3));
+            if (look.sure && look.nearest > Math.AsFloat(Math.Max(Math.Max(c.depths[look.texels.x], c.depths[look.texels.y]),
+                Math.Max(c.depths[look.texels.z], c.depths[look.texels.w]))))
+            {
+                keep = false;
+                hides = true;
+            }
+        }
+    }
+    if (keep) kept.AtomicOr(t / 32, 1 << (t % 32));
+    if (tests) tested.AtomicOr(t / 32, 1 << (t % 32));
+    if (hides) hidden.AtomicOr(t / 32, 1 << (t % 32));
+    GPU.Barrier();
+    int low0 = kept[0];
+    int low1 = kept[1];
+    int below = t < 32 ? Bits(low0 & ((1 << t) - 1)) : Bits(low0) + Bits(low1 & ((1 << (t - 32)) - 1));
+    if (keep) c.scratch[g * 64 + below] = job.at.z + i;
+    if (t == 0)
+    {
+        int count = Bits(low0) + Bits(low1);
+        c.groups[g] = int2(count, 0);
+        int testedCount = Bits(tested[0]) + Bits(tested[1]);
+        int hiddenCount = Bits(hidden[0]) + Bits(hidden[1]);
+        if (testedCount > 0) c.depths.AtomicAdd(0, testedCount);
+        if (hiddenCount > 0) c.depths.AtomicAdd(1, hiddenCount);
+    }
+}
+
+[Group(64)]
+compute CullOffsets(Culling c)
+{
+    shared int[64] sums;
+    int b = c.first + this.group.x;
+    int t = this.local.x;
+    CullBucket bucket = c.buckets[b];
+    int n = bucket.a.y;
+    int each = (n + 63) / 64;
+    int first = Math.Min(t * each, n);
+    int last = Math.Min(first + each, n);
+    mut int mine = 0;
+    for (int k = first; k < last; k++) mine += c.groups[bucket.a.x + k].x;
+    sums[t] = mine;
+    GPU.Barrier();
+    for (var d = 1; d < 64; d *= 2)
+    {
+        int v = t >= d ? sums[t - d] : 0;
+        GPU.Barrier();
+        sums[t] += v;
+        GPU.Barrier();
+    }
+    mut int at = bucket.a.z + sums[t] - mine;
+    for (int k = first; k < last; k++)
+    {
+        int count = c.groups[bucket.a.x + k].x;
+        c.groups[bucket.a.x + k] = int2(count, at);
+        at += count;
+    }
+    if (t == 63) c.counts[b] = sums[63] + bucket.a.w; // ...and an ordinary listed run's places, the CPU's
+}
+
+[Group(64)]
+compute CullScatter(Culling c)
+{
+    int g = c.first + this.group.x;
+    int t = this.local.x;
+    int2 info = c.groups[g];
+    if (t < info.x) c.places[info.y + t] = c.scratch[g * 64 + t];
+}
+
+// An invocation a join: its records, those of the buckets that kept any first, in order (index count, instances,
+// first index, base vertex 0, first instance), then records of none, so a GPU that draws every one of them (gpu.h's
+// draw-a-record fallback) draws nothing more. The frame's joins from `first`: all of them for the frame's culling, a
+// span's (cull.inc) after its CullListed's phase 1, as the counts of its buckets are then.
+[Group(64)]
+compute CullDraws(Culling c)
+{
+    int j = c.first + this.index;
+    CullJoin join = c.joins[j];
+    int first = join.a.x;
+    int n = join.a.y;
+    mut int drawn = 0;
+    for (int k = 0; k < n; k++)
+    {
+        int kept = c.counts[first + k];
+        if (kept > 0)
+        {
+            CullBucket bucket = c.buckets[first + k];
+            int at = (first + drawn) * 5;
+            c.args[at] = bucket.b.x;
+            c.args[at + 1] = kept;
+            c.args[at + 2] = bucket.b.y;
+            c.args[at + 3] = 0;
+            c.args[at + 4] = join.a.z > 0 ? bucket.a.z : 0;
+            drawn += 1;
+        }
+    }
+    for (int k = drawn; k < n; k++)
+    {
+        int at = (first + k) * 5;
+        c.args[at] = 0;
+        c.args[at + 1] = 0;
+        c.args[at + 2] = 0;
+        c.args[at + 3] = 0;
+        c.args[at + 4] = 0;
+    }
+    c.draws[j] = drawn;
+}
+
+view RunCulling()
+{
+    Culling c = Culling { };
+    GPU.Run(CullListed, 64, c);
+    GPU.Run(CullOffsets, 64, c);
+    GPU.Run(CullScatter, 64, c);
+    GPU.Run(CullDraws, 64, c);
+}

@@ -1,109 +1,3 @@
-// Lift and Tile on Corner: GLSL, vertex
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-uniform sampler2D pixels0;
-uniform sampler2D pixels1;
-uniform sampler2D pixels2;
-uniform sampler2D pixels3;
-uniform sampler2D pixels4;
-uniform sampler2D pixels5;
-uniform sampler2D pixels6;
-layout(location = 0) in vec2 tide_a0;
-layout(location = 1) in vec2 tide_a1;
-out vec2 tide_s1;
-struct tt_Corner {
-    vec2 m_position;
-    vec2 m_uv;
-};
-vec4 tide_straight(vec4 c) {
-    if (c.a == 0.0) { return vec4(0.0); }
-    return vec4(c.rgb / c.a, c.a);
-}
-void ts_Lift(inout tt_Corner t_vertex) {
-    t_vertex.m_position.y = (t_vertex.m_position.y + (tide_straight(textureLod(pixels0, t_vertex.m_uv, 0.0)).r + tide_straight(textureLod(pixels1, t_vertex.m_uv, 0.0)).g));
-}
-
-void main() {
-    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
-    ts_Lift(tide_vertex);
-    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
-    gl_Position = tide_camera * tide_place;
-    tide_s1 = tide_vertex.m_uv;
-}
-
-// Lift and Tile on Corner: GLSL, fragment
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-uniform sampler2D pixels0;
-uniform sampler2D pixels1;
-uniform sampler2D pixels2;
-uniform sampler2D pixels3;
-uniform sampler2D pixels4;
-uniform sampler2D pixels5;
-uniform sampler2D pixels6;
-in vec2 tide_s1;
-out vec4 tide_pixel;
-struct tt_Corner {
-    vec2 m_position;
-    vec2 m_uv;
-};
-vec4 tide_straight(vec4 c) {
-    if (c.a == 0.0) { return vec4(0.0); }
-    return vec4(c.rgb / c.a, c.a);
-}
-vec2 tf_Tiled(vec2 t_uv, float t_by) {
-    return (t_uv * t_by);
-}
-
-void ts_Tile(tt_Corner t_vertex, inout vec4 t_color) {
-    vec2 tide_uv0 = (((tf_Tiled(t_vertex.m_uv, tide_u0.x)) + vec2(0.5, 0.0)));
-    vec2 tide_dx0 = dFdx(tide_uv0);
-    vec2 tide_dy0 = dFdy(tide_uv0);
-    vec2 tide_uv1 = t_vertex.m_uv.yx;
-    vec2 tide_dx1 = dFdx(tide_uv1);
-    vec2 tide_dy1 = dFdy(tide_uv1);
-    vec2 tide_uv2 = t_vertex.m_uv;
-    vec2 tide_dx2 = dFdx(tide_uv2);
-    vec2 tide_dy2 = dFdy(tide_uv2);
-    vec2 tide_uv3 = (t_vertex.m_uv * tide_straight(textureLod(pixels5, (tf_Tiled(t_vertex.m_uv, tide_u0.x)), 0.0)).r);
-    vec2 tide_dx3 = dFdx(tide_uv3);
-    vec2 tide_dy3 = dFdy(tide_uv3);
-    t_color = vec4(1.0, 1.0, 1.0, 1.0);
-    vec2 t_twice = tf_Tiled(t_vertex.m_uv, tide_u0.x);
-    vec2 t_moved = (t_twice + vec2(0.5, 0.0));
-    if ((t_vertex.m_uv.x > 0.5)) {
-        t_color = tide_straight(textureGrad(pixels0, t_moved, tide_dx0, tide_dy0));
-        if ((t_color.a < 0.5)) {
-            discard;
-        }
-        t_color = (t_color * tide_straight(textureGrad(pixels2, t_vertex.m_uv.yx, tide_dx1, tide_dy1)));
-    } else {
-        t_color = (tide_straight(textureGrad(pixels3, t_vertex.m_uv, tide_dx2, tide_dy2)) * tide_straight(textureGrad(pixels4, (t_vertex.m_uv * tide_straight(textureLod(pixels5, t_twice, 0.0)).r), tide_dx3, tide_dy3)));
-    }
-    vec2 t_step = t_vertex.m_uv;
-    for (int t_i = 0; (t_i < 3); t_i = (t_i + 1)) {
-        t_step = (t_step + vec2(0.1, 0.0));
-        t_color = (t_color + (tide_straight(textureLod(pixels3, t_step, 0.0)) * tide_straight(textureLod(pixels6, t_vertex.m_uv, 0.0))));
-    }
-}
-
-void main() {
-    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    ts_Tile(tt_Corner(vec2(0.0), tide_s1), tide_color);
-    tide_color = tide_color * tide_tint;
-    tide_color.rgb = tide_color.rgb * tide_color.a;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
-    tide_pixel = tide_color;
-}
-
 // Lift and Tile on Corner: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
@@ -118,18 +12,14 @@ struct tide_uniforms {
 @group(0) @binding(4) var sampler1: sampler;
 @group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
-@group(0) @binding(7) var pixels3: texture_2d<f32>;
 @group(0) @binding(8) var sampler3: sampler;
-@group(0) @binding(9) var pixels4: texture_2d<f32>;
 @group(0) @binding(10) var sampler4: sampler;
-@group(0) @binding(11) var pixels5: texture_2d<f32>;
 @group(0) @binding(12) var sampler5: sampler;
-@group(0) @binding(13) var pixels6: texture_2d<f32>;
 @group(0) @binding(14) var sampler6: sampler;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec2f,
 }
 struct tt_Corner {
@@ -158,7 +48,7 @@ fn ts_Tile(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     let tide_uv2: vec2f = t_vertex.m_uv;
     let tide_dx2: vec2f = dpdx(tide_uv2);
     let tide_dy2: vec2f = dpdy(tide_uv2);
-    let tide_uv3: vec2f = (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels5, sampler5, (tf_Tiled(t_vertex.m_uv, tide_block.tide_u0.x)), 0.0)).r);
+    let tide_uv3: vec2f = (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels2, sampler5, (tf_Tiled(t_vertex.m_uv, tide_block.tide_u0.x)), 0.0)).r);
     let tide_dx3: vec2f = dpdx(tide_uv3);
     let tide_dy3: vec2f = dpdy(tide_uv3);
     (*t_color) = vec4f(1.0, 1.0, 1.0, 1.0);
@@ -172,12 +62,12 @@ fn ts_Tile(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
         }
         (*t_color) = ((*t_color) * tide_straight(textureSampleGrad(pixels2, sampler2, t_vertex.m_uv.yx, tide_dx1, tide_dy1)));
     } else {
-        (*t_color) = (tide_straight(textureSampleGrad(pixels3, sampler3, t_vertex.m_uv, tide_dx2, tide_dy2)) * tide_straight(textureSampleGrad(pixels4, sampler4, (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels5, sampler5, t_twice, 0.0)).r), tide_dx3, tide_dy3)));
+        (*t_color) = (tide_straight(textureSampleGrad(pixels2, sampler3, t_vertex.m_uv, tide_dx2, tide_dy2)) * tide_straight(textureSampleGrad(pixels1, sampler4, (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels2, sampler5, t_twice, 0.0)).r), tide_dx3, tide_dy3)));
     }
     var t_step: vec2f = t_vertex.m_uv;
     for (var t_i: i32 = 0; (t_i < 3); t_i = (t_i + 1)) {
         t_step = (t_step + vec2f(0.1, 0.0));
-        (*t_color) = ((*t_color) + (tide_straight(textureSampleLevel(pixels3, sampler3, t_step, 0.0)) * tide_straight(textureSampleLevel(pixels6, sampler6, t_vertex.m_uv, 0.0))));
+        (*t_color) = ((*t_color) + (tide_straight(textureSampleLevel(pixels2, sampler3, t_step, 0.0)) * tide_straight(textureSampleLevel(pixels0, sampler6, t_vertex.m_uv, 0.0))));
     }
 }
 
@@ -203,62 +93,6 @@ fn ts_Tile(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     return tide_color;
 }
 
-// Lift on Corner: GLSL, vertex
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-};
-uniform sampler2D pixels0;
-uniform sampler2D pixels1;
-uniform sampler2D pixels2;
-layout(location = 0) in vec2 tide_a0;
-layout(location = 1) in vec2 tide_a1;
-out vec2 tide_s1;
-struct tt_Corner {
-    vec2 m_position;
-    vec2 m_uv;
-};
-vec4 tide_straight(vec4 c) {
-    if (c.a == 0.0) { return vec4(0.0); }
-    return vec4(c.rgb / c.a, c.a);
-}
-void ts_Lift(inout tt_Corner t_vertex) {
-    t_vertex.m_position.y = (t_vertex.m_position.y + (tide_straight(textureLod(pixels0, t_vertex.m_uv, 0.0)).r + tide_straight(textureLod(pixels1, t_vertex.m_uv, 0.0)).g));
-}
-
-void main() {
-    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
-    ts_Lift(tide_vertex);
-    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
-    gl_Position = tide_camera * tide_place;
-    tide_s1 = tide_vertex.m_uv;
-}
-
-// Lift on Corner: GLSL, fragment
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-};
-uniform sampler2D pixels0;
-uniform sampler2D pixels1;
-uniform sampler2D pixels2;
-in vec2 tide_s1;
-out vec4 tide_pixel;
-vec4 tide_straight(vec4 c) {
-    if (c.a == 0.0) { return vec4(0.0); }
-    return vec4(c.rgb / c.a, c.a);
-}
-void main() {
-    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    tide_color = tide_color * tide_straight(texture(pixels2, tide_s1));
-    tide_color = tide_color * tide_tint;
-    tide_color.rgb = tide_color.rgb * tide_color.a;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
-    tide_pixel = tide_color;
-}
-
 // Lift on Corner: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
@@ -275,7 +109,7 @@ struct tide_uniforms {
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s1: vec2f,
 }
 struct tt_Corner {

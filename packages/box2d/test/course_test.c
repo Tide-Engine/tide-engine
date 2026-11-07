@@ -155,6 +155,9 @@ TIDE_TEST(box2d_views_glide_through_a_correction)
     TIDE_CHECK(near(local.Seen.position.x, drawn.position.x) && near(local.Seen.angle, drawn.angle));
     // ...and halfway there 75 ms later
     tide_local_frame_time(&local, 0.075f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 0.075f);
+#endif
     tide_draw_reset(&draw);
     tide_frame(&b, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     printf(", then at %g and %g\n", (double)local.Seen.position.x, (double)local.Seen.angle);
@@ -283,8 +286,8 @@ TIDE_TEST(box2d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box2D's image.
-#define SENSORS_HASH UINT64_C(0x3cb5ee9a006cdb65)
-#define SENSORS_IMAGES_HASH UINT64_C(0xbae3f51974a18bbb)
+#define SENSORS_HASH UINT64_C(0xb9ea18766d2d461e)
+#define SENSORS_IMAGES_HASH UINT64_C(0x8476ffa479ac50ee)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 

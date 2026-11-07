@@ -8,8 +8,8 @@ static tide_world before, previous, after, after_previous, verified;
 static tide_local local, other_local;
 static tide_draw_list draw;
 static tide_gui gui;
-static const tide_entity BODY = {1, 1};
-static const tide_entity BODY64 = {2, 1};
+static tide_entity BODY;
+static tide_entity BODY64;
 
 static bool near(float a, float b) { return tide_abs_f(a - b) < 0.00002f; }
 static bool same_rotation(tide_quaternion a, tide_quaternion b)
@@ -22,6 +22,8 @@ static void start(void)
     tide_local_init(&local);
     tide_local_init(&other_local);
     tide_world_init(&before, 1.0f / 60.0f);
+    BODY = tide_entity_in_slot(&before.entities, 1);
+    BODY64 = tide_entity_in_slot(&before.entities, 2);
     tide_world_copy(&previous, &before);
     tide_world_copy(&after, &before);
     tide_world_copy(&after_previous, &before);
@@ -92,7 +94,7 @@ TIDE_TEST(corrections_accumulate_without_lagging_normal_motion_or_other_fields)
     correct_on(&local, 1);
     frame_on(&local, &after, NULL, &after, 1);
     TIDE_CHECK(local.Observed.first.pose.scalar == 16);
-    tide_local_frame_time(&local, 0.075f);
+    tide_local_age_views(&local, 0.075f);
     frame_on(&local, &after, NULL, &after, 1);
     TIDE_CHECK(near(local.Observed.first.pose.scalar, 11.5f));
     TIDE_CHECK(local.Observed.first.pose.scalar == local.Observed.second.pose.scalar);
@@ -101,7 +103,7 @@ TIDE_TEST(corrections_accumulate_without_lagging_normal_motion_or_other_fields)
     for (uint32_t i = 0; i < draw.count; i++) if (draw.commands[i].kind == TIDE_DRAW_SHADED) r = &draw.runs[draw.commands[i].shaded.run];
     TIDE_REQUIRE(r != NULL);
     float instance, uniform;
-    memcpy(&instance, draw.instances + r->first, sizeof instance);
+    memcpy(&instance, tide_draw_run_instance(&draw, r, 0), sizeof instance);
     memcpy(&uniform, draw.uniforms + r->uniforms, sizeof uniform);
     TIDE_CHECK(near(instance, 11.5f) && near(uniform, 11.5f));
 }
@@ -140,8 +142,8 @@ TIDE_TEST(corrections_rotations_wrap_normalize_accumulate_and_decay_independentl
     TIDE_CHECK(near(tide_sin_f(local.Observed.first.pose.angle), tide_sin_f(before.Camera.angle)));
     TIDE_CHECK(same_rotation(local.Observed.first.pose.rotation, tide_get_Body(&before, BODY).state.pose.rotation));
     TIDE_CHECK(near(tide_dot_q(local.Observed.first.pose.rotation, local.Observed.first.pose.rotation), 1));
-    tide_local_frame_time(&local, 0.15f);
-    tide_local_frame_time(&other_local, 0.075f); tide_local_frame_time(&other_local, 0.075f);
+    tide_local_age_views(&local, 0.15f);
+    tide_local_age_views(&other_local, 0.075f); tide_local_age_views(&other_local, 0.075f);
     frame_on(&local, &after, NULL, &after, 1);
     frame_on(&other_local, &after, NULL, &after, 1);
     TIDE_CHECK(same_rotation(local.Observed.first.pose.rotation, other_local.Observed.first.pose.rotation));
@@ -273,7 +275,7 @@ TIDE_TEST(corrections_double_positions_preserve_large_world_offsets_and_responsi
     correct_on(&local, 1);
     frame_on(&local, &after, NULL, &after, 1);
     TIDE_CHECK(local.Observed64.first.pose.scalar == origin + 1.5);
-    tide_local_frame_time(&local, .075f);
+    tide_local_age_views(&local, .075f);
     frame_on(&local, &after, NULL, &after, 1);
     TIDE_CHECK(local.Observed64.first.pose.scalar == origin + 1.1875);
     TIDE_CHECK(local.Observed64.first.pose.wide.w == origin + 1.5625);
@@ -288,7 +290,7 @@ TIDE_TEST(corrections_double_error_and_zero_error_interpolation_keep_binary64_pr
     frame_on(&local, &after, NULL, &after, 1);
     TIDE_CHECK(local.Observed64.first.pose.scalar == 1 && local.Observed64.center.x == 1);
     // Storing the ~0.1 correction in float would fail the exact checks above.
-    tide_local_frame_time(&local, .075f);
+    tide_local_age_views(&local, .075f);
     frame_on(&local, &after, NULL, &after, 1);
     TIDE_CHECK(tide_abs_d(local.Observed64.first.pose.scalar - .95) < 1e-8);
 
@@ -343,4 +345,30 @@ TIDE_TEST(corrections_double_errors_remain_private_and_reset_on_replacement)
     tide_local_correct(&local, &reset);
     TIDE_CHECK(local.tide_corrections_Body64.rows.count == 0 && !local.tide_correction_Camera64.valid);
     free(a); free(b);
+}
+
+TIDE_TEST(corrections_age_between_frames_without_changing_frame_time_or_randomness)
+{
+    start(); scalar(&before, 20); scalar(&after, 10);
+    tide_local_frame_time(&local, .25f);
+    tide_local_frame_time(&other_local, .25f);
+    correct_on(&local, 1);
+    tide_local_age_views(&local, .075f); // Ten becomes five before a fresh error arrives.
+    tide_world_copy(&before, &after);
+    scalar(&after, 6);
+    correct_on(&local, 1); // Four more: nine, not a correction aged for the earlier interval.
+    const uint64_t hash = tide_world_hash(&after);
+    tide_local_age_views(&local, .075f); // Four and a half remain.
+    TIDE_CHECK(local.tide_frame_seconds == .25f);
+    TIDE_CHECK(local.tide_dice.state == other_local.tide_dice.state);
+
+    tide_local_frame_time(&local, .15f);
+    tide_local_frame_time(&other_local, .15f);
+    frame_on(&local, &after, NULL, &after, 1);
+    frame_on(&other_local, &after, NULL, &after, 1);
+    TIDE_CHECK(near(local.Observed.first.pose.scalar, 10.5f)); // Frame time does not age it again.
+    TIDE_CHECK(local.Observed.seconds == .15f && other_local.Observed.seconds == .15f);
+    TIDE_CHECK(local.Observed.roll == other_local.Observed.roll);
+    TIDE_CHECK(local.tide_dice.state == other_local.tide_dice.state);
+    TIDE_CHECK(tide_world_hash(&after) == hash);
 }

@@ -78,7 +78,7 @@ TIDE_TEST(asset_reference_equality_preserves_unknown_received_identity_and_geome
 
     const tide_pack_entry *entry = tide_pack_find("box", TIDE_PACK_MESH);
     TIDE_REQUIRE(entry != NULL);
-    const uint32_t offset = entry->offset;
+    const uint64_t offset = entry->offset;
     uint8_t *changed = malloc(tide_game_pack_size);
     TIDE_REQUIRE(changed != NULL);
     memcpy(changed, tide_game_pack, tide_game_pack_size);

@@ -90,12 +90,17 @@ TIDE_TEST(gpu_rolls_send_the_frames_number_and_the_seed)
     TIDE_REQUIRE(plain != NULL);
     TIDE_CHECK(plain->shader->uniform_ints == 0 && plain->shader->uniform_floats == 0);
 
-    // Each stage that rolls has the generator, and only those: a frag behind a vert that rolls has none of its own
-    TIDE_CHECK(strstr(grain->shader->glsl_fragment, "uint tide_dice;") && !strstr(grain->shader->glsl_vertex, "tide_dice"));
-    TIDE_CHECK(strstr(grain->shader->glsl_vertex, "tide_nth = gl_InstanceID;"));
-    TIDE_CHECK(strstr(shake->shader->glsl_vertex, "uint tide_dice;") && !strstr(shake->shader->glsl_fragment, "tide_dice"));
-    TIDE_CHECK(strstr(mixed->shader->glsl_vertex, "uint tide_dice;") && strstr(mixed->shader->glsl_fragment, "uint tide_dice;"));
-    TIDE_CHECK(!strstr(seeded->shader->glsl_fragment, "tide_dice") && !strstr(plain->shader->glsl_fragment, "tide_dice"));
+    // Each stage that rolls makes the generator, and only those: a frag behind a vert that rolls makes none of its
+    // own. A shader's text is its WGSL, which a build keeps on the web: the vertex stage makes it of its vertex
+    // (tide_hash3), the fragment stage of its pixel (tide_hash4)
+#ifdef __wasm__
+    static const char vertex_dice[] = "tide_dice = u32(tide_hash3(", pixel_dice[] = "tide_dice = u32(tide_hash4(";
+    TIDE_CHECK(strstr(grain->shader->wgsl, pixel_dice) && !strstr(grain->shader->wgsl, vertex_dice));
+    TIDE_CHECK(strstr(grain->shader->wgsl, "out.tide_nth = i32(tide_instance_index);"));
+    TIDE_CHECK(strstr(shake->shader->wgsl, vertex_dice) && !strstr(shake->shader->wgsl, pixel_dice));
+    TIDE_CHECK(strstr(mixed->shader->wgsl, vertex_dice) && strstr(mixed->shader->wgsl, pixel_dice));
+    TIDE_CHECK(!strstr(seeded->shader->wgsl, "tide_dice") && !strstr(plain->shader->wgsl, "tide_dice"));
+#endif
     // Which frag or vert rolls is part of what its generator is made of, so two that draw one pixel roll apart
     TIDE_CHECK(grain->shader->id != mixed->shader->id);
 
@@ -118,6 +123,9 @@ TIDE_TEST(gpu_rolls_send_the_frames_number_and_the_seed)
     // A frame's length goes into the generator (tide_local_frame_time), so its numbers follow it too
     local.tide_dice.state = 1234;
     tide_local_frame_time(&local, DT);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, DT);
+#endif
     TIDE_CHECK(local.tide_dice.state != 1234);
     const int64_t stirred = local.tide_dice.state;
     frame(&world);

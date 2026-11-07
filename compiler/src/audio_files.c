@@ -365,3 +365,20 @@ bool audio_file_read(const uint8_t *data, size_t size, uint8_t **converted, size
     }
     return ok;
 }
+
+uint8_t *audio_float_wav(const void *samples, const uint32_t frames, const uint32_t channels, const uint32_t rate, size_t *size)
+{
+    const size_t data = (size_t)frames * channels * 4u;
+    pcm_wave wave = {.bytes = malloc(WAV_HEADER + data), .capacity = WAV_HEADER + data, .frames = frames,
+                     .channels = channels, .rate = rate, .emit = true};
+    if (!wave.bytes) abort();
+    const uint8_t *from = samples;
+    for (size_t i = 0; i < (size_t)frames * channels; i++) {
+        uint32_t bits;
+        memcpy(&bits, from + i * 4u, sizeof bits);
+        put32(wave.bytes + WAV_HEADER + i * 4u, bits);
+    }
+    uint8_t *out = NULL;
+    finish_wave(&wave, &out, size);
+    return out;
+}

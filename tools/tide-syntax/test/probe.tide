@@ -4,6 +4,11 @@
 scene Main;
 local scene Menu;
 
+scene Campaign
+{
+    prepare(mut Geography geography) { }
+}
+
 command Rename { string name; }
 command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)
 {
@@ -201,6 +206,7 @@ const int NEWER = 1;
 system Loops(Field field)
 {
     parallel (var at in field.cells by 2 offset o) { }
+    indexed foreach (var near in field.items) { }
     foreach (var tick in Both(Ticks(), Ticks())) { int in = 1; }
 }
 
@@ -247,6 +253,9 @@ frag Shade(BoxVertex vertex, out Color color, Box box)
     if (this.position.x < 10) this.Discard();
 }
 vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time, Instance instance) { }
+[Group(64)]
+compute Cull(Meadow meadow, Reach reach) { meadow.shown.Add(meadow.blades[this.index]); GPU.Barrier(); }
+local singleton Meadow { GPUList<Blade> blades; }
 float Blend(float frag, float vert)
 {
     float both = frag + vert;

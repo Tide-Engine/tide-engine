@@ -2,6 +2,8 @@
 #include <stdlib.h>
 
 #include "tide/draw.h"
+#include "tide/heap.h"
+#include "tide/list.h"
 #include "tide/mesh.h"
 #include "tide/text.h"
 #include "tide_test.h"
@@ -34,9 +36,9 @@ TIDE_TEST(draw_sampling_banks_keep_every_slot_independent)
         TIDE_CHECK(tide_sampling_filtered(slot, TIDE_FILTER_TRILINEAR) == ((UINT64_C(1) << slot) | (UINT64_C(1) << (24u + slot))));
         TIDE_CHECK(tide_sampling_wrapped(slot, TIDE_WRAP_MIRROR) == UINT64_C(2) << (8u + 2u * slot));
     }
-    TIDE_CHECK(tide_sampling_filtered(UINT32_MAX, 2) == 0 && tide_sampling_wrapped(12, 2) == 0);
+    TIDE_CHECK(tide_sampling_filtered(UINT32_MAX, 2) == 0 && tide_sampling_wrapped(TIDE_SHADER_TEXTURES, 2) == 0);
     TIDE_CHECK(tide_sampling_filter(UINT64_MAX, UINT32_MAX) == TIDE_FILTER_POINT);
-    TIDE_CHECK(tide_sampling_wrap(UINT64_MAX, 12) == TIDE_WRAP_CLAMP);
+    TIDE_CHECK(tide_sampling_wrap(UINT64_MAX, TIDE_SHADER_TEXTURES) == TIDE_WRAP_CLAMP);
 }
 
 TIDE_TEST(draw_rect_areas_have_aa_and_bounded_independent_corners)
@@ -107,6 +109,303 @@ TIDE_TEST(draw_list_grows)
     tide_draw_free(&world);
     tide_draw_free(&grown);
     TIDE_CHECK(grown.count == 0 && grown.commands == NULL);
+}
+
+// ---------------------------------------------------------------------------
+// Meshes a frame didn't draw: kept, within the idle budget (tide/draw.h)
+
+static const tide_vertex3 idle_corners[3] = {
+    {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+    {{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+    {{0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+};
+static const uint32_t idle_triangle[3] = {0, 1, 2};
+
+// A frame draws a mesh where it finds its place: its copy is made where the place is new.
+static uint32_t idle_mesh(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t other,
+                          const uint64_t version, bool *fill)
+{
+    const uint32_t mesh = tide_draw_mesh_slot(d, space, id, other, version, fill);
+    if (*fill) tide_draw_mesh_fill(d, mesh, idle_corners, 3, idle_triangle, 3);
+    return mesh;
+}
+
+static bool mesh_gone(const tide_draw_list *d, const uint32_t mesh)
+{
+    return d->meshes[mesh - 1u].space == TIDE_MESH_NONE;
+}
+
+TIDE_TEST(draw_idle_meshes_are_kept_for_when_drawn_again)
+{
+    tide_draw_list d = {0};
+    bool fill;
+    const uint32_t kept = idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill);
+    TIDE_CHECK(fill);
+    const uint32_t once = idle_mesh(&d, TIDE_MESH_MEMORY, 3, 4, 7, &fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill) == kept && !fill);
+    // A mesh one frame drew stays a while (TIDE_MESH_ONCE_FRAMES): drawn every other frame, it's found where it
+    // was, uncopied
+    tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, once) && !mesh_gone(&d, kept));
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_MEMORY, 3, 4, 7, &fill) == once && !fill);
+    // ...and one drawn once and never again goes once TIDE_MESH_ONCE_FRAMES frames went by without it
+    const uint32_t brief = idle_mesh(&d, TIDE_MESH_MEMORY, 8, 9, 7, &fill);
+    for (uint32_t i = 0; i < TIDE_MESH_ONCE_FRAMES + 1u; i++) tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, brief));
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, brief) && !mesh_gone(&d, once) && !mesh_gone(&d, kept));
+    // One drawn in two frames stays through a frame that skips it, and is found where it was, uncopied
+    tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, kept));
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill) == kept && !fill);
+
+    // Another version of its lists drawn in a frame that skips it: it goes, as nothing would draw it again
+    const uint32_t old = idle_mesh(&d, TIDE_MESH_MEMORY, 5, 6, 1, &fill);
+    tide_draw_reset(&d);
+    idle_mesh(&d, TIDE_MESH_MEMORY, 5, 6, 1, &fill);
+    tide_draw_reset(&d);
+    const uint32_t newer = idle_mesh(&d, TIDE_MESH_MEMORY, 5, 6, 2, &fill);
+    TIDE_CHECK(fill && newer != old);
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, old) && !mesh_gone(&d, newer));
+    // ...but lists made along the way are all one place's (and a pack's): two of them are told apart by version alone
+    const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
+    const uint32_t a = idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 11, &fill);
+    const uint32_t b = idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 12, &fill);
+    tide_draw_reset(&d);
+    idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 11, &fill);
+    idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 12, &fill);
+    tide_draw_reset(&d);
+    idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 11, &fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, a) && !mesh_gone(&d, b));
+    // ...as made meshes are (tide_draw_mesh_key's UINT64_MAX): two drawn on alternate frames are each found again
+    const uint32_t made_a = idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 21, &fill);
+    tide_draw_reset(&d);
+    const uint32_t made_b = idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 22, &fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 21, &fill) == made_a && !fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 22, &fill) == made_b && !fill);
+    tide_draw_reset(&d);
+
+    // Kept for TIDE_MESH_IDLE_FRAMES frames unused, and no longer
+    idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill);
+    tide_draw_reset(&d);
+    for (uint32_t i = 0; i < TIDE_MESH_IDLE_FRAMES; i++) tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, kept));
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, kept));
+
+    // Forgetting the list lets them all go
+    tide_draw_forget(&d);
+    TIDE_CHECK(d.mesh_count == 0);
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_idle_meshes_past_the_budget_go_longest_unused_first)
+{
+    // TIDE_MESH_IDLE_COUNT of them at most: drawn in two frames, the last
+    // also in a third, then none. The last is the most recently drawn, so of
+    // the others, which are as old, the one in the highest place goes.
+    tide_draw_list d = {0};
+    bool fill;
+    enum { COUNT = TIDE_MESH_IDLE_COUNT + 1 };
+    uint32_t *meshes = malloc(COUNT * sizeof(uint32_t));
+    TIDE_REQUIRE(meshes);
+    for (int frame = 0; frame < 2; frame++) {
+        for (uint32_t i = 0; i < COUNT; i++) meshes[i] = idle_mesh(&d, TIDE_MESH_MEMORY, 100u + i, 0, 1, &fill);
+        tide_draw_reset(&d);
+    }
+    idle_mesh(&d, TIDE_MESH_MEMORY, 100u + COUNT - 1u, 0, 1, &fill);
+    tide_draw_reset(&d);
+    for (uint32_t i = 0; i < COUNT; i++) TIDE_CHECK(!mesh_gone(&d, meshes[i])); // TIDE_MESH_IDLE_COUNT unused
+    tide_draw_reset(&d);
+    uint32_t gone = 0;
+    for (uint32_t i = 0; i < COUNT; i++) gone += mesh_gone(&d, meshes[i]);
+    TIDE_CHECK(gone == 1u && mesh_gone(&d, meshes[COUNT - 2u]) && !mesh_gone(&d, meshes[COUNT - 1u]));
+    free(meshes);
+    tide_draw_free(&d);
+
+    // TIDE_MESH_ONCE_COUNT of those one frame drew, a budget apart from the others': of as old, the one in the
+    // highest place goes, and a mesh in the other budget stays
+    tide_draw_list brief = {0};
+    enum { ONCE = TIDE_MESH_ONCE_COUNT + 1 };
+    uint32_t *briefs = malloc(ONCE * sizeof(uint32_t));
+    TIDE_REQUIRE(briefs);
+    const uint32_t lasting = idle_mesh(&brief, TIDE_MESH_MEMORY, 50u, 0, 1, &fill);
+    tide_draw_reset(&brief);
+    idle_mesh(&brief, TIDE_MESH_MEMORY, 50u, 0, 1, &fill);
+    for (uint32_t i = 0; i < ONCE; i++) briefs[i] = idle_mesh(&brief, TIDE_MESH_MEMORY, 300u + i, 0, 1, &fill);
+    tide_draw_reset(&brief);
+    tide_draw_reset(&brief);
+    gone = 0;
+    for (uint32_t i = 0; i < ONCE; i++) gone += mesh_gone(&brief, briefs[i]);
+    TIDE_CHECK(gone == 1u && mesh_gone(&brief, briefs[ONCE - 1u]) && !mesh_gone(&brief, lasting));
+    free(briefs);
+    tide_draw_free(&brief);
+
+    // TIDE_MESH_IDLE_BYTES of their copies at most: two meshes over half of it each
+    tide_draw_list big = {0};
+    const uint32_t vertex_size = 1024u * 1024u, vertex_count = (uint32_t)(TIDE_MESH_IDLE_BYTES / 2u / vertex_size) + 1u;
+    uint8_t *bytes = calloc(vertex_count, vertex_size);
+    TIDE_REQUIRE(bytes);
+    uint32_t halves[2];
+    for (int frame = 0; frame < 2; frame++) {
+        for (uint32_t i = 0; i < 2; i++) {
+            halves[i] = tide_draw_mesh_slot(&big, TIDE_MESH_BYTES, 200u + i, 0, 1, &fill);
+            if (fill) tide_draw_mesh_fill_bytes(&big, halves[i], bytes, vertex_size, vertex_count, idle_triangle, 3);
+        }
+        tide_draw_reset(&big);
+    }
+    tide_draw_mesh_slot(&big, TIDE_MESH_BYTES, 201u, 0, 1, &fill); // The second, drawn once more
+    tide_draw_reset(&big);
+    TIDE_CHECK(mesh_gone(&big, halves[0]) && !mesh_gone(&big, halves[1]));
+    free(bytes);
+    tide_draw_free(&big);
+}
+
+// A world's lists of a mesh's corners and triangles
+static void hollow_lists(tide_list *vertices, tide_list *indices, const float x)
+{
+    tide_list_resize(vertices, 3, sizeof(tide_vertex3), TIDE_IN_LOCAL);
+    for (int32_t i = 0; i < 3; i++) {
+        tide_vertex3 *v = tide_list_at_mut(*vertices, i, sizeof(tide_vertex3));
+        *v = idle_corners[i];
+        v->position.x += x;
+    }
+    tide_list_resize(indices, 3, sizeof(uint32_t), TIDE_IN_LOCAL);
+    for (int32_t i = 0; i < 3; i++) *(uint32_t *)tide_list_at_mut(*indices, i, sizeof(uint32_t)) = idle_triangle[i];
+}
+
+static tide_float4x4 hollow_at(const float x, const float z)
+{
+    tide_float4x4 m = tide_identity_f4x4();
+    m.c3 = tide_f4(x, 0, z, 1);
+    return m;
+}
+
+// A mesh of a world's lists that a frame skips, and that the renderer has, keeps no copy: drawn again it's found
+// as it was, uncopied; where the renderer lets it go, its place goes and a draw copies it again; appended to
+// another list, it's read from its lists.
+TIDE_TEST(draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy)
+{
+    const uint64_t mark = tide_scratch_mark();
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_list vertices = {0}, indices = {0}, others = {0}, triangles = {0};
+    hollow_lists(&vertices, &indices, 0.0f);
+    hollow_lists(&others, &triangles, 5.0f);
+    tide_draw_list d = {0};
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_mesh3_lists(&d, vertices, indices, hollow_at(0, 0));
+    tide_draw_mesh3_lists(&d, others, triangles, hollow_at(0, 0));
+    const uint32_t first = d.commands[0].mesh3.mesh, mesh = d.commands[d.count - 1u].mesh3.mesh;
+    TIDE_REQUIRE(d.mesh_gpu && first && mesh && first != mesh && d.meshes[mesh - 1u].relisted);
+    // The renderer has both; the next frame draws the first alone
+    for (uint32_t i = 0; i < d.mesh_count; i++) d.mesh_gpu[i] = TIDE_MESH_GPU_HAS;
+    tide_draw_reset(&d);
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_mesh3_lists(&d, vertices, indices, hollow_at(0, 0));
+    tide_draw_reset(&d);
+    const tide_draw_mesh_data *m = &d.meshes[mesh - 1u];
+    TIDE_CHECK(m->hollow && m->vertices == NULL && m->indices == NULL && m->vertex_count == 3 && m->index_count == 3);
+    TIDE_CHECK(!d.meshes[first - 1u].hollow && d.meshes[first - 1u].vertices != NULL); // The one drawn keeps its own
+    // Drawn again: the same place, nothing copied
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_mesh3_lists(&d, others, triangles, hollow_at(0, 0));
+    TIDE_CHECK(d.commands[d.count - 1u].mesh3.mesh == mesh && d.meshes[mesh - 1u].hollow);
+    // Appended to another list, it's read from its lists again
+    tide_draw_list appended = {0};
+    tide_draw_append(&appended, &d);
+    const uint32_t copy = appended.commands[appended.count - 1u].mesh3.mesh;
+    TIDE_REQUIRE(copy && copy <= appended.mesh_count);
+    const tide_draw_mesh_data *read = &appended.meshes[copy - 1u];
+    TIDE_REQUIRE(read->vertices && read->vertex_count == 3 && read->index_count == 3);
+    TIDE_CHECK(read->vertices[1].position.x == idle_corners[1].position.x + 5.0f && !read->hollow);
+    tide_draw_free(&appended);
+    // The renderer lets it go: its place goes as the frame ends, and the next draw copies it again
+    d.mesh_gpu[mesh - 1u] = TIDE_MESH_GPU_DROPPED;
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[mesh - 1u].space == TIDE_MESH_NONE);
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_mesh3_lists(&d, others, triangles, hollow_at(0, 0));
+    const uint32_t again = d.commands[d.count - 1u].mesh3.mesh;
+    TIDE_REQUIRE(again);
+    TIDE_CHECK(!d.meshes[again - 1u].hollow && d.meshes[again - 1u].vertices != NULL
+               && d.meshes[again - 1u].vertices[1].position.x == idle_corners[1].position.x + 5.0f);
+    // Outside the budgets: kept till its lists are drawn at another version, or for TIDE_MESH_IDLE_FRAMES unused
+    d.mesh_gpu[again - 1u] = TIDE_MESH_GPU_HAS;
+    tide_draw_reset(&d);
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[again - 1u].hollow);
+    ((tide_vertex3 *)tide_list_at_mut(others, 0, sizeof(tide_vertex3)))->position.y += 1.0f;
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_mesh3_lists(&d, others, triangles, hollow_at(0, 0));
+    const uint32_t newer = d.commands[d.count - 1u].mesh3.mesh;
+    TIDE_CHECK(newer && newer != again);
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[again - 1u].space == TIDE_MESH_NONE); // Drawn at another version: it goes
+    d.mesh_gpu[newer - 1u] = TIDE_MESH_GPU_HAS;
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[newer - 1u].hollow);
+    for (uint32_t i = 0; i + 1u < TIDE_MESH_IDLE_FRAMES; i++) tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[newer - 1u].space != TIDE_MESH_NONE);
+    tide_draw_reset(&d);
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[newer - 1u].space == TIDE_MESH_NONE);
+    // Lists made along the way keep their copies, whatever the renderer has
+    const tide_list made = tide_list_from(idle_corners, 3, sizeof(tide_vertex3));
+    const tide_list made_faces = tide_list_from(idle_triangle, 3, sizeof(uint32_t));
+    tide_draw_mesh3_lists(&d, made, made_faces, hollow_at(0, 0));
+    const uint32_t scratch = d.commands[d.count - 1u].mesh3.mesh;
+    TIDE_REQUIRE(scratch);
+    for (uint32_t i = 0; i < d.mesh_count; i++) d.mesh_gpu[i] = TIDE_MESH_GPU_HAS;
+    tide_draw_reset(&d);
+    tide_draw_reset(&d);
+    TIDE_CHECK(!d.meshes[scratch - 1u].relisted && !d.meshes[scratch - 1u].hollow && d.meshes[scratch - 1u].vertices);
+    tide_draw_free(&d);
+    tide_list_release(&vertices, TIDE_IN_LOCAL);
+    tide_list_release(&indices, TIDE_IN_LOCAL);
+    tide_list_release(&others, TIDE_IN_LOCAL);
+    tide_list_release(&triangles, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
+// Past the budget, the idle mesh farthest from where the frame's camera was goes first, however recently drawn:
+// turning round keeps what's around.
+TIDE_TEST(draw_idle_meshes_past_the_budget_go_farthest_first)
+{
+    // Copies of 32 MiB each (25 MiB of vertices, as copies grow): one within the budget, the two past it
+    tide_draw_list d = {0};
+    bool fill;
+    const uint32_t vertex_size = 256u * 1024u, vertex_count = 100u;
+    uint8_t *bytes = calloc(vertex_count, vertex_size);
+    TIDE_REQUIRE(bytes);
+    uint32_t meshes[2];
+    for (int frame = 0; frame < 2; frame++) {
+        for (uint32_t i = 0; i < 2; i++) {
+            meshes[i] = tide_draw_mesh_slot(&d, TIDE_MESH_BYTES, 400u + i, 0, 1, &fill);
+            if (fill) tide_draw_mesh_fill_bytes(&d, meshes[i], bytes, vertex_size, vertex_count, idle_triangle, 3);
+        }
+        tide_draw_reset(&d);
+    }
+    // The first drawn once more, far away; the second near the camera
+    tide_draw_mesh_slot(&d, TIDE_MESH_BYTES, 400u, 0, 1, &fill);
+    d.meshes[meshes[0] - 1u].where[0] = 1000.0f;
+    d.meshes[meshes[0] - 1u].placed = true;
+    d.meshes[meshes[1] - 1u].where[0] = 5.0f;
+    d.meshes[meshes[1] - 1u].placed = true;
+    d.idle_eye[0] = d.idle_eye[1] = d.idle_eye[2] = 0.0f;
+    d.idle_eye_set = true;
+    tide_draw_reset(&d);
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, meshes[0]) && !mesh_gone(&d, meshes[1]));
+    free(bytes);
+    tide_draw_free(&d);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +497,61 @@ static tide_render_target_state *foreign_state(void)
                                                                & ~(uintptr_t)TIDE_RENDER_BITS);
     s->memory = memory;
     return s;
+}
+
+static tide_target_content revision_content;
+static tide_target_content revision_resolve(tide_target_size size)
+{
+    (void)size;
+    return revision_content;
+}
+
+TIDE_TEST(draw_target_content_revision_tracks_discard_not_drawing)
+{
+    tide_render_target target = tide_render_target_make(12, 9);
+    const tide_render_target alias = target;
+    const int64_t made = tide_render_target_content_revision(target);
+    TIDE_CHECK(made > 0 && tide_render_target_content_revision(alias) == made);
+    revision_content = (tide_target_content){.device = 1, .pixels = {12, 9}};
+    const tide_target_content_scope previous = tide_render_target_content_resolver((tide_target_content_scope){.resolve = revision_resolve});
+    TIDE_CHECK(tide_render_target_content_revision(target) == made);
+    tide_render_target_content_observe(target.id, (tide_target_content){.device = 1, .pixels = {24, 9}}, 0);
+    tide_render_target_content_observe(target.id, revision_content, 0);
+    const int64_t replaced_twice = tide_render_target_content_revision(target);
+    TIDE_CHECK(replaced_twice > made);
+    tide_draw_list d = {0};
+    tide_draw_render_target(&d, target);
+    tide_draw_clear(&d, TIDE_COLOR_RED);
+    TIDE_CHECK(tide_render_target_content_revision(target) == replaced_twice);
+    revision_content.pixels.x = 24;
+    const int64_t resized = tide_render_target_content_revision(alias);
+    TIDE_CHECK(resized > made && tide_render_target_content_revision(target) == resized);
+    revision_content.device = 0;
+    const int64_t lost = tide_render_target_content_revision(target);
+    TIDE_CHECK(lost > resized && tide_render_target_content_revision(alias) == lost);
+    revision_content.device = 2;
+    const int64_t restored = tide_render_target_content_revision(target);
+    TIDE_CHECK(restored > lost);
+    tide_render_target_content_resolver((tide_target_content_scope){.resolve = revision_resolve, .epoch = 1});
+    const int64_t forgotten = tide_render_target_content_revision(target);
+    TIDE_CHECK(forgotten > restored);
+    tide_render_target_resize(target, 18, 11);
+    const int64_t explicit_size = tide_render_target_content_revision(alias);
+    TIDE_CHECK(explicit_size > forgotten);
+    const uint64_t saved = tide_render_target_revision_highwater();
+    tide_render_target_revision_resume(saved + 100);
+    const tide_render_target reborn = tide_render_target_recreate(target);
+    TIDE_CHECK(tide_render_target_content_revision(reborn) > (int64_t)(saved + 100));
+    TIDE_CHECK(tide_render_target_content_revision(tide_render_target_recreate(alias))
+        == tide_render_target_content_revision(reborn));
+    tide_render_targets_recreated();
+    tide_render_target_dispose(target);
+    TIDE_CHECK(tide_render_target_content_revision(alias) == 0);
+    TIDE_CHECK(tide_render_target_content_revision((tide_render_target){0}) == 0);
+    TIDE_CHECK(tide_render_target_content_revision((tide_render_target){.id = TIDE_RENDER_WINDOW}) == 0);
+    tide_render_target_content_resolver(previous);
+    tide_draw_free(&d);
+    tide_render_targets_free();
 }
 
 TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
@@ -974,7 +1328,7 @@ TIDE_TEST(draw_grids_are_textures)
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}}; // As tidec makes Grid2<Color>'s
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid grid = {0};
     tide_grid_set(&grid, tide_grid_new(2, 40, 33, 0), &colors, TIDE_IN_LOCAL);
     const tide_color red = {1.0f, 0.0f, 0.0f, 1.0f}, half = {0.5f, 2.0f, -1.0f, 0.25f};
@@ -1081,7 +1435,7 @@ TIDE_TEST(draw_textures_say_what_changed)
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid grid = {0};
     tide_grid_set(&grid, tide_grid_new(2, 100, 70, 0), &colors, TIDE_IN_LOCAL); // Four chunks across, three down
     const tide_color red = {1.0f, 0.0f, 0.0f, 1.0f}, blue = {0.0f, 0.0f, 1.0f, 1.0f};
@@ -1268,7 +1622,7 @@ TIDE_TEST(draw_textures_kept_are_the_textures_made_anew)
     static const tide_grid_shape ints = {sizeof(int32_t), 3u, {4u, 4u, 2u}};
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid paint = {0}, blocks = {0};
     tide_grid_set(&paint, tide_grid_new(2, 90, 70, 0), &colors, TIDE_IN_LOCAL);
     tide_grid_set(&blocks, tide_grid_new(3, 40, 0, 9), &ints, TIDE_IN_LOCAL); // No size along y: its chunks say where it is
@@ -1598,7 +1952,7 @@ TIDE_TEST(draw_lists_are_meshes_3d)
 {
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list vertices = {0}, big = {0};
     for (int i = 0; i < 4; i++) {
         *(tide_vertex3 *)tide_list_add(&vertices, sizeof(tide_vertex3), TIDE_IN_LOCAL) = cube_corners[i];
@@ -1697,7 +2051,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     tide_grid grid = {0};
@@ -1752,7 +2106,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
 // merges with ordinary shader draws only while the shared inputs match.
 TIDE_TEST(draw_shaded_instances_are_copied_and_batched)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     static const tide_shader shader = {
@@ -1808,7 +2162,7 @@ TIDE_TEST(draw_shaded_instances_are_copied_and_batched)
 
 TIDE_TEST(draw_twelve_textures_keep_high_slots_through_batching_and_append)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     const tide_float4x4 transform = tide_identity_f4x4();
@@ -1847,7 +2201,7 @@ TIDE_TEST(draw_twelve_textures_keep_high_slots_through_batching_and_append)
 // that many copies, while empty or invalid meshes draw none.
 TIDE_TEST(draw_shaded_instances_without_payload)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     static const tide_shader shader = {.vertex_size = sizeof(tide_vertex3)};
@@ -1870,7 +2224,7 @@ TIDE_TEST(draw_shaded_instances_without_payload)
 // explicit draws can join. C descriptors without an id still use identity.
 TIDE_TEST(draw_shaded_instances_merge_by_shader_id)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     const tide_shader first = {.id = 7, .vertex_size = sizeof(tide_vertex3)};

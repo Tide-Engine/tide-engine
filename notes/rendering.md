@@ -1,5 +1,789 @@
 # The platform layer and the renderer
 
+## A pass's draws made on several threads: tried, not kept (2026-11-06)
+
+After the second round (below), the owner asked to explore making one big pass's draws on several threads. What was
+left in `record` on the frame's thread at Mount & Rifle's woods (84d7542, `OWNER_WOODS`, ~1,670 draws, ~3.65 M
+cycles a frame): turning each draw into commands (`draw_shaded`'s uniforms and camera, descriptor writes, the
+draws' records) ~42%, resolving each draw's textures and samplers ~20% (~8,250 `image` and ~2,650 `sampler` calls),
+the checks before each draw ~12%, handing each pass to a job ~9% (~9k cycles a pass).
+
+- **One lane, tried:** finished passes queued for one job that takes them in turn, so a pass costs no job and no
+  wake. `record` p50 ~0.77 -> ~0.60 ms, but the frame then waited ~2.9 M cycles (~0.6 ms) at present for that one
+  job: one worker can't keep up with the frame's thread. Reverted; a job a pass stays (~40 µs waited at present).
+- **Parts of a pass's draws on the pool, tried:** the backend's per-pass draw state moved to a `vk_emit` a thread
+  can have its own of (`_Thread_local`), `gpu.h` `emit_fork`/`emit_enter`/`emit_leave`/`emit_join` (each part
+  written down apart, joined in order, the upload ring and descriptor sets locked); the renderer collected shaded
+  draws that set nothing but a draw's state (counts, profile rows, stencil before each and their textures found on
+  the frame's thread) and made a run of 96 or more in parts of 48 through `tide_jobs.run`, `pass_stencil` and
+  `draw_shaded`'s uniforms per thread. `record` p50 got worse (0.80-0.97 against ~0.6-0.72 ms): of 18 runs a frame
+  only one was long enough (502 draws, 10 parts), and making it in parts took ~370k cycles on the frame's thread,
+  what making it alone does, the pool's wake for a round eating what the parts saved; the ~930 GPU-culled draws read
+  their list's numbers as a texture (`texture_to_read` can upload) and were left out. Reverted (840 lines).
+- **Why a second version wasn't built:** making a frame's draws on workers after the frame's thread moved on (one
+  round at the end, or each pass's job making its draws) needs the backend's tables (`vk.textures`, `buffers`,
+  `pipelines`, `targets`, ~60 lookups) not to move as the frame's thread makes more, a snapshot of each draw's
+  handles taken on the frame's thread (what's bound changes later in a frame: a texture's `mipped` picks its view),
+  and pipelines freed on a hot reload kept till the jobs are done. With the snapshot back on the frame's thread the
+  saving was ~0.1-0.15 ms, for most of the backend's object handling at risk. The owner chose to stop there.
+- So what's left costs the frame's thread ~0.4 µs a draw; draw count and passes split by other targets' draws are
+  the game's levers.
+
+## Passes recorded on the pool's threads (2026-11-06, second round)
+
+The owner asked to push the render phase further after the first round (below). Same scene, same method. Claude's,
+internal, Provisional.
+
+- **What was left** (cycle counters, removed): of `record`'s ~7.8 M cycles a frame, pass begins 16% (34k cycles each,
+  `vkBeginCommandBuffer` most of it), real pipeline binds 13% (~670), pushes 10%, draws and buffer binds 12%; the
+  renderer's checks before each draw 10% and resolving each draw's textures 8%.
+- **The renderer** (`platform.c`): `step_settled` skips a step's texture checks (available, not the destination's
+  own, source target and mipmaps ready) where a step before at the same `source_epoch` into the same destination
+  found its textures so (`texture_check.settled`, `settled_target`, `settled_mips`; a trilinear read needs
+  `settled_mips`); `bind_shader_textures` takes each texture's GPU id for a read kind from `texture_check.resolved`
+  once an epoch. Both rest on the epoch rules above. `record` p50 ~1.31 -> ~1.18 ms.
+- **Passes recorded on the pool's threads** (`gpu_vk.c`, "Passes recorded on the pool's threads"): a graphics
+  pass's commands are written down (`pc_*`: turns, the pass barrier, query reset and timestamps, rendering, viewport,
+  scissor, stencil, pipeline, pushes or set binds, vertex and index buffers, every draw kind), with the handles
+  resolved on the frame's thread; as the pass ends a `tide_jobs.background` job (`record_pass`) takes one of the
+  frame's `PASS_POOLS` (64) command pools no other thread has (`take_pass_pool`, a state each changed atomically,
+  made the first time), begins a command buffer, replays them and ends it. `pending` holds the pass's place as an
+  odd tag (`pass_tag`); `settle_passes`, first in `flush`, `tide_gpu_vk_present_updating` and `destroy_device`,
+  waits for the jobs (helping the pool) and puts each command buffer in its place, so what's submitted and in what
+  order is as before; one that failed loses the device. The frame's pass pools are reset with its own pool. After a
+  pass, outside work starts a command buffer of its own (it went on in the pass's before). Compute passes and
+  outside work are recorded at once as before; with no pool a pass is recorded as it ends. Descriptor sets
+  (`TIDE_VULKAN_DESCRIPTOR_SETS`) are still allocated and written on the frame's thread, before the bind that's
+  replayed. Pipelines being made in the background are settled before their bind is written down (`vk_use`).
+- **Waking workers** (`platform/src/jobs.c`, `background_notify`): it woke every worker for each job
+  (`WAKE_ALL` of every group), ~42k cycles (~9 µs) a pass on 12 threads, which ate most of the gain. It wakes one
+  sleeping worker now, and none where none sleeps (a worker counts itself asleep before it looks for jobs, and the
+  lock is taken and let go first, as `wake` does); a worker takes jobs till there are none, and each job of a burst
+  (prewarming's pipelines) wakes one.
+- **Measured** (`dev` 7e6ee779e built as it was and with these changes, five alternating pairs, medians): render
+  p50 1.68 -> 1.07 ms, p95 2.51 -> 1.40; `record` p50 1.31 -> 0.68, p95 1.98 -> 0.88; `cpu_work` p50 5.15 -> 4.63.
+  Draw calls the same. The frame's thread waits ~35-45 µs a frame at present for the last passes' jobs.
+- **Checked against the game's report** (its thread, on nightly.111: views 15-20% slower, GPU +0.8 ms, from
+  alternating whole nightlies). Mount & Rifle at 84d7542, `FOREST_REVIEW OWNER_WOODS`, `--host`, E at frame 900,
+  frames 1551-1800, ~1,670 draws; one binary with two temporary switches (passes on jobs, wake one), four rounds of
+  each of the four in rotation, medians (cpu_work / views / render / record / GPU mean, ms): both on (111)
+  5.66 / 3.31 / 1.15 / 0.72 / 6.06; jobs off 6.50 / 3.31 / 1.83 / 1.40 / 6.02; wake all 5.89 / 3.23 / 1.49 /
+  1.06 / 6.06; both off (106's) 6.21 / 3.26 / 1.78 / 1.36 / 6.04. So the jobs don't touch the views (they can't
+  overlap them: the list's drawn after the views, and settled before submission) nor the GPU; waking one worker a
+  job costs the views ~2-3% (the game's own background jobs used to wake the whole pool, which then joined the
+  views' parallel loops sooner), against ~0.55 ms off the frame. The report's larger views change came with the
+  whole nightly (compiler and all) and a noisy machine. Hidden runs: a window's presenting isn't measured.
+- **Left on the frame's thread** in `record`: the renderer's steps and its uniforms, resolving descriptors and
+  writing the commands down. Recording one big pass on several threads (secondary command buffers) isn't built:
+  the scene pass here is ~670 of the 1,742 draws.
+- **Tests:** native sanitize, every `gpu` test (67: Vulkan with push descriptors and with sets, with the validation
+  layer where it's installed, device loss, GPU timing's pass queries, prewarm), `tide_platform_log` and the profile
+  tests; web-debug's draw (and its RGBA fallback), targets, kernels, cull (and fallback), shaders and prewarm tests (WebGPU: the renderer's
+  caches). The pool is made at first use, so the tests record passes on it.
+
+## The render phase's CPU, measured and cut (2026-11-06)
+
+Asked from Mount & Rifle's thread (aiming at 144 fps native: 6.9 ms of CPU a frame), where its ~2 ms render phase
+went at a forest spot of ~1,600 draws in ~60 passes, and to cut what dominates. Claude's work, internal (no language
+or API change beyond the profile's new fields).
+
+- **Measured breakdown** (`tide_platform_render_parts`, `--profile`'s `render_phases`; standard-host.md, Render
+  phases): `prepare`, `steps`, `uploads`, `culling`, `record`, `finish`, `other`. Mount & Rifle (its `dev` e19b25d,
+  built with this checkout in a scratch `TIDE_EXTERNAL_DIRS` folder like benchmarks.md's, `DEFINES PERFORMANCE_TRACE
+  FOREST_REVIEW`, release, hidden, Vulkan, RTX 4080 SUPER, 1920x1036), its `tools/trees-profile.txt` route moved for
+  today's menu and world-making (click Start new at 30, Begin at 80, E at 900, the route's moves 610 frames later),
+  measured frames 1511-1760 among the trees: 1,742 draw calls, 36 passes. Render p50 ~2.0 ms, of which `record`
+  1.63, `steps` 0.11, `uploads` 0.13, `culling` 0.11, `prepare` 0.02, `finish` 0.01. So the passes' recording is
+  80% of it.
+- **Inside `record`** (temporary cycle counters around the backend's calls, removed): ~62% in `gpu_vk.c`, ~38% the
+  renderer's own per-step work. Of the backend's: `vkCmdBindPipeline` 18% (one each draw, and 1,091 of the 1,761
+  were the pipeline already bound), descriptor pushes 15% (every draw pushed all its bindings, ~6 textures and their
+  samplers on average, because its uniforms moved), pass begins 15% (~7 µs each: `vkBeginCommandBuffer` ~3 µs,
+  `vkCmdBeginRendering` ~2.4, the barrier and the outside command buffer's end the rest), vertex binds 7%.
+  Sampling the main thread (`tide_sample --main`) put the renderer's own share in `prepare_source_target`,
+  `target_extent`, `texture_to_read`, `prepare_step_mipmaps`, `unavailable_texture` and `texture_for`: each step
+  looked at each of its textures four or five times, shadow maps' targets through `target_extent` each time.
+- **Changed:**
+  - `vk_use` binds nothing for the pipeline the pass has bound already (its target-kind check was made when it was).
+  - `bind()` pushes only what changed: push descriptors are updated incrementally while the same pipeline layout
+    is used in a command buffer (Vulkan's spec, `vkCmdPushDescriptorSetKHR`), so `vk.pushed` (the layout of the
+    command buffer's last push, `NO_PUSH` at every pass and compute pass) and what each binding was given
+    (`pushed_uniforms[_at]`, `pushed_views`/`_view_layouts`, `pushed_samplers`, `pushed_storage[_range]`) let a draw
+    write only its uniforms' place and the images, samplers and storage that aren't the last push's. Another layout,
+    or a device on descriptor sets (`TIDE_VULKAN_DESCRIPTOR_SETS`), writes all as before. Handles can't be reused
+    within a command buffer (freed objects wait for the frame's fence), so equal handles are the same thing.
+  - `platform.c` keeps a `texture_check` for each of the list's textures: whether it can be sampled (once a list),
+    and whether `prepare_source_target` and a trilinear read's `prepare_mipmaps` found nothing to do, as of
+    `source_epoch`. The epoch goes up at each list, each change of destination (a pass drew into a target, or one
+    was made), after each kernel or GPU list step, after occlusion's measure, and after either preparation made
+    anything; a found need is never kept (it's made, which moves the epoch). Overlays draw another list and start
+    their own.
+- **Not changed, tried:** skipping vertex and index buffer binds already bound gave nothing measurable (reverted).
+  Pass begins stay a command buffer each: a pass's uploads go in a `before` command buffer queued ahead of it, which
+  sharing one command buffer with the work before it would put ahead of that work too. Reordering draws so a target's
+  passes join would change what the game asked for; here the scene's pass is split by shadow-map draws between its
+  draws (passes 9-14 of 36), the game's to order (its `notes/gaps.md` has it).
+- **Before/after**, the same binary with the changes switched off by a temporary environment variable, five
+  alternating pairs, medians of the runs' figures: render p50 2.02 -> 1.65 ms, mean 2.24 -> 1.91, p95 3.50 -> 2.89;
+  `record` p50 1.63 -> 1.26, p95 2.95 -> 2.33; `cpu_work` p50 5.55 -> 5.24 ms. Draw calls the same (1,742). What's
+  left in `record`, by the counters: pass begins ~0.2 ms (36), real pipeline changes ~0.2 ms (~670), the draws'
+  pushes and draws ~0.25, the renderer's own steps ~0.5.
+- **Next, not built:** recording passes on several threads (secondary command buffers per pass or per run of
+  draws) is what would take most of what's left; the renderer's step state is global in `platform.c` today.
+- **Pixels:** the game's own frames differ by 300-450 pixels between two runs of one mode (wind, timing), so its
+  captures can't show identity; the engine's pixel tests are what check it (below).
+- **Tests:** `profile_report_render_phases_of_the_frames_that_gave_them` (`tests/test_profile_report.c`);
+  `platform/tests/profile.mjs` checks the phases' names, samples, and that they add up to the render phase.
+  Native sanitize: every `gpu`-labelled test (Vulkan with push descriptors and with sets). `tide_platform_draw`'s
+  prewarm phase failed on this machine before any change (the base commit too): ten pipelines on the pool with the
+  driver's cache cold took more than its 600 headless frames (~1.5 ms each); `PREWARM_FRAMES` is 6,000 now, still a
+  bound on a hang. After merging `origin/dev` (the depth pre-pass, new shaders) `tide_platform_prewarm` failed the
+  same way two runs in three (its `WAIT_FRAMES`, 600, used up in 0.8 s); 6,000 too, then 4 of 4 passed. Web: `platform.c`'s part runs there too (below in validation).
+
+## Vulkan pipelines on the pool's threads; the loader waits for them (2026-11-05)
+
+The owner's report: Rogue State (Mount & Rifle, a `tide run` debug build) sat on
+the loader's "Preparing" and the window stopped answering for minutes. The pack
+was in; the main thread was in `tide_run_begin`'s `tide_run_prewarm`, where
+Vulkan compiled the game's 265 remembered keys (`pipelines.keys`) and the
+guesses for shaders not drawn yet, one `vkCreateGraphicsPipelines` at a time,
+with no frames between. That day's shader changes had left the driver's cache
+cold for most of them. The process used ~3.5 cores (the driver's own threads) and
+2.8 GB. A hidden run never shows it: an unseen window doesn't prewarm.
+
+- `gpu_vk.c` implements `background` and `pipeline_ready`. Everything that
+  touches `vk` (SPIR-V, the shader module, `layout_for`, the place in
+  `vk.pipelines`) stays on the frame's thread. What `vkCreate*Pipelines` reads
+  is built into a heap `vk_making` record that its create info points into, and
+  with background on a `tide_jobs.background` job runs the call (and destroys
+  the module) on whichever pool threads are free, several at once. A place has
+  `used` (it isn't free) apart from `pipeline` (made yet), and `making` until
+  it's settled: `pipeline_ready` settles a finished one; `use`, `pipeline_free`
+  and `finish_all_making` wait for one, helping the pool meanwhile. All are
+  finished before the pipeline cache is written, merged or switched, and before
+  the device is destroyed, so the threads never see those change. A failure
+  stops the program as one made at once does; a lost device loses the device.
+- With background off (headless runs, custom hosts that don't ask) nothing
+  changed: made before `pipeline` returns.
+- The standard host already turns background on for windowed games
+  (`tide_run_bind_io`, the policy that a game's frames don't wait for a
+  pipeline). On desktop and Android that now applies to Vulkan too: a shader's
+  first draw in a running game shows a frame or a few late instead of the frame
+  hitching, as on WebGPU. Hot reloads with changed shaders no longer freeze the
+  window while they compile.
+- The loader waits: once the pack is in, `tide_run_loading_frame` names the
+  game (`tide_run_name_game`, split out of `tide_run_bind_io`, so the keys file
+  and `pipelines.vulkan` are read first), prewarms, and keeps drawing
+  `Compiling shaders n / total` with a known bar until
+  `tide_platform_prewarm_waiting()` is 0; then `tide_run_begin` (whose prewarm
+  is then a no-op) and the game's first frame. A game with no pack, or whose
+  pack was read in place, gets the same frames (`tide_run_begin_loaded` turns the
+  loader on with nothing to read); if nothing is waiting the game begins in the
+  first frame, with no loader drawn. Not headless, embedded, or a game with no
+  shader table. On the web the page's frames do the same over WebGPU.
+- Tests: `tide_platform_prewarm` starts through `tide_run_begin_loaded` and
+  checks the game begins only once every prewarmed pipeline is made (native
+  Vulkan: frame 245 of the cold first run, frame 2 with the keys file; WebGPU
+  page too). `tide_platform_draw`'s background phase now waits for a frame that
+  began and ended with no shader pipeline being made
+  (`tide_platform_shader_pipelines_waiting`, a test's, `gpu.h`), since pool
+  threads finish in any order; checking at the first orange pixel failed.
+  Passing: native sanitize `tide_platform_draw`, `_shaders`, `_prewarm`,
+  `_loading`, `_compute`, `_compute_vulkan_sets`; web-debug `tide_platform_draw`
+  and `_prewarm`.
+- Not verified: Rogue State itself in a visible window (agents don't open
+  windows; hidden runs skip the prewarm). The owner's next `tide run` should
+  show the shader count instead of a frozen window, and finish faster for the
+  parallel compile.
+- Noticed, not changed: Rogue State's `pipelines.vulkan` is 217 MB. The driver's
+  cache data only grows (old shaders' pipelines stay), and over `CACHE_MOST`
+  (256 MB) `write_pipeline_cache` writes nothing, so every run would compile cold.
+  Pruning or a larger cap is a separate decision.
+
+## GPU lists in pools, on Vulkan (2026-11-05)
+
+`TIDE_GPU_MAX_STORAGE` is 4 (it was 7): a shader's GPU lists are ranges of two pools (`notes/compute.md`, GPU lists in
+pools), so the renderer's pipelines bind 3 storage buffers at the most: the words pool at 33, the ints pool at 34, a
+kernel's run record at 35 (`TIDE_GPU_STORAGE_BINDING` + `TIDE_STORAGE_WORDS`/`_INTS`/`_RUN`; 36 the last a pipeline
+can name). Merged after Sixteen textures a draw (below), whose layout for each pipeline's bindings it keeps: a
+pipeline's layout is 1 + 16 + 16 + 4 = 37 descriptors at the most (it was 40), pushed where it has no more than
+`maxPushDescriptors` and a set of the frame's otherwise, as there; a draw sharing samplers with its lists in pools is
+under 32. (The pools' branch alone had one layout of 29 bindings, 12 texture/sampler pairs then storage at 25..28.)
+Sets as before with `TIDE_VULKAN_DESCRIPTOR_SETS`. The device requirement `maxPerStageDescriptorStorageBuffers` >= 7 became >= 4,
+Vulkan's least, so no conformant device is passed over for storage any more. `gpu.h`'s new `storage_most`
+(`vk_storage_most`) is the least of `maxStorageBufferRange`, `VkPhysicalDeviceVulkan11Properties.maxMemoryAllocationSize`
+and `VkPhysicalDeviceVulkan13Properties.maxBufferSize`, rounded down to 16 bytes: what a pool grows to. Pools grow by a
+new buffer and a `buffer_copy` outside passes; the old buffer is discarded as any is (after the frame's fence). Tests:
+compute.md, GPU lists in pools (validation layer, push descriptors and sets). Merged again after One image a texture
+(below): its textures at 1 + 2i and samplers at 2 + 2j end at 32, so the pools' bindings and the 37 hold.
+
+## Texture arrays (2026-11-05)
+
+`gpu.h`'s `array`, `array_depth`, `array_layer` and the reads `TIDE_GPU_READ_ARRAY`/`_DEPTH_ARRAY`, on Vulkan, WebGPU
+and the recorder; the renderer's `gpu_array`. Later the same day `array_blocks` (compressed layers), `array_of` and
+`array_write` (a `Grid3`'s, written a part of a layer at a time), and the renderer's `pack_array_texture` and
+`grid_array_texture`. Details: notes/textures.md, Texture arrays: built, and The gaps closed.
+
+## One image a texture, its samplers apart (2026-11-05)
+
+The owner's direction for the follow-up to Sixteen textures (below): a texture read several ways is one image binding
+and several samplers ("just cause nothing needs [it] isn't an excuse"). The counting rule this changes is
+language-visible and **awaits the owner's confirmation** (`docs/spec.md`, Wrap: "A draw reads 16 textures and has 16
+samplers"); everything below is Claude's, Provisional.
+
+- **The model.** A shader has textures (images: one for each texture its code reads, however it's read) and samplers
+  apart: texture i at binding 1 + 2i, sampler j at 2 + 2j, 16 of each (WebGPU's default per-stage limits, Vulkan's
+  least, Metal's samplers). A depth read and compared is one `texture_depth_2d` through a `sampler` and a
+  `sampler_comparison`; a texture sampled Point and Trilinear is one image through two samplers. Samplers are shared
+  as before by textures every draw reads alike; one whose filter or wrap a `Texture` value carries is that texture's
+  alone. Lists and grids read as data are images with no sampler, as before.
+- **`tide_shader`** (`tide/draw.h`): `texture_samplers` (1 + another texture) is gone. `sampler_count`, `sampler_reads`
+  (`tide_shader_read`, COMPARE among them) and `texture_samplers` (`uint16_t`, bit j for sampler j a texture is read
+  through). With `sampler_count` 0 each sampled texture has sampler i of its own, read as it is, and a list none: what
+  every hand-written shader and most games' generated C say, so they're unchanged (`samplers_own` in `shader.c` decides
+  when tidec writes the fields). Helpers: `tide_shader_samplers`, `tide_shader_texture_samplers`,
+  `tide_shader_texture_filter` (the most a run reads a texture between: what `prepare_mipmaps` makes images for).
+  A texture's read is its first way's: DEPTH or COMPARE are both "a depth" to the renderer (`texture_to_read`).
+- **The sampling word is by sampler** (`tide_draw_run.sampling`, the same 4 bits a slot, two banks of eight).
+  `gen_shader_textures` writes a fixed sampler's bits as constants and a carried one's from its texture
+  (`tide_sampling_filter_of(j, texture)`).
+- **`gpu.h`:** `sample(slot, texture, filter, wrap)` became `image(slot, texture)` and `sampler(slot, filter, wrap)`;
+  `tide_gpu_sample(gpu, ...)` calls both for a pipeline whose samplers are its textures' own (the renderer's own
+  pipelines, tests). `tide_gpu_pipeline_desc.samplers` became `sampler_count`, `sampler_reads` (TIDE_GPU_READ_DATA a
+  binding it hasn't) and `texture_samplers` (only the recorder reads it); `tide_gpu_samplers(desc, reads)` gives the
+  bindings either way. `tide_gpu_own_sampler` is gone. The renderer's `shader_pipeline_textures` fills the description
+  and `bind_shader_textures` binds a run's (draws and kernel runs alike).
+- **Vulkan** (`gpu_vk.c`): a pipeline keeps `sampler_count`/`sampler_reads`; `layout_for` keys `own` by sampler
+  binding; `bind()` writes each texture, then each sampler by its kind (`vk.sampled` is by sampler). A texture without
+  its smaller images is still bound as its first alone, so any sampler that reads it reads its own pixels.
+- **WebGPU** (`tide.js`, `gpu_web.c`): imports `gpu_image` and `gpu_sampler` replace `gpu_sample`;
+  `gpu_pipeline_samplers(count, low, high)` gives 3 bits a sampler's read (only for a pipeline that says samplers
+  apart; otherwise `ownSamplers(reads)`); `layoutFor(reads, through, ...)` keys by both; `bindGroup` binds textures,
+  then samplers. The old cube-only "Trilinear before its mips is Linear" in `gpu_sample` went: a cube's base view is
+  bound until its images are made, as before. `tide.release.js` regenerated.
+- **Unity** (embed ABI 14): notes/unity.md, One image a texture.
+- **Limits and messages:** "this draw reads N textures, and a draw takes 16" (images); "this draw reads its textures N
+  ways, and a draw has 16 samplers" (`plan_samplers`), and the same two for a kernel.
+- **Tests:** `texture_capacity` (fifteen textures through five samplers; `CapacityWays`: three textures, seven
+  samplers, by bits; the depth of `CapacityKinds` one texture through two; fixed samplers shared); `render_depth`,
+  `wrap`, `mipmaps`, `raw_texture_fields`, `textures`, `asset_textures` (their helpers count a texture-sampler pair as
+  a way); `gpu_limit_samplers` (new) and `gpu_limit_textures`; 17 shader goldens (bindings and which sampler each
+  read names); `platform/tests/draw.c`'s `two_ways_shader` (one quarters texture through a nearest and a blended
+  sampler, the same pixels as `halves_shader`'s two bindings; prewarmed too) and `shared_shader` in the new form;
+  `embed_render_pipeline_carries_samplers_apart` and the reads test's sampler words; `web_runtime.test.mjs`
+  (layouts of samplers apart). Native ASan: the compiler suite (2,921), all 67 `gpu` tests on Vulkan, embed and
+  `tide_tests`. `tests/test_draw.c`'s bank test still checked slot 12 out of range since the 16-texture change, which
+  `tide_tests` failed on; fixed to `TIDE_SHADER_TEXTURES`.
+- **Gaps:** Unity's OpenGL Core samples a texture as its own state, so one texture read two ways there reads both as
+  its first sampler does (it was "as the frame's last draw of it says" before; no Unity run was made). The renderer
+  still binds an image per texture where two textures of one draw are the same image (two fields holding one target):
+  they're two bindings, which is what the language counts.
+
+## Sixteen textures a draw, samplers shared (2026-11-05)
+
+The owner, asked whether the 12-texture limit could go (mount-and-rifle's ground and road frags hit it adding a third
+shadow cascade): "yes lets go ahead and not cap ourselves to arbitrary limits". Everything below is Claude's, behind
+the language (the spec's count rule is unchanged; only the number is), Provisional.
+
+- **Where 12 came from.** No GPU's limit: every pipeline had one layout of 32 descriptors, the uniforms, a texture
+  and a sampler of its own for each of 12, and 7 storage buffers (1 + 24 + 7), which is Vulkan's least
+  `maxPushDescriptors`. What every backend takes in a stage is 16 sampled images and 16 samplers (WebGPU's default
+  `maxSampledTexturesPerShaderStage`/`maxSamplersPerShaderStage`, which Tide asks no more than; Vulkan's least
+  `maxPerStage*`; Metal's 16 samplers; Unity's D3D11 16 samplers and 128 images, of which its replay uses 10 inline
+  samplers whatever the draw). So `TIDE_GPU_MAX_TEXTURES` and `TIDE_SHADER_TEXTURES` are 16, and storage moved after
+  their bindings: `TIDE_GPU_STORAGE_BINDING` is 33 (1 + 2 * 16), storage buffer i at 33 + i, 39 the last.
+- **Shared samplers** (`tide_gpu_pipeline_desc.samplers`, `tide_shader.texture_samplers`, `shader_texture.sampler`).
+  Texture i stays at binding 1 + 2i; its sampler, where it has one of its own, at 2 + 2i. A texture whose sampling
+  every draw does the same way, as its code or its declaration says (a `Sample` that says its filter and its wrap, an
+  asset's `[Filter]`/`[Wrap]`, a grid's field, a depth read or compared, a cube's filter), is read through the first
+  such texture's sampler that's sampled as it is, and declares none (`share_samplers`, `sampled_alike`, `sampled_as`
+  in `compiler/src/shader.c`: the same predicate `gen_shader_textures` uses for what a draw carries). A `Texture` a
+  draw or a field gives, whose sampling it says itself, keeps one of its own, set as the draw goes; a list (read as
+  data) has none, which was a binding wasted before. So a draw's samplers are never more than its textures, and
+  usually a few: the ground frag's 13 take 4 or so.
+- **Vulkan: a layout for each set of bindings** (`layout_for` in `gpu_vk.c`, `vk_layout`, cached by texture count,
+  which textures have their own sampler, and storage count). A pipeline's layout has only the bindings it reads.
+  It's pushed where it has no more descriptors than the device's `maxPushDescriptors` (`vk.max_push`), and written
+  as a set of the frame's otherwise (`frame_set` takes the layout): 1 + 16 + 16 + 7 = 40 at the most (37 since GPU lists in pools, above), more than a
+  desktop driver's usual 32, though a draw that shares samplers is far under. A device with push descriptors no
+  longer needs 32 of them to use them. Pools keep their sizes (16 images and 16 samplers a set).
+- **WebGPU** (`tide.js`): `layoutFor(reads, through, storage, compute)` leaves out a sampler a texture doesn't own,
+  keyed by which do; `bindGroup` binds none for them. `gpu_pipeline_samplers(low, high)`, a new import that
+  `gpu_web.c` calls only for a pipeline that shares any, gives 4 bits a texture (0 its own, 1 + j another's).
+- **A texture whose smaller images aren't made yet is bound as its first alone**, so that a trilinear sampler it
+  shares reads its own pixels, as a texture with no smaller images is read (what each backend did by choosing a
+  blended sampler for it, which a shared sampler can't): Vulkan binds `attach` (a 2D image's first) or a cube's new
+  `base` view; WebGPU a cube's `base` view (its 2D textures get their levels only as they're made), dropping the
+  cube's bind groups when its images are made. Unity's replay (`hlsl.c`) reads each module texture's own slot's
+  sampling bits rather than the sampler's, so its blended fallback for a texture without mips stays the texture's.
+- **Tests.** `cmake/web_runtime.test.mjs`: high slots 8..15 of every read kind, the layouts of textures that share
+  (two samplers for 16 textures) and storage at 33..39 (33..36 since GPU lists in pools, above). `platform/tests/draw.c`'s `shared_shader`: a texture read
+  through another's blended sampler is blended though its draw said the nearest pixel (`tide_platform_draw`, its
+  descriptor-set and WebGPU variants). `texture_capacity`'s `CapacitySixteen`: 16 textures, 12 sampled alike through
+  one sampler, a depth read and compared, a cube and a list; Textures that say how they're sampled keep their own.
+  `gpu_limit_textures` refuses 17.
+- **Left as it was:** each way a texture is read still counts as a texture (one sampled two ways, a depth read and
+  compared). Making those one image with two samplers would let a draw bind the same image once, but the backends'
+  slots are textures (`sample(slot, ...)`), Unity's sampling bits are a slot's, and nothing has hit it.
+
+## GL backends removed (2026-11-05)
+
+The owner's rule: "compute shaders will be a guarantee now, if a render backend can't support it then we should remove it". Compute runs on Vulkan, WebGPU and (recorded) Unity, on Unity's graphics APIs that compute (OpenGL Core 4.5 among them: `notes/unity.md`), so OpenGL 3.3 (the desktop fallback), OpenGL ES 3 (Android's) and WebGL 2 (the web's) are gone. How it's done is Claude's, Provisional.
+
+- **Removed:** `platform/src/gpu_gl.c`, `platform/src/gl.h`, the desktop GL loader (`platform/desktop/gl.c`) and GL context creation in `desktop/glfw.c` (its windows are `GLFW_NO_API`), Android's EGL/GLES path (`activity.c` links neither `EGL` nor `GLESv3`, nor does `tide build --android`), the WebGL half of `platform/web/tide.js` (the GL functions by C name, `checkGL`'s glGetError wrapper, `forgetGL`, `KHR_parallel_shader_compile`, `EXT_color_buffer_float`) and `tide_gpu_gl`. tidec writes no GLSL (`notes/shaders.md`), and the renderer's own shaders (`platform/src/shaders.h`) are WGSL only, SPIR-V at build for Vulkan as before.
+- **No backend choice:** `TIDE_BACKEND`, the page's `backend=` and `Tide.backend`, and Android's `tide.backend` intent extra are gone. The web takes any WebGPU adapter the browser gives, its software (fallback) one too: slower, but the game runs, where before it went to WebGL.
+- **`gpu.h`:** compute is required of every backend (the renderer's no-compute pass-by path, `can_compute`, is gone); `float_targets` is gone (Vulkan, WebGPU and the recorder all draw into, blend and sample RGBA16F, so the Format.Rgba16f-as-Rgba8 fallback and its message went); `tide_gpu_pipeline_desc.glsl_vertex`/`glsl_fragment` are gone; and so are the test hooks `tide_gpu_gl_no_floats` and `tide_gpu_gl_no_vertex_binding`. `TIDE_GPU_MAX_COLORS` stays 4 and the uniform limits stay as they were (their GLES-era reasons are history; changing them would change the language's limits).
+- **What a machine that can't draw is told** (never a silent failure):
+  - Desktop (`say_needs_vulkan` in `glfw.c`): no Vulkan loader, no surface extensions, or no device `tide_gpu_vk_open` takes (which says why on stderr): the message goes to stderr and, outside a quiet run (`TIDE_HIDDEN`), to a dialog of the system's: `MessageBoxW` on Windows, `CFUserNotificationDisplayAlert` on macOS, and on Linux (with a `DISPLAY` or `WAYLAND_DISPLAY`) the first of `zenity`, `kdialog` and `xmessage` that's there (`posix_spawnp`; 127 means it isn't). It says the game needs Vulkan 1.3 and that a current graphics driver brings it. The window doesn't open.
+  - Android (`say_needs_vulkan` in `activity.c`): the message is drawn by the CPU straight into the activity's window (`ANativeWindow_lock`, RGBA 8888, the regular Tuffy weight from the font atlas, word-wrapped at 20 logical pixels) and drawn again for each window the activity is given, until the player leaves (the back button, which is Escape, or the activity going); then `tide_window_open` fails and the app ends. A frame is posted, so `am start -W` reports the launch done.
+  - Web (`sayNeedsWebGPU` in `tide.js`): `tide_web_init_canvas` is a `bool` now (true: WebGPU readied on the canvas). Without a device the page hides the canvas and puts a note in its place (`#tide-needs-webgpu`, `role="alert"`) saying the game needs WebGPU (a current Chrome, Edge or Safari, or Firefox where WebGPU is on) and why there's none (`noDevice`: no `navigator.gpu`, no adapter, or the request's error); the shell's loader shows the same text as its error, and it's printed.
+- **GPU timing:** Vulkan and WebGPU timestamps only. The desktop GL timer paths and their mock test (`tide_platform_gpu_timing`) are gone; `tide_platform_gpu_time` asks `tide_gpu_vk_timestamps()` natively.
+- **Benchmarks:** `versus_draw`'s OpenGL half (`bench/draw/draw_gl.c`) and `versus_draw_opengl` are gone; its saved OpenGL rows stay in `bench/results/draw.jsonl`. `bench/lag.mjs --gpu software` uses the software WebGPU flags.
+- **Tests:** every `*_opengl` twin, `tide_platform_draw_opengl_legacy` and `tide_gpu_test`'s `OPENGL` option are gone; `tide_platform_hidden_runs`' window case finds the window through `tide_glfw_window` (no GL context to find it by). The web tests' new arrangement is in `notes/testing.md`, GL backends removed.
+- **Checked by hand:** `tide_platform_draw` with `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` pointing at no driver, under `TIDE_HIDDEN`, printed "This game needs Vulkan 1.3 to draw, and this machine's Vulkan can't draw in a window" (and the driver advice) and exited 1, with no dialog. The dialogs themselves (Windows, macOS, Linux) weren't shown on this machine, which a run nobody watches mustn't do; the Linux code was compiled warning-free with clang 23 under WSL, the macOS branch not at all. Android's screen: `notes/android-and-mingw.md`. The web's: `tide_platform_web_keys`' page in Chrome with `TIDE_WEBGPU_FLAGS="--disable-features=WebGPU,WebGPUService --disable-gpu"` printed "This game needs WebGPU to draw, which this browser doesn't have or has turned off (the browser gave no GPU adapter)…" and gave result 1 within half a second; no test covers it, as every test browser gives an adapter.
+- Measurements and validation records below that compare OpenGL with Vulkan, or name OpenGL/WebGL tests, are history.
+
+## Runs out of passes, pulled vertices, a pass count (2026-11-05)
+
+`move_work_out_of_passes` (compute.inc) moves each run and GPU list operation step back over the draws before it
+that don't depend on it, so it doesn't split their pass; `tide_platform_render_passes()` (platform.h) counts the
+passes the last list drawn began, which `tide_platform_kernels` pins (2; 3 without the move). A pulled-vertex
+shader's pipeline has a vertex slot of stride 0, and one with GPU indices draws `draw_indirect` with the list's count.
+Details: notes/compute.md, Meshes over GPU lists.
+
+## Occlusion culling's depth, read where it is (2026-11-05)
+
+`gpu.h depth_now(target, &samples)` replaced `depth_far`: a multisampled target's depth is given as its samples
+(`TIDE_GPU_READ_SAMPLES`), which the renderer's pyramid kernel (shaders.h, one dispatch) loads, instead of being
+resolved by the farthest sample into a texture first; Vulkan makes such depth images `SAMPLED` where the device samples
+that many, and turns them back for their next pass. drawing.md, Occlusion's measure made cheaper.
+
+## Occlusion culling's depth (2026-11-05)
+
+`gpu.h depth_far(target)`: what a destination's depth holds now, each pixel the farthest of its samples (a target's
+own depth texture; a multisampled one's resolved by the most: Vulkan's `VK_RESOLVE_MODE_MAX_BIT`, WebGPU's pass over
+every sample; the window's copied on Vulkan, the canvas's depth sampled on WebGPU), which `Draw.Occlusion`'s pyramid is
+made from; and `occlusion.tide`, the renderer's second Tide source. Everything else: drawing.md, Occlusion culling from
+a depth pyramid.
+
+## The renderer's own kernels, in Tide (2026-11-05)
+
+`platform/src/cull.tide` is the renderer's first Tide source: `tidec --kernels` makes it `kernels/cull_kernels.h`
+in the platform's build (WGSL for the web, SPIR-V for Vulkan, each kernel's `tide_shader` and its bindings by
+field name), which `platform/src/cull.inc` includes after compute.inc. The steps of a culled run, its buffers and
+fallbacks: drawing.md, Listed runs culled on the GPU. `tide_platform_cull` is its pixel and read-back test.
+
+## Vulkan compute (2026-11-05)
+
+The owner decided compute is guaranteed on every render backend (`docs/spec.md`, Compute on the GPU; `notes/compute.md` is the contract). This is `gpu.h`'s compute on Vulkan (`platform/src/gpu_vk.c`); every pick below is Claude's, Provisional, behind the language.
+
+- **Storage buffers** (`TIDE_GPU_STORAGE`): usage storage, vertex, index, indirect, transfer source and destination, in device memory from the blocks as other buffers. Made without data, a `vkCmdFillBuffer` of zeros goes outside passes (WebGPU's are zeroed). `storage_of` refuses an id that isn't a storage buffer, so a vertex or index buffer can't be bound as storage, copied or read back (it has none of those usages).
+- **One layout for every pipeline, drawing or computing** (until Sixteen textures a draw, above, made it a layout for each pipeline's bindings, storage at 33..39; 33..36 since GPU lists in pools, above): 32 bindings of set 0 (the uniforms, 12 texture/sampler pairs, then `TIDE_GPU_MAX_STORAGE` storage buffers at 25..31), each for vertex, fragment and compute. A draw or dispatch pushes the storage it binds, whole (its size, held to `maxStorageBufferRange`), at its binding; a slot with nothing bound is left out, as an unbound texture is. Push descriptors need `maxPushDescriptors` ≥ 32 now, the extension's least: a device with fewer gets descriptor sets, as one without the extension does, from pools that now hold storage buffers too. `TIDE_VULKAN_DESCRIPTOR_SETS` still forces sets.
+- **Device requirements added**: a queue family that draws, computes and presents; `maxPerStageDescriptorStorageBuffers` ≥ 7 (≥ 4 since GPU lists in pools, above); workgroups of 256 invocations, 256 × 256 × 64, and 16 KiB of shared memory (WebGPU's default limits, which tidec's kernels keep to). A device without them is passed over with why, on stderr. `drawIndirectFirstInstance` is enabled where the device has it; `gpu.h` has the first instance 0 anyway (but for `draw_indexed_indirect_count`'s records, which take it where `indirect()` says so; since 2026-11-05 `drawIndirectCount` and `multiDrawIndirect` are enabled where there too: drawing.md, Culled runs drawn by a count, joined). `vertexPipelineStoresAndAtomics` and `fragmentStoresAndAtomics` are not enabled: vertex and fragment stages only read storage, which the translator marks `NonWritable`.
+- **Compute pipelines**: entry point `compute`, the SPIR-V from `desc.spirv` or a test's `tide_gpu_spirv_of(wgsl)`, through the same `VkPipelineCache` as graphics pipelines (so `pipelines.vulkan` keeps them across runs). `use` refuses a compute pipeline in a pass and a drawing one in a compute pass.
+- **A compute pass is a command buffer of its own, as a pass is.** `compute_begin` closes what was recorded outside passes and begins one; writes and uploads recorded while it's on go into a `before` command buffer queued just ahead of it, as a pass's do (so a pass of either kind sees, from its start, every write recorded before its end, as WebGPU's queue writes are). After `compute_end` its command buffer goes on as the one outside passes. Uniforms come from the frame's ring as a pass's do; a dispatch with no uniforms written in its compute pass does nothing, as a draw without them.
+- **Barriers, by the stages that write and read**:
+  - `compute_begin` (`barrier_compute`): transfers, draws (indirect, vertex input, vertex, fragment, and attachments, which it may sample) and compute before it → compute and indirect reads and compute writes. It's the full one `notes/compute.md` asks for: a compute pass may read anything recorded before it and overwrite what any of it read.
+  - Between dispatches of one pass (`barrier_dispatches`), only from the second on: compute writes → compute reads/writes and indirect reads. A pass of one dispatch has none.
+  - `compute_end` (`barrier_computed`), only after a dispatch: compute writes → indirect, index, vertex attribute, uniform and shader reads of draws, compute reads and writes, transfer reads and writes. Draws, copies, reads back and writes after it then need nothing of their own.
+  - Draws' stages now include indirect reads (`DRAW_STAGES`, `DRAW_READS`), so the pass barrier makes uploaded indirect numbers visible, and transfers after a pass wait for its indirect reads.
+  - Images read in `SHADER_READ_ONLY_OPTIMAL` or `DEPTH_STENCIL_READ_ONLY_OPTIMAL` are read by compute too (`layout_use`), so a texture turned there after an upload, or a target's after a pass drew in it, is ready for a dispatch's sampling, and one turned away waits for dispatches that sampled it.
+  - Copies (`buffer_copy`, `buffer_read`) record a transfer → transfer barrier first (`barrier_copies`), as `buffer_write` does: copies in one command buffer have no order of their own. A copy onto overlapping bytes of the same buffer is skipped (Vulkan and WebGPU have none).
+- **Dispatches**: `dispatch` with any count 0 records nothing; counts are held to `maxComputeWorkGroupCount`. `dispatch_indirect`, `draw_indirect` (stride 16) and `draw_indexed_indirect` (stride 20, `drawCount` 1) need a storage buffer, an offset that's a multiple of 4, and their 12, 16 or 20 bytes inside it, or record nothing. An index buffer of a draw may be a storage buffer (`indices`), as may a vertex buffer.
+- **Reads back** (`buffer_read`): each read copies into a buffer of `HOST_CACHED` coherent memory of its own (a power of two from 256 bytes), followed by a transfer → host barrier, and remembers the submission it goes with: the next one, whichever sends it (a frame's present or a flush). `buffer_read_done` copies once that submission is done, which it knows by `vk.completed` or by asking a frame's fence with `vkGetFenceStatus`, never waiting; a read not yet submitted is 0. `buffer_read_wait` flushes (submit and wait idle) when any read is still on its way. A read's buffer is kept for the next as one of four spares, the biggest ones, taken by a read of at most a quarter of its room; others go with the frame's garbage. A lost device (a failed submission, `tide_gpu_vk_lose`) makes every read still on its way -1; remaking the device frees every read's memory and marks those not yet taken lost.
+- **Tests**: `tide_platform_compute` (`platform/tests/compute.c`) and its twin `tide_platform_compute_vulkan_sets` (`TIDE_VULKAN_DESCRIPTOR_SETS=1`), label `gpu`, under the validation layer with synchronization validation. After its checks pass on Vulkan, the test begins a read of the tally, checks it isn't there yet (`buffer_read_done` 0, without waiting), loses the device (`tide_gpu_vk_lose`), checks the read comes back -1, and records and checks everything again on the next device. Both pass with the translators' compute (`t3/wgsl-compute-storage-translators`, merged), as do `tide_platform_draw` (with its device-loss pass), `_draw_vulkan_sets`, `_targets`, `_shaders`, `_skinned`, `_swapchain`, `_gpu_time`, `_pipeline_cache`, `_gpu_wait` and `_gpu_wait_headless`, all under the layer.
+  - What catches a missing compute barrier is the test's data, not the layer: with `barrier_dispatches` left out, the reversed groups read zeros and the test fails, while synchronization validation (SDK 1.4.363) reported nothing, with push descriptors and with sets. Nor did it report a missing pass barrier for storage a fragment shader reads (`barrier_pass` left out: the compute test passed). It does report that barrier's hazard on vertex buffers (`tide_platform_draw` stops at `SYNC-HAZARD-READ-AFTER-WRITE`). So the layer doesn't track storage buffers reached through descriptors here, and the barriers above rest on reasoning and on the test's data.
+- **Gaps**: compute passes aren't timed (`pass_time_*` times render passes only). Every read makes or takes its own buffer; reads aren't batched into one. A real device loss is still simulated. Linux, macOS (MoltenVK) and Android Vulkan need CI or a machine of theirs; Android's devices are where the new requirements (storage buffers a stage, 256 invocations) could pass one over.
+
+## Fonts of a game's own, and the checked font reader (2026-11-03)
+
+The owner asked for custom fonts, several in one game ("yeah I want custom fonts; we should also allow multiple fonts to be used for different text on the same game of course"), for the GUI theme too ("yeah themes now need a font"), and for runtime decoding, "careful with security here". The language surface is in `docs/spec.md`, Views and drawing, Fonts; what's below is how it's built.
+
+- **The font reader** (`engine/include/tide/font.h`, `engine/src/font_data.c`, Claude's under the drawing exception, see `notes/runtime-ownership.md`). `tide_font_data_make` reads a TrueType file into *font data*: a 64-byte header (units per em, hhea's ascent, descent and gap, counts, and an id: the first 8 bytes of the SHA-256 of everything after the header, 2 or more), sorted runs of code points to glyphs (format 13's "all one glyph" runs flagged `TIDE_FONT_RUN_SAME`), a 20-byte record a glyph (advance, bearing, box, its vertices) and 10-byte vertices (moves, lines, quadratic curves, stb_truetype's `stbtt_vertex` minus cubics). It reads what stb_truetype reads of a TrueType font, the same way, so its outlines are stb's vertex for vertex: `font_data_is_what_stb_truetype_reads` (`tests/test_font_data.c`) compares every code point under 0x10000, every glyph's metrics and box and every vertex of both Tuffy weights with stb's own reader. What differs is that every read is checked against the file (the `inside` spans), and limits bound what a file can ask: 64 MiB, 16,384 points and 65,535 vertices a glyph, 4 Mi vertices in all, 256 Ki runs, composite parts 8 deep (a part of itself ends there, `font_data_refuses_glyphs_of_themselves`), and a work budget (`MAX_WORK`, 64 Mi vertices copied, parts followed and code points read one by one) so nested composites or overlapping format 4 segments can't take minutes. stb_truetype itself trusts its file: it reads outside a broken one and recurses forever on a self-referencing composite.
+  - Differences from stb, all for files stb would misread: a format 4 segment with an idRangeOffset adds idDelta to the glyph it reads, as the specification says (stb doesn't; Tuffy has no such segment); a contour whose first point is off the curve takes its next point from its own contour; loca ranges past glyf are a broken file, not reads past it; a composite part placed by matching points is placed at its origin (stb asserts); overlapping cmap runs keep the one whose first code point comes first, sorted by first code point, count and glyph so every platform orders them alike.
+  - Refusals say why (`tide_font_error_text`), and CFF outlines are refused with the advice to convert to `.ttf`: reading them safely would be a second parser (Type 2 charstrings), not built.
+  - `tide_font_data_check` is what makes any bytes safe to draw: counts that add up to the size, runs in order inside Unicode and the glyphs, each glyph's vertices inside the vertices and starting with a move, every vertex a move, line or curve. Coordinates can be any 16-bit values; the renderer copes with those (below).
+  - `font_data_refuses_what_isnt_a_font` reads every length the regular weight can be cut to (every byte to 4 KiB, then every 97th), and `font_data_survives_broken_files` 560 copies with random bytes changed in each table and in the directory; under ASan, every read stays inside, and what reads passes the check.
+- **The registry** (same files): `tide_font_add` checks font data and keeps a copy, once per id, in memory of its own never moved or freed, so `tide_font_find(id)` is the same pointer until the program ends and draw lists hold it; `tide_font_decode` is make then add. At most 1,024 fonts and 512 MiB. A spin lock guards it (views and the GUI can measure from more than one thread).
+- **The renderer** (`platform/src/font.c`) reads only font data, the engine's two weights' too: the regular weight is made from `tide_font_ttf` the first time anything measures or draws, the bold from `tide_font_bold`'s file. stb_truetype only rasterizes now. A *weight* is any font: a growing table of them by id, the regular one first, each with its own measures and fitting, a glyph's key their place in the table. A font whose id is known again at another address (a game library built again) is read there; the same id is the same outlines, so its glyphs stay good. A font of a game's C that isn't the registry's is checked the first time it's seen. A glyph a font has none of is the regular weight's, as bold's always were. Hostile coordinates: a glyph whose fitted outline is past what a short holds at whole pixels, or wider than the atlas, has no pixels (never cast past a short, and never marks the atlas full, which would clear it every frame); advances are held to a short; a font's line pitch to at most 4 lines' worth.
+- **Draw lists** name fonts by place: `tide_draw_list.fonts`, each font once a frame, and a text command's `words.font` is 1 + its place (0 the regular weight), replacing `words.bold` and the list's `bold`. `tide_draw_append` carries a command's font across. The C API takes `const tide_font *` wherever it took a weight's file (`tide_draw_text_at`, `tide_measure_fn`, `tide_platform_measure_text`, `tide_draw_measure_text`); `TIDE_FONT_BOLD` is `&tide_font_bold`, defined in the bold file's own object (`platform/font/tide_font_bold.inc`, appended by `cmake/embed.cmake`'s new `APPEND`), so the linker still takes the file only for a program that names it.
+- **Tide's `Font`** is `TY_FONT`, a `tide_font_ref` (its number: 0 regular, 1 bold, else the registry's), no longer an enum. It's this machine's as a `Clip` is (`holds_render_resource`), but a constant can hold one and a parameter default to one (`holds_resource_but_font`), so `const GUITheme` constants and `Font font = Font.Bold` parameters keep working. `.Bold`/`.Regular` shorthand where a Font goes is rewritten to `Font.Bold` (`check_expr_want`, a conditional's sides too), and a builtin overload fits it only where its parameter is a Font or an enum that has the member (`fits` in builtins.c), so `Draw.Text(..., color, .Bold)` takes the font overload. `Font(n)` is gone. Generated `tide_font_file(ref)` is `tide_font_find`, with `TIDE_FONT_BOLD` for 1 only in a game that says `Font.Bold`.
+- **Assets and decoding**: `asset Font` (`ASSET_FONT`) reads the file with `tide_font_data_make` at build time, an error at the declaration saying why; the pack keeps its font data in a clip-shaped block (`TIDE_PACK_FONT`, and `TIDE_PACK_FONTS` for a map; lists are `TIDE_PACK_LIST` of them), which loading adds to the registry (`note_font`, `tide_pack_font_of`), laying lists and maps out as `tide_font_ref`s as it does clips. `Font.Decode(bytes)` (`CALL_FONT_DECODE`, `check_font_decode`) is local code only, failing with `IOError.InvalidData`; its helper flattens the list and calls `tide_font_decode`.
+- **The GUI**: `tide_gui_theme.font`, Tide's `GUITheme.font`, which the widgets measure and draw in (`text_width`, `text_at` in `engine/src/gui.c`).
+- Tests: `tests/test_font_data.c` (above); `tidec_e2e_fonts` (`compiler/tests/e2e/fonts.tide`): an asset's font, a glob's list and map, a decoded one that's the same outlines as the glob's second and so the same registry font, a non-font refused, a font passed on and chosen by shorthand, measuring in one, the theme's, and each font once in the list; `compiler/tests/errors/font_asset_not_a_font.tide`, `font_decode_in_match.tide`, `font_unknown_weight.tide`. `tidec_e2e_text`, `tide_platform_font` and the platform draw tests run as before.
+- Gaps: CFF outlines; kerning (GPOS/kern) and hinting; variable fonts' axes (the default instance draws); a collection's other fonts; a decoded font after a hot reload is the regular weight until decoded again (the new library's registry hasn't it); no `==` on Fonts.
+
+## GPU timing fixture waits for pass observations (2026-11-03)
+
+macOS web run 41669641001 passed 940/941 tests; `gpu_time_webgpu` missed the
+offscreen-only fallback-clear observation in its second round, despite valid
+normal pass samples. The fixture drew that case on just one frame. WebGPU's
+three busy readbacks may leave a frame untimed, and device loss discards pending
+observations, so normal samples do not imply that one particular probe arrived.
+
+The fixture now alternates ordinary and offscreen-only frames after its initial
+pixel check. Each round waits for all required observations, including two
+offscreen-only samples, or the existing 3,600-frame patience limit. The 60-frame
+minimum, outer deadlines, device-loss/reopen work, exact pass metadata checks,
+overlay exclusion and failing assertions remain. Two samples ensure that a
+single lucky probe cannot satisfy the repeated-case coverage. No renderer or
+backend behavior, timing capability or release gate changes.
+
+Validation: four focused Windows ASan CTests pass (real Vulkan/OpenGL timing,
+native GL mock and WebGPU mock), plus all three web timing CTests (WebGL,
+WebGPU and its deferred-readback mock). Builds are warning-free and browsers
+use the existing muted runners. Actual macOS confirmation remains CI coverage.
+
+## Mesh geometry attribution (2026-11-03)
+
+Renderer mesh/shader steps retain draw-list contribution chains and collect them
+only after issuing a GPU draw, outside overlay drawing. Counts need no timing
+query, wait or backend changes, and include repeated render-target passes and
+selected LOD indices. Shapes/text/unshaded 2D work remains aggregate-only.
+LOD fixture checks both repeated pixel-read submissions and regrouped runs on
+built-in/custom shaders. Standard-host.md and drawing.md describe reports and
+provenance lifetime/budgets.
+
+
+## Attributed GPU pass timings (2026-11-03)
+
+Owner-approved extension of structured captures: optional independent pass
+queries on tide_gpu, with accepted uint32 tokens returned alongside results.
+The renderer retains up to 1,024 pending identities (target, render-pass order,
+pixel extent and distinct shader labels), counts actual submitted calls and
+vertices, and copies labels before a game library can unload. Mixed passes
+retain their shader membership, with no invented per-shader/view time or source
+location. No draw-list/compiler boundary or language change is needed.
+
+Vulkan resets/writes pairs directly in existing pass command buffers, before
+pass setup and after rendering/layout restoration; no added pass, transfer
+barrier or submission. Submission serials and availability guard reads, like
+the total timer, including mid-frame flushes. Desktop GL uses independent
+GL_TIMESTAMP pairs (counter-width wrapping handled) alongside GL_TIME_ELAPSED.
+WebGPU retains each pass's token in its existing frame readback and returns all
+completed pass observations even when frame readbacks settle out of order.
+Pass intervals may overlap and omit uploads/mips outside render passes: their
+sum is not the existing frame timer. Timers remain optional on each backend;
+WebGL/ES and the Unity recorder have none.
+
+Collection is capture-only. No pending slot or unsupported/full query means an
+explicit unmeasured pass; oversized shader membership discards that pass's
+attribution rather than truncating identities. Reset/device loss cancels owned
+metadata and counts those observations as unmeasured. Polling does not wait;
+export reports pending observations. Backend query resources are released on
+reset. Shader labels and renderer pass identities do not enter match state.
+
+Validation: focused Windows ASan native GPU timing/mock/profile/draw/target
+checks pass on Vulkan (with synchronization validation) and OpenGL. Web-debug
+GPU timing, draw and target checks pass on WebGL and WebGPU. Real-device timing
+checks two distinct destinations, pixel sizes, pass order, shader membership,
+exact submitted counts, overlay exclusion, unchanged pixels, reopen and forced
+device loss while pass queries exist. Offscreen-only frames explicitly select
+the window before attributing its fallback clear. GL mocks
+cover independent queries alongside the total, delayed results, capacity and
+reset. WebGPU mocks cover out-of-order tokens, 1,024-query pressure, invalid
+results and stale callback cancellation. Report/schema coverage is recorded
+in standard-host.md. Other OSes and Android were not run locally.
+
+
+## Match updates during desktop Vulkan frame waits (2026-11-03)
+
+The desktop's `tide_gpu_vk_present_updating` polls the next frame slot's fence
+after submission and presentation. If it is still pending, the platform may
+run the host's match-only callback between timed waits. The callback receives
+elapsed time since the render frame began and returns its next update delay
+from that point; platform.c subtracts time spent in the callback. Waits follow
+that deadline, bounded to 1–100 ms, and finish early when the fence signals.
+A ready fence invokes no callback. A disabled callback uses the ordinary
+indefinite wait.
+
+`tide_platform_update_while_waiting` is optional and active only after the
+frame callback returns `TIDE_KEEP_RUNNING`, during presentation. It must not
+poll input/events, render, reload, or change GPU/window resources. Desktop
+GLFW supplies it; Android retains `tide_gpu_vk_present` without an updater,
+and OpenGL/web are unchanged. Headless runs never call the host updater, so
+their made-up time and scripted frame boundaries remain unchanged.
+
+Two frame slots remain in flight. Fence completion still precedes garbage
+collection and command-pool, descriptor-pool and upload-ring reuse, in the
+same order. No work is queued farther ahead. This services networking during
+the measured end-present fence bottleneck; it does not reduce GPU workload.
+Swapchain acquisition, `vkQueuePresentKHR`, resize/device-idle, readback and
+mid-frame flushes can still block and never invoke this callback.
+
+The private `tide_gpu_vk_wait_for_test` hook intercepts only end-present fence
+waits and supplies the real wait function; even a claimed success is checked
+against the real fence before resources are reused. Native GPU fixtures
+`tide_platform_gpu_wait` and `_headless` force pending waits and cover deadline
+subtraction/bounds, ready fences, absent/withdrawn callbacks, exclusion during
+drawing/acquisition/readback, simulated device loss, pixels after frame-slot
+reuse, and headless exclusion. Both fixtures pass with Windows ASan and
+Vulkan validation, as does the complete 2,989-test native suite. Coordinated
+web validation and real-game measurements are recorded in netcode.md.
+
+## Gap integration validation (2026-11-02)
+
+Camera-origin uniforms and target content revisions were validated together after
+integration: all 2,873 web-release CTests passed; native Windows ASan passed
+2,905/2,906 non-GPU tests initially, then the sole Chrome room-hosting timeout
+passed on its isolated retry without a code change. All 80 native GPU-labeled
+tests passed (2,986 native tests covered in total). The docs production build
+passed. External prototypes were excluded from these full engine suites.
+Other OS/Android and an actual Unity editor run remain CI/host coverage, not
+local claims. Target revision/reload specifics are in render-targets.md.
+
+## Distant cameras retain local geometry precision (2026-11-02)
+
+The renderer carries recorded camera-data references through destination state
+and draw steps, fitting the stored relative projection and uploading the camera
+origin. Built-in mesh uniforms grow from 96 to 112 bytes. Generated-shader
+headers stay 96 bytes in 2D and are 112 in 3D, with matching pipeline sizes and
+payload offsets. Both built-in and generated vertex placement rebase model
+columns before multiplying their local vertex. The two handwritten 3D test
+shaders follow that same contract; 2D capacity fixtures are unchanged.
+
+Unity's scene-view override supplies only an already-combined matrix and keeps
+origin zero. The ordinary embedded draw path receives the corrected camera
+records. Source review confirms gpu_record records explicit uniform sizes and
+bytes, and TideRender copies/aligned-uploads those bytes without fixed header
+offsets; regenerated shader identity carries the new layout. No recorded packet
+shape or embed ABI number changes. Unity itself was not run.
+
+The dedicated camera_precision fixture uses eye (3000,200,3000), near .04 and
+far 80000, with a tilted plane intersecting an instanced box near distance 140,
+five yaw angles and 81 interior probes. It compares translated/origin cameras,
+default projection/this.clip/authored explicit clip, built-in mesh placement,
+world-space material and Instance.transform sentinels, and appended/direct
+lists. Native Vulkan and OpenGL pass. A temporary control setting camera_data
+to zero restores the old combined matrix and fails both APIs: five sampled
+pixels change which surface occludes the other, and amplified depth differs;
+authored explicit clips stay invariant. Restoring camera data passes again.
+The final fixture additionally covers built-in FOV cameras and passes all five
+backend checks: native Vulkan/OpenGL (about .55s each), WebGL2 (1.49s), ANGLE
+D3D11 (1.34s) and WebGPU (1.07s). Existing shader pixel checks pass across those
+backends too. The explicit reference uses the inverse of the untranslated camera
+transform, matching the custom camera's matrix arithmetic; using a conjugate
+instead differed at two intersection pixels on WebGL from ordinary rounding.
+No tolerance was relaxed. Broad suite results are recorded with integration.
+
+
+## Native cutout stored alpha (2026-11-02)
+
+Desktop OpenGL and Vulkan with the optional `alphaToOne` feature now store
+opaque alpha after hardware coverage selection for single-output cutout
+pipelines. State resets and capability gating are in the backends; shader
+generation is unchanged. The HDR resolve/resample regression, the secondary
+output control and unresolved MRT/web cases are recorded in
+`notes/render-targets.md`, Native single-output cutout alpha.
+
+## The device's own memory (2026-11-02)
+
+`tide_gpu.device_memory` (`gpu.h`, optional) is the bytes of memory a discrete GPU has of its own: Vulkan's
+biggest device-local heap there (`vk_device_memory`), 0 for an integrated GPU or a phone, NULL on OpenGL, WebGL,
+WebGPU and the recorder. Its one reader is the idle image budget, a sixteenth of it where that's more than
+128 MiB. Why, what it fixed (Mount & Rifle's forest maps sent to the GPU again after a frame out of view), the
+measurements, tests and the other hitch causes found (cold pipelines in runs with no window, Vulkan's second
+image for runtime mips): `notes/textures.md`, Idle images by the device's memory.
+
+## Meshes a frame skips stay resident (2026-11-02)
+
+Internal optimization from the 2026-11-02 review. Until now a 3D mesh place
+the frame didn't draw was freed in `tide_draw_reset`, and its GPU buffers became
+spares. So a terrain/voxel chunk that left the view, or that a game skipped for a
+frame, was copied and uploaded again when it came back. Meshes now get an idle
+budget like the one inactive pack images have (`notes/textures.md`).
+
+- **The budget** (`tide/draw.h`, beside `tide_draw_mesh_data`):
+  `TIDE_MESH_IDLE_FRAMES` 36,000 lists (ten minutes at 60 Hz, the textures'
+  number), `TIDE_MESH_IDLE_COUNT` 4,096 meshes and `TIDE_MESH_IDLE_BYTES`
+  64 MiB of copies. The list and the renderer each apply it. Meshes drawn this
+  frame are outside it. When over budget, the longest-unused meshes go first;
+  equal ages go by place, so eviction depends only on the list and is the same
+  each run. Sorting happens only under pressure.
+- **The list** (`forget_idle_meshes` in `engine/src/draw.c`). An undrawn place
+  is kept unless one of these holds:
+  - Only one frame drew it (`tide_draw_mesh_data.made == frame`). So a mesh
+    rebuilt every frame still goes at the next reset, as before, and the
+    renderer's spare-buffer reuse for it is unchanged. (Since 2026-11-05 such a
+    mesh stays `TIDE_MESH_ONCE_FRAMES` frames within a budget of its own, on
+    the GPU too: `notes/drawing.md`, Idle listed regions, held pages and
+    one-frame meshes. A mesh of a world's lists the renderer has keeps no
+    copy in the list while idle, and the renderer's budget is a sixteenth of
+    the device's memory, farthest from the camera first: same file, Turning
+    round.)
+  - The frame drew the same lists (space, id, other) at another version. The
+    old copy can never draw again. Scratch and pack lists all share one id
+    (`mesh3_slot`), so only the budget evicts those.
+  - It's past the budget.
+  A level of detail goes when its base mesh goes (`forget_unplaced_levels`).
+  The first pass frees one-frame and expired places without allocating; the
+  tables are built only when something is left to weigh. `tide_draw_forget`
+  still frees every place. Identities were already content-keyed (C meshes
+  carry `tide_mesh_version`, and Tide lists `list_version`), so a kept place is
+  never stale.
+- **The renderer** (`spare_unused_meshes` in `platform/src/platform.c`). An
+  unwanted GPU place stays while the list's place still has the identity it
+  uploaded (`gpu_mesh_current`, which `mesh_for` now shares) and the list drew
+  it in more than one frame. The same budget applies by `tide_texture_idle_trim`,
+  with GPU bytes and render-frame ages. Everything else becomes a spare, as
+  before. `forget_meshes_3d` is gone; a frame's end frees only spares no mesh
+  took. So a skipped mesh's buffers are owned, counted in `vram`, and no spare
+  outlives its frame. A place the list evicted is spared at the next draw, the
+  same timing as before. A new device epoch still clears every GPU place; the
+  list's copies upload again. Overlays never spare and are unchanged.
+  - The one-frame rule is needed here too. The list lets a mesh go only at the
+    reset after the first frame that skips it, so during that frame the list
+    still has it. A first version kept such a place on the GPU for that one
+    frame. `check_gpu_memory` (`platform/tests/targets.c`) caught it: a
+    blit's quad, drawn once, stayed counted after the frame without it. With
+    the rule, a mesh rebuilt each frame takes exactly the old path.
+- **The old failure** ("a version that kept spares across frames failed
+  `transient_data_textures`"): that version kept *unowned* spares, which
+  showed up in `vram` after the frame. This version never keeps a spare. The
+  fixture's expectation changed on purpose: its quads, drawn in phases 0 to 2,
+  stay counted while phases 3 and 4 skip them. It now starts from a forgotten
+  list, so meshes earlier fixtures leave idle don't move its baseline at its
+  phase-7 forget.
+- **Frustum culling** is unchanged. A culled instance still finds its mesh
+  place, so the list kept those meshes already. Now the GPU keeps their
+  buffers too (under the budget) instead of re-uploading when they come back
+  into view.
+- **Tests:**
+  - `draw_idle_meshes_are_kept_for_when_drawn_again` (`tests/test_draw.c`)
+    covers kept-and-found uncopied, one-frame meshes going, a newer version
+    superseding, scratch meshes not superseding each other, expiry at exactly
+    36,000/36,001 frames, and forget.
+  - `draw_idle_meshes_past_the_budget_go_longest_unused_first` covers the
+    count limit (a recently drawn mesh in the highest place survives; the
+    oldest highest place goes) and the byte limit (two 32+ MiB meshes).
+  - `draw_levels_kept_unused_go_with_their_mesh` (`tests/test_draw_levels.c`)
+    checks that a level stays with its kept base and goes when the base is
+    superseded.
+  - `idle_meshes_kept` (`platform/tests/draw.c`) runs on Vulkan before and
+    after device loss, OpenGL, WebGL and WebGPU. A skipped mesh keeps its
+    memory and isn't sent again (the private counter `tide_mesh_uploads`,
+    `texture_residency.h`). With `tide_mesh_idle_frames` lowered it expires,
+    then comes back from the list's copy with one upload.
+- **Measured** (release, no sanitizers, RTX 4080 SUPER, driver 617.42,
+  `tide_platform_draw --bench --only <n>`: medians of 100 frames, before/after
+  run alternately five times each, HEAD built in a separate worktree with the
+  same bench code). Workload 14 is new: 8 of 32 Tide-list terrain chunks of
+  16,384 corners, the view panning a chunk a frame, so one chunk leaves and one
+  comes back each frame.
+  - Workload 14, Vulkan: record 0.083–0.154 → 0.005–0.006 ms, render +
+    readback 0.173–0.189 → 0.085–0.100, total 0.266–0.385 → 0.089–0.105.
+  - Workload 14, OpenGL: record 0.091–0.164 → 0.005–0.008, total 0.413–0.531 →
+    0.301–0.499 (medians 0.504 → 0.404). OpenGL's render part is about even,
+    because its driver does the buffer work later on its own thread.
+  - Workload 12 (one mesh rebuilt every frame, the spare-reuse control):
+    Vulkan totals 0.316–0.349 → 0.313–0.428, medians 0.318 → 0.324. OpenGL
+    0.380–0.633 → 0.389–0.608, medians 0.484 → 0.516, with run-to-run spread
+    far larger than the difference. Its code path is the old one (above).
+- **Validation** (Clang 23.1.2, Node 24.22.1, `TIDE_HIDDEN`): the sanitize (ASan)
+  build is warning-free. 430 affected native tests pass: every `gpu` test (59,
+  Vulkan with its device-loss pass, and the OpenGL twins), `tide_tests`, and the
+  draw, mesh, LOD, skinned, Render3D, prewarm, Sumo, Towers and Earth targets.
+  276 web-debug tests pass, including draw/targets/shaders/skinned on WebGL and
+  WebGPU, plus `tide_tests` under WASI. The web build's only failure is the
+  external Foldline prototype's layout check: its debug wasm
+  (`tide_query_Render_10`, "local count too large") fails to compile in Node.
+  That's generated code this change doesn't touch, and engine tests don't
+  depend on it. Linux, macOS, MinGW and Android are left to CI. After merging
+  `origin/dev`'s levels of detail for meshes a game makes (whose
+  `tide_draw_lod_collect` runs after the retention pass and gives levels to kept
+  places too), the same sets pass again: 459 native and 307 web.
+- **Not done:** no game or prototype forest was measured, only this
+  workload. Another GPU/driver, Android, macOS and the web's own timings are
+  unmeasured. The budget's numbers are picks (Claude's, alongside the
+  textures'), with no language surface. A game that wants a mesh gone sooner
+  has no way to say so beyond `tide_draw_forget`.
+
+## Shared desktop OpenGL vertex bindings (2026-10-31)
+
+The desktop OpenGL skinning gap was vertex input setup. Legacy
+`glVertexAttribPointer` / `glVertexAttribIPointer` give each attribute its own
+buffer binding, even when those attributes share an interleaved stream. The
+10/11 live attributes in `bench_skinned`'s GPU/baked modes cost about 7.1 ms on
+the RTX 4080 SUPER (driver 617.42), against Vulkan's 4.4-4.7 ms. Configuring
+attributes against shared input slots gives OpenGL 4.3-4.6 ms with unchanged
+shader sources, buffers, draws and pixels. See benchmarks.md, Baked poses /
+OpenGL investigation, for the alternating measurements.
+
+**The decisive control:** a cheap ALU-only shader retaining all the joint,
+weight and instance attributes still took 7.088/7.035 ms, without any texture
+reads. Earlier no-skinning and one-fetch controls allowed the driver to remove
+attributes and were misleading. The initial inference that this was texture-
+heavy vertex-shader execution was wrong. Changing only how the existing
+attributes share bindings closes the gap. The driver's internal reason for
+the legacy binding cost is not established; no universal threshold or claim
+about other vendors follows from this one device.
+
+Implementation and contracts:
+
+- `desktop/gl.c` checks OpenGL 4.3 or `GL_ARB_vertex_attrib_binding` and all
+  five optional entry points. A function address alone is not support.
+- Each GL pipeline chooses its path once. The shared path assigns attribute
+  formats and relative offsets with VertexAttribFormat/IFormat, maps them to
+  the existing descriptor slots with VertexAttribBinding, and sets per-slot
+  VertexBindingDivisor. Drawing only binds each slot's buffer/base offset/
+  stride with BindVertexBuffer. Integer, normalized byte and float formats
+  keep their existing interpretation.
+- Legacy attribute-pointer/divisor calls never modify a shared-path VAO:
+  those calls reset attribute-to-binding associations. Pipeline setup and
+  later buffer changes consistently use the selected path.
+- Older desktop contexts, WebGL and Android retain the existing path. A
+  pipeline also falls back for relative offsets above 2047, strides above
+  2048, or a used zero-stride slot. These conservative bounds fit the new
+  API's guaranteed limits; zero stride means tightly packed only in the old
+  API. This preserves prior layout behavior, subject to the device's existing
+  limits (newer GL also limits legacy strides). No version requirement increased.
+- The private `tide_gpu_gl_no_vertex_binding` test hook forces legacy setup
+  before pipelines are created. It is not a game API or environment setting.
+  No shader generator, simulation/runtime contract, draw order, upload bytes,
+  shader arithmetic, snapshot/hash pin or public API changed.
+
+Measurement controls and rejected probes (temporary instrumentation removed):
+
+- Both timers surround the same shared draw region, after CPU preparation
+  and before readback. Disabling GL queries leaves the slow completion time.
+  Every ordinary measured workload collects all 100 samples. These are
+  headless frames with full synchronous readback, not presented game FPS.
+- Both APIs execute about 65,144,000 vertex invocations for 181,440,000
+  submitted indices. The asset's 3,072 unique vertices are not executed just
+  once each. Extra invocations do not explain the gap; equal counts alone
+  cannot establish cache locality or scheduling equivalence.
+- A matched 10,000-character baked frame is byte-identical across GL/Vulkan.
+  A longer 500-frame pair reproduces the gap at comparable warm P0 clocks
+  (about 2.79-2.82 GHz graphics, 11,501 MHz memory). Desktop load remains
+  uncontrolled; slower saved runs are kept separately, not silently dropped.
+- Static buffer hints, uniform orphaning, immutable data textures, MAX_LEVEL=0,
+  float versus integer textures, buffer textures, instance draw splitting,
+  first provoking vertex, and a branchless/unconditional offscreen Y flip
+  did not close it. Resident mesh buffers already used STATIC_DRAW.
+- Early-return GLSL list readers, diagnostic unchecked readers, nearest
+  textureLod, Vulkan SPIR-V translated back to GLSL, and direct OpenGL SPIR-V
+  ingestion did not close it. Unchecked readers were discarded; all original
+  bounds checks remain. Removing only position or normal skinning did not
+  help either: those controls still kept the additional attributes live.
+
+Validation: all 14 focused Windows ASan CTests pass: draw, targets, shaders,
+skinned, baked and GPU timing on Vulkan and OpenGL, Vulkan descriptor sets,
+and the new forced-legacy draw run. The draw fixture checks a 2048-byte
+absolute attribute offset with an 8-byte stride, between ordinary shared
+bindings and again on reused VAOs. This exercises per-pipeline fallback
+without exceeding the device's stride limit. Existing draw checks cover
+normalized bytes, float and integer fields, per-instance divisors, nonzero
+buffer offsets, indexed/nonindexed draws and pipeline recreation. Matched
+before/after captures of static, gpu_clip and baked_clip are byte-identical.
+All 13 focused web-debug draw/targets/shaders/skinned/baked CTests also pass,
+including RGBA fallback, WebGL, ANGLE D3D11 and WebGPU, using Node 24.22.1
+and the muted browser runners. These checks include the incoming
+`Pose.Models()` compiler/runtime dependency after merging `origin/dev`.
+
+Other GPU vendors/drivers, real older desktop contexts, Android and macOS
+hardware remain unmeasured. The forced-legacy test exercises the retained
+fallback on this machine; it does not substitute for those hardware checks.
+
 ## Twelve shader textures and recorded ABI 6 (2026-10-25)
 
 The approved material/skinning boundary completion raises the internal texture
@@ -158,11 +942,10 @@ design below is Claude's, Provisional.
     for each kind of target its kind drew into, some of which it never draws
     into (BANKED: 7 of 14 unused); with the driver's cache warm that's a
     fraction of a millisecond each.
-  - Vulkan makes them one at a time on the render thread: a cold start of
-    BANKED's 31 takes 1.5 s. Making them on the job pool's threads
-    (`vkCreateGraphicsPipelines` may be called from several), or
-    `VK_EXT_graphics_pipeline_library` to compile shaders apart from state,
-    would cut that; not built.
+  - Vulkan made them one at a time on the render thread: built 2026-11-05,
+    below (Vulkan pipelines on the pool's threads).
+    `VK_EXT_graphics_pipeline_library`, to compile shaders apart from state,
+    is still not built.
   - A page keeps no keys between visits (`localStorage` through `tide.js`
     would; a new import, not built). Its prewarming is the guess alone.
   - Nothing lets a game wait for prewarming (a loading screen reading
@@ -380,7 +1163,8 @@ time it returned (see `notes/textures.md`).
 
 - `tide_gpu` gained optional `background(bool)` and `pipeline_ready(id)`. With
   background on, `pipeline` starts one and returns at once; `pipeline_ready`
-  polls. NULL on backends that only make them synchronously (Vulkan, desktop GL).
+  polls. NULL on backends that only make them synchronously (desktop GL; Vulkan
+  has them since 2026-11-05, Vulkan pipelines on the pool's threads below).
   The renderer's `pipeline_made` leaves out steps (shapes, clear, mesh, mesh 3D,
   shaded, blit, text) whose pipeline isn't made yet. The step is simply not
   drawn that frame; nothing waits.
@@ -457,9 +1241,9 @@ The standard host's display and final validation are in `notes/standard-host.md`
 
 The owner asked for Vulkan ("lets get Vulkan implemented"), the agreed next backend (step 1 of the agreed order, below). Desktop now draws with it by default. Everything below the request is Claude's pick, Provisional: the backend is behind the language, where the owner's rule is that the fastest wins.
 
-- **`platform/src/gpu_vk.c` is `gpu.h` on Vulkan 1.3**, so `platform.c` drew through it unchanged. A device needs 1.3 (dynamic rendering; `robustImageAccess` is used where it's there), `VK_KHR_swapchain`, `independentBlend`, and a graphics queue that presents to the window. `VK_KHR_push_descriptor` is used where it's there, and descriptor sets of each frame's where it isn't (`notes/android-and-mingw.md`, Vulkan on Android). Android draws with it too (same note). With none of that, or no loader, the window draws with OpenGL 3.3 as before, silently. `TIDE_BACKEND=opengl` forces OpenGL. `TIDE_BACKEND=vulkan` refuses to fall back: the window doesn't open, saying why. Any other value is refused.
+- **`platform/src/gpu_vk.c` is `gpu.h` on Vulkan 1.3**, so `platform.c` drew through it unchanged. A device needs 1.3 (dynamic rendering; `robustImageAccess` is used where it's there), `VK_KHR_swapchain`, `independentBlend`, and a graphics queue that presents to the window. `VK_KHR_push_descriptor` is used where it's there, and descriptor sets of each frame's where it isn't (`notes/android-and-mingw.md`, Vulkan on Android). Android draws with it too (same note). With none of that, or no loader, the window doesn't open, and the machine is told what the game needs (GL backends removed, above; until then it drew with OpenGL 3.3, and `TIDE_BACKEND` picked).
 - **The model is WebGPU's, which Vulkan underlies:**
-  - Every pipeline shares one layout of set 0. Binding 0 is the uniform block; texture i and its sampler are at 1 + 2i and 2 + 2i, as the WGSL binds them. A draw pushes what it reads (`vkCmdPushDescriptorSetKHR`): the uniforms at their place in the frame's ring, 4096 bytes from there (`TIDE_GPU_MAX_UNIFORMS`), and each texture through the sampler for how the pipeline reads it.
+  - Every pipeline shares one layout of set 0 (a layout for each pipeline's bindings since 2026-11-05: Sixteen textures a draw, above). Binding 0 is the uniform block; texture i and its sampler are at 1 + 2i and 2 + 2i, as the WGSL binds them. A draw pushes what it reads (`vkCmdPushDescriptorSetKHR`): the uniforms at their place in the frame's ring, 4096 bytes from there (`TIDE_GPU_MAX_UNIFORMS`), and each texture through the sampler for how the pipeline reads it.
   - The viewport is flipped (negative height), so clip space's y is up, rows go from the top in every image, and a front is clockwise (`VK_FRONT_FACE_CLOCKWISE`), as on WebGPU. Depth goes 0 to 1 because the WGSL already converts it.
   - Byte color images, a target's and a drawn-into cube's, have the window's format (`B8G8R8A8_UNORM` where the surface has it, else `R8G8B8A8_UNORM`), so one pipeline draws into both. `target_read` swaps blue and red back. Floats are `R16G16B16A16_SFLOAT`. Depth and stencil are `D24_UNORM_S8_UINT`, or `D32_SFLOAT_S8_UINT` where D24 can't be both attached and sampled.
   - Uploaded textures are `R8G8B8A8_UNORM`, `R8_UNORM`, `R16_SFLOAT` and `R32G32B32A32_SINT`, zeroed until written, as WebGPU's are. BC1/BC3 are used where `textureCompressionBC` exists.
@@ -494,7 +1278,7 @@ The owner asked for Vulkan ("lets get Vulkan implemented"), the agreed next back
   - A C test's hand-written shader has WGSL alone. Such a test hands the translator over (`tide_gpu_spirv_of`, `gpu.h`), and the pipeline translates it at creation. Games never set it, so no game carries the translator (about 106 KB of code).
 - **Validation:** `TIDE_VULKAN_VALIDATION` (anything but empty or 0) loads `VK_LAYER_KHRONOS_validation` and stops the program at the first validation error or warning, as `Tide.checkGL` fails a page. Synchronization validation is on with it where the layer has `VK_EXT_validation_features`: a write and a read with no barrier between them stop the program too. One message ID is let through: `Undefined-Value-ShaderOutputNotConsumed*`, a color written where the target has no image. `gpu.h` defines that write to go nowhere (depth-only targets, a clear of four colors into fewer), and the layer only says the write is unused. The variable set with no layer to be had exits with 1.
 - **The Vulkan headers are vendored** (`platform/third_party/vulkan`, `vulkan-sdk-1.4.350.0`, Apache-2.0; their license installs with the package). Everything is found through the loader that GLFW opens, so nothing of Khronos's is linked.
-- **Tests:** every native GPU test now draws with Vulkan here (`tide_gpu_test` in `cmake/VulkanTests.cmake`; see `notes/testing.md`). `tide_platform_draw`, `_targets`, `_shaders`, `_skinned` and `_gpu_time` also run as `*_opengl` twins (`TIDE_BACKEND=opengl`). The draw (1,447 checks), targets and shaders (1,310) tests pass on Vulkan under the validation layer with the same counts as OpenGL. `tide_platform_hidden_runs`' window case reads the window through its OpenGL context, so it forces OpenGL; whether a window shows is decided in `make_window` alike for both. `tide_platform_gpu_time` asks `tide_gpu_vk_timestamps()` whether the device can time.
+- **Tests:** every native GPU test now draws with Vulkan here (`tide_gpu_test` in `cmake/VulkanTests.cmake`; see `notes/testing.md`). `tide_platform_draw`, `_targets`, `_shaders`, `_skinned` and `_gpu_time` also ran as `*_opengl` twins (`TIDE_BACKEND=opengl`) until 2026-11-05. The draw (1,447 checks), targets and shaders (1,310) tests pass on Vulkan under the validation layer with the same counts as OpenGL. `tide_platform_hidden_runs`' window case read the window through its OpenGL context, so it forced OpenGL; it reads it through `tide_glfw_window` now. `tide_platform_gpu_time` asks `tide_gpu_vk_timestamps()` whether the device can time.
   - Losing the device: once its checks pass on Vulkan, `tide_platform_draw` asks for the device to be lost as the frame is shown (`tide_gpu_vk_lose`, a test hook). The next frame's renderer remakes it, and all 1,447 checks run again on the new one (2,850 `ok`s in all), as `tide_platform_draw_webgpu` does after losing WebGPU's.
   - `tide_platform_swapchain` (`platform/tests/swapchain.c`) resizes a hidden window bigger and then smaller (GLFW resizes a window that isn't the player's to resize, through `tide_glfw_window`). After each, it checks the swapchain was made again at the window's pixel size (`tide_gpu_vk_swapchain`). Then it loses the device while frames are shown, and checks the next frame drew with a new device in a new swapchain, reading a pixel back each frame. Windows keeps a titled window at least 120 pixels wide, so the sizes are read from the window, not assumed.
 - **Measured 2026-10-14, Windows, RTX 4080 SUPER (driver 617.42), release `tide_platform_draw --bench`** (20 warmup and 100 measured frames a workload, median ms of render and synchronous readback, Vulkan / OpenGL 3.3): nothing 0.162 / 0.245; 65,536 rects 0.867 / 0.735; circles 0.779 / 0.694; textured quads 2.144 / 2.437; cube instances 0.620 / 0.714; round rects 1.520 / 1.587; a 1024² grid texture with 64 cells painted 0.162 / 0.096; 65,536 lights read whole 0.218 / 0.121; a 16,384-corner mesh moved each frame 0.280 / 0.238. Recording costs the same on both (it's the platform's).
@@ -502,7 +1286,7 @@ The owner asked for Vulkan ("lets get Vulkan implemented"), the agreed next back
   - Games, debug builds headless (`--frames 90 --capture --size 640 360`) on each backend, compared pixel by pixel: Duel, Asteroids, Marbles, Sumo and Two Forks are the same bytes on Vulkan as on OpenGL. Tag differs in 663 of 230,400 pixels by 9 levels of 255 at most, in its filtered shadows, where it differs from itself run to run already (`notes/shaders.md`).
   - What's left between the two is texture and list uploads (a staging copy and two layout turns each, behind a full barrier) and the per-pass command buffers. No order-of-magnitude gap remains. This benchmark reads back every frame, which a game doesn't. The optimization pass below measured real frames and later cut the per-pass cost.
 - **Optimization pass (2026-10-14).** The owner asked for one over every rendering layer ("ok do an optimization pass maybe on all rendering layers not just vulkan"); what follows is Claude's, behind the language. Real frames were measured, not the readback benchmark. The setup: release builds of Tag, Duel and Two Forks, hidden at 1920×1080 for 400 frames, with each renderer phase timed (temporary instrumentation, not committed) and averaged over frames 301–400. Four changes came out of it, three in the shared renderer and one in Vulkan:
-  - **Mesh buffers are reused within a frame** (`spare_unused_meshes`, `taken_buffer` in `platform/src/platform.c`). Games that fill a list in a view each frame had meshes made again every frame, and creating a buffer costs OpenGL about 0.15 ms. Before any upload, a non-overlay list gives up the buffers of mesh places it doesn't draw, and `mesh_for` gives up a buffer too small for its place. A mesh that needs a buffer takes the smallest spare of its kind with room that is no more than four times its size plus 4 KB. Spares left over are freed at the end of the list, as the data textures' are, so no spare is counted in `vram` after a frame. That contract is pinned by `transient_data_textures`; a version that kept spares across frames failed it. Result: OpenGL's `upload_shaded` fell from 0.34 to 0.016 ms a frame in Tag, 0.12 to 0.001 in Duel, and 0.21 to 0.002 in Two Forks. WebGL buffers cost the same kind of work. Vulkan was already cheap here.
+  - **Mesh buffers are reused within a frame** (`spare_unused_meshes`, `taken_buffer` in `platform/src/platform.c`). Games that fill a list in a view each frame had meshes made again every frame, and creating a buffer costs OpenGL about 0.15 ms. Before any upload, a non-overlay list gives up the buffers of mesh places it doesn't draw, and `mesh_for` gives up a buffer too small for its place. A mesh that needs a buffer takes the smallest spare of its kind with room that is no more than four times its size plus 4 KB. Spares left over are freed at the end of the list, as the data textures' are, so no spare is counted in `vram` after a frame. That contract is pinned by `transient_data_textures`; a version that kept spares across frames failed it. (Since 2026-11-02 a mesh the list still keeps is no spare. Its buffers stay owned under the idle budget: see Meshes a frame skips stay resident, above.) Result: OpenGL's `upload_shaded` fell from 0.34 to 0.016 ms a frame in Tag, 0.12 to 0.001 in Duel, and 0.21 to 0.002 in Two Forks. WebGL buffers cost the same kind of work. Vulkan was already cheap here.
   - **Passes begin at their first draw** (`step_draws`, `draw_list`). A pass used to begin at every change of target, even when the steps before the next change drew nothing. Duel's list began 16 passes, 5 of them empty; Tag's began 15, 3 of them empty. The frame's target is cleared by the first pass that draws in it, or by a pass of its own at the end if nothing does. Clips set with no pass open apply when one begins. OpenGL costs nothing here. Every Vulkan pass is a command buffer, and every WebGPU pass is a command encoder and a `queue.submit`.
   - **Vulkan records one command buffer a pass, not two** (above). Vulkan's pass phase fell from 0.078 to 0.047 ms in Duel, 0.076 to 0.056 in Tag, and 0.033 to 0.024 in Two Forks. About a third of that came from lazy passes and the rest from the command buffers. OpenGL's same phase is 0.008–0.018 ms because its driver does the work later, on its own thread.
   - **The font atlas sends only the rows new glyphs changed** (`tide_font_atlas_changed` in `platform/src/font.h`). A new glyph used to send the whole atlas, 2048 pixels wide and up to 2048 rows. Tag's OpenGL atlas upload fell from 0.010 ms a frame on average to 0.000.
@@ -511,10 +1295,10 @@ The owner asked for Vulkan ("lets get Vulkan implemented"), the agreed next back
 - **MoltenVK on macOS** (2026-10-14, after the owner's "let's close those gaps"; Claude's picks, Provisional). Vulkan on Metal, from Khronos, Apache 2.0, version 1.4.2. It reports Vulkan 1.4, so push descriptors are core and a Mac's GPU passes the device checks above.
   - `cmake/MoltenVK.cmake` downloads the release's `MoltenVK-macos.tar` on Apple, pinned by SHA-256 as GLFW is. Its universal `libMoltenVK.dylib` (x86_64 and arm64, 10.9 MB) goes beside the build's programs (`bin/`), and into the package's `lib/native` with its license (`licenses/moltenvk`).
   - `tide build` and `tide run` put it beside a macOS game's program (`place_moltenvk`, `compiler/cli/build.c`). Only the slice for the game's CPU goes, found by `lib_universal_slice` (`compiler/cli/libraries.c`, tested by `cli_libraries_universal_slice`). That's about 5 MB, and each slice keeps the code signature it was built with.
-  - `desktop/glfw.c`'s `find_vulkan`, before GLFW starts: a system loader (`libvulkan.1.dylib`, as the Vulkan SDK installs it, with its validation layer) first. Else `libMoltenVK.dylib` beside the program, or in an app bundle's `../Frameworks`. Its `vkGetInstanceProcAddr` goes to `glfwInitVulkanLoader`, so GLFW makes the window's surface with it (`VK_EXT_metal_surface`). With neither, the window draws with OpenGL as before. `gpu_vk.c` already enabled `VK_KHR_portability_enumeration` and `VK_KHR_portability_subset` where they're listed.
+  - `desktop/glfw.c`'s `find_vulkan`, before GLFW starts: a system loader (`libvulkan.1.dylib`, as the Vulkan SDK installs it, with its validation layer) first. Else `libMoltenVK.dylib` beside the program, or in an app bundle's `../Frameworks`. Its `vkGetInstanceProcAddr` goes to `glfwInitVulkanLoader`, so GLFW makes the window's surface with it (`VK_EXT_metal_surface`). With neither, the window doesn't open, saying what the game needs (until 2026-11-05 it drew with OpenGL). `gpu_vk.c` already enabled `VK_KHR_portability_enumeration` and `VK_KHR_portability_subset` where they're listed.
   - Tested: `tide_platform_moltenvk` (Apple only, no window or GPU, so CI's Macs run it) loads the MoltenVK beside it. It checks the instance has `VK_KHR_surface` and `VK_EXT_metal_surface`, is Vulkan 1.3 or newer, and makes an instance. Its first CI run (Build `38623397915`, macOS arm64) found MoltenVK 1.4.2 loading and reporting Vulkan 1.4 with both extensions. That run also showed MoltenVK has no `VK_KHR_portability_enumeration` when used directly: that extension is the Vulkan loader's. The test had wrongly required it, and now asks for it only where it's listed, as `gpu_vk.c` always did. With that, Build `38626860832` (`fe678b81`) passed every job, including the Android emulator tests in the Linux package, and published `v0.4.0-nightly.1`. Then it prints each device it lists, with whether it has push descriptors and a swapchain. The Mac-only C was checked on Windows by compiling for `arm64-apple-macos13` with `-Wall -Wextra -Wpedantic -Werror` against stand-in system headers.
   - Not tested: drawing on a Mac. Nothing here has one, and CI's runs no GPU test. The renderer's paths on MoltenVK (its portability subset, Apple GPUs' lack of `D24_UNORM_S8_UINT`, for which `D32_SFLOAT_S8_UINT` is the fallback) need a Mac to run the GPU tests.
-- **Not done:** storage buffers. A real device loss (a driver that starts over) is only simulated: `tide_gpu_vk_lose` takes the same path a lost device's errors do. A minimized window's swapchain isn't tested, since a hidden window can't be. Linux and macOS Vulkan need CI or a machine of theirs.
+- **Not done:** (storage buffers came 2026-11-05: Vulkan compute, above). A real device loss (a driver that starts over) is only simulated: `tide_gpu_vk_lose` takes the same path a lost device's errors do. A minimized window's swapchain isn't tested, since a hidden window can't be. Linux and macOS Vulkan need CI or a machine of theirs.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
@@ -531,17 +1315,17 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - The regular font's 172,324 bytes remain in an empty game, as do all 365 Windows controller mapping strings (98,271 bytes plus 2,920 bytes of pointers). They are live dependencies of text and input initialization; section splitting removes neither capability. The bold file remains conditional as described below. Size optimization and ThinLTO were measured privately but not enabled: `-Os`/`-Oz` change performance tradeoffs, and `-O2` ThinLTO enlarged these native executables. Safe identical-code folding saved zero bytes in the empty game and 512 in Duel, so it was not enabled either.
 
 - Windows, input and rendering are the platform layer's own, with no engine under it:
-  - `platform/src/platform.c` is the frame loop, the devices and the renderer. What it needs of the system is `platform/src/window.h`: a window, what draws in it, and what its input devices say. Each build has one: `platform/desktop/glfw.c` (GLFW, for the window, keyboard, mouse, gamepads through its mappings, and clipboard), `platform/web/canvas.c` (the page, through `tide.js`) or `platform/android/activity.c` (NativeActivity and EGL).
-  - The renderer is written once, against `platform/src/gpu.h`: buffers, textures, pipelines, targets and passes, whichever API is under them (shared, agreed, rather than a renderer per backend). It's shaped by WebGPU, the strictest: a pipeline is made once with its shaders, the vertices it reads and how it blends and tests depth; its uniforms are one block of bytes; drawing happens in passes that start cleared or as they were left, so a clear inside a list is drawn (a triangle over the target, which the clip cuts, and which sets depth back). Clip space is OpenGL's, and pixels and rows count from the top left; each backend turns those into its own. Compute joins it when Tide code computes on the GPU.
-  - Backends so far: Vulkan on desktop (`platform/src/gpu_vk.c`, the default where the machine has 1.3: see Vulkan, above), OpenGL (`platform/src/gpu_gl.c`: OpenGL 3.3 on desktop where there's no Vulkan, OpenGL ES 3 on Android, WebGL 2 on the web) and, on the web, WebGPU (`platform/web/gpu_web.c`, whose functions are the page's: `tide.js` has the WebGPU objects, as it has WebGL's). The window says which draws (`tide_window_gpu`), and `tide_platform_renderer` names it; the stats overlay shows it.
-  - The web draws with WebGPU by default, and with WebGL 2 only where that isn't possible (agreed): the browser has none, gives no device, or only its software one, which is slower than WebGL on a GPU. The page asks for the device before the program starts (`tide.js`), as asking takes a while and the program can't wait for an answer. `Tide.backend`, or `backend=` in the page's address, is `webgpu` (the software one too, and no falling back) or `webgl`: for tests, and for a player whose browser gets one of them wrong. A device that goes away while the game runs (a driver that starts over) takes what was made on it: the page asks for another, and the renderer, which sees it's another (`tide_gpu.epoch`, `gpu_ready` in `platform/src/platform.c`), forgets what it had there and makes it again as lists draw, from the copies the lists and the font keep. Nothing draws meanwhile. `tide_platform_draw_webgpu` loses its device on purpose and checks its pixels again. A canvas that draws with WebGPU can't go to WebGL, so with no device to be had again it stays as it is, and the page says to reload.
-  - `platform/src/gl.h` is OpenGL as its backend uses it: only the functions it calls, which the three share, with no system header. On the web they're the page's (`tide.js` has each by its C name), on Android libGLESv3's, and on desktop they're looked up in the window's context through GLFW (`platform/desktop/gl.c`). A function it starts calling is added there and in `tide.js`, and it uses no extensions, but for one, which adds no function: drawing into float images (see A target holds several color images, below).
-  - The renderer's own shaders (shapes, text, clears, the built-in meshes) are in `platform/src/shaders.h`, each written by hand for every backend: GLSL (one source, with a version line per platform, attributes at fixed locations, uniforms in a std140 block) and WGSL. A change to one goes to the other, and the same tests check both draw the same pixels. A game's shaders are tidec's, from its `frag` and `vert` declarations (below).
-  - A pipeline samples up to 8 textures (`pixels0`... in GLSL; in WGSL, texture i and its sampler at bindings 1 + 2i and 2 + 2i), each through a sampler of the backend's, nearest, blended or between its mipmaps too, and clamped, repeated or mirrored past its edges (`sample`'s `filter` and `wrap`), so one texture can be read several ways in a draw (OpenGL's are sampler objects, bound by unit). Its vertex attributes are floats or ints (`TIDE_GPU_INT`...), 16 at most, and its uniform block 4096 bytes at most (`TIDE_GPU_MAX_UNIFORMS`), of which a game's shader has 3984 of its own (`TIDE_SHADER_UNIFORM_BYTES`, which tidec checks at the draw) after the engine's 96 (its camera, the screen and the tint): 255 float4s in all, as Android's emulator links no shader whose block is 256, counting its members as the vertex shader's uniform vectors; on WebGPU a draw's uniforms take as many 256 byte slots of the uniform buffer as they need. A texture that's a target's depth is read as a number or compared, through samplers of its own, which take no wrap (see A target says what it holds, below). `pipeline_free` lets one go.
+  - `platform/src/platform.c` is the frame loop, the devices and the renderer. What it needs of the system is `platform/src/window.h`: a window, what draws in it, and what its input devices say. Each build has one: `platform/desktop/glfw.c` (GLFW, for the window, keyboard, mouse, gamepads through its mappings, and clipboard), `platform/web/canvas.c` (the page, through `tide.js`) or `platform/android/activity.c` (NativeActivity).
+  - The renderer is written once, against `platform/src/gpu.h`: buffers, textures, pipelines, targets and passes, whichever API is under them (shared, agreed, rather than a renderer per backend). It's shaped by WebGPU, the strictest: a pipeline is made once with its shaders, the vertices it reads and how it blends and tests depth; its uniforms are one block of bytes; drawing happens in passes that start cleared or as they were left, so a clear inside a list is drawn (a triangle over the target, which the clip cuts, and which sets depth back). Clip space is OpenGL's, and pixels and rows count from the top left; each backend turns those into its own. Compute joined it (2026-11-05), and every backend has it.
+  - Backends: Vulkan 1.3 on desktop and Android (`platform/src/gpu_vk.c`: see Vulkan, above), WebGPU on the web (`platform/web/gpu_web.c`, whose functions are the page's: `tide.js` has the WebGPU objects), and the recorder inside another program (`gpu_record.c`). OpenGL 3.3, OpenGL ES 3 and WebGL 2 (`gpu_gl.c`) were removed 2026-11-05 (GL backends removed, above). The window says which draws (`tide_window_gpu`), and `tide_platform_renderer` names it; the stats overlay shows it.
+  - The web draws with WebGPU, any adapter the browser gives, its software one too (since 2026-11-05; before, WebGL 2 took over where there was none or only the software one). The page asks for the device before the program starts (`tide.js`), as asking takes a while and the program can't wait for an answer; without one, the page says what the game needs. A device that goes away while the game runs (a driver that starts over) takes what was made on it: the page asks for another, and the renderer, which sees it's another (`tide_gpu.epoch`, `gpu_ready` in `platform/src/platform.c`), forgets what it had there and makes it again as lists draw, from the copies the lists and the font keep. Nothing draws meanwhile. `tide_platform_draw` (on the web) loses its device on purpose and checks its pixels again. With no device to be had again the canvas stays as it is, and the page says to reload.
+  - (History, removed 2026-11-05.) `platform/src/gl.h` was OpenGL as its backend used it: only the functions it called, which the three shared, with no system header. On the web they're the page's (`tide.js` has each by its C name), on Android libGLESv3's, and on desktop they're looked up in the window's context through GLFW (`platform/desktop/gl.c`). Shared functions are added there and in `tide.js`. Desktop-only optional functions are loaded separately: timer queries and shared vertex bindings (OpenGL 4.3 or `ARB_vertex_attrib_binding`, above). Float render targets also use extension support (see A target holds several color images, below).
+  - The renderer's own shaders (shapes, text, clears, the built-in meshes) are in `platform/src/shaders.h`, written by hand in WGSL (SPIR-V of it at build, for Vulkan). Until 2026-11-05 each had a GLSL twin for the GL backends. A game's shaders are tidec's, from its `frag` and `vert` declarations (below).
+  - A pipeline samples up to 8 textures (12 since 2026-10-25, 16 since 2026-11-05, some through another's sampler: Sixteen textures a draw, above; in WGSL, texture i and its sampler at bindings 1 + 2i and 2 + 2i), each through a sampler of the backend's, nearest, blended or between its mipmaps too, and clamped, repeated or mirrored past its edges (`sample`'s `filter` and `wrap`), so one texture can be read several ways in a draw. Its vertex attributes are floats or ints (`TIDE_GPU_INT`...), 16 at most, and its uniform block 4096 bytes at most (`TIDE_GPU_MAX_UNIFORMS`), of which a game's shader has 3984 of its own (`TIDE_SHADER_UNIFORM_BYTES`, which tidec checks at the draw) after the engine's 96 (its camera, the screen and the tint): 255 float4s in all, as Android's emulator links no shader whose block is 256, counting its members as the vertex shader's uniform vectors; on WebGPU a draw's uniforms take as many 256 byte slots of the uniform buffer as they need. A texture that's a target's depth is read as a number or compared, through samplers of its own, which take no wrap (see A target says what it holds, below). `pipeline_free` lets one go.
   - A backend sets all the state it draws with at each pass, so nothing depends on what drew before it: a pass on another target or, on the web, the build this one took over from (see Hot reloading).
   - Text is `stb_truetype`'s (`platform/third_party/stb_truetype.h`, version 1.26 from nothings/stb, public domain, kept static to `platform/src/font.c` so a game's C can bring a copy of its own), in Tuffy, in two weights, each a file: regular (`platform/font/Tuffy.ttf`) and bold (`platform/font/Tuffy_Bold.ttf`), both version 1.28, from the one archive at tulrich.com/fonts (`tuffy-20120614.zip`), under the one `LICENSE.txt` beside them, public domain too, so games carry no license terms for any of it; GLFW's zlib license asks nothing of binaries. The build puts each in the library as an array (`cmake/embed.cmake`), an object of its own. A text's size is its font size, as CSS's and Unity's: the height of a line of it, with its capitals in the line's middle (what the font draws past a line, accents above and tails below, goes past evenly). Text has to be sharp at the sizes it's read at, and the font has no hints (stb_truetype would read none), so it's fitted to the target's pixels (`platform/src/font.c`): drawn at the whole number of pixels nearest its size, never stretched (but past 128 pixels, where nobody sees it); each glyph's outline moved onto them before it's drawn, as a hinted font's is; and each glyph a whole number of pixels from the last. The fitting finds a glyph's stems in its outline (an edge is a run of it along an axis, a straight side or a curve where it turns back; two edges that are each other's nearest across ink are a stem): upright stems and flat ones (bars, the tops and bottoms of bowls) are a whole number of pixels thick between pixel edges, those about as thick as the font's usual stem all alike, so letters keep one weight; the heights letters share (the baseline, the x-height, the capitals', the descenders') are on the same pixel edges in every glyph, and what round letters go past them by is dropped until it's a pixel; and the rest of the outline moves in proportion between the edges that moved. Stems and bars then fill their pixels, where an outline drawn as it falls blends them between two. What's slanted or round still covers pixels in part, and colors blend as the display's values, not as light, so light text's parts count for more (the text shaders, `platform/src/shaders.h`: a pixel's share to a power under 1, 0.55 for white), or they'd fade beside the stems; dark text is as it is. `tide_platform_font` (`platform/tests/font.c`, no window or GPU, so every platform's tests run it) checks that glyphs of upright and flat strokes have no pixel covered in part at any size from 8 to 48, and that letters share their heights and their stems' thickness, in both weights. Glyphs are drawn the first time each is needed at a size and in a weight into an atlas of a byte a pixel that grows as it needs, and text goes to the GPU as two triangles a glyph. `tide_platform_measure_text` is the size that's drawn (`tide_font_size`): its widest line by the same whole-pixel advances, and its lines' height, a line as high as the size and each newline the whole pixels lines are apart (`tide_font_pitch`, which drawing uses too), at the window's scale or, for a render target, at its image's own (the `tide_target_size` it's given). It needs no window open. It's the `tide_measure_fn` (`tide/draw.h`) hosts give the GUI, and what Tide code measures with: `Draw.MeasureText` is `tide_draw_measure_text` (`engine/src/draw_coordinates.c`), which asks it at the size the frame's 2D camera draws text at and gives the answer back in the units the view draws in, so a view measures what it draws, to the pixel. A host with no measure function gets a guess (`tide_draw_guess_text`). `tide_platform_draw` (`text_measures_as_drawn` in `platform/tests/draw.c`) draws text in parts, each where the last measures to, and checks they're the pixels of the text drawn at once, in both weights.
   - A text's position is a place of its box (agreed): `Draw.Text(text, position, size, color[, anchor][, font])`, with the GUI's `Anchor` (`tide_anchor`, in `tide/draw.h`), its top left corner without one. The box is what `MeasureText` gives, upper is towards the top of the screen under a camera too, and each line is against the anchor's side. The command keeps the anchor (`tide_draw_command.words`), and the platform places each line (`line_start`, `add_text` in `platform/src/platform.c`), on whole pixels as ever: text at an anchor is, to the pixel, its lines drawn from the corners its box puts them at, which `text_anchors` in `platform/tests/draw.c` checks for the nine, on the screen and under a camera, with one line and several, in both weights. `Anchor.UpperLeft` goes through the arithmetic it always did.
-  - Bold is the font's own bold weight, an argument of the draw (agreed: `Font.Bold`, as `Filter.Point` is an argument), and a game that never uses it doesn't carry its file (agreed). How:
+  - Bold is the font's own bold weight, an argument of the draw (agreed: `Font.Bold`, as `Filter.Point` is an argument), and a game that never uses it doesn't carry its file (agreed). How (as built 2026-10; since 2026-11-03 C names a font by a `tide_font` and lists keep a table of fonts, see Fonts of a game's own, above):
     - C names a weight by its file: `TIDE_FONT_REGULAR` (NULL) or `TIDE_FONT_BOLD`, the array `tide_font_bold_ttf` (`tide/draw.h`). `tide_draw_text_at` takes one, and so does a renderer's `tide_measure_fn`. A text command only says it's bold (`words.bold`), and its list has the file (`tide_draw_list.bold`, set by the frame's first bold text and cleared by `tide_draw_reset`), which the platform draws with. So the file reaches the renderer as data, from the code that draws with it.
     - Nothing in the engine or the platform layer names `tide_font_bold_ttf`: no source file of either may. Its array is alone in its object (`tide_font_bold.c`, which the build makes) in the platform layer's library, which stays a static one, so a linker only takes that object out for a program whose own code names the array. Generated C does for a game that says `Font.Bold`, or makes a `Font` of a number (`program.names_bold`, in the `tide_font_file` helper that turns a `Font` into its file), and for no other.
     - That's a program's link: CMake's, and `tide build`'s on every target. `tide run`'s library of the game has none of the platform layer, as its host does, so for a game that names the file (`game_info.bold`) tide links the library with the platform layer's too, which gives it that one object (`link_objects` in `compiler/cli/build.c`). A program with no platform layer that such a game is built into (a test's host, a server) needs the object too: `tide_add_game` links a `HOST`'s program with `tide_font_bold`, a library of that one object (`cmake/Tide.cmake`), so `duel_tests` builds as it did; a host built some other way links the platform layer's library, or defines the array itself, as nothing draws with it there.
@@ -549,9 +1333,9 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     - Stems are a whole number of pixels thick in both, by each weight's own usual stem, so under 13 pixels both are one pixel thick (and at 20, both two): there, bold differs in its letters' shapes and widths alone. Nothing fattens it to tell them apart. What the agreed design left open (this, the regular weight's name, what a missing glyph is) is in `docs/spec.md`, Views and drawing, awaiting the owner.
     - The GUI, the stats overlay and the debug views are in the regular weight.
     - `tide_platform_font_files` (`platform/tests/font_files.mjs`, every platform) reads two games as the build left them, `tests/text.tide`, which says `Font.Bold`, and `tests/text_plain.tide`, which doesn't, and checks the bold's file is in the first and none of it in the second. `tide_platform_text` is also text to look at: `build/debug/bin/tide_platform_text --frames 2 --capture text.png --size 1180 900` draws both weights at the sizes text is read at, light on dark and dark on light, and a text at each anchor.
-- The agreed order from here, with OpenGL staying as a small fallback for machines without the main backends (browsers without WebGPU, older phones):
+- The agreed order from here, with OpenGL staying as a small fallback for machines without the main backends (browsers without WebGPU, older phones; superseded 2026-11-05, when compute became guaranteed and the GL backends were removed):
   1. Vulkan natively (MoltenVK on Apple until a Metal backend is worth writing), under the same `gpu.h` as WebGPU: explicit pipelines, buffers and compute. tidec writes SPIR-V for it then, beside GLSL and WGSL. **Built on desktop 2026-10-14** (see Vulkan, above): pipelines, buffers and SPIR-V; compute waits for Tide code that computes, as below. Android and MoltenVK followed the same day.
-  2. The rest of render state (which side draws, masks), as draw settings like the ones there are (below), frags with other outputs than one color (drawing into a texture is there already: render targets), and Tide code that computes on the GPU. On the OpenGL fallback, compute runs on CPU threads instead, so games work everywhere.
+  2. The rest of render state (which side draws, masks), as draw settings like the ones there are (below), frags with other outputs than one color (drawing into a texture is there already: render targets), and Tide code that computes on the GPU. On the OpenGL fallback, compute runs on CPU threads instead, so games work everywhere (not taken: the GL backends were removed instead, 2026-11-05).
   - How a draw blends was part of that second step, and the owner brought it forward (2026-10-05), with tints, transforms and the settings rule: "these are things we need as part of the foundation of our drawing apis". What a 3D mesh does with depth followed (2026-10-06), from Alley's shadows, which hid each other: "this seems like our Draw3D or shaders or whatever might need some tweaking".
   - More of that second step is agreed (2026-10-07; `docs/spec.md`, Views and drawing, What the GPU side gains, which has each rule and which names are picks), and built in part: a target's format and its depth read are (below: A target says what it holds), the rest isn't. It came of how the demos drew shadows: Sumo laid its casters flat on the floor and shaded the floor again under them, as nothing could read a target's depth (its shadows are a shadow map since: see The physics games). The owner asked for no shadows feature but for a complete set of raw pieces a game builds any technique from, and decided each:
     - A draw with no frag keeps the engine's default look, and never means "depth only": what a draw writes is said.

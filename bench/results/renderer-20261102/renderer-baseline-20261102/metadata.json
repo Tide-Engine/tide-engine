@@ -1,0 +1,456 @@
+{
+  "label": "renderer-baseline-20261102",
+  "state": "failed",
+  "startedUtc": "2026-11-02T16:41:06.4256312Z",
+  "revision": "fb675d4eb7b60cb045059d06fb5d4284ff784486",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "backend": "vulkan",
+  "viewport": {
+    "source": "fixed host viewport",
+    "width": 1920,
+    "height": 1080
+  },
+  "build": "optimized native executable supplied by caller; runner does not build or verify compiler flags",
+  "adapter": {
+    "expected": "NVIDIA GeForce RTX 4080 SUPER",
+    "actual": null,
+    "limitation": "renderer() reports the backend, not the actual adapter; nvidia-smi is device inventory",
+    "vulkanSelection": "highest-scored supported discrete device"
+  },
+  "parameters": {
+    "frames": 100,
+    "warmup": 20,
+    "spot": null,
+    "shadowMaps": null,
+    "counts": "1000,10000",
+    "rounds": 3,
+    "point": null,
+    "capture": true,
+    "directional": null,
+    "shadowResolution": 512,
+    "cases": "unshadowed,mixed",
+    "repeat": 1
+  },
+  "gate": {
+    "quietLimitSeconds": 600,
+    "acquiredUtc": "2026-11-02T16:41:06.4531057Z",
+    "waitSeconds": 0.0035097,
+    "name": "Local\\TideClaudeContinuationBenchmark",
+    "waitLimitSeconds": 600,
+    "held": true,
+    "abandoned": false
+  },
+  "processTimeoutSeconds": 900,
+  "processPollingMilliseconds": 250,
+  "quietSeconds": 5,
+  "detection": "Get-Process polling and known repository Node runner command lines via Win32_Process; sub-250ms processes or unavailable command lines may be missed; other desktop activity is uncontrolled",
+  "binary": {
+    "input": {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\release\\bin\\bench_render3d.exe",
+      "exists": true,
+      "bytes": 2555904,
+      "sha256": "7ac93a11af458d6804c75e36aa95d20f06a5d27871687f229da356c97b2203c7"
+    },
+    "frozen": {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\bin\\bench_render3d.exe",
+      "exists": true,
+      "bytes": 2555904,
+      "sha256": "7ac93a11af458d6804c75e36aa95d20f06a5d27871687f229da356c97b2203c7"
+    }
+  },
+  "sources": [
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\bench\\render3d\\game.tide",
+      "exists": true,
+      "bytes": 3929,
+      "sha256": "836ff1b69db8e07ed8a330bc086bbdc68d72c363608b90191122a20a0045997c",
+      "relativePath": "bench/render3d/game.tide"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\bench\\render3d\\main.c",
+      "exists": true,
+      "bytes": 23965,
+      "sha256": "0c611e0ed3e588ffc31007fc9ea226e9aa6a1935c00680e858dc19c88c8634f9",
+      "relativePath": "bench/render3d/main.c"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\bench\\render3d\\direct.c",
+      "exists": true,
+      "bytes": 33834,
+      "sha256": "ff634880d1243a447db7e78f359652fe0bc1c5580d53a2fbd7682a8712c57a52",
+      "relativePath": "bench/render3d/direct.c"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\bench\\render3d\\direct.h",
+      "exists": true,
+      "bytes": 1188,
+      "sha256": "d875e4ff0eae157228d5c16cd1ac3418115fb86095683bf28f5b3f4bd575a507",
+      "relativePath": "bench/render3d/direct.h"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\bench\\render3d\\mesh.obj",
+      "exists": true,
+      "bytes": 698,
+      "sha256": "071fafffd9372ec2b8ee04769aa8148fef8fdcd15584fbc6dde3b200216aa182",
+      "relativePath": "bench/render3d/mesh.obj"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\bench\\render3d\\run.ps1",
+      "exists": true,
+      "bytes": 21501,
+      "sha256": "634d80a4c3a2aabd139080eb0dacda4ffb9fd5da93449c15c6d96d25927532cc",
+      "relativePath": "bench/render3d/run.ps1"
+    }
+  ],
+  "runs": [
+    {
+      "label": "renderer-baseline-20261102-vulkan-package-r1",
+      "round": 1,
+      "way": "package",
+      "launchOrder": 1,
+      "backend": "vulkan",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--cases",
+        "unshadowed,mixed",
+        "--ways",
+        "package",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "renderer-baseline-20261102-vulkan-package-r1",
+        "--output",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1.jsonl",
+        "--shadow-resolution",
+        "512",
+        "--capture",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1-final.png"
+      ],
+      "state": "completed",
+      "startedUtc": "2026-11-02T16:41:12.3773223Z",
+      "pid": 42236,
+      "exitCode": 0,
+      "competingWork": false,
+      "timedOut": false,
+      "stdout": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1.log",
+      "stderr": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1.err",
+      "output": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1.jsonl",
+      "capture": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1-final.png",
+      "wallSeconds": 3.862996,
+      "finishedUtc": "2026-11-02T16:41:16.2414622Z",
+      "artifacts": [
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1.log",
+          "exists": true,
+          "bytes": 1114,
+          "sha256": "cdd2df48d6a276133cadce44fb87881cdfd263c596578996800e0b243c8e16f6"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1.err",
+          "exists": true,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1.jsonl",
+          "exists": true,
+          "bytes": 7211,
+          "sha256": "3a54316eaec855835a8502c0fe0288b3b2573bfda8c926e5be76a09e39a34162"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r1-final.png",
+          "exists": true,
+          "bytes": 1356454,
+          "sha256": "db4ce81dd754bc97ae25609926d09966501a3866be538be719ce646938b76ed1"
+        }
+      ]
+    },
+    {
+      "label": "renderer-baseline-20261102-vulkan-cached_direct-r1",
+      "round": 1,
+      "way": "cached_direct",
+      "launchOrder": 2,
+      "backend": "vulkan",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--cases",
+        "unshadowed,mixed",
+        "--ways",
+        "cached_direct",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "renderer-baseline-20261102-vulkan-cached_direct-r1",
+        "--output",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1.jsonl",
+        "--shadow-resolution",
+        "512",
+        "--capture",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1-final.png"
+      ],
+      "state": "completed",
+      "startedUtc": "2026-11-02T16:41:16.4533935Z",
+      "pid": 45516,
+      "exitCode": 0,
+      "competingWork": false,
+      "timedOut": false,
+      "stdout": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1.log",
+      "stderr": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1.err",
+      "output": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1.jsonl",
+      "capture": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1-final.png",
+      "wallSeconds": 2.7094483,
+      "finishedUtc": "2026-11-02T16:41:19.1628997Z",
+      "artifacts": [
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1.log",
+          "exists": true,
+          "bytes": 1144,
+          "sha256": "1cab5c5dd308813cd5ce486296cd8ce25dc33358c551e39cd63cc420c05d7a77"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1.err",
+          "exists": true,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1.jsonl",
+          "exists": true,
+          "bytes": 7250,
+          "sha256": "b755478a5b028b39b2aba666a6d489b00d4a2b0d07d58e1d914635362415567d"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r1-final.png",
+          "exists": true,
+          "bytes": 1356454,
+          "sha256": "db4ce81dd754bc97ae25609926d09966501a3866be538be719ce646938b76ed1"
+        }
+      ]
+    },
+    {
+      "label": "renderer-baseline-20261102-vulkan-cached_direct-r2",
+      "round": 2,
+      "way": "cached_direct",
+      "launchOrder": 3,
+      "backend": "vulkan",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--cases",
+        "unshadowed,mixed",
+        "--ways",
+        "cached_direct",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "renderer-baseline-20261102-vulkan-cached_direct-r2",
+        "--output",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2.jsonl",
+        "--shadow-resolution",
+        "512",
+        "--capture",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2-final.png"
+      ],
+      "state": "completed",
+      "startedUtc": "2026-11-02T16:41:19.3688389Z",
+      "pid": 9764,
+      "exitCode": 0,
+      "competingWork": false,
+      "timedOut": false,
+      "stdout": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2.log",
+      "stderr": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2.err",
+      "output": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2.jsonl",
+      "capture": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2-final.png",
+      "wallSeconds": 2.6854569,
+      "finishedUtc": "2026-11-02T16:41:22.0543411Z",
+      "artifacts": [
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2.log",
+          "exists": true,
+          "bytes": 1144,
+          "sha256": "ec7fd5386aeb9e3640477c4340b9d2b5fbaed3d43cbf1802a22ab79bee009794"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2.err",
+          "exists": true,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2.jsonl",
+          "exists": true,
+          "bytes": 7250,
+          "sha256": "5519b579945f7a754dc57b8ead77a2af1c077453a3a2c487e40e8b0ef0e75943"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-cached_direct-r2-final.png",
+          "exists": true,
+          "bytes": 1356454,
+          "sha256": "db4ce81dd754bc97ae25609926d09966501a3866be538be719ce646938b76ed1"
+        }
+      ]
+    },
+    {
+      "label": "renderer-baseline-20261102-vulkan-package-r2",
+      "round": 2,
+      "way": "package",
+      "launchOrder": 4,
+      "backend": "vulkan",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--cases",
+        "unshadowed,mixed",
+        "--ways",
+        "package",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "renderer-baseline-20261102-vulkan-package-r2",
+        "--output",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2.jsonl",
+        "--shadow-resolution",
+        "512",
+        "--capture",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2-final.png"
+      ],
+      "state": "completed",
+      "startedUtc": "2026-11-02T16:41:22.2833120Z",
+      "pid": 51448,
+      "exitCode": 0,
+      "competingWork": false,
+      "timedOut": false,
+      "stdout": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2.log",
+      "stderr": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2.err",
+      "output": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2.jsonl",
+      "capture": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2-final.png",
+      "wallSeconds": 4.111067,
+      "finishedUtc": "2026-11-02T16:41:26.3944212Z",
+      "artifacts": [
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2.log",
+          "exists": true,
+          "bytes": 1114,
+          "sha256": "a949c4363c3d355c49f0ebebacc8ed607151aaa4f996374094017ac0e3055c94"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2.err",
+          "exists": true,
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2.jsonl",
+          "exists": true,
+          "bytes": 7208,
+          "sha256": "c1dc17b8506b20ca9b393526c3f78afb44f28aa055ac2b8a4721485641fa21f7"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r2-final.png",
+          "exists": true,
+          "bytes": 1356454,
+          "sha256": "db4ce81dd754bc97ae25609926d09966501a3866be538be719ce646938b76ed1"
+        }
+      ]
+    },
+    {
+      "label": "renderer-baseline-20261102-vulkan-package-r3",
+      "round": 3,
+      "way": "package",
+      "launchOrder": 5,
+      "backend": "vulkan",
+      "arguments": [
+        "--counts",
+        "1000,10000",
+        "--cases",
+        "unshadowed,mixed",
+        "--ways",
+        "package",
+        "--frames",
+        "100",
+        "--warmup",
+        "20",
+        "--repeat",
+        "1",
+        "--save",
+        "renderer-baseline-20261102-vulkan-package-r3",
+        "--output",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r3.jsonl",
+        "--shadow-resolution",
+        "512",
+        "--capture",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r3-final.png"
+      ],
+      "state": "completed",
+      "startedUtc": "2026-11-02T16:41:26.6259577Z",
+      "pid": 45824,
+      "exitCode": 0,
+      "competingWork": false,
+      "timedOut": false,
+      "stdout": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r3.log",
+      "stderr": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r3.err",
+      "output": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r3.jsonl",
+      "capture": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r3-final.png",
+      "wallSeconds": 3.9004018,
+      "finishedUtc": "2026-11-02T16:41:30.5264040Z"
+    }
+  ],
+  "quietGuards": [
+    {
+      "runLabel": "",
+      "startedUtc": "2026-11-02T16:41:06.4597727Z",
+      "requiredSeconds": 0,
+      "resets": 0,
+      "state": "completed",
+      "finishedUtc": "2026-11-02T16:41:06.6380760Z",
+      "wallSeconds": 0.1752479,
+      "quietSeconds": 0.175604
+    },
+    {
+      "runLabel": "",
+      "startedUtc": "2026-11-02T16:41:06.8953336Z",
+      "requiredSeconds": 5,
+      "resets": 0,
+      "state": "completed",
+      "finishedUtc": "2026-11-02T16:41:12.1211616Z",
+      "wallSeconds": 5.2233394,
+      "quietSeconds": 5.2233439
+    }
+  ],
+  "contention": [],
+  "competingWork": false,
+  "cleanupErrors": [],
+  "gpu": {
+    "inventory": [
+      "name, driver_version",
+      "NVIDIA GeForce RTX 4080 SUPER, 617.42"
+    ],
+    "monitorIntervalMilliseconds": 250,
+    "monitorPid": 12800,
+    "executable": "C:\\WINDOWS\\system32\\nvidia-smi.exe",
+    "state": "queried",
+    "monitorState": "stopped_at_cleanup",
+    "queryExitCode": 0,
+    "monitorRequested": true
+  },
+  "error": "The process cannot access the file 'C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-8c449f69\\build\\render3d-measurements\\renderer-baseline-20261102\\renderer-baseline-20261102-vulkan-package-r3.log' because it is being used by another process.",
+  "finishedUtc": "2026-11-02T16:41:30.5507085Z"
+}

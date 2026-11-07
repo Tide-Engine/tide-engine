@@ -532,8 +532,21 @@ singleton Places
     int switched;
     int stepped;
     List<int> items;
-    int indexed;
+    int byIndex;
     int inlined;
+    Tally tally;
+}
+
+// A method whose result a statement leaves unread, called with a call that has an `out`
+struct Tally
+{
+    int total;
+
+    mut int Add(int value)
+    {
+        total += value;
+        return total;
+    }
 }
 
 int Returned(int value)
@@ -577,7 +590,9 @@ system Place(mut Places places)
     places.stepped = steps;
     places.items = [0, 0, 0];
     places.items[Half(4, out var at) ? at : 0] = at + 40;
-    places.indexed = places.items[2];
+    places.byIndex = places.items[2];
+    places.tally.Add(Returned(10));
+    places.tally.Add(Half(30, out _) ? 100 : 0);
     places.inlined = 0;
     Each(6)
     {

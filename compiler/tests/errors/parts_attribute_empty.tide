@@ -1,0 +1,3 @@
+// expect: Parts names the parts to keep
+[Parts()] asset SkinnedMesh<Vertex3> model = "../e2e/fbx/parts/parts_ascii.fbx";
+scene Main { }

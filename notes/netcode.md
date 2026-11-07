@@ -1,10 +1,1325 @@
 # Netcode: sessions, prediction, commands
 
+## Logical spawn identity and canonical execution, protocol 25 (2026-11-06)
+
+The owner selected stable logical Entity IDs separate from storage, and ascending
+logical Entity order for match queries and deferred changes. An Entity is now
+two opaque 64-bit words, birth and lineage. Birth is a public simulation identity
+clock (initially one, advancing after each tick), independent of 32-bit Time.tick
+and every private allocation/free list. Lineage follows the declaration/call
+site, causal parent/row/event and that origin's per-site occurrence. Hidden
+allocations at other origins do not advance a visible spawn's sequence. No
+component initializer bytes, private allocator counts or transport cookies seed
+the key. The final key exists before Spawn returns, including worker execution;
+queued changes install that exact key rather than settling temporary handles.
+
+Repeated public player lifecycle events have per-player clock-local occurrence
+counters; implicit Main starts have their own counter. Snapshots, raw/delta
+state, recipient projections and layout migration preserve these public values.
+Async frames retain causal paths/counters across waits. Duplicate/colliding keys
+fail explicitly before publication; the allocator never probes for a different
+logical key based on hidden occupancy. Dense private slots and exact-key lookup
+remain storage details. A per-clock birth registry also catches a duplicate key
+whose first entity has already been destroyed that clock.
+
+Canonical traversal spans admitted archetypes and survives holes, compaction
+and different projection layouts. Indexed queries sort their candidate keys
+before applying the ordinary guards/body. A cached immutable ordered-key array
+avoids sorting/allocating on every repeated query; borrowed arrays survive
+structural changes until settle. Independent row-local work may remain parallel;
+modelled structural/event effects retain canonical source order. Extern systems
+receive canonical contiguous runs through their existing rows/COW adapter.
+Ordinary list/map insertion order is unchanged, and trusted C retains its existing
+determinism, external-state and thread-safety responsibilities.
+
+Protocol 25 carries complete keys in lifecycle journals and command values.
+Generated C, physics bridge records, embed packet version 5 / ABI 18, Unity,
+debuggers and hot-reload metadata rebuild together. The recipient block/delta
+repair scheme below remains in use; no private allocator or native physics
+history is added to recipient state. Older Entity8 saves/wire formats are not
+reinterpreted.
+
+Focused native regressions cover forty projected/replayed cycles with unrelated
+hidden spawns and targeted events, repeated same-clock membership and Main
+starts, async spawning with different private task slots, and 3,000 permuted
+entities across archetypes/chunks under snapshots with Tide and C writes. The
+allocator diagnostic below now asserts matching public IDs and hashes, both
+with a hidden entity and with ALL_VISIBLE. Its physical free lists still differ.
+Runtime cache tests cover retained borrows, concurrent readers, COW snapshots
+and bounded allocation under 20,000 spawn/despawn operations. Whole engine
+unit/migration targets pass native ASan and WASI. After the initial broad suites,
+all repaired targets pass the final 70-test native and 72-test web batches,
+including deterministic pins, safety churn, physics, networking and demo pixels.
+Browser threaded simulation retains its 240-tick/45-second bound (19.61 seconds).
+Debugger, CLI/Unity packet tests and docs build also pass. Exact-game runs and
+remaining CPU costs are recorded in the linked measurement artifact below.
+
+This removes allocation/row-order coupling between otherwise independent visible
+pieces. It does not supply hidden values needed by a coupled public calculation,
+restore opaque native physics warm state after projection, or make public Task
+handles independent of the task registry's allocation order. Those remain
+separate boundaries; stable async spawn causes do not redesign Task identity.
+
+### Measured battle outcome
+
+The final exact-game results and commands are in
+[the four-run summary](repro/mount-rifle-logical-identity-20261106-summary.json),
+with intermediate failures and the late correction trace in
+[the investigation](repro/mount-rifle-logical-identity-investigation.md).
+These are native Windows optimized, unsanitized, hidden 2100-frame runs from
+Mount & Rifle `349c35a`, two players, latency option 40 (reported ping 123 ms).
+Rates use simulation seconds 20–34, not the slower wall clock.
+
+| Configuration | Total received kB/s | World kB/s |
+| --- | ---: | ---: |
+| Public 1000-bot battle | 48.11 | 27.72 |
+| Prediction.Delay | 34.27 | 15.69 |
+| TROOPER_SIGHT | 786.06 | 734.45 |
+| 10-bot control | 58.51 | 28.05 |
+
+All four runs finish without resyncs. Across the complete bandwidth work, the
+public case falls from 3113.23 kB/s total (protocol 22), through 128.31 kB/s after
+protocol 24 repair compression/comparison, to 48.11 kB/s with logical identity.
+It is not a zero-correction campaign: public repairs stay at three through 20
+seconds, then reach 26 at 34 seconds. The next first-difference probe parses both
+7,093,074-byte projections completely at endpoint 1301, with the same identity
+clock 1302 and exactly one differing float: Brevno ammo depot's Works.stock is
+0 on the server and 18.416666 on the client. Its hauler has no permitted Party
+row. economy.tide's hidden Haul system consumes public depot stock when the
+convoy arrives; the client cannot execute that hidden work. These authority
+updates are expected. The first residual is not evidence of physics divergence.
+TROOPER_SIGHT still couples public Crowd data to hidden troops and is not fixed
+by making allocation and query order independent.
+
+CPU is explicitly unresolved: public match work averages 123.90 ms/frame and
+systems 15.64 ms/tick, with 15,977 ticks over 2100 frames. The canonical chunk
+preparation correction removes a large introduced copy cost, but remaining
+query lowering and changing remote action inputs still cost substantial work.
+No return to the original reported 6.1 ms client tick is claimed.
+
+### Full-width destruction journals
+
+The instrumented battle caught a migration error before delivery: the first
+post-startup endpoint difference at tick 413 was public clock 414 on the server
+versus 413 on the client. The client had not run that tick. FRAME_DESTROYED
+encoded two varint64 key words, but apply_frame_to's skip loop still consumed
+varint32 and rejected the frame before simulation. The journal replay skip
+loop had the same error. Both now consume full-width words. This was a frame
+parsing failure, not evidence of native physics divergence.
+
+`visibility_full_entity_destroyed_frames_verify_and_replay` uses both key words
+above 32 bits, checks verification advances beyond 650 without another repair
+across the destruction, and checks journal replay reaches the same hash. It
+passes native ASan and WASI; all sixteen native visibility cases pass.
+
+## Remaining scoped tasks after logical Entity identity
+
+- **Recipient simulation completeness:** native physics resident/warm state is
+  intentionally absent from permitted projections. Do not attribute a repair
+  to physics without tracing its first differing logical value, or send private
+  bodies/histories wholesale. Public Task handles still follow private task
+  registry allocation order and need their own identity design if exposed to
+  otherwise independent visible gameplay.
+- **Canonical query CPU lowering:** remaining per-row overhead is measurable.
+  BuildKitBodies scans all troopers for every walled place but only consumes
+  position. Its canonical query performs exact-key lookup, reconstructs 88 lane
+  pointers and gathers a full 352-byte Trooper per visit; the current optimized
+  variant retains that gather call. The public profile averages 4.76 ms per
+  BuildKitBodies call. Key caching avoids repeated sorting. Specialize narrow
+  reads/reuse safe chunk metadata while preserving canonical order and immediate
+  World.Set visibility; validate equivalent seeded work and snapshot/COW cases.
+  This is a compiler performance follow-up, not a demonstrated random-gear cause
+  or a measured attribution of the entire tick-time regression.
+- **Owned prediction:** a first-class owned-and-descendant prediction mode and
+  ping-aware far-state freshness remain unimplemented. Re-measure replay work
+  after identity/order fixes before changing the stale interval. A small
+  predictionRange still runs singleton/query work unless the game filters Far.
+- **Server AI input:** match-derived authoritative input sampling remains Open
+  in the spec; this change does not give server Sample match-state access.
+- **Game coordinates/privacy:** Position float2 has ordinary XY coordinates.
+  A 3D game's ground XZ point should use float3(x, 0, z), or omit Position when
+  it describes a separate campaign abstraction. The engine cannot infer that
+  mapping from float2. A public Crowd built from hidden fighters still couples
+  public results to unavailable state and exposes their positions; partition it
+  by permitted battle/group or keep presentation-only data local.
+
+### Why an idle player still causes rollback in Mount & Rifle
+
+In game commit `349c35a`, `controls.tide:32–57` samples `Look.barrel` and
+`Look.muzzle` into `[Absolute]` input fields; an animated pose need not keep those
+values constant while no key is pressed. With `maxRewind = 0.5`, the compiler also
+adds the read-only `Controls.viewTime` field. Session input sampling stamps the
+last presented tick/fraction after Sample (`session.c`, `sample_input`), so that
+field advances even for an idle player. `infantry/body.tide:165–169` unconditionally
+copies it into `Orders.seen`, and `infantry/fire.tide:149,173–181` uses the saved
+value for the game's own shooter-lag capsule query. This revision does not call
+Physics.Rewind, but it does consume the engine-stamped view time.
+
+Input prediction holds the last remote values, and the let-go callback defaults
+non-Absolute fields after the guess window; viewTime has no Absolute attribute.
+Changed authoritative input therefore requires replay even when the other player
+stands still. At final public frame 900, repairs were still the three startup
+repairs, while stats showed ten ticks per frame, eight run again. This separates
+input rollback from correction traffic. The 0.25-second far-state stale limit
+cannot make a changed remote input or differing near singleton/heap compare equal.
+These are source-level reasons for changing input; no isolated field-by-field
+experiment measured their relative contribution.
+
+Game-authored action fields can stay unchanged while unused, or derive from
+deterministic match pose where that suits the game's aiming model. Stamp action
+metadata when the action consumes it rather than changing unrelated persistent
+input every frame. The built-in viewTime is engine-owned and Sample cannot
+conditionally overwrite it; changing its stamping/prediction policy needs a
+separate agreed input/rewind contract. A wider stale interval is not that fix.
+
+The measured canonical traversal is not a CPU improvement claim: after eliminating
+repeated whole-chunk COW copies, the public frame-900 tick is about 16 ms versus
+the report's 6.1 ms reference, and rollback still multiplies that work. Singleton
+systems such as BuildKitBodies still query every troop unless the game explicitly
+excludes Far. Exact final profiles and remaining costs are recorded with the
+logical-identity measurement artifact.
+
+Read-only inspection of `campaign/compound_kit.tide:581–589` identifies a remaining
+cost in BuildKitBodies: every walled Place scans every Trooper for nearest distance,
+using only `t.position.xz`. The generated canonical walk resolves each logical key
+to its current location and sets up the 88-lane Trooper row per candidate; the old
+physical walk set up column pointers once per chunk. This is concrete additional
+row setup/lookup work, not a measurement assigning the whole observed cost increase
+to one operation. Narrower query reads and reuse of chunk setup are follow-up
+optimizations; no further traversal redesign accompanies these measurements.
+
+## Same-tick recipient repair comparison, protocol 24 (2026-11-06)
+
+Fixing compression locality alone still retransmitted legitimate evolution from
+the last confirmed tick, although the client had already computed most of it.
+Large recipient repairs now offer canonical 16 KiB block hashes for the pinned
+authoritative target. The client compares its own **same-tick** canonical bytes,
+pins them outside the mutable prediction ring, and answers a bounded missing-block
+mask. The server sends compressed permitted blocks only where the client differs.
+The reconstructed complete canonical hash and the existing frame logical hash
+must pass before the endpoint is adopted. A comparison never confirms a tick.
+
+The server retains one target world, its original acknowledged base/tick and its
+permitted lifecycle journal throughout both transfer phases. Stream targets stay
+coalesced to recent authoritative endpoints; they are not limited to advancing
+one mismatch tick per round trip. Snapshot number, target tick and authenticated
+connection attempt bind the response; PATCH must immediately follow the hash
+offer the client answered. No target is regenerated from a later world. Normal
+packet/chunk budgets, retransmission and early-chunk handling apply. Over 64 MiB
+of canonical bytes falls back to the ordinary codec because the fixed 512-byte
+mask cannot describe more blocks; this is a negotiation bound, not a world limit.
+Small canonical projections (under 128 KiB) avoid the extra round trip. When more
+than half the blocks are missing, the pinned acknowledged-base codec is used.
+For patches covering over 64 KiB of missing spans, both encodings are measured
+and the smaller complete payload wins. Counting missing blocks alone can choose
+poorly for a large mostly-static world. Tiny same-tick patches avoid this extra
+packing work and skip serialization of the unused acknowledged baseline.
+
+Delay clients have no predicted target world. While the hash transfer remains
+pending, complete authenticated frames can replay into a private comparison
+world, ignoring expected logical divergence but rejecting malformed frames or
+pending preparation. Work uses the same per-update catch-up allowance, capped at
+four quiet ticks; the server continues delivering frames during negotiation.
+Quiet work changes no verified/predicted ring endpoint, presentation clock,
+hearing record or download acknowledgement. It neither drops frames nor invents
+remote input. Incomplete comparison after one second safely requests all blocks,
+selecting the existing baseline codec. Adoption, new offers, reload, migration
+and destruction release comparison caches using the correct build's callbacks.
+Same-layout reload explicitly abandons a pending comparison and recovers through
+a full snapshot, preventing a response from waiting forever for discarded bytes.
+
+All negotiation data is derived from `client_state` for that recipient. Physical
+worlds, allocator/free lists, private commands and physics history remain private.
+This stage used protocol 24; protocol 25 above adds logical identities. There
+was no new Tide syntax, generated callback or observable simulation policy in
+the transfer change. It reduced repairs before the identity fix, without
+requiring an entire evolving battle to correct a few differing handles.
+
+An actual first-battle mismatch at tick 1149 had four differing bytes in one
+16 KiB block: two newly spawned bullets had different entity handles, while their
+other gameplay values matched. Offline negotiation over those **same-tick**
+7,315,009-byte permitted projections needs 3,588 hash bytes, a 56-byte reply mask
+and a 7,698-byte patch (11,286 bytes down before session/journal/packet overhead),
+with exact reconstruction. This measures repair payloads, not live byte rate.
+
+New 512 KiB changing/shifted-state loopback fixtures activate the complete path
+over 40 ms/way, 10 ms jitter and 3% loss. Across twelve seconds, rollback confirms
+717 ticks with 33 repairs, zero resyncs and 1,079,676 world bytes; Delay confirms
+712 with 31 repairs, zero resyncs and 1,029,890 bytes. A 4.2-second receive pause
+crosses frame history and safely recovers through one full resync, reaching tick
+717 with 1,357,922 world bytes. The quiet-event fixture proves private comparison
+work occurs without delivering future or duplicate local events. Native ASan and
+WASI pass these fixtures and the existing visibility/session checks; final
+integration and actual game traffic results are recorded with their run below.
+The compatible-reload regression swaps and zeroes old game callback tables eleven
+times during large repairs, then verifies continued progress and state. A spread
+logical mismatch touches nine random comparison blocks but is cheaper as an
+acknowledged delta: the selection regression confirms tick 717 with 33 repairs,
+zero resyncs and 1,574,457 world bytes, below its 2 MiB transfer bound.
+
+## Recipient delta locality, protocol 23 (2026-11-06)
+
+The battle investigation below established that fixed-offset XOR regions lose
+almost all reuse when an earlier variable-size value grows. Session projection
+transfers now select an internal `recipient_delta` encoding over **only** the
+current and acknowledged baseline's permitted canonical bytes. Candidates are
+the old 16 KiB XOR regions, literal bytes, and LZ copy spans referencing either
+that permitted baseline or already reconstructed output. No private world,
+allocator metadata or physics history is transferred. Existing projection bytes,
+logical hashes, event journals, tick/repair policy and game semantics are unchanged.
+
+Two direct-mapped 65,536-entry indexes (512 KiB total), adaptively spaced baseline
+anchors (at least 32 bytes apart) and one candidate per index per scan position
+bound encoder work. Matched output spans are indexed every eight bytes rather
+than scanning them again byte by byte; literal searches still visit every byte. Every
+candidate is compared exactly; hash collisions only reduce compression. Output
+copies allow overlap. The actual smaller payload wins; XOR results of at most
+64 bytes or 1/32 of raw bytes skip LZ construction/scanning. This preserves the
+common sparse/unchanged path. The session wire is protocol 23; raw command,
+packet, view-time and voice fixtures follow it. Older peers are refused normally.
+No generated runtime callback/API or match-state layout changes.
+
+The private decoder checks baseline/output hashes, caller-provided decoded size,
+exact encoded end, literal/copy spans by subtraction, and strictly earlier
+output sources. Copies advance at least eight bytes, bounding token work;
+forward overlap copying is linear in decoded bytes. It allocates nothing from
+token lengths. Session decoded allocation follows the preexisting declared
+projection size/allocation-exhaustion policy, with no arbitrary small world cap
+(memory-safety.md, Recipient state decoding). Invalid output is never loaded as
+a world. XOR decoding clears its output rather than requiring a zeroed caller.
+
+Measured deterministic fixtures (1,000 records of 512 random bytes): a one-byte
+prefix insertion falls from **512,206 to 123 bytes**. Twelve changed bytes per
+record without shifting encode in 15,158 bytes; those changes plus the prefix
+insertion encode in 42,264 bytes. A 7 MiB random baseline with a prefix insertion
+and 1,000 scattered twelve-byte edits encodes in 152,660 bytes, covering index
+load/early-region retention beyond the original 512 KiB fixture.
+Exact round trips are required on native/WASI.
+Unsanitized optimized Windows pack+unpack measurements, 16 iterations each, are
+0.506 ms fixed and 1.676 ms shifted/changed, on a shared machine; these are codec
+microbenchmarks, not the real game's bandwidth or whole-frame performance.
+
+Windows ASan and WASI pass the four new codec cases, the shifted-record probe,
+nine visibility and fifteen session cases. Tests cover empty/incompressible
+payloads, insertion/deletion, shorter bases, overlapping distance-one copies,
+every truncation in representative modes, bad hashes/bases/sizes, trailing bytes,
+zero/small/overflowing spans and invalid 64-bit sources. Sixteen generated
+network/prediction/visibility/view-time/voice integration CTests pass on each
+platform. Independent decoder/encoder review found no remaining blocker.
+The live measurements below subsequently established the first battle mismatch
+and measured the combined protocol-23/24 changes. Repairs and the allocator
+limitation below remain; compression locality alone was insufficient.
+
+Index tuning used the actual game's consecutive **correction target** projections
+(not necessarily the exact acknowledged repair baseline), 7,315,009 -> 7,315,431
+bytes at ticks 1149 -> 1169 and 7,315,431 -> 7,314,111 at 1169 -> 1213. Original
+fixed-region encoding takes 2,313,763 / 2,332,588 bytes; the final codec takes
+265,732 / 272,350. Unsanitized optimized eight-iteration probes on those identical
+byte pairs measure roughly 6-7 ms original pack, 12.5-16.1 ms new pack and
+2.4-2.8 ms new unpack on the shared machine. Exact output/hash checks pass.
+This guided adaptive anchors and sparse output indexing: a fixed 16K-entry index
+with dense copied-span indexing took 550,660 / 712,151 bytes and 19-20 ms packing
+on the same pairs. These are offline codec comparisons; they do not establish
+the live recipient's final byte rate or confirmation lag.
+
+## Mount & Rifle live battle measurements (2026-11-06)
+
+The controlled Windows comparison uses game commit `349c35a`, its exact non-art
+source assets, the local art/cache, optimized tools and runtime built in this
+engine checkout, seed 0, two players, latency option 40, 2100 frames and 1280x720.
+`BATTLE_TEST ARMY` creates 1000 bots; F7 is sent to both players at frame 100,
+with player-2 captures at 900, 1500 and 2100. The executable receives:
+
+```text
+--players 2 --latency 40 --frames 2100 --size 1280 720 --stats --script battle.txt --profile profile.json
+```
+
+The script is:
+
+```text
+100 player 1 key f7
+100 player 2 key f7
+900 player 2 capture battle-900.png
+1500 player 2 capture battle-1500.png
+2100 player 2 capture battle-2100.png
+```
+
+Build with `--release --debug-views --define BATTLE_TEST --define ARMY --stats`,
+adding the named switch below; the ten-bot control omits ARMY. Every invocation
+sets `TIDE_HIDDEN=1`. The preserved protocol-22 baseline and final protocol-24
+runtime use the same game source, assets, optimized platform and command line.
+The baseline session source is the pre-codec implementation, with the new status
+counters retained. The intermediate protocol-23 result is retained in the
+[compact metrics artifact](repro/mount-rifle-network-20261106-summary.json).
+
+After three startup repairs, the public battle ran on inputs until the first
+battle mismatch at tick **1149**. Both same-tick permitted projections were
+7,315,009 bytes; exactly four bytes differed. Two freshly spawned bullets had
+matching shooters, bornTick 1148 and gameplay values, but different identities:
+shooter `#1568.1` produced server `#3380.45` versus client `#3376.59`, and shooter
+`#997.1` produced server `#3376.59` versus client `#3389.49`. This establishes
+identity divergence as the observed trigger, followed by repeated repair
+transfers. Projection loading loses physical slot/free-generation information;
+its precise contribution to this game's allocation ordering remains inferred,
+not an approved change to recipient identity semantics. Physics.Rewind is not
+called by this game revision, as source inspection below explains.
+
+Player-2 rates below are decimal KB per **simulation second**, measured from
+cumulative counters at seconds 20 and 34. World bytes count transferred world
+payload; total received also includes ordinary frames, inputs and protocol
+traffic. Joins are outside this interval. All runs completed with zero resyncs.
+
+| Build / game switch | World KB/s | Total received KB/s | Repairs at 34 s | Wall seconds for 2100 frames |
+|---|---:|---:|---:|---:|
+| Protocol 22, 1000 bots | 3028.5 | 3113.2 | 22 | 146.85 |
+| Protocol 24, 1000 bots | 107.8 | 128.3 | 57 | 144.08 |
+| Protocol 24, PREDICT_DELAY | 60.1 | 79.7 | 45 | 87.26 |
+| Protocol 24, TROOPER_SIGHT | 654.8 | 699.6 | 78 | 92.14 |
+| Protocol 22, ten-bot control | 665.8 | 695.5 | 59 | 40.82 |
+| Protocol 24, ten-bot control | 58.7 | 85.1 | 51 | 41.05 |
+
+The public 1000-bot battle therefore uses **28.1 times less world payload** and
+**24.3 times less total received traffic** (about 1.03 Mbit/s total). At second
+34 its cumulative world bytes fall from 55,732,919 to 6,279,847. More repairs can
+finish because they are much smaller; repair count alone is not transfer volume.
+Delay's late input delay stays at 12 ticks instead of growing throughout the
+run. The paired ten-bot baseline verifies an 8.2-fold total-traffic improvement;
+the reported nightly's 29 KB/s ten-bot behavior was not reproduced in this setup.
+
+TROOPER_SIGHT remains substantially more expensive, about 5.60 Mbit/s total.
+Selecting by actual encoded cost lowered its world traffic from 1588.2 to 654.8
+KB/s. The game's public `Crowd` singleton contains positions of all server troops,
+while a client rebuilds it from permitted troops. Even a small hidden subset can
+therefore change public state and coupled AI decisions; it can also disclose
+hidden positions. The game should give this derived data an appropriate audience
+or rebuild it without mixing restricted and public state. The engine transfer
+fix does not establish correctness of that visibility policy.
+
+Hidden native runs advance a fixed 60-frame simulation clock; the table's rates
+and the displayed FPS are **not real-time throughput/FPS benchmarks**. Wall
+seconds are measured separately, and one run per configuration on a shared
+machine does not establish a CPU improvement. The paired main profiles average
+58.78 / 60.13 ms CPU work per frame and 38.72 / 41.68 ms match work before/after.
+This change fixes transfer amplification, not repeated prediction work. Delay
+averages 10.43 ms match work and Sight 9.30 ms, with different simulation work.
+Full samples, cumulative counters, profile summaries, source hashes and the
+intermediate results are in the artifact; raw world dumps are not committed.
+
+## Mount & Rifle battle investigation and repair diagnostics (2026-11-06)
+
+`tide_client_status.repairs` counts successful authoritative recipient repair
+adoptions, separately from `resyncs` (full snapshot replacements). Initial joins,
+rejected transfers and host mirrors do not count. It is cumulative for the client
+object, like `resyncs` and `world_bytes`. The visibility backoff fixture checks
+that repairs equal projection loads minus the initial snapshot. Native stats
+presentation is recorded in standard-host.md.
+
+The diagnostic counter alone did not fix the battle flood; the repair changes
+and live measurements above followed it. Source inspection of Mount & Rifle
+commit `349c35a` refutes its proposed Physics.Rewind
+cause: its only Tide references to rewind are the maxRewind setting and the
+hitbox.tide comment saying those capsules used to be Box3D bodies. Actual hits use
+the game's posed capsules and shooter-lag displacement. No Physics.Rewind call
+occurs in that commit's Tide sources. This does not remove the separately
+documented physics-history limitation after projection loading.
+
+Two mechanisms relevant to the report are established independently of timing:
+
+- `as_predicted` rejects any changed foreign input. The game's `PlayerControl`
+  copies the automatically sampled `viewTime` every tick (`body.tide`); that
+  timestamp advances even when another player stands still. A stationary player
+  therefore does not establish unchanged input or reusable predicted ticks.
+  Near prediction additionally compares the entire heap and non-Native singleton
+  state; its rebuilt `Crowd` lists and grids can reject near reuse even when all
+  near components match. FAR_STALE_SECONDS only bounds successful reuse to 0.25 s;
+  increasing it cannot make those rejected comparisons pass.
+- Before the protocol-23 fix above, recipient repair compression split flat variable-length projection bytes at
+  fixed 16 KiB offsets. A prefix insertion shifts every later region against its
+  base. `delta_recipient_shifted_records_round_trip` provides a repeatable
+  1000-record probe (512 random bytes per record), using the same region codec:
+  one changed byte packs to 19 bytes, a one-byte prefix insertion to 512,206.
+  Both decode exactly. This is synthetic evidence of compression locality, not
+  a measurement of the game's component entropy or actual first mismatch.
+  The existing maximum repair backoff with maxRewind 0.5 is seven ticks at 60 Hz;
+  512 KB repairs at that rate already exceed 4 MB/s before packet overhead.
+
+The original allocator probe (`notes/repro/recipient_allocator.tide` and `.c`)
+shows a public-spawn mismatch after loading a valid projection: create a public
+Dot and a hidden entity, destroy Dot, project/load, then both sides spawn Dot.
+Their hashes agree immediately after load; the next public entity is server
+`1:3` versus client `1:1`, and hashes differ. The projected loader discards free
+slots/generations. This extends the existing Open spawn-identity gap ("A client's
+own spawns go after the last entity it was sent", below) to public slot reuse.
+The live trace above subsequently found bullet identity differences at the
+first battle mismatch. The exact allocator ordering cause remains an inference.
+Reconstructing a remembered client's
+free list is insufficient: the server can have allocated those slots privately
+since the last endpoint. Recipient projections intentionally omit allocator/free
+lists; copying the full server allocator would disclose hidden lifetime activity.
+
+Reproduce with this checkout's built tools (PowerShell, TIDE_HIDDEN=1):
+
+```powershell
+New-Item -ItemType Directory -Force build/recipient-allocator | Out-Null
+build/sanitize/bin/tidec.exe notes/repro/recipient_allocator.tide -o build/recipient-allocator --name game
+& 'C:/Program Files/LLVM/bin/clang.exe' -std=c17 -O2 -g -fsanitize=address -D_DLL -D_MT -Xclang --dependent-lib=msvcrt -Iengine/include -Ibuild/recipient-allocator notes/repro/recipient_allocator.c build/recipient-allocator/game.c build/sanitize/engine/tide.lib -o build/recipient-allocator/probe.exe
+Copy-Item 'C:/Program Files/LLVM/lib/clang/23/lib/windows/clang_rt.asan_dynamic-x86_64.dll' build/recipient-allocator
+build/recipient-allocator/probe.exe
+```
+
+The compiler/ASan paths above describe the measured Windows installation. The
+probe now asserts equality with logical Entity IDs; add --define ALL_VISIBLE to
+tidec for the public-only control. Historical output before the identity fix:
+
+```text
+before: free server 2 client 0 next server 3 client 1 hash equal 1
+after: entity server 1:3 client 1:1 hash equal 0
+```
+
+After the logical identity change both Windows ASan variants exit successfully.
+Despite server/client free heads 2/0 and next slots 3/1 (hidden) or 3/2 (all
+visible), the new public Entity is identical on both sides and both before/after
+recipient hashes agree. Exact key bits are diagnostic, not a public ID guarantee.
+
+Historical follow-up scope, **recipient repair locality and battle divergence**
+(addressed by the protocol 23–25 work above): first trace
+the first differing logical fields/entity identities in the exact 1000-bot game,
+including Delay, and distinguish initial mismatches from repair-induced ones.
+The protocol-23 implementation above addresses variable-length transfer locality;
+measure its exact-game effect before claiming the bandwidth issue resolved.
+In parallel, resolve recipient-safe predicted spawn identities and slot reuse
+without transferring hidden allocation metadata; confirm the probe's public
+post-load spawns agree, including hidden intervening allocations, without pinning
+private counts or histories. This required an owner decision; the owner selected
+logical IDs and canonical traversal above, retaining the privacy boundary.
+Measure bytes per recipient, repairs, resyncs, tick work and confirmation age
+before/after for no-switch, Delay and TROOPER_SIGHT, plus the 10-bot control.
+Acceptance includes native/WASI correction/lifecycle/view-time tests, lossy
+variable-list/spawn/despawn cases and an exact-game bounded run. Arbitrarily
+throttling repairs is not a substitute: it can move confirmed presentation
+outside maxRewind while hiding the transfer volume. Sending private allocator or
+physics-history state wholesale is not an acceptable fix either.
+
+Validation: Windows ASan and WASI pass all nine visibility-filtered engine cases
+and all twelve delta-filtered cases. The new probe pins successful round trips,
+not its poor compression size, allowing future improvements. No actual battle
+before/after bandwidth result or Internet/browser validation is claimed.
+
+## Scene preparation and player readiness (2026-11-05)
+
+Owner-approved scene preparation (language.md) uses optional tide_game callbacks `prepare_pending`, `prepare`,
+`prepared_scene` and `prepared_command`. Sessions stop ticks while their private preparation job runs, continuing
+receive/send/timeout processing. The server resumes on its own completion. Client prediction stops at a pending
+load; generation starts only on the verified endpoint, then becomes the replay baseline. Startup page negotiation
+can generate its ordinary initial baseline asynchronously before requesting missing pages. Slow peers use the
+existing input history, catch-up and snapshot recovery. Recovery-journal replay prepares before the following tick.
+
+Readiness is a private empty command sent once per completed root identity, through existing reliable authenticated
+command sequencing. Its sender supplies the player; game payloads cannot name another sender. The generated world
+stores player bits, clears departed players and preserves them in snapshots/hashes/packing. This is a completion
+report, not proof of honest work; game logic owns any readiness barrier or kick. No new wire packet/protocol version.
+All hosts/libraries rebuild for the tide_game callback layout (Session ABI preparation 1).
+
+Prepared local/verified events merge ahead of the next tick's events. Visibility servers additionally record
+recipient-filtered genuine lifecycle logs from preparation; projected clients never regenerate from potentially
+missing private inputs and request the permitted prepared snapshot instead. The private ordinal singleton and
+root ordinals are omitted/canonicalized in recipient codecs and lifecycle payloads. Completion and readiness remain
+permitted match state. Leaving/restart/rewind/reload drain and discard private jobs/logs before releasing worlds/code.
+Progress endpoints are available to views while initial baseline preparation is still connecting, without promoting
+them to verified state. Tests and validation: language.md, Deterministic scene preparation.
+
+## Bans (2026-11-04)
+
+The owner's ask, from mount-and-rifle, whose host re-kicked banned PlayerIDs
+from a local `PlayerJoined` handler: a ban that kicks and refuses that player
+for the rest of the match, and lifting it, surviving host migration. Names,
+what a ban holds and the wire shape are the agent's picks (spec, Sessions,
+Provisional; docs `multiplayer/matches.md`, Bans).
+
+- **Language**: `Session.Ban(player, message = "")` and `Session.Unban(player)`,
+  checked as `Kick` is (local code, a statement, a `PlayerID`, text). They go
+  in the frame's kick queue (`tide_kicks`, `TIDE_GAME_PLAYERS` entries) as
+  `TIDE_REQUEST_BAN` / `TIDE_REQUEST_UNBAN`, after the session requests; a
+  `Start`/`Join`/`Connect`/`Leave` drops them with the kicks. `DisconnectReason`
+  gains `Banned` (7, `TIDE_DISCONNECT_BANNED`), with the ban's message.
+- **Server** (`session.c`): `tide_server_ban/unban/banned`; `tide_session_ban`
+  and `_unban` on the session's server (nothing on a client or a sharded
+  match); `tide_session_server(s)` gives hosts and tests the server.
+  - State: `tide_player_set banned` and `ban_messages[players]`, by slot. A ban
+    needs a slot someone played in (`digests[i] != 0`) and refuses this
+    machine's own player and a first-time player still joining (not greeted,
+    `new_player`), whom no PlayerID names yet and whose slot `drop_connection`
+    would clear.
+  - A connected banned player is sent away by `send_away` (kick's resending
+    entry, with `kicked.banned`), so the goodbye says `BYE_BANNED` and so does
+    every resend. A kick of a banned slot also says banned.
+  - `on_hello` refuses before the kick list, the closed check and slot
+    assignment: a HELLO whose cookie digest is a banned slot's, or, with a
+    trusted identity host, whose nonzero identity is that slot's, gets
+    `BYE_BANNED` + message (authenticated with the cookie and nonce it sent, as
+    a not-yet-welcomed client accepts a BYE). The slot giving-away loop skips
+    banned slots, so the PlayerID is kept for the banned player.
+  - `tide_server_unban` clears the bit and message and the slot's kick entry
+    (so the next HELLO is admitted without first being told of a kick), and
+    starts its `away_since` if unset, so the slot can be given away in time.
+- **Identity** (documented): a ban holds the slot, reached by cookie digest
+  and, under `tide_server_desc.identity`, the account. A machine without the
+  cookie is someone new: another device, cleared storage, or a session that
+  joins a migrated match at the new host's address (`tide_session_join` drops
+  the cookie for a different address, as for kicks). Accounts are what make a
+  ban stick.
+- **Survives**: host migration, through the HANDOVER record (after the
+  in-match digests: `write_players(banned)`, then per banned slot its digest and
+  message length + bytes; `handover_capacity` grows by a set and
+  `(8 + TIDE_MESSAGE_BYTES) * players`), read into `handover.banned` /
+  `ban_messages` (`free_handover`) and passed by `tide_session_take_over` as
+  `tide_server_desc.banned` / `ban_messages` with the digests. A banned player
+  who is still `present` (of a world it went on from, not back yet) stays in
+  `in_match` and banned, and leaves on the usual 20 s. Recovery:
+  `tide_server_recovery.banned` and optional `ban_messages`; managed hosting's
+  checkpoint carries both (`tide/managed_run.h`, magic `TDM3`). Server create
+  copies bans only with a `world` and only for slots with a digest. Not in the
+  world, hashes or snapshots.
+- Wire: `PROTOCOL` 22 (`BYE_BANNED = 4`, the HANDOVER tail).
+- **Tests**: `net_a_match_bans_players` (lossy loopback: own player and empty
+  slot refused, ban kicks with `Banned`/message, rejoin refused open and
+  closed, a newcomer gets another slot, unban lets the same PlayerID in,
+  recovery state has the ban and message); `handover_keeps_bans` (banned
+  before the host leaves; the new host has the ban and refuses the old cookie
+  with its message; unbanned, the same PlayerID is let in);
+  `net_local_code_joins_rooms_and_connects_to_addresses` (request order and
+  `Disconnected { reason = Banned, ... }`); `tidec_error_session_ban_not_a_player`.
+- **Gaps**: bans of a sharded world (each shard's admission is separate);
+  banning by address; a ban list that outlives the match; Ban/Unban results
+  (they are requests, like Kick). The lobby and rooms packages show a
+  `Banned` message as they do a kick's.
+
+## Commands holding lists of values (2026-11-04)
+
+The owner asked for the gap mount-and-rifle met on nightly.32 to be closed: `command Enlist { List<int> attributes; }`
+was refused ("a command can't hold a list, map, set or grid"), and the game sent `int[6]`. A command now holds a
+`List<T>` of any fixed-size value, in a field, a struct, a `T?` or an array; the picks are Provisional in
+`docs/spec.md`, Commands. What's built, and what code relies on:
+
+- **The checker** (`check_fields` in `compiler/src/check.c`): `holds_map_or_grid` refuses a map, set or grid anywhere in
+  a command, lists' elements included ("a command can't hold a map, set or grid"); `holds_unsized_list` refuses a list
+  whose elements hold text or a list, map, set or grid ("a command's list can't hold text or other lists"), with a note
+  of what can. `[Clamp]`, `[Min]` and `[Max]` take a `List<T>` field as they take an array, bounding each element
+  (`check_field_attributes`, `check_bound`).
+- **The wire** (`gen_bits_list` in `compiler/src/codegen.c`, which `gen_bits` calls for a list of anything but bytes):
+  the count as a varint, then each element through `gen_bits` as a field of its type, unaligned. `List<byte>` keeps its
+  aligned raw path. Writing copies each element (`tide_list_at`) into a one-member struct `tide_element<k>` and shadows
+  `in` with it, so `gen_bits`'s `in->` paths work unchanged; reading refuses a count over `TIDE_COMMAND_LIMIT` or over
+  the bits left divided by the fewest an element takes (`bits_least`), before `tide_list_resize` makes the scratch
+  list, then reads each element into a zeroed wrapper, repairs it (`gen_repair_value` against the element type's
+  default, `gen_default`; for an enum with no member 0, its first member) and copies it in. So a hostile count costs at
+  most about eight times the command's own bytes of scratch (bools: a bit each), released with the scratch mark both
+  `check_command` and `command` take. The dispatch's `gen_bounds` loops a list's elements (`gen_bounds_list`) for a
+  bound on the field and for a struct element's bounded fields (`type_has_bounds`).
+- **Limits and room**: any list makes a command `TIDE_COMMAND_LIMIT` at most (`command_limit`, `decl_has_list`) and so
+  chunked over `TIDE_COMMAND_BYTES`, as `List<byte>` was; the session needed nothing. Local `Send` sizes its buffer
+  with `tide_command_room` (generated only in games with list commands) for every list in the value, through structs,
+  `T?`s and arrays (`gen_command_rooms`, each element's most bytes from `bits_most`, which runs `gen_bits` into a
+  throwaway buffer). The embed path (`tide_embed_command`) uses the same rooms; its `tide_embed_command_list` already
+  took plain lists. Arrays of `List<byte>` used to be left out of the room and would have aborted at send.
+- **Not built**: lists of text (each element's text would need its own bound and room; `string[N]` is the fixed form)
+  and nested lists, maps and sets (maps' entries would need a wire form of keys and values; two lists do it now). A
+  C# `TideCommandWriter` list of non-byte elements is untested from Unity.
+- **Tests**: `compiler/tests/e2e/command_lists` (ints with an element bound, structs with defaults, a bounded field,
+  an enum and a vector, floats, enums, entities, a list in a struct beside text, a `List<int>?`, `List<int>[2]`; every
+  truncation and a trailing byte refused; a hand-written command with NaN, infinity, unknown enums and out-of-bounds
+  values repaired; counts the bits can't hold and `UINT32_MAX` refused; 200,000 ints chunked through a lossy loopback
+  session to the server's and the client's verified world), natively and on the web; `compiler/tests/errors/
+  command_list_payload`, `command_list_of_lists`, `command_list_of_maps`, `command_map_payload`, `command_set_payload`,
+  `optional_field_command_list`.
+
+## Predicting near the player alone (2026-11-04)
+
+The owner's ask: a client predicts what's near its player and leaves what's far
+as the server confirmed it, ticking once (as `Prediction.Delay` would); near
+meets far as if it were constant, and odd reconciles at the border are fine;
+positions as shards find them. `settings { predictionRange = 40; }` (spec,
+Settings, Provisional for the picks; docs `multiplayer/matches.md`, Predicting
+what's near).
+
+What's built:
+- **A hidden sparse tag** (`check.c`): with the setting, `tide_far`, a builtin
+  component with no fields (`program.predict_far`), sparse (`sparse_component`),
+  possible in every match archetype that can have a position (`positioned`: a
+  `[Position]` component or `Transform`, in its components or `possible`). Every
+  match system and match handler that runs for each entity gets it in
+  `without_mask`, as shards' ghosts do; a system written in C too (owner's yes,
+  same day), whose wrapper hands C the runs of rows between tagged ones as it
+  does for visibility presence (`gen_extern_filtered_call`). So the existing sparse-filter row loops (counted chunks,
+  masked/selected/cached variants, apart loops copying skipped rows back) leave
+  tagged rows out with no new loop code. Only predicted worlds ever have the tag:
+  the server never sets it and a confirmed tick runs on a verified world, so
+  server ticks and confirmed ticks run every row, at the cost of a presence
+  count over each positioned chunk (zero pages, cached hashes).
+- **`tide_game.predict_far(world, player) -> bool`** (`predict_far_codegen.inc`):
+  the box around the positions of the player's own entities (`Owner`), grown by
+  the range on each axis; each taggable row then gets the tag when its position
+  is outside it, loses it otherwise, written (`tide_table_cell`, the page made
+  its own and its hash reset) only where that changes. Positions are
+  `tide_shard_where`'s (`gen_position_where`, split out of `gen_shard_where` and
+  generated for unsharded games too) of the entity's root (`tide_far_where`,
+  walking `tide_parent_of`). No owned positioned entity: nothing is tagged.
+  NULL without the setting. Session ABI marker: `predict far (1)`.
+- **`session.c`**: `tide_client.far_from`, the first tick run from a tagged
+  world, reset wherever `let_go` is. `run_predicted` calls `predict_far` on the
+  copied world when the tick is the verified one (each run of predictions starts
+  there, untagged) or while nothing is far (`far_from` UINT32_MAX), so an entity
+  moving out of range is noticed tick by tick; tags then carry along the chain by
+  copy. `play` never takes a tick at or past `far_from` as predicted: it runs the
+  frame on the verified world (whole), and the predicted ticks after it are stale
+  and run again near alone (`predict_again`), `predict_from` clearing `far_from`
+  past where it starts. With anything far, each confirmed tick is a whole tick
+  plus a near-only rollback of the lead; the input-delay budget measures those
+  predicted ticks (`note_tick_cost`), now near-only.
+- **Corrections**: `tide_local_correct` skips an entity tagged in either world, as
+  it skips a ghost in a sharded game: a far entity takes no accumulated error
+  (with it, each confirmed tick read as a one-tick correction and smoothing
+  lagged far entities by about six ticks); views blend it on the confirmed clock
+  instead (below).
+
+Tests: `tidec_e2e_predict_near` (`compiler/tests/e2e/predict_near*`, with a
+system written in C, `predict_near_c.c`, which fails the test excluded): two
+players on a 100 ms loopback, and on 120 ms with 60 ms jitter and 20% loss; a
+walker 4 units from them and one 100 away, range 10. Every frame a client runs
+ahead, the far walker in its predicted world is byte for byte its verified one
+and the near one has run every predicted tick; then the mover runs to the far
+walker and the two swap for its client, not the other's. No resyncs, and both
+walkers' confirmed state follows the server's. Without the `far_from` check in
+`play` both clients resync. Error fixtures `settings_prediction_range_zero` and
+`settings_prediction_range_delay`.
+
+**Far entities drawn blended** (same day, the owner: "we should blend them"):
+the drawn (predicted) world has a far entity as last confirmed at both ends of
+every tick, so it moved a tick at a step. Generated `tide_far_blend_<C>(w, e, v)`
+(`gen_far_blend`, for blended components with nothing in a heap, `far_plain`):
+for an entity tagged in the drawn world, its value in the presented confirmed
+world, blended with the one before on the confirmed clock (`tide_blend_<C>`,
+`tide_prev_<C>`), as a `verified` parameter's is; false for a near one or one
+that world lacks (born the same, else drawn as before). View row copies and
+view query rows call it before their ordinary blend, whole and lane-subset
+paths. The confirmed pair comes from file statics `tide_far_verified`,
+`tide_far_vprev`, `tide_far_valpha`, set by `tide_frame` before views (and per
+other shard's world drawn), cleared after them, so views without `verified`
+parameters needn't take the confirmed worlds (`takes_verified` would also turn
+off shader preparation). Components holding text, lists or grids keep a tick
+at a step: their handles are the drawn world's heap's.
+
+**The marking pass, by columns** (same day): `gen_far_rows` reads each
+archetype's position from its lanes chunk by chunk (`far_source`: the first
+`[Position]` component it has, then `Transform`; a sparse one, which a row may
+lack, goes through `tide_far_where`); a child in a hierarchy goes by its root
+(`tide_parent_of`, then `tide_far_where`). A chunk's tag page is made its own
+only where a tag changes. Measured (release, Windows, one thread, 50,001
+entities over 1000 × 50 units, range 40, ~3% near; a scratch game, not kept):
+
+| | lookups | columns |
+|---|---|---|
+| marking, first time on a verified world | 0.350 ms | 0.056 ms |
+| marking again, nothing changing | 0.245 ms | 0.041 ms |
+
+A whole tick of cheap systems (move, count) took 0.065 ms and the near-only one
+0.080 ms: every chunk mixes near and far rows, and the filtered loops cost more
+than the plain SIMD ones. With a system doing 32 steps of math per entity, a
+whole tick took 43.2 ms and the near-only one 1.5 ms (marking 0.11 ms). The same
+games without the setting: 0.037 ms and 42-43 ms a whole tick, so the far filter
+costs every tick (the server's and confirmed ones too, though nothing is ever
+tagged there) about 0.5 ns per row per system, which only shows on trivial
+systems.
+
+Tests (blending): `predict_near_draws_far_walkers_blended_as_confirmed` runs
+`tide_frame` on the client's views each frame and checks the far walker drawn
+at the confirmed pair's blend (and between its endpoints in over a quarter of
+frames), the near one at the predicted pair's; it fails with the helper
+returning false.
+
+**`Far`, and the physics packages holding far bodies** (same day; the owner
+named it and agreed the design: `with Far`/`without Far`, border islands
+stepped whole, near bodies hearing `Touched`/`Hit` from held ones):
+- `check.c` `far_filter`: `Far` in a `with`/`without` parameter of a system, C
+  system or query names `program.predict_far`; without the setting, a builtin
+  tag no archetype can have (`program.far_absent`, made on first use, so games
+  that never name it don't change), so a package names it either way. `Far far`
+  is an error (`errors/far_filter_binding`, `far_filter_query_binding`). A
+  game's own type named `Far` wins the lookup. A system for each entity that
+  needs the tag doesn't get it added to `without_mask` (it would never run).
+  `warn_unmatched` says a system `with Far` never runs without the setting
+  (`warnings/far_without_prediction_range`); package systems aren't warned.
+  Extern systems' wrappers already split chunks into runs by presence, so the
+  filter needed no codegen change. `tidec_e2e_predict_near` now also has a
+  `with Far` system counting far walker ticks: equal to the ticks predicted past
+  the verified one in every frame, zero on the server and in confirmed worlds.
+- Box2D/Box3D (`notes/box3d.md`, `notes/box2d.md`, each `box*d/TIDE.md`):
+  `HoldFar(Body, mut Physics, with Far)` at `Step` offset 19 hands the far
+  bodies' ids to the bridge, and the step holds them once per run of predicted
+  ticks (`b*World_HoldBodies`, noted into the stamp as `'f'`). `Leave` is
+  `without Far`. Test `tide_box{2,3}d_predict_near`
+  (`packages/test/predict_near_test.c`, the game in each package's `test/`).
+
+Measured (release, Windows, a scratch game not kept: Box3D, 3,000 balls rolling
+45 to 340 units from the players and 25 near them, range 40, a client on a
+100 ms loopback, 14 ticks ahead; client ms a frame over 10 s, server and client
+in one process):
+
+| | whole world | range 40, holding | range 40, not holding |
+|---|---|---|---|
+| guesses always right | 2.8-2.9 | 11.9-12.8 | 33-34 |
+| another player's input changing every 5 ticks | 19.5-21.2 | 14.4-14.9 | |
+
+Where the 14.7 ms goes with the range: Box3D steps 4.1-4.5 (12.1-13.4 whole),
+resident restores and commits 6.9 (5.7-5.9 whole), holding 0.3, the rest
+Tide's ticks. Holding saves most of what the steps cost, but with anything far
+every confirmed tick reruns the lead near-only, which the whole world skips
+when guesses were right: the range costs four times as much there. And holding
+3,000 bodies writes most of the arena, so the commit after it, and the
+verified world's restore the next frame, copy most pages.
+
+**Keeping the predicted ticks a confirmed tick leaves as they were** (same day;
+the owner picked "skip, bounded"): with anything far, every confirmed tick
+reran the near lead even when guesses were right, which made the range four
+times dearer than predicting everything (table above). Now:
+- `tide_game.near_same(predicted, confirmed)` (`gen_near_same`,
+  `predict_far_codegen.inc`; session ABI `predict far (2)`): every match
+  singleton and every row not tagged far in the predicted world, field by
+  field leaving out `[Native]` fields (a physics package's stamps and handles
+  differ between a held world and a whole one), sparse presence, scenes; and
+  entities, commands, task tables and order, inputs and the heap by their
+  hashes. Columns whose pages both worlds share from the tick before are
+  skipped unread.
+- `session.c` `play`: a confirmed tick whose inputs went as guessed but which
+  ran something far (`guessed && tick >= far_from`) keeps the predicted world
+  of its tick (`near_kept`, a spare world), runs whole over it, and if
+  `near_same`, sets `far_from` to the next tick and leaves `stale` alone: the
+  predicted ticks after it stand. `far_since`, the verified tick when the run
+  of predictions started, bounds it: once the next tick is more than
+  `FAR_STALE_SECONDS` (0.25) of ticks past it, they run again, which starts
+  `far_since` over. `tide_client_status.near_kept` counts the kept ones.
+- Test `tidec_e2e_predict_kept`: two still players, a near walker and a far
+  one; in every frame ahead the near one ran every predicted tick, the far one
+  is 0 to 15 ticks older than the last confirmed (older in over a quarter of
+  frames), over 100 confirmations kept per client, no resyncs.
+  `tidec_e2e_predict_near` keeps a predicted-world singleton (`FarSeen`), so it
+  never keeps one and its exact far checks still hold; so does the physics test
+  (its near raycast sees the far ball, which moved in the whole tick).
+- The same scratch game (busier machine: whole world 3.5 rather than 2.9):
+
+| client ms a frame | whole world | range 40, before | range 40, kept |
+|---|---|---|---|
+| guesses always right | 3.5-3.5 | 11.9-12.8 | 5.0-5.9 (716 kept) |
+| another player's input changing every 5 ticks | 22.4-23.5 | 14.4-14.9 | 7.5-9.0 (611 kept) |
+
+With Box3D marking less on sparse commits (notes/box3d.md, same day), the same
+game, a quieter machine: guesses always right 3.9 ms a frame with the range,
+2.65-2.7 whole; another player's input changing, 5.9 with the range, 18.5
+whole.
+What's left is mostly the whole confirmed tick and its whole commit each frame,
+and the arena switching between the confirmed and held predicted states (a
+restore each way; in this bench also the server's, in one process). A
+predicted world in an arena of its own can't: an arena's bytes hold pointers
+to where it is (notes/box3d.md). Running confirmed ticks in batches while
+what's near goes as predicted would cut the switching, at the cost of the
+confirmed world (far entities drawn, verified handlers) and divergence checks
+lagging up to the batch: the owner declined it (2026-11-04, "stop here").
+
+Gaps:
+- Singleton systems going through queries still run far entities in predicted
+  ticks unless their queries say `without Far`. A system's `mut` query rows
+  write far entities like any other: the owner's decision, same day ("written
+  like any other is correct").
+- The filter's per-row cost in ticks that have no tags (the server's,
+  confirmed ones): a world-level "nothing is tagged" would let them take the
+  unfiltered loops.
+- `World` reads in views (`world.Get<Body>(e)`) of a far entity are the drawn
+  world's, not blended from the confirmed one.
+- `near_same` compares every list and command whole (heap hash): a list
+  written anywhere in the confirmed tick, a far entity's or a package's, reruns.
+  Comparing near rows' lists alone would keep more.
+- Box3D: holding many bodies marks most of the arena, so a held world's commit
+  and the next restore copy most pages (6.9 ms a frame against 5.8 whole in the
+  table). Holding without moving bodies between sets would avoid it.
+
+## A client's own ticks of its projection; repairs that back off (2026-11-04)
+
+Mount & Rifle played alone (route `tools/performance-route.txt`, seed 42, release)
+had its client's own ticks differ from the server's projection every ~62 ticks for
+the whole route: 1,338 to 1,357 repairs of 3-4 MB projections, packed and loaded.
+A scratch probe (in `session.c` at each divergence, with the generated
+`client_state` marking where every singleton, entity and component starts;
+kept with the findings, not in the tree) compared the server's projection after
+the tick with the client's run of it, from a projection both had alike. Four
+causes, two of them the engine's. That was the lone player's own client, before
+the host shared the server's world (the next section, merged the same day); the
+causes are any remote client's, and the measurements below are from before
+that change.
+
+- **A client's hidden spawns were in its projection.** On a client
+  `Visibility.CreateGroup` returned -1 whatever the audience, and
+  `tide_visibility_entity` called every live entity visible, so a bot spawned into
+  `Audience.None` by the client's own tick was in its projection and hash and not
+  in the server's (315 parties at the first probe). Now a client's group is 0 (the
+  default handle) when the audience has its player and -1 otherwise, and
+  `tide_visibility_client_hidden` (the entity or its scene in a group below 0)
+  keeps such entities out of `client_state`, the client's `client_hashes`
+  (audience none instead of all), `tide_visibility_component` and
+  `client_destroyed`. They stay in the client's world, and its systems see them,
+  as the server's do. `Set` and `DestroyGroup` still do nothing on a client.
+- **`[Native]` fields went in projections, the Resident didn't.** A client that
+  loaded one had Box3D's bookkeeping (`Body.id`, `owners`, colliders, history)
+  saying the bodies existed and an empty C world, so every query missed and its
+  tick rewrote the bookkeeping. `client_state` and `client_hashes` now write each
+  singleton and component with its `[Native]` fields 0 (`gen_client_bare` for a
+  component's copy, `gen_client_put_singleton` for a singleton's, on the heap), so a
+  loaded world has them 0, as on a shard an entity comes to, and the package makes
+  its world again in the client's next tick (notes/box3d.md, same date); a client's
+  own handles don't count in its hash. The value codecs themselves are unchanged:
+  local handlers' event records and shards' entity records use them too, and a
+  local handler taking `Physics` keeps its stamp. Box2D's `image` and both
+  packages' collider and rewind lists no longer reach clients.
+- **Game code** (written up for the game's thread: public `Works.hauler` checked
+  with `world.Has` against a hidden party, and a public `Pathing` budget spent by
+  hidden bots). With those changed in a scratch copy, what's left is what can't be
+  predicted: the game's own commands, and parties coming into or out of sight.
+- A client's spawn into a group it's in (the player's own party) has the client's
+  group number (0), the server's another, so it's repaired once. Leaving
+  VisibilityGroup numbers out of the codecs fixed that and broke shards, which
+  move entities and shared singletons with them (`shards_visibility`, Earth); left
+  as it is.
+
+`recipient logical state schema 3` (`asset_usage.c`) is in the simulation
+identity: builds before and after differ in projection bytes and refuse each
+other. The wire and `PROTOCOL` are unchanged.
+
+**Repairs back off** (`session.c`, `repair_gap_after`): a stream (two repairs
+within a second) that has to start again within a second of the last one's end
+repairs half as often as that one did. The server packs a streamed repair only
+`repair_gap` ticks after the last (`repair_streamed`): 2, 4, 8 ticks, to a quarter
+of a second at most, and at most a quarter of the game's `maxRewind` (the frames a
+client presents must stay young enough to rewind to: 7 ticks for Mount & Rifle's
+0.5 s, 3 for a quarter of a second). After a second with no stream it's every tick
+again. The client's verified world falls that much further behind, as on a slower
+network; reconnects and migration reset it.
+
+Tried and taken back: letting a client in a stream confirm frames with its own
+ticks and ask again only where one differs. It cut the scratch-fixed game's repairs
+from 669 to 56, but a tick a client confirms itself (by the order-free projection
+hash) can have its rows in another order than the server's (tables fill and settle
+holes that hidden entities left), so the next repair's delta, made against the
+server's bytes, failed against the client's and it resynced
+(`net_alone_seen_hearing_its_events_runs_its_ticks`). That needs a repair without
+a base (a wire change) or projections in a canonical row order (which changes the
+order a client's systems see rows in): the owner's call. The same can happen today
+to an exact repair after ticks a client confirmed itself.
+
+Tests: `tidec_e2e_visibility_predicted` (a client loading the server's projection
+each tick and running it: hidden spawns out of its projection, spawns into an
+`Audience.All` group seen, and game `[Native]` fields neither sent nor hashed, over
+a reload too); `tide_box3d_projected` (notes/box3d.md);
+`visibility_repairs_back_off_while_a_client_goes_on_differing`
+(`tests/test_visibility_session.c`: one client on a loopback with no delay, every
+tick differing for 8 s: 137 loads, 18 in the last 4 s, most lag 14 ticks, against
+489, 240 and 1 before; with `maxRewind` 0.25 s, a 3-tick gap and lag 3). All three
+fail against the code before. `session_view_time_large_changing_repairs_keep_chunks_before_welcome`
+is unchanged (292/320 bounded stamps, worst lag 18); with a quarter-second gap and
+no rewind cap it had fallen to 263/320.
+
+Validation: the whole native release suite (3,029 CTests, with the private
+prototypes configured) passes; on `web-debug` (WASI, Node 24.22.1) and native
+`sanitize` (Windows ASan), the engine test binary, `visibility_predicted`,
+`visibility_projection`, `visibility_lists`, `shards_visibility`,
+`net_alone_seen` and `tide_box3d_projected` pass (web also `visibility_groups`
+and `visibility_lifecycle`). The docs site builds. Other operating systems,
+Android and MinGW are CI's.
+
+Measured on Mount & Rifle, the same build but for the session, two runs each (the
+machine was shared and loaded, so times are high and vary; counts don't): repairs
+packed 1,338 / 1,346 before, 401 / 424 after; pack and load 12.9 / 15.5 s over the
+route before, 5.3 / 4.7 s after; match phase 8.96 / 10.56 ms a frame before,
+7.89 / 6.55 after.
+
+The former “after the last entity” spawn rule was resolved on 2026-11-06 by
+logical identity above, without transferring private counts or histories.
+
+Still open (the owner's):
+- A repair base that doesn't depend on row order (above), which would let streams
+  stop as soon as a client's ticks go as the server's.
+- Physics queries from views of a world just loaded find nothing until the client
+  ticks it (`Physics.Ready` is false at stamp 0). No game hits this today.
+- Moving Box3D/Box2D bodies start again without warm starts or sleep state on a
+  client after each projection, so their motion can differ until corrected.
+- The backoff's numbers (a second, doubling, a quarter of a second, a quarter of
+  `maxRewind`) are picks.
+## The host's player shares the server's world (2026-11-04)
+
+The owner's decision: the server's machine keeps no client world. Its player stays "a client" only in being a player like any other: it joins (`PlayerJoined`), has a `PlayerID`, owns entities, sends input and commands over the in-process loopback. The host may see everything the server does, so the match is ticked once there whoever else is in it. That replaces "A match played alone ticks once" below: `twin_ran`, `twin_take`, `twin_takes`, `host_runs`, `server_due`, `tide_client.host`/`host_due`/`taken_from`/`taken_to` are gone (`taken_world` stays, for remote projection reloads).
+
+What's built (`engine/src/session.c`):
+- **`tide_client.mirror`**, the server of the same session, set where the session makes its own player (`start_server`, `tide_session_take_over`). Never for shards (their clients are `tide_shard_client`'s) or a joined match.
+- **Joining**: a mirror's HELLO claims neither a world nor `can_start`, so the server sends the plain world. On the WELCOME naming it, the client doesn't receive it: `load_snapshot` copies the server's world as it is (`snapshot_tick` = the server's tick) and the client then says it has the transfer whole (`got_number`). A later transfer is acknowledged the same way. Visibility games skip `hear_visibility_tick` at that load (the world isn't a projection).
+- **Each server tick** (`server_tick`): `mirrored` is the session's player while `tide_session_update` updates the server (`tide_server.twin`), level with it (`verified == ahead == tick`, loaded, the same build). If it is and the game has local handlers that hear the match, the tick runs with `tick_events` into `tide_hearing_begin(&c->hearing, tick)` (`mirror_hearing`), or for visibility games with `tick_client_events(..., journals, all)` (below). After the tick, `mirror_tick` ends and confirms that hearing at once (predicted and verified handlers each hear it once), copies the server's world into the ring at `tick + 1` (`copy_world`: pages shared until either side writes), and sets `verified = ahead = tick + 1`.
+- **`play`** for a mirror is `mirror_play`: no frame is applied, predicted, hashed or repaired (frames for ticks before `verified` are dropped as they arrive). Behind the server (after a build change, or a ring that had no room) it takes the server's world whole (`take_server_world`, now a full copy for a mirror even with `client_state`) and skips the hearing to there. It runs the clock part of `play` (`clock_back`, `keep_early`, sampling inputs up to the clock, `early_settled`). `adjust_delay` does nothing for a mirror.
+- **Generated callback** (owner-approved design; compiler side): `tide_game.tick_client_events(world, jobs, per_player, all)` gets `all`, recording everything the tick sent, as `tick_events` does, into what was the generated `ignored` log. NULL keeps the old behavior. The Session ABI marker says `host events (1)`. Handwritten test games ignore it.
+
+**The server does nothing for its own player that only a world of its own would need** (the owner: "seems like something we should do"). `tide_server.mirrors_local`, set by the session beside `tide_client.mirror`, makes `mirrors(s, c)` true for its `local` connection:
+- `start_snapshot` packs nothing: the transfer is named and empty (`SEND_WORLD`, or `SEND_CLIENT_WORLD` with projections, 0 bytes), and it ends only once the client says it has that number (`on_client`: an empty transfer used to end at the first CLIENT, before the WELCOME naming it was even read, and started again and again).
+- `send_frames` sends no frame. The connection has every tick (`frame_ack` = the server's tick, never catching up or sent the world again), and gets one SERVER packet an update for its times, its inputs' wait and its uploads.
+- `server_tick` leaves it out of the recipients: no projection hash (`client_hashes`), no filtered inputs or journal (`store_client_frame`).
+- Big commands don't wait for it to download them (`everyone_has`), and none goes down to it (`send_downloads`).
+
+Measured with `net_alone_seen` alone (sanitize build, the change switched off by a scratch environment variable for comparison, three runs each): the host's session updates over 360 frames took 15.1 to 15.9 ms, against 25.9 to 28.3 ms. With a guest in, the guest's projection work is most of it (30.6 to 35.7 ms either way).
+
+Tests: `net_a_host_with_another_player_ticks_once` also checks the host's player was sent no world bytes; the earlier tests above cover the rest. Validation: full native `sanitize` (3,036 CTests, prototypes included): all pass but `tide_server_smoke`, which failed once to listen on UDP port 7777 that something else on the machine held, and passes 20 runs of 20 alone (its dedicated server never mirrors). Web and other platforms are left to the Build workflow at the owner's word.
+
+What changes for games: the host's views and local code see the whole match, hidden entities included (the spec's State visibility now says so; whether its views should be masked by its player's audience is Open there). Its local handlers hear every match event, including events from hidden state, which `hears_match_events` no longer decides. `tide_client_status.run_ticks`/`ahead_ticks` stay 0 for the host. The other machines are unchanged.
+
+Gaps:
+- A lone developer no longer gets the twin's desync check (the host's client hashing its own run of each tick against the server's). Nondeterminism shows only with another machine in (`--players 2`, the networking tests). An opt-in check (running the twin again) was offered to the owner and isn't built.
+- The host's presentation has no prediction correction to smooth, and draws the server's tick as it is.
+
+Tests: `net_a_host_with_another_player_ticks_once` (`compiler/tests/e2e/net_test.c`: a host and a guest over 30 ms, 10 ms jitter and 5% loss, 300 uneven frames; the counted game ticks exactly once per confirmed tick, the host's player runs none, its world is the server's every frame, both players' inputs reach the match, no resyncs). `net_alone_seen` now checks the host instead: alone and with a guest, ticks run equal ticks confirmed, the host has all 8 walkers every frame while the guest sees fewer, and every Rang and every walker's Shown is heard once and once as verified (before, a game hearing Rang ran both ticks, and the twin's Shown counted only walkers in sight). `delta_players_coming_back_to_a_match_that_changed_hands_get_what_they_lack`: the new host's player receives 0 world bytes (it shares its server's world); the guest still gets what it lacks. The existing `net_a_session_played_alone_ticks_once` and `net_a_session_takes_a_new_build_of_its_game` pass unchanged.
+
+Validation: full native `sanitize` (3,028 CTests, Windows ASan, tide-prototypes included through `TIDE_EXTERNAL_DIRS`) and full `web-debug` (2,899, engine only) pass, and the docs build. Other operating systems, Android and MinGW are CI's.
+
+## Projection hashes follow what changed (2026-11-04)
+
+Every tick the server hashes each player's projection (`client_hashes`). Its
+singleton part used to encode every public singleton into one buffer and hash
+it: in Mount & Rifle (Box3D's `Physics` with its rewind frames and colliders,
+the campaign's build-once `Atlas`, `Ground`, `Pathing`, ...) that was 1.8 ms a
+tick in release, more than the game's systems, and it grew with the world.
+
+The singletons now hash as trees (`gen_client_hvs`, `compiler/src/client_state_codegen.inc`):
+a value's bytes are its codec's (`tide_client_put<id>`), but each list, map, set
+and grid in it is the 8 bytes of its own hash, of its bytes made the same way.
+A container's hash is a function of its value alone, so the server and a client
+(their heaps laid out differently) agree on it as before, on every platform and
+build; it's only a different function of the same values, a 64-bit hash of
+hashes (`singleton tree hashes` is in the simulation identity). Text stays inline.
+Singletons holding nothing in the heap, entities, inputs and commands hash as
+they did; games with transform hierarchies still hash `client_state`'s bytes.
+
+What makes it cheap: a container of 256 bytes or more keeps its hash in a memo,
+by its handle and codec, with every heap page its value was read from (its own
+blocks, its chunks, its elements' text and containers, all it holds; a hit
+counts its pages into its parent's). The memo says the hash again while each of
+those pages, by its place, has the same size, start and page hash. Pages keep
+their hashes until written (`tide_heap_write` or a copy marks them), and the
+server has just hashed its world, so an unchanged container costs a comparison
+a page; a changed one is encoded again, its unchanged children taken from the
+memo. A value that reads anything outside the match's heap (the pack's) isn't
+kept. The memo is only a shortcut to a hash the value has: a page hash
+collision is the only way it could be wrong, which is what the world's own hash
+already rests on. Memos are the process's (`tide_client_memos`, 8, globals so no
+thread's exit loses them), one per world last hashed, taken under a spin lock
+and busy while a thread hashes with it; what a call didn't use goes once it's
+most of what's kept. No runtime function or `tide_game` member was added:
+generated code reads list, grid and page headers and calls `tide_heap_block_hash`.
+
+Bug found on the way, kept as a test: the walk records each page once in a row,
+and comparing against the last page recorded before the container's own start
+left that page out of the container's set (a grid whose directory shared its
+page with the list before it was taken from the memo after a cell changed).
+
+Tests: `tidec_e2e_visibility_hash_memo` (`compiler/tests/e2e/visibility_hash_memo.tide`):
+singletons with a list of structs with text and lists, a map of lists, a set, a
+list in chunks, a ring of frames of points and notes, a grid; a tick changes one
+thing deep in one of them. Over 150 ticks each projection hash differs from the
+tick before, equals itself again, the snapshot of the tick before still hashes
+as it did, and a world the projection loads into (another heap) hashes the same,
+warm and, on odd ticks, after eight other worlds pushed its memo out. The 150
+hashes together are pinned, and `tidec_e2e_visibility_hash_memo_off` (the same,
+`TIDE_CLIENT_MEMO_OFF`: nothing kept) must give the same pin. A second case
+changes values in place (a byte in a chunked list, an int in a list in a list's
+element, a point of a frame), with and without a snapshot sharing their pages:
+each change shows and undoing it gives the hash back. Validated native release,
+`sanitize` (Windows ASan) and `web-debug`: these, the visibility, double,
+event_containers and shards_visibility fixtures, `earth_tests`, `bench_earth*`
+and `tide_cornerculling`, the games whose generated code changed (every game's
+simulation ID moves, as with any compiler edit).
+
+Measured (Windows, shared machine, so runs vary):
+- Microbenchmark, that fixture's game in release (551 KB projection, one thing
+  changed a tick): projection hash 0.25-0.28 ms a tick before, 0.042 after;
+  hashed again with nothing changed, 0.25 ms before, 0.001 after.
+- Mount & Rifle (HEAD 6e963ed, tide 0.6.0-dev from this branch with and without
+  the change, route `tools/performance-route.txt`, seed 42, 3230 frames,
+  1280x720, `--profile --profile-warmup 200`, a scratch timer around
+  `client_hashes` in session.c): release 2.43, 2.21 and 2.51 ms a tick before,
+  0.49, 1.03 (a run the machine's load slowed throughout) and 0.57 after; debug
+  4.24 before, 1.57 after. The profile's match phase moves by about that much
+  but is within the machine's noise between runs.
+
+What's left: changed containers are encoded whole (a big list whose one element
+changes is encoded again, not its changed chunk); entities are still hashed
+every tick, each from its components; and the client's verification hash goes
+the same way but on a world loaded or predicted afresh it finds less unchanged.
+
+## Service the match while desktop presentation waits (2026-11-03)
+
+The owner prioritized networking after the focus measurements below. Desktop
+Vulkan's end-present frame fence now waits to the next match deadline and calls
+the standard host's match-only update between waits. The GPU still owns its
+unfinished resources, and the existing two-frame queue limit remains. Rendering
+details and remaining blocking points are in rendering.md; clock, local event,
+input and correction-aging contracts are in standard-host.md.
+
+This changes host scheduling, not the session protocol, world data, prediction
+policy, tick hashes or Tide language. Fresh local input is still polled at the
+rendered frame rate; remote input and session traffic can progress during this
+specific wait. GPU execution/scheduling time and the background FPS difference
+are separate from the networking improvement.
+
+Windows ASan validation passes all 2,989 native CTests, including the forced
+GPU waits, real host/session fixture, generated correction/RNG regression,
+reload/embed, input, rendering and networking coverage. The browser fixture
+uses an explicit exit after the shared test runner: returning from main alone
+leaves Tide's asynchronous page alive. Its three assertions passed on the first
+web run, and its completion wrapper now passes the browser runner too; the
+updated fixture also passes again natively. Logs are in build/focus-probe.
+The complete web-debug run passes the other 2,873 tests, including WebGL,
+WebGPU and D3D11. With that fixture's recheck, all 2,874 web tests pass. No
+test assertions were loosened, deterministic hashes changed, or extra CI
+dispatched. Other desktop operating systems and Android remain CI coverage.
+
+An optimized Mount & Rifle comparison used the same checkout-built executable
+with the update hook disabled/enabled, seed 42, two direct-UDP peers, a 60 Hz
+client, scripted E to request on-foot play and 60-second bounded muted runs.
+The scratch end-present fence hook held completion for 100 ms on each host
+frame from roughly seconds 12–59, while still requiring the actual GPU fence
+to complete before resource reuse. This is injected presentation delay, not a
+measurement of 100 ms of GPU work. The steady 15–58-second interval verified
+host=1/remote peers=1 and client=0/connected for every sample in both runs.
+
+Host gaps between session updates fell from mean 109.58 ms / p95 111.39 ms /
+max 112.62 ms to 13.33 / 18.20 / 19.36 ms. It serviced 2,818 updates inside
+waits in that interval. Host drawing stayed slow (9.13 vs 9.46 FPS), as intended;
+the client's rate remained 59.54 vs 59.52 FPS. Neither peer accumulated late
+inputs during either measured interval. These are update-cadence measurements,
+not end-to-end button/display latency or an Internet benchmark. Final logs,
+instrumented build scripts and network-summary.json are in build/focus-probe;
+the four valid stall-before/network and stall-after/network processes exited 0.
+
+The intended new foreground/background comparison was inconclusive: neither
+window ever reported foreground, and the UI screenshot showed desktop wallpaper.
+The desktop-state cause was not established, so those runs are excluded. An old
+solo-play Escape step also canceled a client's lobby join in an initial trial;
+the final script omits it and checks peer roles throughout. The earlier measured
+focus bottleneck below motivated the patch; no new focus-FPS improvement is
+claimed, nor any driver-policy change. New local input still waits for the next
+normal device poll, and the other blocking GPU boundaries remain unchanged.
+
+## Background rendering delays the next session update (2026-11-02)
+
+The owner's Mount & Rifle focus report was reproduced with two independent
+matches on the same PC, excluding match traffic as the cause. Owner-approved
+visible tests used muted, auto-closing 60-second windows; all changes were
+diagnostic copies under build/focus-probe, with TIDE_HIDDEN otherwise retained.
+Current checkout-built game/engine, seed 42, scripted on-foot view, Vulkan FIFO,
+RTX 4080 SUPER driver 617.42, 1920x1080 desktop. No settings or production code
+changed. Real elapsed frame time and onscreen presentation replaced the hidden
+runner's fixed time/offscreen target; ordinary scripts still bounded the run.
+
+At 1280x720 with overlapping windows, the clean steady interval (12-59 seconds)
+measured foreground 143.9 FPS versus background 23.8 FPS. Game-frame CPU work
+was 4.19/6.78 ms; presentation wrapper 2.73/35.19 ms, including GPU fence waits
+of 2.50/34.96 ms. Background fence p95 was 56.51 ms. Acquisition and queue-present
+calls themselves were negligible. GPU timestamp intervals were 4.93/41.28 ms;
+these include elapsed scheduling gaps, not just exclusive execution by that app.
+
+A repeat with the test windows requesting focus in alternating ten-second
+phases moved the slowdown with focus: each copy ran about 144 FPS foreground
+and 30-32 FPS background. Side-by-side 940x700 windows also differed: 144 FPS
+foreground, 82-83 background. Different dimensions mean this is not a measured
+occlusion-only comparison, but coverage is not necessary for the slowdown.
+Disabling the foreground copy's drawing, while keeping its game updates capped
+at 60 Hz, raised the background game to 132 FPS. This implicates
+competing rendering/presentation workloads rather than a fixed Tide focus cap;
+the driver's exact scheduling decision is not established.
+
+The dominant wait is the next-frame fence in `tide_gpu_vk_present`, after the
+host's frame function on the same thread as its session updates. Thus a GPU-bound
+background host/client also updates its match less often. Short-stall clock
+recovery below does not remove persistent rendering waits. Separating update
+cadence from readiness to render is follow-up work, not implemented by this test.
+
+An external UI activation helper caused a separate access violation in GLFW's
+`_glfwPollEventsWin32` modifier-key check (`win32_window.c:2159`), captured with
+LLDB in build/focus-probe/debug-A.log. Clean runs avoided that helper and exited
+normally; no ordinary-human focus crash or underlying cause is claimed. Final
+measurements/logs/build scripts are in build/focus-probe (clean, timed, side and
+capped runs; analyze-final.py/final-summary.json). No browser, other GPU or
+other-OS coverage; no engine fix or new correctness-test claim accompanies this
+measurement-only investigation.
+
+## Short server stalls recover their input lead promptly (2026-11-02)
+
+A half-second server pause left clients sending inputs hundreds of milliseconds
+too early. It fit inside the prediction window, so `clock_back` did nothing;
+ordinary `keep_early` waited 2 or 10 seconds before shedding the excess at 10%.
+Other machines consequently saw fresh actions late well after the pause ended.
+
+`clock_back` now also detects a smaller excess from two timed server replies:
+the input clock is more than 100 ms (and more than two ticks) beyond the server
+tick plus the configured lead and that reply's full round trip. Slow/reordered
+traffic alone does not establish this excess. It removes the proven difference
+at 50% of elapsed time, retaining one extra tick for the fractional server/RTT
+parts rounded down. The existing two-reply hard reset beyond the input window
+keeps its separate evidence counter and behavior.
+
+This path never rewinds sampled inputs, replaces sent bytes or resets prediction.
+Prediction temporarily advances at half speed, continuing to sample fresh input;
+resetting the clock backward instead would stop sampling until previously sent
+ticks came round again. No language, wire, game callback or simulation-state
+layout change. Normal lead tuning remains unchanged. Fast correction may replace
+ordinary slow correction, but cannot re-add unfinished fast debt. Wait feedback
+is ignored until inputs sampled under the adjusted clock have run. Timed replies
+can establish excess while visibility repairs lag; they do not depend on having
+confirmed every advertised tick, since smooth recovery rewrites no history.
+
+`seen_a_short_server_stall_recovers_without_freezing_own_input` tests two 500 ms
+server pauses on the same connection, 30/60 Hz matches, 60 Hz updates, clean
+30 ms/way and 80 ms/way with 10 ms jitter/3% loss. It checks monotonic sampling
+and prediction, actual local presentation response, sample gaps, server response
+to a new press two seconds after each pause, input wait and no resyncs. Linking
+the same fixture with the original session fails 16 latency assertions. At
+60 Hz on the lossy profile the server response falls from 31 frames to 7 after
+both pauses; across all eight cases, later input wait stays at most 70 ms,
+local presentation responds within one frame at 60 Hz/three at 30 Hz, sampling
+gaps stay within two/four frames, and no input is late. The initial experiment
+without the extra tick caused late inputs after recovery; the cushion fixes it.
+
+Mount & Rifle paired diagnostic: identical compiled game/host, seed 42, 60 Hz
+frames, 80 ms/way, 10 ms jitter, 3% loss, server updates paused from 7 to 7.5 s.
+A press 0.83 s after resuming appeared in the host-side world in 517 ms before,
+283 ms after; a press 2.5 s after resuming took 517 ms before, 150 ms after
+(the previous no-stall baseline). During recovery the fixed local simulation
+responded in 17 ms and its camera in 33 ms; afterward, immediately/17 ms.
+Adaptive input delay stayed zero, with its real CPU clock enabled. These are
+simulated elapsed-time/world-state measurements, not display or Internet/WebRTC
+latency; the pause stops server updates only. Scratch artifacts and reproduction
+are in build/input-probe/fast-comparison.json and build-fast.py. The game's
+nightly pin is unchanged. The older reported inverted local/remote delay remains
+unreproduced; this is not a general fix for arbitrary repair or CPU backlog.
+
+Validation: Windows ASan and WASI pass the 15 session and eight visibility
+cases, plus the complete seen, net, net_join_big, predict, guess, view_time and
+visibility_lifecycle fixtures. Native/web repeated-stall measurements agree.
+Existing long-stall recovery, delayed/reordered replies, joins, adaptive input
+delay, prediction and repair checks pass. Independent source review identified
+the need for separate hard/soft evidence counters, included above. Other native
+platforms remain CI coverage; no browser or Internet transport test was run.
+
+## Received projections reuse decoded state (2026-11-02)
+
+Mount & Rifle now exercises the existing `reload_client_state` path for remote
+snapshots and repairs as well as solo takes. `unpack_client_state` first validates
+the delta and byte hash, copies the last accepted, never-ticked decoded projection,
+and reloads over its original bytes. Missing/refused reloads use the existing fresh
+loader. Re-serialization/hash, endpoint/frame hash and event-journal checks remain.
+Only an accepted endpoint replaces the cache; prediction never mutates it. Existing
+build-change, migration and destruction cleanup owns the cache. Games without the
+callback keep the old path. No wire, language or generated-C API changes.
+
+Cost: a remote client now retains one decoded projection and its bytes, using the
+same cache as solo takes. World pages share with snapshots; changed pages copy on
+write. This saves rebuilding static lists, maps and text during recurring repairs,
+not serialization of the delta baseline or the checks after decoding.
+
+Real-game experiment: current engine checkout, Mount & Rifle sources from
+D:/Projects/mount-and-rifle, optimized Windows build, two standard-host players,
+180 frames at 320x180, 80 ms one-way latency, 10 ms jitter, 3% loss. A scratch
+switch disabled only reload reuse in the same instrumented executable. Both runs
+decoded 41 projections, 39 eligible for reuse. Timed copy/reload-or-load work took
+10.1850 ms total fresh versus 5.7131 ms with reuse (248.4 versus 139.3 us per
+projection, 44% less). This is one paired run, not a whole-frame speedup or an
+Internet connection-time result. Scratch logs/scripts are in build/mp-probe;
+no timing calls, switches or logging remain in production.
+
+Connection investigation: the baseline 240-frame run at those network conditions
+loaded the remote initial snapshot at simulated time 0.833333 s: 56,244 compressed
+bytes, endpoint tick 19 versus advertised tick 41. This excludes room signalling,
+ICE/DTLS and actual bandwidth limits. Packing requests after the current update's
+ticks instead produced 1.05 s in the same seeded network (changed traffic also
+changes loss draws); that experiment was reverted. No initial-join improvement is
+claimed. The game's pinned nightly.14 was not changed or benchmarked here.
+
+Validation: 15 session/packet/view-time and eight visibility tests pass on Windows
+ASan and WebAssembly/WASI (Node 24.22.1). The extended view-time test uses reloads
+through lossy repairs, checks that each old world exactly matches its original
+bytes despite intervening prediction, and deliberately refuses every third reload
+to exercise fallback. Generated visibility_lists and net_alone_seen CTests pass
+on both platforms, covering unchanged-page sharing, fresh-load equivalence,
+truncated-codec rejection, prediction and solo takes. The real game's 240-frame
+two-client run also completes with the change. Other native platforms are CI's;
+actual Internet/WebRTC joining and browser rendering remain unmeasured.
+
+## Protocol 21: 64-bit handles (2026-10-30)
+
+`PROTOCOL` is 21 (`engine/src/session.c`, and the tests that write it by hand:
+`tests/test_commands.c`, `test_session_packets.c`, `test_session_view_time.c`,
+`packages/voice/test/voice_test.c`). Text, list, map, set and grid handles are
+64 bits (notes/ecs.md, 64-bit handles), so every layout holding one, every page
+and so every world hash changed: two builds on either side would connect and
+then disagree. On the wire, deltas carry a handle column's zero high words as
+runs of zeros, and the heap's numbers as varints (`tide_delta_number64`); raw
+world bytes carry the heap's numbers and the asset dictionary's places as
+`uint64_t`. Commands, inputs and recipient state carry values, never handles,
+so they change only by the sizes of structs. Received heaps are checked at
+least as strictly as before (notes/memory-safety.md, 64-bit handles).
+
+## A lone player's take loaded over the last one (2026-11-02)
+
+The owner approved a new generated callback for the follow-up below ("yes build it"). `tide_game.reload_client_state(world, data, size, had, had_size)` (`engine/include/tide/session.h`; generated by `gen_client_reload` in `compiler/src/client_state_codegen.inc` for every visibility game without transform hierarchies): `world` was loaded from `had` and is as it was loaded; it becomes what loading `data` would make it. It copies the world page by page (`tide_world_copy`). Then it goes past each singleton's and each archetype's bytes in both projections (`tide_client_skip<n>`, `tide_client_skip_rows<a>`: the value codecs' readers, making nothing) and keeps those whose bytes are the same. The rest are let go of, with what they held in the heap, before one `tide_heap_flush`, and read as `load_client_state` reads them. Entity slots are made again: those of a kept table from its rows, with their snaps as they were. Refused bytes leave the world as it was, as `load_client_state`'s do. Values come out as a fresh load's; only where the heap keeps them differs, and nothing reads that (a client's projected world is never sent, packed for others or hashed physically). The generated header's Session ABI marker says `reload projection (1)`, so hosts and games rebuild together. The wire, projection bytes and hashes are unchanged.
+
+The session (`twin_take`): where the game has the callback, the client keeps the last projection it took as loaded (`tide_client.taken_world`, never ticked) and its bytes (`taken_bytes`). It reloads that world over them, falling back to a fresh load when there's none or the reload refuses, then shares it with the ring's world (`copy_world`). `drop_taken` frees it with the build that loaded it: as a build changes (`client_set_game`, migration) and when the client goes. Games without the callback (with hierarchies, or handwritten) take as before.
+
+Measured on mount-and-rifle's route (as below): the match phase 0.48 and 0.50 ms a frame, the engine's part 0.34 and 0.36 ms (from 1.55 to 2.01 before any of this work, 0.59 to 0.68 after the first part). What's left is serializing and hashing the projection on the server and skipping the client's bytes to compare them.
+
+Screenshots: rendering on this route isn't the same from run to run (its draw-call count differs in every run of every build). In 2 of about 12 runs of builds with the reload, the final capture differed from the reference by one level in 6 pixels, the same alternate image each time. A build that ran the reload but presented a fresh load (a temporary experiment) gave the same alternate image in 2 of 8 runs, so the reloaded world's contents aren't its cause. The merged `dev` before the reload (9abc3c4bc, which brought in the quick frustum test and idle pack-image changes) gives it in 2 of 10 runs too, while 11 runs of the build before that merge never did. So the variation arrived with that merge and isn't this work's; it's left to whoever owns those renderer changes.
+
+Tests: `visibility_lists_reload_over_the_last_projection` (`compiler/tests/e2e/visibility_lists.tide`, whose `Churn` and `Grow` systems change some of the world each tick from the second: a singleton's list now and then, a component's text list, entities spawned and destroyed). Over 120 ticks each reload re-projects to the server's bytes and hash and has a fresh load's entity count. A tick predicted from it comes out as from a fresh load. On ticks that leave `Bulk` alone, its elements are still on the page shared with the world before (kept, not read again). Truncated new or old bytes are refused with the world as it was, and the heap stays within twice a fresh load's pages. `net_alone_seen` and the other visibility session tests take through the reload.
+
+Validation: full native `sanitize` (2,976 CTests, Windows ASan) and `web-debug` (2,864) suites, engine only, pass. Other operating systems, Android and MinGW are CI's.
+
+## A lone player's take, cheaper (2026-11-02)
+
+Played alone with visibility, every tick the server serializes its projection for the player (`client_state`), the client loads it (`load_client_state`, `twin_take`), the server hashes every player's projection (`client_hashes`) and the client hashed the world it had just loaded. In mount-and-rifle (big public singletons: a 22,500-byte `List<Footing>`, catalogs of structs with text, maps) that was nearly all of a frame's match phase: 1.59 ms of engine work against 0.16 ms of systems on its performance route (`tools/performance-route.txt`, release, seed 42, 1280x720, profile warmup 200, this checkout's tide before the change). A stack sample put half of the load in `tide_list_insert`/`reserve` (lists read an element at a time) and most of the rest in per-field writer/reader calls.
+
+What changed, none of it in a world's bytes, a projection's bytes, a hash or the wire:
+- **List codecs in runs** (`compiler/src/value_codec_codegen.inc`). An element type whose codec bytes are its memory (`client_codec_raw`: numbers, vectors, entities, players, enums, and padding-free structs and arrays of them; not bools, T?, text or containers) is written as one copy per run of side-by-side elements (through `tide_list_cached_at`) and read the same way. Every list is grown by `tide_client_list_grow` exactly as `tide_list_add` grows it: an add that would take room calls the same `reserve` through `tide_list_resize(count + 1)`, and the adds that wouldn't are done at once. Room is filled before the list grows again, since a block a list outgrows is let go of with its elements still in it and those bytes are hashed with the heap. So a loaded world, and a shard message or local-event record read with the same codecs, is byte for byte what it was. `tide_client_write`/`tide_client_read` inline the writer's and reader's common case for every field.
+- **A taken tick isn't hashed again** (`engine/src/session.c`, the confirmation loop): the frame's hash is the server's `client_hash` of the very world the client loaded, so the client accepts a tick it took (`taken_from`/`taken_to`) without hashing it. The server still hashes its world and every projection every tick; predicted, repaired and caught-up ticks are checked as before. A codec that loaded a world unlike the server's would now show at the next predicted tick rather than the taken one; the round trip is pinned by the visibility tests below.
+- **New pages from the spares** (`engine/src/page.c`, `tide_page_new`): a page of a size kept spare (4 bytes to 16 KiB) is one let go of, zeroed, rather than `calloc`'s: a world loaded every tick takes as many as it let go of. Other sizes are still the system's.
+
+Measured on the route (one tick a frame; the machine is shared, so runs vary by about 20%): the match phase from 1.76 and 2.26 ms a frame before to 0.90 and 0.78 after; less the systems, the engine's part from 1.59 and 2.01 ms to 0.68 and 0.59. The route's final screenshot is byte for byte the same. Of what's left, the take's load is about half (reading text, with its UTF-8 checks, entities and maps) and serializing and hashing the projection on the server a third. Going further means not rebuilding what didn't change: loading over the previous tick's taken world, keeping singletons whose bytes are the same. That needs a new `tide_game` callback (a generated-C/runtime contract), so it awaits the owner.
+
+Tests: `tidec_e2e_visibility_lists` (`compiler/tests/e2e/visibility_lists.tide`): a projection with a chunked list of padding-free structs, a 20,000-byte list, small, padded and text lists, nested lists and a component's lists reads back to the same projection bytes and hash, and the loaded world's own hash (`tide_world_hash`: its heap's blocks and the bytes freed blocks keep) is pinned at the value the element-by-element codec gave, taken with tidec before the change. Every truncation is refused with the world left as it was. The existing `net_alone_seen` cases check the take each frame. `pages_let_go_are_handed_out_again` (`tests/test_heap.c`) now checks a new page is a spare, zeroed.
+
+Validation: full native `sanitize` (2,976 CTests, Windows ASan) and full `web-debug` (2,864) suites, engine only (no external directories), pass; the one failure in each first run was that heap test's old assumption, fixed and rerun on both. Other operating systems, Android and MinGW are CI's.
+
 ## A match played alone ticks once (2026-10-30)
+
+Superseded on 2026-11-04 by "The host's player shares the server's world" above: the mechanism below is removed. Kept for the measurements and the reasons.
 
 A session that hosts its own match runs a server and this machine's client in one process, and each ran every tick: the client its prediction, the server the same tick with the same input. A game played alone paid for its simulation twice (a battle of 20000 fighters in the Bannerlord duel's tools/army: 11.9 ms a tick, 23.8 ms a frame at 60 ticks a second). Now, while `tide_session_update` updates its server, the server knows this machine's client (`tide_server.twin`), and a tick the client has run already as the server would is taken from it (`twin_ran`, a copy of its world) rather than run again: 11.4 ms a frame. Only when that's certain to be the same world: no recipient projections (`client_state`), no other player connected, the client predicting with nothing to catch up, repair or get again, its verified tick the one the server is about to run (so the world it ran from is the server's, checked by hash) and the frame as it predicted it (`as_predicted`: its own input and nothing else, no joins, leaves, commands or shard messages). Anything else, the server ticks as before. The client goes on hashing and confirming as it did.
 
 Tests: `net_a_session_played_alone_ticks_once` (each tick run once over 240 frames of changing input, the worlds alike every frame); `net_a_session_takes_a_new_build_of_its_game` counts a new build's ticks once, not twice.
+
+### Played alone, seeing part of the match (2026-10-30)
+
+The Bannerlord duel's campaign still showed "Ticks 2.0 a frame". It has visibility (its `Sight` system hides parties more than 9 map units from the player's), so its server ticks through `tick_client_events` and never reached `twin_ran`, which refuses `client_state` anyway. A lone player doesn't see everything: the visibility a game sets decides, alone or not, and the hidden parties aren't in the player's world, so the server can't take it. The other way round can work: the server's projection for the player (`client_state` of its world, loaded with `load_client_state`) is what the server confirms, so the client can take that rather than run its part of the tick (`twin_take`). In the session's update the client is told the ticks its server runs then (`tide_client.host`, `host_due`, from `server_due`). It doesn't predict the next of them (`host_runs`). The server runs it as always, then loads its projection into the client's world after the tick. The client confirms it as a predicted tick: the hash is checked, but `as_predicted` isn't, since whatever the frame held is in the world already (`taken_from`/`taken_to`; a prediction or a loaded world over those ticks drops the mark). The conditions otherwise match `twin_ran`'s: the client predicting, loaded, with nothing to catch up, repair or receive, the tick its next to run, no other player connected, the same build.
+
+What local handlers hear decides it. With visibility, the server journals only lifecycle events per player (Spawned, Destroyed), and the client finds Shown and Hidden in its worlds. The match's own events, though, a player hears only from its own run of a tick (docs/spec.md, visibility journals). So the take applies only to games whose local handlers hear none of those: `tide_game.hears_match_events`, generated when a non-local event other than the four has a local listener (owner's choice, 2026-10-30, over journaling the match's own events from the server's tick, which would let events computed from hidden state reach local code). The campaign hears its combat events (`combat/sounds.tide`: Clashed, Struck, Swung and others), so it still runs both ticks: at about 0.05 ms a tick there, around 0.05 ms a frame.
+
+Tests: `net_alone_seen_ticks_once` (`compiler/tests/e2e/net_alone_seen.tide`: walkers passing in and out of a lone player's sight, spawned and destroyed; it claims `hears_match_events` false. Each tick runs once over 360 frames of uneven length, the player's projection is byte for byte the server's every frame, and Shown is heard once and once as verified). Before the change it ran 764 ticks for 360 confirmed. `net_alone_seen_hearing_its_events_runs_its_ticks`: the same game as generated, hearing its `Rang`, runs both and hears every Rang.
+
+In that game, without the take, `verified Rang` is heard for 2 of 13 Rangs predicted. That is the documented behavior (docs/spec.md, Ticks a world sent again skips), not a hearing bug. The walkers come into sight about once a second, and each time the client's tick differs from the server's projection. Two repairs within a second start a second of streamed repairs (projected repair delivery, below), and a mismatch soon after a stream starts another. So the client spends most of its time on repaired ticks, which skip their hearing records (`tide_hearing_skip_to`).
+
+The campaign, measured as a lone host idling on the map over 600 ticks (instrumented nightly 0.6.0-nightly.1 engine), spent 55 ms on server ticks and 45 ms on client ticks. It also ran 300 repairs: 51 ms packing on the server and 100 ms loading on the client. With the take forced on (its combat sounds lost; measurement only) it spent 50 ms on server ticks and 128 ms on takes (a 69 KB projection serialized and loaded each tick), with no repairs. Without repair streaming for the local connection it mismatched 587 ticks of 600 and took over 2 s, so streaming stays.
+
+The campaign mismatches nearly every tick because its public `Crowd` singleton (`combat/strike.tide`, `Gather`) is rebuilt each tick from every `Fighter`, including fighters of AI battles hidden from the player. That also sends the hidden fighters' positions to every player. It is a game fix (a crowd per battle, hidden with it, or local), handed to the duel's thread on 2026-10-30. A compiler warning for public singletons written from queries that can match visibility-restricted entities is a possible follow-up, awaiting the owner.
 
 ## Protocol 20: rows entities left are holes (2026-10-29)
 
@@ -663,8 +1978,9 @@ cannot become the full authoritative server. Source-code hot reload remains a
 separate supported `tide_session_migrate` path; the hosting player's replacement
 world is projected before adoption.
 
-Hash/repair partitioning is currently internal and provisional: one canonical
-projection hash goes each tick, no hierarchical page-hash negotiation or inferred
+Hash/repair partitioning is internal and provisional: one canonical projection
+hash goes each tick. Protocol 24 adds on-demand canonical 16 KiB block-hash/need
+negotiation for large repairs; no hierarchical partition tree or inferred
 dependency graph is implemented. Steady corrections put a client's verified
 world up to 1.5 s behind at 133 ms round trips (`notes/benchmarks.md`, Earth
 under load).
@@ -685,7 +2001,8 @@ and grew with the square of the players):
   hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
   and anchors differ. A transfer's check is now the hash of the bytes the
   loaded world encodes to again (it compared `client_hash`, which was the same
-  hash). `recipient logical state schema 2` is in the simulation identity.
+  hash). `recipient logical state schema 2` is in the simulation identity
+  (with `singleton tree hashes` after it since 2026-11-04, above).
 - **Inputs** (`tide_game.client_input_masks`): which slots each recipient may
   have, before and after the tick, from each slot's owner's entities' audiences
   intersected once; the session reads every slot once and packs each changed
@@ -777,7 +2094,7 @@ counts and remaining platform coverage are in notes/language.md.
 
 Self-contained restoration currently omits pack-offset affinity along with optional page origins. Such retained payloads may use full dictionary transmission even when identical catalog bytes are installed; explicit shared-base reuse still works. This is an encoding-size gap, not a value/hash or fallback failure.
 
-The production `tide_game.pack_delta` callback now takes `bool assets` before its size output. The existing public generated `tide_world_pack_delta` remains self-contained by default. HELLO advertises the SHA-256 of exact original pack-file bytes; wants/lacks requests advertise it too, with no added steady-tick bytes. Only equal nonzero digests enable pack references. A failed snapshot decode disables references for that client and uses the existing retry path to obtain self-contained state. Old protocol peers/builds reject through protocol/build identity. Generated headers carry the session ABI marker for all games and the retained-heap marker where applicable; hosts and games rebuild together.
+The production `tide_game.pack_delta` callback now takes `bool assets` before its size output. The existing public generated `tide_world_pack_delta` remains self-contained by default. HELLO advertises the SHA-256 of exact original pack-file bytes (since pack format 4, the digest the build wrote into the header: notes/assets-and-files.md); wants/lacks requests advertise it too, with no added steady-tick bytes. Only equal nonzero digests enable pack references. A failed snapshot decode disables references for that client and uses the existing retry path to obtain self-contained state. Old protocol peers/builds reject through protocol/build identity. Generated headers carry the session ABI marker for all games and the retained-heap marker where applicable; hosts and games rebuild together.
 
 Heap dictionaries carry ID32/count4/element4/users4/hint4 and either full bytes, a portable pack-file offset or UINT32_MAX for explicit XOR-base dictionary reuse, followed by one uint32 descriptor location per lease. The decoder verifies exact ID and shape and checks each registered descriptor; world hashing authenticates lease ID/location/count independently of registry order. Raw saves always include bytes. Detached page-sized list chunks may carry an asset-relative XOR region; the encoder compares actual complete full/patch sizes including 48 bytes of identity/slice metadata and picks patch only when smaller. Dense changes fall back to full. Patch decoding bounds the source slice, proves current immutable content and reconstructs ordinary page bytes; every result must satisfy heap descriptor/lease validation and the world hash. ECS regions retain their existing format. Save pages and small inline edited lists do not use asset patches yet.
 
@@ -795,7 +2112,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **A command's ordering is its type's, per player** (agreed 2026-10-06; built the same day, the picks Provisional in `docs/spec.md`, Commands): `[Channel(Channels.Uploads)]` on a `command`, with an enum member of the game's, puts it in a channel of its own, in order among that channel's commands and against nothing else; `[Unordered]` gives it no order at all. The server still picks the tick, and every handler runs in the tick's end queue in the server's order. What's built, and what code relies on:
   - **Channels are numbered in the world's state, not named there:** 0 is the default, and the members `[Channel]` names are 1 to N in the order of their enums' declarations and then their members (`number_channels` in `compiler/src/check.c`, `program.channels`; `decl.channel`, `decl.unordered`), 63 of the game's own at most (`TIDE_COMMAND_CHANNELS_MOST`). `tide_game.command_channels` says how many (0 for 1), and `TIDE_COMMAND_UNORDERED` (`UINT32_MAX`) is the unordered ones' channel on every contract that takes one. The channel is never on the wire: the command's type is in its first 16 bits, and `check_command` says the type's channel, so a client can't put a command in another's.
   - **The sequence state is the hidden `tide_command_state` singleton** (`compiler/src/codegen.c`): `seq<p>` for the default channel, as it was, then `seq<p>_<k>` for channel k, then, only in a game with an unordered command, `top<p>` (the highest id applied) and `seen<p>` (a `long`: a bit for each of the `TIDE_COMMAND_WINDOW` ids down from the top). So a game with no channel attributes has the world layout it had. `tide_game.command_applied(world, player, id)` reads the window (NULL in a game with no unordered command): an id older than the window counts as applied, which is why a client never has more than 32 pending unordered ids, allocated in sequence from the top. An unordered command's id goes in `sequence`'s place everywhere.
-  - **A `List<byte>` field is a file's bytes** (`type_has_bytes`): on the wire as a varint count and then the bytes on a whole byte (`tide_command_align`), packed into room the list's count sizes, through `tide_list_flatten`, and read into a scratch list (`tide_list_from`) that `tide_own_` copies into the match's heap with the rest of the event. A command with one is `TIDE_COMMAND_LIMIT` (4 MiB) packed bytes at most, any other `TIDE_COMMAND_BYTES` (1024) as before; the error for any other list stays.
+  - **A `List<byte>` field is a file's bytes** (`type_has_bytes`): on the wire as a varint count and then the bytes on a whole byte (`tide_command_align`), packed into room the list's count sizes, through `tide_list_flatten`, and read into a scratch list (`tide_list_from`) that `tide_own_` copies into the match's heap with the rest of the event. A command with one is `TIDE_COMMAND_LIMIT` (4 MiB) packed bytes at most, any other `TIDE_COMMAND_BYTES` (1024) as before. Lists of other values came later (Commands holding lists of values, 2026-11-04, at the top).
   - **Over `TIDE_COMMAND_BYTES` a command goes in chunks** (`engine/src/session.c`: `MSG_UPLOAD` up, `MSG_DOWNLOAD` down, `PROTOCOL` 12): `CHUNK` bytes each, `COMMAND_CHUNKS_PER_UPDATE` (16) an update each way, under the inputs and frames, each sent again after `resend_after` without an acknowledgement. A client uploads one at a time (`send_upload`), the server acknowledges in its SERVER datagrams (`UPLOAD_PART`, the chunks it has, as a CLIENT says a world's; `UPLOAD_WHOLE`, with the download's number once it's published) and takes the whole command into the player's queue as any other (`take_command`). **No tick waits for a transfer:** when a big command's turn comes, the server publishes it (`publish_command`, `published`: `PUBLISHED_MOST` kept, until their tick's frame is gone), sends it down to each player (`send_downloads`, acknowledged in CLIENTs after what the world lacks), and puts it in a tick only once every player in the match has it (`everyone_has`; a player being sent a world, or catching up, is sent it with the ticks it lacks instead, as `needs_published` says by the tick of the world it was sent). The frame then names the download (`size` over `TIDE_COMMAND_BYTES`, then its number) instead of carrying the bytes; a client's `pending_frame` reads the names once its pieces are there (`read_frame_names`) and is complete once those downloads are whole (`frame_complete`). Its sender keeps the bytes and, told the number, says it has the download (`note_download`), so nothing goes down to it. The wire adds nothing for a game without commands (`g->command` guards both sides), so `net_a_match_costs_little_to_keep_going` stands as pinned.
   - **The local outbox** is `tide_outgoing_item`s (a malloc'd buffer, its size and channel) in the local state, `TIDE_COMMAND_OUTBOX` of them (32 a channel, the unordered ones counted as one), packed after the struct in `tide_local_pack` (each checked again as it's unpacked) and freed by `tide_local_free` and `tide_local_disconnected`.
   - Generated C: a game with no commands generates the C it did, byte for byte (old and new tidec over every game's source list); one with commands differs only in the contract's signatures, the outbox and `TIDE_COMMAND_CHANNELS` in its header, and so in its hash, which is one hash, not a layout change.

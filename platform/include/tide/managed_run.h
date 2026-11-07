@@ -130,6 +130,8 @@ typedef struct tide_managed_checkpoint {
     tide_player_set players, leaving;
     uint64_t digests[TIDE_GAME_PLAYERS];
     uint8_t identities[TIDE_GAME_PLAYERS][32];
+    tide_player_set banned; // Session.Ban and tide_server_ban: kept out for the rest of the match
+    char ban_messages[TIDE_GAME_PLAYERS][TIDE_MESSAGE_BYTES];
     uint32_t tick_rate, seed;
     float dt;
     bool closed, started;
@@ -148,11 +150,13 @@ uint32_t tide_managed_save(uint8_t *out, const uint32_t capacity)
     if (!out || capacity < total) return total;
     tide_managed_checkpoint *checkpoint = calloc(1, sizeof *checkpoint);
     if (!checkpoint) return 0;
-    checkpoint->magic = UINT32_C(0x324d4454);
+    checkpoint->magic = UINT32_C(0x334d4454);
     checkpoint->size = size;
-    tide_server_recovery recovery = {.digests = checkpoint->digests, .identities = checkpoint->identities};
+    tide_server_recovery recovery = {.digests = checkpoint->digests, .identities = checkpoint->identities,
+                                     .ban_messages = checkpoint->ban_messages};
     tide_server_recovery_state(tide_managed_server, &recovery);
     checkpoint->players = recovery.players;
+    checkpoint->banned = recovery.banned;
     checkpoint->leaving = recovery.leaving;
     checkpoint->tick_rate = recovery.tick_rate;
     checkpoint->seed = recovery.seed;
@@ -171,11 +175,12 @@ uint32_t tide_managed_restore(const uint8_t *data, const uint32_t size, const do
     tide_managed_checkpoint *checkpoint = malloc(sizeof *checkpoint);
     if (!checkpoint) return 0;
     memcpy(checkpoint, data, sizeof *checkpoint);
-    if (checkpoint->magic != UINT32_C(0x324d4454) || checkpoint->size != size - sizeof *checkpoint
+    if (checkpoint->magic != UINT32_C(0x334d4454) || checkpoint->size != size - sizeof *checkpoint
         || !checkpoint->tick_rate || checkpoint->tick_rate > 1000
         || !(checkpoint->dt > 0.0f && checkpoint->dt <= 1.0f)
         || checkpoint->players.words > TIDE_PLAYER_SET_BITS / 64u
-        || checkpoint->leaving.words > TIDE_PLAYER_SET_BITS / 64u) { free(checkpoint); return 0; }
+        || checkpoint->leaving.words > TIDE_PLAYER_SET_BITS / 64u
+        || checkpoint->banned.words > TIDE_PLAYER_SET_BITS / 64u) { free(checkpoint); return 0; }
     void *world = calloc(1, tide_game_api.world_size);
     if (!world) { free(checkpoint); return 0; }
     bool (*read)(void *, const uint8_t *, uint32_t) = tide_managed_read_save
@@ -189,6 +194,8 @@ uint32_t tide_managed_restore(const uint8_t *data, const uint32_t size, const do
         d.leaving = checkpoint->leaving;
         d.digests = checkpoint->digests;
         d.identities = (const uint8_t (*)[32])checkpoint->identities;
+        d.banned = checkpoint->banned;
+        d.ban_messages = (const char (*)[TIDE_MESSAGE_BYTES])checkpoint->ban_messages;
         d.closed = checkpoint->closed;
         d.tick_rate = checkpoint->tick_rate;
         d.seed = checkpoint->seed;

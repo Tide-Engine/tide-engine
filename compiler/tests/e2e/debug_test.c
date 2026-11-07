@@ -8,7 +8,7 @@ static tide_world world;
 TIDE_TEST(debug_output_changes_nothing)
 {
     tide_world_init(&world, 1.0f);
-    const tide_entity counter = {1, 1};
+    const tide_entity counter = tide_entity_in_slot(&world.entities, 1);
     for (int i = 0; i < 4; i++) tide_world_tick(&world);
     TIDE_CHECK(tide_get_Counter(&world, counter).value == 16);
     tide_world_free(&world);

@@ -1,5 +1,638 @@
 # Runtime written by Claude for now
 
+## Stable logical Entity boundary (2026-11-06)
+
+Owner-approved implementation: Entity is opaque 16-byte `{uint64_t birth,
+lineage}`, independently mapped to private dense slots. Generated match spawns
+call `tide_new_entity_key(tide_entities*, tide_entity)` with a final causal key;
+serial execution registers it immediately and workers retain exact keys until
+canonical task settlement registers them with `tide_entity_create_key`. There
+are no temporary IDs or payload rewrites. Unkeyed create remains trusted-C/local
+only. Shared equality/order/hash cover the full key. `tide_entities_ordered`
+returns a cached borrowed sorted ALIVE array; invalidated arrays survive until
+settlement, and snapshots do not share mutable cache ownership. The approved
+`tide_entities_ordered_archetypes` completion caches copied ascending archetype-ID
+sets, invalidating subsets on actual membership changes while preserving them
+for row-only moves. Contracts and
+focused validation: ecs.md and memory-safety.md.
+
+Attached local fields use a full-key hash index. Shard references carry their
+full 16-byte entity key plus an 8-byte shard location; world-clock/status/checkpoint
+metadata preserves identity clocks (checkpoint 6). `tide_layout_world` appends
+identity_clock/lifecycle_occurrences/lifecycle_count/main_occurrence offsets; migration
+validates and preserves the 64-bit clock and occurrence counters across moved offsets and
+player-count changes, rejecting missing/zero/bad spans. Old Entity8 saves are not
+supported. Session protocol 25 gates the changed simulation/wire representation.
+
+The approved embed completion uses native 64-bit birth/lineage command words,
+exact four-u32 web transport, packet 5 and embed ABI 18. New generated/runtime calls
+`tide_packet_entity_place` and `tide_packet_find_entity` resolve full logical keys
+in a reused packet map, including distinct private slot 0 entries from different
+shard worlds. Null/NONE is absent; a duplicate exact key replaces its place.
+Reset/free ownership, bounds and validation are recorded in unity.md.
+
+
+## Deterministic scene preparation (2026-11-05)
+
+Owner-requested implementation, agent-maintained: `tide/preparation.h` and `engine/src/preparation.c`, including
+`tide_preparation_update`, `_update_clients`, `_free`, `_publish` and `_view`. Generated code calls `_publish`
+at safe statement boundaries; sessions own/update/drain private world jobs through the other calls. The existing
+worker provider/cancellation/page APIs are reused. `tide_game` gains optional prepare_pending/prepare/prepared_scene/
+prepared_command callbacks (Session ABI preparation 1); generated world readiness/preparation helpers specialize
+each game. Hosts and game libraries rebuild together. Contracts/tests: language.md and netcode.md, scene preparation.
+
+## GPU lists in pools (2026-11-05)
+
+Under compute's pre-approved boundary, owner-approved lifting of the storage limit: `tide_shader` gains
+`storage_ints` and `storage_table` and its `storage_writes` is 64 bits, its `adds` lose `scratch`; `TIDE_SHADER_STORAGE`
+is 64; `TIDE_STORAGE_WORDS`/`INTS`/`RUN`, `tide_shader_table_words`, `tide_shader_storage_ints`,
+`tide_shader_pool_written` and `TIDE_GPU_LIST_INTS` (tide/draw.h); `tide_gpu_list_state.ints`. Generated code calls
+nothing new: `tide_gpu_list_make`, `_adopt` and `_recreate` take `TIDE_GPU_LIST_INTS` in their stride. gpu.h's
+`TIDE_GPU_MAX_STORAGE` is 4 and it gains the optional `storage_most` (every backend; NULL in the recorder and
+`gpu_none`). No embed op, packet or ABI change. Hosts, libraries and games rebuild together for `tide_shader`'s
+layout. Contracts: notes/compute.md, GPU lists in pools.
+
+## Texture arrays and samplers apart (2026-11-05)
+
+Within the drawing maintenance exception, with the owner's go-ahead for both pieces ("just cause nothing needs [it]
+isn't an excuse") and the texture-array design the owner picked. `tide_shader`'s `texture_samplers` (1 + another
+texture) became `sampler_count`, `sampler_reads` and `texture_samplers` (a mask a texture), with
+`tide_shader_samplers`, `tide_shader_texture_samplers` and `tide_shader_texture_filter`; a run's `sampling` is by
+sampler. New calls generated code makes: `tide_texture_array_make_sized[_as]`, `_make_scaled[_as]`, `_layer`,
+`_depth`, `_resize`, `_dispose`, `_recreate`, `_size`, `_count`, `tide_depth_array_count`, `tide_draw_array_source`
+and `tide_pack_texture_array_of` (`tide/draw.h`, `tide/pack.h`; engine/src/draw.c, mesh.c, pack_load.c), and the
+reads `TIDE_SHADER_READ_ARRAY`/`_DEPTH_ARRAY`. gpu.h: `image`/`sampler` in place of `sample`, `array`,
+`array_depth`, `array_layer`. Embed ABI 15. Contracts and tests: notes/rendering.md, One image a texture, and
+notes/textures.md, Texture arrays: built.
+
+Closing their gaps (the owner: "work on the gaps"): generated code also calls `tide_texture_array_of_grid`
+(`tide/mesh.h`), and the draw list `tide_pack_texture_array_blocks` (`tide/pack.h`), `tide_draw_grid_array_texture`
+and `tide_grid_array_extent`; `tide_draw_texture` gains `layer_blocks` and the space `TIDE_PIXELS_GRID_ARRAY`;
+`tide/texture_blocks.h` `tide_texture_blocks_bc1_to_bc3`. gpu.h: `array_blocks`, `array_of`, `array_write`. Embed ABI
+16. Details: notes/textures.md, The gaps closed. Then `tide_embed_render_formats` (`tide/embed.h`, embed ABI 17) and
+the recorder's `tide_gpu_record_block_formats`; `tide_texture_array_of_grid` takes `raw`, and
+`tide_draw_grid_array_texture` too, with `tide_texture_array_grid_raw` (notes/unity.md, ABI 17).
+
+## Sixteen textures, shared samplers (2026-11-05)
+
+Within the drawing maintenance exception, with the owner's "not cap ourselves to arbitrary limits": `tide/draw.h`'s
+`TIDE_SHADER_TEXTURES` is 16 and `tide_shader` gains `texture_samplers` (generated code fills it; nothing new is
+called), gpu.h's `TIDE_GPU_MAX_TEXTURES` is 16, `TIDE_GPU_STORAGE_BINDING` 33, and `tide_gpu_pipeline_desc` gains
+`samplers` with `tide_gpu_own_sampler`. Hosts, libraries and generated games rebuild together; embed ABI 13
+(`TideLibrary.Abi`). Contracts and tests: notes/rendering.md, Sixteen textures a draw.
+
+## A game's keyboard on screen (2026-11-05)
+
+New and agent-maintained, like `tide/voice.h`: `engine/include/tide/screen_keyboard.h` and `engine/src/screen_keyboard.c` (`tide_screen_keyboard_set`, `tide_screen_keyboard_get`), which a game's C (the steam package) calls, never generated code, and the host table's optional `screen_keyboard` getter. Contracts: notes/standard-host.md, A machine that slept, and the game's keyboard.
+
+## Indexed loops' indexes and their caches (2026-11-05)
+
+New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `engine/src/index.c`
+(`tide_index_make`/`free`/`begin`/`add`/`end`/`count`/`ordinals`/`find`, `tide_index_hits_init`/`free`,
+`tide_index_lock`/`unlock`), which generated code calls for every indexed loop. The caches of indexes are
+generated helpers (`index_codegen.inc`: `tide_ix_*`, `tide_index_cache_prepare`/`free`), like the rows cache, over
+existing runtime calls (`tide_page_retain`/`release`, `tide_table_*`, `tide_list_*`, `tide_alloc*`); a game with an
+indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `tide_local`, and defines
+`tide_loop_indexes_free` (its header says `TIDE_HAS_LOOP_INDEXES`), which `tide_run_unload` (tide/run.h) calls
+before the library is unloaded, for the indexes kept outside the worlds. Contracts: notes/indexed-loops.md, Code
+generation.
+
+## Meshes over GPU lists, moved runs (2026-11-05)
+
+Under compute's pre-approved boundary: `tide_draw_mesh_fill_pulled` (draw.h, a pulled shader's stand-in mesh, which
+mesh.c's `shaded_mesh` makes), `tide_shader.instance_through`, `.vertex_storage`, `.index_storage`, and the renderer's
+`tide_platform_render_passes`. Generated code calls nothing new: `tide_draw_mesh_shaded*` and
+`tide_draw_mesh_shaded_indirect` take the new forms as they are. No embed op or ABI change: the recorder already has
+`DRAW_INDIRECT` and a pipeline's slot strides. Contracts: notes/compute.md, Meshes over GPU lists.
+
+## Compute's reads back in Unity: embed ABI 11 (2026-11-05)
+
+Under compute's pre-approved boundary, for the Unity replay: `tide/embed.h`
+gains the op `TIDE_EMBED_RENDER_BUFFER_READ` (appended) and
+`tide_embed_render_read(e, token, data, size)`, which hands the bytes of a read
+the other program made back to the recorder; `gpu.h` gains
+`tide_gpu_record_read`, and `gpu_record.c`'s `buffer_read`/`buffer_read_done`
+keep a table of reads instead of failing each. Generated game code calls nothing
+new; the `tide unity --web` program exports `tide_unity_render_read`.
+`TIDE_EMBED_ABI` and Unity's `TideLibrary.Abi` are 11, so hosts, embeds and the
+package move together. Contracts and tests: notes/unity.md, Compute in Unity.
+
+## Culled runs drawn by a count, joined (2026-11-05)
+
+Within the drawing maintenance exception, internal (no Tide or generated-C change, the same pixels): gpu.h's
+`draw_indexed_indirect_count` and `indirect` (every backend and the recorder: embed ABI 12, `TideLibrary.Abi`), the
+culling's fourth kernel and joins (`cull.tide`, `cull.inc`), `tide_draw_cull.rows`/`rows_revision`, the diagnostics'
+`tide_draw_geometry_row_of` and `tide_draw_geometry_add` (`tide/draw_profile.h`), and the platform's
+`tide_platform_draws` (`tide/platform.h`, stats). Generated code calls nothing new. Contracts: drawing.md, Culled runs
+drawn by a count, joined.
+
+## Listed runs culled on the GPU (2026-11-05)
+
+Within the drawing maintenance exception, an internal performance change (no Tide or generated-C change, the same
+pixels): `tide_draw_shaded_culled` (list_data_cache.h, from `tide_draw_mesh_shaded_list`), `tide_draw_culled_places`,
+`tide_draw_run_uncull`, `tide_draw_uncull`, `tide_draw_cull_planes` (`tide/draw.h`), the renderer's
+`tide_platform_gpu_culling` (which the standard host sets `tide_draw_list.gpu_culling` from) and
+`tide_platform_cull_compare` (tests and diagnostics). Generated code calls nothing new. The kernels are the
+renderer's own, in Tide (`platform/src/cull.tide`), built by `tidec --kernels`. Contracts: drawing.md, Listed runs
+culled on the GPU.
+
+## Compute: GPU lists, runs and reads back (2026-11-05)
+
+The owner pre-approved compute's boundary ("anything you decide should be
+provisional"). New generated-C/runtime functions, agent-maintained with
+`engine/src/gpu_list.c` and the draw.c/mesh.c additions:
+
+- `tide_gpu_list_make`, `_resize`, `_dispose`, `_capacity`,
+  `_content_revision`, `_adopt`, `_recreate`, `tide_gpu_lists_recreated`,
+  `tide_gpu_lists_free`; the renderer's `tide_gpu_list_made`;
+  `tide_render_revision_next` (draw.c, the revisions targets and lists share).
+- `tide_draw_compute_run`, `tide_draw_gpu_list_set`, `_clear`, `_count`,
+  `tide_draw_storage`, `tide_draw_set_storage`, `tide_draw_shaded_indirect`,
+  `tide_draw_mesh_shaded_indirect`, `tide_gpu_size`.
+- Reads: `tide_gpu_list_read_begin`, `_poll`, `_forget` (generated awaits), and
+  the renderer's `tide_gpu_read_requests`, `tide_gpu_read_finished`,
+  `tide_gpu_reads_frame`.
+- Generated per GPU list type: `tide_gpu_words_<n>`, `tide_gpu_set_<n>`,
+  `tide_gpu_list_of_<n>`; per kernel: `tide_run_<n>` and
+  `tide_shader_<n>_words_<t>`.
+
+Contracts are in `tide/draw.h` and `notes/compute.md`, Built.
+
+## Cheaper draw diagnostics (2026-11-05)
+
+Within the drawing maintenance exception: `tide_draw_mesh_data` gains `profile_name`, `profile_named_by`
+and `profile_named_vertices/indices/version`, and `tide_draw_diagnostics` a private `geometry_index`. Generated
+code calls nothing new; hosts and game libraries rebuild together for the layouts. Details: standard-host.md,
+Cheaper draw diagnostics.
+
+## Quit and bans across the host boundary (2026-11-04)
+
+Owner-approved for mount-and-rifle's two gaps. Generated code calls no new
+runtime function: `Application.Quit` and `Session.Ban`/`Unban` are new
+`tide_session_request_kind` values (`TIDE_REQUEST_BAN`, `_UNBAN`, `_QUIT`,
+appended so earlier values keep their numbers) through the existing
+`tide_local_take_request`, and the local struct gains `bool tide_quit`.
+`DisconnectReason` gains `Banned` (`TIDE_DISCONNECT_BANNED`, 7). New host-side
+calls: `tide_platform_quit` and `tide_platform_on_close` (`tide/platform.h`),
+`tide_server_ban`, `_unban`, `_banned`, `tide_session_ban`, `_unban` and
+`tide_session_server` (`tide/session.h`); `tide_server_desc` and
+`tide_server_recovery` gain `banned`/`ban_messages`; `tide_embed_status` gains
+`quit` in a pad byte (embed ABI 10, Unity's `TideLibrary.Abi`); session
+protocol 22; managed checkpoint magic `TDM3`. Hosts and game libraries rebuild
+together. Details: standard-host.md, Application.Quit; netcode.md, Bans.
+
+## Predicting near the player (2026-11-04)
+
+For the owner's `predictionRange` ask, within the agent-maintained session area: `tide_game` gains the optional
+callback `predict_far(world, player)`, which generated code provides and `session.c` calls before predicted ticks
+(`tide_client.far_from`). Generated code calls no new runtime function. Hosts and games rebuild together (Session ABI
+marker `predict far (1)`). Games without the setting generate a NULL callback and an unchanged world layout. Contracts and tests:
+netcode.md, Predicting near the player alone.
+
+## GUI widget listing (2026-11-04)
+
+Under the existing GUI maintenance exception, with the owner's request ("yes lets do that") that agents click widgets by a list rather than by pixels: `tide_gui` gains `listing` (a borrowed `tide_gui_listing *`, NULL by default), `listed` and the `describing` fields, and `tide/gui.h` gains `tide_gui_controls` and the listing types. Generated code calls nothing new and its C is unchanged. The widget functions it already calls describe themselves, so hosts, libraries and games rebuild together for the layout change. The standard host calls the new platform function `tide_platform_list_controls(&tide_run_gui)` each frame, which sets `listing` only in an `--interactive` run. No match state, wire format or simulation changes. Contracts, tests and gaps: gui.md, Widget listing; standard-host.md, Clicking widgets by name.
+
+## Fonts: the checked reader and the registry (2026-11-03)
+
+Under the drawing maintenance exception, with the owner's request for custom fonts and runtime decoding: `engine/include/tide/font.h` and `engine/src/font_data.c` (font files into checked font data, its check, and the registry of a program's fonts) are Claude's on the same terms. New runtime functions generated code calls: `tide_font_find` (a Font's font, in `tide_font_file`), `tide_font_decode` (Font.Decode's helper) and `tide_pack_font_of` (an `asset Font`); the pack builder gains `tide_pack_font`, which only tidec calls. The C drawing API takes `const tide_font *` where it took a weight's file (`tide_draw_text_at`, `tide_measure_fn`, `tide_platform_measure_text`, `tide_draw_measure_text`), `tide_draw_list` has `fonts` in place of `bold`, a text command `words.font` in place of `words.bold`, and `tide_gui_theme` a `font`; hosts and game libraries rebuild together. No match state changes: a Font is local. Details: `notes/rendering.md`, Fonts of a game's own.
+
+## Grids code owns, in the scratch area (2026-11-03)
+
+Within the grids maintenance exception (`tide/grid.h`, `engine/src/grid.c`), for the owner's decision that grids are
+values in all code (docs/spec.md, Grids): a grid code makes as it runs (a local's, a function's result, a copy) lives
+in the thread's scratch area, as a local's list does, and is written there. `tide_grid_poke_slow` writes a scratch
+grid that isn't the pack's wherever `where` says, or makes one for an empty grid when `where` is `TIDE_IN_SCRATCH`;
+`tide_grid_poke`'s fast path sends `TIDE_IN_SCRATCH` to it (it has no heap). Its directory grows into a new scratch
+block, the old one left for the area's mark, and a chunk is a scratch block whose header is cells too, read through
+`tide_grid_chunk_at` with no heap as the pack's are. `tide_grid_own` (so `tide_grid_set`) copies a scratch grid's
+chunks into the world it goes in, where it took only the size; the pack's grids still give their size alone.
+`tide_grid_clear` forgets a scratch grid's records. `tide_grid_rows_begin` goes through a scratch grid too, where it
+gave nothing. One new function generated code calls: `tide_grid_copy(g, shape)`, `cells.Copy()`, a scratch copy of
+any grid. Parallel loops (`tide_par_begin`) still go through a world's grid only, which the checker makes sure of.
+No layout, snapshot, hash or match-state change: a scratch grid is never the world's. The owner should confirm the
+new generated call. Contracts and tests: notes/language.md, Grids as values.
+
+## Build code's constant lists (2026-11-03)
+
+Under the pack maintenance exception, the owner-approved build code (docs/spec.md, Build code) adds one pack
+writer, `tide_pack_values` (tide/pack.h, engine/src/pack.c): a list block of `count` plain elements, the header's
+count and room set to `count`, shared by a content hash the caller makes cover the element size. Only tidec calls
+it, for a constant `List<T>` build code made; generated code loads that block with the existing
+`tide_pack_find` and `tide_pack_handle`, as an asset `List<byte>`. No loader, format version, generated runtime
+call or match state changes. Details: notes/assets-and-files.md, Build code.
+
+## Diagnostic geometry boundary (2026-11-03)
+
+Within the owner's approved mesh profiling extension, generated frames install
+and restore a borrowed mesh-name callback in tide_draw_list. The existing drawing
+maintenance exception covers collector-owned geometry rows, list-owned bounded
+contribution chains and renderer submission counters. No new runtime function
+is called by generated code. Draw-list/mesh structures grow; command size and
+Unity packet layout stay unchanged. Names/sources are copied while recording,
+never borrowed across reload. Contracts: drawing.md and standard-host.md.
+
+
+## Presentation correction clock boundary (2026-11-03)
+
+The generated host table adds optional `age_views(local, seconds)`, implemented
+by generated `tide_local_age_views` and called by the host before session
+updates. This separates existing correction decay from the once-per-rendered-
+frame `frame_time` callback so GPU-wait updates neither reseed local randomness
+nor shorten `Frame.dt`. It adds no runtime function called by generated code,
+Tide language feature or match-state/storage change. Hosts and generated game
+libraries rebuild together for the table layout change. Details and validation
+are in `notes/language.md` and `notes/standard-host.md`.
+
+## Camera-relative drawing boundary (2026-11-02)
+
+Within the existing drawing maintenance exception, camera records gain relative
+projection/origin data and recorded camera commands retain a bounded reference
+to those records. Existing draw functions and generated call signatures stay the
+same. Hosts and game libraries rebuild for the C layout change. Generated 3D
+shader uniform blocks add the owner-approved camera-origin float4, with 3968
+remaining game bytes; 2D stays unchanged. No match state, snapshot, hash, camera
+query API or recorded Unity packet shape changes. Contracts and validation are
+in drawing.md, shaders.md and rendering.md.
+
+
+## Render-target content revisions (2026-11-02)
+
+The owner approved a per-target content invalidation query and its runtime
+boundary. Generated code calls `tide_render_target_content_revision` and installs
+the host metadata scope with `tide_render_target_content_resolver`; both are in
+draw.h/draw.c under the existing drawing exception. The renderer calls
+`tide_render_target_content_observe` on allocation; web reload carries
+`tide_render_target_revision_highwater` through its host header and calls
+`tide_render_target_revision_resume` before rebinding. The shared managed state
+and C draw-list structures grow; the Tide RenderTarget value stays 24 bytes.
+No match state or simulation operation uses the counter. Contracts and tests:
+render-targets.md, Cached images detect discarded contents.
+
+## Instance lists kept on the GPU (2026-11-02)
+
+Within the drawing maintenance exception, as an internal performance change the task authorized (no Tide or draw
+API change, the same pixels): generated `Draw.Instanced` adapters of listable shaders call the new
+`tide_draw_mesh_shaded_list` (`tide/mesh.h`) with a generated `tide_shader_N_listed` words function and a layout
+number. They return early when it draws; when it says false, they pack instances as before. `tide/draw.h` gained
+`tide_draw_shaded_listed`, `tide_draw_run_instance`, `tide_draw_run_unlist`, `tide_draw_run_stride`,
+`tide_draw_run.listed`, the listed vertex stage fields of `tide_shader`, and the private `tide_draw_list.listed`.
+Hosts, libraries and games rebuild together for the layout changes. The owner should confirm the new generated
+call. Contracts: drawing.md, Instance lists kept on the GPU.
+
+## Loop views of lists (2026-11-02)
+
+Owner-approved ("im ok with redesigning things, if it doesnt touch language and is a net position = do it"): generated loops index lists through `tide_list_loop` (`tide/list.h`, new) with `tide_list_loop_chunk` and `tide_list_loop_own` (`engine/src/list.c`, new), agent-maintained as the generated-C side of list access. No existing runtime function, layout, snapshot or hash rule changed; `tide_list_cache` and its fill functions are as they were. Contracts, measurements and tests: `notes/ecs.md`, Loop views.
+
+## Authored immutable texture mip chains (2026-11-02)
+
+The approved foliage pass extends the existing `tide_texture_blocks` format
+enum with RGBA8, preserving its layout and generated-C/runtime boundary.
+`tide_texture_level_bytes` and `tide_texture_blocks_decode_level` are inline
+compiler/platform helpers, never new generated game calls. Complete descriptor
+validation precedes decoding, including clipped BC tail blocks. The existing
+base decode helper still has its original signature and delegates to level 0.
+Pack/draw borrowing and ownership are unchanged. Backend factories synchronously
+upload each authored level; unsupported BC uses an owned temporary full RGBA
+chain and frees it after upload. Unity's base-only recorder is unchanged and
+does not retain authored mip chains. Contracts and validation are recorded in
+`notes/textures.md`, Authored foliage mip coverage.
+
+## Mesh keys for meshes the game makes (2026-11-02)
+
+Owner-approved ("go with your recommendations", including a runtime entry
+point that draws a mesh at a given version): generated code calls two new
+functions in `tide/mesh.h`, implemented in `engine/src/mesh.c`.
+`tide_mesh_key(vertices, vertex_size, indices)` is called once as
+`Mesh(vertices, indices)` makes a mesh; its result is simulation state (a
+`Mesh<V>`'s id), so it's a fixed definition, the same on every platform.
+`tide_draw_mesh_key(d, lists, key)` is called around each draw of a `Mesh<V>`
+value. `tide_draw_list` gained `mesh_key_vertices`, `mesh_key_indices` and
+`mesh_key`: hosts, libraries and generated games rebuild together. Contracts
+in drawing.md, Drawing a mesh at a given version.
+
+## Levels for meshes a game makes (2026-11-02)
+
+Owner-approved (the proposal's recommendations, `lod:` on mesh draws). Within the existing drawing maintenance
+exception: generated views call the new `tide_draw_want_levels(list, multiplier, layout)` (`tide/draw.h`), before
+a mesh draw and again with NULL after it, passing a compound-literal `tide_mesh_lod_layout` of 1 + field offsets.
+`tide_draw_levels_pending` is for tests and hosts. `tide_draw_prepare` now also hands waiting level jobs to the
+jobs' optional `background`; `tide_draw_reset` collects them and `tide_draw_free` stops and waits for them. The
+simplifier moved from tidec into the engine (`engine/src/mesh_lod.c`, `tide/internal/mesh_lod.h`,
+`tide_mesh_lod_make`/`_free`), agent-maintained as the draw list is; generated code doesn't call it. Draw list and
+mesh data layouts grew, so hosts, libraries and games rebuild together. Contracts: drawing.md; tests and
+validation: assets-and-files.md, both "Levels ... meshes a game makes". Follow-up the same day: generated skinned
+draws with `lod:` also call `tide_draw_want_bones(list, model.data)` (`tide/mesh.h`), and tidec's bone weighing
+moved beside the maker (`tide_mesh_lod_bones_of`, `_apart`, `_free` in `tide/internal/mesh_lod.h`), which tidec
+calls for assets; generated code calls neither.
+
+## Flat shader-data capture memo (2026-11-02)
+
+Within the approved forest submission optimization and existing drawing
+maintenance exception, `tide_draw_list` gains private `list_data` metadata.
+`engine/src/list_data_cache.h` defines its eight bounded frame-local entries;
+`mesh.c` probes current ordinary flat heap lists and `draw.c` resets/frees the
+metadata alongside texture lifecycle. No generated call, runtime entry point,
+simulation storage, hash or list representation changes. Hosts, libraries and
+generated games rebuild together for the C draw-list layout change.
+
+Valid page hashes witness mutation; `heap.moves` alone does not, because unique
+pages change in place. Cache hits preserve the hash helper's moves increment so
+existing retained writable addresses must revalidate before their next write.
+Heap identities are integer values, never dereferenced retained source pointers;
+every probe resolves and bounds-checks current storage. Dirty, scratch, packed,
+immutable asset-backed and chunked lists retain the original checked path.
+Contracts and the three focused Windows ASan regressions are in drawing.md,
+Repeated flat numeric-list captures. Full integration passes all 2,908 native
+Windows sanitizer and 2,794 web-release CTests; three 1920x1080 before/after
+forest captures (10k canopy, 100k wide and 100k ground) match every RGBA pixel.
+Independent cache review found no blocking issues. The containing task's
+[measurements and reproduction](../bench/results/forest-opt-20261102/README.md)
+cover the complete optimization rather than this cache alone.
+
+## All of a pose's model matrices (2026-10-31)
+
+Owner-approved ("OK" to the proposed `pose.Models()`): generated code calls
+the new `tide_skinned_models(data, transforms, where)` (`tide/skinned.h`,
+`engine/src/skinned.c`) through the adapter `tide_skin_pose_models`, which
+returns an empty list for a pose whose count isn't the model's. It reuses the
+palette's `global_matrices` (parents before children, `tide_mul_f4x4(parent,
+local)`), the order `chain_model` multiplies in, so every element is the bits
+`tide_skinned_model` gives that node; the packed-model fast path and the
+opened-model path mirror `tide_skinned_model`'s. The result list is made in
+`where` before the scratch mark the pass resets. Tests:
+`skinned_models_are_each_nodes_model_matrix` (tests/test_retarget.c, owned
+bytes, edited scale/rotation, wrong count, no model) and
+`tidec_e2e_baked_poses` (packed models, five poses, by bits). Used by
+`BakedPoses.Add`/`Of`: 3,000 rows of the 64-deep benchmark chain 134 -> 19 ms.
+
+## Asset LOD multiplier metadata (2026-10-31)
+
+Under the drawing/pack maintenance exceptions, the approved `[LOD(multiplier)]`
+adds `tide_mesh_levels.multiplier` and `tide_draw_mesh_data.lod_multiplier`.
+The existing pack writer/reader and `tide_draw_mesh_levels` carry it; no new
+runtime entry point is introduced. Pack word 27 was reserved and now holds
+the multiplier, zero meaning 1. Hosts/libraries rebuild for the C structure
+changes; simulation, snapshots and generated mesh values retain their layouts.
+Contracts and native ASan/WASM tests are recorded in assets-and-files.md.
+
+## Destination LOD pixel tolerance (2026-10-31)
+
+Within the draw-list maintenance exception and the owner's approved tolerance
+task, generated settings call `tide_draw_set_lod_pixels`,
+`tide_draw_unset_lod_pixels`, `tide_draw_push_lod_pixels` and
+`tide_draw_push_no_lod_pixels`. These replace the former C-only global
+`tide_draw_lod_pixels` with destination-local state and ordinary block cleanup.
+`lod_pixels` moves from `tide_draw_list` to `tide_draw_place`; hosts, libraries
+and generated games rebuild together. No match state or simulation changes.
+Contracts and native ASan/WASM validation are recorded in drawing.md.
+
+## Parts and non-uniform retarget scale (2026-10-30)
+
+Under the skinned/retarget maintenance exceptions: `tide_skinned_data_decode_parts`
+(build-time; `tide/skinned_data.h`) decodes keeping chosen parts, and
+`retarget.c` accepts non-uniform scale on nodes the transfer doesn't need. No
+generated call or plan layout changed; uniform rigs give the same bits.
+Details: assets-and-files.md, [Parts], and retargeting past non-uniform helpers.
+
+## Compressed pack images alone (2026-10-30)
+
+Under the pack and drawing maintenance exceptions: a pack texture block may be
+its GPU blocks with no RGBA (`texture_at`; `tide_pack_texture_find` gives NULL
+pixels; `tide_pack_texture_blocks_find`), and `tide_texture_blocks_decode`
+(inline in `tide/texture_blocks.h`) decodes their largest level where the
+platform can't upload them (`texture_for`). Generated code calls nothing new;
+C reading a pack image's pixels must allow NULL for a compressed one. Details:
+textures.md.
+
+## Sampler constants and scratch lifetime follow-up (2026-10-30)
+
+Within the approved animation performance task, retained immutable sample
+plans now fold unique single-key channels into their starting pose, including
+folded wrapper locals. The value uses the sampler's existing key reader and
+final quaternion normalization. A channel is eligible only when no other
+channel writes the same destination node/path; all duplicate writers retain
+their original per-frame order. Mutable/unkeyed models retain the existing
+per-call path and complete validation. Canonical cubic tracks require at least
+two keys, so this folding applies to STEP and LINEAR single-key tracks only.
+Plan keys, bounded cache ownership, pack-generation invalidation, refusals,
+public API, world storage and exact sampled bits are unchanged.
+
+`plan_apply` now reclaims its temporary arrays when the output is proven flat
+scratch storage sized before its mark. Other scratch outputs keep the prior
+conservative lifetime rule because writes can copy chunks after that mark.
+This prevents large channel/group arrays accumulating across samples in one
+view. The 192-channel stack threshold remains: a measured 256-channel trial
+was slower and was reverted. The cold `plan_constants` helper stays out of
+line; `sampled_value` is forced inline so its new preparation-time caller does
+not introduce a call per channel in the hot loop. Release object disassembly
+confirms no `sampled_value` symbol/call, while preparation retains its helper.
+No interpolation or normalization expression was changed.
+
+Two focused tests compare retained packed/asset plans to the unchanged mutable
+path across single keys, mixed interpolation, duplicate order, signed zeros,
+non-unit rotations, nonfinite clocks, folded wrappers and snapshot-preserving
+heap outputs. A 300-channel/300-group fixture exercises both temporary-array
+spill paths and checks stable scratch marks plus exact pose hashes across
+repeated sampling. Full native ASan and WASM suites pass: 2,906 and 2,794
+enabled tests respectively, with one preexisting disabled MicroDuck test on
+each. Every existing deterministic hash pin is unchanged. Final paired
+measurements and the separate, approximately unchanged cold-load cost are in
+assets-and-files.md and `bench/results/retarget-playback-20261030/`. The related
+generated fresh-pose and redundant Clamp-duration fixes are in language.md.
+
+## Owned runtime-baked animations (2026-10-30)
+
+The owner approved `map.Bake(animation, target.skeleton, sampleRate = 60)`
+and the AnimationCatalog overload, returning ordinary owned animation values
+with `fails IOError`. Generated wrappers use the shared baker below. Their
+temporary results are ordinary scratch byte lists; no scratch asset marker,
+global payload registry or new value layout is introduced. The existing
+scratch lifetime and caller capability rules remain in force.
+
+The agreed generated-C boundary adds
+`void tide_skinned_own(tide_list *data, uint32_t where)`. Animation model-data
+ownership, including nested values and each catalog source, calls it when
+storing a copied value. A valid canonical model copied to a real match/local
+heap becomes an existing `TIDE_LIST_ASSET` descriptor with its own lease in
+that heap's refcounted asset pool. Already immutable values acquire another
+descriptor lease; the borrowed source is never released. Assignment promotes
+the incoming value before releasing its old destination, including aliases.
+Scratch/no-heap destinations and noncanonical bytes follow generic byte-list
+ownership. Packed descriptors are span-checked before their trusted list path.
+
+The private `tide_asset_model` constructor makes and validates the immutable
+payload once, hashes its existing content identity, and transfers its sole
+reference to the destination pool. It registers nothing globally. Snapshot,
+raw/delta transfer, clear, unload and write-detachment use existing asset-list
+machinery. Stored baked or decoded Animation bytes therefore get existing
+immutable sampling/model caches; immediate scratch-only playback retains the
+checked cold path. An edited/detached value loses its immutable sampling proof.
+No pointers enter world pages, and no cache is part of match state.
+
+Catalog wrappers stage every successful part before publishing a result. The
+new `tide_retarget_bake_with_budget` shares bounded samples, source-plus-target
+transforms, sampled key numbers and encoded bytes across all source models;
+both its budget and outputs remain unchanged on a failed part. Its original
+single-model entry point delegates with a zero budget. Canonical output and
+solver arithmetic are unchanged, so the bake algorithm version stays 2.
+
+Three `skinned_own_` C tests cover cache proof and exact samples, independent
+leases, replacement aliases, match/local ownership, scratch reset, source
+release, snapshot retention, raw pack/unpack, mutable detachment, chunked data,
+invalid data fallback and pack unload/span safety. The additional baker budget
+test checks cross-source totals, every work limit, hostile uint64 totals and
+atomic failure. All three ownership fixtures and the 26-test combined retarget
+filter pass within the complete native ASan and WASM engine suites.
+
+Promoting a stored decoded Animation changes its physical heap representation
+from copied byte pages to immutable descriptors. The existing skinned e2e's
+world-hash pin intentionally changes from `13181359130345510980` to
+`18284937891356215991`, identical on native ASan and WASM. Its pose bits,
+snapshot, packing and replay checks remain unchanged and pass. This is an
+ownership representation change, with no calibration or sampling math change.
+Final compiler/release integration and stored-bake timings are recorded by the
+coordinator in language.md and assets-and-files.md.
+
+## Shared retarget baking support (2026-10-30)
+
+Within the owner's approved profile-assets and Retarget-attribute task, agents
+maintain `tide/retarget_bake.h`, `engine/src/retarget_bake.c` and their focused
+tests alongside the existing skinned/retarget maintenance exception. The C
+helpers `tide_retarget_bake`, `tide_retarget_bake_with_budget` and
+`tide_retarget_bake_skeleton` are compiler and cold-path support. The first two
+also serve the approved generated bake-on-load wrappers described above.
+There is no tide-motion dependency.
+
+The baker borrows canonical source/target lists, a prepared pointer-free map
+and scalar settings. Clip index -1 selects the source catalog; a nonnegative
+index selects one clip. Successful output is free-compatible canonical bytes
+owned by the caller, independent of input lifetimes. Both output parameters,
+scratch and world bytes remain unchanged on failure. It uses existing sampling
+and retarget application, with temporary scratch poses and bounded owned
+sample/encoder buffers; no pointer enters simulation state or a prepared map.
+It does not depend on the map's private layout. The skeleton-only helper
+strips reference geometry and animation without changing original target
+identity. No existing runtime signature or canonical format is changed.
+
+Sampling, compression, named resource limits, approximation boundaries,
+profile/cache integration and tests are recorded in assets-and-files.md,
+Profile assets and retargeted animation baking. The seven focused C fixtures
+pass native ASan and WASM as part of the 25/25 combined retarget filter,
+including immutable caller/snapshot state, complete truncated source coverage
+and scale rejection. Private native/WASM comparisons agree over all 1,181 bake
+samples and every node. Final compiler/build/editor integration coverage is
+recorded in notes/tide-programs.md.
+
+## Humanoid retargeting boundary (2026-10-30)
+
+Within the owner's approved standalone retargeting task, agents maintain
+`engine/include/tide/retarget.h`, `engine/src/retarget.c` and their focused C
+tests until the owner takes them over. This adds three generated-C runtime
+calls: `tide_humanoid_auto`, `tide_retarget_create`, and `tide_retarget_apply`.
+The compiler owns HumanoidRig/HumanoidBone/HumanoidBoneStatus, RetargetMap and
+RetargetError wrappers, typed Bone provenance checks, and value lifecycle
+handling. Public contracts and supported limits are in assets-and-files.md
+and the Pose documentation. There is no tide-motion dependency.
+
+Auto takes canonical skeleton bytes plus reference transforms and returns
+55 integer role indices and statuses as ordinary owned lists. Create takes
+actual source bytes separately from source reference bytes/transforms/roles
+and target reference bytes/transforms/roles. It returns an immutable List<byte>
+plan and the initial leg-length root scale only on success. Error codes are
+OK, InvalidRig, MissingBone, AmbiguousBone, InvalidReferencePose,
+IncompatibleSkeleton and UnsupportedScale in that order (0 through 6). Role
+values follow the declared HumanoidBone order, ending with UpperChest. Status
+values are Missing=0, Automatic=1, Uncertain=2 and Manual=3. Missing and uncertain
+required-role diagnostics identify the role; a failed Create preserves outputs.
+
+The v3 plan contains a 136-byte header, a 12-byte record per actual source node,
+and a 160-byte record per target node. Static assertions pin their padding-free
+layouts. Records carry parent/source indices, scalar options, calibrated
+quaternions and reference local transforms; they contain no pointers, caches,
+asset offsets or allocator handles. Lists therefore keep normal copy-on-write,
+snapshot, hashing and packing semantics. Changes to this private plan layout
+must change its magic. No existing canonical asset format or skinned ABI changes.
+
+Preparation validates canonical data and positive uniform reference scale,
+accumulates model transforms once, binds export names using stable sorting,
+then prepares semantic anchors and torso/twist chains. Hand ancestry and chain
+sampling use parent-first/monotonic passes. Apply reads only the immutable
+skeleton headers for node counts and SHA-256 identity (with a chunk-size static
+assertion); it does not flatten or traverse whole mesh/animation payloads.
+Packed skeleton and plan headers and payload spans are checked before access.
+Needed source/target globals and every output local are staged in scratch; only a completely
+valid result prepares/resizes/writes the destination transform list. Existing
+destination storage is reused. Source transform/output aliasing is supported;
+aliasing a transform output with a byte-list plan or model is rejected. Reused
+scratch outputs and world outputs release the temporary staging mark; only a
+newly allocated scratch output retains it. No persistent pointer escapes.
+Current source scales must match the prepared static export scales. Finite
+options, hierarchy order, indices and intermediate transforms are checked;
+malformed inputs cannot partially mutate the output or its match heap.
+
+The arithmetic uses Tide deterministic quaternion/vector functions and basic
+IEEE operations. Original `tests/test_retarget.c` rigs verify independent
+geometric expectations, export separation, missing optional source roles,
+automatic/manual diagnostics, invalid data atomicity, copy-on-write snapshots
+and cross-platform output bits. Native ASan and WASM passed all twelve new C
+fixtures, the existing retarget regression and both new public API e2e cases.
+The initial 13-frame pose hash was `a669d398066dafa5`. The intentional local-space
+arithmetic change below replaces it with `1c354e8036dca9f4`, verified and pinned
+on native ASan and WASM. Existing skinned CPU coverage passed 62/62 on each. Private user-asset
+measurements and visual checks are recorded with the asset contract.
+
+The same-day performance follow-up keeps the public C ABI and all ownership
+rules. Prepared inverses, alignment rotations, heading and twist axes are
+normalized once; direct matching source/target parent chains additionally keep
+two local calibration quaternions. Applying these directly avoids reconstructing
+and cancelling whole global chains. Other joints, torso/twist helpers and hips
+retain the global solver. This is mathematically equivalent but intentionally
+changes float rounding, so the private plan magic is v3 and the bake/cache
+algorithm version is 2. Existing imported or baked asset formats are unchanged.
+
+Prepared source/target dependency flags close over ancestors of every required
+global transform. Every input local and accumulated scale is still checked.
+Unused global positions are proved finite with a conservative bound: the
+unit-quaternion rotation's intermediates are bounded by 13 times the maximum
+scaled local-position component; the fast proof uses 16 times that component,
+adds the parent's bound and requires at most FLT_MAX/4. If inconclusive, the
+whole source or target hierarchy is evaluated with the original composition
+before any output is committed. This preserves rejection of overflow in unused
+branches. Specialization indices, sentinels, matching-parent eligibility and
+dependency flags are checked before use. Input lists use one checked view and
+output writes copy contiguous runs, including copy-on-write heap chunks.
+
+Five additional C fixtures cover retained scratch, multi-chunk input/output and
+plans with snapshots, finite and overflowing large-position fallbacks, static
+scale/nonfinite rejection in skipped nodes, signed/nonunit quaternions and
+forged specialization metadata. All 25 tests in the combined retarget filter
+(17 new runtime fixtures, the earlier binding regression and seven bake
+fixtures) pass native ASan and WASM with the new pinned bits. Release timings and
+old/new geometric error measurements are recorded in assets-and-files.md.
+
+## Kept sample plans and model facts (2026-10-30)
+
+`tide_skinned_sample` and `tide_skinned_sample_into` keep what they decide
+from a model's bytes (validity, binding, output nodes) in sample plans,
+private to `engine/src/skinned.c`. `tide/pack.h` gains
+`tide_pack_generation()`, which the runtime reads and generated code doesn't
+call; it changes on every pack load, unload and `tide_pack_mesh_updated`.
+The same day, keyed models' facts and looked-up names are kept per thread
+for Pose indexing and Model, and Model multiplies only a bone's ancestors. No
+generated call, signature, layout, pose bit or world byte changes. Contracts
+and tests: assets-and-files.md, Kept sample plans and model facts.
+
+Merge review found a same-slot lifetime bug in the new compatibility fast path:
+looking up the second model can replace the first model's cache slot, making
+two different skeletons compare equal. `tide_skinned_compatible` now copies
+the first node count and skeleton hash before the second lookup. This preserves
+the identity checks used by Pose blending and HumanoidRig reference-pose edits;
+it changes no ABI or arithmetic. The regression
+`skinned_known_model_compatibility_survives_cache_collisions` packs 33 distinct
+identities against the 16-slot cache and checks every packed, asset-held, mixed
+and owned pairing, including equal identities held through different handles.
+
 ## GUI looks boundary (2026-10-29)
 
 Within the owner's approved GUI looks task, generated code gains the
@@ -61,7 +694,6 @@ contracts: ecs.md, Pure row updates before conditional destruction.
 is build-time support tidec calls for `[BlendShapes]`; generated code calls
 nothing new. Contracts and tests: assets-and-files.md.
 
-
 ## Lenient separate-rig binding (2026-10-27)
 
 Owner-decided (docs/spec.md, Separate-file binding): `tide_skinned_sample_into`
@@ -69,7 +701,6 @@ and `tide_skinned_pose_into` skip required source nodes the target lacks;
 present nodes keep the strict parent rule. No signature, generated call,
 canonical byte or world byte changes. Contracts and tests:
 assets-and-files.md, Clips skip nodes the model lacks.
-
 
 ## Blend shapes (2026-10-27)
 
@@ -84,7 +715,6 @@ them only in programs that name `blendShapes`, `Shaped` or `BlendShape`; no
 existing function, struct, draw entry point or shader changes, and models
 without shapes keep their version 1 bytes. Contracts and tests:
 assets-and-files.md, Blend shapes.
-
 
 ## Prehashed asset lookup (2026-10-27)
 
@@ -205,6 +835,15 @@ function: lifecycle deduplication uses a hidden, bounded match-state bitset
 through the existing list/COW functions. Checkpoint envelope 5 commits player
 metadata and pending notifications before game delivery. Contracts, failure
 reproductions and validation: `notes/sharding.md`, Border and recovery audit.
+
+## The host's events from the server's tick (2026-11-04)
+
+The owner decided the server's machine keeps no client world of its own. The
+generated `tide_game.tick_client_events` takes a fourth argument, `all`: the
+log `tick_events` would record, for the host player's local handlers (NULL:
+recorded nowhere, as before). Generated code calls nothing new; the session
+calls it. The Session ABI marker says `host events (1)`. Contracts and tests:
+notes/netcode.md, The host's player shares the server's world.
 
 ## Every player's frame at once (2026-10-24)
 
@@ -508,7 +1147,6 @@ Runtime implementation and ownership stay as recorded below. Pose values are
 captured before return and compatible items batch through existing palette
 pages. Compiler fixtures and platform pixels are recorded in `notes/drawing.md`.
 
-
 Recorded containers (2026-10-19) introduce no runtime API, struct or function
 contract. Compiler-private read analysis and self-contained journal tails reuse
 existing value codecs, tide_writer/reader, heap resolvers/allocation and event
@@ -668,6 +1306,7 @@ Sampling/capture optimization validation (2026-10-10): the frozen implementation
 - `engine/include/tide/math.h`, `engine/src/math.c` (vectors, quaternions, matrices and transcendental functions) and `engine/src/noise.c` (Perlin, simplex and cellular noise) are Claude's too, on the same terms. Generated code calls them by the names `tide_<function>_<type>`. The transcendental functions are in-house, computed in double from basic operations; CORE-MATH remains an option to replace them.
 - `engine/include/tide/random.h` (random number generators: the state, its seeding and every method) is Claude's too, on the same terms. Generated code calls the `tide_random_*` functions by the names in `compiler/src/builtins.c`, and uses `tide_random` as Tide's `Random`.
 - `engine/include/tide/color.h`, `engine/include/tide/draw.h`, `engine/src/draw.c`, `engine/src/draw_coordinates.c`, `engine/src/primitives.c` (colors, the draw list, render targets, screen and world conversions, and the 3D primitives' meshes), `engine/include/tide/mesh.h` and `engine/src/mesh.c` (Tide's mesh draws: lists, and grids as textures) are Claude's too, on the same terms. Generated views call the `tide_draw_*` and `tide_render_target_*` functions (`tide_draw_mesh_shaded` and `tide_draw_grid_texture` for a mesh through a shader), and a game's C does when a view passes it its list.
+- `engine/include/tide/mesh_data.h` and `engine/src/mesh_decode.c` (the static mesh reader: glTF 2.0 and OBJ into one mesh's streams) are Claude's too, on the same terms, approved 2026-11-02 for `Mesh<V>.Decode` (notes/assets-and-files.md, The static mesh reader in the engine). tidec's `asset Mesh<V>` imports call it through `compiler/src/mesh_files.c`, which keeps FBX and file names. `tide_mesh_data_decode` takes the caller's limits (`tide_mesh_decode_limits` for a game's decode) and returns malloc-compatible streams freed by `tide_mesh_data_free`; nothing it gives points into the caller's bytes.
 - `engine/include/tide/attached.h` and `engine/src/attached.c` (what the local world keeps for the match's entities: the tables of local fields) are Claude's too, on the same terms. Generated code calls the `tide_attached_*` functions.
 - `engine/include/tide/skinned.h`, `engine/src/skinned.c`, `engine/include/tide/skinned_data.h`, `engine/src/skinned_data.c` and `engine/src/skinned_decode.c` (portable model data and decoding, deterministic animation/pose operations and GPU palette capture) are temporary runtime implementations maintained with the transpiler, on the same terms. The approved generated-C boundary uses ordinary immutable `List<byte>` model data and owned `List<BoneTransform>` pose data; `tide_bone_transform` is the ten-float C alias (40 bytes). Generated adapters call the `tide_skinned_*` functions and either `tide_draw_skinned_atlas` or the immediate `tide_draw_skinned_data`; omitted poses use `tide_draw_skinned_rest_atlas` or `tide_draw_skinned_rest_data` with the same respective output shapes. No platform headers enter simulation code.
   - The raw decoder returns free-compatible temporary canonical bytes through `tide_skinned_data_decode`/`free`; runtime input is self-contained GLB only. Build-time glTF uses the same decoder with an explicit side-buffer callback. Parser/accessor code is shared with the static importer in `tide/internal/gltf_json.h` and `gltf_read.h`, and allocations use the engine's worker-safe page functions. Full portable validation and checked getters never retain pointers beyond the caller's bytes. The pack's model-content preflight runs before replacing a loaded pack; its entry records are three ordinary list handles (`notes/assets-and-files.md`).
@@ -711,3 +1350,33 @@ The owner explicitly approved the internal tick-completion hook before generated
 ## T? fields (2026-10-11)
 
 Generated code calls no new runtime function for fields declared `T?`, and no engine header or structure changed: what a field is kept as, its conversion to and from the `T?` code reads, its text and list ownership, its packing and its JSON are generated, over `tide_text_view`, `tide_text_temp`, `tide_text_release`, the generated list and map helpers and the `tide_json_*` and `tide_bits_*` functions there were (`notes/language.md`, T? fields).
+
+## Approved profiler source boundary (2026-11-02)
+
+As part of the owner's approved agent-facing profiling work, generated systems and
+views now call `tide_profile_sources` in the existing agent-maintained profiling
+runtime. Its `tide_profile_source` carries the full diagnostic name and optional
+file/line/column. Timing rows own copies, retaining the existing 48-byte panel
+label separately; changed names or locations reset measurements, count changes
+release old sources, and free releases every owned string. Clearing totals retains
+source metadata and lifetime measurement counters. This keeps a host's retained
+profile valid after a game library unloads.
+
+Generated views also borrow their static source entry through
+`tide_draw_list.profile_source` while drawing diagnostics are attached, restoring
+the caller's pointer before local changes/tasks. Draw diagnostics own any source
+they retain. This boundary adds no match data or changes to hashes, snapshots,
+ordering or gameplay. The profile/draw structure changes require hosts and game
+libraries to rebuild together. Source registration does no clock reads; ordinary
+unmeasured execution remains clock-free. Runtime ownership/lifetime tests are in
+`tests/test_profile.c`; compiler fixtures and the stripping contract are recorded
+in `notes/language.md`. Coordinated validation is in `notes/standard-host.md`.
+
+The same exception covers host-owned `tide/profile_report.h` and
+`tide/draw_profile.h` collectors. No generated call reaches the report writer.
+Profile tables and rows carry replacement revisions so capture baselines can
+recognize reset counters. `tide_headless_desc.finished` is an optional host
+finalization callback, called before GPU shutdown and multiplayer process joining;
+it propagates report write failure as an exit status. The existing
+`tide_platform_players_file` helper is declared publicly for consistent report
+suffixes. These remain presentation/diagnostic data outside world storage.

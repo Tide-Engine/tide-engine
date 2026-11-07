@@ -1,0 +1,51 @@
+// What tidec writes for this.Ddx(v), this.Ddy(v) and this.Fwidth(v): a GPU
+// says how fast a value changes from pixel to pixel only outside branches and
+// loops, so the frag works v out a first time as it starts and asks there
+// (`tide_d<n>`), and the call, wherever it is, is that answer. v is made of
+// what the frag can work out as it starts: its vertex, `this`, constants, and
+// variables never assigned again, a texture's read among them. Of each type
+// from float to float4, and a derivative of a derivative.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    List<Corner> mesh;
+    List<int> faces;
+    Grid2<Color> image = Grid2(8, 8);
+}
+
+// A disc's signed distance, smooth over a pixel at any size
+float Disc(float2 uv)
+{
+    return Math.Length(uv - float2(0.5)) - 0.4;
+}
+
+frag Ring(Corner vertex, out Color color, Texture image)
+{
+    var d = Disc(vertex.uv);
+    color = Color.white;
+    if (vertex.uv.x > 0.25)
+    {
+        var edge = Math.Saturate(0.5 - d / this.Fwidth(d));
+        color = Color(edge, edge, edge);
+    }
+    var slope = this.Ddx(vertex.uv) + this.Ddy(this.world.xy);
+    var texel = this.Fwidth(image.Sample(vertex.uv));
+    for (int i = 0; i < 2; i++)
+    {
+        color.r = color.r + this.Fwidth(this.position.x + this.Ddy(d)) * slope.x * texel.a;
+    }
+    color.b = this.Fwidth(this.world).z;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.mesh, art.faces, float4x4.identity, art.image, Ring);
+}

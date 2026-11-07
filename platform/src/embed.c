@@ -224,7 +224,7 @@ tide_embed *tide_embed_create(const tide_embed_desc *desc)
         tide_run_assets_from(pack, desc->pack_size);
     }
 #if !defined(__wasm__)
-    if (from_library) check_pack(); // The pack tide wrote with the build, where the game has assets
+    if (from_library) check_pack(false); // The pack tide wrote with the build, where the game has assets
 #endif
     tide_run_begin();
     return &the_embed;
@@ -421,6 +421,7 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     tide_draw_reset(&tide_run_draw);
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size());
     tide_run_draw.target_pixels = tide_platform_target_pixels;
+    tide_run_draw.target_content = tide_platform_target_content;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
     if (tide_run_view_camera) {
         tide_draw_set_camera_matrices(&tide_run_draw, tide_run_view_camera_transform, tide_run_view_camera_projection);
@@ -876,6 +877,7 @@ void tide_embed_status_of(const tide_embed *e, tide_embed_status *out)
         .typing = tide_platform_embed_typing(),
         .cursor_locked = tide_platform_embed_cursor_lock(),
         .microphone = tide_platform_embed_microphone(),
+        .quit = tide_run_quit,
     };
     memcpy(out->room, tide_run_room, sizeof out->room);
     out->room[sizeof out->room - 1] = '\0';
@@ -935,13 +937,13 @@ bool tide_embed_request(tide_embed *e, const tide_session_request_kind kind, con
     return true;
 }
 
-bool tide_embed_command(tide_embed *e, const uint32_t type, const uint32_t target_index, const uint32_t target_generation,
+bool tide_embed_command(tide_embed *e, const uint32_t type, const uint64_t target_birth, const uint64_t target_lineage,
                         const void *value, const uint32_t size)
 {
     if (e != &the_embed || !running || !tide_run_game || !value || type > INT32_MAX) return false;
     const tide_embed_game *embed = tide_run_game->embed;
     return embed && embed->command
-        && embed->command(tide_run_local, (int32_t)type, target_index, target_generation, value, size);
+        && embed->command(tide_run_local, (int32_t)type, target_birth, target_lineage, value, size);
 }
 
 void tide_embed_camera(tide_embed *e, const float *transform, const float *projection)
@@ -988,6 +990,19 @@ void tide_embed_render_reset(tide_embed *e)
 {
     if (e != &the_embed) return;
     tide_platform_embed_render_reset();
+}
+
+void tide_embed_render_formats(tide_embed *e, const uint32_t formats)
+{
+    if (e != &the_embed) return;
+    tide_gpu_record_block_formats(formats);
+    tide_platform_embed_render_reset(); // What was made as RGBA, made again as the blocks they are
+}
+
+void tide_embed_render_read(tide_embed *e, const uint32_t token, const void *data, const uint32_t size)
+{
+    if (e != &the_embed) return;
+    tide_gpu_record_read(token, data, size);
 }
 
 void tide_embed_background(tide_embed *e, const bool background)

@@ -1,0 +1,5 @@
+// expect: Retarget needs a HumanoidRig profile asset
+asset Animation source = "../e2e/retargeting/source.gltf";
+[Retarget(source, source)]
+asset Animation result = "../e2e/retargeting/export.gltf";
+scene Main { }

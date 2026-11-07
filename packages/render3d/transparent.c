@@ -42,7 +42,8 @@ static uint32_t sortable(const tide_draw_list *d, const tide_draw_command *c)
         || c->shaded.run >= d->run_count) return 0;
     const tide_draw_run *r = &d->runs[c->shaded.run];
     const tide_shader *s = r->shader;
-    if (!s || s->dims != 3 || s->instance_floats < 4u || !r->count || !r->mesh || r->mesh > d->mesh_count) return 0;
+    if (!s || s->dims != 3 || s->instance_floats < 4u || !r->count || !r->mesh || r->mesh > d->mesh_count
+        || r->listed) return 0;
     const uint64_t size = ((uint64_t)s->instance_floats + s->instance_ints) * 16u;
     const uint64_t uniforms = ((uint64_t)s->uniform_floats + s->uniform_ints) * 16u;
     if (size > UINT32_MAX || !d->instances || r->first > d->instance_used
@@ -147,6 +148,12 @@ void SortTransparent(tide_draw_list *d, const int32_t first, const tide_float3 e
     if (!d || first < 0 || (uint32_t)first >= d->count
         || !tide_is_finite_f(eye.x) || !tide_is_finite_f(eye.y) || !tide_is_finite_f(eye.z)
         || !tide_is_finite_f(forward.x) || !tide_is_finite_f(forward.y) || !tide_is_finite_f(forward.z)) return;
+    // Runs of a list the draw list keeps (tide_draw_run.listed) have places for instances: their bytes, to move
+    for (uint32_t i = (uint32_t)first; i < d->count; i++) {
+        const tide_draw_command *c = &d->commands[i];
+        if (c->kind == TIDE_DRAW_SHADED && c->shaded.run < d->run_count && d->runs[c->shaded.run].listed)
+            tide_draw_run_unlist(d, c->shaded.run);
+    }
     uint64_t extra = 0, most_packets = 0, most_bytes = 0;
     uint64_t packets = 0, bytes = 0;
     for (uint32_t i = (uint32_t)first; i < d->count; i++) {

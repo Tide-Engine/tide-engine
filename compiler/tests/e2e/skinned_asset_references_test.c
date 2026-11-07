@@ -152,7 +152,7 @@ TIDE_TEST(skinned_asset_references_keep_identity_snapshots_and_current_pack_borr
     tide_pack_header header;
     memcpy(&header, changed, sizeof header);
     const size_t vertex_at = (size_t)header.region_at
-        + (after.vertices.at & 0x3FFFFFFFu) - TIDE_PACK_BASE + sizeof(tide_block);
+        + tide_handle_offset(after.vertices.at) - TIDE_PACK_BASE + sizeof(tide_block);
     TIDE_REQUIRE(vertex_at + sizeof(float) <= tide_game_pack_size);
     const float replacement = 123;
     memcpy(changed + vertex_at, &replacement, sizeof replacement);

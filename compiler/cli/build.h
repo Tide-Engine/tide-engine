@@ -2,17 +2,27 @@
 
 #include <stdbool.h>
 
+struct asset_sizes;
+
 typedef struct build_options {
     const char *folder; // The game: every .tide file in it and its subfolders
-    bool release;       // Optimized, no console window on Windows
+    bool release;       // Optimized game code with symbols and readable diagnostics
+    bool distribution;  // Shipping cuts; implies release. No console window on Windows
+    const char *optimization; // -O0 through -O3, or NULL for the mode defaults; borrowed for watched rebuilds
     bool web;           // A web page, with clang's WebAssembly target: index.html, and the program and pack it downloads
     bool single_file;   // ...or one self-contained .html with them inside, which opens straight from disk
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
     bool server;        // Headless native process hosting independent matches.
     bool managed;       // Internal deploy target: single-match sandboxed WASM reactor.
     bool server_strip_assets; // Explicit promise that custom C has no hidden asset dependencies.
+    // --strip-assets: the same promise for a release or distribution build's pack, which a game with custom C or
+    // libraries otherwise keeps whole (strip_game_assets)
+    bool strip_assets;
+    // --asset-sizes: gets what each asset declaration adds to the pack, from the build's last compile (asset_sizes.h)
+    struct asset_sizes *asset_sizes;
     bool watch;         // Interactive run: rebuild as the game's files change
     const char *output; // Where the program goes; NULL for <folder>/.build/<name>
+    const char *report; // tide build --report: where the build's report goes (build_report.h), or NULL for none
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner
     bool stats_open;    // ...which starts open: tide run's, for whoever typed --stats to read them

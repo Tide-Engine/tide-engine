@@ -66,7 +66,7 @@ static packages_text load(const char *folder)
 static bool save(packages_text *t)
 {
     const bool ok = sys_write_text(t->path, t->text);
-    if (!ok) fprintf(stderr, "tide: can't write %s\n", t->path);
+    if (!ok) fprintf(stderr, "tide: can't write %s; check file and folder permissions and free disk space\n", t->path);
     free(t->path);
     free(t->text);
     return ok;
@@ -270,6 +270,7 @@ int tide_add(const char *folder, const char *what)
     char *dir = packages_folder(&line, game.folder);
     if (!sys_is_dir(dir)) {
         fprintf(stderr, "tide: %s isn't a folder\n", line.local ? source : dir);
+        fprintf(stderr, "  = note: give an existing package folder; relative paths start at the game's folder, %s\n", game.folder);
         return 1;
     }
     packages_file pf;
@@ -555,7 +556,7 @@ int tide_eject(const char *folder, const char *name)
     char *to = path_join(game.folder, source + 2);
     if (sys_exists(to)) {
         fprintf(stderr, "tide: %s is there already, so %s wasn't copied\n", to, own);
-        fprintf(stderr, "  = note: a package is ejected into packages/ in the game's folder, under its own folder's name\n");
+        fprintf(stderr, "  = note: eject writes packages/ in the game's folder; move the existing folder aside if you want a fresh copy\n");
         return 1;
     }
     copy_walk walk = {from, to, true, sys_mkdirs(to)};
@@ -586,16 +587,16 @@ int tide_eject(const char *folder, const char *name)
 int tide_pin(const char *folder, const char *version)
 {
     const char *pin = version ? version : tide_version_text();
-    if (pin[0] == 'v') pin++;
+    if (pin[0] == 'v' && packages_exact_version(pin + 1)) pin++;
     const size_t length = strlen(pin);
     if (!version && length > 4 && strcmp(pin + length - 4, "-dev") == 0) {
         fprintf(stderr, "tide: this is a build of tide's own source (%s), which no release is\n", pin);
         fprintf(stderr, "  = note: give the version to pin, like `tide pin 0.5.0`\n");
         return 2;
     }
-    if (!packages_exact_version(pin)) {
+    if (!packages_exact_version(pin) && !packages_channel(pin)) {
         fprintf(stderr, "tide: '%s' isn't a whole version\n", pin);
-        fprintf(stderr, "  = note: write it as `tide version` says it, like 0.5.0 or 0.5.0-nightly.12\n");
+        fprintf(stderr, "  = note: use nightly, stable, or an exact version like 0.5.0-nightly.12\n");
         return 2;
     }
     packages_file game;

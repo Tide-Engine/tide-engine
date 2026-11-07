@@ -102,8 +102,8 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.Shadow(rect, radius, size)` | A soft shadow under a box at `rect`, fading out over `size` pixels, a quarter of `size` lower: black at 0.4, or `Draw.Shadow(rect, radius, size, color)`. Draw it before the box |
 | `Draw.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it (see [Text](#text)) |
 | `Draw.Text(text, position, size, color, anchor)` | Text with `position` another place of its box: `Anchor.MiddleCenter` centers it there |
-| `Draw.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw.Text(text, position, size, color, anchor, font)` |
-| `Draw.MeasureText(text, size)` | Nothing: it returns how big `Draw.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
+| `Draw.Text(text, position, size, color, font)` | Text in a font: `Font.Bold`, or one of the game's (see [Fonts](#fonts)). An anchor goes before it: `Draw.Text(text, position, size, color, anchor, font)` |
+| `Draw.MeasureText(text, size)` | Nothing: it returns how big `Draw.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a font |
 | `Draw.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](./meshes-and-textures.md#meshes)) |
 | `Draw.Mesh(vertices, indices, texture)` | Triangles drawn with a texture, read as it says or with the filter and the wrap after it (see [Textures](./meshes-and-textures.md#textures)) |
 | `Draw.Sprite(texture, center, size, color)` | A texture upright over a box, its top left at the box's top left, times `color` (white without one). `Sprite(texture, center, size, part, color)` draws the part of it a `Rect` of uvs covers, and a `rotation` before the color turns it (see [Sprites](./meshes-and-textures.md#sprites)) |
@@ -338,11 +338,47 @@ Draw.Text("DUEL", at, 88, Color.white, Font.Bold);
 Draw.Text("DUEL", at, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
 ```
 
-`Font.Regular` is the weight text has without one. A `Font` is a value like any enum's, so a function can take one and pass it on.
+`Font.Regular` is the weight text has without one. A `Font` is a value, so a function can take one and pass it on, and `.Bold` and `.Regular` name the two where a `Font` goes.
 
 Bold is a second font file, and a game only carries it when its code says `Font.Bold`: about 95 KB more in the program, and nothing for a game that never does. Its strokes are a whole number of pixels thick, as the regular weight's are, so text stays sharp. At the smallest sizes, under 13 of the display's pixels, that's one pixel in both weights: bold is for text of about that size and up, and for titles. A letter the bold weight doesn't have (it covers Latin, Greek and Cyrillic, less widely than the regular one) is drawn in the regular weight.
 
-The GUI's widgets are in the regular weight.
+The GUI's widgets are in the regular weight, unless their [theme](./gui.md#themes) says another font.
+
+### Fonts
+
+A game can have fonts of its own, as many as it likes, each drawn wherever a call names it. A font file is an asset:
+
+```csharp
+asset Font title = "fonts/Title.ttf";
+asset Map<string, Font> fonts = "fonts/*.ttf";
+
+view Hud(Round round)
+{
+    Draw.Text("ROUND 3", float2(40, 40), 64, Color.white, title);
+    Draw.Text(round.message, float2(40, 120), 20, Color.white, fonts["fonts/Body.ttf"]);
+}
+```
+
+A `Font` asset is a TrueType font: a `.ttf`, an `.otf` of TrueType outlines, or the first font of a `.ttc`. Many `.otf` files have CFF (PostScript) outlines instead, which aren't read: the build says so, and a font tool converts one to `.ttf`. A file that isn't a font it can read is an error where it's declared.
+
+A font that comes as the game runs, a player's file or one fetched from the web, is decoded from its bytes in local code:
+
+```csharp
+local singleton Chat { Font font; bool loaded; }
+
+view Load(mut Chat chat, ChatSettings settings)
+{
+    if (chat.loaded) return;
+    chat.font = Font.Decode(settings.fontBytes)!;
+    chat.loaded = true;
+}
+```
+
+`Font.Decode` fails with `IOError.InvalidData` for bytes that aren't such a font. It reads every file with the engine's own reader, which checks every place a file names before it reads anything there, so a broken or hostile file can't make the game read or write outside it. A file past its limits (64 MiB, or more glyphs and outlines than any font has) is refused too. Decoding the same bytes again gives the same font, at no cost.
+
+A `Font` is this machine's, as a `Texture` is: views, local handlers and local tasks hold one, and the match doesn't. A font every player should see goes into the match as bytes, a `List<byte>` field, which each machine decodes.
+
+A character a font has no glyph for is drawn in `Font.Regular`. Every font is fitted to the display's pixels as the engine's is, so text in it is sharp; hints and kerning in the file aren't read.
 
 ### Measuring text
 
@@ -359,7 +395,7 @@ view Banner(Round round)
 }
 ```
 
-That's the message in the middle of the screen, on a panel that fits it. Bold text is wider than regular, so it's measured in its weight: `Draw.MeasureText(text, size, Font.Bold)`.
+That's the message in the middle of the screen, on a panel that fits it. Bold text is wider than regular, so it's measured in its weight: `Draw.MeasureText(text, size, Font.Bold)`, as text in any font is measured in it.
 
 Below, the cross is the position the text is given, and the frame is the box `MeasureText` says it has. Move the anchor's slider to put another place of the box on the cross, and change the size and the weight to see the box follow.
 

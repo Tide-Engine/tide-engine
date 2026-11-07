@@ -99,7 +99,7 @@ static bool same(const tide_entity x, const tide_entity y)
 
 static bool none(const tide_entity e)
 {
-    return e.index == 0 && e.generation == 0;
+    return tide_entity_is_null(e);
 }
 
 // Ticks until a tick steps nothing, and whether one came within `most`
@@ -130,8 +130,8 @@ static bool stays(tide_world *w)
 // The match of parts after its ticks, on every platform and in every
 // configuration: its parts' shapes are in Box2D's image, and whose each is in
 // the match.
-#define PARTS_HASH UINT64_C(0x0264b698f5e2d3c4)
-#define PARTS_IMAGES_HASH UINT64_C(0x58c9a82b39bd3a19)
+#define PARTS_HASH UINT64_C(0xceb501c85ee2e8d0)
+#define PARTS_IMAGES_HASH UINT64_C(0x1ea9df5390662619)
 
 enum { PART_TICKS = 420, SNIP = 200, FELL = 260, LOOK = 180 };
 
@@ -399,8 +399,8 @@ static bool same_bytes(const void *x, const void *y, const size_t size, const ch
 
 // The match of questions after its ticks, and every answer the match was
 // given along the way, on every platform and in every configuration.
-#define ASKS_HASH UINT64_C(0xd7ee189106186006)
-#define ANSWERS_HASH UINT64_C(0x53abf452b7c6e40b)
+#define ASKS_HASH UINT64_C(0xd478440c23769400)
+#define ANSWERS_HASH UINT64_C(0xbc944a22c14580f3)
 
 enum { ASK_TICKS = 150, FADE = 100 };
 

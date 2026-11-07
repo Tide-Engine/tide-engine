@@ -39,6 +39,17 @@ typedef enum tide_frame_part {
     TIDE_FRAME_PARTS,
 } tide_frame_part;
 
+// What the renderer's CPU spends drawing a frame's list on (tide_platform_render_parts), within TIDE_FRAME_RENDER.
+typedef enum tide_render_part {
+    TIDE_RENDER_PREPARE, // Levels of detail, skinning's poses, the destinations, GPU lists' reads begun
+    TIDE_RENDER_STEPS,   // The list's commands turned into the renderer's steps (shapes, text and 2D meshes laid out)
+    TIDE_RENDER_UPLOADS, // Pipelines found, textures, meshes, instances and GPU lists sent to the GPU
+    TIDE_RENDER_CULLING, // Culled runs' and occlusion's kernels set going, before any pass
+    TIDE_RENDER_RECORD,  // The passes' draws recorded through the backend, with the kernels and copies between them
+    TIDE_RENDER_FINISH,  // Read-backs, spares and textures let go
+    TIDE_RENDER_PARTS,
+} tide_render_part;
+
 // A line of the panel.
 typedef struct tide_profiler_row {
     char label[TIDE_PROFILE_NAME];

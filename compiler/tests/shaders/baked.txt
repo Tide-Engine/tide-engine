@@ -1,0 +1,314 @@
+// BakedSkin and Tinted on BakedVertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_n4: vec4f;
+var<private> tide_n5: vec4f;
+var<private> tide_j0: vec4i;
+var<private> tide_f0: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec3f,
+    @location(1) @interpolate(flat) tide_f0: vec4f,
+}
+struct tt_BakedVertex {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_uv: vec2f,
+    m_joints: vec4i,
+    m_weights: vec4f,
+}
+struct tt_BakedBone {
+    m_x: vec4f,
+    m_y: vec4f,
+    m_z: vec4f,
+}
+struct tt_BakedFrame {
+    m_rows: vec4i,
+    m_blend: vec4f,
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_saturate1(a: f32) -> f32 {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
+fn tide_normalize3(v: vec3f) -> vec3f {
+    var l: f32 = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
+    return vec3f(0.0);
+}
+fn tf_BakedBone_2m5(tide_self: tt_BakedBone, t_b: tt_BakedBone, t_t: f32) -> tt_BakedBone {
+    return tt_BakedBone(mix(tide_self.m_x, t_b.m_x, vec4f(t_t)), mix(tide_self.m_y, t_b.m_y, vec4f(t_t)), mix(tide_self.m_z, t_b.m_z, vec4f(t_t)));
+}
+
+fn tide_list0(tide_i: i32) -> tt_BakedBone {
+    if (tide_i < 0 || tide_i >= tide_block.tide_v0.y) {
+        return tt_BakedBone();
+    }
+    let tide_word = tide_i * 12;
+    let tide_first = tide_word >> 2u;
+    let tide_q0 = textureLoad(pixels0, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = textureLoad(pixels0, vec2i((tide_first + 1) & 1023, (tide_first + 1) >> 10u), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    let tide_q2 = textureLoad(pixels0, vec2i((tide_first + 2) & 1023, (tide_first + 2) >> 10u), 0);
+    let tide_p2 = bitcast<vec4f>(tide_q2);
+    return tt_BakedBone(tide_p0, tide_p1, tide_p2);
+}
+
+fn tf_BakedPoses_2m7(t_from: i32, t_to: i32, t_t: f32, t_joints: vec4i, t_weights: vec4f) -> tt_BakedBone {
+    var t_a: tt_BakedBone = tf_BakedBone_2m5(tide_list0((t_from + t_joints.x)), tide_list0((t_to + t_joints.x)), t_t);
+    var t_b: tt_BakedBone = tf_BakedBone_2m5(tide_list0((t_from + t_joints.y)), tide_list0((t_to + t_joints.y)), t_t);
+    var t_c: tt_BakedBone = tf_BakedBone_2m5(tide_list0((t_from + t_joints.z)), tide_list0((t_to + t_joints.z)), t_t);
+    var t_d: tt_BakedBone = tf_BakedBone_2m5(tide_list0((t_from + t_joints.w)), tide_list0((t_to + t_joints.w)), t_t);
+    return tt_BakedBone(((((t_a.m_x * t_weights.x) + (t_b.m_x * t_weights.y)) + (t_c.m_x * t_weights.z)) + (t_d.m_x * t_weights.w)), ((((t_a.m_y * t_weights.x) + (t_b.m_y * t_weights.y)) + (t_c.m_y * t_weights.z)) + (t_d.m_y * t_weights.w)), ((((t_a.m_z * t_weights.x) + (t_b.m_z * t_weights.y)) + (t_c.m_z * t_weights.z)) + (t_d.m_z * t_weights.w)));
+}
+
+fn tf_BakedPoses_2m8(t_frame: tt_BakedFrame, t_joints: vec4i, t_weights: vec4f) -> tt_BakedBone {
+    var t_now: i32 = (t_frame.m_rows.x * tide_block.tide_v0.x);
+    var t_next: i32 = (t_frame.m_rows.y * tide_block.tide_v0.x);
+    if ((t_frame.m_blend.w > 0.5)) {
+        var t_one: tt_BakedBone = tf_BakedBone_2m5(tide_list0((t_now + t_joints.x)), tide_list0((t_next + t_joints.x)), t_frame.m_blend.x);
+        if ((t_frame.m_blend.z < 1.0)) {
+            var t_from: tt_BakedBone = tf_BakedBone_2m5(tide_list0(((t_frame.m_rows.z * tide_block.tide_v0.x) + t_joints.x)), tide_list0(((t_frame.m_rows.w * tide_block.tide_v0.x) + t_joints.x)), t_frame.m_blend.y);
+            t_one = tf_BakedBone_2m5(t_from, t_one, tide_saturate1(t_frame.m_blend.z));
+        }
+        return t_one;
+    }
+    var t_m: tt_BakedBone = tf_BakedPoses_2m7(t_now, t_next, t_frame.m_blend.x, t_joints, t_weights);
+    if ((t_frame.m_blend.z < 1.0)) {
+        t_m = tf_BakedBone_2m5(tf_BakedPoses_2m7((t_frame.m_rows.z * tide_block.tide_v0.x), (t_frame.m_rows.w * tide_block.tide_v0.x), t_frame.m_blend.y, t_joints, t_weights), t_m, tide_saturate1(t_frame.m_blend.z));
+    }
+    return t_m;
+}
+
+fn tf_BakedBone_2m3(tide_self: tt_BakedBone, t_p: vec3f) -> vec3f {
+    var t_q: vec4f = vec4f(t_p, 1.0);
+    return vec3f(dot(tide_self.m_x, t_q), dot(tide_self.m_y, t_q), dot(tide_self.m_z, t_q));
+}
+
+fn tf_BakedBone_2m4(tide_self: tt_BakedBone, t_d: vec3f) -> vec3f {
+    var t_q: vec4f = vec4f(t_d, 0.0);
+    return vec3f(dot(tide_self.m_x, t_q), dot(tide_self.m_y, t_q), dot(tide_self.m_z, t_q));
+}
+
+fn ts_BakedSkin(t_vertex: ptr<function, tt_BakedVertex>) {
+    var t_skin: tt_BakedBone = tf_BakedPoses_2m8(tt_BakedFrame(tide_j0, tide_n4), (*t_vertex).m_joints, (*t_vertex).m_weights);
+    (*t_vertex).m_position = tf_BakedBone_2m3(t_skin, (*t_vertex).m_position);
+    (*t_vertex).m_normal = tide_normalize3(tf_BakedBone_2m4(t_skin, (*t_vertex).m_normal));
+}
+
+fn ts_Tinted(t_vertex: tt_BakedVertex, t_color: ptr<function, vec4f>) {
+    (*t_color) = (tide_f0 * (0.5 + (0.5 * t_vertex.m_normal.y)));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec2f, @location(3) tide_a3: vec4i, @location(4) tide_a4: vec4f, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @location(9) tide_in4: vec4f, @location(10) tide_in5: vec4f, @location(11) tide_ij0: vec4i) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    tide_n4 = tide_in4;
+    tide_n5 = tide_in5;
+    tide_j0 = tide_ij0;
+    var tide_vertex: tt_BakedVertex = tt_BakedVertex(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
+    ts_BakedSkin(&tide_vertex);
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_normal;
+    out.tide_f0 = vec4f(tide_n5.x, tide_n5.y, tide_n5.z, tide_n5.w);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_f0 = in.tide_f0;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Tinted(tt_BakedVertex(vec3f(), in.tide_s1, vec2f(), vec4i(), vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Hold on Vertex3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_n4: vec4f;
+var<private> tide_j0: vec4i;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s2: vec4f,
+}
+struct tt_Vertex3 {
+    m_position: vec3f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+struct tt_BakedFrame {
+    m_rows: vec4i,
+    m_blend: vec4f,
+}
+struct tt_BakedBone {
+    m_x: vec4f,
+    m_y: vec4f,
+    m_z: vec4f,
+}
+struct tt_BakedSocket {
+    m_bone: i32,
+    m_at: tt_BakedBone,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_saturate1(a: f32) -> f32 {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
+fn tide_list1(tide_i: i32) -> tt_BakedSocket {
+    if (tide_i < 0 || tide_i >= tide_block.tide_v0.z) {
+        return tt_BakedSocket();
+    }
+    let tide_word = tide_i * 16;
+    let tide_first = tide_word >> 2u;
+    let tide_q0 = textureLoad(pixels1, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = textureLoad(pixels1, vec2i((tide_first + 1) & 1023, (tide_first + 1) >> 10u), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    let tide_q2 = textureLoad(pixels1, vec2i((tide_first + 2) & 1023, (tide_first + 2) >> 10u), 0);
+    let tide_p2 = bitcast<vec4f>(tide_q2);
+    let tide_q3 = textureLoad(pixels1, vec2i((tide_first + 3) & 1023, (tide_first + 3) >> 10u), 0);
+    return tt_BakedSocket(tide_q3.x, tt_BakedBone(tide_p0, tide_p1, tide_p2));
+}
+
+fn tf_BakedBone_2m0(tide_self: tt_BakedBone) -> mat4x4f {
+    return mat4x4f(vec4f(tide_self.m_x.x, tide_self.m_y.x, tide_self.m_z.x, 0.0), vec4f(tide_self.m_x.y, tide_self.m_y.y, tide_self.m_z.y, 0.0), vec4f(tide_self.m_x.z, tide_self.m_y.z, tide_self.m_z.z, 0.0), vec4f(tide_self.m_x.w, tide_self.m_y.w, tide_self.m_z.w, 1.0));
+}
+
+fn tf_BakedBone_2m5(tide_self: tt_BakedBone, t_b: tt_BakedBone, t_t: f32) -> tt_BakedBone {
+    return tt_BakedBone(mix(tide_self.m_x, t_b.m_x, vec4f(t_t)), mix(tide_self.m_y, t_b.m_y, vec4f(t_t)), mix(tide_self.m_z, t_b.m_z, vec4f(t_t)));
+}
+
+fn tide_list0(tide_i: i32) -> tt_BakedBone {
+    if (tide_i < 0 || tide_i >= tide_block.tide_v0.y) {
+        return tt_BakedBone();
+    }
+    let tide_word = tide_i * 12;
+    let tide_first = tide_word >> 2u;
+    let tide_q0 = textureLoad(pixels0, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = textureLoad(pixels0, vec2i((tide_first + 1) & 1023, (tide_first + 1) >> 10u), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    let tide_q2 = textureLoad(pixels0, vec2i((tide_first + 2) & 1023, (tide_first + 2) >> 10u), 0);
+    let tide_p2 = bitcast<vec4f>(tide_q2);
+    return tt_BakedBone(tide_p0, tide_p1, tide_p2);
+}
+
+fn tf_BakedPoses_2m5(t_frame: tt_BakedFrame, t_bone: i32) -> tt_BakedBone {
+    if (((t_bone < 0) || (t_bone >= tide_block.tide_v0.x))) {
+        return tt_BakedBone(vec4f(1.0, 0.0, 0.0, 0.0), vec4f(0.0, 1.0, 0.0, 0.0), vec4f(0.0, 0.0, 1.0, 0.0));
+    }
+    var t_a: tt_BakedBone = tf_BakedBone_2m5(tide_list0(((t_frame.m_rows.x * tide_block.tide_v0.x) + t_bone)), tide_list0(((t_frame.m_rows.y * tide_block.tide_v0.x) + t_bone)), t_frame.m_blend.x);
+    if ((t_frame.m_blend.z < 1.0)) {
+        var t_b: tt_BakedBone = tf_BakedBone_2m5(tide_list0(((t_frame.m_rows.z * tide_block.tide_v0.x) + t_bone)), tide_list0(((t_frame.m_rows.w * tide_block.tide_v0.x) + t_bone)), t_frame.m_blend.y);
+        t_a = tf_BakedBone_2m5(t_b, t_a, tide_saturate1(t_frame.m_blend.z));
+    }
+    return t_a;
+}
+
+fn tf_BakedPoses_2m6(t_frame: tt_BakedFrame, t_bone: i32) -> mat4x4f {
+    return tf_BakedBone_2m0(tf_BakedPoses_2m5(t_frame, t_bone));
+}
+
+fn tf_BakedPoses_2m10(t_frame: tt_BakedFrame, t_socket: i32) -> mat4x4f {
+    if (((t_socket < 0) || (t_socket >= tide_block.tide_v0.z))) {
+        return mat4x4f(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+    }
+    var t_s: tt_BakedSocket = tide_list1(t_socket);
+    return (tf_BakedPoses_2m6(t_frame, t_s.m_bone) * tf_BakedBone_2m0(t_s.m_at));
+}
+
+fn ts_Hold(t_corner: ptr<function, tt_Vertex3>) {
+    (*t_corner).m_position = (tf_BakedPoses_2m10(tt_BakedFrame(tide_j0, tide_n4), tide_i(0)) * vec4f((*t_corner).m_position, tide_f(1.0))).xyz;
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @location(7) tide_in4: vec4f, @location(8) tide_ij0: vec4i) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    tide_n4 = tide_in4;
+    tide_j0 = tide_ij0;
+    var tide_vertex: tt_Vertex3 = tt_Vertex3(tide_a0, tide_a1, tide_a2);
+    ts_Hold(&tide_vertex);
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s2 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = in.tide_s2;
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

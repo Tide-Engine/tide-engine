@@ -1,0 +1,5 @@
+// expect: Retarget options are named rootScale, rootOffset, headingDegrees, spineDistribution, twistDistribution or sampleRate
+asset HumanoidRig source = "../e2e/retargeting/source.humanoid.json";
+[Retarget(source, source, quality: 2)]
+asset Animation result = "../e2e/retargeting/source.gltf";
+scene Main { }

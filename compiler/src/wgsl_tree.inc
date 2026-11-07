@@ -3,6 +3,10 @@
 // `struct translation`, whose first fields wgsl_read.inc reads, then
 // includes that.
 
+// Generated portable uniform blocks can have 252 members, and their packed
+// arrays can construct 249 elements. Keep bounded translator scratch large enough.
+enum { WGSL_MEMBERS_MOST = 256, WGSL_ARGUMENTS_MOST = 256 };
+
 // ---------------------------------------------------------------------------
 // Memory
 
@@ -155,8 +159,10 @@ typedef struct attrs {
     int location;  // -1 for none
     int builtin;   // A SPIR-V built-in, or -1
     bool flat;
+    bool invariant;     // @invariant: a position worked out the same in every shader that works it out the same way
     int group, binding; // -1 for none
-    int stage;     // A function's: 0, or 1 for @vertex and 2 for @fragment
+    int stage;     // A function's: 0, or 1 for @vertex, 2 for @fragment and 3 for @compute
+    int size[3];   // A compute function's @workgroup_size: 0 for none
 } attrs;
 
 typedef struct member {
@@ -178,7 +184,7 @@ typedef struct sdecl {
     bool resolving;
 } sdecl;
 
-typedef enum space { SPACE_FUNCTION, SPACE_PRIVATE, SPACE_UNIFORM, SPACE_HANDLE } space;
+typedef enum space { SPACE_FUNCTION, SPACE_PRIVATE, SPACE_UNIFORM, SPACE_HANDLE, SPACE_STORAGE, SPACE_WORKGROUP } space;
 
 typedef struct gdecl {
     const char *name;
@@ -189,6 +195,7 @@ typedef struct gdecl {
     expr *init;
     attrs at;
     bool is_const;
+    bool writable; // var<storage, read_write>
 } gdecl;
 
 typedef struct param {
@@ -219,22 +226,25 @@ typedef struct fdecl {
 
 typedef enum kind {
     K_NONE, K_VOID, K_BOOL, K_I32, K_U32, K_F32, K_AINT, K_AFLOAT, K_VEC, K_MAT, K_ARRAY, K_STRUCT, K_PTR,
-    K_SAMPLER, K_SAMPLER_CMP, K_TEXTURE,
+    K_SAMPLER, K_SAMPLER_CMP, K_TEXTURE, K_ATOMIC,
 } kind;
 
 typedef enum dim { DIM_2D, DIM_CUBE } dim;
 
 typedef struct type {
     kind kind;
-    int elem;  // A vector's, a matrix's column's (a vector), an array's, a pointer's, a texture's sampled scalar
-    int n;     // A vector's size, a matrix's columns, an array's count
+    int elem;  // A vector's, a matrix's column's (a vector), an array's, a pointer's, a texture's sampled scalar, an atomic's
+    int n;     // A vector's size, a matrix's columns, an array's count (0 for a runtime-sized one, storage's)
     int sc;    // A pointer's storage class
     sdecl *s;  // A struct's
     dim dim;   // A texture's
-    bool depth, multisampled;
+    bool depth, multisampled, arrayed; // arrayed: a texture_2d_array's, texture_depth_2d_array's
     uint32_t id, laid; // Its SPIR-V type, and the one laid out for a uniform block (structs and arrays)
 } type;
 
 // SPIR-V's storage classes, which a pointer's type says
-enum { SC_UNIFORM_CONSTANT = 0, SC_INPUT = 1, SC_UNIFORM = 2, SC_OUTPUT = 3, SC_PRIVATE = 6, SC_FUNCTION = 7 };
+enum {
+    SC_UNIFORM_CONSTANT = 0, SC_INPUT = 1, SC_UNIFORM = 2, SC_OUTPUT = 3, SC_WORKGROUP = 4, SC_PRIVATE = 6, SC_FUNCTION = 7,
+    SC_STORAGE = 12,
+};
 

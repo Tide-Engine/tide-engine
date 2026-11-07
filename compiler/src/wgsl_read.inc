@@ -292,11 +292,11 @@ static expr *parse_expr(translation *x);
 
 static expr **parse_args(translation *x, int *count)
 {
-    expr *items[64];
+    expr *items[WGSL_ARGUMENTS_MOST];
     int n = 0;
     expect(x, P_LPAREN, "'('");
     while (!is_punct(x, P_RPAREN)) {
-        if (n == 64) fail(x, peek(x)->line, peek(x)->col, "too many arguments");
+        if (n >= WGSL_ARGUMENTS_MOST) fail(x, peek(x)->line, peek(x)->col, "too many arguments");
         items[n++] = parse_expr(x);
         if (!accept(x, P_COMMA)) break;
     }
@@ -449,6 +449,8 @@ static int builtin_named(translation *x, const token *t)
         int builtin;
     } builtins[] = {
         {"position", 0}, {"vertex_index", 42}, {"instance_index", 43}, {"front_facing", 17}, {"frag_depth", 22},
+        {"num_workgroups", 24}, {"workgroup_id", 26}, {"local_invocation_id", 27}, {"global_invocation_id", 28},
+        {"local_invocation_index", 29},
     };
     for (size_t i = 0; i < sizeof builtins / sizeof builtins[0]; i++) {
         if (same(t->at, t->len, builtins[i].name)) return builtins[i].builtin;
@@ -485,6 +487,8 @@ static attrs parse_attrs(translation *x)
             at.builtin = builtin_named(x, expect_name(x, "a built-in's name"));
             accept(x, P_COMMA);
             expect(x, P_RPAREN, "')'");
+        } else if (same(name->at, name->len, "invariant")) {
+            at.invariant = true;
         } else if (same(name->at, name->len, "interpolate")) {
             expect(x, P_LPAREN, "'('");
             token *how = expect_name(x, "how it's interpolated");
@@ -504,6 +508,23 @@ static attrs parse_attrs(translation *x)
             at.stage = 1;
         } else if (same(name->at, name->len, "fragment")) {
             at.stage = 2;
+        } else if (same(name->at, name->len, "compute")) {
+            at.stage = 3;
+        } else if (same(name->at, name->len, "workgroup_size")) {
+            expect(x, P_LPAREN, "'('");
+            for (int k = 0; k < 3; k++) {
+                token *t = peek(x);
+                if (t->kind != T_INT) fail(x, t->line, t->col, "a workgroup's size here is a number");
+                next(x);
+                const int64_t n = parse_int_text(x, t);
+                if (n < 1 || n > 1024) fail(x, t->line, t->col, "a workgroup's size is from 1 to 1024");
+                at.size[k] = (int)n;
+                if (!accept(x, P_COMMA) || is_punct(x, P_RPAREN)) break;
+            }
+            expect(x, P_RPAREN, "')'");
+            for (int k = 1; k < 3; k++) {
+                if (!at.size[k]) at.size[k] = 1;
+            }
         } else if (same(name->at, name->len, "must_use")) {
             // Nothing to do here
         } else {
@@ -794,10 +815,10 @@ static void parse_module(translation *x)
             sdecl *s = grab(&x->a, sizeof(sdecl));
             s->name = name->at, s->len = name->len;
             expect(x, P_LBRACE, "'{'");
-            member items[128];
+            member items[WGSL_MEMBERS_MOST];
             int n = 0;
             while (!is_punct(x, P_RBRACE)) {
-                if (n == 128) fail(x, t->line, t->col, "too many members");
+                if (n >= WGSL_MEMBERS_MOST) fail(x, t->line, t->col, "too many members");
                 member *m = &items[n++];
                 m->at = parse_attrs(x);
                 token *mname = expect_name(x, "a member's name");
@@ -824,7 +845,14 @@ static void parse_module(translation *x)
                 token *space = expect_name(x, "an address space");
                 if (same(space->at, space->len, "private")) g->space = SPACE_PRIVATE;
                 else if (same(space->at, space->len, "uniform")) g->space = SPACE_UNIFORM;
+                else if (same(space->at, space->len, "workgroup")) g->space = SPACE_WORKGROUP;
+                else if (same(space->at, space->len, "storage")) g->space = SPACE_STORAGE;
                 else fail(x, space->line, space->col, "var<%.*s> isn't one this takes", space->len, space->at);
+                if (g->space == SPACE_STORAGE && accept(x, P_COMMA)) {
+                    token *mode = expect_name(x, "how it's accessed");
+                    if (same(mode->at, mode->len, "read_write")) g->writable = true;
+                    else if (!same(mode->at, mode->len, "read")) fail(x, mode->line, mode->col, "var<storage, %.*s> isn't one this takes", mode->len, mode->at);
+                }
                 expect_close(x);
             }
             token *name = expect_name(x, "a name");
@@ -886,7 +914,7 @@ static int add_type(translation *x, const type t)
     for (int i = 1; i < x->ntypes; i++) {
         const type *o = &x->types[i];
         if (o->kind == t.kind && o->elem == t.elem && o->n == t.n && o->sc == t.sc && o->s == t.s && o->dim == t.dim
-            && o->depth == t.depth && o->multisampled == t.multisampled) {
+            && o->depth == t.depth && o->multisampled == t.multisampled && o->arrayed == t.arrayed) {
             return i;
         }
     }
@@ -997,7 +1025,8 @@ static void type_name(translation *x, const int t, char *out, const size_t size)
     case K_MAT: snprintf(out, size, "mat%dx%df", ty->n, T(x, ty->elem)->n); break;
     case K_ARRAY:
         type_name(x, ty->elem, inner, sizeof inner);
-        snprintf(out, size, "array<%s, %d>", inner, ty->n);
+        if (ty->n) snprintf(out, size, "array<%s, %d>", inner, ty->n);
+        else snprintf(out, size, "array<%s>", inner);
         break;
     case K_STRUCT: snprintf(out, size, "%.*s", ty->s->len, ty->s->name); break;
     case K_PTR:
@@ -1007,6 +1036,10 @@ static void type_name(translation *x, const int t, char *out, const size_t size)
     case K_SAMPLER: snprintf(out, size, "sampler"); break;
     case K_SAMPLER_CMP: snprintf(out, size, "sampler_comparison"); break;
     case K_TEXTURE: snprintf(out, size, "a texture"); break;
+    case K_ATOMIC:
+        type_name(x, ty->elem, inner, sizeof inner);
+        snprintf(out, size, "atomic<%s>", inner);
+        break;
     default: snprintf(out, size, "nothing"); break;
     }
 }
@@ -1138,7 +1171,8 @@ static int resolve_maybe(translation *x, const tnode *n)
     }
     if (same(s, len, "array")) {
         if (!n->nargs) return 0;
-        if (n->nargs < 2 || n->args[1]->name) fail(x, n->line, n->col, "an array here has a count, which is a number");
+        if (n->nargs == 1) return t_array(x, resolve(x, n->args[0]), 0); // Runtime-sized: storage's
+        if (n->args[1]->name) fail(x, n->line, n->col, "an array here has a count, which is a number");
         if (n->args[1]->number <= 0 || n->args[1]->number > 65536) fail(x, n->line, n->col, "an array's count is from 1 to 65536");
         return t_array(x, resolve(x, n->args[0]), (int)n->args[1]->number);
     }
@@ -1148,21 +1182,32 @@ static int resolve_maybe(translation *x, const tnode *n)
         int sc;
         if (same(space->name, space->len, "function")) sc = SC_FUNCTION;
         else if (same(space->name, space->len, "private")) sc = SC_PRIVATE;
+        else if (same(space->name, space->len, "workgroup")) sc = SC_WORKGROUP;
+        else if (same(space->name, space->len, "storage")) sc = SC_STORAGE;
         else fail(x, n->line, n->col, "ptr<%.*s, ...> isn't taken here", space->len, space->name), sc = 0;
         return t_ptr(x, sc, resolve(x, n->args[1]));
     }
+    if (same(s, len, "atomic")) {
+        const int held = resolve_scalar_arg(x, n, 0);
+        if (T(x, held)->kind != K_U32 && T(x, held)->kind != K_I32) fail(x, n->line, n->col, "an atomic holds a u32 or an i32");
+        return add_type(x, (type){.kind = K_ATOMIC, .elem = held});
+    }
     if (same(s, len, "sampler")) return t_simple(x, K_SAMPLER);
     if (same(s, len, "sampler_comparison")) return t_simple(x, K_SAMPLER_CMP);
-    if (same(s, len, "texture_2d") || same(s, len, "texture_cube") || same(s, len, "texture_multisampled_2d")) {
+    if (same(s, len, "texture_2d") || same(s, len, "texture_cube") || same(s, len, "texture_multisampled_2d")
+        || same(s, len, "texture_2d_array")) {
         const int sampled = resolve_scalar_arg(x, n, 0);
         if (T(x, sampled)->kind == K_BOOL) fail(x, n->line, n->col, "a texture holds numbers");
         return add_type(x, (type){.kind = K_TEXTURE, .elem = sampled, .dim = same(s, len, "texture_cube") ? DIM_CUBE : DIM_2D,
-                                  .multisampled = same(s, len, "texture_multisampled_2d")});
+                                  .multisampled = same(s, len, "texture_multisampled_2d"),
+                                  .arrayed = same(s, len, "texture_2d_array")});
     }
-    if (same(s, len, "texture_depth_2d") || same(s, len, "texture_depth_cube") || same(s, len, "texture_depth_multisampled_2d")) {
+    if (same(s, len, "texture_depth_2d") || same(s, len, "texture_depth_cube") || same(s, len, "texture_depth_multisampled_2d")
+        || same(s, len, "texture_depth_2d_array")) {
         return add_type(x, (type){.kind = K_TEXTURE, .elem = t_simple(x, K_F32), .depth = true,
                                   .dim = same(s, len, "texture_depth_cube") ? DIM_CUBE : DIM_2D,
-                                  .multisampled = same(s, len, "texture_depth_multisampled_2d")});
+                                  .multisampled = same(s, len, "texture_depth_multisampled_2d"),
+                                  .arrayed = same(s, len, "texture_depth_2d_array")});
     }
     sdecl *st = find_struct(x, s, len);
     if (st) return resolve_struct(x, st, n->line, n->col);
@@ -1175,4 +1220,29 @@ static int resolve(translation *x, const tnode *n)
     const int t = resolve_maybe(x, n);
     if (!t) fail(x, n->line, n->col, "'%.*s' isn't a type", n->len, n->name);
     return t;
+}
+
+// What atomicCompareExchangeWeak gives, WGSL's __atomic_compare_exchange_result of
+// `scalar` (a u32 or an i32): its old value, and whether it was exchanged.
+static int exchange_result(translation *x, const int scalar)
+{
+    const char *name = T(x, scalar)->kind == K_I32 ? "__atomic_compare_exchange_result_i32" : "__atomic_compare_exchange_result_u32";
+    for (int i = 1; i < x->ntypes; i++) {
+        const type *t = T(x, i);
+        if (t->kind == K_STRUCT && same(t->s->name, t->s->len, name)) return i;
+    }
+    sdecl *s = grab(&x->a, sizeof(sdecl));
+    s->name = name, s->len = (int)strlen(name);
+    s->count = 2;
+    s->members = grab(&x->a, sizeof(member) * 2);
+    s->members[0] = (member){.name = "old_value", .len = 9, .at = no_attrs()};
+    s->members[1] = (member){.name = "exchanged", .len = 9, .at = no_attrs()};
+    s->member_types = grab(&x->a, sizeof(int) * 2);
+    s->member_types[0] = scalar;
+    s->member_types[1] = t_simple(x, K_BOOL);
+    s->offsets = grab(&x->a, sizeof(uint32_t) * 2);
+    s->offsets[1] = 4;
+    s->align = 4, s->size = 8;
+    s->type = add_type(x, (type){.kind = K_STRUCT, .s = s});
+    return s->type;
 }

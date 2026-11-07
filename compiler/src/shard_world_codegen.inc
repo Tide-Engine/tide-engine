@@ -12,7 +12,7 @@ static void gen_shard_receive(gen *g)
     // with the changes on them, taken as a whole tree would be. A base that
     // isn't the one it was sent changes nothing, and asks for the tree whole
     sb_put(o, "TIDE_SHARD_FN bool tide_shard_take_changes(tide_world *w, tide_reader *r, const uint32_t from)\n{\n"
-              "    tide_entity root;\n    root.index = tide_read_u32(r);\n    root.generation = tide_read_u32(r);\n"
+              "    tide_entity root;\n    root.birth = tide_read_u64(r);\n    root.lineage = tide_read_u64(r);\n"
               "    const uint64_t hash = tide_read_u64(r);\n    const uint32_t n = tide_read_u32(r);\n"
               "    const uint8_t *changes = tide_read_bytes(r, n);\n"
               "    if (r->failed || !changes) return false;\n"
@@ -34,7 +34,7 @@ static void gen_shard_receive(gen *g)
               "        free(was.data);\n    }\n"
               "    if (!took) { // Asked for whole\n"
               "        tide_writer m = tide_shard_begin(w, TIDE_SHARD_STALE, true);\n"
-              "        tide_write_u32(&m, root.index);\n        tide_write_u32(&m, root.generation);\n"
+              "        tide_write_u64(&m, root.birth);\n        tide_write_u64(&m, root.lineage);\n"
               "        tide_shard_post(w, TIDE_SHARD_TO_SHARD, from, (tide_entity){0}, &m);\n    }\n"
               "    return true;\n}\n\n");
     const char *use = prog->assets.count ? "    tide_pack_use();\n" : "";
@@ -49,16 +49,16 @@ static void gen_shard_receive(gen *g)
                  "    if (r.failed) return false;\n"
                  // A numbered message applies once, in its sender's order: one heard already is dropped
                  "    if (number) {\n"
-                 "        const int32_t at = tide_shard_find(s->heard, (int64_t)from, 2);\n"
+                 "        const int32_t at = tide_shard_find_long(s->heard, (int64_t)from, 2);\n"
                  "        if (at >= 0 && tide_shard_long(s->heard, at + 1) >= (int64_t)number) return true;\n"
-                 "        if (at >= 0) *(int64_t *)tide_list_at_mut(s->heard, at + 1, 8u) = (int64_t)number;\n"
+                 "        if (at >= 0) *(int64_t *)tide_list_at_mut(s->heard, at + 1, 24u) = (int64_t)number;\n"
                  "        else {\n            tide_shard_push(&s->heard, (int64_t)from);\n            tide_shard_push(&s->heard, (int64_t)number);\n        }\n"
                  "    }\n"
                  "    switch (kind) {\n", use);
     // CONFIG and MAP: who it is, and the regions
     sb_printf(o, "    case TIDE_SHARD_CONFIG:\n    case TIDE_SHARD_MAP: {\n"
                  "        uint32_t id = 0;\n        uint8_t role = 0;\n"
-                 "        if (kind == TIDE_SHARD_CONFIG) {\n            id = tide_read_u32(&r);\n            role = tide_read_u8(&r);\n        }\n"
+                 "        if (kind == TIDE_SHARD_CONFIG) {\n            id = tide_read_u32(&r);\n            role = tide_read_u8(&r);\n            w->tide_identity_clock = tide_read_u64(&r);\n        }\n"
                  "        const uint32_t regions = tide_read_u32(&r);\n"
                  "        if (r.failed || regions > (r.size - r.at) / 60u) return false;\n"
                  "        double *values = malloc((size_t)regions * 7u * sizeof *values + 1u);\n"
@@ -71,29 +71,15 @@ static void gen_shard_receive(gen *g)
                  "            matches[i] = tide_read_u64(&r);\n        }\n"
                  "        if (r.failed) { free(values); free(matches); return false; }\n"
                  "        tide_list_clear(&s->regions, 8u);\n"
-                 "        tide_list_clear(&s->matches, 8u);\n"
+                 "        tide_list_clear(&s->matches, 24u);\n"
                  "        for (uint32_t i = 0; i < regions * 7u; i++) *(double *)tide_list_add(&s->regions, 8u, TIDE_IN_MATCH) = values[i];\n"
                  "        for (uint32_t i = 0; i < regions; i++) tide_shard_push(&s->matches, (int64_t)matches[i]);\n"
                  "        free(values);\n        free(matches);\n"
                  "        if (kind == TIDE_SHARD_MAP) return true;\n"
                  "        s->shard = (int32_t)id + 1;\n        s->role = role;\n"
                  "        if (role == TIDE_SHARD_ROOT_ROLE) s->singletons = (int64_t)%s;\n"
-                 "        const uint32_t ranges = tide_read_u32(&r);\n"
-                 "        if (r.failed || ranges > (r.size - r.at) / 8u) return false;\n"
-                 "        for (uint32_t i = 0; i < ranges; i++) {\n"
-                 "            const uint32_t first = tide_read_u32(&r), end = tide_read_u32(&r);\n"
-                 "            if (end <= first) continue;\n"
-                 "            tide_shard_push(&s->ranges, (int64_t)first);\n            tide_shard_push(&s->ranges, (int64_t)end);\n"
-                 "            if (i == 0) {\n"
-                 "                s->next = (int64_t)first > (int64_t)w->entities.next_unused ? (int64_t)first : (int64_t)w->entities.next_unused;\n"
-                 "                s->end = (int64_t)end;\n            }\n        }\n"
                  "        return !r.failed;\n    }\n",
               shard_singleton_count(prog) >= 64 ? "UINT64_MAX" : "((UINT64_C(1) << TIDE_SHARD_SINGLETONS) - 1u)");
-    sb_put(o, "    case TIDE_SHARD_RANGE: {\n"
-              "        const uint32_t first = tide_read_u32(&r), end = tide_read_u32(&r);\n"
-              "        if (r.failed || end <= first) return false;\n"
-              "        tide_shard_push(&s->ranges, (int64_t)first);\n        tide_shard_push(&s->ranges, (int64_t)end);\n"
-              "        return true;\n    }\n");
     // GHOSTS: copies near the border, what went from it, and the singletons
     sb_put(o, "    case TIDE_SHARD_GHOSTS: {\n"
               "        const uint32_t trees = tide_read_u32(&r);\n"
@@ -102,9 +88,9 @@ static void gen_shard_receive(gen *g)
               "            if (form == 0u ? !tide_shard_take_tree(w, &r, true, (int32_t)from, NULL)\n"
               "                           : form != 1u || !tide_shard_take_changes(w, &r, from)) return false;\n        }\n"
               "        const uint32_t drops = tide_read_u32(&r);\n"
-              "        if (r.failed || drops > (r.size - r.at) / 8u) return false;\n"
+              "        if (r.failed || drops > (r.size - r.at) / 16u) return false;\n"
               "        for (uint32_t i = 0; i < drops; i++) {\n"
-              "            tide_entity e;\n            e.index = tide_read_u32(&r);\n            e.generation = tide_read_u32(&r);\n"
+              "            tide_entity e;\n            e.birth = tide_read_u64(&r);\n            e.lineage = tide_read_u64(&r);\n"
               "            if (tide_entity_alive(&w->entities, e) && tide_has_tide_ghost(w, e) && tide_get_tide_ghost(w, e).source == (int32_t)from) {\n"
               "                tide_shard_remove_tree(w, e, true);\n            }\n        }\n"
               "        if (r.at < r.size && tide_read_u8(&r)) {\n"
@@ -131,32 +117,36 @@ static void gen_shard_receive(gen *g)
               "        if (r.failed || !tide_shard_take_tree(w, &r, false, 0, &root)) return false;\n"
               "        tide_shard_mark_tree(w, root, false, 0);\n"
               "        if (!tide_shard_take_tasks(w, &r)) return false;\n"
-              "        tide_shard_unask(w, root);\n"
+              "        tide_shard_unask_ref(w, tide_shard_key(root));\n"
               "        if (flags & TIDE_SHARD_BORROWED) tide_shard_pin(w, tide_shard_key(root));\n"
               "        return true;\n    }\n");
     // BORROW: lent now, once nothing holds it, or the request goes on to its owner
     sb_put(o, "    case TIDE_SHARD_BORROW:\n    case TIDE_SHARD_BORROW_SINGLETON: {\n"
               "        const uint32_t asker = tide_read_u32(&r);\n"
-              "        tide_entity e;\n        e.index = tide_read_u32(&r);\n"
-              "        e.generation = kind == TIDE_SHARD_BORROW ? tide_read_u32(&r) : TIDE_ENTITY_TEMPORARY;\n"
+              "        tide_shard_ref key;\n"
+              "        if (kind == TIDE_SHARD_BORROW) {\n"
+              "            const uint64_t birth = tide_read_u64(&r), lineage = tide_read_u64(&r);\n"
+              "            key = tide_shard_key((tide_entity){birth, lineage});\n"
+              "        } else key = tide_shard_singleton_ref(tide_read_u32(&r));\n"
+              "        if (key.singleton > TIDE_SHARD_SINGLETONS) return false;\n"
               "        if (r.failed || (int32_t)asker == tide_shard_self(w)) return !r.failed;\n"
-              "        tide_shard_ask_of(w, e, (int32_t)asker);\n        return true;\n    }\n");
+              "        tide_shard_ask_of(w, key, (int32_t)asker);\n        return true;\n    }\n");
     sb_put(o, "    case TIDE_SHARD_SHARED: return tide_shard_take_shared(w, &r);\n");
     sb_put(o, "    case TIDE_SHARD_STALE: return true; // The sender's agent's (tide_shard_agent_apply)\n");
     sb_put(o, "    case TIDE_SHARD_FREED: {\n"
-              "        const uint32_t index = tide_read_u32(&r);\n        const uint32_t generation = tide_read_u32(&r);\n"
+              "        const uint64_t birth = tide_read_u64(&r);\n        const uint64_t lineage = tide_read_u64(&r);\n"
               "        if (r.failed) return false;\n"
-              "        (void)tide_entity_release(&w->entities, index, generation);\n"
+              "        (void)tide_entity_release(&w->entities, (tide_entity){birth, lineage});\n"
               "        return true;\n    }\n");
     sb_put(o, "    case TIDE_SHARD_GONE: {\n"
-              "        tide_entity e;\n        e.index = tide_read_u32(&r);\n        e.generation = tide_read_u32(&r);\n"
+              "        tide_entity e;\n        e.birth = tide_read_u64(&r);\n        e.lineage = tide_read_u64(&r);\n"
               "        if (r.failed) return false;\n"
-              "        tide_shard_unask(w, e);\n"
-              "        if (tide_shard_find(s->gone, tide_shard_key(e), 1) < 0) tide_shard_push(&s->gone, tide_shard_key(e));\n"
+              "        tide_shard_unask_ref(w, tide_shard_key(e));\n"
+              "        if (tide_shard_find(s->gone, tide_shard_key(e), 1) < 0) tide_shard_push_ref(&s->gone, tide_shard_key(e));\n"
               "        return true;\n    }\n");
     // EVENT: to an entity this shard owns, it's sent here; else it goes on
     sb_put(o, "    case TIDE_SHARD_EVENT: {\n"
-              "        tide_entity target;\n        target.index = tide_read_u32(&r);\n        target.generation = tide_read_u32(&r);\n"
+              "        tide_entity target;\n        target.birth = tide_read_u64(&r);\n        target.lineage = tide_read_u64(&r);\n"
               "        const uint32_t event = tide_read_u32(&r);\n        const tide_player_id sender = {tide_read_u32(&r)};\n"
               "        (void)sender;\n        uint64_t budget = SIZE_MAX;\n        (void)budget;\n"
               "        if (r.failed) return false;\n"
@@ -182,7 +172,7 @@ static void gen_shard_receive(gen *g)
     }
     sb_put(o, "        default: return false;\n        }\n    }\n");
     sb_put(o, "    case TIDE_SHARD_UNLOAD: {\n"
-              "        tide_entity scene;\n        scene.index = tide_read_u32(&r);\n        scene.generation = tide_read_u32(&r);\n"
+              "        tide_entity scene;\n        scene.birth = tide_read_u64(&r);\n        scene.lineage = tide_read_u64(&r);\n"
               "        if (r.failed) return false;\n");
     if (has_scenes(prog, false)) sb_put(o, "        tide_shard_unload_members(w, scene);\n");
     else sb_put(o, "        (void)scene;\n");
@@ -197,9 +187,9 @@ static void gen_shard_receive(gen *g)
                  "        const int32_t word = slot / 64;\n"
                  "        if (word >= tide_list_count(s->members)) {\n"
                  "            if (!joined) return true;\n"
-                 "            tide_list_resize(&s->members, word + 1, 8u, TIDE_IN_MATCH);\n"
+                 "            tide_list_resize(&s->members, word + 1, 24u, TIDE_IN_MATCH);\n"
                  "        }\n"
-                 "        uint64_t *members = tide_list_at_mut(s->members, word, 8u);\n"
+                 "        uint64_t *members = tide_list_at_mut(s->members, word, 24u);\n"
                  "        const uint64_t mask = UINT64_C(1) << ((uint32_t)slot & 63u);\n"
                  "        if (((*members & mask) != 0) == (joined != 0)) return true;\n"
                  "        *members ^= mask;\n"
@@ -231,9 +221,9 @@ static void gen_shard_receive(gen *g)
               "        const uint32_t i = tide_read_u32(&r);\n        tide_read_u32(&r);\n"
               "        if (r.failed || i >= TIDE_SHARD_SINGLETONS || !tide_shard_take_singleton(w, &r, i, true)) return false;\n"
               "        s->singletons = (int64_t)((uint64_t)s->singletons | ((uint64_t)1 << i));\n"
-              "        const tide_entity mark = {i, TIDE_ENTITY_TEMPORARY};\n"
-              "        tide_shard_unask(w, mark);\n"
-              "        if (s->role != TIDE_SHARD_ROOT_ROLE) tide_shard_pin(w, tide_shard_key(mark));\n"
+              "        const tide_shard_ref mark = tide_shard_singleton_ref(i);\n"
+              "        tide_shard_unask_ref(w, mark);\n"
+              "        if (s->role != TIDE_SHARD_ROOT_ROLE) tide_shard_pin(w, mark);\n"
               "        return true;\n    }\n"
               "    default: return false;\n    }\n}\n\n");
 }
@@ -243,10 +233,10 @@ static void gen_shard_receive(gen *g)
 static void gen_shard_lending(gen *g)
 {
     sb *o = &g->c;
-    sb_put(o, "TIDE_HELPER void tide_shard_wait_to_lend(tide_world *w, const tide_entity e, const int32_t asker)\n{\n"
+    sb_put(o, "TIDE_HELPER void tide_shard_wait_to_lend(tide_world *w, const tide_shard_ref key, const int32_t asker)\n{\n"
               "    tide_writer r = {.grows = true};\n"
-              "    tide_write_u32(&r, 28u);\n    tide_write_u32(&r, TIDE_SHARD_LEND);\n"
-              "    tide_write_u32(&r, e.index);\n    tide_write_u32(&r, e.generation);\n"
+              "    tide_write_u32(&r, 44u);\n    tide_write_u32(&r, TIDE_SHARD_LEND);\n"
+              "    tide_shard_write_ref(&r, key);\n"
               "    tide_write_u32(&r, (uint32_t)w->Time.tick);\n    tide_write_u32(&r, (uint32_t)asker);\n    tide_write_u32(&r, 0u);\n"
               "    if (r.overflow) tide_out_of_memory();\n"
               "    tide_shard_bytes_append(&w->tide_shard_state.waits, r.data, r.size, TIDE_IN_MATCH);\n    free(r.data);\n}\n\n"
@@ -255,23 +245,22 @@ static void gen_shard_lending(gen *g)
               // comes after it. A shard with a lower number always gets what it
               // asks for, so code waiting on several shards' entities can't wait
               // on each other forever
-              "TIDE_HELPER bool tide_shard_keeps(const tide_world *w, const tide_entity e, const int32_t asker)\n{\n"
-              "    const int64_t key = tide_shard_key(e);\n"
+              "TIDE_HELPER bool tide_shard_keeps(const tide_world *w, const tide_shard_ref key, const int32_t asker)\n{\n"
               "    return asker > tide_shard_self(w) && (tide_shard_pinned(w, key) || tide_shard_find(w->tide_shard_state.held, key, 1) >= 0);\n}\n\n"
-              "TIDE_SHARD_FN void tide_shard_ask_of(tide_world *w, const tide_entity e, const int32_t asker)\n{\n"
-              "    if (tide_shard_is_singleton(e)) {\n"
-              "        if (!tide_shard_owned(w, e) || tide_shard_keeps(w, e, asker)) tide_shard_wait_to_lend(w, e, asker);\n"
-              "        else tide_shard_lend(w, e, asker);\n        return;\n    }\n"
+              "TIDE_SHARD_FN void tide_shard_ask_of(tide_world *w, const tide_shard_ref key, const int32_t asker)\n{\n"
+              "    const tide_entity e = key.entity;\n    if (key.singleton) {\n"
+              "        if (!tide_shard_owned_ref(w, key) || tide_shard_keeps(w, key, asker)) tide_shard_wait_to_lend(w, key, asker);\n"
+              "        else tide_shard_lend(w, key, asker);\n        return;\n    }\n"
               "    if (tide_entity_alive(&w->entities, e) && !tide_has_tide_ghost(w, e)) {\n"
-              "        if (tide_shard_keeps(w, e, asker)) tide_shard_wait_to_lend(w, e, asker);\n"
-              "        else tide_shard_lend(w, e, asker);\n        return;\n    }\n"
+              "        if (tide_shard_keeps(w, key, asker)) tide_shard_wait_to_lend(w, key, asker);\n"
+              "        else tide_shard_lend(w, key, asker);\n        return;\n    }\n"
               "    if (tide_entity_died_here(&w->entities, e) || tide_shard_find(w->tide_shard_state.gone, tide_shard_key(e), 1) >= 0) {\n"
               "        tide_writer m = tide_shard_begin(w, TIDE_SHARD_GONE, true);\n"
-              "        tide_write_u32(&m, e.index);\n        tide_write_u32(&m, e.generation);\n"
+              "        tide_write_u64(&m, e.birth);\n        tide_write_u64(&m, e.lineage);\n"
               "        tide_shard_post(w, TIDE_SHARD_TO_SHARD, (uint32_t)asker, e, &m);\n        return;\n    }\n"
               // Another shard has it: the request goes on there, still the asker's
               "    tide_writer m = tide_shard_begin(w, TIDE_SHARD_BORROW, true);\n"
-              "    tide_write_u32(&m, (uint32_t)asker);\n    tide_write_u32(&m, e.index);\n    tide_write_u32(&m, e.generation);\n"
+              "    tide_write_u32(&m, (uint32_t)asker);\n    tide_write_u64(&m, e.birth);\n    tide_write_u64(&m, e.lineage);\n"
               "    tide_shard_post(w, TIDE_SHARD_TO_OWNER, 0u, e, &m);\n}\n\n");
 }
 
@@ -286,9 +275,9 @@ static void gen_shard_after(gen *g)
     // summed into it; a pair is gone at 0, and when neither is here
     sb_put(o, "static int tide_shard_pair_order(const void *x, const void *y)\n{\n"
               "    const tide_shard_pair *p = x, *q = y;\n"
-              "    const int64_t a[3] = {tide_shard_key(p->a), tide_shard_key(p->b), p->delta};\n"
-              "    const int64_t b[3] = {tide_shard_key(q->a), tide_shard_key(q->b), q->delta};\n"
-              "    for (int i = 0; i < 3; i++) if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;\n"
+              "    const int a = tide_entity_compare(p->a, q->a);\n    if (a) return a;\n"
+              "    const int b = tide_entity_compare(p->b, q->b);\n    if (b) return b;\n"
+              "    if (p->delta != q->delta) return p->delta < q->delta ? -1 : 1;\n"
               "    return 0;\n}\n\n"
               "TIDE_SHARD_FN void tide_shard_touching(tide_world *w, const tide_shard_tick *t)\n{\n"
               "    tide_shard_state *s = &w->tide_shard_state;\n"
@@ -297,31 +286,31 @@ static void gen_shard_after(gen *g)
               "        if (!pairs) tide_out_of_memory();\n"
               "        for (uint32_t i = 0; i < t->pair_count; i++) {\n"
               "            pairs[i] = t->pairs[i];\n"
-              "            if (tide_shard_key(pairs[i].b) < tide_shard_key(pairs[i].a)) {\n"
+              "            if (tide_entity_compare(pairs[i].b, pairs[i].a) < 0) {\n"
               "                pairs[i].a = t->pairs[i].b;\n                pairs[i].b = t->pairs[i].a;\n            }\n        }\n"
               "        qsort(pairs, t->pair_count, sizeof *pairs, tide_shard_pair_order);\n"
               "        for (uint32_t i = 0; i < t->pair_count; i++) {\n"
-              "            const int64_t a = tide_shard_key(pairs[i].a), b = tide_shard_key(pairs[i].b);\n"
+              "            const tide_shard_ref a = tide_shard_key(pairs[i].a), b = tide_shard_key(pairs[i].b);\n"
               "            int32_t at = -1;\n"
               "            for (int32_t k = 0; k + 3 <= tide_list_count(s->touching) && at < 0; k += 3) {\n"
-              "                if (tide_shard_long(s->touching, k) == a && tide_shard_long(s->touching, k + 1) == b) at = k;\n            }\n"
-              "            if (at >= 0) *(int64_t *)tide_list_at_mut(s->touching, at + 2, 8u) += pairs[i].delta;\n"
+              "                if (!tide_shard_ref_compare(tide_shard_ref_at(s->touching, k), a) && !tide_shard_ref_compare(tide_shard_ref_at(s->touching, k + 1), b)) at = k;\n            }\n"
+              "            if (at >= 0) *(int64_t *)tide_list_at_mut(s->touching, at + 2, 24u) += pairs[i].delta;\n"
               "            else if (pairs[i].delta > 0) {\n"
-              "                tide_shard_push(&s->touching, a);\n                tide_shard_push(&s->touching, b);\n"
+              "                tide_shard_push_ref(&s->touching, a);\n                tide_shard_push_ref(&s->touching, b);\n"
               "                tide_shard_push(&s->touching, pairs[i].delta);\n            }\n        }\n"
               "        free(pairs);\n    }\n"
               "    for (int32_t k = tide_list_count(s->touching) - 3; k >= 0; k -= 3) {\n"
-              "        const tide_entity a = tide_shard_unkey(tide_shard_long(s->touching, k));\n"
-              "        const tide_entity b = tide_shard_unkey(tide_shard_long(s->touching, k + 1));\n"
+              "        const tide_entity a = tide_shard_unkey(tide_shard_ref_at(s->touching, k));\n"
+              "        const tide_entity b = tide_shard_unkey(tide_shard_ref_at(s->touching, k + 1));\n"
               "        if (tide_shard_long(s->touching, k + 2) > 0\n"
               "            && (tide_entity_alive(&w->entities, a) || tide_entity_alive(&w->entities, b))) continue;\n"
               "        tide_shard_drop(&s->touching, k, 3);\n    }\n}\n\n");
     sb_put(o, "static int tide_shard_span_order(const void *x, const void *y)\n{\n"
-              "    const int64_t a = tide_shard_key(((const tide_shard_span *)x)->e), b = tide_shard_key(((const tide_shard_span *)y)->e);\n"
-              "    return a < b ? -1 : a > b ? 1 : 0;\n}\n\n"
+              "    const tide_entity a = ((const tide_shard_span *)x)->e, b = ((const tide_shard_span *)y)->e;\n"
+              "    return tide_entity_compare(a, b);\n}\n\n"
               "TIDE_SHARD_FN void tide_shard_spanning(tide_world *w, const tide_shard_tick *t)\n{\n"
               "    tide_shard_state *s = &w->tide_shard_state;\n"
-              "    tide_list_clear(&s->spanned, 8u);\n    tide_list_clear(&s->spans, 8u);\n"
+              "    tide_list_clear(&s->spanned, 24u);\n    tide_list_clear(&s->spans, 8u);\n"
               "    if (!t->span_count) return;\n"
               "    tide_shard_span *spans = malloc((size_t)t->span_count * sizeof *spans);\n"
               "    if (!spans) tide_out_of_memory();\n"
@@ -341,7 +330,7 @@ static void gen_shard_after(gen *g)
               "        for (uint32_t k = 0; k < TIDE_SHARD_DIMS; k++) {\n"
               "            past |= span.lo[k] < p[k] - TIDE_SHARD_REACH || span.hi[k] > p[k] + TIDE_SHARD_REACH;\n        }\n"
               "        if (!past) continue;\n"
-              "        tide_shard_push(&s->spanned, tide_shard_key(span.e));\n"
+              "        tide_shard_push_ref(&s->spanned, tide_shard_key(span.e));\n"
               "        for (uint32_t k = 0; k < 3u; k++) *(double *)tide_list_add(&s->spans, 8u, TIDE_IN_MATCH) = span.lo[k];\n"
               "        for (uint32_t k = 0; k < 3u; k++) *(double *)tide_list_add(&s->spans, 8u, TIDE_IN_MATCH) = span.hi[k];\n    }\n"
               "    free(spans);\n}\n\n");
@@ -352,12 +341,12 @@ static void gen_shard_after(gen *g)
               "    tide_shard_spanning(w, t); // What reaches past its position, for the border\n"
               "    tide_shard_send_shared(w); // What its code wrote of the root's settings goes to the root\n"
               // What its code that waits needs: the entities it ran for, and what they touched
-              "    tide_list_clear(&s->held, 8u);\n"
+              "    tide_list_clear(&s->held, 24u);\n"
               "    for (uint32_t i = 0; i < t->skip_count; i++) {\n"
-              "        const tide_entity both[2] = {t->skip[i].entity, t->skip[i].touched};\n"
+              "        const tide_shard_ref both[2] = {tide_shard_key(t->skip[i].entity), t->skip[i].touched};\n"
               "        for (uint32_t k = 0; k < 2u; k++) {\n"
-              "            if (!tide_entity_is_null(both[k]) && tide_shard_find(s->held, tide_shard_key(both[k]), 1) < 0) {\n"
-              "                tide_shard_push(&s->held, tide_shard_key(both[k]));\n            }\n        }\n    }\n"
+              "            if ((!tide_entity_is_null(both[k].entity) || both[k].singleton) && tide_shard_find(s->held, both[k], 1) < 0) {\n"
+              "                tide_shard_push_ref(&s->held, both[k]);\n            }\n        }\n    }\n"
               "    if (tide_list_count(s->waits)) {\n"
               "        uint32_t size;\n        bool copied;\n"
               "        const uint8_t *flat = tide_shard_bytes_flat(s->waits, &size, &copied);\n"
@@ -366,28 +355,28 @@ static void gen_shard_after(gen *g)
               "            const uint32_t record = tide_read_u32(&r);\n"
               "            if (record < 4u || record > size - at) break;\n"
               "            if (tide_read_u32(&r) != TIDE_SHARD_LEND) {\n"
-              "                tide_entity e;\n                e.index = tide_read_u32(&r);\n                e.generation = tide_read_u32(&r);\n"
+              "                tide_entity e;\n                e.birth = tide_read_u64(&r);\n                e.lineage = tide_read_u64(&r);\n"
               "                tide_read_u32(&r);\n                tide_read_u32(&r);\n"
               "                const uint32_t needs = tide_read_u32(&r);\n"
-              "                for (uint32_t k = 0; k <= needs && !r.failed; k++) {\n"
-              "                    if (k) { e.index = tide_read_u32(&r); e.generation = tide_read_u32(&r); }\n"
-              "                    if (!r.failed && !tide_entity_is_null(e) && tide_shard_find(s->held, tide_shard_key(e), 1) < 0) {\n"
-              "                        tide_shard_push(&s->held, tide_shard_key(e));\n                    }\n                }\n            }\n"
+              "                tide_shard_ref key = tide_shard_key(e);\n                for (uint32_t k = 0; k <= needs && !r.failed; k++) {\n"
+              "                    if (k) key = tide_shard_read_ref(&r);\n"
+              "                    if (!r.failed && (!tide_entity_is_null(key.entity) || key.singleton) && tide_shard_find(s->held, key, 1) < 0) {\n"
+              "                        tide_shard_push_ref(&s->held, key);\n                    }\n                }\n            }\n"
               "            at += record;\n        }\n"
               "        tide_shard_bytes_done(s->waits, flat, copied);\n    }\n");
     // What its code that waits touched, asked for
-    sb_put(o, "    for (uint32_t i = 0; i < t->skip_count; i++) {\n"
-              "        const tide_entity e = t->skip[i].touched;\n"
-              "        if (tide_shard_owned(w, e) || tide_shard_find(s->asked, tide_shard_key(e), 1) >= 0) continue;\n"
-              "        tide_shard_push(&s->asked, tide_shard_key(e));\n"
-              "        if (tide_shard_is_singleton(e)) {\n"
+    sb_put(o, "    for (int32_t i = 0; i < tide_list_count(s->held); i++) {\n"
+              "        const tide_shard_ref key = tide_shard_ref_at(s->held, i);\n        const tide_entity e = key.entity;\n"
+              "        if (tide_shard_owned_ref(w, key) || tide_shard_requested(w, key)) continue;\n"
+              "        tide_shard_requested_now(w, key);\n"
+              "        if (key.singleton) {\n"
               "            tide_writer m = tide_shard_begin(w, TIDE_SHARD_BORROW_SINGLETON, true);\n"
-              "            tide_write_u32(&m, (uint32_t)tide_shard_self(w));\n            tide_write_u32(&m, e.index);\n"
+              "            tide_write_u32(&m, (uint32_t)tide_shard_self(w));\n            tide_write_u32(&m, (uint32_t)(key.singleton - 1u));\n"
               "            tide_shard_post(w, TIDE_SHARD_TO_SHARD, TIDE_SHARD_ROOT, (tide_entity){0}, &m);\n"
               "        } else {\n"
               "            tide_writer m = tide_shard_begin(w, TIDE_SHARD_BORROW, true);\n"
               "            tide_write_u32(&m, (uint32_t)tide_shard_self(w));\n"
-              "            tide_write_u32(&m, e.index);\n            tide_write_u32(&m, e.generation);\n"
+              "            tide_write_u64(&m, e.birth);\n            tide_write_u64(&m, e.lineage);\n"
               "            tide_shard_post(w, TIDE_SHARD_TO_OWNER, 0u, e, &m);\n        }\n    }\n");
     // Requests waiting to be lent, in the order they came
     sb_put(o, "    if (tide_list_count(s->waits)) {\n"
@@ -401,12 +390,13 @@ static void gen_shard_after(gen *g)
               "            const uint32_t record = tide_read_u32(&r);\n"
               "            if (record < 4u || record > size - at) break;\n"
               "            const uint32_t code = tide_read_u32(&r);\n"
-              "            tide_entity e;\n            e.index = tide_read_u32(&r);\n            e.generation = tide_read_u32(&r);\n"
+              "            const tide_shard_ref key = code == TIDE_SHARD_LEND ? tide_shard_read_ref(&r) : (tide_shard_ref){0};\n"
+              "            if (code != TIDE_SHARD_LEND) { tide_read_u64(&r); tide_read_u64(&r); }\n"
               "            tide_read_u32(&r);\n            const int32_t asker = (int32_t)tide_read_u32(&r);\n"
-              "            const bool held = tide_shard_owned(w, e) && tide_shard_keeps(w, e, asker);\n"
-              "            if (code == TIDE_SHARD_LEND && !r.failed && !held && (!tide_shard_is_singleton(e) || tide_shard_owned(w, e))) {\n"
+              "            const bool held = tide_shard_owned_ref(w, key) && tide_shard_keeps(w, key, asker);\n"
+              "            if (code == TIDE_SHARD_LEND && !r.failed && !held && (!key.singleton || tide_shard_owned_ref(w, key))) {\n"
               "                lent = true;\n"
-              "                tide_shard_ask_of(w, e, asker);\n"
+              "                tide_shard_ask_of(w, key, asker);\n"
               "            } else tide_write_bytes(&keep, all + at, record);\n"
               "            at += record;\n        }\n"
               "        if (lent) {\n"
@@ -420,13 +410,18 @@ static void gen_shard_after(gen *g)
               "        free(keep.data);\n        free(all);\n    }\n"
               // Borrowed singletons go back to the root once nothing held them a while
               "    for (int32_t at = 0; at + 2 <= tide_list_count(s->pins);) {\n"
-              "        const int64_t key = tide_shard_long(s->pins, at);\n"
+              "        const tide_shard_ref key = tide_shard_ref_at(s->pins, at);\n"
               "        if (tide_shard_long(s->pins, at + 1) > (int64_t)w->Time.tick) { at += 2; continue; }\n"
               "        tide_shard_drop(&s->pins, at, 2);\n"
-              "        const tide_entity e = tide_shard_unkey(key);\n"
-              "        if (tide_shard_is_singleton(e) && s->role != TIDE_SHARD_ROOT_ROLE && tide_shard_owned(w, e)) tide_shard_lend(w, e, TIDE_SHARD_ROOT);\n"
+              "        if (key.singleton && s->role != TIDE_SHARD_ROOT_ROLE && tide_shard_owned_ref(w, key)) tide_shard_lend(w, key, TIDE_SHARD_ROOT);\n"
               "    }\n"
-              "    tide_shard_handoff(w);\n}\n\n");
+              "    tide_shard_handoff(w);\n"
+              "    for (int32_t at = tide_list_count(s->asked) - 2; at >= 0; at -= 2) {\n"
+              "        const tide_shard_ref key = tide_shard_ref_at(s->asked, at);\n"
+              "        const uint32_t since = (uint32_t)tide_shard_long(s->asked, at + 1);\n"
+              "        if (tide_shard_find(s->held, key, 1) < 0 || (uint32_t)w->Time.tick - since >= TIDE_SHARD_PIN_TICKS)\n"
+              "            tide_shard_drop(&s->asked, at, 2);\n"
+              "    }\n}\n\n");
 }
 
 // What the runtime asks of a world (tide_shard_game)
@@ -611,12 +606,7 @@ static void gen_shard_queries(gen *g)
               "    tide_reader r = {flat, size, 0, false};\n    tide_shard_outgoing m;\n"
               "    while (tide_shard_next_outgoing(&r, &m)) out->outbox++;\n"
               "    tide_shard_bytes_done(s->outbox, flat, copied);\n"
-              "    out->indices = s->end > s->next ? (uint64_t)(s->end - s->next) : 0u;\n"
-              "    const int32_t n = tide_list_count(s->ranges);\n"
-              "    for (int32_t i = 0; i + 2 <= n; i += 2) {\n"
-              "        if (tide_shard_long(s->ranges, i) >= s->end) out->indices += (uint64_t)(tide_shard_long(s->ranges, i + 1) - tide_shard_long(s->ranges, i));\n"
-              "        if ((uint64_t)tide_shard_long(s->ranges, i + 1) > out->ranges_end) out->ranges_end = (uint64_t)tide_shard_long(s->ranges, i + 1);\n"
-              "    }\n}\n\n");
+              "    out->identity_clock = w->tide_identity_clock;\n}\n\n");
 }
 
 // Starting a shard: the root as a match starts, a region with nothing in it,
@@ -779,8 +769,8 @@ static void gen_shard_tasks(gen *g)
         sb_printf(o, "        case %du: {\n"
                      "            const tide_task_%s *t = tide_table_get(&w->tide_tasks_%s, &tide_columns_tasks_%s, going[k].row, 0);\n"
                      "            tide_write_u32(out, (uint32_t)t->task.wake);\n"
-                     "            tide_write_u32(out, t->task.owner.index);\n            tide_write_u32(out, t->task.owner.generation);\n"
-                     "            tide_write_u32(out, t->task.scene.index);\n            tide_write_u32(out, t->task.scene.generation);\n"
+                     "            tide_write_u64(out, t->task.owner.birth);\n            tide_write_u64(out, t->task.owner.lineage);\n"
+                     "            tide_write_u64(out, t->task.scene.birth);\n            tide_write_u64(out, t->task.scene.lineage);\n"
                      "            tide_client_put%d(out, &t->frame, 0);\n            break;\n        }\n",
                   i, id, id, id, client_codec_id(codec, (type){TY_STRUCT, ti->frame}));
     }
@@ -806,8 +796,8 @@ static void gen_shard_tasks(gen *g)
               "    for (uint32_t k = 0; k < count; k++) {\n"
               "        const uint32_t kind = tide_read_u32(in);\n        const int32_t wake = (int32_t)tide_read_u32(in);\n"
               "        tide_entity owner, scene;\n"
-              "        owner.index = tide_read_u32(in);\n        owner.generation = tide_read_u32(in);\n"
-              "        scene.index = tide_read_u32(in);\n        scene.generation = tide_read_u32(in);\n"
+              "        owner.birth = tide_read_u64(in);\n        owner.lineage = tide_read_u64(in);\n"
+              "        scene.birth = tide_read_u64(in);\n        scene.lineage = tide_read_u64(in);\n"
               "        if (in->failed || wake < 0) return false;\n"
               "        switch (kind) {\n");
     for (int i = 0; i < g->tasks.count; i++) {
@@ -821,7 +811,7 @@ static void gen_shard_tasks(gen *g)
                      "                tide_release_%s(&f, TIDE_IN_MATCH);\n                return false;\n            }\n"
                      "            const uint32_t row = tide_table_add(&w->tide_tasks_%s, &tide_columns_tasks_%s);\n"
                      "            tide_task_%s *t = tide_table_cell(&w->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n"
-                     "            t->task = (tide_task){w->tide_task_order++, wake, owner, scene, 0u};\n"
+                     "            t->task = (tide_task){w->tide_task_order++, wake, owner, scene, 0u, 0u};\n"
                      "            t->frame = f;\n            break;\n        }\n",
                   i, frame, client_codec_id(codec, (type){TY_STRUCT, ti->frame}), frame, id, id, id, id, id);
     }
@@ -848,9 +838,9 @@ static void gen_shard_main(gen *g)
     sb_put(o, "TIDE_SHARD_FN void tide_shard_unloaded(tide_world *w, const tide_entity scene)\n{\n"
               "    if (!w->tide_shard_state.shard || !tide_entity_alive(&w->entities, scene) || tide_has_tide_ghost(w, scene)) return;\n"
               "    tide_writer m = tide_shard_begin(w, TIDE_SHARD_UNLOAD, true);\n"
-              "    tide_write_u32(&m, scene.index);\n    tide_write_u32(&m, scene.generation);\n"
+              "    tide_write_u64(&m, scene.birth);\n    tide_write_u64(&m, scene.lineage);\n"
               "    tide_shard_post(w, TIDE_SHARD_TO_ALL, 0u, scene, &m);\n}\n\n");
-    sb_put(o, "TIDE_SHARD_FN void tide_shard_ask_of(tide_world *w, tide_entity e, int32_t asker);\n\n");
+    sb_put(o, "TIDE_SHARD_FN void tide_shard_ask_of(tide_world *w, tide_shard_ref key, int32_t asker);\n\n");
     gen_shard_receive(g);
     gen_shard_lending(g);
     gen_shard_after(g);

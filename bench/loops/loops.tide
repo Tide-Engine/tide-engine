@@ -1,0 +1,102 @@
+// Indexed loops (notes/indexed-loops.md): boids that look at their neighbours within a radius, through a query,
+// and agents that look for obstacles near them in a list that never changes. bench_loops goes through each loop's
+// index; bench_loops_plain, the same game built with NO_LOOP_INDEXES, through every row.
+
+component Boid
+{
+    float3 position;
+}
+
+component Steer
+{
+    float3 velocity;
+    int seen;
+}
+
+component Agent
+{
+    float2 position;
+    float2 heading;
+    int bumps;
+}
+
+struct Obstacle
+{
+    float2 at;
+    float radius;
+}
+
+singleton Config
+{
+    int boids;
+    int agents;
+    int obstacles;
+    bool made;
+}
+
+singleton Course
+{
+    List<Obstacle> obstacles;
+}
+
+// A number from 0 to 1 for `i`, the same everywhere
+float Spread(int i, int salt)
+{
+    var h = Math.Hash(i * 2 + salt * 7919);
+    return float(h % 100000) / 100000.0f;
+}
+
+// Spawned once the host has said how many: about ten boids within a boid's sight, and three obstacles near an agent
+system Make(mut Config config, mut Course course)
+{
+    if (config.made) return;
+    config.made = true;
+    var side = Math.Pow(float(config.boids) * 3.35f, 1.0f / 3.0f) + 1.0f;
+    for (var i = 0; i < config.boids; i++)
+    {
+        Spawn(Boid { position = float3(Spread(i, 1), Spread(i, 2), Spread(i, 3)) * side },
+              Steer { velocity = float3(Spread(i, 4) - 0.5f, Spread(i, 5) - 0.5f, Spread(i, 6) - 0.5f) * 0.1f });
+    }
+    var room = Math.Sqrt(float(config.obstacles) * 4.0f) + 1.0f;
+    for (var i = 0; i < config.agents; i++)
+    {
+        Spawn(Agent { position = float2(Spread(i, 7), Spread(i, 8)) * room, heading = float2(Spread(i, 9) - 0.5f, Spread(i, 10) - 0.5f) });
+    }
+    for (var i = 0; i < config.obstacles; i++)
+    {
+        course.obstacles.Add(Obstacle { at = float2(Spread(i, 11), Spread(i, 12)) * room, radius = 0.5f + Spread(i, 13) });
+    }
+}
+
+system Flock(mut Steer steer, Boid boid, query (Boid other) others)
+{
+    mut var center = float3(0.0f, 0.0f, 0.0f);
+    mut var seen = 0;
+    foreach (var o in others)
+    {
+        if (Math.DistanceSq(o.other.position, boid.position) > 4.0f) continue;
+        center += o.other.position;
+        seen += 1;
+    }
+    steer.seen = seen;
+    if (seen > 0) steer.velocity += (center / float(seen) - boid.position) * 0.001f;
+}
+
+system Fly(mut Boid boid, Steer steer)
+{
+    boid.position += steer.velocity;
+}
+
+system Walk(mut Agent agent, Course course)
+{
+    foreach (var o in course.obstacles)
+    {
+        if (Math.Distance(o.at, agent.position) > 2.0f) continue;
+        if (Math.Distance(o.at, agent.position) > o.radius + 0.5f) continue;
+        agent.heading = -agent.heading;
+        agent.bumps += 1;
+    }
+    agent.position += agent.heading * 0.05f;
+}
+
+scene Main { }

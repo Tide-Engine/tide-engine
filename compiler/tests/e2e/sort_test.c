@@ -7,11 +7,12 @@
 static tide_world world;
 static tide_world copy;
 
-static const tide_entity THING = {1, 1};
+static tide_entity THING;
 
 TIDE_TEST(sort_all_checks_pass)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     const Results r = tide_get_Results(&world, THING);
     if (r.passed != r.checks) printf("first failed check: %d\n", r.firstFailure);
@@ -25,6 +26,7 @@ TIDE_TEST(sort_all_checks_pass)
 TIDE_TEST(sort_is_the_same_on_every_run)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     tide_world_init(&copy, 1.0f);
     tide_world_tick(&world);
     tide_world_tick(&copy);

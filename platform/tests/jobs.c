@@ -6,8 +6,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "game.h"
+#include "tide/internal/mesh_lod.h"
 #include "tide/jobs.h"
 #include "tide/platform.h"
 #include "tide/time.h"
@@ -289,7 +291,7 @@ TIDE_TEST(jobs_threads_change_nothing)
 
     TIDE_CHECK(tide_world_entity_count(&one) == tide_world_entity_count(&many));
 
-    // Entities spawned on many threads: every handle kept is the real one
+    // Match spawns in a threaded tick retain their final full logical keys
     TIDE_CHECK(many.Stats.chipped > 1000 && many.Stats.matched == many.Stats.chipped);
     int trails = 0;
     int shards = 0;
@@ -298,13 +300,13 @@ TIDE_TEST(jobs_threads_change_nothing)
         const Trail trail = tide_get_Trail(&many, e);
         if (tide_has_Trail(&many, e) && trail.count) {
             const Debris debris = tide_get_Debris(&many, trail.last);
-            TIDE_CHECK(!tide_entity_is_temporary(trail.last) && tide_entity_equal(trail.last, trail.link.target));
+            TIDE_CHECK(trail.last.birth != 0 && tide_entity_equal(trail.last, trail.link.target));
             TIDE_CHECK(tide_has_Debris(&many, trail.last) && tide_entity_equal(debris.from, e) && tide_has_Size(&many, trail.last));
             trails++;
         }
         const Shard shard = tide_get_Shard(&many, e);
         if (tide_has_Shard(&many, e)) {
-            TIDE_CHECK(!tide_entity_is_null(shard.of) && !tide_entity_is_temporary(shard.of));
+            TIDE_CHECK(!tide_entity_is_null(shard.of) && shard.of.birth != 0);
             if (shard.debris) TIDE_CHECK(tide_has_Debris(&many, shard.of)); // Rocks burn up, but debris stays
             shards += shard.debris;
         }
@@ -469,7 +471,7 @@ TIDE_TEST(jobs_threads_come_back)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities};
     const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL, NULL, NULL};
     int ticks = 0;
     // A worker has to have joined the tick while its first system ran to have
@@ -487,6 +489,109 @@ TIDE_TEST(jobs_threads_come_back)
     printf("    %u of %u tasks were run by threads that had left the tick, after %d tick%s\n",
            (unsigned)atomic_load(&back_returned), (unsigned)BACK_TASKS, ticks, ticks == 1 ? "" : "s");
     TIDE_CHECK(atomic_load(&back_returned) > 0u);
+}
+
+// A bumpy square of n by n cells, as a game makes a mesh: its corners and its triangles, three ints each.
+static void hills(tide_vertex3 *vertices, int32_t *indices, const int n, const float lift)
+{
+    for (int y = 0; y <= n; y++) {
+        for (int x = 0; x <= n; x++) {
+            const float u = (float)x / (float)n, v = (float)y / (float)n;
+            const float h = (float)((u * 9.0f + lift) - (int)(u * 9.0f + lift)) * (float)(v * 7.0f - (int)(v * 7.0f)) * 0.08f;
+            vertices[y * (n + 1) + x] = (tide_vertex3){.position = {u - 0.5f, h, v - 0.5f}, .uv = {u, v}, .color = {1, 1, 1, 1}};
+        }
+    }
+    for (int y = 0, at = 0; y < n; y++) {
+        for (int x = 0; x < n; x++) {
+            const int32_t a = y * (n + 1) + x;
+            const int32_t six[6] = {a, a + n + 1, a + 1, a + 1, a + n + 1, a + n + 2};
+            for (int k = 0; k < 6; k++) indices[at++] = six[k];
+        }
+    }
+}
+
+// The mesh the list copied for the draw that asked for levels, or NULL.
+static const tide_draw_mesh_data *asked_mesh(const tide_draw_list *d)
+{
+    for (uint32_t i = 0; i < d->mesh_count; i++) {
+        if (d->meshes[i].space != TIDE_MESH_NONE && !d->meshes[i].base && d->meshes[i].lod_key) return &d->meshes[i];
+    }
+    return NULL;
+}
+
+// Levels of detail for a mesh a game makes (`lod:`), made by the pool's own background threads: they come while the
+// frames go on, are the levels the simplifier gives that mesh on this thread, and a list freed while another
+// mesh's are being made waits for them.
+TIDE_TEST(jobs_levels_of_detail_are_made_on_background_threads)
+{
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->background) {
+        printf("    no background threads: meshes that ask draw whole\n");
+        return;
+    }
+    enum { N = 48 };
+    const uint64_t mark = tide_scratch_mark();
+    static tide_vertex3 corners[(N + 1) * (N + 1)];
+    static int32_t triangles[N * N * 6];
+    hills(corners, triangles, N, 0.0f);
+    const tide_mesh_lod_layout layout = {.position = 1u + (uint32_t)offsetof(tide_vertex3, position),
+                                         .uv = 1u + (uint32_t)offsetof(tide_vertex3, uv),
+                                         .color = 1u + (uint32_t)offsetof(tide_vertex3, color)};
+    tide_draw_list d = {0};
+    const tide_float4x4 far = tide_translate_f4x4(tide_f3(0.0f, 0.0f, 900.0f));
+    const uint64_t until = tide_time_now_ns() + 20000000000ull;
+    uint32_t frames = 0;
+    const tide_draw_mesh_data *m = NULL;
+    for (; tide_time_now_ns() < until; frames++) {
+        tide_draw_reset(&d);
+        tide_draw_screen_size(&d, tide_f2(800.0f, 600.0f));
+        tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
+        const tide_list vertices = tide_list_from(corners, (int32_t)(sizeof corners / sizeof corners[0]), sizeof(tide_vertex3));
+        const tide_list indices = tide_list_from(triangles, (int32_t)(sizeof triangles / sizeof triangles[0]), sizeof(int32_t));
+        tide_draw_want_levels(&d, 1.0f, &layout);
+        tide_draw_mesh3_lists(&d, vertices, indices, far);
+        tide_draw_want_levels(&d, 0.0f, NULL);
+        tide_draw_prepare(&d, jobs);
+        m = asked_mesh(&d);
+        TIDE_REQUIRE(m);
+        if (m->levels) break;
+        tide_yield();
+    }
+    printf("    levels after %u frame%s\n", (unsigned)frames, frames == 1 ? "" : "s");
+    TIDE_REQUIRE(m && m->levels >= 2);
+    TIDE_CHECK(tide_draw_levels_pending(&d) == 0);
+    // What the simplifier gives the same mesh here
+    static float position[(N + 1) * (N + 1) * 3], uv[(N + 1) * (N + 1) * 2], color[(N + 1) * (N + 1) * 4];
+    for (uint32_t v = 0; v < (N + 1) * (N + 1); v++) {
+        memcpy(&position[v * 3u], &corners[v].position, sizeof(float) * 3u);
+        memcpy(&uv[v * 2u], &corners[v].uv, sizeof(float) * 2u);
+        memcpy(&color[v * 4u], &corners[v].color, sizeof(float) * 4u);
+    }
+    const tide_mesh_lod_source source = {.vertices = (N + 1) * (N + 1), .position = position, .uv = uv, .color = color,
+                                         .index = (const uint32_t *)triangles, .indices = N * N * 6,
+                                         .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
+                                         .triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST};
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&source, &lod);
+    TIDE_REQUIRE(lod.levels == m->levels);
+    for (uint32_t level = 0; level < lod.levels; level++) {
+        TIDE_CHECK(lod.error[level] == m->level_error[level] && lod.count[level] == m->level_count[level]);
+        TIDE_CHECK(memcmp(&lod.index[lod.first[level]], &m->level_indices[m->level_first[level]],
+                          lod.count[level] * sizeof(uint32_t)) == 0);
+    }
+    tide_mesh_lod_free(&lod);
+    // Another mesh asks, and the list goes while the pool may be making its levels: freeing waits, and helps
+    hills(corners, triangles, N, 0.5f);
+    tide_draw_reset(&d);
+    const tide_list vertices = tide_list_from(corners, (int32_t)(sizeof corners / sizeof corners[0]), sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(triangles, (int32_t)(sizeof triangles / sizeof triangles[0]), sizeof(int32_t));
+    tide_draw_want_levels(&d, 1.0f, &layout);
+    tide_draw_mesh3_lists(&d, vertices, indices, far);
+    tide_draw_want_levels(&d, 0.0f, NULL);
+    tide_draw_prepare(&d, jobs);
+    TIDE_CHECK(tide_draw_levels_pending(&d) == 1);
+    tide_draw_free(&d);
+    tide_scratch_reset(mark);
 }
 
 // The system says how much memory the program has (tide_platform_memory),
@@ -585,7 +690,7 @@ TIDE_TEST(jobs_thousands_of_systems)
     }
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities, NULL, NULL};
+    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities};
     const tide_jobs *jobs = tide_platform_jobs();
     for (int pass = 0; pass < (jobs ? 4 : 2); pass++) {
         const tide_jobs *with = pass >= 2 ? jobs : NULL; // On one thread, then on every core

@@ -1,0 +1,20 @@
+// Words copied from one raw buffer to another, which TideRender.cs runs for
+// gpu.h's buffer_copy (Unity's CopyBuffer copies whole buffers alone) and to
+// copy an indirect call's numbers out of a storage buffer, where it is in the
+// frame. Words past either buffer's end are left out.
+#pragma kernel TideCopy
+
+ByteAddressBuffer _TideFrom;
+RWByteAddressBuffer _TideTo;
+uint4 _TideCopy; // The byte it reads from, the byte it writes from, how many words, and the groups along x
+
+[numthreads(64, 1, 1)]
+void TideCopy(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
+{
+    uint i = (group.y * _TideCopy.w + group.x) * 64u + thread;
+    uint from, to;
+    _TideFrom.GetDimensions(from);
+    _TideTo.GetDimensions(to);
+    uint read = _TideCopy.x + 4u * i, written = _TideCopy.y + 4u * i;
+    if (i < _TideCopy.z && read + 4u <= from && written + 4u <= to) _TideTo.Store(written, _TideFrom.Load(read));
+}

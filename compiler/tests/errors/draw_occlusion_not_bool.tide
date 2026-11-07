@@ -1,0 +1,4 @@
+// expect: no version of Draw.SetOcclusion takes (int)
+// expect: Draw.SetOcclusion(bool enabled)
+scene Main { }
+view Show() { Draw.SetOcclusion(2); }

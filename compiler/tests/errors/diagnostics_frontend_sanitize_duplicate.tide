@@ -1,0 +1,5 @@
+// expect: an input has one Sanitize; combine the validation logic into a single Sanitize() method
+input Controls {
+    Sanitize() { }
+    Sanitize() { }
+}

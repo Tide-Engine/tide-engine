@@ -4,12 +4,16 @@ scene Main { }
 // name and a field's, each a `samplerCube` and a `texture_cube` of the
 // shader's beside a grid's colors. One read with another filter is another
 // texture, and one read between its smaller images has its direction's
-// change asked as the frag starts.
+// change asked as the frag starts. [Raw] ones, an asset's and a field's, are
+// read as their numbers, not straightened.
 asset Cubemap sky = "../e2e/cubes/sky/sky_??.png";
+[Raw]
+asset Cubemap directions = "../e2e/cubes/sky/sky_??.png";
 
 local singleton Room
 {
     Cubemap reflection;
+    [Raw] Cubemap normals;
     Grid2<Color> wood = Grid2(2, 2);
     List<Vertex3> mesh;
     List<int> faces;
@@ -33,6 +37,11 @@ frag Shine(Corner corner, out Color color, Room room)
     color = room.wood.Sample(corner.normal.xy) * near + far + sky.Sample(float3(0, 1, 0));
 }
 
+frag Numbers(Corner corner, out Color color, Room room)
+{
+    color = directions.Sample(corner.normal) + room.normals.Sample(corner.normal, Filter.Trilinear);
+}
+
 vert Swell(mut Vertex3 vertex, Room room)
 {
     vertex.position *= 1 + room.reflection.Sample(vertex.position).r;
@@ -42,4 +51,5 @@ view Show(Room room)
 {
     Draw.Mesh([Corner { }], [0, 0, 0], float4x4.identity, Shine);
     Draw.Mesh(room.mesh, room.faces, float4x4.identity, Swell);
+    Draw.Mesh([Corner { }], [0, 0, 0], float4x4.identity, Numbers);
 }

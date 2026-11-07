@@ -9,6 +9,29 @@
 # and not what tidec says of each wait.
 set(TIDE_PACKAGE_ORDER "${CMAKE_CURRENT_BINARY_DIR}/expect_order.cmake")
 
+# Height-aware sprite rendering and surface radiance cascades are an optional,
+# independent Tide package. Its tests exercise the same package source set.
+file(GLOB render2d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/render2d/*.tide")
+tide_add_game(tide_render2d_pipeline SOURCES render2d/test/pipeline.tide NAME game
+    PACKAGES Render2D ${render2d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render2d/test/pipeline_test.c)
+target_include_directories(tide_render2d_pipeline PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render2d_pipeline COMMAND tide_render2d_pipeline)
+
+if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render2d_pixels SOURCES render2d/test/pipeline.tide NAME game
+        PACKAGES Render2D ${render2d_sources} HOST render2d/test/pixels.c)
+    target_link_libraries(tide_render2d_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_render2d_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render2d_pixels TARGET tide_render2d_pixels PIXELS
+            EXPECT "ok: Render2D height, normals, lights, cutout shadows and radiance cascades")
+    else()
+        add_test(NAME tide_render2d_pixels COMMAND tide_render2d_pixels)
+        tide_gpu_test(tide_render2d_pixels)
+    endif()
+endif()
+
 # CPU visibility certificates. The package is ordinary Tide, with no engine
 # runtime, renderer, platform or physics dependency.
 tide_add_game(tide_cornerculling SOURCES cornerculling/test/game.tide cornerculling/test/example.tide NAME game
@@ -26,18 +49,46 @@ target_include_directories(tide_render3d_transparent PRIVATE "${PROJECT_SOURCE_D
 target_link_libraries(tide_render3d_transparent PRIVATE tide_render3d)
 add_test(NAME tide_render3d_transparent COMMAND tide_render3d_transparent)
 set(render3d_sources render3d/pbr.tide render3d/materials.tide render3d/vertex.tide
-    render3d/post.tide render3d/render3d.tide)
+    render3d/post.tide render3d/wind.tide render3d/fog.tide render3d/impostor.tide render3d/render3d.tide)
 tide_add_game(tide_render3d_pbr SOURCES render3d/test/pbr.tide NAME game
     PACKAGES Render3D render3d/pbr.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pbr_test.c)
 target_include_directories(tide_render3d_pbr PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_render3d_pbr COMMAND tide_render3d_pbr)
 
+# Numeric wind contracts plus actual Render3D culling and thin-leaf lighting.
+tide_add_game(tide_render3d_wind SOURCES render3d/test/wind.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/wind_test.c)
+target_include_directories(tide_render3d_wind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_wind PRIVATE tide_render3d)
+add_test(NAME tide_render3d_wind COMMAND tide_render3d_wind)
+
+tide_add_game(tide_render3d_foliage SOURCES render3d/test/foliage.tide NAME game
+    PACKAGES Render3D render3d/pbr.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/foliage_test.c)
+target_include_directories(tide_render3d_foliage PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_foliage COMMAND tide_render3d_foliage)
+
 tide_add_game(tide_render3d_materials SOURCES render3d/test/materials.tide NAME game
     PACKAGES Render3D ${render3d_sources}
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/materials_test.c)
 target_include_directories(tide_render3d_materials PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_render3d_materials COMMAND tide_render3d_materials)
+
+tide_add_game(tide_render3d_lod SOURCES render3d/test/lod.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/lod_test.c)
+target_include_directories(tide_render3d_lod PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_lod PRIVATE tide_render3d)
+add_test(NAME tide_render3d_lod COMMAND tide_render3d_lod)
+
+tide_add_game(tide_render3d_impostor SOURCES render3d/test/impostor.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/impostor_test.c)
+target_include_directories(tide_render3d_impostor PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_impostor PRIVATE tide_render3d)
+add_test(NAME tide_render3d_impostor COMMAND tide_render3d_impostor)
 
 tide_add_game(tide_render3d_post SOURCES render3d/test/post.tide NAME game
     PACKAGES Render3D ${render3d_sources}
@@ -73,18 +124,38 @@ target_link_libraries(tide_render3d_shadows PRIVATE tide_render3d)
 add_test(NAME tide_render3d_shadows COMMAND tide_render3d_shadows)
 
 if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render3d_fog SOURCES render3d/test/fog.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/fog_pixels.c)
+    target_link_libraries(tide_render3d_fog PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_fog SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_fog TARGET tide_render3d_fog
+            PIXELS EXPECT "ok: Render3D post-light fog")
+    else()
+        add_test(NAME tide_render3d_fog COMMAND tide_render3d_fog)
+        tide_gpu_test(tide_render3d_fog)
+    endif()
+    tide_add_game(tide_render3d_foliage_pixels SOURCES render3d/test/foliage_pixels.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/foliage_pixels.c)
+    target_link_libraries(tide_render3d_foliage_pixels PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_foliage_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_foliage_pixels TARGET tide_render3d_foliage_pixels
+            PIXELS EXPECT "ok: thin-leaf")
+    else()
+        add_test(NAME tide_render3d_foliage_pixels COMMAND tide_render3d_foliage_pixels)
+        tide_gpu_test(tide_render3d_foliage_pixels)
+    endif()
     tide_add_game(tide_render3d_shadows_pixels SOURCES render3d/test/shadows.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadows_pixels.c)
     target_link_libraries(tide_render3d_shadows_pixels PRIVATE tide_platform tide_render3d)
     if(TIDE_WEB)
         tide_web_page(tide_render3d_shadows_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(tide_render3d_shadows_pixels TARGET tide_render3d_shadows_pixels
-            WEBGPU EXPECT "ok: Render3D cascade selection" D3D11)
+            PIXELS EXPECT "ok: Render3D cascade selection")
     else()
         add_test(NAME tide_render3d_shadows_pixels COMMAND tide_render3d_shadows_pixels)
-        add_test(NAME tide_render3d_shadows_pixels_opengl COMMAND tide_render3d_shadows_pixels)
         tide_gpu_test(tide_render3d_shadows_pixels)
-        tide_gpu_test(tide_render3d_shadows_pixels_opengl OPENGL)
     endif()
     tide_add_game(tide_render3d_post_pixels SOURCES render3d/test/post_pixels.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/post_pixels.c)
@@ -92,12 +163,10 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_render3d_post_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(tide_render3d_post_pixels TARGET tide_render3d_post_pixels
-            WEBGPU EXPECT "ok: Render3D post pixels" D3D11)
+            PIXELS EXPECT "ok: Render3D post pixels")
     else()
         add_test(NAME tide_render3d_post_pixels COMMAND tide_render3d_post_pixels)
-        add_test(NAME tide_render3d_post_pixels_opengl COMMAND tide_render3d_post_pixels)
         tide_gpu_test(tide_render3d_post_pixels)
-        tide_gpu_test(tide_render3d_post_pixels_opengl OPENGL)
     endif()
     tide_add_game(tide_render3d_skinning_pixels SOURCES render3d/test/skinning.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/skinning_pixels.c)
@@ -105,12 +174,10 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_render3d_skinning_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(tide_render3d_skinning_pixels TARGET tide_render3d_skinning_pixels
-            WEBGPU EXPECT "ok: Render3D posed UV silhouettes" D3D11)
+            PIXELS EXPECT "ok: Render3D posed UV silhouettes")
     else()
         add_test(NAME tide_render3d_skinning_pixels COMMAND tide_render3d_skinning_pixels)
-        add_test(NAME tide_render3d_skinning_pixels_opengl COMMAND tide_render3d_skinning_pixels)
         tide_gpu_test(tide_render3d_skinning_pixels)
-        tide_gpu_test(tide_render3d_skinning_pixels_opengl OPENGL)
     endif()
     tide_add_game(tide_render3d_material_pixels SOURCES render3d/test/material_pixels.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/material_pixels.c)
@@ -118,12 +185,10 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_render3d_material_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(tide_render3d_material_pixels TARGET tide_render3d_material_pixels
-            WEBGPU EXPECT "ok: Render3D material maps" D3D11)
+            PIXELS EXPECT "ok: Render3D material maps")
     else()
         add_test(NAME tide_render3d_material_pixels COMMAND tide_render3d_material_pixels)
-        add_test(NAME tide_render3d_material_pixels_opengl COMMAND tide_render3d_material_pixels)
         tide_gpu_test(tide_render3d_material_pixels)
-        tide_gpu_test(tide_render3d_material_pixels_opengl OPENGL)
     endif()
     tide_add_game(tide_render3d_shadow_batches_pixels SOURCES render3d/test/shadow_batches.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadow_batches_test.c)
@@ -132,24 +197,20 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_render3d_shadow_batches_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(tide_render3d_shadow_batches_pixels TARGET tide_render3d_shadow_batches_pixels
-            WEBGPU EXPECT "renderer: WebGPU" D3D11)
+            PIXELS EXPECT "renderer: WebGPU")
     else()
         add_test(NAME tide_render3d_shadow_batches_pixels COMMAND tide_render3d_shadow_batches_pixels)
-        add_test(NAME tide_render3d_shadow_batches_pixels_opengl COMMAND tide_render3d_shadow_batches_pixels)
         tide_gpu_test(tide_render3d_shadow_batches_pixels)
-        tide_gpu_test(tide_render3d_shadow_batches_pixels_opengl OPENGL)
     endif()
     tide_add_game(tide_render3d_pixels SOURCES render3d/test/pipeline.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/pixels.c)
     target_link_libraries(tide_render3d_pixels PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_render3d_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
-        tide_add_web_test(tide_render3d_pixels TARGET tide_render3d_pixels WEBGPU EXPECT "renderer: WebGPU" D3D11)
+        tide_add_web_test(tide_render3d_pixels TARGET tide_render3d_pixels PIXELS EXPECT "renderer: WebGPU")
     else()
         add_test(NAME tide_render3d_pixels COMMAND tide_render3d_pixels)
-        add_test(NAME tide_render3d_pixels_opengl COMMAND tide_render3d_pixels)
         tide_gpu_test(tide_render3d_pixels)
-        tide_gpu_test(tide_render3d_pixels_opengl OPENGL)
     endif()
 endif()
 foreach(target IN ITEMS tide_render3d_materials tide_render3d_pipeline tide_render3d_shadow_batches
@@ -189,30 +250,6 @@ function(tide_package_order_test name namespace source folder)
     # files (see tide_write_games_manifest in cmake/Tide.cmake)
     set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${name}\t${folder}/order.tide" "${name}\t${source}\t${namespace}")
 endfunction()
-
-# NVIDIA Newton's selected CPU kernels, statically compiled for the same
-# simulation on native and WASM. Python/Warp are regeneration tools only.
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/newton/runtime.cpp"
-    PROPERTIES LANGUAGE C COMPILE_OPTIONS "${TIDE_CPP_FLAGS}")
-add_library(tide_newton STATIC newton/runtime.cpp newton/math.c)
-target_link_libraries(tide_newton PUBLIC tide)
-target_compile_options(tide_newton PRIVATE $<$<CONFIG:Debug>:-O2>)
-add_executable(tide_newton_runtime "${PROJECT_SOURCE_DIR}/tests/test_main.c"
-    newton/test/runtime_test.c newton/test/friction_test.c newton/test/coulomb_test.c
-    newton/test/stability_test.c)
-target_include_directories(tide_newton_runtime PRIVATE "${PROJECT_SOURCE_DIR}/tests")
-target_link_libraries(tide_newton_runtime PRIVATE tide_newton)
-add_test(NAME tide_newton_runtime COMMAND tide_newton_runtime)
-set_tests_properties(tide_newton_runtime PROPERTIES TIMEOUT 120)
-tide_package_order_test(tide_newton_order Newton "${CMAKE_CURRENT_SOURCE_DIR}/newton/newton.tide"
-    "${CMAKE_CURRENT_SOURCE_DIR}/newton/test")
-# A sharded world: each shard steps its own bodies, with its neighbours' near the border
-tide_add_game(tide_newton_shards SOURCES newton/bridge.c newton/test/shards.tide NAME game PACKAGES Newton newton/newton.tide
-    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" newton/test/shards_test.c)
-target_include_directories(tide_newton_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests")
-target_link_libraries(tide_newton_shards PRIVATE tide_newton)
-add_test(NAME tide_newton_shards COMMAND tide_newton_shards)
-set_tests_properties(tide_newton_shards PROPERTIES TIMEOUT 120)
 
 # Box2D's own sources, as they came: a library the tests share, with its
 # warnings off. The package's bridge is ours, and compiles with each test.
@@ -366,7 +403,7 @@ if(TIDE_PLATFORM)
         add_test(NAME tide_lobby_relay_web
             COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
                 "$<TARGET_FILE_DIR:tide_lobby_relay_web>/tide_lobby_relay_web.html"
-                "${CMAKE_CURRENT_BINARY_DIR}/tide_lobby_relay_web-browser" "backend=webgl"
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_lobby_relay_web-browser"
                 --routes "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/relay_routes.mjs")
         # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
         set_tests_properties(tide_lobby_relay_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
@@ -484,6 +521,14 @@ endif()
 add_test(NAME tide_box3d_parts COMMAND tide_box3d_parts)
 set_tests_properties(tide_box3d_parts PROPERTIES TIMEOUT 300)
 
+# A client's tick of its projection, which has none of Box3D's own state:
+# Box3D's world made again from the bodies, asked what the server's was.
+tide_add_game(tide_box3d_projected SOURCES box3d/bridge.c box3d/test/projected.tide NAME projected PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/projected_test.c)
+target_include_directories(tide_box3d_projected PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_projected PRIVATE tide_box3d)
+add_test(NAME tide_box3d_projected COMMAND tide_box3d_projected)
+
 tide_add_game(tide_box2d_rewind SOURCES box2d/bridge.c box2d/test/rewind.tide NAME rewind PACKAGES Box2D box2d/box2d.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/rewind_test.c)
 target_include_directories(tide_box2d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/tests")
@@ -571,6 +616,19 @@ foreach(dimension 2 3)
     add_test(NAME tide_box${dimension}d_rewind_network COMMAND tide_box${dimension}d_rewind_network)
     set_tests_properties(tide_box${dimension}d_rewind_network PROPERTIES TIMEOUT 120)
 endforeach()
+# predictionRange: a client's predicted ticks hold what's far from its player
+# in the physics world, where the server last confirmed it.
+foreach(dimension 2 3)
+    tide_add_game(tide_box${dimension}d_predict_near
+        SOURCES box${dimension}d/bridge.c box${dimension}d/test/predict_near.tide
+        NAME predict_near PACKAGES Box${dimension}D box${dimension}d/box${dimension}d.tide
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/predict_near_test.c)
+    target_include_directories(tide_box${dimension}d_predict_near PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tide_box${dimension}d_predict_near PRIVATE PREDICT_NEAR_${dimension}D=1)
+    target_link_libraries(tide_box${dimension}d_predict_near PRIVATE tide_box${dimension}d)
+    add_test(NAME tide_box${dimension}d_predict_near COMMAND tide_box${dimension}d_predict_near)
+    set_tests_properties(tide_box${dimension}d_predict_near PROPERTIES TIMEOUT 120)
+endforeach()
 # Voice's codec belongs only to targets that explicitly link the package.
 # The engine/platform, compiler and games without voice never link it.
 file(GLOB voice_codec_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/voice/codec/*.c")
@@ -604,4 +662,32 @@ if(TIDE_PLATFORM AND NOT TIDE_ANDROID AND NOT TIDE_WEB AND TIDE_NODE)
             "$<TARGET_FILE:tide_voice_host>" "${CMAKE_CURRENT_BINARY_DIR}/voice-host")
     tide_gpu_test(tide_voice_host)
     set_tests_properties(tide_voice_host PROPERTIES TIMEOUT 120)
+endif()
+
+# Mesh building over a game's own vertex structs: ordinary generic Tide, no C.
+tide_add_game(tide_geometry SOURCES geometry/test/game.tide NAME game
+    PACKAGES Geometry geometry/geometry.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" geometry/test/game_test.c)
+target_include_directories(tide_geometry PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_geometry COMMAND tide_geometry)
+
+# Code-authored local particles: bounded CPU state and instanced rendering.
+tide_add_game(tide_particles SOURCES particles/test/game.tide NAME game
+    PACKAGES Particles particles/particles.tide particles/draw.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" particles/test/game_test.c)
+target_include_directories(tide_particles PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_particles COMMAND tide_particles)
+
+if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_particles_pixels SOURCES particles/test/pixels.tide NAME game
+        PACKAGES Particles particles/particles.tide particles/draw.tide HOST particles/test/pixels.c)
+    target_link_libraries(tide_particles_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_particles_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_particles_pixels TARGET tide_particles_pixels
+            PIXELS EXPECT "ok: particle sprites")
+    else()
+        add_test(NAME tide_particles_pixels COMMAND tide_particles_pixels)
+        tide_gpu_test(tide_particles_pixels)
+    endif()
 endif()

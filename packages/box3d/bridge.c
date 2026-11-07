@@ -148,11 +148,10 @@ typedef struct physics {
     int64_t stamp;
     tide_resident state; // Box3D's state, as pages of the world's (tide/resident.h)
     bool moved;
-    uint8_t unused_too[3];
+    uint8_t unused_too[7];
     tide_list gone;
     tide_map owners;
     tide_list gone_shapes;
-    uint8_t unused_maps[4];
     tide_map parts;
     tide_map sensors;
     tide_map joints;
@@ -164,13 +163,12 @@ typedef struct physics {
     tide_list pending;
     tide_list history;
     tide_list colliders;
-    uint8_t collider_padding[4];
     tide_map collider_index;
     tide_list free_colliders;
     tide_list pending_hulls;
     tide_list topology;
     bool topology_changed;
-    uint8_t topology_padding[3];
+    uint8_t topology_padding[7];
     int64_t shard_moves; // Shards.moves as the last tick had it
     tide_map copies;     // Other shards' bodies near this one's border, by entity...
     tide_map copy_of;    // ...and whose each copy is
@@ -178,8 +176,8 @@ typedef struct physics {
 } physics;
 
 _Static_assert(sizeof(body) == 176 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
-                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 376 && offsetof(physics, moved) == 88
-                   && offsetof(physics, shard_moves) == 296 && offsetof(physics, copies) == 304,
+                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 480 && offsetof(physics, moved) == 88
+                   && offsetof(physics, shard_moves) == 376 && offsetof(physics, copies) == 384,
                "box3d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 12
@@ -187,9 +185,9 @@ _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) ==
                    && offsetof(physics, contact_speed) == 24 && offsetof(physics, bounce_speed) == 28
                    && offsetof(physics, hit_speed) == 32 && offsetof(physics, sleeping) == 36
                    && offsetof(physics, bodies) == 40 && offsetof(physics, shapes) == 44 && offsetof(physics, stamp) == 48
-                   && offsetof(physics, state) == 56 && offsetof(physics, moved) == 88 && offsetof(physics, gone) == 92
-                   && offsetof(physics, owners) == 96 && offsetof(physics, gone_shapes) == 120
-                   && offsetof(physics, parts) == 128 && offsetof(physics, sensors) == 152,
+                   && offsetof(physics, state) == 56 && offsetof(physics, moved) == 88 && offsetof(physics, gone) == 96
+                   && offsetof(physics, owners) == 104 && offsetof(physics, gone_shapes) == 136
+                   && offsetof(physics, parts) == 144 && offsetof(physics, sensors) == 176,
                "Physics's fields aren't where box3d.tide lays them out any more");
 
 // A body's place and speeds are 13 floats side by side in its component: its
@@ -1320,9 +1318,10 @@ typedef struct mesh_collider {
     tide_float3 scale, offset;
     float friction, bounce;
     int32_t cache;
+    uint8_t padding[4];
 } mesh_collider;
 typedef struct part { tide_entity of; int64_t box, sphere, capsule, mesh, hull, height_field, body; } part;
-_Static_assert(sizeof(mesh_collider) == 44 && sizeof(part) == 64, "mesh component ABI changed");
+_Static_assert(sizeof(mesh_collider) == 56 && sizeof(part) == 72, "mesh component ABI changed");
 
 static int64_t attach_mesh_component(const int64_t on, const mesh_collider *m)
 {
@@ -1444,6 +1443,38 @@ typedef struct tuning {
     bool sleeping;
 } tuning;
 
+// The bodies far from this client's player in a predicted tick (`with Far`,
+// predictionRange), which HoldFar gives the step to hold where they are
+// (b3World_HoldBodies): each island or sleeping set of them alone doesn't move,
+// and a near body meets it as a static one. Only predicted worlds are tagged,
+// so a server's tick and a confirmed one give none. Each run of predicted ticks
+// starts from a confirmed world, whose restore lets them go, and holds them
+// once: the ticks after it find the world holding, and give none either.
+static b3BodyId *far_bodies;
+static int32_t far_count, far_room;
+static int32_t holds, held; // For tests: holds made, and awake bodies they put to sleep
+
+int32_t b3t_holds(void) { return holds; }
+int32_t b3t_held(void) { return held; }
+
+void b3t_hold_far(tide_rows *rows, physics *p)
+{
+    (void)p;
+    if (!active || !active->made || b3World_IsHolding(active->id)) return;
+    const uint32_t count = tide_rows_count(rows);
+    const int32_t *ids = tide_rows_ints(rows, 0, offsetof(body, id));
+    const int32_t *ids_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4);
+    for (uint32_t i = 0; i < count; i++) {
+        if (ids[i] == 0) continue; // Not made yet
+        if (far_count == far_room) {
+            const int32_t room = far_room ? far_room * 2 : 256;
+            far_bodies = tide_realloc(far_bodies, (size_t)far_room * sizeof *far_bodies, (size_t)room * sizeof *far_bodies);
+            far_room = room;
+        }
+        far_bodies[far_count++] = body_of(active, (int64_t)((uint64_t)(uint32_t)ids[i] | (uint64_t)(uint32_t)ids_high[i] << 32));
+    }
+}
+
 int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, const tide_float3 gravity, const float contact_stiffness,
                  const float contact_damping, const float contact_speed, const float bounce_speed, const float hit_speed,
                  const bool sleeping)
@@ -1457,6 +1488,8 @@ int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, c
     // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
     // step would leave it as it is. The stamp stays, which says so. The rest of how it's to step waits
     // for a step there's something to step in.
+    const int32_t far = far_count;
+    far_count = 0;
     if (!turned && !roused && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b3World_GetAwakeBodyCount(w->id) == 0) {
         return w->stamp;
     }
@@ -1489,6 +1522,15 @@ int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, c
     // ...and then what code put to sleep this tick is: in a world whose bodies don't fall asleep by
     // themselves too, as that only says what the step does
     slept = put_to_sleep(w);
+    // ...and what's far from this client's player is held where it is, in its predicted ticks: a world
+    // that holds bodies is another state than the one that doesn't, which the stamp says
+    if (far > 0 && !b3World_IsHolding(w->id)) {
+        note('f', far_bodies, (size_t)far * sizeof *far_bodies);
+        const int awake = b3World_GetAwakeBodyCount(w->id);
+        b3World_HoldBodies(w->id, far_bodies, far);
+        holds++;
+        held += awake - b3World_GetAwakeBodyCount(w->id);
+    }
     shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
@@ -2376,7 +2418,7 @@ typedef struct collider {
     int64_t category, mask;
 } collider;
 typedef struct hull_geometry { tide_float3 points[128]; tide_float4 planes[128]; int32_t count, faces; } hull_geometry;
-_Static_assert(sizeof(collider) == 192 && offsetof(physics, pending) == 240, "historical scene ABI changed");
+_Static_assert(sizeof(collider) == 208 && offsetof(physics, pending) == 288, "historical scene ABI changed");
 
 static b3Vec3 scene_vec(const tide_float3 p) { return vec(p); }
 static tide_float3 scene_float(const b3Vec3 p) { return float3(p); }
@@ -2576,8 +2618,8 @@ void b3t_capture_history(tide_rows *rows, physics *p)
 
 // Geometry was captured by the physics step; identity/Snap metadata is final
 // only after the tick's queued changes have applied.
-typedef struct history_frame { int32_t tick; tide_list colliders, hulls; } history_frame;
-_Static_assert(sizeof(history_frame) == 12, "history frame ABI changed");
+typedef struct history_frame { int32_t tick; uint8_t padding[4]; tide_list colliders, hulls; } history_frame;
+_Static_assert(sizeof(history_frame) == 24, "history frame ABI changed");
 static void seal_history(void *context, const tide_entities *entities)
 {
     physics *p = context;
@@ -2891,7 +2933,7 @@ int64_t b3t_copy_hull(const int64_t on, const tide_float3 *vertices, const int32
                       const tide_float3 offset, const float density, const float friction, const float bounce, const bool sensor)
 {
     note('U', &on, sizeof on);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const hull_collider s = {.vertices = tide_list_from(vertices, count, sizeof *vertices), .scale = scale, .offset = offset,
                              .density = density, .friction = friction, .bounce = bounce, .sensor = sensor};
     const int64_t made = live_hull(on, 0, &s);
@@ -2904,7 +2946,7 @@ int64_t b3t_copy_height(const int64_t on, const float *heights, const int32_t he
                         const float minimum, const float maximum, const float friction, const float bounce)
 {
     note('E', &on, sizeof on);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const height_collider s = {.heights = tide_list_from(heights, height_count, sizeof *heights),
                                .holes = tide_list_from(holes, hole_count, sizeof *holes), .columns = columns, .rows = rows,
                                .scale = scale, .minimum = minimum, .maximum = maximum, .friction = friction, .bounce = bounce};

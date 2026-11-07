@@ -86,7 +86,7 @@ TIDE_TEST(local_workers_start_preserves_readonly_match_and_attached_fields)
     gui.jobs = &deferred;
     tide_world previous = {0};
     tide_world_copy(&previous, &world);
-    const tide_entity entity = {1, 1};
+    const tide_entity entity = tide_entity_in_slot(&world.entities, 1);
     WorkerPreview preview = tide_get_WorkerPreview(&world, entity);
     preview.value = 17;
     tide_set_WorkerPreview(&world, entity, preview);

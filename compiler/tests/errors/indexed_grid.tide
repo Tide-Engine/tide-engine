@@ -1,0 +1,12 @@
+// expect: an indexed loop goes through a query or a list, and this one goes through a grid
+singleton Field { Grid2<int> cells; }
+scene Main { }
+system Count(Field field)
+{
+    mut var n = 0;
+    indexed foreach (var at in field.cells)
+    {
+        if (at.x > 3) continue;
+        n += 1;
+    }
+}

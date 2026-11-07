@@ -25,7 +25,7 @@
 
 #define SMOKE_TICKS 240
 // Update when the demo's simulation changes on purpose. Every platform must agree.
-#define SMOKE_HASH 0x1D9D22B70969DF47ull
+#define SMOKE_HASH 0xED729D7B7D0F5A84ull
 
 // Colors demo.tide's views use, as 0xRRGGBBAA: the player's and the background.
 #define SMOKE_PLAYER_COLOR 0xFFC43DFFu
@@ -86,6 +86,9 @@ static int play_frame(const float seconds)
     tide_platform_poll(&devices);
     now += seconds;
     tide_local_frame_time(&local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, seconds);
+#endif
     const tide_view_worlds view = update();
     const tide_world *match = view.current;
     render(view);
@@ -144,7 +147,7 @@ static uint64_t world_hash(const tide_world *w)
 }
 
 // Renders the views offscreen and reads pixels back, which proves the whole
-// path works (Tide views, the draw list, the renderer, WebGL on the web) without
+// path works (Tide views, the draw list, the renderer, WebGPU on the web) without
 // needing a visible window. The frame's render() set the camera for
 // tide_platform_world_to_screen.
 static bool smoke_pixels(const tide_world *w)

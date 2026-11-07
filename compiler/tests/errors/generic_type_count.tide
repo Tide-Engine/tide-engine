@@ -1,0 +1,5 @@
+// expect: 'Max' takes 1 type in '<>', not 2
+scene Main { }
+T Max<T>(T a, T b) { return a > b ? a : b; }
+singleton S { int x; }
+system Run(mut S s) { s.x = Max<int, int>(1, 2); }

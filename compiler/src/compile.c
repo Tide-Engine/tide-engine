@@ -6,7 +6,10 @@
 #include <string.h>
 
 #include "builtins.h"
+#include "asset_files.h"
+#include "build_code.h"
 #include "lexer.h"
+#include "indexing.h"
 
 static char *read_file(const char *path, size_t *len)
 {
@@ -86,7 +89,7 @@ static bool add_embed_taps(program *prog)
     return true;
 }
 
-bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
+static bool compile_inputs_impl(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     diag_reset();
     diag_phase(NULL);
@@ -102,6 +105,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
     size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
     for (int i = 0; i < count; i++) {
+        compile_progress("Parsing Tide", inputs[i].path, i, count);
         source *src = NEW(source);
         src->path = inputs[i].path;
         src->package = inputs[i].package;
@@ -120,7 +124,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
             memcpy(text, given, src->len + 1);
         } else text = read_file(inputs[i].path, &src->len);
         if (!text) {
-            fprintf(stderr, "tidec: can't read %s\n", inputs[i].path);
+            fprintf(stderr, "tidec: can't read source file '%s'; check that it exists and is readable\n", inputs[i].path);
             return false;
         }
         src->text = text;
@@ -132,9 +136,10 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         token *toks = lex(src);
         if (!toks) return false;
         if (!parse_file(prog, src, toks, false)) return false;
+        compile_progress("Parsing Tide", inputs[i].path, i + 1, count);
     }
     if (opts->editor_source && !overlay_found) {
-        fprintf(stderr, "tide: source overlay is not in the selected project: %s\n", opts->editor_source);
+        fprintf(stderr, "tide: source overlay is not in the selected project: %s; select the project containing this file or add it to the compiler inputs\n", opts->editor_source);
         return false;
     }
     if (web) {
@@ -149,6 +154,14 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         source *src = NEW(source);
         src->path = DRAW_PRELUDE_PATH;
         src->text = draw_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+    }
+    if (baked_prelude_wanted(texts, lens, count)) {
+        source *src = NEW(source);
+        src->path = BAKED_PRELUDE_PATH;
+        src->text = baked_prelude(&src->len);
         diag_add_source(src);
         token *toks = lex(src);
         if (!toks || !parse_file(prog, src, toks, false)) return false;
@@ -170,20 +183,37 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;
+    compile_progress("Checking Tide", NULL, 0, 0);
     if (!check(prog)) return false;
+    // What build code makes (build_code.h): found, or made by running it and then found as the game compiles again
+    if (!schedule && !opts->declarations_only && !opts->build_program && prog->build_roots.count) {
+        static int again_depth;
+        bool again = false;
+        if (!build_code_run(prog, opts, &again)) return false;
+        diag_phase("running build code");
+        if (again) {
+            if (again_depth) {
+                diag_error(prog->build_roots.items[0]->at, "build code ran, and what it made isn't found: build the game again");
+                return false;
+            }
+            again_depth++;
+            const bool ok = compile_inputs_impl(inputs, count, opts, schedule);
+            again_depth--;
+            return ok;
+        }
+    }
 
     codegen_options named = *opts;
     if (!named.name) named.name = path_stem(inputs[0].path);
     if (schedule && opts->strip_names && (opts->shaders || opts->spirv_dir || opts->hlsl_dir)) {
         for (int i = 0; i < prog->shaders.count; i++) {
             shader *sh = prog->shaders.items[i];
-            sh->glsl_vertex = shader_minify_names(sh->glsl_vertex, NULL);
-            sh->glsl_fragment = shader_minify_names(sh->glsl_fragment, NULL);
             sh->wgsl = shader_minify_names(sh->wgsl, NULL);
         }
     }
     if (schedule && opts->spirv_dir) return write_spirv(prog, opts->spirv_dir, schedule);
     if (schedule && opts->hlsl_dir) return write_hlsl(prog, opts->hlsl_dir, schedule);
+    if (schedule && opts->kernels_out) return write_kernels(prog, opts->kernels_out);
     if (opts->shader_out) {
         for (int i = 0; i < prog->shaders.count; i++) {
             opts->shader_out(opts->shader_user, prog->shaders.items[i]->name, prog->shaders.items[i]->wgsl);
@@ -199,10 +229,21 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     }
     if (schedule) {
         print_schedule(prog, named.name, schedule);
+        print_loop_indexes(prog, schedule);
         return true;
     }
     const bool ok = codegen(prog, &named);
     diag_phase("generating C");
     if (ok && opts->outline_to) print_outline(prog, opts->outline_to);
+    return ok;
+}
+
+bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
+{
+    asset_files_use_build_cache(schedule == NULL);
+    compile_progress_whole(0); // Parsing counts its files; checking starts the whole compilation's count
+    const bool ok = compile_inputs_impl(inputs, count, opts, schedule);
+    compile_progress_whole(0);
+    asset_files_use_build_cache(false);
     return ok;
 }

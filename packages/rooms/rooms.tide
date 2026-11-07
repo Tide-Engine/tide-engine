@@ -389,6 +389,7 @@ local event(Disconnected gone) BackToTitle(mut Lobby lobby)
                   : gone.reason == DisconnectReason.Refused ? "That room is full, or closed."
                   : gone.reason == DisconnectReason.TimedOut ? (lobby.joining ? "That room didn't answer." : "Lost the connection to the room.")
                   : gone.reason == DisconnectReason.Kicked ? (gone.message != "" ? gone.message : "The host sent you out of the room.")
+                  : gone.reason == DisconnectReason.Banned ? (gone.message != "" ? gone.message : "The host banned you from the room.")
                   : "The match ended.";
     lobby.started = true;
     lobby.page = lobby.joining ? Page.Join : Page.Title;

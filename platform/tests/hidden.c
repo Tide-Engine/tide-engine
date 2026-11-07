@@ -132,9 +132,10 @@ static int sound(void *user, const float seconds)
     return 0;
 }
 
-// GLFW's, without its header: whether the window the context is current in shows.
+// GLFW's, without its header: whether the window shows. The window is desktop/glfw.c's, as tests/swapchain.c
+// resizes it.
 typedef struct GLFWwindow GLFWwindow;
-GLFWwindow *glfwGetCurrentContext(void);
+GLFWwindow *tide_glfw_window(void);
 int glfwGetWindowAttrib(GLFWwindow *window, int attrib);
 #define GLFW_VISIBLE 0x00020004
 
@@ -175,7 +176,7 @@ int main(const int argc, char **argv)
     if (strcmp(mode, "window") == 0) {
         // Under the platform's refusal, the window itself: whatever asks for one gets it hidden
         if (!tide_window_open(&(tide_window_desc){.title = "hidden", .width = 64, .height = 64})) return 1;
-        const bool shows = glfwGetWindowAttrib(glfwGetCurrentContext(), GLFW_VISIBLE) != 0;
+        const bool shows = glfwGetWindowAttrib(tide_glfw_window(), GLFW_VISIBLE) != 0;
         tide_window_close();
         printf("%s: a window asked to show doesn't\n", shows ? "FAIL" : "ok");
         return shows ? 1 : 0;

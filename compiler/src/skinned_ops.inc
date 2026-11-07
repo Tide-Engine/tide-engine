@@ -18,6 +18,20 @@ static type check_skinned_member(checker *c, expr *e, const type obj, bool *hand
         return T_ERR;
     }
     if (!skinned_cpu(c, e)) return T_ERR;
+    if (d->skin_kind == SKIN_HUMANOID_RIG || d->skin_kind == SKIN_RETARGET_MAP) {
+        // Public calibration/settings fields retain ordinary owned-struct
+        // access; hidden mapping data follows the usual hidden-field diagnostic.
+        *handled = false;
+        return T_ERR;
+    }
+    if (d->skin_kind == SKIN_BONE && str_eq_c(e->member, "index")) {
+        e->skin_operation = SKIN_OP_BONE_INDEX;
+        return T_INT_;
+    }
+    if ((d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_POSE) && str_eq_c(e->member, "skeleton")) {
+        e->skin_operation = SKIN_OP_SKELETON;
+        return decl_type(c->prog->skeleton);
+    }
     if (d->skin_kind == SKIN_MESH) {
         if (str_eq_c(e->member, "vertices") || str_eq_c(e->member, "indices")) {
             *handled = false; // Ordinary visible fields, with immutable access checked at a write.
@@ -147,7 +161,7 @@ static bool skinned_arguments(checker *c, expr *e, const char *names, const int 
         clamp->kind = E_INT;
         clamp->type = types[count - 1];
         clamp->at = e->at;
-        clamp->int_value = 0;
+        clamp->int_value = skinned_bakes(e->skin_operation) ? 60 : 0;
         vec_push(e->args, clamp);
     }
     return valid;
@@ -156,6 +170,34 @@ static bool skinned_arguments(checker *c, expr *e, const char *names, const int 
 static type check_skinned_static(checker *c, expr *e, bool *handled)
 {
     const expr *receiver = e->object;
+    if (receiver && receiver->kind == E_NAME
+        && (str_eq_c(receiver->name, "HumanoidRig") || str_eq_c(receiver->name, "RetargetMap"))
+        && !find_local(c, receiver->name) && !find_param(c, receiver->name) && !field_in_scope(c, receiver->name)) {
+        const decl *own = find_type(c, receiver->name, receiver->at);
+        if (!own || own == c->prog->humanoid_rig || own == c->prog->retarget_map) {
+            *handled = true;
+            if (!skinned_cpu(c, e)) return T_ERR;
+            skinned_retarget_types(c->prog);
+            const bool humanoid = str_eq_c(receiver->name, "HumanoidRig");
+            decl *owner = humanoid ? c->prog->humanoid_rig : c->prog->retarget_map;
+            e->object->type = decl_type(owner);
+            e->object->type_decl = owner;
+            e->object->bind = BIND_TYPE;
+            const char *method = humanoid ? "Auto" : "Create";
+            if (!str_eq_c(e->name, method)) {
+                for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+                diag_error(e->at, "%s has the static method %s, not '" STR_FMT "'", type_name(decl_type(owner)), method, STR_ARG(e->name));
+                return T_ERR;
+            }
+            const type args[] = {decl_type(humanoid ? c->prog->pose : c->prog->skeleton),
+                                 decl_type(c->prog->humanoid_rig), decl_type(c->prog->humanoid_rig)};
+            if (!skinned_arguments(c, e, humanoid ? "referencePose" : "source, sourceRig, targetRig", 0, args, humanoid ? 1 : 3, -1))
+                return T_ERR;
+            e->call = CALL_SKINNED;
+            e->skin_operation = humanoid ? SKIN_OP_HUMANOID_AUTO : SKIN_OP_RETARGET_CREATE;
+            return humanoid ? decl_type(owner) : result_of(c->prog, decl_type(owner), decl_type(c->prog->retarget_error), false);
+        }
+    }
     *handled = receiver && receiver->kind == E_NAME && receiver->type_arg_ref
         && str_eq_c(receiver->type_arg_ref->name, "SkinnedMesh");
     if (!*handled) return T_ERR;
@@ -187,12 +229,45 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
     const skinned_kind kind = obj.decl->skin_kind;
     const bool animations = kind == SKIN_ANIMATIONS;
     const bool bones = kind == SKIN_BONES || kind == SKIN_SKELETON;
+    if (kind == SKIN_RETARGET_MAP && str_eq_c(e->name, "Bake")) {
+        // Check every written argument in source order before selecting the
+        // overload. The source carries either a clip or a catalog; no inferred
+        // catalog member contract survives this dynamic conversion.
+        e->skin_operation = SKIN_OP_RETARGET_BAKE_ANIMATION;
+        const type parameters[] = {T_ERR, decl_type(c->prog->skeleton), T_FLOAT_};
+        if (!skinned_arguments(c, e, "source, target, sampleRate", 1, parameters, 3, -1)) return T_ERR;
+        const type source = e->args.items[0]->type;
+        if (source.kind != TY_STRUCT || (source.decl->skin_kind != SKIN_ANIMATION && source.decl->skin_kind != SKIN_ANIMATIONS)) {
+            diag_error(e->args.items[0]->at, "'Bake' source is an Animation or AnimationCatalog, not %s", type_name(source));
+            return T_ERR;
+        }
+        const bool catalog = source.decl->skin_kind == SKIN_ANIMATIONS;
+        e->skin_operation = catalog ? SKIN_OP_RETARGET_BAKE_CATALOG : SKIN_OP_RETARGET_BAKE_ANIMATION;
+        e->call = CALL_SKINNED;
+        return result_of(c->prog, decl_type(catalog ? c->prog->animations : c->prog->animation),
+                         (type){TY_ENUM, c->prog->io_error}, false);
+    }
     type args[3] = {{TY_ERROR, NULL}, {TY_ERROR, NULL}, {TY_ERROR, NULL}};
     type result = T_ERR;
     const char *names = "";
     int count = 0, optional = 0, out_index = -1;
     bool changes = false;
-    if (kind == SKIN_BLEND_SHAPES && (str_eq_c(e->name, "TryGetByName") || str_eq_c(e->name, "TryGetAt"))) {
+    if (kind == SKIN_HUMANOID_RIG && str_eq_c(e->name, "GetStatus")) {
+        e->skin_operation = SKIN_OP_HUMANOID_STATUS;
+        args[0] = decl_type(c->prog->humanoid_bone);
+        names = "bone";
+        count = 1;
+        result = decl_type(c->prog->humanoid_status);
+    } else if (kind == SKIN_POSE && str_eq_c(e->name, "Retarget")) {
+        skinned_retarget_types(c->prog);
+        e->skin_operation = SKIN_OP_POSE_RETARGET;
+        args[0] = decl_type(c->prog->pose);
+        args[1] = decl_type(c->prog->retarget_map);
+        names = "source, mapping";
+        count = 2;
+        changes = true;
+        result = T_BOOL_;
+    } else if (kind == SKIN_BLEND_SHAPES && (str_eq_c(e->name, "TryGetByName") || str_eq_c(e->name, "TryGetAt"))) {
         const bool by_name = str_eq_c(e->name, "TryGetByName");
         e->skin_operation = by_name ? SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME : SKIN_OP_TRY_GET_BLEND_SHAPE_AT;
         args[0] = by_name ? (type){TY_STRING, NULL} : T_INT_;
@@ -224,6 +299,12 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
         count = 2;
         out_index = 1;
         result = T_BOOL_;
+    } else if (bones && str_eq_c(e->name, "NameOf")) {
+        e->skin_operation = SKIN_OP_BONE_NAME;
+        args[0] = decl_type(c->prog->bone);
+        names = "bone";
+        count = 1;
+        result = (type){TY_STRING, NULL};
     } else if (kind == SKIN_SKELETON && str_eq_c(e->name, "RestPose")) {
         e->skin_operation = SKIN_OP_REST_POSE;
         result = decl_type(c->prog->pose);
@@ -246,6 +327,10 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
         count = 2;
         changes = true;
         result = T_VOID_;
+    } else if (kind == SKIN_POSE && str_eq_c(e->name, "Models")) {
+        e->skin_operation = SKIN_OP_POSE_MODELS;
+        names = "";
+        result = list_of(c->prog, (type){TY_FLOAT4X4, NULL});
     } else if (kind == SKIN_POSE && str_eq_c(e->name, "Model")) {
         e->skin_operation = SKIN_OP_POSE_MODEL;
         args[0] = decl_type(c->prog->bone);
@@ -267,8 +352,8 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
         decl called = {0};
         called.name = e->name;
         if (through_element(e->object)) {
-            diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(e->name));
-            diag_note("take the pose out, change it, and put it back");
+            diag_error(e->at, "an indexed pose is a copy, so '" STR_FMT "' can't change it in place", STR_ARG(e->name));
+            diag_note("copy the pose into a 'mut var', change that local, then assign it back to the indexed destination");
             return T_ERR;
         }
         if (!check_writable(c, e->object, &called, NULL)) return T_ERR;
@@ -278,15 +363,18 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
 
 static type check_skinned_index(checker *c, expr *e, const type obj, bool *handled)
 {
-    *handled = obj.kind == TY_STRUCT && obj.decl && obj.decl->skin_kind == SKIN_POSE;
+    *handled = obj.kind == TY_STRUCT && obj.decl
+        && (obj.decl->skin_kind == SKIN_POSE || obj.decl->skin_kind == SKIN_HUMANOID_RIG);
     if (!*handled) return T_ERR;
     if (!skinned_cpu(c, e)) return T_ERR;
-    const type index = check_expr_want(c, e->lhs, decl_type(c->prog->bone));
+    const bool humanoid = obj.decl->skin_kind == SKIN_HUMANOID_RIG;
+    const type wanted = decl_type(humanoid ? c->prog->humanoid_bone : c->prog->bone);
+    const type index = check_expr_want(c, e->lhs, wanted);
     if (index.kind == TY_ERROR) return T_ERR;
-    if (!type_assignable(decl_type(c->prog->bone), index)) {
-        diag_error(e->lhs->at, "a Pose is indexed by a Bone, not %s", type_name(index));
+    if (!type_assignable(wanted, index)) {
+        diag_error(e->lhs->at, humanoid ? "a HumanoidRig is indexed by a HumanoidBone, not %s" : "a Pose is indexed by a Bone, not %s", type_name(index));
         return T_ERR;
     }
-    e->skin_operation = SKIN_OP_POSE_INDEX;
-    return decl_type(c->prog->bone_transform);
+    e->skin_operation = humanoid ? SKIN_OP_HUMANOID_INDEX : SKIN_OP_POSE_INDEX;
+    return decl_type(humanoid ? c->prog->bone : c->prog->bone_transform);
 }

@@ -1,0 +1,9 @@
+// expect: a GPUList of indices picks its vertices on the GPU, and these vertices are the CPU's
+// Indices a GPU list's with the CPU's vertices: the vertices are read by the indices on the GPU, so they're a GPU list's too
+scene Main { }
+local singleton Made
+{
+    List<Vertex> vertices;
+    GPUList<int> order;
+}
+view Show(Made made) { Draw.Mesh(made.vertices, made.order); }

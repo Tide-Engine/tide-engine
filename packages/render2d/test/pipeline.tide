@@ -1,0 +1,181 @@
+scene Main;
+
+enum RenderCase { Dark, Emission, Normals, Shadows, Point, Spot, Indirect }
+component Patch { int role; }
+singleton Fixture
+{
+    RenderCase scenario;
+    bool built;
+    float height = 1;
+}
+
+local singleton Probe
+{
+    bool disabled;
+    bool gi;
+    int giResolution = 64;
+    bool bloom;
+    float bloomIntensity = 0.25;
+    bool cutout;
+    bool present = true;
+    bool mapsReady;
+    int lightLimit = 16;
+    int shadowLimit = 8;
+    int shadowResolution = 256;
+    float exposure = 1;
+    bool traceDiagnostic;
+    float4[4] intervals;
+    float[8] ranges;
+    float3[3] directions;
+    float[8] attenuation;
+    float[5] transfer;
+    float3[3] mapped;
+    [Raw] [Filter(Filter.Point)] Grid2<Color> normal = Grid2(1, 1);
+    [Filter(Filter.Point)] Grid2<Color> hole = Grid2(8, 8);
+}
+
+system BuildFixture(mut Fixture fixture)
+{
+    if (fixture.built) return;
+    fixture.built = true;
+    if (fixture.scenario == RenderCase.Normals)
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            Spawn(Patch { role = i }, Render2D.SpriteRenderer { size = float2(1.4) },
+                Render2D.Material { specular = 0 }, Transform {
+                    localPosition = float3(float(i * 2 - 3), 0, 0),
+                    localScale = float3(i == 2 ? -1 : 1, 1, 1),
+                    localRotation = quaternion.Euler(0, 0, i == 3 ? 90deg : 0)
+                });
+        }
+        Spawn(Render2D.DirectionalLight {
+            direction = float3(-3, 0, -4), radiance = float3(Math.PI), castShadows = false
+        });
+        return;
+    }
+    Spawn(Patch { role = 0 }, Render2D.SpriteRenderer { size = float2(8, 6), castShadows = false },
+        Render2D.Material {
+            specular = 0,
+            emission = fixture.scenario == RenderCase.Emission ? float3(1, 2, 4) : float3(0)
+        }, Transform);
+    if (fixture.scenario == RenderCase.Shadows)
+    {
+        Spawn(Patch { role = 1 }, Render2D.SpriteRenderer { size = float2(1.5) },
+            Render2D.Material { specular = 0 }, Transform { localPosition = float3(1, 0, fixture.height) });
+        Spawn(Render2D.DirectionalLight {
+            direction = float3(-1, 0, -1), radiance = float3(Math.PI)
+        });
+    }
+    if (fixture.scenario == RenderCase.Point || fixture.scenario == RenderCase.Spot)
+    {
+        if (fixture.scenario == RenderCase.Point)
+            Spawn(Transform { localPosition = float3(0, 0, 2) },
+                Render2D.PointLight { intensity = float3(4 * Math.PI), range = 4 });
+        else
+            Spawn(Transform { localPosition = float3(0, 0, 2) },
+                Render2D.SpotLight { direction = float3(0, 0, -1), intensity = float3(4 * Math.PI),
+                                     range = 4, innerAngle = 30deg, outerAngle = 60deg, castShadows = false });
+    }
+    if (fixture.scenario == RenderCase.Indirect)
+    {
+        Spawn(Patch { role = 1 }, Render2D.SpriteRenderer { size = float2(1.5) },
+            Render2D.Material { baseColor = Color.black, emission = float3(8, 0, 0), specular = 0 },
+            Transform { localPosition = float3(1.25, 0, fixture.height) });
+    }
+}
+
+[Before(Render2D.Stages.Prepare)]
+view ConfigureFixture(mut Render2D.Renderer renderer, mut Render2D.GlobalIllumination gi, mut Probe probe)
+{
+    renderer.enabled = !probe.disabled;
+    renderer.defaultPresent = probe.present;
+    renderer.background = Color.black;
+    renderer.camera = Render2D.Camera { verticalSize = 6, minHeight = -4, maxHeight = 8 };
+    renderer.exposure = probe.exposure;
+    renderer.bloom.enabled = probe.bloom;
+    renderer.bloom.intensity = probe.bloomIntensity;
+    renderer.ambientIrradiance = float3(0);
+    renderer.maxLights = probe.lightLimit;
+    renderer.maxShadowMaps = probe.shadowLimit;
+    renderer.shadowResolution = probe.shadowResolution;
+    renderer.shadowCenter = float3(0, 0, 0.5);
+    renderer.shadowExtent = 8;
+    renderer.shadowDistance = 24;
+    renderer.shadowBias = 0.001;
+    renderer.shadowSlopeBias = 0;
+    gi.enabled = probe.gi;
+    gi.intensity = 1;
+    gi.probeSpacing = 4;
+    gi.cascades = 3;
+    gi.distance = 5;
+    gi.resolution = probe.giResolution;
+    if (!probe.mapsReady)
+    {
+        probe.mapsReady = true;
+        probe.normal[0, 0] = Color(204.0 / 255, 128.0 / 255, 230.0 / 255, 0);
+        for (var y = 0; y < 8; y++)
+            for (var x = 0; x < 8; x++)
+                probe.hole[x, y] = Color(1, 1, 1, x >= 2 && x < 6 && y >= 2 && y < 6 ? 0 : 1);
+    }
+    probe.attenuation[0] = Render2D.PointAttenuation(0, 4);
+    probe.attenuation[1] = Render2D.PointAttenuation(2, 4);
+    probe.attenuation[2] = Render2D.PointAttenuation(4, 4);
+    probe.attenuation[3] = Render2D.PointAttenuation(2, 0);
+    probe.attenuation[4] = Render2D.SpotAttenuation(0.5, 0.75, 0.25);
+    probe.attenuation[5] = Render2D.SpotAttenuation(0.25, 0.75, 0.25);
+    probe.attenuation[6] = Render2D.SpotAttenuation(0.75, 0.75, 0.25);
+    probe.attenuation[7] = Render2D.SpotAttenuation(0.5, 0.5, 0.5);
+    probe.transfer[0] = Render2D.SrgbToLinear(0.5);
+    probe.transfer[1] = Render2D.SrgbToLinear(0.04045);
+    probe.transfer[2] = Render2D.LinearToSrgb(0.0031308);
+    probe.transfer[3] = Render2D.LinearToSrgb(Render2D.SrgbToLinear(0.5));
+    probe.transfer[4] = Render2D.SrgbToLinear(-1);
+    probe.mapped[0] = Render2D.Tonemap(float3(0, 1, 4), 1);
+    probe.mapped[1] = Render2D.Tonemap(float3(-1, 1, 4), 0);
+    probe.mapped[2] = Render2D.Tonemap(float3(0, 1, 4), 2);
+    probe.intervals[0] = Render2D.MergeIntervals(float4(1, 2, 3, 0), float4(4, 5, 6, 0.5));
+    probe.intervals[1] = Render2D.MergeIntervals(float4(0, 0, 0, 1), float4(4, 5, 6, 0.5));
+    probe.intervals[2] = Render2D.MergeIntervals(float4(1, 2, 3, 0.25), float4(4, 8, 12, 0.5));
+    probe.intervals[3] = Render2D.MergeIntervals(float4(1, 2, 3, 1), float4(0, 0, 0, 1));
+    for (var i = 0; i < 4; i++)
+    {
+        probe.ranges[i * 2] = Render2D.CascadeIntervalStart(i, 4, 8);
+        probe.ranges[i * 2 + 1] = Render2D.CascadeIntervalEnd(i, 4, 8);
+    }
+    probe.directions[0] = Render2D.OctaDirection(float2(0.5));
+    probe.directions[1] = Render2D.OctaDirection(float2(1, 0.5));
+    probe.directions[2] = Render2D.OctaDirection(float2(1));
+}
+
+[Before(Render2D.Stages.Prepare)]
+view BindFixtureMaps(mut Render2D.Material material, Patch patch, Fixture fixture, Probe probe)
+{
+    if (fixture.scenario == RenderCase.Normals && patch.role > 0) material.normalMap = probe.normal;
+    if (fixture.scenario == RenderCase.Shadows && patch.role == 1)
+    {
+        if (probe.cutout) material.baseMap = probe.hole;
+        else material.baseMap = Render2D.White;
+    }
+}
+
+frag TraceDiagnostic(Vertex vertex, out Color color, Texture source, Render2D.Renderer renderer)
+{
+    int mode = int(vertex.uv.x * 4);
+    float3 origin = mode == 1 ? float3(-2, 0, 0.25) : float3(-1, 0, 0);
+    float3 direction = mode == 1 ? Math.Normalize(float3(1, 0, 0.1)) : Math.Normalize(float3(2, 0, 1));
+    float start = mode == 3 ? 2 : 0;
+    float end = mode == 2 ? 1 : 5;
+    float2 viewSize = float2(renderer.camera.verticalSize * float(renderer.positions.size.x)
+                            / float(renderer.positions.size.y), renderer.camera.verticalSize);
+    float4 hit = Render2D.TraceSurface(renderer.positions, source, viewSize,
+                                      origin, direction, start, end, 0.01);
+    color = Color(hit.x / 8, hit.w, 0, 1);
+}
+
+[After(Render2D.Stages.Present)]
+view TraceWitness(Render2D.Renderer renderer, Probe probe)
+{
+    if (probe.traceDiagnostic && renderer.enabled && renderer.ready)
+        Draw.Blit(renderer.direct, Draw.window, TraceDiagnostic);
+}

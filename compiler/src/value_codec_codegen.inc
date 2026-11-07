@@ -38,12 +38,40 @@ static uint64_t client_codec_minbytes(const program *prog, const type t)
         uint64_t bytes = 0;
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == prog->visibility)) continue;
+            if (f->typed || recipient_private_field(prog, t.decl, f)) continue;
             bytes += client_codec_minbytes(prog, f->type);
         }
         return bytes;
     }
     return (uint64_t)type_layout(t).size;
+}
+
+// Whether the codec's bytes for `t` are its memory, byte for byte: plain
+// numbers, vectors, entities, players and enums, and structs and arrays of them
+// with no padding (their fields side by side, in order). A run of such list
+// elements goes in and out as one copy, the same bytes as one at a time.
+// Bools aren't (a read checks for 0 or 1), nor are T?, text or containers.
+static bool client_codec_raw(const program *prog, const type t)
+{
+    switch (t.kind) {
+    case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
+    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION:
+    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4:
+    case TY_COLOR: case TY_RECT: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_ENUM: return true;
+    case TY_ARRAY: return client_codec_raw(prog, t.decl->fields.items[0].type);
+    case TY_STRUCT: {
+        int64_t bytes = 0;
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->typed || recipient_private_field(prog, t.decl, f) || !client_codec_raw(prog, f->type)) return false;
+            bytes += type_layout(f->type).size;
+        }
+        return t.decl->fields.count && bytes == type_layout(t).size && bytes < LAYOUT_MOST;
+    }
+    default: return false;
+    }
 }
 
 static void gen_client_codec_value(gen *g, const client_codec *codec, const int id)
@@ -56,14 +84,14 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     if (t.kind == TY_STRING) {
         sb_put(o, "    const tide_str text = tide_text_view(*v);\n"
                   "    tide_write_varint(out, text.bytes);\n"
-                  "    tide_write_bytes(out, text.ptr, text.bytes);\n");
+                  "    tide_client_write(out, text.ptr, (uint32_t)text.bytes);\n");
     } else if (t.kind == TY_RECORD && t.decl->array_of) {
         sb_printf(o, "    for (uint32_t i = 0; i < %du; i++) tide_client_put%d(out, &v->at[i], depth + 1u);\n",
                   t.decl->array_length, client_codec_id(codec, (type){TY_RECORD, t.decl->array_of}));
     } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == g->prog->visibility)) continue;
+            if (f->typed || recipient_private_field(g->prog, t.decl, f)) continue;
             sb_printf(o, "    tide_client_put%d(out, &v->%s, depth + 1u);\n", client_codec_id(codec, f->type), field_cname(f));
         }
         if (!t.decl->fields.count) sb_put(o, "    (void)out; (void)v;\n");
@@ -74,9 +102,23 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     } else if (t.kind == TY_LIST) {
         const type et = t.decl->fields.items[0].type;
         sb_put(o, "    const uint32_t count = (uint32_t)tide_list_count(*v);\n"
-                  "    tide_write_varint(out, count);\n");
-        sb_printf(o, "    for (uint32_t i = 0; i < count; i++) tide_client_put%d(out, tide_list_at(*v, (int32_t)i, sizeof(%s)), depth + 1u);\n",
-                  client_codec_id(codec, et), elem_ctype(et));
+                  "    tide_write_varint(out, count);\n"
+                  "    tide_list_cache cache = {0};\n");
+        if (client_codec_raw(g->prog, et)) {
+            // Each run of elements side by side as one copy of its bytes
+            sb_printf(o, "    _Static_assert(sizeof(%s) == %d, \"a list element's codec bytes are its memory\");\n",
+                      elem_ctype(et), type_layout(et).size);
+            sb_printf(o, "    for (uint32_t i = 0; i < count;) {\n"
+                         "        const %s *element = tide_list_cached_at(&cache, *v, (int32_t)i, sizeof *element);\n"
+                         "        uint32_t n = cache.at == v->at && cache.at && i - cache.first < cache.count ? cache.first + cache.count - i : 1u;\n"
+                         "        if (n > count - i) n = count - i;\n"
+                         "        if (n > (1u << 30) / sizeof *element) n = (uint32_t)((1u << 30) / sizeof *element);\n"
+                         "        tide_client_write(out, element, (uint32_t)(n * sizeof *element));\n"
+                         "        i += n;\n    }\n", elem_ctype(et));
+        } else {
+            sb_printf(o, "    for (uint32_t i = 0; i < count; i++) tide_client_put%d(out, tide_list_cached_at(&cache, *v, (int32_t)i, sizeof(%s)), depth + 1u);\n",
+                      client_codec_id(codec, et), elem_ctype(et));
+        }
     } else if (t.kind == TY_MAP || t.kind == TY_SET) {
         const int map = t.decl->index;
         sb_put(o, "    tide_write_varint(out, v->live);\n"
@@ -102,7 +144,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
                   "        if (dir->records > 1u) qsort(records, dir->records, sizeof *records, tide_client_grid_compare);\n"
                   "        for (uint32_t i = 0; i < dir->records; i++) {\n"
                   "            tide_write_bytes(out, records[i].chunk, sizeof records[i].chunk);\n");
-        sb_printf(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(v->at >> 30), records[i].block);\n"
+        sb_printf(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), records[i].block);\n"
                      "            for (uint32_t k = 0; k < tide_grid_chunk_bytes(&%s) / sizeof(%s); k++)\n"
                      "                tide_client_put%d(out, (const %s *)(const void *)(cells + (size_t)k * sizeof(%s)), depth + 1u);\n",
                   grid_shape_name(t.decl), elem_ctype(cell), client_codec_id(codec, cell), elem_ctype(cell), elem_ctype(cell));
@@ -112,7 +154,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
         // component outcomes belong in a recipient's projection.
         sb_put(o, "    // Opaque resident storage remains authoritative server state.\n");
     } else {
-        sb_put(o, "    tide_write_bytes(out, v, sizeof *v);\n");
+        sb_put(o, "    tide_client_write(out, v, (uint32_t)sizeof *v);\n");
     }
     sb_put(o, "}\n\n");
 
@@ -120,7 +162,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     sb_put(o, "    if (in->failed || depth > 256u) return false;\n    (void)where; (void)v; (void)budget;\n");
     if (t.kind == TY_STRING) {
         sb_put(o, "    const uint32_t size = tide_read_varint(in);\n"
-                  "    const uint8_t *bytes = tide_read_bytes(in, size);\n"
+                  "    const uint8_t *bytes = tide_client_read(in, size);\n"
                   "    if (!bytes || !tide_client_budget(budget, (uint64_t)size + 64u)) return false;\n"
                   "    if (size > INT32_MAX || !tide_utf8_valid((const char *)bytes, (int32_t)size)) return false;\n"
                   "    const tide_str text = {(const char *)bytes, (int32_t)size, tide_utf8_chars((const char *)bytes, (int32_t)size)};\n"
@@ -131,7 +173,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == g->prog->visibility)) continue;
+            if (f->typed || recipient_private_field(g->prog, t.decl, f)) continue;
             sb_printf(o, "    if (!tide_client_get%d(in, &v->%s, where, depth + 1u, budget)) return false;\n",
                       client_codec_id(codec, f->type), field_cname(f));
         }
@@ -147,8 +189,34 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
         const uint64_t minbytes = client_codec_minbytes(g->prog, et);
         if (minbytes) sb_printf(o, "    if (count > (in->size - in->at) / %lluULL) return false;\n", (unsigned long long)minbytes);
         sb_printf(o, "    if (!tide_client_budget(budget, (uint64_t)count * (sizeof(%s) + 64u))) return false;\n", elem_ctype(et));
-        sb_printf(o, "    for (uint32_t i = 0; i < count; i++) {\n        %s *element = tide_list_add(v, sizeof *element, where);\n", elem_ctype(et));
-        sb_printf(o, "        if (!element || !tide_client_get%d(in, element, where, depth + 1u, budget)) return false;\n    }\n", client_codec_id(codec, et));
+        // Added as tide_list_add would, one at a time (tide_client_list_grow), so the heap comes out the same
+        sb_put(o, "    const uint32_t base = (uint32_t)tide_list_count(*v);\n"
+                  "    if (count > (uint32_t)INT32_MAX - base) return false;\n"
+                  "    tide_list_cache cache = {0};\n");
+        if (client_codec_raw(g->prog, et)) {
+            // The room the list has is filled, a run at a time, before it grows: a block it outgrows is let go
+            // of with its elements in it, as adding them one by one leaves it, and the heap's bytes are hashed
+            sb_printf(o, "    _Static_assert(sizeof(%s) == %d, \"a list element's codec bytes are its memory\");\n",
+                      elem_ctype(et), type_layout(et).size);
+            sb_printf(o, "    for (uint32_t i = 0; i < count;) {\n"
+                         "        if (!tide_client_list_grow(v, base + i + 1u, base + count, sizeof(%s), where)) return false;\n"
+                         "        const uint32_t room = (uint32_t)tide_list_count(*v) - base;\n"
+                         "        while (i < room) {\n"
+                         "            %s *element = tide_list_cached_at_mut(&cache, *v, (int32_t)(base + i), sizeof *element);\n"
+                         "            if (!element) return false;\n"
+                         "            uint32_t n = cache.at == v->at && cache.at && base + i - cache.first < cache.count ? cache.first + cache.count - (base + i) : 1u;\n"
+                         "            if (n > room - i) n = room - i;\n"
+                         "            if (n > (1u << 30) / sizeof *element) n = (uint32_t)((1u << 30) / sizeof *element);\n"
+                         "            const uint8_t *bytes = tide_client_read(in, (uint32_t)(n * sizeof *element));\n"
+                         "            if (!bytes) return false;\n"
+                         "            memcpy(element, bytes, (size_t)n * sizeof *element);\n"
+                         "            i += n;\n        }\n    }\n", elem_ctype(et), elem_ctype(et));
+        } else {
+            sb_printf(o, "    for (uint32_t i = 0; i < count; i++) {\n"
+                         "        if (!tide_client_list_grow(v, base + i + 1u, base + count, sizeof(%s), where)) return false;\n"
+                         "        %s *element = tide_list_cached_at_mut(&cache, *v, (int32_t)(base + i), sizeof *element);\n", elem_ctype(et), elem_ctype(et));
+            sb_printf(o, "        if (!element || !tide_client_get%d(in, element, where, depth + 1u, budget)) return false;\n    }\n", client_codec_id(codec, et));
+        }
     } else if (t.kind == TY_MAP || t.kind == TY_SET) {
         const int map = t.decl->index;
         const type kt = t.decl->fields.items[0].type;
@@ -208,11 +276,75 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     } else if (t.kind == TY_RESIDENT) {
         sb_put(o, "    *v = (tide_resident){0};\n");
     } else if (t.kind == TY_BOOL) {
-        sb_put(o, "    const uint8_t value = tide_read_u8(in);\n"
-                  "    if (value > 1u) return false;\n    *v = value != 0;\n");
+        sb_put(o, "    const uint8_t *bytes = tide_client_read(in, 1u);\n"
+                  "    if (!bytes || *bytes > 1u) return false;\n    *v = *bytes != 0;\n");
     } else {
-        sb_put(o, "    const uint8_t *bytes = tide_read_bytes(in, sizeof *v);\n"
+        sb_put(o, "    const uint8_t *bytes = tide_client_read(in, (uint32_t)sizeof *v);\n"
                   "    if (!bytes) return false;\n    memcpy(v, bytes, sizeof *v);\n");
+    }
+    sb_put(o, "    return !in->failed;\n}\n\n");
+}
+
+// Goes past a value's bytes as tide_client_get%d reads them, making nothing:
+// where a value's bytes end, to compare them with another's
+// (reload_client_state). For bytes the reader accepts it goes exactly as far;
+// for others it stops, bounds checked, failing or not, and the reader decides.
+static void gen_client_codec_skip(gen *g, const client_codec *codec, const int id)
+{
+    const type t = codec->items[id];
+    sb *o = &g->c;
+    sb_printf(o, "TIDE_HELPER bool tide_client_skip%d(tide_reader *in, uint32_t depth)\n{\n", id);
+    sb_put(o, "    if (in->failed || depth > 256u) return false;\n");
+    if (t.kind == TY_STRING) {
+        sb_put(o, "    if (!tide_client_read(in, tide_read_varint(in))) return false;\n");
+    } else if (t.kind == TY_RECORD && t.decl->array_of) {
+        sb_printf(o, "    for (uint32_t i = 0; i < %du; i++) if (!tide_client_skip%d(in, depth + 1u)) return false;\n",
+                  t.decl->array_length, client_codec_id(codec, (type){TY_RECORD, t.decl->array_of}));
+    } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->typed || recipient_private_field(g->prog, t.decl, f)) continue;
+            sb_printf(o, "    if (!tide_client_skip%d(in, depth + 1u)) return false;\n", client_codec_id(codec, f->type));
+        }
+    } else if (t.kind == TY_ARRAY) {
+        sb_printf(o, "    for (uint32_t i = 0; i < %du; i++) if (!tide_client_skip%d(in, depth + 1u)) return false;\n",
+                  t.decl->array_length, client_codec_id(codec, t.decl->fields.items[0].type));
+    } else if (t.kind == TY_LIST) {
+        const type et = t.decl->fields.items[0].type;
+        const uint64_t minbytes = client_codec_minbytes(g->prog, et);
+        sb_put(o, "    const uint32_t count = tide_read_varint(in);\n    if (count > INT32_MAX) return false;\n");
+        if (minbytes) sb_printf(o, "    if (count > (in->size - in->at) / %lluULL) return false;\n", (unsigned long long)minbytes);
+        if (client_codec_raw(g->prog, et)) {
+            // Bounded by the bytes left just above
+            sb_printf(o, "    if (!tide_client_read(in, (uint32_t)((uint64_t)count * %dull))) return false;\n", type_layout(et).size);
+        } else {
+            sb_printf(o, "    for (uint32_t i = 0; i < count; i++) if (!tide_client_skip%d(in, depth + 1u)) return false;\n",
+                      client_codec_id(codec, et));
+        }
+    } else if (t.kind == TY_MAP || t.kind == TY_SET) {
+        sb_put(o, "    const uint32_t count = tide_read_varint(in);\n    tide_read_u64(in);\n"
+                  "    if (count > INT32_MAX || count > (in->size - in->at) / 8u) return false;\n"
+                  "    for (uint32_t i = 0; i < count; i++) {\n        tide_read_u64(in);\n");
+        sb_printf(o, "        if (!tide_client_skip%d(in, depth + 1u)) return false;\n", client_codec_id(codec, t.decl->fields.items[0].type));
+        if (t.kind == TY_MAP) sb_printf(o, "        if (!tide_client_skip%d(in, depth + 1u)) return false;\n", client_codec_id(codec, t.decl->fields.items[1].type));
+        sb_put(o, "    }\n");
+    } else if (t.kind == TY_GRID) {
+        const type cell = t.decl->fields.items[0].type;
+        const uint64_t cell_min = client_codec_minbytes(g->prog, cell);
+        sb_printf(o, "    if (!tide_client_read(in, 3u * sizeof(int32_t))) return false;\n"
+                     "    const uint32_t count = tide_read_varint(in);\n"
+                     "    const uint32_t cells = tide_grid_chunk_bytes(&%s) / sizeof(%s);\n"
+                     "    if (count > (in->size - in->at) / (12u + (uint64_t)cells * %lluULL)) return false;\n"
+                     "    for (uint32_t i = 0; i < count; i++) {\n"
+                     "        if (!tide_client_read(in, 12u)) return false;\n"
+                     "        for (uint32_t k = 0; k < cells; k++) if (!tide_client_skip%d(in, depth + 1u)) return false;\n    }\n",
+                  grid_shape_name(t.decl), elem_ctype(cell), (unsigned long long)cell_min, client_codec_id(codec, cell));
+    } else if (t.kind == TY_RESIDENT) {
+        sb_put(o, "    (void)in;\n");
+    } else if (t.kind == TY_BOOL) {
+        sb_put(o, "    if (!tide_client_read(in, 1u)) return false;\n");
+    } else {
+        sb_printf(o, "    if (!tide_client_read(in, (uint32_t)sizeof(%s))) return false;\n", elem_ctype(t));
     }
     sb_put(o, "    return !in->failed;\n}\n\n");
 }
@@ -222,6 +354,34 @@ static void gen_client_codecs(gen *g, client_codec *codec)
     sb *o = &g->c;
     sb_put(o, "TIDE_HELPER bool tide_client_budget(uint64_t *remaining, uint64_t bytes)\n{\n"
               "    if (bytes > *remaining) return false;\n    *remaining -= bytes;\n    return true;\n}\n\n");
+    // tide_write_bytes and tide_read_bytes with their usual case (room, no
+    // failure) inline: the codecs go field by field, a call each otherwise
+    sb_put(o, "TIDE_HELPER void tide_client_write(tide_writer *out, const void *v, const uint32_t size)\n{\n"
+              "    if (!out->overflow && out->capacity - out->size >= size) {\n"
+              "        if (size) memcpy(out->data + out->size, v, size);\n        out->size += size;\n"
+              "    } else tide_write_bytes(out, v, size);\n}\n\n"
+              "TIDE_HELPER const uint8_t *tide_client_read(tide_reader *in, const uint32_t size)\n{\n"
+              "    if (in->failed || in->size - in->at < size) return tide_read_bytes(in, size);\n"
+              "    const uint8_t *at = in->data + in->at;\n    in->at += size;\n    return at;\n}\n\n");
+    // A list read element by element grows as tide_list_add grows it: an add
+    // that finds no room left (or a block that isn't the list's own) takes
+    // room as that add would, through the same reserve; adds that find room
+    // take nothing, so they're done at once, as far as `most`. The heap gets
+    // the same blocks in the same order, and callers fill the room they have
+    // before asking for more, so it comes out byte for byte the same.
+    sb_put(o, "TIDE_HELPER bool tide_client_list_grow(tide_list *v, const uint32_t need, const uint32_t most, const uint32_t size, const uint32_t where)\n{\n"
+              "    uint32_t count = (uint32_t)tide_list_count(*v);\n"
+              "    while (count < need) {\n"
+              "        const tide_block *b = tide_block_at(v->at);\n"
+              "        uint32_t to = count + 1u;\n"
+              "        if (b && b->b != TIDE_LIST_ASSET && !tide_pack_holds(v->at) && tide_handle_where(v->at) == where) {\n"
+              "            const uint64_t room = b->b & TIDE_LIST_CHUNKED ? (uint64_t)(b->b & ~TIDE_LIST_CHUNKED) * (TIDE_LIST_CHUNK / size) : b->b;\n"
+              "            if (room > count) to = room < most ? (uint32_t)room : most;\n"
+              "        }\n"
+              "        tide_list_resize(v, (int32_t)to, size, where);\n"
+              "        if ((uint32_t)tide_list_count(*v) != to) return false;\n"
+              "        count = to;\n"
+              "    }\n    return true;\n}\n\n");
     for (int i = 0; i < codec->count; i++) {
         if (codec->items[i].kind != TY_GRID) continue;
         sb_put(o, "TIDE_HELPER int tide_client_grid_position_compare(const int32_t a[3], const int32_t b[3])\n{\n"
@@ -236,7 +396,31 @@ static void gen_client_codecs(gen *g, client_codec *codec)
         const char *ct = elem_ctype(codec->items[i]);
         sb_printf(o, "TIDE_HELPER void tide_client_put%d(tide_writer *, const %s *, uint32_t);\n", i, ct);
         sb_printf(o, "TIDE_HELPER bool tide_client_get%d(tide_reader *, %s *, uint32_t, uint32_t, uint64_t *);\n", i, ct);
+        sb_printf(o, "TIDE_HELPER bool tide_client_skip%d(tide_reader *, uint32_t);\n", i);
     }
     sb_put(o, "\n");
-    for (int i = 0; i < codec->count; i++) gen_client_codec_value(g, codec, i);
+    for (int i = 0; i < codec->count; i++) {
+        gen_client_codec_value(g, codec, i);
+        gen_client_codec_skip(g, codec, i);
+    }
+}
+
+// Whether a value of `t` holds anything in the heap (text, lists, maps, sets,
+// grids), which its projection hash reaches through: tide_client_hv<id>.
+static bool client_codec_heapy(const program *prog, const type t, const int depth)
+{
+    if (depth > 64) return true;
+    switch (t.kind) {
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID: return true;
+    case TY_ARRAY: return client_codec_heapy(prog, t.decl->fields.items[0].type, depth + 1);
+    case TY_STRUCT: case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT: case TY_EVENT: case TY_RECORD:
+        if (t.kind == TY_RECORD && t.decl->array_of) return client_codec_heapy(prog, (type){TY_RECORD, t.decl->array_of}, depth + 1);
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->typed || recipient_private_field(prog, t.decl, f)) continue;
+            if (client_codec_heapy(prog, f->type, depth + 1)) return true;
+        }
+        return false;
+    default: return false;
+    }
 }

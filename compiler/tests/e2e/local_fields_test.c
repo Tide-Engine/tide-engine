@@ -15,14 +15,24 @@ static tide_local other;
 static tide_draw_list draw;
 static tide_gui gui;
 
-#define BOX4 ((tide_entity){1, 1}) // With a Label
-#define BOX3 ((tide_entity){2, 1}) // With a Glow
-#define BOX5 ((tide_entity){3, 1}) // With both
+static tide_entity BOX4, BOX3, BOX5;
 
 static void start(void)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    BOX4 = tide_entity_in_slot(&world.entities, 1); // With a Label
+    BOX3 = tide_entity_in_slot(&world.entities, 2); // With a Glow
+    BOX5 = tide_entity_in_slot(&world.entities, 3); // With both
     tide_local_init(&local);
+}
+
+static tide_entity box_with_sides(const tide_world *w, const int32_t sides)
+{
+    for (uint32_t i = 0; i < w->entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (tide_has_Box(w, e) && tide_get_Box(w, e).sides == sides) return e;
+    }
+    return (tide_entity){0};
 }
 
 static void frame_on(tide_local *l, const tide_world *w, const tide_world *confirmed)
@@ -204,7 +214,7 @@ TIDE_TEST(local_fields_go_with_the_entity)
 
     world.Rules.spawn = 6;
     tide_world_tick(&world);
-    const tide_entity next = {2, 3};
+    const tide_entity next = box_with_sides(&world, 6);
     TIDE_REQUIRE(tide_has_Box(&world, next));
     frame();
     const Box_local six = tide_get_Box_local(&local, next);
@@ -266,7 +276,7 @@ TIDE_TEST(local_fields_outlast_a_wrong_prediction)
     // A spawn the client predicted, which the server never had
     world.Rules.spawn = 7;
     tide_world_tick(&world);
-    const tide_entity predicted = {2, 3};
+    const tide_entity predicted = box_with_sides(&world, 7);
     TIDE_REQUIRE(tide_has_Box(&world, predicted) && !tide_has_Box(&verified, predicted));
     frame_on(&local, &world, &verified);
     TIDE_CHECK(tide_has_Box_local(&local, predicted) && tide_list_count(tide_get_Box_local(&local, predicted).verts) == 7);
@@ -278,11 +288,9 @@ TIDE_TEST(local_fields_outlast_a_wrong_prediction)
     tide_world_free(&verified);
 }
 
-// A replay can put another entity on a handle: a spawn the client predicted,
-// where the server had another in that tick. A row remembers what its entity
-// was born as, so the other one starts from the defaults, and the same spawn
-// again keeps what it had.
-TIDE_TEST(local_fields_tell_entities_on_one_handle_apart)
+// Correcting the initializer at the same causal spawn preserves identity and
+// local fields. The same spawn site on another tick produces another entity.
+TIDE_TEST(local_fields_follow_causal_identity_across_initializer_corrections)
 {
     start();
     frame();
@@ -291,7 +299,7 @@ TIDE_TEST(local_fields_tell_entities_on_one_handle_apart)
     // The client predicts a box of 7 sides
     world.Rules.spawn = 7;
     tide_world_tick(&world);
-    const tide_entity handle = {4, 1};
+    const tide_entity handle = box_with_sides(&world, 7);
     TIDE_REQUIRE(tide_get_Box(&world, handle).sides == 7);
     const uint32_t seven = tide_entity_born(&world.entities, handle);
     TIDE_CHECK(seven != 0u && tide_entity_born(&verified.entities, handle) == 0u);
@@ -299,23 +307,22 @@ TIDE_TEST(local_fields_tell_entities_on_one_handle_apart)
     frame_on(&local, &world, &verified);
     TIDE_CHECK(tide_list_count(tide_get_Box_local(&local, handle).verts) == 7 && tide_get_Box_local(&local, handle).age == 2.5f);
 
-    // The server had one of 9 there: the same handle, and another entity
+    // The server had nine sides at the same causal spawn.
     verified.Rules.spawn = 9;
     tide_world_tick(&verified);
     tide_world_copy(&world, &verified);
     TIDE_REQUIRE(tide_get_Box(&world, handle).sides == 9);
-    TIDE_CHECK(tide_entity_born(&world.entities, handle) != seven);
+    TIDE_CHECK(tide_entity_born(&world.entities, handle) == seven);
     frame_on(&local, &world, &verified);
     const Box_local nine = tide_get_Box_local(&local, handle);
-    TIDE_CHECK(local.Stats.forgotten == 1 && local.Stats.lastBakes == 107);
-    TIDE_CHECK(tide_entity_equal(local.Stats.last, handle));
-    TIDE_CHECK(nine.bakes == 1 && tide_list_count(nine.verts) == 9 && nine.age == 1.5f);
+    TIDE_CHECK(local.Stats.forgotten == 0);
+    TIDE_CHECK(nine.bakes == 1 && tide_list_count(nine.verts) == 7 && nine.age == 3.5f);
     TIDE_CHECK(tide_get_Box_local(&local, BOX4).bakes == 1 && tide_get_Box_local(&local, BOX4).age == 4.5f);
 
     // A spawn the server has as the client predicted it is the same entity
     world.Rules.spawn = 6;
     tide_world_tick(&world);
-    const tide_entity next = {5, 1};
+    const tide_entity next = box_with_sides(&world, 6);
     TIDE_REQUIRE(tide_get_Box(&world, next).sides == 6);
     const uint32_t six = tide_entity_born(&world.entities, next);
     frame_on(&local, &world, &verified);
@@ -325,18 +332,19 @@ TIDE_TEST(local_fields_tell_entities_on_one_handle_apart)
     TIDE_CHECK(tide_entity_born(&world.entities, next) == six && six != 0u);
     frame_on(&local, &world, &verified);
     TIDE_CHECK(tide_get_Box_local(&local, next).bakes == 1 && tide_get_Box_local(&local, next).age == 2.5f);
-    TIDE_CHECK(local.Stats.forgotten == 1);
+    TIDE_CHECK(local.Stats.forgotten == 0);
 
     // The same values a tick later are another spawn
     tide_world_copy(&base, &world);
     world.Rules.spawn = 8;
     tide_world_tick(&world);
-    const uint32_t eight = tide_entity_born(&world.entities, (tide_entity){6, 1});
+    const tide_entity eight = box_with_sides(&world, 8);
     tide_world_tick(&base);
     base.Rules.spawn = 8;
     tide_world_tick(&base);
-    TIDE_REQUIRE(tide_get_Box(&base, (tide_entity){6, 1}).sides == 8);
-    TIDE_CHECK(eight != 0u && tide_entity_born(&base.entities, (tide_entity){6, 1}) != eight);
+    const tide_entity later = box_with_sides(&base, 8);
+    TIDE_REQUIRE(!tide_entity_is_null(later));
+    TIDE_CHECK(!tide_entity_is_null(eight) && !tide_entity_equal(eight, later));
 
     // A world that came as bytes says nothing of what its entities were born
     // as: there they're known by their handles, and what's kept stays
@@ -349,7 +357,7 @@ TIDE_TEST(local_fields_tell_entities_on_one_handle_apart)
     TIDE_CHECK(tide_entity_born(&base.entities, next) == 0u && tide_entity_born(&base.entities, handle) == 0u);
     tide_world_tick(&base);
     frame_on(&local, &base, &base);
-    TIDE_CHECK(local.Stats.forgotten == 1 && local.tide_fields_Box.rows.count == 5);
+    TIDE_CHECK(local.Stats.forgotten == 0 && local.tide_fields_Box.rows.count == 5);
     TIDE_CHECK(tide_get_Box_local(&local, next).bakes == 1 && tide_get_Box_local(&local, handle).bakes == 1);
     tide_world_free(&verified);
 }

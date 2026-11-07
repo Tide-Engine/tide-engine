@@ -87,9 +87,39 @@ bool world_reads_own_writes(const decl *sys)
     return false;
 }
 
+// Direct system effects are not the routine-capability `acts` summary. Every
+// modelled queued effect must commit sources in logical identity order.
+static bool queued_stmt(const stmt *s);
+static bool queued_expr(const expr *e)
+{
+    if (!e) return false;
+    switch (e->call) {
+    case CALL_SPAWN: case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY:
+    case CALL_PARENT: case CALL_SEND: case CALL_LOAD: case CALL_UNLOAD: case CALL_SNAP: return true;
+    default: break;
+    }
+    if (e->method && !e->method->is_extern && e->method->acts[0]) return true;
+    if (queued_expr(e->object) || queued_expr(e->lhs) || queued_expr(e->rhs) || queued_expr(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) if (queued_expr(e->args.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (queued_expr(e->inits.items[i].value)) return true;
+    return queued_stmt(e->block);
+}
+static bool queued_stmt(const stmt *s)
+{
+    if (!s) return false;
+    if (queued_expr(s->cond) || queued_expr(s->value) || queued_expr(s->target)
+        || queued_stmt(s->init) || queued_stmt(s->step) || queued_stmt(s->then_stmt) || queued_stmt(s->else_stmt)) return true;
+    for (int i = 0; i < s->stmts.count; i++) if (queued_stmt(s->stmts.items[i])) return true;
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) if (queued_expr(s->cases.items[i].labels.items[k])) return true;
+        for (int k = 0; k < s->cases.items[i].body.count; k++) if (queued_stmt(s->cases.items[i].body.items[k])) return true;
+    }
+    return false;
+}
+
 bool system_splits(const decl *sys)
 {
-    if (sys->is_view || !sys->per_entity || sys->writes_text) return false;
+    if (sys->is_view || !sys->per_entity || sys->writes_text || sys->extern_system || sys->acts[0] || sys->spawns || queued_stmt(sys->body)) return false;
     if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
@@ -152,6 +182,12 @@ static access_list accesses_of(const program *prog, const decl *sys)
         takes_owner |= data && data == prog->owner;
     }
     if (by_owner && sys->per_entity && !takes_owner && prog->owner) list.items[list.count++] = (access){prog->owner, false, false};
+    if (!any_entity && sys->preparation_reads) {
+        for (int k = 0; k < sys->world_uses.count; k++) {
+            const world_use *u = &sys->world_uses.items[k];
+            list.items[list.count++] = (access){u->component, u->writes, true};
+        }
+    }
     for (int side = 0; side < 2; side++) {
         if (sys->task_access[side] && prog->task_slots[side])
             list.items[list.count++] = (access){prog->task_slots[side], (sys->task_access[side] & 2u) != 0, true};
@@ -494,6 +530,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         put_access(out, sys, true);
         put_world_access(out, sys, false);
         put_world_access(out, sys, true);
+        if (sys->preparation_reads) sb_put(out, "         reads scene readiness\n");
         for (int k = 0; k < sys->waits.count; k++) {
             const system_wait *w = &sys->waits.items[k];
             sb_put(out, "         after ");
@@ -528,8 +565,19 @@ void print_schedule(const program *prog, const char *game, sb *out)
         }
     }
 
+    if (prog->preparing) {
+        sb_put(out, "\nScene preparation, before Spawned, with match ticks waiting:\n");
+        for (int i = 0; i < prog->handlers.count; i++) {
+            const decl *h = prog->handlers.items[i];
+            if (!h->preparation_owner) continue;
+            sb_put(out, "         ");
+            put_decl_name(out, h->preparation_owner, "", NULL);
+            sb_put(out, ": prepare\n");
+        }
+    }
     bool handled = false, heard = false;
     for (int i = 0; i < prog->events.count; i++) {
+        if (prog->events.items[i] == prog->preparing) continue;
         handled |= prog->events.items[i]->handlers.count > 0;
         heard |= prog->events.items[i]->listeners.count > 0;
     }
@@ -537,7 +585,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         sb_put(out, "\nEvent handlers, at the end of the tick, as their events are sent:\n");
         for (int i = 0; i < prog->events.count; i++) {
             const decl *event = prog->events.items[i];
-            if (event->handlers.count == 0) continue;
+            if (event->handlers.count == 0 || event == prog->preparing) continue;
             sb_put(out, "         ");
             put_decl_name(out, event, "", NULL);
             sb_put(out, ": ");

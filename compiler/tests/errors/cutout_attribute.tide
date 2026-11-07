@@ -1,0 +1,5 @@
+// expect: a frag says it's a cut-out in its code, with 'this.Cutout(alpha)': there's no Cutout attribute
+// expect: 'this.Cutout(color.a);' in the frag cuts it where the alpha is under 0.5, with edges as smooth as its target's samples
+scene Main { }
+[Cutout]
+frag Leaf(Vertex3 vertex, out Color color) { color = Color.white; }

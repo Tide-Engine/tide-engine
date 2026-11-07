@@ -18,14 +18,13 @@ import { fileURLToPath } from 'node:url';
 import { handler } from '../build/handler.js';
 import { headers } from '../headers.js';
 import { createRelay } from '../../relay/relay.mjs';
+import { adapterExpression, adapterVerdict, gpuFlags as webGpuFlags } from '../../cmake/web_gpu.mjs';
 
 const docs = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const browser = [process.env.TIDE_BROWSER, '/usr/bin/google-chrome', '/usr/bin/chromium',
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find((path) => path && existsSync(path));
 assert.ok(browser, 'Set TIDE_BROWSER to a Chrome or Edge executable');
-const backend = process.env.TIDE_EXAMPLE_BACKEND ?? 'webgl';
-assert.ok(['webgl', 'webgpu'].includes(backend));
 const profile = mkdtempSync(join(tmpdir(), 'tide-docs-examples-'));
 
 // Every page with an example, in the order its examples are written, from
@@ -64,9 +63,10 @@ const server = createServer((req, res) => {
 });
 await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
-const gpuFlags = backend === 'webgl' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
-    : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader',
-        ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : [])];
+// The browser's WebGPU as cmake/run_web_served_test.mjs has it (cmake/web_gpu.mjs): software (SwiftShader, its
+// own drawing through WARP on Windows), enough here, which counts frames drawn; or the machine's GPU with
+// TIDE_WEB_HARDWARE=1, where a software adapter fails the run
+const gpuFlags = webGpuFlags();
 // --mute-audio: headless, it still plays through the machine's device once a page's AudioContext runs
 const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--mute-audio', '--remote-debugging-port=0', `--user-data-dir=${profile}`, ...gpuFlags,
@@ -116,7 +116,9 @@ try {
     function command(method, params = {}) {
         return new Promise((done, fail) => {
             const id = ++next;
-            const timeout = setTimeout(() => { pending.delete(id); fail(new Error(`Timed out: ${method}`)); }, 20000);
+            // A screenshot waits for a frame, which software WebGPU (WARP on CI) can take long over
+            const limit = method === 'Page.captureScreenshot' ? 120000 : 20000;
+            const timeout = setTimeout(() => { pending.delete(id); fail(new Error(`Timed out: ${method}`)); }, limit);
             pending.set(id, { done, fail, timeout });
             socket.send(JSON.stringify({ id, method, params }));
         });
@@ -143,14 +145,12 @@ try {
     }
     await command('Page.enable');
     await command('Runtime.enable');
+    // Examples start by themselves unless the machine prefers reduced motion (eager(), src/lib/examples.ts),
+    // as a Windows server with its animations off says it does
+    await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     await command('Page.addScriptToEvaluateOnNewDocument', { source: `
         window.__draws = 0;
-        for (const name of ['drawArraysInstanced', 'drawElementsInstanced', 'drawArrays', 'drawElements']) {
-            const original = WebGL2RenderingContext.prototype[name];
-            WebGL2RenderingContext.prototype[name] = function (...args) {
-                window.__draws++; return original.apply(this, args);
-            };
-        }
+        window.__drawnFrames = 0;
         // WebGPU's draws, not its submits: a frame that draws nothing still submits its pass
         if (window.GPURenderPassEncoder) {
             for (const name of ['draw', 'drawIndexed']) {
@@ -160,6 +160,14 @@ try {
                 };
             }
         }
+        // Count completed game animation callbacks only when they submitted
+        // real drawing. A shadowed scene can issue many draws in one frame.
+        const requestFrame = window.requestAnimationFrame.bind(window);
+        window.requestAnimationFrame = (callback) => requestFrame(function (time) {
+            const before = window.__draws;
+            callback.call(this, time);
+            if (window.__draws > before) window.__drawnFrames++;
+        });
         // Exercise the site's local Earth build through the same unavailable-
         // hosting fallback it uses offline, without depending on a publication.
         const fetchPage = window.fetch.bind(window);
@@ -169,11 +177,11 @@ try {
                 return Promise.resolve(new Response(null, { status: 503 }));
             return fetchPage(input, ...args);
         };
-        // A GL error stops a game and names the call, where WebGL would only warn
+        // A WebGPU validation error or a shader's warning stops a game, where the browser would only warn
         let config;
         Object.defineProperty(window, 'Tide', { configurable: true, get: () => config, set: value => {
             config = value; config.checkGL = true; config.backgroundPipelines = false;
-            config.relay = ${JSON.stringify(relayUrl)}; config.backend = ${JSON.stringify(backend)};
+            config.relay = ${JSON.stringify(relayUrl)};
         } });
     ` });
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -260,8 +268,10 @@ try {
             return createHash('sha256').update(pixels).digest('hex');
         };
         const afterFrames = async () => {
-            const previous = await evaluate('example.querySelector("iframe").contentWindow.__draws');
-            await until(`example.querySelector("iframe").contentWindow.__draws > ${previous + 20}`, `${id}: camera frame`);
+            const previous = await evaluate('example.querySelector("iframe").contentWindow.__drawnFrames');
+            // Overlay handles Reset after the scene was presented. The next
+            // rendered update must apply its camera before pixels are compared.
+            await until(`example.querySelector("iframe").contentWindow.__drawnFrames >= ${previous + 2}`, `${id}: camera frames`);
         };
         const click = async (localX, localY) => {
             const x = rect.left + localX, y = rect.top + localY;
@@ -343,9 +353,15 @@ try {
         await shoot(`${id}-collapsed`);
     }
     const visited = new Set();
+    let adapterKnown = false;
     for (const page of pages) {
-        // The page's `backend=` goes on to its games.
-        await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
+        await command('Page.navigate', { url: `${origin}${page}` });
+        if (!adapterKnown) { // The browser's WebGPU adapter, asked in its first page (cmake/web_gpu.mjs)
+            adapterKnown = true;
+            const { line, failure } = adapterVerdict(await evaluate(adapterExpression));
+            console.log(line);
+            if (failure) throw new Error(failure);
+        }
         // The whole page, not what of it has arrived: its examples are listed
         // next, and the last of a long page's comes after the first.
         await until(`location.pathname === '${page}' && document.readyState !== 'loading' && document.querySelector('.tide-example')`, `${page} page`);
@@ -394,7 +410,7 @@ try {
             if (id === 'render3d' || id === 'render3d-materials' || id === 'render3d-effects') await cameraControls(id);
             // Stopped, so that the page runs one game at a time here.
             await evaluate('example.querySelector("[data-example-stop]").click();');
-            console.log(`${id}: source and rendering passed (${backend})`);
+            console.log(`${id}: source and rendering passed`);
         }
         assert.deepEqual([...sourced].sort(), [...new Set(ids)].sort(), `${page} shows the source of every example it runs`);
     }
@@ -413,7 +429,7 @@ try {
         stats(src.href, `${id}: whole game frame`);
         await until(drawn(game), `${id}: draws`);
         await shoot(id);
-        console.log(`${id}: its page's frame draws (${backend})`);
+        console.log(`${id}: its page's frame draws`);
     }
     // The Samples gallery: a card for each game, which links to the game's
     // own page, where it draws.
@@ -430,7 +446,6 @@ try {
         if (only && !only.has(id)) continue;
         const url = new URL(href);
         const path = url.pathname;
-        url.searchParams.set('backend', backend);
         await command('Page.navigate', { url: url.href });
         if (id === 'earth' && path === '/guide/earth') {
             await until(`location.pathname === '${path}' && document.querySelector('.demo .controls button')`, 'Earth demo page');
@@ -449,27 +464,29 @@ try {
             await shoot('sample-earth');
             await evaluate('Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Stop").click()');
             await until('!document.querySelector(".earth iframe")', 'Earth Stop removes the game');
-            console.log(`earth: click-to-play, stats, local rendering and stop passed (${backend})`);
+            console.log(`earth: click-to-play, stats, local rendering and stop passed`);
             continue;
         }
         await until(`location.pathname === '${path}' && window.__draws > 5`, `${id}: its page draws`);
         await shoot(`sample-${id}`);
-        console.log(`${id}: the gallery's game draws on its page (${backend})`);
+        console.log(`${id}: the gallery's game draws on its page`);
     }
     // The playground's edits run the actual WASI compiler tools in its worker.
     // Freeze a known counter, migrate a new field, then break and repair syntax.
     if (!only || only.has('playground')) {
-        await command('Page.navigate', { url: `${origin}/guide/playground?backend=${backend}` });
-        await until(`location.pathname === '/guide/playground' && document.querySelector('#playground-source')`, 'playground page');
+        await command('Page.navigate', { url: `${origin}/guide/playground` });
+        await until(`location.pathname === '/guide/playground' && document.querySelector('section.playground')?.tideEditor`, 'playground editor');
+        // Tide's grammar colors the code: its lines have several token colors.
+        await until(`new Set(Array.from(document.querySelectorAll('.playground .view-line span span'), span => span.className)).size > 4`, 'playground highlights Tide');
         await until(`document.querySelector('iframe')?.contentWindow.__draws > 5`, 'playground initial game draws');
         stats(await evaluate('document.querySelector("iframe").src'), 'playground runtime');
         const source = readFileSync(join(docs, 'playground/demo.tide'), 'utf8');
-        assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
+        assert.equal(await evaluate(`document.querySelector('section.playground').tideEditor.value`), source);
         const frozen = source.replace('const float SPEED = 1;', 'const float SPEED = 0;')
             .replace('Spawn(Ball);', 'Spawn(Ball { bounces = 37 });')
             .replace('view Show(Ball ball)\n{', 'view Show(Ball ball)\n{\n    Debug.Log($"state {ball.bounces}");');
         const edit = async text => {
-            await evaluate(`(() => { const editor = document.querySelector('#playground-source'); editor.focus(); editor.value = ${JSON.stringify(text)}; editor.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+            await evaluate(`(() => { const editor = document.querySelector('section.playground').tideEditor; editor.focus(); editor.setValue(${JSON.stringify(text)}); })()`);
         };
         const running = `document.querySelector('.status').textContent.includes('your changes are live')`;
         const details = `({status: document.querySelector('.playground .status')?.textContent,
@@ -498,9 +515,11 @@ try {
         await edit(changed);
         await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`,
             'playground preserves state and migrates new defaults', { failure, details });
-        assert.equal(await evaluate('document.activeElement.id'), 'playground-source', 'reload retains editor focus');
+        assert.equal(await evaluate(`document.querySelector('section.playground').tideEditor.hasFocus()`), true, 'reload retains editor focus');
         await edit(changed.replace('Spawn(Ball { bounces = 37 });', 'Spawn(Ball { bounces = 37 })'));
         await until(`document.querySelector('.diagnostics.error')?.textContent.includes("expected ';'")`, 'playground reports a source diagnostic');
+        // The language server underlines it before any build, too.
+        await until(`document.querySelector('.playground .problems .error') && document.querySelector('.playground .squiggly-error')`, 'playground editor marks the error');
         const draws = await evaluate(`document.querySelector('iframe').contentWindow.__draws`);
         await until(`document.querySelector('iframe').contentWindow.__draws > ${draws + 5}`, 'last good game keeps drawing after a compile error');
         await edit(changed);
@@ -508,14 +527,15 @@ try {
         await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`, 'playground still has the preserved state');
         await evaluate(`Array.from(document.querySelectorAll('.actions button')).find(button => button.textContent === 'Reset code').click()`);
         await compiled('playground resets its source');
-        assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
+        assert.equal(await evaluate(`document.querySelector('section.playground').tideEditor.value`), source);
+        await until(`!document.querySelector('.playground .problems')`, 'playground problems clear after the reset');
         await shoot('playground');
         await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
         await until('innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth', 'playground fits a phone without page overflow');
         await until('document.querySelector(".sidebar").getBoundingClientRect().right <= 1', 'phone sidebar finishes closing');
         await evaluate(`document.querySelector('.preview').scrollIntoView({block:'center'})`);
         await shoot('playground-phone');
-        console.log(`playground: browser compilation, state migration, diagnostics, recovery and reset passed (${backend})`);
+        console.log(`playground: browser compilation, state migration, diagnostics, recovery and reset passed`);
     }
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');

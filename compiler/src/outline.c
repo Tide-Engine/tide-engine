@@ -218,6 +218,7 @@ static void put_access(sb *out, const decl *sys)
     int count = 0;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
+        if (sys->preparation_owner && i < 2) continue;
         if (p->mode != PARAM_READ && p->mode != PARAM_MUT) continue;
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
         sb_put(out, count++ ? ", " : ", \"access\": [");
@@ -294,7 +295,7 @@ void print_outline(const program *prog, sb *out)
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         const char *kind = kind_of(d);
-        if (!kind || d->builtin || !d->unit || !d->unit->src || d->embed_tap || d == prog->startup_create) continue;
+        if (!kind || d->builtin || !d->unit || !d->unit->src || d->embed_tap || d->build_owner || d == prog->startup_create || d->preparation_owner) continue; // An asset's or a constant's code is its own declaration's
         sb_put(out, count++ ? ",\n  {" : "\n  {");
         sb_printf(out, "\"kind\": \"%s\", \"name\": ", kind);
         put_name(out, d);
@@ -316,6 +317,11 @@ void print_outline(const program *prog, sb *out)
         case DECL_STRUCT:
         case DECL_INPUT:
             put_fields(out, &lines, d);
+            if (d->preparation) {
+                sb_printf(out, ", \"preparation\": {\"line\": %d", d->preparation->at.line);
+                put_access(out, d->preparation);
+                sb_put(out, "}");
+            }
             break;
         case DECL_EVENT:
             put_fields(out, &lines, d);

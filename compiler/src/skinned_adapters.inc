@@ -54,9 +54,13 @@ static void gen_skinned_adapters(gen *g)
                  "    return tide_skin_animation_at(data, tide_skin_member_index(data, name, exact, false));\n}\n"
                  "TIDE_HELPER %s tide_skin_bone_member(tide_list data, tide_str name, bool exact)\n{\n"
                  "    return tide_skin_bone_at(data, tide_skin_member_index(data, name, exact, true));\n}\n"
+                 "TIDE_HELPER tide_str tide_skin_bone_name(tide_list data, %s bone)\n{\n"
+                 "    if (bone.fingerprint == 0 || (uint64_t)bone.fingerprint != tide_skinned_fingerprint(data)) return TIDE_STR_EMPTY;\n"
+                 "    return tide_skinned_bone_name(data, bone.index);\n}\n"
+                 "TIDE_HELPER bool tide_skin_bone_equal(%s a, %s b) { return a.fingerprint == b.fingerprint && a.index == b.index; }\n"
                  "TIDE_HELPER tide_str tide_skin_animation_name(%s v) { return tide_skinned_animation_name(v.data, v.index); }\n"
                  "TIDE_HELPER float tide_skin_animation_duration(%s v) { return tide_skinned_animation_duration(v.data, v.index); }\n\n",
-              animation, animation, bone, bone, animation, bone, animation, animation);
+              animation, animation, bone, bone, animation, bone, bone, bone, bone, animation, animation);
     sb_put(o, "typedef struct tide_skin_catalog { tide_list data, sources; } tide_skin_catalog;\n"
               "TIDE_HELPER tide_list tide_skin_catalog_list(tide_list data)\n{\n"
               "    return data.at ? tide_list_from(&data, 1, sizeof data) : (tide_list){0};\n}\n"
@@ -147,11 +151,11 @@ static void gen_skinned_adapters(gen *g)
                  "    %s v = {.data = data};\n    (void)tide_skinned_rest(data, &v.transforms, TIDE_IN_SCRATCH);\n    return v;\n}\n"
                  "TIDE_HELPER %s tide_skin_animation_sample(%s animation, float seconds, int32_t playback)\n{\n"
                  "    %s v = {.data = animation.data};\n"
-                 "    seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
+                 "    if (playback == 1) seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
                  "    (void)tide_skinned_sample(animation.data, animation.index, seconds, &v.transforms, TIDE_IN_SCRATCH);\n    return v;\n}\n"
                  "TIDE_HELPER void tide_skin_pose_sample(%s *v, %s animation, float seconds, int32_t playback, uint32_t where)\n{\n"
                  "    if (!v) return;\n"
-                 "    seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
+                 "    if (playback == 1) seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
                  "    (void)tide_skinned_sample_into(v->data, animation.data, animation.index, seconds, &v->transforms, where);\n}\n"
                  "TIDE_HELPER void tide_skin_pose_blend(%s *v, %s other, float weight, uint32_t where)\n{\n"
                  "    if (!v || !tide_skinned_compatible(v->data, other.data)) return;\n"
@@ -161,17 +165,113 @@ static void gen_skinned_adapters(gen *g)
                  "        && bone.index < tide_list_count(v.transforms) && tide_list_count(v.transforms) == tide_skinned_bone_count(v.data);\n}\n"
                  "TIDE_HELPER tide_float4x4 tide_skin_pose_model(%s v, %s bone)\n{\n"
                  "    return tide_skin_pose_has(v, bone) ? tide_skinned_model(v.data, v.transforms, bone.index) : tide_identity_f4x4();\n}\n"
+                 "TIDE_HELPER tide_list tide_skin_pose_models(%s v)\n{\n"
+                 "    return tide_list_count(v.transforms) == tide_skinned_bone_count(v.data)\n"
+                 "        ? tide_skinned_models(v.data, v.transforms, TIDE_IN_SCRATCH) : (tide_list){0};\n}\n"
                  "TIDE_HELPER const tide_bone_transform *tide_skin_pose_ref(%s v, %s bone)\n{\n"
                  "    static const tide_bone_transform zero = {.rotation = {{0, 0, 0, 1}}, .scale = {1, 1, 1}};\n"
                  "    const tide_bone_transform *at = tide_skin_pose_has(v, bone) ? tide_list_at(v.transforms, bone.index, sizeof *at) : NULL;\n"
                  "    return at ? at : &zero;\n}\n"
                  "TIDE_HELPER tide_bone_transform *tide_skin_pose_slot(%s *v, %s bone)\n{\n"
                  "    return v && tide_skin_pose_has(*v, bone) ? tide_list_at_mut(v->transforms, bone.index, sizeof(tide_bone_transform)) : NULL;\n}\n\n",
-              pose, pose, pose, animation, pose, pose, animation, pose, pose, pose, bone, pose, bone, pose, bone, pose, bone);
+              pose, pose, pose, animation, pose, pose, animation, pose, pose, pose, bone, pose, bone, pose, pose, bone, pose, bone);
+    if (p->humanoid_rig) {
+        const char *rig = type_cname(p->humanoid_rig), *mapping = type_cname(p->retarget_map);
+        sb_printf(o, "TIDE_HELPER %s tide_skin_humanoid_auto(%s reference)\n{\n"
+                     "    %s v = {.referencePose = tide_copy_%s(reference), .data = tide_list_copy(reference.data, 1u)};\n"
+                     "    (void)tide_humanoid_auto(reference.data, reference.transforms, &v.bones, &v.status, TIDE_IN_SCRATCH);\n"
+                     "    return v;\n}\n"
+                     "TIDE_HELPER %s tide_skin_humanoid_bone(%s v, int32_t role)\n{\n"
+                     "    const int32_t *at = role >= 0 && role < TIDE_HUMANOID_COUNT ? tide_list_at(v.bones, role, sizeof *at) : NULL;\n"
+                     "    const int32_t index = at ? *at : -1;\n"
+                     "    return index >= 0 && index < tide_skinned_bone_count(v.data) ? tide_skin_bone_at(v.data, index) : (%s){0};\n}\n"
+                     "TIDE_HELPER %s tide_skin_humanoid_status(%s v, int32_t role)\n{\n"
+                     "    const int32_t *at = role >= 0 && role < TIDE_HUMANOID_COUNT ? tide_list_at(v.status, role, sizeof *at) : NULL;\n"
+                     "    return (%s)(at && *at >= TIDE_HUMANOID_MISSING && *at <= TIDE_HUMANOID_MANUAL ? *at : TIDE_HUMANOID_MISSING);\n}\n"
+                     "TIDE_HELPER void tide_skin_humanoid_set(%s *v, int32_t role, %s bone, uint32_t where)\n{\n"
+                     "    if (!v || role < 0 || role >= TIDE_HUMANOID_COUNT) return;\n"
+                     "    const tide_list data = v->data.at ? v->data : v->referencePose.data;\n"
+                     "    const uint64_t fingerprint = tide_skinned_fingerprint(data);\n"
+                     "    if (!fingerprint || !tide_skinned_compatible(data, v->referencePose.data)) return;\n"
+                     "    const bool unset = bone.fingerprint == 0 && bone.index == 0;\n"
+                     "    if (!unset && ((uint64_t)bone.fingerprint != fingerprint || bone.index < 0 || bone.index >= tide_skinned_bone_count(data))) return;\n"
+                     "    if (!v->data.at) tide_list_set(&v->data, tide_list_copy(data, 1u), 1u, where);\n"
+                     "    if (tide_list_count(v->bones) != TIDE_HUMANOID_COUNT || tide_list_count(v->status) != TIDE_HUMANOID_COUNT) {\n"
+                     "        tide_list_resize(&v->bones, TIDE_HUMANOID_COUNT, sizeof(int32_t), where);\n"
+                     "        tide_list_resize(&v->status, TIDE_HUMANOID_COUNT, sizeof(int32_t), where);\n"
+                     "        for (int32_t i = 0; i < TIDE_HUMANOID_COUNT; i++) {\n"
+                     "            *(int32_t *)tide_list_at_mut(v->bones, i, sizeof(int32_t)) = -1;\n"
+                     "            *(int32_t *)tide_list_at_mut(v->status, i, sizeof(int32_t)) = TIDE_HUMANOID_MISSING;\n"
+                     "        }\n    }\n"
+                     "    tide_list_prepare(&v->bones, sizeof(int32_t), where);\n"
+                     "    tide_list_prepare(&v->status, sizeof(int32_t), where);\n"
+                     "    *(int32_t *)tide_list_at_mut(v->bones, role, sizeof(int32_t)) = unset ? -1 : bone.index;\n"
+                     "    *(int32_t *)tide_list_at_mut(v->status, role, sizeof(int32_t)) = TIDE_HUMANOID_MANUAL;\n}\n"
+                     "TIDE_HELPER bool tide_skin_pose_retarget(%s *v, %s source, %s mapping, uint32_t where)\n{\n"
+                     "    if (!v) return false;\n"
+                     "    return tide_retarget_apply(mapping.plan, source.data, source.transforms, v->data, mapping.rootScale, mapping.rootOffset,\n"
+                     "        mapping.headingDegrees, mapping.spineDistribution, mapping.twistDistribution, &v->transforms, where);\n}\n\n",
+                  rig, pose, rig, pose, bone, rig, bone, type_cname(p->humanoid_status), rig, type_cname(p->humanoid_status),
+                  rig, bone, pose, pose, mapping);
+    }
     for (int i = 0; i < p->results.count; i++) {
         const decl *r = p->results.items[i];
         const type value = r->fields.items[0].type;
         if (value.kind != TY_STRUCT || !value.decl->skin_kind) continue;
+        if (r->fields.count == 2 && value.decl->skin_kind == SKIN_RETARGET_MAP) {
+            const char *result = c_type((type){TY_FAILABLE, (decl *)r});
+            sb_printf(o, "TIDE_HELPER %s tide_skin_result%d_retarget_create(%s source, %s sourceRig, %s targetRig)\n{\n"
+                         "    %s result = {0};\n"
+                         "    if (sourceRig.data.at && !tide_skinned_compatible(sourceRig.data, sourceRig.referencePose.data)) {\n"
+                         "        tide_debug_log(\"tide: RetargetMap.Create: source referencePose belongs to another skeleton; create a new HumanoidRig for it\");\n"
+                         "        result.error = %s_IncompatibleSkeleton;\n        return result;\n    }\n"
+                         "    if (targetRig.data.at && !tide_skinned_compatible(targetRig.data, targetRig.referencePose.data)) {\n"
+                         "        tide_debug_log(\"tide: RetargetMap.Create: target referencePose belongs to another skeleton; create a new HumanoidRig for it\");\n"
+                         "        result.error = %s_IncompatibleSkeleton;\n        return result;\n    }\n"
+                         "    const int32_t error = tide_retarget_create(source.data, sourceRig.data, sourceRig.referencePose.transforms, sourceRig.bones, sourceRig.status,\n"
+                         "        targetRig.data, targetRig.referencePose.transforms, targetRig.bones, targetRig.status, &result.value.plan, &result.value.rootScale, TIDE_IN_SCRATCH);\n"
+                         "    result.error = (%s)error;\n    if (error) return result;\n"
+                         "    result.value.spineDistribution = 1.0f;\n    result.value.twistDistribution = 1.0f;\n"
+                         "    result.ok = true;\n    return result;\n}\n\n",
+                      result, r->index, type_cname(p->skeleton), type_cname(p->humanoid_rig), type_cname(p->humanoid_rig),
+                      result, type_cname(p->retarget_error), type_cname(p->retarget_error), type_cname(p->retarget_error));
+            continue;
+        }
+        if (p->retarget_map && r->fields.count == 2 && r->fields.items[1].type.decl == p->io_error
+            && (value.decl->skin_kind == SKIN_ANIMATION || value.decl->skin_kind == SKIN_ANIMATIONS)) {
+            const bool catalog = value.decl->skin_kind == SKIN_ANIMATIONS;
+            const char *result = c_type((type){TY_FAILABLE, (decl *)r});
+            sb_printf(o, "TIDE_HELPER %s tide_skin_result%d_retarget_bake(%s mapping, %s source, %s target, float sampleRate)\n{\n"
+                         "    %s result = {.error = IOError_InvalidData};\n"
+                         "    const tide_retarget_bake_settings settings = {mapping.rootScale, mapping.rootOffset, mapping.headingDegrees,\n"
+                         "        mapping.spineDistribution, mapping.twistDistribution, sampleRate};\n"
+                         "    char why[256] = {0};\n",
+                      result, r->index, type_cname(p->retarget_map), catalog ? "tide_skin_catalog" : animation,
+                      type_cname(p->skeleton), result);
+            if (catalog) {
+                sb_put(o, "    const int32_t count = source.data.at ? 1 : tide_list_count(source.sources);\n"
+                          "    if (count <= 0) { tide_debug_log(\"tide: RetargetMap.Bake: the source catalog contains no animations\"); return result; }\n"
+                          "    const uint64_t mark = tide_scratch_mark();\n    tide_list sources = {0};\n"
+                          "    tide_retarget_bake_budget budget = {0};\n"
+                          "    for (int32_t i = 0; i < count; i++) {\n"
+                          "        uint8_t *baked = NULL;\n        uint32_t size = 0;\n"
+                          "        if (!tide_retarget_bake_with_budget(tide_skin_catalog_source(source, i), -1, target.data, mapping.plan, &settings, &budget, &baked, &size, why)) {\n"
+                          "            tide_debug_log(why);\n            tide_scratch_reset(mark);\n            return result;\n        }\n"
+                          "        const tide_list data = tide_list_from(baked, (int32_t)size, 1u);\n"
+                          "        tide_skinned_data_free(baked);\n"
+                          "        *(tide_list *)tide_list_add(&sources, sizeof(tide_list), TIDE_IN_SCRATCH) = data;\n    }\n"
+                          "    result.value.data = sources;\n");
+            } else {
+                sb_put(o, "    uint8_t *baked = NULL;\n    uint32_t size = 0;\n"
+                          "    if (source.index < 0 || !tide_retarget_bake(source.data, source.index, target.data, mapping.plan, &settings, &baked, &size, why)) {\n"
+                          "        tide_debug_log(source.index < 0 ? \"tide: RetargetMap.Bake: select a valid source Animation\" : why);\n"
+                          "        return result;\n    }\n"
+                          "    result.value.data = tide_list_from(baked, (int32_t)size, 1u);\n"
+                          "    tide_skinned_data_free(baked);\n");
+            }
+            sb_put(o, "    result.ok = true;\n    result.error = (IOError)0;\n    return result;\n}\n\n");
+            continue;
+        }
         if (r->fields.count != 2 || value.decl->skin_kind != SKIN_MESH) continue;
         const decl *mesh = value.decl, *vertex = mesh->skin_vertex.decl;
         const char *result = c_type((type){TY_FAILABLE, (decl *)r});

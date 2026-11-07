@@ -27,7 +27,7 @@ typedef struct tide_shard_agent tide_shard_agent;
 // `ticks_before`: the shard's ticks before this server's first, when it went
 // on from a checkpoint, so the ticks it reports go on from there. `fresh`:
 // it went on from a checkpoint, and its first report says what it owns and
-// holds, for the coordinator to know where everything is.
+// holds. Later reports advertise newly owned full keys, including new births.
 tide_shard_agent *tide_shard_agent_create(const tide_game *game, tide_server *server, uint32_t shard,
                                           uint32_t ticks_before, bool fresh);
 void tide_shard_agent_destroy(tide_shard_agent *a);
@@ -60,7 +60,7 @@ uint32_t tide_shard_agent_tick(const tide_shard_agent *a);
 // PlayerID, u64 cookie); with DO_TARGETS, u32 count and each shard its ghosts
 // go to (u32 shard, u8 whether a region, 48 bytes its box); with DO_SAMPLE,
 // u32 every how many entities' positions to sample; with DO_HELD, u32 count
-// and each ghost of this shard's another holds (u32 holder, u64 entity key).
+// and each ghost of this shard's another holds (u32 holder, u64 birth, u64 lineage).
 //
 // Report: u32 TIDE_SHARD_REPORT, u32 shard, u32 the last batch applied, u32
 // the shard's tick (as its journal numbers them), u32 messages handed the

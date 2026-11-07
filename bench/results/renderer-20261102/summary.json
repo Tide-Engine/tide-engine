@@ -1,0 +1,82 @@
+[
+  {
+    "meshes": 1000,
+    "case": "unshadowed",
+    "way": "package",
+    "draw_calls": 4,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 0.2612,
+    "cpu_submit_ms": 0.0373,
+    "gpu_ms": 1.7568
+  },
+  {
+    "meshes": 1000,
+    "case": "unshadowed",
+    "way": "cached_direct",
+    "draw_calls": 4,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 0.00805,
+    "cpu_submit_ms": 0.0395,
+    "gpu_ms": 1.758352
+  },
+  {
+    "meshes": 1000,
+    "case": "mixed",
+    "way": "package",
+    "draw_calls": 12,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 0.38065,
+    "cpu_submit_ms": 0.06335,
+    "gpu_ms": 1.254464
+  },
+  {
+    "meshes": 1000,
+    "case": "mixed",
+    "way": "cached_direct",
+    "draw_calls": 12,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 0.03065,
+    "cpu_submit_ms": 0.0634,
+    "gpu_ms": 1.26112
+  },
+  {
+    "meshes": 10000,
+    "case": "unshadowed",
+    "way": "package",
+    "draw_calls": 4,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 2.71875,
+    "cpu_submit_ms": 0.11765,
+    "gpu_ms": 2.737536
+  },
+  {
+    "meshes": 10000,
+    "case": "unshadowed",
+    "way": "cached_direct",
+    "draw_calls": 4,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 0.07585,
+    "cpu_submit_ms": 0.1112,
+    "gpu_ms": 2.744352
+  },
+  {
+    "meshes": 10000,
+    "case": "mixed",
+    "way": "package",
+    "draw_calls": 12,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 4.27175,
+    "cpu_submit_ms": 0.3656,
+    "gpu_ms": 2.083136
+  },
+  {
+    "meshes": 10000,
+    "case": "mixed",
+    "way": "cached_direct",
+    "draw_calls": 12,
+    "texture_upload_bytes": 0,
+    "view_record_ms": 0.3332,
+    "cpu_submit_ms": 0.3569,
+    "gpu_ms": 2.088336
+  }
+]

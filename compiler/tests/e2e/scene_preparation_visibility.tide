@@ -1,0 +1,34 @@
+component Recipe { int seed; }
+component Result { int value; }
+singleton State { Entity destination; int calls; int value; }
+local singleton Observed { int spawned; }
+
+scene Main;
+
+namespace Levels
+{
+    scene Region
+    {
+        prepare(Recipe recipe, mut State state)
+        {
+            state.calls += 1;
+            state.value = recipe.seed;
+            Spawn(Result { value = recipe.seed });
+        }
+    }
+}
+
+system Travel(with Main, Time time, mut State state)
+{
+    if (time.tick != 5) return;
+    var group = Visibility.CreateGroup(Audience.None);
+    mut Visibility visibility = Visibility {};
+    visibility.Set<Recipe>(group);
+    state.destination = Scene.Load(Levels.Region, Recipe { seed = 12345 }, visibility);
+    Scene.Unload(this);
+}
+
+local event(Spawned) Observe(Result result, mut Observed observed)
+{
+    if (result.value == 12345) observed.spawned += 1;
+}

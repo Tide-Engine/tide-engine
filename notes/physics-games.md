@@ -1,5 +1,12 @@
 # The physics games: Towers and Sumo
 
+Entity128 fixture migration (2026-11-06): manually encoded global commands in
+Towers and Sumo now carry all four zero target words after the command ID,
+matching the generated 144-bit header. Gameplay and authorization checks remain.
+Towers' native ASan and WASI runs agree on the intentional identity-dependent
+world pins: `5cebbb8bed2ae170` at tick 1500 and `b895d2273b9c6ec6` at tick 1800.
+Gameplay, late joining and zero-resync checks pass on both platforms.
+
 Box3D completion (2026-10-22): all joints, collider controls and live source
 tracking add package components/state. Sumo's generated Brain.dice component
 ordinal and stored-world layout therefore change. The native/WASI network
@@ -138,3 +145,9 @@ Sumo took the place of Alley, a bowling game, the same day. The owner found the 
 ## Physics method/host migration (2026-10-11)
 
 Towers uses physics.Cast rather than the removed free-function query form. Game hosts/tests forward the additional confirmed frame interval arguments (NULL/1 for manual single-world frames). Towers and Sumo world pins changed for the added physics/time schema; simulation/body/native-image/answer pins did not. Native and web game suites cover the migration. No gameplay rewind opt-in was added to these examples.
+
+Logical Entity identity/canonical order (2026-11-06): Sumo/Towers handwritten
+commands use the full 128-bit target header. Native ASan and WASI Sumo gameplay
+and network checks agree on tick640 `52005651708181ca` and tick880
+`7339b3d0f18243b4`; those intentional order/seed result changes replace the old
+storage-identity pins, with no convergence or gameplay assertions removed.

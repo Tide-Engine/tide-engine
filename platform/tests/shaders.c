@@ -1,8 +1,8 @@
 // frag and vert, written in Tide (shaders.tide), through the whole path:
-// tidec's GLSL and WGSL, the draw list, the renderer and the GPU, read back
-// from an offscreen render. Every backend compiles every shader the game
-// uses, and has to give the same pixels: OpenGL 3.3 natively, and in a
-// browser WebGL 2 and WebGPU, whose device is then lost and found again.
+// tidec's WGSL (and its SPIR-V), the draw list, the renderer and the GPU, read
+// back from an offscreen render. Every backend compiles every shader the game
+// uses, and has to give the same pixels: Vulkan natively, and in a browser
+// WebGPU, whose device is then lost and found again.
 //
 // The game draws a 24 pixel square in the middle of 32 pixel cells, each
 // through another frag or vert: `cell` is a pixel in one. Its frames are a
@@ -17,6 +17,9 @@
 #include "game.h"
 #include "tide/platform.h"
 #include "window.h" // The backend, for whether it draws into floats
+#if !defined(__wasm__) && !defined(__ANDROID__)
+extern bool tide_gpu_vk_alpha_to_one(void);
+#endif
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
@@ -605,7 +608,7 @@ static void run_stencil_checks(const char *when)
 // floats, those images are bytes, and what was drawn is kept from 0 to 1.
 static void run_output_checks(const char *when)
 {
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     static const struct {
         int panel_x, panel_y; // The panel's corner in the window
         float x, y;           // In the panel
@@ -801,7 +804,7 @@ static void run_height_checks(const char *when)
 static void run_mipmap_checks(const float lit, const char *when)
 {
     // A float texture's smaller images are drawn, so made where the device draws into floats
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     const int drawn = (int)(lit * 255.0f / 8.0f + 0.5f);
     const struct {
         float left;
@@ -819,6 +822,10 @@ static void run_mipmap_checks(const float lit, const char *when)
         {136, {floats ? 32 : 0, 0, 0}, "a grid of floats, sampled Trilinear"},
         {152, {drawn, 0, 0}, "a target's color, read between its smaller images: made of what was just drawn into it"},
         {168, {drawn, 0, 0}, "through a frag too"},
+        {184, {32, 64, 255}, "SampleGrad keeps carried Trilinear through two helpers and divergent fragments"},
+        {200, {0, 0, 255}, "SampleGrad keeps carried Bilinear at the base level"},
+        {216, {32, 64, 255}, "SampleGrad's explicit derivatives and Trilinear override a Point source"},
+        {232, {51, 77, 102}, "SampleGrad keeps Raw RGB and carried Repeat at explicit mip 2 through two helpers"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 14;
@@ -898,6 +905,98 @@ static void run_alpha_checks(const char *when)
     }
 }
 
+// Cut-outs (`Cutouts` in shaders.tide): this.Cutout's red sheet, there from
+// the middle of its 32nd pixel (31 from 0), through a target of 4 samples at
+// the window's left, one of a sample beside it, and a target of depth alone's
+// depth at 128 on; this.Coverage's three quarters below them. Red is what's
+// covered: in between only at the edge with samples, and whole wherever its
+// alpha is half or more. And at 192, the slopes a frag asks for, drawn into
+// the window and, below, into a target: 1, 1 and 0.5.
+static void run_cut_checks(const char *when)
+{
+    static const struct {
+        float x, y;
+        float low, high; // What its red is between
+        const char *what;
+    } wanted[] = {
+        {29, 32, 0, 0.03f, "a cut-out leaves out what its alpha is under half for, into a target with samples"},
+        {31, 32, 0.15f, 0.85f, "and covers some of the samples of the pixel its edge crosses: alpha to coverage"},
+        {33, 32, 0.97f, 1, "and all of those past it, whole, where its alpha is little over half"},
+        {40, 60, 0, 0.03f, "and a cut-out still discards"},
+        {64 + 29, 32, 0, 0.03f, "into a target of one sample, it's cut where its alpha is under half"},
+        {64 + 33, 32, 0.97f, 1, "and is there, whole, where it's over half"},
+        {32, 96, 0.5f, 0.95f, "a frag that covers three quarters of a pixel as it's given covers that share of its samples"},
+        {64 + 32, 96, 0.97f, 1, "and is there, whole, in a target of one sample"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    static const struct {
+        float y;
+        const char *what;
+    } slopes[] = {
+        {32, "a frag's slopes, this.Ddx, this.Ddy and this.Fwidth: a pixel across, a pixel down and a 64th, in the window"},
+        {96, "and the same, the same way round, in a target"},
+    };
+    local.Art.targetPass = 24;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT + 7];
+    uint32_t got[COUNT + 7];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
+    // The depth target's left and right quarters: one side of the card is cut, whichever way its camera sees it
+    points[COUNT] = tide_f2(128 + 16.5f, 32.5f);
+    points[COUNT + 1] = tide_f2(128 + 48.5f, 32.5f);
+    for (int i = 0; i < 2; i++) points[COUNT + 2 + i] = tide_f2(192 + 32.5f, slopes[i].y + 0.5f);
+    for (int i = 0; i < 3; i++) points[COUNT + 4 + i] = tide_f2(32.5f + 64.0f * (float)i, 160.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT + 7, got);
+    for (int i = 0; i < COUNT; i++) {
+        const float red = (float)(got[i] >> 24) / 255.0f;
+        const bool ok = red >= wanted[i].low && red <= wanted[i].high && (got[i] >> 8 & 0xFFFFu) == 0;
+        printf("%s: %s%s (0x%08X, red from %.2f to %.2f)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               (double)wanted[i].low, (double)wanted[i].high);
+        if (!ok) failures++;
+    }
+    const float left = (float)(got[COUNT] >> 24) / 255.0f, right = (float)(got[COUNT + 1] >> 24) / 255.0f;
+    const float nearer = left < right ? left : right, farther = left < right ? right : left;
+    const bool ok = farther > 0.97f && nearer < 0.8f;
+    printf("%s: into a target of depth alone, a cut-out stores depth only where it's there%s (0x%08X, 0x%08X)\n",
+           ok ? "ok" : "FAIL", when, (unsigned)got[COUNT], (unsigned)got[COUNT + 1]);
+    if (!ok) failures++;
+    for (int i = 0; i < 2; i++) {
+        const uint32_t c = got[COUNT + 2 + i];
+        const int want[3] = {255, 255, 128};
+        bool fine = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(c >> (24 - 8 * k) & 0xFFu) - want[k];
+            fine = fine && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0xFFFF80FF)\n", fine ? "ok" : "FAIL", slopes[i].what, when, (unsigned)c);
+        if (!fine) failures++;
+    }
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    const bool opaque_samples = tide_gpu_vk_alpha_to_one();
+    if (opaque_samples) {
+        const uint32_t opaque = got[COUNT + 4], clear = got[COUNT + 5], other = got[COUNT + 6];
+        const int coverage = (int)(clear >> 16 & 255u);
+        const int opaque_red = (int)(opaque >> 24), opaque_blue = (int)(opaque >> 8 & 255u);
+        const int other_alpha = (int)(other >> 16 & 255u);
+        const bool fine = coverage >= 128 && coverage <= 242
+            && abs(opaque_red - coverage) <= 3 && (opaque >> 16 & 255u) >= 252u
+            && abs(2 * opaque_blue - coverage) <= 4
+            && (clear >> 24) >= 252u && abs((int)(clear >> 8 & 255u) - 128) <= 3
+            && abs((int)(other >> 24) - 128) <= 3 && abs((int)(other >> 8 & 255u) - 64) <= 3
+            && abs(4 * other_alpha - coverage) <= 6;
+        printf("%s: HDR cut-out resolve preserves opaque/transparent alpha and resampled color, leaving the second output's alpha alone%s (0x%08X, 0x%08X, 0x%08X)\n",
+               fine ? "ok" : "FAIL", when, (unsigned)opaque, (unsigned)clear, (unsigned)other);
+        if (!fine) failures++;
+    } else printf("cut-out stored-alpha check unavailable on this device%s\n", when);
+#else
+    printf("cut-out stored-alpha correction remains unavailable on this backend%s\n", when);
+#endif
+}
+
 // Textures that are numbers (`Raws` in shaders.tide): [Raw] ones are
 // read as their file or their grid has them, where a texture of colors has no
 // color in a pixel with no alpha. Squares of 32 pixels, 40 apart.
@@ -947,7 +1046,7 @@ static void run_cube_checks(const float lit, const char *when)
 {
     static const int colors[6][3] = {{255, 0, 0}, {0, 255, 255}, {0, 255, 0}, {255, 0, 255}, {0, 0, 255}, {255, 255, 0}};
     static const char *const sides[6] = {"+x", "-x", "+y", "-y", "+z", "-z"};
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     struct {
         float x, y;
         int want[3];
@@ -1011,6 +1110,94 @@ static void run_cube_checks(const float lit, const char *when)
     printf("%s: a frag that reads an asset's cube towards twelve directions is one shader in twelve runs%s (%d runs)\n",
            runs == 12 ? "ok" : "FAIL", when, runs);
     if (runs != 12) failures++;
+}
+
+// Texture arrays (pass 25: `LayersPaint` and `LayersRead` in shaders.tide): an asset's six layers, a painted array's
+// four, a layer that differs across a square, layers past the last and before the first, a layer read between its
+// smaller images, an array never made and its depth, and a depth array's three layers read as numbers and compared.
+// Each square is 8 pixels; two pixels of each are read, its corner and one inside, which may want another color.
+static void run_array_checks(const char *when)
+{
+    static const int sky[6][3] = {{0, 255, 255}, {255, 0, 255}, {255, 255, 0}, {255, 0, 0}, {0, 255, 0}, {0, 0, 255}};
+    static const int painted[4][3] = {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}, {255, 255, 0}};
+    struct {
+        float x, y;
+        int want[3];
+        const char *what;
+        int layer;
+    } wanted[64];
+    int count = 0;
+#define WANT(at_x, at_y, r, g, b, text, n) wanted[count++] = (__typeof__(wanted[0])){(float)(at_x), (float)(at_y), {(r), (g), (b)}, (text), (n)}
+    for (int layer = 0; layer < 6; layer++) {
+        WANT(8 + layer * 32, 8, 255, 255, 255, "an asset's array, a layer's top left quarter, which is white: layer", layer);
+        WANT(13 + layer * 32, 12, 255, 255, 255, "an asset's array, a layer's top left quarter, inside: layer", layer);
+        WANT(24 + layer * 32, 8, sky[layer][0], sky[layer][1], sky[layer][2], "and its bottom right, its file's color: layer", layer);
+        WANT(29 + layer * 32, 12, sky[layer][0], sky[layer][1], sky[layer][2], "and its bottom right, inside: layer", layer);
+    }
+    for (int layer = 0; layer < 4; layer++) {
+        WANT(8 + layer * 32, 24, 255, 255, 255, "an array a view painted, a layer's top left quarter: layer", layer);
+        WANT(24 + layer * 32, 24, painted[layer][0], painted[layer][1], painted[layer][2], "and its bottom right: layer", layer);
+    }
+    WANT(136, 24, 255, 255, 0, "a layer past the last reads the last", 9);
+    WANT(152, 24, 255, 0, 0, "and one before the first, the first", -2);
+    WANT(8, 40, 255, 0, 0, "a layer that differs across a square: its left quarter reads the first", 0);
+    WANT(13, 40, 0, 0, 255, "and at two thirds across, the third", 2);
+    WANT(24, 40, 0, 255, 0, "a layer read between its smaller images: one color however small", 1);
+    WANT(29, 44, 0, 255, 0, "a layer read between its smaller images, inside", 1);
+    WANT(40, 40, 255, 255, 255, "an array that was never made reads white, and its depth the far limit", 0);
+    WANT(56, 40, 128, 128, 100, "an array's count and size on the GPU, and a depth array's and an asset's: 4, 32, 3 + 6 + 16", 0);
+    WANT(8, 88, 255, 0, 0, "a Grid3 of colors as an array: its first layer", 0);
+    WANT(24, 88, 0, 255, 0, "its second", 1);
+    WANT(40, 88, 0, 0, 255, "its third", 2);
+    if (local.Layers.paint) WANT(56, 88, 255, 255, 255, "a cell of its second layer, changed: that part written alone", 1);
+    else WANT(56, 88, 0, 255, 0, "a cell of its second layer, as it was", 1);
+    WANT(88, 88, 255, 128, 64, "a [Raw] Grid3's array: its numbers as they are, with an alpha of 0", 1);
+    WANT(72, 88, 191, 80, 64, "a Grid3 of floats as an array: its fourth layer, 0.75; its count, 5, and the other's width, 40", 3);
+    WANT(8, 56, 0, 42, 0, "a depth array's layer, a plane 5 away: nearer than 0.4, and its depth", 0);
+    WANT(24, 56, 0, 84, 0, "the next, 10 away: still nearer than 0.4", 1);
+    WANT(40, 56, 255, 127, 0, "the last, 15 away: not nearer than 0.4", 2);
+#undef WANT
+    local.Art.targetPass = 25;
+    tide_draw_reset(&list);
+    list.target_pixels = tide_platform_target_pixels; // What an array's size is, in pixels, as the host says
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    list.target_pixels = NULL;
+    local.Art.targetPass = 0;
+    tide_float2 points[64];
+    uint32_t got[64];
+    for (int i = 0; i < count; i++) points[i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, (uint32_t)count, got);
+    for (int i = 0; i < count; i++) {
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - wanted[i].want[c];
+            ok = ok && d >= -6 && d <= 6;
+        }
+        printf("%s: %s %d%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, wanted[i].layer, when,
+               (unsigned)got[i], (unsigned)wanted[i].want[0], (unsigned)wanted[i].want[1], (unsigned)wanted[i].want[2]);
+        if (!ok) failures++;
+    }
+    // Compressed layers read as the same files as Textures do: a pixel of each, and between their smaller images
+    const tide_float2 pairs[4][2] = {{{12.5f, 76.5f}, {28.5f, 76.5f}}, {{44.5f, 76.5f}, {60.5f, 76.5f}},
+                                     {{75.5f, 75.5f}, {107.5f, 75.5f}}, {{81.5f, 83.5f}, {113.5f, 83.5f}}};
+    static const char *const said[4] = {"a compressed array's opaque layer (BC1 as BC3) reads as its file does as a Texture",
+                                         "and its layer with alpha (BC3)", "and between its smaller images, drawn small",
+                                         "and at another pixel"};
+    tide_float2 at[8];
+    uint32_t read[8];
+    for (int i = 0; i < 4; i++) at[2 * i] = pairs[i][0], at[2 * i + 1] = pairs[i][1];
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, at, 8, read);
+    for (int i = 0; i < 4; i++) {
+        bool ok = read[2 * i] != 0x808080FFu; // Something was drawn there, not the background
+        for (int c = 0; c < 4; c++) {
+            const int d = (int)(read[2 * i] >> (24 - 8 * c) & 0xFFu) - (int)(read[2 * i + 1] >> (24 - 8 * c) & 0xFFu);
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X and 0x%08X)\n", ok ? "ok" : "FAIL", said[i], when, (unsigned)read[2 * i], (unsigned)read[2 * i + 1]);
+        if (!ok) failures++;
+    }
 }
 
 // Lists (`ListReads` and `ListOwners` in shaders.tide): frags and a
@@ -1135,12 +1322,14 @@ static int gpu_roll_below(uint32_t *dice, const uint32_t max)
     return (int)(((uint64_t)gpu_roll(dice) * max) >> 32);
 }
 
-// Which frag or vert a stage's text says it is: the number its generators are made with
-static int32_t roll_site(const char *glsl)
+// The number the generators of the frag or vert called `name` are made with, as tidec works it out
+// (shader.c's roll_site): FNV-1a of its shader name, "ts_" and its own, which has no '_' or '.' here
+static int32_t roll_site(const char *name)
 {
-    const char *made = strstr(glsl, "tide_dice = uint(");
-    const char *with = made ? strstr(made, " ^ ") : NULL;
-    return with ? (int32_t)strtoul(with + 3, NULL, 10) : 0;
+    uint32_t hash = 2166136261u;
+    for (const char *s = "ts_"; *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    for (const char *s = name; *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    return (int32_t)(hash & 0x7FFFFFFFu);
 }
 
 static const tide_shader *shader_named(const char *name)
@@ -1242,28 +1431,28 @@ static void run_roll_checks(const int64_t state, const char *when)
         float want[3] = {0, 255, 0}; // RANGES: green
         int within = 1; // Whole numbers come out as they are; what's blended between corners is the GPU's rounding
         switch (wanted[i].kind) {
-        case BYTES: roll_bytes(x, y, 0, rolled, roll_site(bytes->glsl_fragment), want); break;
-        case FIRST: roll_bytes(x, y, 0, rolled, roll_site(placed->glsl_fragment), want); break;
-        case SECOND: roll_bytes(x, y, 1, rolled, roll_site(placed->glsl_fragment), want); break;
+        case BYTES: roll_bytes(x, y, 0, rolled, roll_site("RollBytes"), want); break;
+        case FIRST: roll_bytes(x, y, 0, rolled, roll_site("RollBytes"), want); break;
+        case SECOND: roll_bytes(x, y, 1, rolled, roll_site("RollBytes"), want); break;
         case TINT:
-            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site(tint->glsl_vertex), want);
+            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site("RollTint"), want);
             within = 3;
             break;
         case SEED: want[0] = SEEDED & 255, want[1] = (SEEDED >> 8) & 255, want[2] = (SEEDED >> 16) & 255; break;
         case OVER: {
             float blended[3];
-            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site(over->glsl_vertex), blended);
-            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(over->glsl_fragment)});
+            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site("RollTint"), blended);
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site("RollOver")});
             want[0] = (float)gpu_roll_below(&pixel, 256), want[1] = blended[1], want[2] = 0;
             within = 3;
             break;
         }
         case FILL: // The image's cells are red and green above blue and white: its blue is 0 above and 1 below
-            roll_bytes(x, y, 0, rolled, roll_site(fill->glsl_fragment), want);
+            roll_bytes(x, y, 0, rolled, roll_site("RollFill"), want);
             want[2] = y < SIZE / 2 ? 0 : 255;
             break;
         case PICK: { // The first roll is picked, the second made and left, and the third is what's rolled after
-            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(pick->glsl_fragment)});
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site("RollPick")});
             want[0] = (float)gpu_roll_below(&pixel, 256);
             (void)gpu_roll_below(&pixel, 256);
             want[1] = (float)gpu_roll_below(&pixel, 256), want[2] = 0;
@@ -1596,6 +1785,52 @@ static void run_size_checks(const char *when)
     tide_render_target_dispose(limited);
 }
 
+// A depth pre-pass and its lit pass (`Prepasses` in shaders.tide): Depth.Only writes depth and no color, its frag's
+// discards and cut-outs included, at 4 samples; Depth.Equal then shades each sample the pre-pass left once, added, and
+// nothing the pre-pass didn't draw. The near card fills one half of the target and the far card shows in the other
+// (whichever side the camera puts it), and in the near card's discarded tenth.
+static void run_prepass_checks(const char *when)
+{
+    local.Art.targetPass = 26;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    enum { LEFT, RIGHT, EDGE_A, EDGE_B, TOP_LEFT, TOP_RIGHT, LOW_LEFT, LOW_RIGHT, POINTS };
+    const tide_float2 points[POINTS] = {{16.5f, 32.5f}, {48.5f, 32.5f}, {31.5f, 32.5f}, {32.5f, 32.5f},
+                                        {16.5f, 2.5f},  {48.5f, 2.5f},  {16.5f, 61.5f}, {48.5f, 61.5f}};
+    uint32_t got[POINTS];
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, POINTS, got);
+    int r[POINTS], g[POINTS], b[POINTS];
+    bool once = true; // Every sample one card's half, never both added, nor white, nor the card between
+    for (int i = 0; i < POINTS; i++) {
+        r[i] = (int)(got[i] >> 24), g[i] = (int)(got[i] >> 16 & 255u), b[i] = (int)(got[i] >> 8 & 255u);
+        once = once && b[i] <= 1 && abs(r[i] + g[i] - 128) <= 4;
+    }
+    printf("%s: a lit pass under Depth.Equal shades each sample of a pre-pass once, and the pre-pass writes no color%s "
+           "(0x%08X 0x%08X 0x%08X 0x%08X 0x%08X 0x%08X 0x%08X 0x%08X)\n", once ? "ok" : "FAIL", when, (unsigned)got[0],
+           (unsigned)got[1], (unsigned)got[2], (unsigned)got[3], (unsigned)got[4], (unsigned)got[5], (unsigned)got[6],
+           (unsigned)got[7]);
+    if (!once) failures++;
+    // Which half the near card is in: red there, green past its cut
+    const bool near_right = r[RIGHT] > r[LEFT];
+    const int near = near_right ? RIGHT : LEFT, past = near_right ? LEFT : RIGHT;
+    const bool halves = r[near] >= 124 && g[near] <= 3 && g[past] >= 124 && r[past] <= 3;
+    printf("%s: the near card is lit where its cut-out pre-pass covered, the far one where it was cut%s\n",
+           halves ? "ok" : "FAIL", when);
+    if (!halves) failures++;
+    // Its discarded tenth, at its top or its bottom, shows the far card, and the other end the near one
+    const int top = near_right ? TOP_RIGHT : TOP_LEFT, low = near_right ? LOW_RIGHT : LOW_LEFT;
+    const bool cut = (g[top] >= 124 && r[low] >= 124) || (r[top] >= 124 && g[low] >= 124);
+    printf("%s: where the pre-pass's frag discarded, the far card is lit%s\n", cut ? "ok" : "FAIL", when);
+    if (!cut) failures++;
+    // At the cut's edge, the near card's samples are the cut-out's share, the far card's the rest
+    const bool shared = (r[EDGE_A] >= 20 && g[EDGE_A] >= 20) || (r[EDGE_B] >= 20 && g[EDGE_B] >= 20);
+    printf("%s: at the cut-out's edge, each card is lit at its own samples%s\n", shared ? "ok" : "FAIL", when);
+    if (!shared) failures++;
+}
+
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
 // as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
 // draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
@@ -1625,19 +1860,52 @@ static void run_prewarmed_checks(void)
     run_height_checks(when);
     run_mipmap_checks(2, when);
     run_alpha_checks(when);
+    run_cut_checks(when);
     run_raw_checks(when);
     run_cube_checks(2, when);
+    run_array_checks(when);
     run_list_checks(0, when);
     run_roll_checks(1234, when);
     run_normal_checks(when);
     run_model_checks(when);
     run_place_checks(when);
     run_size_checks(when);
+    run_prepass_checks(when);
     const uint32_t after = tide_platform_shader_pipelines();
     printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
            (unsigned)after);
     if (after != made) failures++;
 }
+
+#ifdef __wasm__
+// Every check again, on another device: `when` says which time
+static void run_again(const int roll, const char *when)
+{
+    run_checks(when);
+    run_target_checks(when);
+    run_screen_target_checks(when);
+    run_wrap_checks(when);
+    run_image_checks(when);
+    run_shadow_checks(when);
+    run_stencil_checks(when);
+    run_output_checks(when);
+    run_values_checks(when);
+    run_height_checks(when);
+    run_mipmap_checks(2, when);
+    run_alpha_checks(when);
+    run_cut_checks(when);
+    run_raw_checks(when);
+    run_cube_checks(2, when);
+    run_array_checks(when);
+    run_list_checks(0, when);
+    run_roll_checks(roll, when);
+    run_normal_checks(when);
+    run_model_checks(when);
+    run_place_checks(when);
+    run_size_checks(when);
+    run_prepass_checks(when);
+}
+#endif
 
 static int frame(void *user, const float seconds)
 {
@@ -1656,26 +1924,13 @@ static int frame(void *user, const float seconds)
         lost = 2;
     }
     if (lost == 2) {
-        run_checks(", on another device");
-        run_target_checks(", on another device");
-        run_screen_target_checks(", on another device");
-        run_wrap_checks(", on another device");
-        run_image_checks(", on another device");
-        run_shadow_checks(", on another device");
-        run_stencil_checks(", on another device");
-        run_output_checks(", on another device");
-        run_values_checks(", on another device");
-        run_height_checks(", on another device");
-        run_mipmap_checks(2, ", on another device");
-        run_alpha_checks(", on another device");
-        run_raw_checks(", on another device");
-        run_cube_checks(2, ", on another device");
-        run_list_checks(0, ", on another device");
-        run_roll_checks(555, ", on another device");
-        run_normal_checks(", on another device");
-        run_model_checks(", on another device");
-        run_place_checks(", on another device");
-        run_size_checks(", on another device");
+        // A mesh whose copy the list gave up while the renderer had it (drawing.md, Turning round) isn't drawn
+        // the first time after the device went, and is copied again for the next: every check once, not
+        // counted, then again
+        const int before = failures;
+        run_again(777, ", on another device, its first draws (not counted)");
+        failures = before;
+        run_again(555, ", on another device");
         return failures;
     }
 #endif
@@ -1700,10 +1955,17 @@ static int frame(void *user, const float seconds)
     run_mipmap_checks(2, ", again");
     run_mipmap_checks(4, ", with other pixels drawn into the target");
     run_alpha_checks("");
+    run_cut_checks("");
+    run_cut_checks(", again");
     run_raw_checks("");
     run_cube_checks(2, "");
     run_cube_checks(2, ", again");
     run_cube_checks(6, ", with other pixels drawn into the cube");
+    run_array_checks("");
+    local.Layers.paint = 1;
+    run_array_checks(", with a cell changed");
+    local.Layers.paint = 0;
+    run_array_checks(", and changed back");
     run_list_checks(0, "");
     run_list_checks(0, ", again");
     run_list_checks(1, ", with another element written");
@@ -1716,6 +1978,8 @@ static int frame(void *user, const float seconds)
     run_place_checks("");
     run_place_checks(", again");
     run_size_checks("");
+    run_prepass_checks("");
+    run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

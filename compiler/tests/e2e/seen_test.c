@@ -310,6 +310,109 @@ TIDE_TEST(seen_a_clock_far_ahead_comes_back_at_once)
     TIDE_CHECK(s.least >= 0.0f && s.longest <= 40.0f);
 }
 
+typedef struct recovering_player {
+    bool key;
+    int frame;
+    int sampled_at;
+    int sample_gap;
+    uint32_t sampled_tick;
+    bool sampled;
+} recovering_player;
+
+static void sample_recovering(void *user, const uint32_t tick, void *input)
+{
+    recovering_player *p = user;
+    if (p->sampled) TIDE_CHECK(tick > p->sampled_tick); // Sent inputs must never be replaced or sampled again
+    if (p->sampled && p->frame >= 600 && p->frame - p->sampled_at > p->sample_gap) {
+        p->sample_gap = p->frame - p->sampled_at;
+    }
+    p->sampled = true;
+    p->sampled_tick = tick;
+    p->sampled_at = p->frame;
+    *(Pad *)input = (Pad){.held = p->key};
+}
+
+// A half-second server pause is short enough that the client can still sample every input.
+// Recover its excess lead promptly without turning that remote lag into a local input freeze.
+// Keep changing the key through recovery, then measure a fresh press two seconds after resuming.
+// Repeat on the same connection to catch leftover correction state and tick-phase differences.
+TIDE_TEST(seen_a_short_server_stall_recovers_without_freezing_own_input)
+{
+    const uint32_t rates[] = {60, 30};
+    const tide_net_conditions conditions[] = {{.latency = 0.03}, {.latency = 0.08, .jitter = 0.01, .loss = 0.03}};
+    for (uint32_t r = 0; r < 2; r++) {
+        for (uint32_t network = 0; network < 2; network++) {
+            const uint32_t rate = rates[r];
+            tide_loopback *net = tide_loopback_create(42);
+            tide_loopback_set_conditions(net, conditions[network]);
+            tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = rate,
+                .transports = {tide_loopback_endpoint(net, 1)}}, 0.0);
+            recovering_player p = {0};
+            tide_client *client = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
+                .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
+                .sample = sample_recovering, .user = &p, .lead = 1, .lead_frame = true}, 0.0);
+            TIDE_REQUIRE(server && client);
+            double now = 0.0;
+            for (int episode = 0; episode < 2; episode++) {
+                const int stop = 600 + episode * 600, resume = stop + 30, press = resume + 120;
+                int own_pending = -1, own_most = 0, server_seen = -1;
+                float early_most = 0.0f;
+                uint32_t late_before = 0;
+                uint32_t predicted_before = 0;
+                for (int frame = episode ? 930 : 0; frame < resume + 300; frame++) {
+                    now += FRAME;
+                    tide_loopback_set_time(net, now);
+                    p.frame = frame;
+                    const bool key = frame < resume + 90 ? frame / 13 % 2 == 0 : frame >= press;
+                    if (key != p.key && frame >= stop) {
+                        TIDE_CHECK(own_pending < 0);
+                        own_pending = frame;
+                    }
+                    p.key = key;
+                    tide_client_update(client, now);
+                    if (frame < stop || frame >= resume) tide_server_update(server, now);
+                    const tide_client_status status = tide_client_status_of(client);
+                    if (frame == stop - 1) late_before = status.late_ticks;
+                    if (frame >= stop) {
+                        TIDE_CHECK(status.predicted_tick >= predicted_before);
+                        TIDE_CHECK(status.delay_ticks == 0);
+                        if (own_pending >= 0) {
+                            const float x = shown(tide_client_view(client));
+                            if ((key && x > 0.0f) || (!key && x < 100.0f)) {
+                                const int took = frame - own_pending;
+                                if (took > own_most) own_most = took;
+                                own_pending = -1;
+                            }
+                        }
+                    }
+                    predicted_before = status.predicted_tick;
+                    const float server_x = ((const tide_world *)tide_server_world(server))->Meter.first_x;
+                    if (frame == press - 1) TIDE_CHECK(server_x == 0.0f);
+                    if (frame >= press) {
+                        if (server_seen < 0 && server_x > 0.0f) server_seen = frame;
+                        if (status.early_ms > early_most) early_most = status.early_ms;
+                    }
+                }
+                const tide_client_status status = tide_client_status_of(client);
+                printf("    %u Hz, %.0f ms/way, stall %d: fresh press took %d frames at server;"
+                       " own response %d, sample gap %d frames; later input wait <=%.0f ms, %u late\n",
+                       rate, conditions[network].latency * 1000.0, episode + 1, server_seen - press, own_most, p.sample_gap,
+                       (double)early_most, status.late_ticks - late_before);
+                TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
+                TIDE_CHECK(status.verified_tick + rate / 4u > tide_server_tick(server));
+                TIDE_CHECK(own_pending < 0 && own_most <= (int)(180u / rate));
+                TIDE_CHECK(p.sample_gap <= (int)(120u / rate) + 1);
+                TIDE_CHECK(server_seen >= press && server_seen - press <= 9 + (int)(180u / rate));
+                TIDE_CHECK(early_most <= 150.0f);
+                TIDE_CHECK(status.late_ticks - late_before <= (network ? 4u : 0u));
+            }
+            tide_client_destroy(client);
+            tide_server_destroy(server);
+            tide_loopback_destroy(net);
+        }
+    }
+}
+
 // A connection slower than the prediction window isn't a server whose clock stopped: its answers
 // took that long too, so a clock set from them would still be past the window, and the existing
 // clock mustn't come back. Fresh packets passing older ones still on their way must not move

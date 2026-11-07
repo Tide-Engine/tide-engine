@@ -25,7 +25,7 @@ install(TARGETS tide_cli RUNTIME DESTINATION bin COMPONENT tide)
 # zips, and the path of a file that isn't there yet.
 add_executable(tide_cli_tests tests/release_test.c tests/install_test.c tests/libraries_test.c tests/packages_test.c tests/apk_test.c
     tests/unzip_test.c tests/rsa_test.c tests/sys_test.c tests/unity_assets_test.c tests/unity_code_test.c tests/unity_shaders_test.c release.c
-    install.c libraries.c fetch.c sys.c unity_assets.c unity_code.c unity_mapping.c unity_shaders.c unity_yaml.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
+    install.c libraries.c fetch.c line.c sys.c unity_assets.c unity_code.c unity_mapping.c unity_shaders.c unity_yaml.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/unity_names.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_cli_tests PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/platform/src/rtc")
 # A Unity project's Assets, as Unity wrote them, for tide unity --assets
@@ -57,6 +57,15 @@ if(NOT WIN32)
 endif()
 add_test(NAME tide_cli_run_exit COMMAND tide_cli_run_exit_tests)
 
+add_executable(tide_cli_terminal_exit_tests tests/terminal_exit_test.c sys.c)
+target_include_directories(tide_cli_terminal_exit_tests PRIVATE .)
+target_link_libraries(tide_cli_terminal_exit_tests PRIVATE tidec_core)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_terminal_exit_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME tide_cli_terminal_exit COMMAND tide_cli_terminal_exit_tests)
+set_tests_properties(tide_cli_terminal_exit PROPERTIES TIMEOUT 10)
+
 # Apple SDK discovery must follow the selected linker even when a newer
 # standalone Command Line Tools package is installed. Stub discovery only.
 add_executable(tide_cli_toolchain_tests tests/toolchain_test.c sys.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
@@ -77,6 +86,17 @@ if(NOT WIN32)
 endif()
 add_test(NAME tide_cli_fetch COMMAND tide_cli_fetch_tests)
 
+# Queue writes and detached sender claims must not lose an event between
+# fopen and fwrite, or hold a local queue lock across the HTTP request.
+add_executable(tide_cli_telemetry_queue_tests tests/telemetry_queue_test.c sys.c)
+target_include_directories(tide_cli_telemetry_queue_tests PRIVATE . ../lsp
+    "${PROJECT_SOURCE_DIR}/platform/src/rtc" "${PROJECT_SOURCE_DIR}/engine/include")
+target_link_libraries(tide_cli_telemetry_queue_tests PRIVATE tide_flags)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_telemetry_queue_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME tide_cli_telemetry_queue COMMAND tide_cli_telemetry_queue_tests)
+
 # Help must be available without a project, installation or side effects.
 add_test(NAME tide_cli_help
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>"
@@ -88,7 +108,28 @@ add_test(NAME tide_cli_packages
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/packages_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/packages_test.cmake")
 
+if(TIDE_NODE AND NOT TIDE_EMBED_LLVM)
+    add_executable(tide_cli_build_compiler tests/build_compiler.c sys.c)
+    target_include_directories(tide_cli_build_compiler PRIVATE .)
+    target_link_libraries(tide_cli_build_compiler PRIVATE tide_flags)
+    if(WIN32)
+        # The fake host must never create a console when the tested CLI has none.
+        if(NOT MINGW)
+            target_link_options(tide_cli_build_compiler PRIVATE "LINKER:/subsystem:windows,/entry:mainCRTStartup")
+        else()
+            target_link_options(tide_cli_build_compiler PRIVATE -Wl,--subsystem,windows,-e,mainCRTStartup)
+        endif()
+    else()
+        target_link_libraries(tide_cli_build_compiler PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME tide_cli_build_overlap COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_overlap_test.mjs"
+        "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/build overlap test")
+    add_test(NAME tide_cli_build_report COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_report_test.mjs"
+        "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/build report test")
+endif()
+
 if(TIDE_NODE)
+    add_test(NAME tide_unity_entity_wire COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_entity_wire_test.mjs")
     add_executable(tide_cli_versions_driver tests/versions_driver.c versions.c upgrade.c release.c install.c line.c sys.c unzip.c
         ../lsp/json.c ../lsp/packages.c ../lsp/unity_names.c "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/platform/src/rtc/crypto.c")
     target_include_directories(tide_cli_versions_driver PRIVATE . ../lsp)

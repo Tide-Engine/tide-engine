@@ -34,6 +34,10 @@ typedef struct parser {
     bool has_rest;
 } parser;
 
+static bool at_type_argument(const parser *p);
+static bool type_then_dot(const parser *p);
+static void parse_type_args(parser *p, struct expr *e);
+
 static token *peek_at(const parser *p, int offset)
 {
     if (p->has_rest) {
@@ -444,6 +448,10 @@ static expr *parse_primary(parser *p)
             const uint64_t d = (uint64_t)(ch <= '9' ? ch - '0' : (ch | 0x20) - 'a' + 10);
             if (v > (limit - d) / (uint64_t)base) {
                 diag_error(t->at, "integer '" STR_FMT "' is too large for long", STR_ARG(t->text));
+                if (base == 10)
+                    diag_note("decimal integers go up to 9223372036854775807; use a smaller value, or a d-suffixed double if exact integer precision isn't needed");
+                else
+                    diag_note("hexadecimal and binary integers hold at most 64 bits; use a smaller value or split the bits across several values");
                 longjmp(p->fail, 1);
             }
             v = v * (uint64_t)base + d;
@@ -468,6 +476,7 @@ static expr *parse_primary(parser *p)
             digits[count] = '\0';
             if (!isfinite(strtod(digits, NULL))) {
                 diag_error(t->at, "double literal '" STR_FMT "' is too large for double", STR_ARG(t->text));
+                diag_note("use a smaller magnitude or exponent; the largest finite double is about 1.7976931348623157e308d");
                 longjmp(p->fail, 1);
             }
         }
@@ -484,6 +493,7 @@ static expr *parse_primary(parser *p)
             const float degrees = strtof(digits, NULL);
             if (!isfinite(degrees)) {
                 diag_error(t->at, "degree literal '" STR_FMT "' is too large for float", STR_ARG(t->text));
+                diag_note("use a smaller angle, such as an equivalent angle within one full turn; deg literals are 32-bit floats");
                 longjmp(p->fail, 1);
             }
             e->is_degrees = true;
@@ -611,17 +621,19 @@ static expr *parse_primary(parser *p)
         return e;
     }
     case T_IDENT: {
-        if (str_eq_c(t->text, "SkinnedMesh") && peek_at(p, 1)->kind == T_LT) {
-            const type_ref *model = parse_type(p, "a skinned mesh type");
+        // Mesh<V>.Decode(bytes): a static Mesh<V> as a type whose static method is called, where '>' is followed by '.'
+        if ((str_eq_c(t->text, "SkinnedMesh") || (str_eq_c(t->text, "Mesh") && type_then_dot(p))) && peek_at(p, 1)->kind == T_LT) {
+            const type_ref *model = parse_type(p, str_eq_c(t->text, "Mesh") ? "a mesh type" : "a skinned mesh type");
             expr *e = new_expr(E_NAME, t->at);
             e->name = model->text;
             e->type_arg_ref = model;
             return e;
         }
         advance(p);
-        if (at(p, T_LPAREN)) {
+        if (at(p, T_LPAREN) || (at(p, T_LT) && at_type_argument(p))) {
             expr *e = new_expr(E_CALL, t->at);
             e->name = t->text;
+            if (accept(p, T_LT)) parse_type_args(p, e); // Max<float>(a, b)
             parse_args(p, e);
             return e;
         }
@@ -647,6 +659,23 @@ static expr *parse_primary(parser *p)
 // no comparison reads that way (it would compare a bool). The type can take
 // types of its own, as in Json.Read<List<Score>>(text): names, dots and
 // commas up to the '>' that closes the first '<', which a '>>' can be part of.
+// Whether the name the parser is at is a type with <>, then '.': Mesh<Vertex3>.Decode, never a comparison.
+static bool type_then_dot(const parser *p)
+{
+    if (peek_at(p, 1)->kind != T_LT || peek_at(p, 2)->kind != T_IDENT) return false;
+    int i = 2, depth = 1;
+    while (depth > 0) {
+        const tok_kind k = peek_at(p, i)->kind;
+        if (k == T_LT) depth++;
+        else if (k == T_GT) depth--;
+        else if (k == T_SHR) depth -= 2;
+        else if (k != T_IDENT && k != T_DOT && k != T_COMMA && k != T_LBRACKET && k != T_RBRACKET && k != T_INT
+                 && k != T_QUESTION) return false;
+        i++;
+    }
+    return depth == 0 && peek_at(p, i)->kind == T_DOT;
+}
+
 static bool at_type_argument(const parser *p)
 {
     int i = 1;
@@ -657,13 +686,23 @@ static bool at_type_argument(const parser *p)
         if (k == T_LT) depth++;
         else if (k == T_GT) depth--;
         else if (k == T_SHR) depth -= 2;
-        else if (k != T_IDENT && k != T_DOT && !(k == T_COMMA && depth > 1)) return false; // Map<string, int>'s comma
+        else if (k != T_IDENT && k != T_DOT && k != T_COMMA && k != T_LBRACKET && k != T_RBRACKET && k != T_INT
+                 && k != T_QUESTION) return false; // Map<string, int>'s comma, Pick<int, float>'s, int[4], int?
         i++;
     }
     return depth == 0 && peek_at(p, i)->kind == T_LPAREN;
 }
 
 static stmt *new_stmt(stmt_kind kind, loc at);
+
+// The types in <> before a call's arguments, its '<' read: Max<float>(...).
+static void parse_type_args(parser *p, expr *e)
+{
+    do {
+        vec_push(e->type_args, parse_type(p, "a type in '<>'"));
+    } while (accept(p, T_COMMA));
+    close_angle(p, "'>' after the types");
+}
 
 // ++i, i++, --i or i--, as a value: with the assignment it makes, `i += 1`,
 // which is the whole of it where it's a statement (parse_simple).
@@ -719,13 +758,14 @@ static expr *parse_postfix(parser *p)
             expr *m = new_expr(E_METHOD, name->at);
             m->object = e;
             m->name = name->text;
-            if (accept(p, T_LT)) { // world.Get<Health>(e)
-                const type_ref *arg = parse_type(p, "a type in '<>'");
+            if (str_eq_c(name->text, "IsPrepared") && e->kind == E_NAME && str_eq_c(e->name, "Scene")) p->prog->uses_prepared = true;
+            if (accept(p, T_LT)) { // world.Get<Health>(e), Geometry.Bounds<Corner>(...)
+                parse_type_args(p, m);
+                const type_ref *arg = m->type_args.items[0];
                 m->type_arg = arg->text;
                 m->type_arg_at = arg->name_at;
                 m->type_arg_qual_at = arg->at;
                 m->type_arg_ref = arg;
-                close_angle(p, "'>' after the type");
             }
             parse_args(p, m);
             e = m;
@@ -915,6 +955,20 @@ static expr *parse_binary(parser *p, const int min_prec)
             lhs = parse_is(p, lhs);
             continue;
         }
+        // V has float3 normal: a contextual word, as a name and then another name reads no other way
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "has") && lhs->kind == E_NAME && peek_at(p, 1)->kind == T_IDENT
+            && IS_PRECEDENCE >= min_prec) {
+            const token *word = advance(p);
+            expr *e = new_expr(E_HAS, word->at);
+            e->lhs = lhs;
+            e->pattern_ref = parse_type(p, "a field's type after 'has', like 'V has float3 normal'");
+            e->pattern = e->pattern_ref->text;
+            const token *name = expect_ident(p, "the field's name after its type, like 'V has float3 normal'");
+            e->pattern_field = name->text;
+            e->pattern_field_at = name->at;
+            lhs = e;
+            continue;
+        }
         const int prec = binary_precedence(peek(p)->kind);
         if (prec == 0 || prec < min_prec) return lhs;
         const token *op = advance(p);
@@ -1028,7 +1082,9 @@ static bool is_decl_word(const str text)
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
-        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio") || str_eq_c(text, "worker");
+        || str_eq_c(text, "vert") || str_eq_c(text, "compute") || str_eq_c(text, "asset") || str_eq_c(text, "audio")
+        || str_eq_c(text, "worker")
+        || str_eq_c(text, "build");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -1054,6 +1110,16 @@ bool attributes_before_field(const token *toks, int i)
         && !is_decl_word(t->text);
 }
 
+// `<T, U>` from token `i` on, a generic function's type parameters: where they
+// end, or `i` if there are none (or what's there isn't them).
+static int skip_type_params(const parser *p, int i)
+{
+    if (peek_at(p, i)->kind != T_LT || peek_at(p, i + 1)->kind != T_IDENT) return i;
+    int k = i + 2;
+    while (peek_at(p, k)->kind == T_COMMA && peek_at(p, k + 1)->kind == T_IDENT) k += 2;
+    return peek_at(p, k)->kind == T_GT ? k + 1 : i;
+}
+
 // [mut] Type Name(, `from` tokens on: a method or function, rather than a
 // field or a local. With `qualified`, the name can be: `float Combat.Damage(`,
 // an override's, which names what it replaces.
@@ -1065,6 +1131,7 @@ static bool at_method_from(const parser *p, const int from, const bool qualified
     if (i < 0 || peek_at(p, i)->kind != T_IDENT) return false;
     i++;
     while (qualified && peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+    i = skip_type_params(p, i); // T Max<T>(...)
     return peek_at(p, i)->kind == T_LPAREN;
 }
 
@@ -1233,6 +1300,8 @@ static stmt *parse_var(parser *p)
     }
     if (!at(p, T_ASSIGN)) {
         diag_error(name->at, "local variable '" STR_FMT "' needs an initial value", STR_ARG(s->name));
+        diag_note("initialize it with 'var " STR_FMT " = ...;', or write its type for assignment later, like 'int " STR_FMT ";'",
+                  STR_ARG(s->name), STR_ARG(s->name));
         longjmp(p->fail, 1);
     }
     advance(p);
@@ -1448,6 +1517,19 @@ static stmt *parse_stmt(parser *p)
         return s;
     }
 
+    case T_INDEXED: {
+        // indexed foreach (...) or indexed parallel (...): the loop promises to visit only rows its guard can pass
+        advance(p);
+        if (!at(p, T_FOREACH) && !at(p, T_PARALLEL)) {
+            diag_error(peek(p)->at, "'indexed' goes before a loop: write 'indexed foreach (...)' or 'indexed parallel (...)'");
+            longjmp(p->fail, 1);
+        }
+        stmt *s = parse_stmt(p);
+        s->indexed = true;
+        s->indexed_at = t->at;
+        return s;
+    }
+
     case T_PARALLEL: {
         // parallel (var at in cells), or by blocks: parallel (var at in cells by 2 offset shift)
         advance(p);
@@ -1488,6 +1570,20 @@ static stmt *parse_stmt(parser *p)
             diag_note("a local is read-only already: '" STR_FMT " " STR_FMT " = ...;'", STR_ARG(peek_at(p, 1)->text),
                       STR_ARG(peek_at(p, 2)->text));
             longjmp(p->fail, 1);
+        }
+        // `shared int[64] sums;`: a kernel's local the whole group shares (the checker says where it goes)
+        if (t->kind == T_IDENT && str_eq_c(t->text, "shared") && peek_at(p, 1)->kind == T_IDENT) {
+            advance(p);
+            stmt *s = parse_var(p);
+            s->is_shared = true;
+            s->shared_at = t->at;
+            // Zeroed as the group starts, and written by any of the group: `int[64] sums = default;`, changeable
+            if (s->delayed) {
+                s->delayed = false;
+                s->value = new_expr(E_DEFAULT, s->name_at);
+            }
+            s->is_mut = true;
+            return s;
         }
         if (at_local_decl(p)) return parse_var(p);
 
@@ -1569,7 +1665,7 @@ static void parse_sample(parser *p, decl *d, const token *name)
         longjmp(p->fail, 1);
     }
     if (d->body) {
-        diag_error(name->at, "an input has one Sample");
+        diag_error(name->at, "an input has one Sample; combine the sampling logic into a single Sample() method");
         longjmp(p->fail, 1);
     }
     if (str_eq_c(name->text, "sample")) {
@@ -1602,7 +1698,7 @@ static void parse_sanitize(parser *p, decl *d, const token *name)
         longjmp(p->fail, 1);
     }
     if (d->sanitize) {
-        diag_error(name->at, "an input has one Sanitize");
+        diag_error(name->at, "an input has one Sanitize; combine the validation logic into a single Sanitize() method");
         longjmp(p->fail, 1);
     }
     if (name->text.ptr[0] == 's') diag_error(name->at, "methods use PascalCase: 'Sanitize()'");
@@ -1620,7 +1716,7 @@ static void parse_predict(parser *p, decl *d, const token *name)
         longjmp(p->fail, 1);
     }
     if (d->predict) {
-        diag_error(name->at, "an input has one Predict");
+        diag_error(name->at, "an input has one Predict; combine the prediction logic into a single Predict() method");
         longjmp(p->fail, 1);
     }
     if (name->text.ptr[0] == 'p') diag_error(name->at, "methods use PascalCase: 'Predict()'");
@@ -1929,6 +2025,8 @@ static decl *parse_const(parser *p)
     if (!at(p, T_ASSIGN)) {
         diag_error(peek(p)->at, "a constant needs a value: 'const " STR_FMT " " STR_FMT " = ...;'", STR_ARG(type->text),
                    STR_ARG(name->text));
+        if (at(p, T_LBRACE)) diag_note("code that works it out goes in a function, which its value calls: 'const " STR_FMT " "
+                                       STR_FMT " = Make();' (docs/spec.md, Build code)", STR_ARG(type->text), STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
     advance(p);
@@ -1939,7 +2037,8 @@ static decl *parse_const(parser *p)
 
 // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name,
 // at the top of a file (see docs/spec.md, Assets). Its value is its path, a
-// constant text, which the checker resolves.
+// constant text, which the checker resolves, or what build code makes, like
+// 'asset Texture board = Checker(64);' (docs/spec.md, Build code).
 static decl *parse_asset(parser *p)
 {
     if (peek(p)->kind == T_IDENT && peek_at(p, 1)->kind == T_ASSIGN) {
@@ -1959,11 +2058,19 @@ static decl *parse_asset(parser *p)
     if (!at(p, T_ASSIGN)) {
         diag_error(peek(p)->at, "an asset needs its file's path: 'asset " STR_FMT " " STR_FMT " = \"...\";', from the folder this file is in",
                    STR_ARG(type->text), STR_ARG(name->text));
+        diag_note("or a call of code that makes it as the game builds: 'asset " STR_FMT " " STR_FMT " = Make();'", STR_ARG(type->text),
+                  STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
     advance(p);
     d->value = parse_expr(p);
-    d->end = expect(p, T_SEMI, "';' after the asset's path")->at;
+    if (at(p, T_LBRACE)) {
+        diag_error(peek(p)->at, "an asset is its file's path or what code makes, with no block after it");
+        diag_note("code that makes or changes it goes in a function its value calls: 'asset " STR_FMT " " STR_FMT
+                  " = Outlined(source, Color.red);' (docs/spec.md, Build code)", STR_ARG(type->text), STR_ARG(name->text));
+        longjmp(p->fail, 1);
+    }
+    d->end = expect(p, T_SEMI, "';' after the asset's value")->at;
     return d;
 }
 
@@ -2027,9 +2134,32 @@ static decl *parse_settings(parser *p, const token *keyword)
 // no owner, a function. The checker says where methods are allowed.
 static decl *parse_method(parser *p, decl *owner)
 {
+    const parser start = *p;
     const bool is_mut = accept(p, T_MUT);
     const type_ref *ret = parse_decl_type(p, "return type");
     decl *m = new_named_decl(p, owner ? DECL_METHOD : DECL_FUNCTION, owner ? "method name" : "function name");
+    if (at(p, T_LT)) { // T Max<T>(T a, T b): a generic function, read again for each instantiation (parse_generic_instance)
+        const token *open = advance(p);
+        do {
+            const token *name = expect_ident(p, "a type parameter's name, like 'T'");
+            vec_push(m->type_params, name->text);
+            vec_push(m->type_param_at, name->at);
+        } while (accept(p, T_COMMA));
+        close_angle(p, "'>' after the type parameters");
+        if (owner) {
+            diag_error(open->at, "a method can't have type parameters of its own yet");
+            diag_note("write it as a function that takes the value, like 'void Fill<V>(mut List<V> vertices)'");
+            m->type_params.count = 0;
+        } else if (p->overriding) {
+            diag_error(open->at, "a generic function can't be virtual or replace one");
+            m->type_params.count = 0;
+        } else {
+            m->kind = DECL_GENERIC;
+            parser *saved = NEW(parser);
+            *saved = start;
+            m->generic_parser = saved;
+        }
+    }
     m->unit = p->unit;
     m->owner = owner;
     m->is_mut_method = is_mut;
@@ -2148,6 +2278,42 @@ static decl *parse_prefab(parser *p)
     return d;
 }
 
+static void parse_preparation(parser *p, decl *scene)
+{
+    const token *word = advance(p);
+    if (!scene->is_scene) {
+        diag_error(word->at, "prepare(...) belongs inside a scene");
+        longjmp(p->fail, 1);
+    }
+    if (scene->preparation) {
+        diag_error(word->at, "a scene has one prepare block; combine the preparation into prepare(...) { ... }");
+        longjmp(p->fail, 1);
+    }
+    decl *h = new_decl(DECL_SYSTEM, word);
+    sb name = {0};
+    sb_printf(&name, "tide_prepare_" STR_FMT, STR_ARG(scene->name));
+    h->name = str_from(name.data);
+    h->is_handler = true;
+    h->preparation_owner = scene;
+    h->preparation_cpu = true;
+    param trigger = {0};
+    trigger.mode = PARAM_EVENT;
+    trigger.at = trigger.type_at = trigger.type_qual_at = word->at;
+    trigger.type_name = str_from("tide_preparing");
+    vec_push(h->params, trigger);
+    param self = {0};
+    self.mode = PARAM_MUT;
+    self.name = str_from("tide_preparation_scene");
+    self.type_name = scene->name;
+    self.at = self.type_at = self.type_qual_at = self.name_at = word->at;
+    vec_push(h->params, self);
+    parse_query_params(p, h);
+    h->body = parse_block(p);
+    h->end = h->body->end;
+    scene->preparation = h;
+    p->prog->uses_prepared = true;
+}
+
 static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scene)
 {
     const char *what = kind == DECL_COMPONENT   ? "component or scene name"
@@ -2164,6 +2330,11 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
     }
     expect(p, T_LBRACE, "'{'");
     while (!at(p, T_RBRACE)) {
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "prepare")
+            && (peek_at(p, 1)->kind == T_LPAREN || peek_at(p, 1)->kind == T_LBRACE)) {
+            parse_preparation(p, d);
+            continue;
+        }
         if (p->recover && (at(p, T_EOF) || at_decl_start_or_function(p, false))) {
             diag_error(peek(p)->at, "expected '}' to close '" STR_FMT "'", STR_ARG(name->text));
             d->end = peek(p)->at;
@@ -2481,10 +2652,11 @@ static decl *parse_extern_system(parser *p)
 
 // frag Shade(BoxVertex vertex, out Color color, Sun sun) { ... } and
 // vert Wave(mut BoxVertex vertex, Time time) { ... }: code the GPU runs.
-static decl *parse_shader(parser *p, const bool is_frag)
+static decl *parse_shader(parser *p, const bool is_frag, const bool is_compute)
 {
-    decl *d = new_named_decl(p, DECL_SHADER, is_frag ? "frag name" : "vert name");
+    decl *d = new_named_decl(p, DECL_SHADER, is_compute ? "compute name" : is_frag ? "frag name" : "vert name");
     d->is_frag = is_frag;
+    d->is_compute = is_compute;
     d->return_type_name = str_from("void");
     parse_query_rest(p, d);
     return d;
@@ -2633,9 +2805,15 @@ static void parse_attributes(parser *p)
         const token *name = expect_ident(p, "attribute name");
         a.name = name->text;
         a.at = name->at;
-        if (accept(p, T_LPAREN)) {
+        if (str_eq_c(a.name, "Retarget") && at(p, T_LPAREN)) {
+            a.call = NEW(expr);
+            a.call->at = a.at;
+            parse_args(p, a.call);
+        } else if (accept(p, T_LPAREN)) {
             if (!at(p, T_RPAREN)) {
-                if (str_eq_c(a.name, "Stage")) {
+                if (str_eq_c(a.name, "LOD") || str_eq_c(a.name, "Group")) { // [Group(8, 8)]: sizes, which constants can say
+                    do vec_push(a.values, parse_expr(p)); while (accept(p, T_COMMA));
+                } else if (str_eq_c(a.name, "Stage")) {
                     vec_push(a.args, parse_qname(p, "an enum member, like 'RenderStages.Objects'"));
                     while (accept(p, T_COMMA)) vec_push(a.values, parse_expr(p));
                 } else {
@@ -2808,6 +2986,9 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
+    for (const token *t = toks; t->kind != T_EOF; t++)
+        if (t->kind == T_IDENT && str_eq_c(t->text, "Scene") && t[1].kind == T_DOT
+            && t[2].kind == T_IDENT && str_eq_c(t[2].text, "IsPrepared")) prog->uses_prepared = true;
     const size_t path_len = strlen(src->path);
     // A Unity prefab or scene is read as the prefab `tide unity` makes of it
     const bool prefab_file = (path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0) ||
@@ -2849,6 +3030,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const token *worker = NULL;
         const token *virtual = NULL;
         const token *override = NULL;
+        const token *build = NULL;
         p.overriding = false;
         for (;;) {
             const tok_kind after = peek_at(&p, 1)->kind;
@@ -2859,6 +3041,8 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 async = advance(&p);
             } else if (!worker && t->kind == T_IDENT && str_eq_c(t->text, "worker") && after == T_IDENT) {
                 worker = advance(&p);
+            } else if (!build && t->kind == T_IDENT && str_eq_c(t->text, "build") && (after == T_IDENT || after == T_MUT)) {
+                build = advance(&p); // build void Outline(...): it runs while the game builds
             } else if (!virtual && t->kind == T_IDENT && str_eq_c(t->text, "virtual") && at_replace_word(&p, false)) {
                 virtual = advance(&p);
             } else if (!override && t->kind == T_IDENT && str_eq_c(t->text, "override") && at_replace_word(&p, false)) {
@@ -2924,8 +3108,9 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         else if (t->kind == T_SYSTEM) d = parse_system(&p, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "input")) d = parse_data_decl(&p, DECL_INPUT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "view")) d = parse_system(&p, true);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "compute")) d = parse_shader(&p, false, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "audio")) d = parse_audio(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT, false);
@@ -2969,6 +3154,18 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 if (async) diag_error(async->at, "a worker runs to completion; drop 'async' and await it from a local async function");
             }
         }
+        if (build) {
+            if (d->kind != DECL_FUNCTION || d->is_extern) {
+                diag_error(build->at, "'build' goes before a function, which then runs only while the game builds: "
+                                      "'build Grid2<Color> Checker(int size) { ... }'");
+            } else {
+                d->is_build = true;
+                d->build_at = build->at;
+                if (local) diag_error(local->at, "a build function is the build's, not a machine's: drop 'local'");
+                if (async) diag_error(async->at, "a build function runs to completion while the game builds; drop 'async'");
+                if (worker) diag_error(worker->at, "a build function runs while the game builds, not on a worker: drop 'worker'");
+            }
+        }
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {
             d->is_async = true;
             d->async_at = async->at;
@@ -2984,6 +3181,11 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         p.pending.count = p.pending.cap = 0;
         p.seen_decl = true;
         vec_push(prog->decls, d);
+        if (d->preparation) {
+            d->preparation->unit = d->unit;
+            if (d->is_local) diag_error(d->preparation->at, "prepare runs deterministic match code; local scenes use Spawned handlers");
+            vec_push(prog->decls, d->preparation);
+        }
     }
     if (p.unit->outer) {
         diag_error(peek(&p)->at, "expected '}' to end the namespace '" STR_FMT "', which opens at line %d", STR_ARG(p.unit->ns_written),
@@ -2995,4 +3197,22 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         if (!recover) return false;
     }
     return true;
+}
+
+// One instantiation of generic function `generic`: its declaration read again
+// from its tokens, a syntax tree of its own that the checker annotates as it
+// checks it with the type arguments bound. It read once, so it reads again.
+decl *parse_generic_instance(const decl *generic)
+{
+    parser p = *(const parser *)generic->generic_parser;
+    p.recover = false;
+    p.has_rest = false;
+    p.pending.items = NULL;
+    p.pending.count = p.pending.cap = 0;
+    if (setjmp(p.fail)) return NULL;
+    decl *d = parse_method(&p, NULL);
+    d->kind = DECL_FUNCTION;
+    d->generic_parser = NULL;
+    d->unit = generic->unit;
+    return d;
 }

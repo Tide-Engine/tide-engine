@@ -58,7 +58,7 @@ bool type_is_numeric(type t);
 // byte, int or long.
 bool type_is_integer(type t);
 
-// An immutable asset glob's resource references, borrowed by synchronous helpers.
+// A raw imported mesh collection; ordinary Mesh values use checked reference structs.
 bool type_is_asset_collection(type t);
 
 // The model value a checked Asset<T> resolves, without acquiring ownership.
@@ -117,6 +117,7 @@ type matrix_column(type t);
 bool type_assignable(type to, type from);
 // A grid that's a texture where one is wanted: a Grid2<Color>, or a Grid2<float> (one channel).
 bool type_is_texture_grid(type t);
+bool type_is_array_grid(type t);
 
 // Suffix of the tide/math.h functions for a type: f3, i2, q, f4x4, ...
 const char *type_suffix(type t);

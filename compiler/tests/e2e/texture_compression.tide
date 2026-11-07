@@ -3,6 +3,16 @@ asset Texture alpha = "texture_compression_assets/alpha.png";
 [Raw]
 asset Texture numbers = "texture_compression_assets/alpha.png";
 asset Texture small = "texture_compression_assets/small.png";
+[Raw]
+asset Texture opaqueNumbers = "texture_compression_assets/opaque.png";
+[Lossless]
+asset Texture exactColors = "texture_compression_assets/alpha.png";
+[Raw, Lossless]
+asset Texture exactNumbers = "texture_compression_assets/alpha.png";
+[Filter(Filter.Trilinear)]
+asset Texture authored = "texture_compression_assets/authored.dds";
+[Raw, Filter(Filter.Trilinear)]
+asset Texture authoredNumbers = "texture_compression_assets/authored.dds";
 scene Main { }
 
 local singleton Art
@@ -16,10 +26,24 @@ frag Numbers(Vertex vertex, out Color color)
     color = numbers.Sample(vertex.uv);
 }
 
+frag OtherNumbers(Vertex vertex, out Color color)
+{
+    color = opaqueNumbers.Sample(vertex.uv) + exactNumbers.Sample(vertex.uv);
+}
+
+frag AuthoredNumbers(Vertex vertex, out Color color)
+{
+    color = authoredNumbers.Sample(vertex.uv);
+}
+
 view Show(Art art)
 {
     Draw.Mesh(art.vertices, art.indices, opaque);
     Draw.Mesh(art.vertices, art.indices, alpha);
     Draw.Mesh(art.vertices, art.indices, small);
     Draw.Mesh(art.vertices, art.indices, Numbers);
+    Draw.Mesh(art.vertices, art.indices, OtherNumbers);
+    Draw.Mesh(art.vertices, art.indices, exactColors);
+    Draw.Mesh(art.vertices, art.indices, authored);
+    Draw.Mesh(art.vertices, art.indices, AuthoredNumbers);
 }

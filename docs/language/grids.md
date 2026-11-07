@@ -46,6 +46,46 @@ Nothing about a grid fails: past its size, reads give zero and writes do nothing
 - `cells.size` is its size, 0 on open axes.
 - `cells.Clear()` sets every cell back to zero, and keeps the size.
 - `cells = Grid2(512, 512)` gives the field a new, empty grid.
+- `cells.Copy()` is a grid of its own, with the same size and cells.
+
+## Grids in code
+
+Functions make grids, change them and return them, and a local can hold one. A grid is never copied without saying so: a field, a local or what a function returns has a grid of its own, never another's.
+
+```csharp
+// Made from nothing, cells and all
+Grid2<int> Ramp(int size)
+{
+    mut Grid2<int> made = Grid2(size, size);
+    foreach (var at in made)
+    {
+        made[at] = at.x + at.y;
+    }
+    return made;
+}
+
+// Changes the caller's grid where it is: a field's, or a local's
+void Border(mut Grid2<int> cells, int value)
+{
+    for (int x = 0; x < cells.size.x; x++)
+    {
+        cells[x, 0] = value;
+    }
+}
+
+system Generate(mut Terrain terrain)
+{
+    terrain.heights = Ramp(64); // The field gets the grid's size and cells
+    Border(terrain.heights, 9);
+    mut Grid2<int> copy = terrain.heights.Copy();
+    copy[0, 0] = 1; // The field's stays as it is
+}
+```
+
+- A local holds a new grid, a copy (`cells.Copy()`) or what a function returns. `var copy = terrain.heights;` is an error that says to copy it: two names for one grid would change each other.
+- A function returns a new grid, a copy, or a local of its own. A field takes the same, and a field's grid is the world's: snapshotted, hashed and sent as any field is.
+- A function takes a grid to read, or `mut` to change it where it is. Its writes are the caller's, so a system that passes `terrain.heights` as `mut` writes `Terrain`.
+- A local's grid lasts until the system, view or handler that made it is done. A [task](../game/tasks.md) can't keep one while it waits, and a lambda can't capture one.
 
 ## What a grid costs
 
@@ -53,7 +93,7 @@ A grid keeps its cells in chunks of 64 by 64 cells, or 16 by 16 by 16 in 3D: 16 
 
 A match is snapshotted every tick and rolled back when a guess about another player went wrong (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). Snapshots share the chunks nothing changed, and hashes cover each chunk on its own, so changing a few cells copies and hashes a few chunks, never the whole grid. A player joining gets only the chunks that exist.
 
-A grid stays in its component or singleton: a local can't hold a copy, and functions cannot return grids. A [local worker](../game/tasks.md#local-workers) can take a read-only snapshot as an input. Ordinary helpers called by workers or shader code can read and forward a grid parameter; they cannot change it. Other CPU code reads and changes cells through their component or singleton.
+A local's grid isn't the world's, so nothing snapshots, hashes or sends it, and it costs what's in it. Assigning it to a field copies its cells into the world. A [local worker](../game/tasks.md#local-workers) can take a read-only snapshot of a grid as an input, and reads its grid parameters without keeping a grid in a local.
 
 A `Grid2<Color>` or a `Grid2<float>` with a size is a `Texture` wherever one is wanted: a draw's texture, a frag's source, a `Texture` field or parameter (see [Textures](../game/meshes-and-textures.md#textures)). The texture is the grid, not a copy of it. GPU sampling stays on the GPU; workers read their snapshot's cells by integer position.
 
@@ -81,6 +121,8 @@ system Spread(mut Heat heat)
 
 Each step reads the grid as the loop found it, and changes only its own cell, `at`. So it doesn't matter which steps run first, or on which thread: the result is exactly the same on one thread as on many, on every machine. Code after the loop runs once every step is done.
 
+How many threads a loop gets never changes what it makes, only how soon. tidec reckons what a step costs, counting the functions it calls, and a loop whose steps come to little in all, under a millisecond or so, runs on one thread. More goes to threads, even a short list of costly steps, or a grid or list the system filled that same tick.
+
 That loop runs below, 30 times a second, less a little heat each tick so it cools. Drag over the grid to heat its cells.
 
 ::: tide-example grids Heat that spreads
@@ -99,9 +141,9 @@ A step can declare variables, call functions (and C) and read any cell. What it 
 
 To add things up, use a `for` loop, or a foreach that goes in order (see below).
 
-A list's elements go through a parallel loop the same way, by index (see [Lists](./text-and-lists.md#going-through-every-element-at-once)).
+A list's elements go through a parallel loop the same way, by index (see [Lists](./text-and-lists.md#going-through-every-element-at-once)), and so do a query's rows, whose steps can also send events (see [Systems](../game/systems.md#going-through-the-rows-at-once)).
 
-A parallel loop goes in a system, a view, an event handler that isn't async, or a local worker: not in ordinary functions, methods, async code or an input's `Sample`. Workers can run parallel loops over their own lists, reading captured grids from each step. Their read-only grid inputs cannot be the writable output of an explicit parallel loop.
+A parallel loop goes in a system, a view, an event handler that isn't async, or a local worker: not in ordinary functions, methods, async code or an input's `Sample`. It goes through a component's or a singleton's grid: a local's lives on the thread that made it, so a `foreach` goes through it in order. Workers can run parallel loops over their own lists, reading captured grids from each step. Their read-only grid inputs cannot be the writable output of an explicit parallel loop.
 
 ### Moving things: blocks
 

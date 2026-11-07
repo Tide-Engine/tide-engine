@@ -1,5 +1,410 @@
 # Textures and how they are sampled
 
+## Texture arrays: built (2026-11-05)
+
+What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture arrays), the users' page is
+`docs/game/shaders.md` (Texture arrays) and `docs/game/assets.md`. Everything here is Claude's, Provisional.
+
+- **Runtime values** (`tide/draw.h`): `tide_texture_array_ref` (40 bytes: a target, a pack name, its layers) is Tide's
+  `TextureArray`; `DepthTextureArray` is a `tide_depth_ref` of the array's target. A drawn array is a managed target's
+  state with `layers` (1 to `TIDE_TEXTURE_ARRAY_LAYERS`, 256); its id has `TIDE_RENDER_ARRAY` (bit 52), and a layer as a
+  destination `TIDE_RENDER_LAYER` (bits 53 to 61, 1 + the layer): `tide_render_target_arrayed`, `_layer`, `_array_of`,
+  as a cube's faces. `tide_texture_array_make` (and the `_sized`/`_scaled` wrappers generated C calls), `_layer`,
+  `_depth`, `_resize`, `_dispose`, `_recreate` (a web reload: the layers come in the value), `_size`, `_count`,
+  `tide_depth_array_count`. `tide_render_target_recreate` keeps a layer's bits. Resizing or disposing a layer alone says
+  so and does nothing; a layer's color and depth name no image, as a face's don't.
+- **The draw list:** `TIDE_PIXELS_TARGET_ARRAY` (by the array's id) and `TIDE_PIXELS_PACK_ARRAY` (the pack's pointer to
+  each layer's pixels, as a pack cube's), with `tide_draw_texture.layers`; an array's depth is `TIDE_PIXELS_TARGET_DEPTH`
+  of the array's id. `tide_draw_array_source`. A blit refuses an array a layer of which it draws into; `append` carries
+  both.
+- **The pack:** `TIDE_PACK_TEXTURE_ARRAY` (19), a list block of texture handles, uncompressed (`pack_item` with no
+  compression, `[Raw]` as the declaration says). The loader notes each array whose layers are whole and of one size
+  (`note_arrays`, `tide_pack_texture_array_find`, `tide_pack_texture_array_of`); its version is a hash of its layers'.
+- **tidec:** `TY_TEXTURE_ARRAY`, `TY_DEPTH_TEXTURE_ARRAY`; `ASSET_TEXTURE_ARRAY`, read as Textures (each path a file or a
+  glob, a list of paths as an AnimationCatalog's, no layers merged), with the size and count checked;
+  `check_array_target`, `check_array_sample`, `check_depth_array_read`, `layers[i]` through `colors_indexed` as a cube's
+  `faces`. Shader reads `READ_ARRAY`, `READ_DEPTH_ARRAY` and the compiler-only `READ_COMPARE_ARRAY` (a depth array's
+  texture read, a compared sampler); a way's sampler reads its `base_read`, so arrays share samplers with textures read
+  alike. WGSL: `texture_2d_array<f32>`, `texture_depth_2d_array`, the layer after the uv as
+  `clamp(i32(layer), 0, i32(textureNumLayers(t)) - 1)` (`put_layer`). The SPIR-V and HLSL translators take both
+  (`arrayed` types; vec3/float3 coordinates; `tidehl_layers`; fixtures `compiler/tests/wgsl/texture_arrays*.wgsl`,
+  through spirv-val and fxc). A reload remakes a drawn array from its value (`gen_resource_value`).
+- **gpu.h:** `array(format, width, height, layers, layer_pixels)`, `array_depth`, `array_layer`; reads
+  `TIDE_GPU_READ_ARRAY` (6) and `_DEPTH_ARRAY` (7), whose samplers read COLOR and DEPTH/COMPARE
+  (`tide_gpu_sampler_read`). Vulkan: `make_layers` (one image of `layers`, a `2D_ARRAY` view, a base view, a 2D view a
+  layer to draw into, cleared), color arrays with room for their smaller images from the start where the format blits,
+  a depth array beside (or as) it; a layer's target is a face-like target that attaches that layer of both. WebGPU: the
+  same in `tide.js` (`gpu_array`, `layered` views, which cubes now share, `depthLayers`), its layouts `'2d-array'`.
+  The renderer: `gpu_array`, `array_for` (layers' targets cleared black and far as made), texture reads, sources made
+  before they're read, a layer's pass counted for the array's smaller images, fallbacks (`blank`, a white array of one
+  pixel; `far_array`, a depth array at the far limit). Memory is held as the array's whole.
+- **Unity** (embed ABI 15, 16 for a grid's arrays): notes/unity.md, Texture arrays.
+- **Tests:** `tidec_e2e_texture_arrays` (an asset's glob and list, a list's repeated file one image, counts, layers as
+  destinations, the run's textures and samplers, a reload in other memory, Resize and Dispose, natively and under
+  Node); `compiler/tests/shaders/texture_arrays` (golden, through spirv-val and fxc); `tidec_error_texture_array_*`
+  (7); pass 25 of `platform/tests/shaders.tide` (`run_array_checks`: an asset's six layers, a painted array's four,
+  layers past the last and before the first, a layer that differs across a square, a layer read between its smaller
+  images, a never-made array and depth, a depth array's three layers read and compared), on Vulkan (with the
+  validation layer) and WebGPU, again after device loss on the web; `embed`'s packet reader takes the new ops; LSP
+  (`lsp_texture_arrays`).
+- **Gaps:** see the follow-up below.
+
+### The gaps closed (2026-11-05, the owner: "work on the gaps")
+
+- **Compressed layers.** The pack writes each layer as a `Texture` asset's (`compress = !lossless`), so a layer of 128
+  or more, a power of two a side, is BC1 or BC3 with its chain made in the build; `[Lossless]` is allowed on
+  `ASSET_TEXTURE_ARRAY` and keeps them all RGBA8. `note_arrays` takes layers that are blocks alone (their pixels NULL)
+  and `tide_pack_texture_array_blocks(named)` gives each layer's `tide_texture_blocks` (`blocks_at`, shared with
+  `tide_pack_texture_blocks_find`); the draw list hands them on as `tide_draw_texture.layer_blocks`. gpu.h's
+  `array_blocks(width, height, layers, blocks)` takes one format a call, each layer a whole chain `bytes` apart. The
+  renderer's `pack_array_texture` makes the GPU one: all BC1 stays BC1, a mix is BC3 throughout
+  (`tide_texture_blocks_bc1_to_bc3`, `tide/texture_blocks.h`, puts an opaque alpha block before each BC1 one: exact),
+  without BC every level decoded to an RGBA8 chain (the same mips a `Texture`'s fallback has, not regenerated), and an
+  array of RGBA8 layers as before. Vulkan `vk_array_blocks`, WebGPU `gpu_array_blocks`; the recorder decodes to pixels
+  (Unity's arrays aren't compressed).
+- **`size` and `count` on the GPU.** A shader texture's size words are three for an array (`shader_size_words`): its
+  width, height and layers, from `tide_texture_array_size`/`_count` (`gen_array_size`), read by `ex_texture_size`
+  as uniform words, as a texture's size already is.
+- **`Grid3` to `TextureArray`.** `type_is_array_grid` (`Grid3<Color>` or `Grid3<float>`) is assignable to
+  `TY_TEXTURE_ARRAY`; `gen_as` makes `tide_texture_array_of_grid(grid, &shape)`, a value naming the grid
+  (`reserved == TIDE_TEXTURE_ARRAY_GRID`, `named` the handle, `layers` the cell kind and the chunk shifts;
+  `tide_texture_array_grid` reads it back). The draw list's `TIDE_PIXELS_GRID_ARRAY` (`tide_draw_grid_array_texture`,
+  mesh.c) is `width` by `height * layers` pixels, the layers one under another, through `grid_cells` with a box of
+  three dimensions and `across` 1, so its changed areas follow the chunks as a grid texture's do; `layers` set. gpu.h
+  `array_of(format, width, height, layers)` (RGBA8 or R16F, zeros, room for smaller images) and
+  `array_write(array, layer, pixels, x, y, width, height)`; the renderer's `grid_array_texture` writes it whole when
+  made, else each changed area split by the layers it crosses. Vulkan `vk_array_of`/`vk_array_write`
+  (`write_pixels` with a layer), WebGPU `gpu_array_of`/`gpu_array_write` (`writeTexture` at `[x, y, layer]`, its
+  smaller images made again when next read), the recorder `ARRAY_OF`/`ARRAY_WRITE` (embed ABI 16, notes/unity.md).
+- **Tests:** `tidec_e2e_texture_arrays` (BC1 and BC3 layers with no pixels, a `[Lossless]` array's pixels and no
+  blocks, the blocks handed to the list, a `Grid3<float>`'s array: count, size, no destination, the list's halves
+  stacked by layer); `compiler/tests/shaders/texture_arrays` (`count` and `size` in a frag); pass 25 of
+  `platform/tests/shaders.tide`: a compressed array's opaque and alpha layers against the same files as `Texture`s,
+  its smaller images, a frag's `size`/`count`, a `Grid3<Color>`'s three layers and a `Grid3<float>`'s fourth, a cell
+  changed then changed back between frames (a partial write; a broken one leaves the old color, checked by breaking
+  it), on Vulkan and WebGPU, and `tide_platform_shaders_rgba_fallback` (WebGPU with `texture-compression=off`);
+  `embed_render_array_written_in_parts`.
+- **Then the rest** (the owner: "why are we stopping with things still open? the testing i understand and that can be
+  postponed"):
+  - **`[Raw]` arrays and cubes.** The checker's raw role is `raw_kind` (Texture, TextureArray, Cubemap) wherever it
+    was Texture's: `[Raw]` on `ASSET_TEXTURE_ARRAY`/`ASSET_CUBEMAP` assets and on TextureArray, Cubemap and
+    `Grid3<Color>` fields (`check_field_raw`); raw uses, field values and escapes as for textures (`check_raw_uses`,
+    `check_raw_field_value`, `refuse_raw_grid` naming the type); array and cube `Sample` and array `size`/`count`
+    mark the source read. `declared_raw` covers both field types, so their reads skip `tide_straight` (the cube's in
+    `ex_cube_sample` too). A raw array asset's layers pack raw (`pack_item` with `sample_raw`, compressed as raw
+    Textures are); a raw cube's faces too (never compressed). A `[Raw] Grid3<Color>`'s array is
+    `tide_texture_array_of_grid(grid, &shape, true)`: cell kind 3 in the ref (`tide_texture_array_grid_raw`), drawn by
+    `tide_draw_grid_array_texture(..., raw)` with `cells_writer.raw` and `KIND_ARRAY_RAW`. Hot-reload layout names
+    `[Raw] TextureArray`/`[Raw] Cubemap`. Tests: e2e (`numbers` asset, a raw Grid3's alpha-0 cell kept, the run has
+    no `tide_straight` on the web, a color array's does); goldens `shaders/texture_arrays`, `shaders/cubemaps`; errors
+    `raw_array_kept`, `raw_grid3_kept`, `raw_array_field_colors`, `raw_on_float_grid3`, `raw_cube_kept` (replacing
+    `cubemap_asset_raw`); pass 25's alpha-0 raw Grid3 pixel on Vulkan and WebGPU.
+  - **Compressed images in Unity**, textures and arrays alike: notes/unity.md, ABI 17.
+  - **Unity's OpenGL Core reading one texture two ways**: notes/unity.md, ABI 17.
+  - **The prototypes' `WEBGPU`**: already gone on tide-prototypes' dev (its foldline test says `PIXELS`); only a stale
+    local checkout had it.
+- **Still open:** none of the Unity side has run in Unity (no Unity here: C# compile checks, fxc for the HLSL, the
+  recorder's packets in `embed`); Linux, macOS and Android are CI's. The layer-before-array reload case above needed
+  nothing: recreating the array reconciles its layer count.
+
+## Texture arrays: the proposal, agreed (2026-11-05)
+
+The owner picked the recommended option of each of the four questions asked (2026-11-05): types of their own
+(`TextureArray`, `DepthTextureArray`); an asset of a glob or a list of paths; one drawn into made by
+`TextureArray(width, height, layers, ...)` with `layers[i]` as targets and `.depth` the depth array; and
+`Sample(uv, layer)` with an int layer, clamped. The rest of the proposal below came with them; its details stay
+Claude's picks, Provisional.
+
+Asked for by the owner ("just cause nothing needs [it] isn't an excuse"), from Mount & Rifle's ground frag (9 material
+scans, two or three shadow cascades and a canopy texture, notes/gaps.md there). The language design is the owner's:
+nothing below is built until it's agreed. Every backend has them: WGSL `texture_2d_array<f32>` and
+`texture_depth_2d_array` (with `textureSample*(t, s, uv, layer)`), Vulkan images of several layers viewed as
+`VK_IMAGE_VIEW_TYPE_2D_ARRAY`, Unity's `Texture2DArray` and `RenderTexture` with `TextureDimension.Tex2DArray`
+(HLSL `Texture2DArray`). The layer limit everywhere is at least 256 (WebGPU's default `maxTextureArrayLayers`,
+Vulkan's least `maxImageArrayLayers`).
+
+1. **Types of their own, `TextureArray` and `DepthTextureArray`,** as `Cubemap` is one (the same argument: every place a
+   `Texture` goes reads it by a `float2`, and an array is read by a `float2` and a layer, so each would refuse one).
+   One array is one of a draw's 16 textures, its ways of reading samplers as a texture's (the rule just built).
+2. **An asset of same-sized images:** `asset TextureArray ground = "art/ground/*.png";`, the glob's files as layers in
+   the order a glob's list has them (by path), or a list of paths, `asset TextureArray ground = ["art/grass.png",
+   "art/rock.png"];`, in its order. Every file the same size (an error naming the one that isn't, with both sizes),
+   1 to 256 of them. `[Filter]`, `[Wrap]`, `[Raw]` and `[Lossless]` are the whole array's, as for a `Texture`. Each
+   layer is compressed (BC1/BC3) as a `Texture` asset is, all layers one format (BC3 if any has alpha). Layer names:
+   the glob's `ground.Layer("rock")`? Not proposed; a game uses the index (or its own `const int`s).
+3. **One a view draws into:** `TextureArray(width, height, layers[, pixelsPerUnit][, format...][, samples: n])`, a
+   constructor as `Cubemap(size)` is, whose `layers[i]` is a `RenderTarget`, a destination as a cube's face is (its own
+   camera, clip and settings, depth and stencil of its own). `array.depth` is its `DepthTextureArray`: each layer's depth.
+   So shadow cascades are `TextureArray(2048, 2048, 3, 1, Format.Depth)`, each cascade drawn into `cascades.layers[c]`,
+   read as `cascades.depth.Compare(uv, c, value)`. `Resize(width, height)` and `Dispose()` as a target's.
+4. **Reading one in a frag or a vert:** `array.Sample(uv, layer[, filter][, wrap])`, `array.SampleGrad(uv, dx, dy,
+   layer[, filter][, wrap])`, `depthArray.Sample(uv, layer)` and `depthArray.Compare(uv, layer, value)`. `layer` is an
+   `int` of any expression, so it can differ from pixel to pixel (a cascade picked by depth, a material by a splat
+   map). One past the layers reads the nearest one: tidec clamps it, as WGSL leaves an out-of-range layer to the GPU.
+   Filters and wraps are a sampler's, so they're the whole array's for that read, never a layer's own: a
+   `Filter.Trilinear` read lifts the uv as a texture's does (the layer needn't be), and the smaller images are made
+   for every layer.
+5. **Where it's read from:** an asset by its name, or a field of a component or a singleton the code takes, as a
+   `Cubemap` or a `DepthTexture` is; a function takes one and reads its call's. A `Grid3<Color>` (z the layer) and a
+   `Grid3<float>` convert to a `TextureArray` where one is wanted, as a `Grid2` converts to a `Texture`: the grid's
+   cells as layers, sent as a grid's texture is (only what changed).
+6. **On the CPU** (local code, as `Texture.size` is): `array.size` (an `int2`, a layer's pixels) and `array.count`
+   (the layers), zeros for none. A `TextureArray` is this machine's, as a `Cubemap` is: no match state holds one.
+7. **Limits:** 256 layers (an error for a constant past it, a line and the most at run time), a side up to the
+   device's 2D limit, and each layer counts towards the image memory budgets as a texture does.
+8. **Unity:** `Texture2DArray` for an asset's, a `RenderTexture` of `Tex2DArray` with `volumeDepth` for one drawn
+   into, read in the HLSL as `Texture2DArray<float4>`/`<float>` with `float3(uv, layer)` (the compare by `GatherRed`
+   as a depth's is now); the embed's texture and target packets gain a layer count, so the ABI moves.
+
+Not proposed: cube arrays (`texture_cube_array` isn't in WebGPU's core); a layer of an array as a `Texture` of its
+own; arrays of more than one color image or as a draw's own texture (`Draw.Mesh(..., texture)`).
+
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
+## `[Raw]` images compress too; `[Lossless]` keeps one exact (2026-11-04)
+
+From a game's feedback (Mount & Rifle, pinned 0.6.0-nightly.21): its 618 MB distribution pack was ~495 MB of 47
+`[Raw]` textures, normal and ARM maps stored as RGBA8 because `pack_item` compressed only `!raw` images (a 4096
+normal map 67,108,864 bytes, 4096²×4; BC1 with mips is ~11 MB). 173 of its 179 Raw textures had no alpha. The
+owner chose, from a proposal: "Compress, opt-out", the attribute named `[Lossless]`.
+
+- **Packing** (`pack_item`, `compiler/src/codegen.c`): the `compress` argument is now `!decl.lossless`, and Raw
+  images go through `texture_compress` as color ones do. The RGBA it's given is already what the GPU reads: color
+  bytes premultiplied, Raw channels as the file has them (worked alpha 1), and `texture_compress`'s box filter averages each
+  channel apart, which is right for both. BC1 when every alpha byte is 255, else BC3, as for colors. The
+  decoder for devices without BC (`tide_texture_blocks_decode`) never premultiplied, so a Raw image decodes to
+  its numbers; no runtime, shader or ABI change. Authored DDS chains, cubemap faces (`compress` false) and
+  small/non-power-of-two images are as they were.
+- **Cache keys** (`texture_cache_key`, `compiler/src/texture_cache.c`): a Raw compressed variant hashes a third
+  word, as its old key held exact RGBA another build would otherwise reuse. Color keys are unchanged, so no color
+  image is re-encoded.
+- **`[Lossless]`** (`decl.lossless`, `check_lossless_attribute` in `check.c`): before a `Texture` asset, one or a
+  glob's list or map, with or without `[Raw]`. Takes nothing, once; an error on a non-asset (through the general
+  attribute loop) and on any other asset type, grids and cubemaps included ("which is never compressed"). Editors
+  offer it in an asset's brackets with a hover (`compiler/lsp/analysis.c`).
+- **Mips** (the feedback's second question): an uncompressed image, Raw or `[Lossless]`, has only its base level
+  in the pack; the renderer makes the rest on the GPU the first time a `Filter.Trilinear` draw reads it
+  (`prepare_mipmaps`, below), so the pack's 4096²×4 was right and the GPU held 4/3 of it. Compressed Raw images
+  now carry the build's chain, as color ones do.
+- **Images are shared by what they store** (owner, the same day: "if they are equivalent they should remain the
+  same"): `[Raw]` only changes alpha's part, so an opaque file declared as a color and as Raw comes out the same
+  bytes, which were two blocks because the content key was the file's hash with bytes turned for Raw and for
+  blocks. The content key is now `texture_content` (`texture_cache.c`): SHA-256 of a version string, the size,
+  the blocks' format and levels, and the stored bytes. `tide_pack_texture_blocks` already shared by content, so
+  equal images are one block, one version in the draw list and one GPU upload; images that differ by a byte are
+  two. Its first 8 bytes stay the image's version. The texture cache entry carries the key after its 20-byte head
+  (layout word 2 in `texture_cache_key`, so every texture is prepared once more), so a build that reuses the cache
+  hashes nothing. Exact equality, not a rule about alpha: a 16-bit alpha just under 1 rounds colors apart, and
+  stays two. Two different files of the same pixels share too.
+- **The no-alpha warning** the feedback proposed is moot with Raw compressed; not built.
+- **Not built:** BC4/BC5 (two-channel normals: a Raw texture's `Sample` would read z as 0, which changes what a
+  frag gets), BC7, per-asset quality, renormalized normal-map mips (the GPU's runtime mips didn't either).
+- **Tests:** `texture_compression` e2e: Raw alpha image BC3 with unpremultiplied channels within 8 of the file,
+  Raw opaque BC1, `[Lossless]` color exact and premultiplied, `[Raw, Lossless]` exact, small exact; the opaque
+  pair is one block and version, the pairs with alpha are two. `tide_platform_shaders` (Vulkan and OpenGL)
+  passes with the new keys, its Raw and color `hero.png` having clear pixels and so staying two.
+  `compiler/tests/errors/lossless_*.tide` (on a grid, on a component, twice). The renderer's Raw passes use an
+  8x6 image, below the size that compresses, so their exact-pixel checks stand.
+
+## Idle images by the device's memory (2026-11-02)
+
+Internal, from an investigation of frame hitches in the owner's Mount & Rifle (pinned 0.6.0-nightly.12, the
+same engine as dev then). Its profiled route (release, hidden, 1280x720, seed 42, `--profile-warmup 200`) had a
+mean CPU frame of 7.8 ms and a max of 88 ms, the render phase's max 77 ms.
+
+- **The cause** (temporary per-frame instrumentation of every backend call, of `vkAllocateMemory`, and of
+  `texture_for`'s uploads and `forget_textures`' evictions; not committed). The game's `[Raw]` conifer maps
+  are three 4096 by 4096 RGBA images, 89 MB each with the mips the renderer makes for Trilinear. The game draws
+  every vegetation material once behind the camera at its menu (`vegetation_warmup.tide`), about 430 MB of
+  images. At the next frame the idle byte budget, 128 MiB whatever the device, let most of it go: two of the
+  conifer maps and 20 of the 1024 by 1024 maps at frame 3, the third conifer map at 122. So the forest's first
+  appearance uploaded them again (frames 518 and 519: 64 MB each copied into the ring, 4 allocations of 298 MB,
+  mips), they went again at 525 after one frame out of view, and came back at 817 and 818 (render 22 to 40 ms,
+  mip generation 13 to 31 ms of CPU, nearly all `vkAllocateMemory`: 5 allocations, 554 MB, 18.7 ms, the
+  textures, their copies with room for mips, and the upload ring doubling to 256 MB), then a wait in the next
+  present while the GPU copied. The 1024 maps came back at 850. On a busy machine the same allocations took
+  127 ms once.
+- **The budget is now the larger of 128 MiB and a sixteenth of the device's own memory**
+  (`tide_texture_idle_budget`, `TIDE_TEXTURE_IDLE_SHARE` in `platform/src/texture_residency.h`; the share is
+  Claude's pick). `tide_gpu.device_memory` (`gpu.h`, optional) says how much: Vulkan's is the biggest
+  device-local heap of a discrete GPU (`vk_device_memory`), 0 for an integrated GPU or a phone, whose memory is
+  the system's. OpenGL, WebGL, WebGPU and the Unity recorder don't say, so they keep 128 MiB. On this RTX 4080
+  SUPER that's 1,002 MiB of 16,045 MiB. `forget_textures` reads it every frame (`tide_texture_idle_bytes`), so a
+  new device is weighed by its own. The count, the ten-minute age and the pressure order are unchanged, and
+  active images are still outside the budget: it isn't a VRAM cap. The memory kept is the only cost: Mount &
+  Rifle now keeps its warmed set (the profile's `gpu_memory` is that much higher while the forest is out of view).
+- **Measured after** (the same route from a build of this checkout with the game as an external dir, release,
+  without and with the change built side by side and run alternately twice each, warm pipeline and driver
+  caches): CPU work max 28.2/25.1 ms before and 18.3/15.3 after, the render phase's max 20.0/16.4 and 3.2/2.5,
+  means unchanged (6.7 ms CPU, 0.8 ms render). With the instrumentation on, nothing is evicted or uploaded again
+  after the menu's warmup. The frames over 20 ms left are the script's five captures (readback and PNG),
+  which the profile leaves out.
+- **What else the hitches were, not changed here:**
+  - Pipelines. The owner's baseline was a new build, so its pipelines weren't in `pipelines.vulkan` yet: a cold
+    run here compiled 38, 12 to 709 ms each, five of them at frame 971 (360 ms together) and six between 832
+    and 846. A run with no window never prewarms (`notes/rendering.md`, Pipelines made before they're drawn),
+    so a profile of a new build hitches where a window's second run, with its keys file, wouldn't. Prewarming
+    in a `--profile` run would make its first frames like a player's; not built (a behaviour of headless runs
+    that note decided).
+  - Vulkan makes a texture that's read Trilinear twice: `vk_texture_make` with one level, then `vk_mipmaps`
+    makes another with room for its levels and copies the first into it, as WebGPU's backend does. For a 4096
+    image that's 64 MB and then 85 MB more of `vkAllocateMemory` and a GPU copy. Making it with its levels when
+    the renderer knows a Trilinear draw reads it would save that; `gpu.h`'s `texture` has no levels to say it
+    with. Not built.
+  - The first upload of a big uncompressed image is synchronous: 64 MB is about 4 to 9 ms of copying into the
+    ring. A game that draws its images during loading (as Mount & Rifle does) pays it there. Asynchronous
+    uploads remain a gap (Automatic compression, below).
+  - The upload ring grows to the most a frame has uploaded and never shrinks, so its doublings cost once.
+- **Tests:** `resident_pack_textures` (`platform/tests/draw.c`) checks the budget's values (0 and 1 GiB keep
+  128 MiB, 16 GiB keeps 1 GiB, no overflow) and that the renderer weighs by its device's.
+  `resident_large_pack_textures` draws two 4096 by 4096 Trilinear pack images (128 MiB, 170 MiB with mips),
+  skips them for two frames, and draws them again: nothing is sent again, their memory stays counted, and
+  they go with the pack. It runs where the device's budget has room (here, Vulkan), and says it's skipped
+  elsewhere. With the old fixed budget it fails at frame 3 (64 MB sent again).
+- **Validation** (Clang 23.1.2, Node 24.22.1, `TIDE_HIDDEN`): Windows ASan, all four `tide_platform_draw` tests
+  (Vulkan with its device-loss pass, OpenGL, OpenGL's legacy vertex path, Vulkan descriptor sets) and the
+  targets, shaders, prewarm and skinned tests on Vulkan and OpenGL; web debug, all four draw pages (WebGL,
+  WebGPU and both RGBA fallbacks). Android (whose Vulkan builds `vk_device_memory`), Linux and macOS are CI's.
+  The game wasn't changed; its gap is recorded in its own notes.
+- **How it was measured, for next time:** a scratch folder whose `CMakeLists.txt` globs the game's `.tide` and
+  `.c` files (hidden folders left out) into `tide_add_game(... PACKAGES Rooms <packages/rooms/rooms.tide>
+  DEFINES PERFORMANCE_TRACE)`, given to the `release` preset as `-DTIDE_EXTERNAL_DIRS`, builds an owner's game
+  against the checkout, so the renderer can be instrumented; the game's own route script copied beside it keeps
+  its captures out of the game's folder.
+
+## Authored foliage mip coverage and portable full chains (2026-11-02)
+
+The owner asked to apply established foliage techniques without losing distant
+leaf coverage. The scoped asset route is authored, uncompressed DDS mipmaps;
+there is no shader alpha heuristic, new Tide syntax, or generated runtime call.
+This extends the existing immutable texture-block trailer with RGBA8 format 4.
+Ordinary PNG/PSD/JPEG/TGA/BMP assets keep their existing import/compression path.
+
+- `image_file_read_mips` accepts a legacy DDS_HEADER/DDS_PIXELFORMAT containing
+  one tightly packed 2D RGBA8 or BGRA8 chain. Both base sides must be powers of
+  two from 4 through 16384, and the exact mip count and payload must describe
+  every level through 1x1. Pixel flags, channel masks, FourCC, bit depth, pitch,
+  depth and cube/volume caps are checked before allocation. DX10/compressed
+  DDS, arrays, volumes, cubes, padding, truncation and extra bytes fail with
+  export guidance. Dimensions/size arithmetic is bounded before allocation;
+  source bytes and decoded float base plus retained RGBA chain each fit the
+  existing 512 MiB image-import budget. Signatures take precedence over names.
+- The file cache owns independent decoded base colors and straight RGBA mip
+  bytes, freeing both on invalidation. Texture packing premultiplies RGB by
+  alpha separately at every authored color mip. `[Raw]` keeps all four bytes
+  independently. Textures/lists/maps retain the chain alone in the pack;
+  grids and cubemap faces use only the base pixels. Runtime Decode stays PNG
+  only. Authored chains bypass automatic BC encoding and cost a full RGBA
+  chain (about 4/3 of base RGBA) in the pack and GPU.
+- Native OpenGL/Vulkan, WebGL2 and WebGPU upload every RGBA level through the
+  existing private `texture_blocks` factory; no compression extension is
+  required. Immutable resident mip state prevents later GPU mip generation
+  from replacing the supplied levels. Unsupported-BC fallback now decodes
+  **every** original BC mip into a temporary RGBA8 chain, uploads it, and frees
+  it synchronously. An explicit exact RGBA base fallback, when present, still
+  supplies level zero. Upload/residency accounting counts the actual full
+  representation. Unity's current draw recorder has no block factory and
+  retains only the base RGBA image; authored Unity mip preservation is not
+  implemented by this pass.
+- `tide_texture_blocks_decode_level` validates the entire descriptor before
+  writing and clips partial 2x2/1x1 BC tail blocks to the destination extent.
+  The existing base decode helper delegates to level zero. Trailer/Texture
+  layouts, pack bounds checks, borrowed draw-list lifetimes and generated
+  calls stay unchanged; RGBA8 is another validated immutable representation.
+- Offline `bench/forest/alpha-mips.mjs` exports
+  `writeCoverageDDS(path,width,height,rgba,cutoff,options)` and
+  `writeMipDDS(path,width,height,rgba,{raw})`, plus pure build/encode helpers.
+  Sources are straight RGBA Uint8Arrays, POT4..16384, bounded to 128 MiB of
+  source bytes. Color filtering averages premultiplied RGB then unpremultiplies;
+  raw filtering averages independent channels. Every mip is filtered before
+  scaling, avoiding correction feedback. The coverage helper uses the original
+  `alpha >= cutoff` coverage and chooses the closest achievable uniform-alpha
+  scale in byte space at every mip. A tiny offset inside a byte-rounding
+  interval avoids a floating-point half-byte boundary losing passing texels.
+  Tied alpha values and finite texel counts make exact coverage impossible
+  for some mips; there is no promise of identical silhouettes at 1x1.
+- Atlas options `{tileWidth,tileHeight}` preserve each view's original coverage
+  independently while that tile still has at least one texel in both axes.
+  Smaller mandatory full-atlas tails use aggregate coverage. This does not
+  solve view bleeding at coarse LODs: the baker/sampler still owns gutters and
+  atlas coordinate/LOD choices. The coverage algorithm follows Ignacio
+  Castano's [Computing Alpha Mipmaps](https://www.ludicon.com/castano/blog/articles/computing-alpha-mipmaps/);
+  DDS layout follows Microsoft's legacy DDS header/pixel-format documentation.
+
+Focused regression coverage: specification-written RGBA/BGRA rectangular DDS
+chains, unsupported shapes/headers, exact-allocation cuts and byte mutations;
+RGBA and clipped BC tail decoding against an independent oracle; Raw/color
+pack bytes and premultiplication at every mip in `texture_compression`; actual
+authored mip-2 pixels, BC fallback, residency and upload counters in
+`platform/tests/draw.c`. The offline algorithm's four Node 24.22.1 tests pass,
+including independent exhaustive finite-coverage oracles for full images and
+per-view atlas tiles, color/raw filtering and complete DDS layout. Generated
+release web runtime matches source. Central native/web compilation and GPU
+validation are coordinated centrally; no timing claim is made here. Initial
+native/web builds succeeded. The first native DDS run exposed diagnostic
+priority for a non-POT width whose pitch also differed: POT validation now
+precedes the independent pitch check, retaining both errors and the existing
+strict expectation. The first WebGPU RGBA-fallback run completed every draw
+check and reported result 0; CTest rejected only its old base-only upload
+marker (65536 instead of the correct full-chain 87380 bytes). Its CMake marker
+is updated centrally. The repeated native image/runtime checks pass, and the
+corrected WebGPU fallback passes in the 47-case integrated web foliage run.
+
+## A grid's Texture keeps a 64-bit handle (2026-10-30)
+
+A grid's handle is 64 bits now (notes/ecs.md, 64-bit handles), which
+`image.version` can't hold beside the cells, the shifts and the sampling bits.
+`tide_texture_of_grid` (`tide/mesh.h`) keeps the handle's low 32 bits where
+they were and its high 32 in `image.width`, which nothing reads of a grid's
+Texture (its size is the grid's: `tide_texture_size`, `see_grid`);
+`tide_texture_grid` puts them back together. The 48-byte `tide_texture_ref`
+is unchanged. The draw list's ids for lists, maps and grids of numbers
+(`numbers_id`, `engine/src/mesh.c`) are a 63-bit mix of the handle and the
+layout, where they were the 32-bit handle beside the layout, and a mesh made
+along the way is `tide_handle_of(TIDE_IN_SCRATCH, 0)`, no world's handle.
+
+## Packs keep compressed images alone (2026-10-30)
+
+bannerlord-duel (notes/gaps.md) found its web pack going from 32 to 231 MB with
+a dozen 1k-2k photographs, and four 4096 by 4096 RGBA atlases ending `tide
+run` with "tide: out of memory". Both were the pack keeping every compressed
+image's exact RGBA beside its blocks: 85 MB for one 4096 image with BC3, and
+tidec's builder aborts (`block` in `engine/src/pack.c`) past the 512 MiB a pack
+handle reaches (`TIDE_PACK_BASE`, tide/text.h), which their pack passed.
+
+- **tidec** (`pack_item`) gives `tide_pack_texture_blocks` no RGBA when
+  compression made blocks; its content key flips another byte too, as this is
+  another representation. Uncompressed images (small, not a power of two,
+  `[Raw]`, cubemap faces) are as they were.
+- **The block** of one: the size, then the existing trailer (magic, format,
+  levels, bytes) and the blocks, with `next` exactly `8 + 16 + bytes`. With
+  RGBA, `next` counts the RGBA too and is never that, and an uncompressed
+  image's is 0, so `texture_at` (`pack_load.c`) tells them apart. A
+  blocks-only image's `tide_pack_texture_find` has `pixels` NULL (its size is
+  as before), its `tide_pack_texture_blocks_find` the blocks, and it's no
+  cubemap face. Old layouts still load.
+- **A device without BC** (`gpu->texture_blocks` absent or failing: phones'
+  OpenGL ES and WebGPU, WebGL without S3TC, Unity's backend) gets the blocks'
+  largest level decoded to premultiplied RGBA in `texture_for`
+  (`platform/src/platform.c`), uploaded as an ordinary image and freed; such a
+  texture makes its own mips for Trilinear as any uncompressed one does. The
+  decoder is `tide_texture_blocks_decode` (`tide/texture_blocks.h`, inline):
+  BC1's four and three-color blocks, BC3's eight and six-level alpha with its
+  color block always four colors, thirds and sevenths rounded to the nearest.
+  It checks the blocks' size against the image's before writing anything.
+- **Measured:** seven 4096 textures (six BC3, one BC1) pack into 145 MB; the
+  same with RGBA beside them was past 512 MiB and tidec aborted.
+
+Tests: `pack_textures_of_blocks_alone_have_no_pixels_and_their_blocks`
+(tests/test_pack.c: no pixels, whole blocks, a damaged `next` or trailer no
+blocks, no cube of it, an image given neither stays zeros);
+`texture_blocks_decode_to_the_first_level_as_the_formats_say` (within 2 of the
+independent decoder in texture_compress_test.c over both smooth fixtures,
+hand-made three-color BC1 and six-level BC3 blocks, wrong sizes, formats and
+counts writing nothing); `compressed_pack_textures` in `platform/tests/draw.c`
+now draws each format as blocks alone too, with its pixels and upload bytes;
+`texture_compression` e2e reads the decoded pixel.
+
 ## Depth dimensions (2026-10-29)
 
 The Render3D resolution increase needs physical shadow dimensions after the
@@ -31,7 +436,7 @@ local coverage limits are recorded with the Render3D change in render3d.md.
 
 ## Twelve shader slots (2026-10-25)
 
-The internal draw capacity is twelve. Individual Texture references retain
+The internal draw capacity is twelve (sixteen since 2026-11-05: notes/rendering.md, Sixteen textures a draw). Individual Texture references retain
 their existing four sampling bits, Raw role and ownership. A run's sampling
 value is uint64_t: slots 0..7 retain their original low bank and slots 8..11 use
 the same layout in the high bank. Existing filters, wraps, mip preparation and
@@ -127,12 +532,12 @@ There is no sampler, runtime or GPU contract change; see `notes/language.md`.
 - `compiler/src/texture_compress.c` uses pinned stb_dxt 1.12 in high-quality mode at build time only. Existing RGBA byte conversion and display-space premultiplication happen first. All-255 alpha selects BC1; any other alpha selects BC3. Integer box filtering builds every mip down to 1x1, with clamped 4x4 tail blocks. Compression is lossy and visual only; numeric data must keep `[Raw]`. The smooth-gradient fixtures measured maximum channel error 7/255 and mean absolute error 1.15517 (BC1) / 0.959274 (BC3); those are fixture measurements, not arbitrary-art quality bounds.
 - Exact premultiplied RGBA remains in the pack for unsupported devices and existing C readers. An optional trailer carries magic, format, mip count, byte count and blocks; the texture block's `next` bounds its payload. `tide_pack_texture_blocks_find` validates dimensions, complete mip sizes, counts and file-region bounds before exposing a borrowed pointer. Missing/malformed metadata gives RGBA fallback. Compressed/uncompressed representations have distinct content versions. Pack bytes and CPU asset memory increase; download/CPU-memory compression is not claimed.
 - The draw list borrows both representations until the pack is replaced/unloaded; append propagates the block reference. The private backend factory uploads complete immutable BC mips when supported, otherwise creates the ordinary RGBA image. OpenGL/WebGL query S3TC formats; WebGPU requests optional `texture-compression-bc`. GPU accounting counts the actual full block chain. Point/Bilinear still sample the base level; Trilinear uses the prepared chain without runtime generation. Epoch changes recreate compressed GPU objects rather than writing RGBA into them.
-- Only immutable pack image/cube GPU identities survive inactive frames. The idle budget is 128 MiB, 4096 images, and at most `TIDE_TEXTURE_IDLE_FRAMES` rendered lists since last use: 36,000 (ten minutes at 60 Hz) since 2026-10-20, previously 60, which re-uploaded GRAVEWAKE's boss animation every time one rose and hitched on the web. The byte/count budget is what bounds memory. `tide_texture_idle_frames` (platform.c) holds the value; the residency test in `platform/tests/draw.c` sets it to 60 to see expiry and restores it. Active images are outside this budget; it is not a total VRAM cap. Pressure prefers the most recent images that fit, with stable ties and overflow-safe subtraction. C pointers, grids, shader data and targets retain their existing lifetimes. The GPU cache retains ids/metadata only, never borrowed CPU pack pointers. Device epochs clear it; draw epochs retire stale inactive images.
+- Only immutable pack image/cube GPU identities survive inactive frames. The idle budget is 128 MiB (since 2026-11-02 a sixteenth of a discrete GPU's memory where that's more: Idle images by the device's memory, above), 4096 images, and at most `TIDE_TEXTURE_IDLE_FRAMES` rendered lists since last use: 36,000 (ten minutes at 60 Hz) since 2026-10-20, previously 60, which re-uploaded GRAVEWAKE's boss animation every time one rose and hitched on the web. The byte/count budget is what bounds memory. `tide_texture_idle_frames` (platform.c) holds the value; the residency test in `platform/tests/draw.c` sets it to 60 to see expiry and restores it. Active images are outside this budget; it is not a total VRAM cap. Pressure prefers the most recent images that fit, with stable ties and overflow-safe subtraction. C pointers, grids, shader data and targets retain their existing lifetimes. The GPU cache retains ids/metadata only, never borrowed CPU pack pointers. Device epochs clear it; draw epochs retire stale inactive images.
 - Renderer fixture measurements on this Windows RTX 4080 SUPER: 128x128 BC1 uploaded/accounted 10,936 bytes, BC3 21,872, both including all eight mips, versus 65,536 RGBA base bytes. Relative to a full RGBA mip chain (87,380 bytes), those are approximately 8x/4x smaller. Returning after a hidden frame uploads zero bytes; expiry after 61 unused lists releases the entire allocation. These are upload and engine GPU-accounting measurements, excluding driver allocation overhead, not FPS claims.
 - Coverage: compiler compression tests use an independent decoder and repeat-build comparison; `texture_compression` E2E checks automatic opaque/alpha imports, exact Raw/small channels and append. Pack tests reject corrupt metadata without changing RGBA. Renderer tests cover pixels, premultiplied alpha, point/trilinear reads, upload/memory accounting, residency expiry, byte/count pressure, unload/draw epochs, forced RGBA fallback and WebGPU device loss. Adapter mocks check BC with/without timestamps, timestamp fallback preserving BC and explicit disablement.
 - Validation: full native/web debug builds and suites exercised 2081/2053 tests. Initial failures came from new PNGs entering an existing recursive-glob fixture, an empty optional-feature request descriptor, and forwarding the page's fallback query as a C test argument. Those were corrected, fixtures/pages rebuilt, and all seven affected native checks and sixteen web asset/runtime/renderer/timing/shader/skinning/thread checks passed; every other full-suite case passed. The production docs build passed with existing allowed missing-example placeholders. All native runs used `TIDE_HIDDEN=1`; browsers were muted. No CI or deployment was requested.
 - Merge validation: incoming `dev` editor completions/playback hints and unbuilt LOD design were retained. Two top-of-note insertion conflicts preserved both entries; the spec merged cleanly. Rebuilt the changed compiler dependency, editor tests and affected asset/animation/render targets. Eleven native and eight web dependency checks passed, including all editor transports, automatic compression, CPU/default-pose sampling and skinned pixels on both web backends. The merged production docs build passed.
-- Remaining gaps: ETC2/ASTC/mobile-specific compressed variants, DDS/KTX imports, compressed cubemaps/non-power-of-two images, per-asset quality controls, smaller CPU/download representation, asynchronous uploads, mip streaming, total-memory budgets and virtual texturing. No streaming system is scaffolded here. Android and macOS hardware coverage remains CI/device work.
+- Remaining gaps: ETC2/ASTC/mobile-specific compressed variants, compressed DDS/KTX imports (authored RGBA8 DDS is built above), compressed cubemaps/non-power-of-two images, per-asset quality controls, smaller CPU/download representation (built 2026-10-30: Packs keep compressed images alone, above), asynchronous uploads, mip streaming, total-memory budgets and virtual texturing. No streaming system is scaffolded here. Android and macOS hardware coverage remains CI/device work.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
@@ -216,7 +621,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **`[Raw]` is a texture of numbers** (built 2026-10-07, after the owner asked for the follow-up; the attribute was approved with the proposal, and its name and rules are Claude's picks, Provisional in the spec beside the rest). `docs/game/shaders.md` (Textures that are numbers) is the users' page. What code relies on:
     - **Where:** before an asset that's one `Texture` or one `Grid2<Color>` (`decl.sample_raw`, `check_raw_attribute` in `compiler/src/check.c`, read with the asset's declaration as `[Filter]` is), and on a `Grid2<Color>` field (`check_field_raw`; the attribute stays on the field, `field_is_raw`). Refused, each with what to write: a glob's list or map, any other asset, a `Grid2<float>`, a `Texture` or `RenderTarget` field, an argument, twice.
     - **Nothing carries it at run time, on purpose:** a `Texture`'s four sampling bits are all taken (the filter's two since `Filter.Trilinear`, the wrap's two), and a frag handed a `Texture` would need a uniform or a second shader to know. So a raw texture is only ever the object of a `Sample` by its name, where `declared_raw` (`compiler/src/shader.c`) knows it as the game compiles, and every other use is an error. For a raw `Texture` asset, each place its name is used is noted (`checker.raw_uses`, in `use_asset`), `check_grid_sample` marks its own (`expr.raw_sampled`), and `check_raw_uses` says the rest once code is checked: that catches a local or a function argument too, with no list of places. For a raw grid, which code still reads cell by cell, it's where a `Texture` is wanted: `check_expr_want_any`, `check_blit` and `check_mesh_draw` call `refuse_raw_grid`. A new place a grid becomes a `Texture` without going through one of those has to call it too: `compiler/tests/errors/raw_*.tide` has a file for each way in there is.
-    - **Bytes:** tidec packs a raw `Texture` asset's channels as the file has them (`pack_item`'s `raw`), under the file's hash with two bytes turned, so the same file declared both ways is two blocks and two versions in the draw list. A raw grid goes through `tide_draw_grid_texture_raw` (`engine/src/mesh.c`: `grid_pixels` with no alpha worked in, and another version than the same cells as colors), which generated `tide_shade_<n>` calls for a raw asset grid or field. A `Grid2<Color>` asset is in the pack as its file has it either way.
+    - **Bytes:** tidec packs a raw `Texture` asset's channels as the file has them (`pack_item`'s `raw`), under the file's hash with two bytes turned, so the same file declared both ways is two blocks and two versions in the draw list (since 2026-11-04 the key is what's stored, and the two are one block where the bytes match: `[Raw]` images compress too, above). A raw grid goes through `tide_draw_grid_texture_raw` (`engine/src/mesh.c`: `grid_pixels` with no alpha worked in, and another version than the same cells as colors), which generated `tide_shade_<n>` calls for a raw asset grid or field. A `Grid2<Color>` asset is in the pack as its file has it either way.
     - **The shader:** `ex_sample` leaves `tide_straight` off a raw texture's read, and nothing else differs. `compiler/tests/shaders/raw` pins it beside the same file as colors.
     - A game with no `[Raw]` generates the C it did (the changes are a suffix and a flag that are empty and false without one).
     - **Tests:** pass 16 of `platform/tests/shaders.tide` with `run_raw_checks` in `shaders.c` (a raw `Texture` asset's clear pixel keeps its file's numbers where the same file as colors has none, a raw `Grid2<Color>` asset, a raw grid field's cell with no alpha, and numbers blended between cells), the same on OpenGL 3.3, WebGL 2 and WebGPU; `compiler/tests/shaders/raw`; `compiler/tests/errors/raw_*.tide`, a file a diagnostic; `lsp_asset_textures_and_declared_sampling` (hover, completion, the diagnostic and its note).

@@ -3,13 +3,14 @@
 #include <string.h>
 
 #include "game.h"
+#include "entity_order_test.h"
 #include "tide/events.h"
 #include "tide/jobs.h"
 #include "tide_test.h"
 
-// events_runs.tide, worked out in C: every shooter's Hit, then its Ping, then
-// its Roll, then every third one's graze, each to its target as its turn finds
-// it, then what the handlers sent, in the order they sent it.
+// events_runs.tide, worked out in C: each system visits shooters in full-key
+// order, then handlers append their events behind the recorded tick. Neither
+// Log.targets nor the actual trace/hearing records is sorted for comparison.
 
 #define TARGETS 3000
 #define SHOOTERS 5000
@@ -52,7 +53,7 @@ static int32_t aim(const int32_t shooter)
     return (shooter * 7 + 3) % TARGETS;
 }
 
-static void model_tick(model *m, const uint32_t tick)
+static void model_tick(model *m, const uint32_t tick, const entity_order_value *shooters)
 {
     if (tick == 0) return; // The shooters spawn at its end
     if (tick == 3) {
@@ -63,7 +64,8 @@ static void model_tick(model *m, const uint32_t tick)
     int32_t *echoes = malloc(2u * SHOOTERS * sizeof *echoes);
     TIDE_REQUIRE(echoes);
     uint32_t echo_count = 0;
-    for (int32_t s = 0; s < SHOOTERS; s++) {
+    for (int32_t index = 0; index < SHOOTERS; index++) {
+        const int32_t s = shooters[index].value;
         model_target *t = &m->targets[aim(s)];
         if (!t->alive || t->armor || t->shielded) continue;
         t->value -= 1 + s % 13;
@@ -75,7 +77,8 @@ static void model_tick(model *m, const uint32_t tick)
     }
     m->heard = realloc(m->heard, (m->pings + SHOOTERS) * sizeof *m->heard);
     TIDE_REQUIRE(m->heard);
-    for (int32_t s = 0; s < SHOOTERS; s++) {
+    for (int32_t index = 0; index < SHOOTERS; index++) {
+        const int32_t s = shooters[index].value;
         model_target *t = &m->targets[aim(s)];
         if (!t->alive) continue;
         m->heard[m->pings++] = (uint32_t)aim(s);
@@ -86,8 +89,13 @@ static void model_tick(model *m, const uint32_t tick)
         t->value -= 1;
         model_add(m, -1 - (s * 10000 + aim(s)));
     }
-    for (int32_t s = 0; s < SHOOTERS; s += 97) model_add(m, 900000000 + s);
-    for (int32_t s = 0; s < SHOOTERS; s += 3) { // Graze
+    for (int32_t index = 0; index < SHOOTERS; index++) {
+        const int32_t s = shooters[index].value;
+        if (s % 97 == 0) model_add(m, 900000000 + s);
+    }
+    for (int32_t index = 0; index < SHOOTERS; index++) { // Graze
+        const int32_t s = shooters[index].value;
+        if (s % 3 != 0) continue;
         model_target *t = &m->targets[aim(s)];
         if (!t->alive || t->armor || t->shielded) continue;
         t->value -= 1;
@@ -106,6 +114,28 @@ static tide_entity target_of(const tide_world *w, const int32_t i)
     return *(const tide_entity *)tide_list_read(&w->heap, w->Log.targets, (uint32_t)i, sizeof(tide_entity));
 }
 
+// Build a separate lexicographic key oracle, without the runtime ordered cache.
+// Payload IDs still follow Setup's authored lists and arithmetic, not key order.
+static bool shooter_order(const tide_world *w, entity_order_value *shooters)
+{
+    bool seen[SHOOTERS] = {0};
+    uint32_t count = 0;
+    for (uint32_t slot = 0; slot < w->entities.next_unused; slot++) {
+        const tide_entity key = tide_entity_in_slot(&w->entities, slot);
+        if (!tide_has_Shooter(w, key)) continue;
+        const Shooter shooter = tide_get_Shooter(w, key);
+        if (count == SHOOTERS || shooter.id < 0 || shooter.id >= SHOOTERS || seen[shooter.id]) return false;
+        if (shooter.damage != 1 + shooter.id % 13 || !tide_entity_equal(shooter.target, target_of(w, aim(shooter.id)))) return false;
+        seen[shooter.id] = true;
+        shooters[count++] = (entity_order_value){key, shooter.id};
+    }
+    if (count != SHOOTERS) return false;
+    qsort(shooters, count, sizeof *shooters, entity_order_compare);
+    bool differs = false;
+    for (int32_t i = 0; i < SHOOTERS; i++) differs |= shooters[i].value != i;
+    return differs;
+}
+
 static void check_world(const tide_world *w, const model *m)
 {
     TIDE_REQUIRE(tide_list_count(w->Log.targets) == TARGETS);
@@ -117,6 +147,7 @@ static void check_world(const tide_world *w, const model *m)
             wrong += tide_has_Target(w, e);
             continue;
         }
+        wrong += !tide_has_Target(w, e) || tide_get_Target(w, e).id != i;
         if (t->armor) wrong += !tide_has_Armor(w, e) || tide_get_Armor(w, e).value != t->value;
         else wrong += !tide_has_Health(w, e) || tide_get_Health(w, e).value != t->value;
     }
@@ -149,8 +180,11 @@ TIDE_TEST(events_runs_take_each_event_as_its_turn_finds_its_target)
     const tide_jobs jobs = {NULL, 4u, work, NULL, NULL, NULL, NULL, NULL};
     tide_event_log log = {0};
     uint32_t back_from = 0;
+    entity_order_value *shooters = malloc(SHOOTERS * sizeof *shooters);
+    TIDE_REQUIRE(shooters);
     for (uint32_t tick = 0; tick < TICKS; tick++) {
-        model_tick(&m, tick);
+        if (tick == 1u) TIDE_REQUIRE(shooter_order(&one, shooters));
+        model_tick(&m, tick, shooters);
         tide_world_tick(&one);
         tide_world_tick_on(&many, &jobs);
         tide_world_tick_events(&heard, NULL, &log);
@@ -185,6 +219,7 @@ TIDE_TEST(events_runs_take_each_event_as_its_turn_finds_its_target)
     TIDE_CHECK(records == m.pings);
     TIDE_CHECK(misplaced == 0);
     tide_event_log_free(&log);
+    free(shooters);
     free(m.trace);
     free(m.heard);
     tide_world_free(&back);

@@ -1,0 +1,25 @@
+// expect: a shared local is the whole group's, so it's declared at the top of the kernel's body
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow)
+{
+    if (this.index > 0)
+    {
+        shared int[4] sums;
+        sums[0] = 1;
+    }
+    meadow.counts[0] = 1;
+}
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

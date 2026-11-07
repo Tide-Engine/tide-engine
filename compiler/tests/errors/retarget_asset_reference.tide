@@ -1,0 +1,3 @@
+// expect: reference requires a file and either
+asset HumanoidRig source = "../retarget_profiles/reference.humanoid.json";
+scene Main { }

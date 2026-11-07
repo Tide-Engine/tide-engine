@@ -1,12 +1,15 @@
+using System;
 using System.Runtime.InteropServices;
 
 namespace Tide
 {
-    // A text field of a view packet's value: its handle in the packet's STRINGS (0 for empty).
+    // A text field of a view packet's value: its handle in the packet's STRINGS (0 for empty), in the first of the
+    // 8 bytes the game's C has for one.
     [StructLayout(LayoutKind.Sequential)]
     public struct TideText
     {
         public uint handle;
+        uint unused;
 
         public bool Empty => handle == 0;
 
@@ -28,11 +31,13 @@ namespace Tide
     }
 
     // A list field of a view packet's value: its elements, side by side, in the packet's STRINGS. Lists whose
-    // elements hold text or lists aren't in the packet: they read as empty.
+    // elements hold text or lists aren't in the packet: they read as empty. Its handle is in the first of the 8 bytes
+    // the game's C has for one.
     [StructLayout(LayoutKind.Sequential)]
     public struct TideList
     {
         public uint handle;
+        uint unused;
 
         public unsafe int Count<T>(TidePacket packet = null) where T : unmanaged
         {
@@ -63,33 +68,35 @@ namespace Tide
     }
 
     // A map or set field of a view packet's value: its handle in the packet's STRINGS (0 for empty), in the first of the
-    // 24 bytes the game's C has for one (TideRead.Map and Set read it).
-    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    // 32 bytes the game's C has for one (TideRead.Map and Set read it).
+    [StructLayout(LayoutKind.Explicit, Size = 32)]
     public struct TideMap
     {
         [FieldOffset(0)] public uint handle;
     }
 
-    // A grid field of a view packet's value: its handle in the packet's STRINGS (TideRead.Grid2 and Grid3 read it).
+    // A grid field of a view packet's value: its handle in the packet's STRINGS (TideRead.Grid2 and Grid3 read it), in
+    // the first of the 8 bytes the game's C has for one.
     [StructLayout(LayoutKind.Sequential)]
     public struct TideGrid
     {
         public uint handle;
+        uint unused;
     }
 
     // An entity field: Tide's handle of one, which the packet's entities have too (TideEntityRow).
     [StructLayout(LayoutKind.Sequential)]
-    public struct TideEntityId
+    public struct TideEntityId : IEquatable<TideEntityId>
     {
-        public uint index;
-        public uint generation;
-
-        public bool IsNull => generation == 0;
-        public ulong Id => ((ulong)generation << 32) | index;
-
-        public static implicit operator TideEntityId(TideEntityRow row)
-        {
-            return new TideEntityId { index = row.Index, generation = row.Generation };
-        }
+        public ulong birth;
+        public ulong lineage;
+        public bool IsNull => birth == 0 && lineage == 0;
+        public bool Equals(TideEntityId other) => birth == other.birth && lineage == other.lineage;
+        public override bool Equals(object value) => value is TideEntityId other && Equals(other);
+        public override int GetHashCode() => unchecked(birth.GetHashCode() * 397 ^ lineage.GetHashCode());
+        public static bool operator ==(TideEntityId a, TideEntityId b) => a.Equals(b);
+        public static bool operator !=(TideEntityId a, TideEntityId b) => !a.Equals(b);
+        public override string ToString() => IsNull ? "none" : $"Entity({birth:x16}:{lineage:x16})";
+        public static implicit operator TideEntityId(TideEntityRow row) => row.Id;
     }
 }

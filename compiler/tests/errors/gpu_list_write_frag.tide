@@ -1,0 +1,25 @@
+// expect: a frag reads GPU lists, and kernels write them
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+struct Corner { float2 position; }
+frag Paint(Corner corner, Meadow meadow, out Color color)
+{
+    meadow.counts[0] = 1;
+    color = Color.white;
+}
+view Show(Meadow meadow)
+{
+    Draw.Mesh([Corner { position = float2(0, 0) }, Corner { position = float2(1, 0) }, Corner { position = float2(0, 1) }], [0, 1, 2], Paint);
+}

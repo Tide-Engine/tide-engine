@@ -28,8 +28,8 @@ TIDE_TEST(lists_all_checks_pass)
 {
     tide_world_init(&world, 1.0f);
     tide_world_tick(&world);
-    const Results r = tide_get_Results(&world, (tide_entity){1, 1});
-    TIDE_REQUIRE(tide_has_Results(&world, (tide_entity){1, 1}));
+    const Results r = tide_get_Results(&world, tide_entity_in_slot(&world.entities, 1));
+    TIDE_REQUIRE(tide_has_Results(&world, tide_entity_in_slot(&world.entities, 1)));
     if (r.firstFailure) printf("    check %d failed\n", (int)r.firstFailure);
     TIDE_CHECK(r.checks == 18);
     TIDE_CHECK(r.passed == r.checks);
@@ -40,7 +40,7 @@ TIDE_TEST(lists_reuse_their_memory)
 {
     tide_world_init(&world, 1.0f);
     for (int i = 0; i < 50; i++) tide_world_tick(&world);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     for (int i = 0; i < 200; i++) tide_world_tick(&world);
     TIDE_CHECK(world.heap.used == used);
     tide_world_print(&world);

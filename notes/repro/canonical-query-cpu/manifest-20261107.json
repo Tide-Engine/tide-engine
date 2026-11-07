@@ -1,0 +1,88 @@
+{
+  "schema": "tide.canonical-query-cpu.v1",
+  "mode": "split-code ThinLTO",
+  "clang": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "common_compile_flags": [
+    "-std=c17",
+    "-O2",
+    "-g",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Werror",
+    "-fno-fast-math",
+    "-ffp-contract=off",
+    "-D_CRT_SECURE_NO_WARNINGS"
+  ],
+  "split_flags": [
+    "-flto=thin",
+    "-fuse-ld=lld"
+  ],
+  "fixture_sha256": "f189224a19b70bee7a50cae34545434edcfe87aa623b3c3cf16c5032b8d1c0f3",
+  "main_sha256": "8ee14f3dc61100bf80187ac3717287123a286abbbbbb3670e68c8463f5bc9f60",
+  "clock_sha256": "4cf7f3dca9f6e11bdfc8d57fc722b4a046e2e5bcb43c8fad27a7f5aeac312093",
+  "runtime_library_sha256": "1019861eab3f3368051074a484ece9d27c75da8bad528b97954ed1a9a9fd2de8",
+  "warmup_ticks": 20,
+  "measured_ticks": 2000,
+  "variants": [
+    {
+      "name": "baseline",
+      "compiler_sha256": "0569cd42ecea924bb39a206ad11158154f6b315865fe606240d6556d14672574",
+      "executable_sha256": "a017b764a6c8bef6acedee7f7534c17e05871d84414764f72bd1cb9fa636b328",
+      "generated": [
+        {
+          "file": "game.c",
+          "sha256": "70504d7586146d5ddfbe4a0ec4e06c2f0f0aca19221d74ca4fd1e2328bbc735a"
+        },
+        {
+          "file": "game_part1.c",
+          "sha256": "2b29c24ebb840a25a56f3e68b8a364f55c2c8c109a70a2194addac2460f6ffc6"
+        },
+        {
+          "file": "game_part2.c",
+          "sha256": "8d22ed0f159b4f9bb278b2bf86e0aff352dd91077bebcc7d09bd60653758b198"
+        },
+        {
+          "file": "game_part3.c",
+          "sha256": "1ea329c6d00ad35f169b4f49d6f697164b1a02755f9548b059c32da782f23d49"
+        },
+        {
+          "file": "game_data.c",
+          "sha256": "aa78218d0abf05531c5492a491fd427097b39d1f219304e9f72311ef1a52e5a2"
+        }
+      ]
+    },
+    {
+      "name": "candidate",
+      "compiler_sha256": "2b9636b7f6921213b5cb936356a6e345805f55f3ccecd4372b8ffc95e6cfa787",
+      "executable_sha256": "756808f03ff9bc86a24d3c7a63bd7294b7b1cc4121d7b88d77396d290bc8806d",
+      "generated": [
+        {
+          "file": "game.c",
+          "sha256": "6cadaf46d9060a1b7ab3021335896e8029cf36d15197d51cfd4b8a765509669b"
+        },
+        {
+          "file": "game_part1.c",
+          "sha256": "e1565bdf2d2b599226337b6f652b25ab4e87aea2363cbfe3066d8a23f292d972"
+        },
+        {
+          "file": "game_part2.c",
+          "sha256": "32b8110644fdb938d5f5469e7ead46af3e9642f41c591b19fc6627227bff5e8e"
+        },
+        {
+          "file": "game_part3.c",
+          "sha256": "d846ec7f24c0d22cbd06eca08cf712e48570b8e069cc9a8a30d376033a8e93b9"
+        },
+        {
+          "file": "game_data.c",
+          "sha256": "aa78218d0abf05531c5492a491fd427097b39d1f219304e9f72311ef1a52e5a2"
+        }
+      ]
+    }
+  ],
+  "baseline_engine_commit": "d8c35ae91c34cbe89047f0a4656598f84e6818d2",
+  "candidate_source_sha256": {
+    "compiler/src/codegen.c": "c263c5be048ee6a7bea39b4bcd8f615026325170002b1a2da055e2292a2a6b86",
+    "compiler/src/lane_reads_codegen.inc": "8985f199533a6ccf5bbdd4821f14fb06daf1f177cee73f68e5bb943c320f6e8b"
+  }
+}

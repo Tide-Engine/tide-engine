@@ -6,6 +6,9 @@
 #include "tide/platform.h"
 #endif
 
+extern const unsigned char tide_game_pack[];
+extern const size_t tide_game_pack_size;
+
 static tide_world world;
 static tide_local local;
 static tide_draw_list draw;
@@ -13,6 +16,7 @@ static tide_gui gui;
 
 TIDE_TEST(workers_keep_nested_values_arrays_optionals_and_errors)
 {
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     for (int pass = 0; pass < 2; pass++) {
         tide_world_init(&world, 1.0f);
         tide_local_init(&local);

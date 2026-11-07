@@ -88,9 +88,9 @@ TIDE_TEST(draw_levels_are_picked_by_how_big_a_mesh_is)
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 52.6f)) == 1); // 51.85
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 52.8f)) == 2); // 52.05
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 1.0e6f)) == 2);
-    // Around the camera and behind it, it draws whole
+    // Around the camera, it draws whole; behind it, by how far behind (draw_levels_out_of_view_go_by_how_far_out)
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 0.5f)) == 0);
-    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, -100.0f)) == 0);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, -100.0f)) == 2);
     // Ten times as big is ten times as far off, and a ball ten times as big
     const tide_float4x4 big = tide_trs_f4x4(tide_f3(0.0f, 0.0f, 100.0f), tide_identity_q(), tide_f3(10.0f, 10.0f, 10.0f));
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, big) == 1);
@@ -102,11 +102,11 @@ TIDE_TEST(draw_levels_are_picked_by_how_big_a_mesh_is)
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 2.0f)) == 2);
     tide_draw_unset_transform_3d(&d);
     // Four pixels of leeway are four times nearer
-    tide_draw_lod_pixels(&d, 4.0f);
+    tide_draw_set_lod_pixels(&d, 4.0f);
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 2.0f)) == 0);
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 2.1f)) == 1);
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 14.0f)) == 2);
-    tide_draw_lod_pixels(&d, -1.0f);
+    tide_draw_set_lod_pixels(&d, -1.0f);
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 14.0f)) == 1);
     // A mesh with none, and a transform that's no number, draw whole
     TIDE_CHECK(tide_draw_mesh_level(&d, plain_mesh(&d), at(0.0f, 100.0f)) == 0);
@@ -115,6 +115,91 @@ TIDE_TEST(draw_levels_are_picked_by_how_big_a_mesh_is)
     // With no window's size said, nothing is picked
     tide_draw_screen_size(&d, tide_f2(0.0f, 0.0f));
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 100.0f)) == 0);
+    tide_draw_free(&d);
+}
+
+// The tolerance follows the selected destination and ordinary scoped restoration.
+TIDE_TEST(draw_levels_asset_multiplier_composes_with_destination_tolerance)
+{
+    tide_draw_list d = {0};
+    frame(&d);
+    const uint32_t mesh = leveled_mesh(&d);
+    tide_mesh_levels levels = two_levels;
+    levels.multiplier = 2.0f;
+    tide_draw_mesh_levels(&d, mesh, &levels);
+    const tide_float4x4 transform = at(0.0f, 8.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    tide_draw_instance(&d, mesh, transform, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_set_lod_pixels(&d, 4.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2); // Effective 8 pixels.
+    tide_draw_instance(&d, mesh, transform, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    const tide_draw_command *runs[3];
+    TIDE_REQUIRE(runs_of(&d, runs, 3) == 2);
+    TIDE_CHECK(mesh_of(&d, runs[0])->level == 1 && mesh_of(&d, runs[1])->level == 2);
+    levels.multiplier = 1.0f;
+    tide_draw_mesh_levels(&d, mesh, &levels);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1); // Draw's 4 alone is insufficient.
+    levels.multiplier = 0.25f;
+    tide_draw_mesh_levels(&d, mesh, &levels);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1); // Effective 1 pixel.
+    tide_draw_unset_lod_pixels(&d);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 0);
+    tide_draw_set_lod(&d, 2);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2);
+    tide_draw_unset_lod(&d);
+    const float invalid[] = {0.0f, -1.0f, NAN, INFINITY};
+    for (uint32_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        levels.multiplier = invalid[i];
+        tide_draw_mesh_levels(&d, mesh, &levels);
+        TIDE_CHECK(d.meshes[mesh - 1u].lod_multiplier == 1.0f);
+        TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    }
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_levels_pixel_tolerance_is_scoped_and_destination_local)
+{
+    tide_draw_list d = {0};
+    frame(&d);
+    const uint32_t mesh = leveled_mesh(&d);
+    const tide_float4x4 transform = at(0.0f, 14.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    tide_draw_set_lod_pixels(&d, 4.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2);
+    const uint32_t outer = tide_draw_push_lod_pixels(&d, 0.25f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 0);
+    const uint32_t inner = tide_draw_push_no_lod_pixels(&d);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    tide_draw_pop(&d, inner);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 0);
+    tide_draw_pop(&d, outer);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2);
+    // A target with the same picking camera and pixels keeps its own tolerance.
+    const uint64_t target = tide_render_target_make(800.0f, 600.0f).id;
+    tide_draw_to(&d, target, 800.0f, 600.0f);
+    tide_draw_set_lod_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    tide_draw_set_lod_pixels(&d, 0.25f);
+    const uint32_t target_mark = tide_draw_push_lod_pixels(&d, 100.0f);
+    tide_draw_to(&d, 0, 0, 0);
+    tide_draw_pop(&d, target_mark); // Restore the target even while the window is selected.
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2);
+    tide_draw_to(&d, target, 800.0f, 600.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 0);
+    tide_draw_set_lod(&d, 2);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2);
+    tide_draw_unset_lod(&d);
+    const float invalid[] = {0.0f, -1.0f, NAN, INFINITY, -INFINITY};
+    for (uint32_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        tide_draw_set_lod_pixels(&d, invalid[i]);
+        TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    }
+    tide_draw_set_lod_pixels(&d, 4.0f);
+    tide_draw_defaults(&d);
+    TIDE_CHECK(d.place.lod_pixels == 0.0f && d.targets[0].place.lod_pixels == 0.0f);
+    tide_draw_set_lod_pixels(&d, 4.0f);
+    frame(&d);
+    TIDE_CHECK(d.place.lod_pixels == 0.0f);
     tide_draw_free(&d);
 }
 
@@ -140,14 +225,14 @@ TIDE_TEST(draw_levels_are_meshes_with_the_full_meshes_vertices)
     }
     const uint32_t first = runs[1]->mesh3.mesh, second = runs[2]->mesh3.mesh;
     // The next frame draws the second level alone: it has its place still, and so has the full mesh, and the
-    // first level's is free
+    // first level, which one frame drew, keeps its own a while (TIDE_MESH_ONCE_FRAMES)
     frame(&d);
     TIDE_REQUIRE(leveled_mesh(&d) == mesh && d.meshes[mesh - 1u].levels == 2);
     tide_draw_instance(&d, mesh, at(0.0f, 100.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_REQUIRE(runs_of(&d, runs, 4) == 1);
     TIDE_CHECK(runs[0]->mesh3.mesh == second);
     frame(&d);
-    TIDE_CHECK(d.meshes[first - 1u].space == TIDE_MESH_NONE && d.meshes[second - 1u].space != TIDE_MESH_NONE);
+    TIDE_CHECK(d.meshes[first - 1u].space != TIDE_MESH_NONE && d.meshes[second - 1u].space != TIDE_MESH_NONE);
     // ...and a frame that drew a level alone still kept the mesh it's a level of
     const uint32_t again = leveled_mesh(&d);
     TIDE_CHECK(again == mesh && d.meshes[mesh - 1u].vertices != NULL && d.meshes[mesh - 1u].levels == 2);
@@ -330,6 +415,55 @@ TIDE_TEST(draw_levels_are_picked_through_another_camera_when_told)
     tide_draw_free(&d);
 }
 
+// Beside the camera or behind it, where its depth says nothing of how big a
+// mesh is, a pick goes by how far out the mesh is in the view's own measure, so
+// a target picking through another camera (a shadow map told the viewer's)
+// takes coarser levels there as its tolerance grows. Anything the camera could
+// show picks as it did: by its depth.
+TIDE_TEST(draw_levels_out_of_view_go_by_how_far_out)
+{
+    tide_draw_list d = {0};
+    frame(&d);
+    const uint32_t mesh = leveled_mesh(&d);
+    // 60 degrees up, 4:3 across: clip x is a sideways unit times 1 / (tan(30) * 4 / 3), about 1.299. Beside the
+    // camera, 10 out is about 10.5 once the ball's taken off (5.196 to 51.96: the first level), 100 out the last
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(10.0f, 0.0f)) == 1);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(100.0f, 0.0f)) == 2);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(-100.0f, 0.0f)) == 2);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, -20.0f)) == 1);
+    // ...and the tolerance counts there as anywhere: 10.5 is within 8 pixels of the last level (0.1 at 64.95 a pixel)
+    tide_draw_set_lod_pixels(&d, 4.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(10.0f, 0.0f)) == 1);
+    tide_draw_set_lod_pixels(&d, 8.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(10.0f, 0.0f)) == 2);
+    tide_draw_unset_lod_pixels(&d);
+    // A ball reaching into the view across its side goes by its depth: at 5.9 deep, 5.15 at its nearest, whole, as
+    // in front; at 6, the first level. Its center is outside, past the side's x = 0.7698 * z
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.7698f * 5.9f + 0.5f, 5.9f)) == 0);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.7698f * 6.0f + 0.5f, 6.0f)) == 1);
+    // Around the camera it draws whole still
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.5f, 0.2f)) == 0);
+    // A target told the window's camera, drawing what's beside it, as instances and one at a time: coarser as
+    // its tolerance grows
+    const uint64_t shadow = tide_render_target_make(1024.0f, 1024.0f).id;
+    tide_draw_to(&d, shadow, 1024.0f, 1024.0f);
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 500.0f, 0.0f), tide_identity_q(), 20.0f);
+    tide_draw_set_lod_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
+    const tide_float4x4 beside[2] = {at(10.0f, 0.0f), at(10.0f, 0.0f)};
+    tide_draw_instances(&d, mesh, beside, 2, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_instance(&d, mesh, beside[0], 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_set_lod_pixels(&d, 8.0f);
+    tide_draw_instances(&d, mesh, beside, 2, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_instance(&d, mesh, beside[0], 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    const tide_draw_command *runs[8];
+    // (Each level's three are one run: the one drawn alone joins the two before it)
+    TIDE_REQUIRE(runs_of(&d, runs, 8) == 2);
+    TIDE_CHECK(mesh_of(&d, runs[0])->level == 1 && runs[0]->mesh3.count == 3);
+    TIDE_CHECK(mesh_of(&d, runs[1])->level == 2 && runs[1]->mesh3.count == 3);
+    tide_draw_free(&d);
+}
+
 // A view that runs for each entity draws an instance at a time, each at its
 // own level: runs that tide_draw_gather_levels makes one a level, the finest
 // first, with the instances of each in the order they were drawn.
@@ -339,8 +473,9 @@ TIDE_TEST(draw_levels_of_draws_in_a_row_are_gathered)
     frame(&d);
     const uint32_t mesh = leveled_mesh(&d);
     static const float depth[7] = {2.0f, 100.0f, 2.0f, 10.0f, 100.0f, 2.0f, 10.0f};
+    // Tenths of a unit apart, so each is in view and picks by its depth alone
     for (uint32_t i = 0; i < 7; i++) {
-        tide_draw_instance(&d, mesh, at((float)(i + 1u), depth[i]), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+        tide_draw_instance(&d, mesh, at((float)(i + 1u) * 0.1f, depth[i]), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     }
     const tide_draw_command *runs[16];
     TIDE_CHECK(runs_of(&d, runs, 16) == 7 && d.leveled);
@@ -352,7 +487,7 @@ TIDE_TEST(draw_levels_of_draws_in_a_row_are_gathered)
     for (uint32_t level = 0; level < 3; level++) {
         TIDE_CHECK(mesh_of(&d, runs[level])->level == level && runs[level]->mesh3.count == counts[level]);
         for (uint32_t i = 0; i < runs[level]->mesh3.count; i++) {
-            TIDE_CHECK(d.matrices[runs[level]->mesh3.first + i].c3.x == order[next++] - 0.5f);
+            TIDE_CHECK(d.matrices[runs[level]->mesh3.first + i].c3.x == order[next++] * 0.1f - 0.5f);
         }
     }
     // Again changes nothing
@@ -712,4 +847,31 @@ TIDE_TEST(draw_levels_read_write_and_read_replace_still_gather_finest_first)
             }
         }
     }
+}
+
+// A level a frame didn't draw is kept with its mesh, and goes with it.
+TIDE_TEST(draw_levels_kept_unused_go_with_their_mesh)
+{
+    tide_draw_list d = {0};
+    uint32_t mesh = 0, level = 0;
+    for (int i = 0; i < 2; i++) {
+        frame(&d);
+        mesh = leveled_mesh(&d);
+        tide_draw_instance(&d, mesh, at(0.0f, 100.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    }
+    for (uint32_t i = 0; i < d.mesh_count; i++) {
+        if (d.meshes[i].base == mesh) level = i + 1u;
+    }
+    TIDE_REQUIRE(level && d.meshes[level - 1u].level == 2);
+    frame(&d); // Neither drawn
+    frame(&d);
+    TIDE_CHECK(d.meshes[mesh - 1u].space != TIDE_MESH_NONE && d.meshes[level - 1u].base == mesh);
+    // Another version of the mesh's lists is drawn: the old one goes, and its level with it
+    bool fill;
+    const uint32_t newer = tide_draw_mesh_slot(&d, TIDE_MESH_MEMORY, 41, 42, 2, &fill);
+    TIDE_REQUIRE(fill && newer != mesh && newer != level);
+    tide_draw_mesh_fill(&d, newer, corners, 4, whole, 12);
+    frame(&d);
+    TIDE_CHECK(d.meshes[mesh - 1u].space == TIDE_MESH_NONE && d.meshes[level - 1u].space == TIDE_MESH_NONE);
+    tide_draw_free(&d);
 }

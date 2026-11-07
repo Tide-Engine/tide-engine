@@ -1,0 +1,147 @@
+// Mesh<V>.Decode(bytes): a static mesh read from a file's bytes while the game
+// runs, in match code, as the same vertices an asset of the file has: a .glb,
+// a .gltf with its buffers inside it, an .obj, a vertex of the game's own with
+// a default and a float4 tangent, and a Mesh with bones.
+scene Main;
+
+struct Shaded
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    Color color;
+    float4 tangent;
+    float extra = 2.5;
+}
+
+struct Boned
+{
+    float3 position;
+    float3 normal;
+    int4 joints;
+    float4 weights;
+}
+
+using Model = Mesh<Vertex3>;
+
+asset Mesh<Vertex3> quad = "assets/meshes/quad.glb";
+asset List<byte> quadBytes = "assets/meshes/quad.glb";
+asset Mesh<Vertex3> strip = "assets/meshes/inline.gltf";
+asset List<byte> stripBytes = "assets/meshes/inline.gltf";
+asset Mesh<Shaded> box = "assets/meshes/box.obj";
+asset List<byte> boxBytes = "assets/meshes/box.obj";
+asset Mesh<Boned> legs = "assets/mesh_bones/legs.glb";
+asset List<byte> legsBytes = "assets/mesh_bones/legs.glb";
+asset List<byte> notAMesh = "assets/rules.txt";
+
+singleton Decoded
+{
+    Model quad;
+    Model strip;
+    Mesh<Shaded> box;
+    Mesh<Boned> legs;
+    List<Model> list;
+    bool quadSame;
+    bool stripSame;
+    bool boxSame;
+    bool legsSame;
+    bool extraKept;
+    bool aliasSame;
+    bool refused;
+    bool emptyRefused;
+    bool unwrapped;
+    bool sameKey;
+    int listCorners;
+    int ticks;
+}
+
+bool Eq2(float2 a, float2 b) { return a.x == b.x && a.y == b.y; }
+bool Eq3(float3 a, float3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+bool Eq4(float4 a, float4 b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
+bool EqI(int4 a, int4 b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
+bool EqC(Color a, Color b) { return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a; }
+
+bool SameIndices(List<int> a, List<int> b)
+{
+    if (a.count != b.count) return false;
+    for (int i = 0; i < a.count; i++) if (a[i] != b[i]) return false;
+    return true;
+}
+
+bool Same(Model a, Model b)
+{
+    if (a.vertices.count != b.vertices.count || !SameIndices(a.indices, b.indices)) return false;
+    for (int i = 0; i < a.vertices.count; i++)
+    {
+        var x = a.vertices[i];
+        var y = b.vertices[i];
+        if (!Eq3(x.position, y.position) || !Eq2(x.uv, y.uv) || !EqC(x.color, y.color)) return false;
+    }
+    return a.vertices.count > 0;
+}
+
+bool SameShaded(Mesh<Shaded> a, Mesh<Shaded> b)
+{
+    if (a.vertices.count != b.vertices.count || !SameIndices(a.indices, b.indices)) return false;
+    for (int i = 0; i < a.vertices.count; i++)
+    {
+        var x = a.vertices[i];
+        var y = b.vertices[i];
+        if (!Eq3(x.position, y.position) || !Eq3(x.normal, y.normal) || !Eq2(x.uv, y.uv) || !EqC(x.color, y.color)
+            || !Eq4(x.tangent, y.tangent) || x.extra != y.extra) return false;
+    }
+    return a.vertices.count > 0;
+}
+
+bool SameBoned(Mesh<Boned> a, Mesh<Boned> b)
+{
+    if (a.vertices.count != b.vertices.count || !SameIndices(a.indices, b.indices)) return false;
+    for (int i = 0; i < a.vertices.count; i++)
+    {
+        var x = a.vertices[i];
+        var y = b.vertices[i];
+        if (!Eq3(x.position, y.position) || !Eq3(x.normal, y.normal) || !EqI(x.joints, y.joints) || !Eq4(x.weights, y.weights)) return false;
+    }
+    return a.vertices.count > 0;
+}
+
+system Tick(mut Decoded decoded)
+{
+    if (decoded.ticks == 0)
+    {
+        decoded.quad = Mesh<Vertex3>.Decode(quadBytes)!;
+        decoded.strip = Model.Decode(stripBytes)!;
+        decoded.box = Mesh<Shaded>.Decode(boxBytes)!;
+        decoded.legs = Mesh<Boned>.Decode(legsBytes)!;
+        decoded.list = [quad, decoded.quad, Model.Decode(stripBytes)!];
+        decoded.refused = Model.Decode(notAMesh) is IOError.InvalidData;
+        decoded.emptyRefused = Model.Decode([]) is IOError.InvalidData;
+        if (Model.Decode(boxBytes) is Model statue) decoded.unwrapped = statue.indices.count == box.indices.count;
+    }
+    // Kept in the match: the same each tick, after snapshots and packing
+    decoded.quadSame = Same(decoded.quad, quad);
+    decoded.stripSame = Same(decoded.strip, strip);
+    decoded.boxSame = SameShaded(decoded.box, box);
+    decoded.legsSame = SameBoned(decoded.legs, legs);
+    decoded.extraKept = decoded.box.vertices[0].extra == 2.5;
+    decoded.aliasSame = Same(decoded.list[2], decoded.strip);
+    decoded.sameKey = decoded.list[1] == decoded.quad && decoded.quad != quad;
+    decoded.listCorners = 0;
+    foreach (var m in decoded.list) decoded.listCorners += m.indices.count;
+    decoded.ticks++;
+}
+
+local singleton Seen
+{
+    Model kept;
+    int frames;
+}
+
+// Decoded where it's drawn, in local state, and drawn from the match's: one mesh on the GPU, by what's in it
+view Draws(mut Seen seen, Decoded decoded)
+{
+    seen.frames++;
+    if (seen.frames == 1) seen.kept = Model.Decode(quadBytes)!;
+    Draw.Mesh(seen.kept, float4x4.identity);
+    Draw.Mesh(decoded.quad, float4x4.Translate(float3(1, 0, 0)));
+}

@@ -12,24 +12,36 @@ custom C retain assets conservatively unless explicitly opting into pruning.
 
 An asset is a file a game is built with: an image, a model, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.
 
+`tide build` and `tide run` reuse expensive imports between launches from
+`.tide/assets/imports`: static/skinned models and animations, generated tangents,
+audio validation/conversion, and prepared texture pixels or mip blocks. Unchanged
+draw-only textures can skip image decoding too. The cache is keyed by source
+contents, external model buffers, import options and compiler/decoder revision;
+editing code alone keeps it useful. Each build still discovers glob matches and
+packs the current declarations and vertex layouts. Grid images keep their exact
+CPU-readable decoder path. Cache files are disposable: missing, incompatible or
+damaged entries fall back to the ordinary import, and an unwritable cache does
+not prevent a build.
+
 ## Supported formats
 
 | Asset | Build-time source formats | What reaches the game |
 | --- | --- | --- |
-| `Texture`, `Grid2<Color>`, cubemap faces | PNG, PSD, JPEG (`.jpg`, `.jpeg`), TGA, BMP | Decoded pixels; textures and cube faces use RGBA8 |
+| `Texture`, `Grid2<Color>`, cubemap faces | PNG, PSD, JPEG (`.jpg`, `.jpeg`), TGA, BMP, [RGBA8 DDS](#authored-mipmaps) | Decoded pixels; textures and cube faces use RGBA8 |
 | `Mesh<V>` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX, OBJ | Static vertices and triangles |
 | `SkinnedMesh<V>` | glTF 2.0, binary or ASCII FBX | Geometry, skeleton and animation; see [Animation](./animation.md) |
 | `AnimationCatalog` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | Skeleton and every animation clip; see [Animation files](./animation.md#animation-files) |
 | `Animation` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | The only clip, or an exact `[Name("source name")]` selection |
 | `Clip` | WAV, Ogg Vorbis, MP3, FLAC | WAV/Vorbis bytes, or float PCM WAV converted from MP3/FLAC; see [Audio](./audio.md#clips) |
+| `Font` | TrueType fonts: `.ttf`, an `.otf` of TrueType outlines, a `.ttc`'s first font | Its glyphs' outlines, checked; see [Fonts](./views.md#fonts) |
 | `string` | Any UTF-8 text file | Text |
 | `List<byte>` | Any file | Its original bytes |
 
-These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
+These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, runtime [`Mesh<V>.Decode`](#meshes) reads GLB, a glTF with its buffers inside it and OBJ, runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only, and runtime [`Font.Decode`](./views.md#fonts) reads what a `Font` asset does. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
 
-WebP, TIFF, animated images, SVG, HDR/EXR and GPU texture containers such as DDS/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
+WebP, TIFF, animated images, SVG, HDR/EXR, compressed DDS and KTX/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
 
-Custom font assets (TTF/OTF) and video playback aren't built. [`Draw.Text`](./views.md#text) uses Tide's bundled font. Any file can still be packed as `List<byte>`, which preserves its bytes without interpreting them.
+Fonts of CFF (PostScript) outlines, which many `.otf` files have, aren't read: convert one to `.ttf`. Video playback isn't built. Any file can still be packed as `List<byte>`, which preserves its bytes without interpreting them.
 
 ## Declaring an asset
 
@@ -42,7 +54,7 @@ asset string rules = "rules.txt";           // UTF-8 text
 asset List<byte> table = "data/table.bin";  // Any file, as its bytes
 ```
 
-Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. Those four are the plain ones: `string`, `List<byte>`, `Grid2<Color>` and `Texture`. A sky is a [`Cubemap`](#cubemaps), a static model a [`Mesh`](#meshes), a model with bones a [`SkinnedMesh`](./animation.md), animation clips an [`AnimationCatalog`](./animation.md#animation-files) asset, and a sound a [`Clip`](./audio.md#clips).
+Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. Those four are the plain ones: `string`, `List<byte>`, `Grid2<Color>` and `Texture`. A sky is a [`Cubemap`](#cubemaps), a static model a [`Mesh`](#meshes), a model with bones a [`SkinnedMesh`](./animation.md), animation clips an [`AnimationCatalog`](./animation.md#animation-files) asset, a sound a [`Clip`](./audio.md#clips), and a font a [`Font`](./views.md#fonts).
 
 ::: tide-example assets A sprite from a file
 <<< @/examples/assets.tide
@@ -54,11 +66,11 @@ Match code reads assets like any value, since every machine has the same pack; a
 
 ### Release builds
 
-A standalone `tide build --release` omits asset declarations that no checked Tide code, default or shader references. An asset named in a helper or a type's default stays, even if that helper or type is unused. A referenced list or map keeps every file its path matches. Every declaration is still checked, so an unused asset with a missing or invalid file remains a build error.
+A standalone `tide build --release` or `--distribution` omits asset declarations that no checked Tide code, default or shader references. An asset named in a helper or a type's default stays, even if that helper or type is unused. A referenced list or map keeps every file its path matches. Every declaration is still checked, so an unused asset with a missing or invalid file remains a build error.
 
 Debug and hot-reload builds keep every declared asset. So do games or packages with C/C++ sources or prebuilt libraries, and games with a custom C host: their C code may read assets through the generated API or by name in the pack.
 
-A web release also compresses the retained pack inside its self-contained page when that saves space. The page decodes the same packed bytes before the game starts; the asset values and match results stay the same.
+A web distribution also compresses the retained pack inside its self-contained page when that saves space. The page decodes the same packed bytes before the game starts; the asset values and match results stay the same.
 
 ### A field's default
 
@@ -116,7 +128,7 @@ view Show(mut Player player)
 ```
 
 - An ordinary color `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`. Numeric Raw sources follow the field rules below.
-- Its exact fallback keeps a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images also have a smaller compressed GPU copy, described below.
+- Its RGBA pixels keep a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images use a smaller compressed image instead, described below.
 - `texture.size` reads its base-level dimensions as an `int2`, without uploading pixels. An image whose pixels the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
@@ -126,13 +138,41 @@ For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and r
 
 ### GPU compression
 
-Ordinary color `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled colors can differ slightly from the source, especially around sharp color changes or faint transparency.
+`Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels: color images and [`[Raw]` images of numbers](./shaders.md#textures-that-are-numbers) alike, such as normal, roughness and mask maps. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled values can differ slightly from the source, especially around sharp changes or faint transparency. A Raw image's channels are compressed as the file has them, never multiplied by its alpha.
 
-On supported GPUs, a full mip chain takes roughly one eighth of RGBA memory for BC1, or one quarter for BC3. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. Unsupported devices use the exact RGBA fallback.
+A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes every mip to RGBA as it uploads the image, preserving the prepared distant levels. That fallback uses the memory of a full RGBA mip chain.
 
-The pack currently includes both representations, so this reduces GPU memory and upload bytes while increasing pack size. Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
+Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. Images that come out the same bytes are one image in the pack and on the GPU, whichever declarations name them: the same opaque file declared with and without `[Raw]`, or two copies of one picture.
+
+`[Lossless]` keeps an image exact, a byte per channel, for numbers that must not move: a lookup table, a flow map, an ID mask. It goes before a `Texture` asset, alone or a glob's list or map, or a `TextureArray` asset, and beside `[Raw]` too:
+
+```csharp
+[Raw, Lossless] asset Texture flow = "art/flow.png";   // Every byte as the file has it
+```
+
+A lossless image costs its full RGBA in the pack, 64 MB for 4096 by 4096, and on the GPU a third more for the mips a `Filter.Trilinear` draw makes as it first reads it.
+
+To see what each asset costs, build with `--asset-sizes` (see [the CLI](../tools/cli.md#asset-sizes)): a line for each declaration, biggest first, with how its images are kept.
 
 The renderer keeps recently hidden pack images in a bounded GPU cache, avoiding another upload when they return soon. This is whole-image residency; mip streaming and virtual textures aren't built yet.
+
+### Authored mipmaps
+
+For cutout leaves and distant sprites, ordinary averaging can make thin shapes disappear when an alpha test rejects their smaller mipmaps. Prepare a mip chain whose alpha preserves coverage at the material's exact cutoff, then import it as an ordinary texture:
+
+```csharp
+[Filter(Filter.Trilinear)]
+asset Texture leaves = "art/leaves.dds";
+
+[Raw, Filter(Filter.Trilinear)]
+asset Texture normals = "art/leaf-normal.dds";
+```
+
+The DDS must contain one tightly packed, uncompressed RGBA8 or BGRA8 2D image, with power-of-two sides from 4 through 16,384 and every mip through 1 × 1. Use the legacy DDS header with explicit RGB and alpha channel masks. DX10 headers, BC-compressed data, cubes, arrays, volumes, padded rows, missing mips and extra payloads are rejected. Source bytes and decoded pixels plus retained mips each have a 512 MiB import budget.
+
+Supply straight RGBA color pixels. The importer premultiplies RGB by alpha separately at every mip; `[Raw]` retains all channels independently. It preserves the supplied mip pixels without recompressing them. The pack and GPU hold the full RGBA8 chain, roughly a third larger than the base image. `Grid2<Color>` and cubemap declarations read only the DDS base image. Runtime `grid.Decode` remains PNG-only.
+
+Vulkan and WebGPU preserve the chain. Unity's draw recorder currently retains only the base image and does not preserve authored mipmaps. Alpha coverage also becomes approximate at tiny mips because a handful of texels cannot represent every area fraction; atlas authors should preserve each view separately and supply suitable gutters.
 
 ### Image formats
 
@@ -165,6 +205,17 @@ The file must be an ordinary PSD (version 1) in RGB mode, with 8 or 16 bits per 
 A PSD is at most 16384 pixels a side and 8192 × 8192 in all.
 
 Only the decoded pixels are packed, as with a PNG. The game needs no Photoshop files or decoder when it runs. [`grid.Decode(bytes)`](#decoding-a-png) still reads PNG only.
+
+## Texture arrays
+
+Images of one size, read by a uv and a layer (see [Texture arrays](./shaders.md#texture-arrays)), are a `TextureArray`: a glob's files, in their paths' order, or a list of paths in its own, each a file or a glob:
+
+```tide
+asset TextureArray ground = "art/ground/*.png";
+asset TextureArray picked = ["art/grass.png", "art/rock.png"];
+```
+
+Every image is the same size, 256 at the most. `[Filter]` and `[Wrap]` say how a `Sample` that says neither reads it.
 
 ## Cubemaps
 
@@ -283,20 +334,71 @@ Layouts without a tangent field, layouts with `float3 tangent`, and skinned mesh
 
 **It comes in as Tide has the world.** Tide's world is left-handed with fronts [clockwise](./3d.md#which-side-draws), like Unity's. glTF is right-handed with fronts counterclockwise: a file's `x` is turned around and its triangles are wound the other way, so `+y` stays up and a model that faces `+z` still faces `+z`. OBJ uses the same conversion. FBX first converts its declared axes and units to right-handed Y-up meters, then uses that conversion too. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
 
-**Nothing keeps one.** A `Mesh` is the pack's own memory, which code reads by the asset's name: a local, a function's parameter and what a function returns pass one on, and no field holds one, nor a task while it waits. What says which model a thing has is a number or a key of yours:
+**An asset's mesh value is a stable ID.** Fields, lists, arrays, maps, parameters and tasks can keep a `Mesh<V>` without copying an asset's vertices or indices. Reading `.vertices` or `.indices` borrows the currently loaded geometry. `Asset<Mesh<V>>` holds only that ID, for a reference that must name an asset (the editor assigns one); it goes wherever a `Mesh<V>` does, and its `.Value` is that `Mesh<V>`.
 
 ```csharp
 component Prop
 {
     float3 position;
-    int model; // Its place in `rocks`
+    Mesh<Vertex3> model;
+}
+
+singleton Models
+{
+    List<Mesh<Vertex3>> choices;
+    Mesh<Vertex3>[2] favorites;
 }
 
 view Props(Prop prop)
 {
-    Draw.Mesh(rocks[prop.model], float4x4.Translate(prop.position), Look);
+    Draw.Mesh(prop.model, float4x4.Translate(prop.position));
 }
 ```
+
+**A mesh the game makes is a `Mesh<V>` too.** `Mesh(vertices, indices)` takes a `List<V>` of a 3D vertex struct and a `List<int>` of indices, three a triangle, and makes a static mesh of copies of them. Nothing changes the copies after, whatever happens to the lists they came from, so there is nothing to free: the mesh lasts as long as the value holding it, like any list. It goes wherever an asset's mesh goes: fields, lists and maps of meshes beside assets', parameters, `Draw.Mesh` and `Draw.Instanced`, and anything else that takes a `Mesh<V>`. A type alias makes one too: `Model(vertices, indices)`.
+
+```csharp
+using Model = Mesh<Vertex3>;
+
+singleton Terrain { Model ground; List<Model> pieces; }
+
+system Build(mut Terrain terrain)
+{
+    List<Vertex3> corners = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(1, 0, 0) },
+                             Vertex3 { position = float3(0, 0, 1) }];
+    terrain.ground = Mesh(corners, [0, 2, 1]);
+    terrain.pieces = [rock, terrain.ground];
+}
+```
+
+- **Where it's kept decides its cost.** In match state its geometry is part of the match: in snapshots and hashes, sent whole to a player who joins, and to the others once, as it's made. Its pages never change after, so rollback copies and the per-tick hash cost almost nothing more. Keep geometry only the screen needs in local state, where none of that applies, or make it in a view each frame.
+- **Copies are one mesh on the GPU.** Every copy draws with no list read: the mesh's id is worked out from its contents once, when it's made, and the draw uses it as the geometry's version. A copy of the value copies its two lists.
+- **Equality compares contents:** two meshes made of the same lists are `==`, and a made mesh is never an asset's or `default`, even with no triangles.
+- **Levels of detail** are the draw's to ask for, `lod:`, as for any mesh your game makes (below).
+- **Not there:** a made `SkinnedMesh<V>`; and a 2D mesh, which draws from its two lists, `Draw.Mesh(vertices, indices)`.
+
+**A mesh read while the game runs is a `Mesh<V>` too.** `Mesh<V>.Decode(bytes)` reads a model from a `List<byte>`, from [`await Web.Fetch(url)`](./files.md), `File.ReadAllBytes(path)` or a player's upload, and gives a `Mesh<V> fails IOError`. It reads the file as an `asset Mesh<V>` of it does: the same vertices, filled by your vertex struct's field names, every other field its default, a `float4 tangent` made where the file has none. It's the same bits on every machine, so match code can decode too, and the mesh then lives as a mesh your game makes does (above).
+
+```csharp
+using Model = Mesh<Vertex3>;
+
+singleton Arena { Model statue; PlayerID host; string message; }
+
+command SetStatue { List<byte> model; }
+
+command(SetStatue value, PlayerID sender) Apply(mut Arena arena)
+{
+    if (sender != arena.host) return;
+    if (Model.Decode(value.model) is Model statue) arena.statue = statue;
+    else arena.message = "That isn't a model";
+}
+```
+
+- **Formats:** a `.glb`, a `.gltf` whose buffers are inside it (data URIs), and an `.obj`, told apart by their first bytes, as the bytes have no name. A `.gltf` that names buffer files, and an FBX, which Tide reads at build time only, are `IOError.InvalidData`, as is anything else that isn't a mesh.
+- **A vertex with `joints` or `weights`** is a [Mesh with bones](./animation.md), read from a `.glb` as its asset is: at rest, each corner with its four heaviest bones.
+- **Limits:** a file of more than 512 MiB, 1,048,576 vertices, 6,291,456 triangle corners, 4,194,304 JSON values or 67,108,864 numbers read (an `.obj`'s vertex, normal and uv lines count) is `InvalidData` before anything is made for it, and so is a mesh whose numbers a node's transform takes past what a float holds. Each machine that refused one says why on its log, naming the limit: `tide: Mesh.Decode refused a mesh: it has 2,000,000 vertices in a part, more than the 1,048,576 Mesh.Decode takes (TIDE_MESH_DECODE_MAX_VERTICES)`.
+
+Collections follow ordinary value-copy and mutation rules. Copying an immutable asset collection can share its ID storage until a write. Geometry stays in the asset pack. Singular IDs follow the qualified declaration name; glob-element IDs also include the written file key, so changing a glob's order keeps retained selections stable. A removed or unknown ID resolves to empty geometry. Renaming a declaration or file key changes that identity.
 
 A frag and a vert don't read a mesh's two lists: the draw sends them to the GPU as the mesh they are.
 
@@ -319,16 +421,44 @@ That's all there is to write. There are no distances to set, no levels to author
 - **A level is fewer of the mesh's own triangles.** Each has about half the triangles of the one before, over the same vertices: none is added or moved, so the pack grows by the levels' triangles alone, about as much again as the mesh's own. Open edges stay where they are, and so do the seams where a texture or a color changes, so no hole opens and no texture tears.
 - **Static layouts with a `float4 tangent` preserve opposite handedness signs as separate seams.** Tangent `xyz` adds no simplification error metric. Other vertex layouts and skinned meshes retain their previous LOD behavior and cache keys.
 - **A mesh of under 1,000 triangles gets no levels.** Levels only pay by the triangles they take off a draw, and picking one costs a little for each instance, so such a mesh draws exactly as if it weren't marked, with nothing picked. A bigger mesh's chain goes on to levels of a few dozen triangles, and stops before one of under 64: a crowd far off draws each figure that small.
-- **A draw picks the simplest level that looks the same.** Each level knows how far its surface, and what's on it, is from the full mesh's. A normal or a color is off by as much as the patch it's off on: a bevel shaded a little differently counts for the bevel's size, not the whole mesh's. A draw takes the simplest level whose difference is under a pixel where the mesh is, so a mesh drawn large keeps all its detail at any distance.
+- **A draw picks by estimated visual error on screen.** Each level knows how far its surface, and what's on it, is from the full mesh's. A normal or a color is off by as much as the patch it's off on: a bevel shaded a little differently counts for the bevel's size, not the whole mesh's. A draw takes the simplest level within its pixel tolerance, 1 by default. A mesh drawn large keeps more detail at any distance.
 - **Each instance picks its own.** `Draw.Instanced` over a field of rocks draws the near ones whole and the far ones simple: one GPU draw for each level in use, the instances of each in the order the list has them. A view that runs for each entity is grouped the same way.
 - **Your code reads the full mesh.** `rock.vertices` and `rock.indices` are what they are without `[LOD]`, for the match too: a collider built from a rock's triangles is built from all of them, on every machine.
 - **It works on a [`SkinnedMesh<V>`](./animation.md) too:** `[LOD] asset SkinnedMesh<Corner> hero = "art/hero.glb";`. Its levels are made from the model at rest, weighing how each vertex follows its bones so joints keep the vertices that bend them, and a pose deforms a level as it deforms the full mesh.
 - **A list or a map of meshes** takes it for every file: `[LOD] asset List<Mesh<Corner>> rocks = "art/rocks/*.glb";`.
+- **An asset can accept more error:** `[LOD(2)] asset Mesh<Corner> rock = "art/rock.glb";` multiplies the draw's pixel tolerance by 2. `[LOD]` means 1. The argument must be a positive finite constant number; fractions below 1 keep more detail. It applies to every file in a list or map and works on skinned meshes too. The generated levels stay the same.
 - **They're made once.** tide keeps a mesh's levels in the game's `.tide/` folder, by what's in the file, so later builds don't make them again.
+
+**A mesh your game makes gets levels with `lod:`.** Terrain chunks, generated buildings, anything built into a `List<Vertex3>` or a list of your own vertex while the game runs: write `lod:` last in its 3D `Draw.Mesh` or `Draw.Instanced`, with the same multiplier `[LOD(...)]` takes:
+
+```csharp
+view Terrain(Chunk chunk)
+{
+    Draw.Mesh(chunk.vertices, chunk.indices, chunk.transform, Look, lod: 1);
+}
+```
+
+- **The levels are the ones an asset of the same mesh would get**, made by the same code: the same floor of 1,000 triangles, the same seams kept, the same picking, and the same levels on every machine.
+- **They're made in the background**, on threads beside the frame's, never in it. Until they're there the mesh draws whole: a frame or so for a mesh of thousands of triangles, longer for a big one. Where there are no threads to make them on (a web page that isn't [cross-origin isolated](../tools/cli.md#threads-on-the-web)), such meshes draw whole.
+- **They're kept by what's in the mesh.** Drawing the same lists again costs nothing more, nor does making the same mesh again or drawing it again after a while away. Lists made again with other numbers start over: what was being made of the old ones stops. A mesh that changes every frame keeps drawing whole, which is right for one that moves its vertices.
+- **The fields weighed are your vertex's `position` (a `float3`), and `normal`, `uv`, `uv2`, `color` and `tangent` where it has them** with those names and types, as an asset's file fills them.
+- **The same lists drawn without `lod:` are another mesh**, drawn whole, and so are the same lists drawn with another multiplier. `lod: 0`, or a multiplier that's no number, is 1, as `Draw.LODPixels` takes them.
+- It's for 3D meshes: a 2D mesh draws as it is. A model with bones takes it too, `Draw.SkinnedMesh(model, transform, lod: 1)`, with its bones weighed as `[LOD]` weighs them, so a model decoded while the game runs (`SkinnedMesh<V>.Decode`) gets the levels its file would get as a marked asset.
 
 **A game's vert isn't known to the pick.** Where the mesh is and how big it is come from the file's own geometry and the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been: draw such a mesh with `Draw.LOD(0)`, below, or leave `[LOD]` off it.
 
-**`Draw.LOD` names the level** instead of picking it, a [draw setting](./draw-settings.md) with the two forms the others have. `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last level is its last:
+**`Draw.LODPixels` controls the quality/performance tradeoff** while each mesh still picks automatically. The default is 1 pixel of estimated visual error. Higher values allow coarser meshes at the same distance; positive values below 1 keep more detail:
+
+```csharp
+Draw.LODPixels(4)
+{
+    Draw.Instanced(rock, scenery.transforms, Look);
+}
+```
+
+`Draw.SetLODPixels(4);` applies to following window draws. A render target has its own tolerance: `shadow.SetLODPixels(4);`. The asset's multiplier applies too: `[LOD(2)]` allows 2 pixels normally and 8 in that shadow pass. Both draw-setting forms restore 1 with no arguments; a block restores the previous value when it ends, including an early exit. Nonpositive or nonfinite draw-setting values also use 1. This changes selection among the levels already built; it doesn't generate more levels. Pixels are counted through the same camera and resolution as automatic selection.
+
+**`Draw.LOD` names the level** instead of picking it, a [draw setting](./draw-settings.md) with the two forms the others have. A named level overrides the pixel tolerance. `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last level is its last:
 
 ```csharp
 Draw.LOD(0)
@@ -352,8 +482,10 @@ view Cast(Lamp lamp, Viewer viewer, Rock rock)
 
 It takes what `Draw.Camera` takes for a 3D camera: a position, a rotation and a field of view, or a transform and a projection (`Draw.CameraTransform()` and `Draw.CameraProjection()` give the window's). With nothing, `SetLODCamera()`, the destination's own camera picks again. A level that's named wins over a camera that's named.
 
+A shadow map covers more than the player sees: meshes beside the player and behind them. Those pick by how far out of the view they are, so they cast coarser shadows the farther out they are, and the shadow map's `SetLODPixels` coarsens them as it does the rest.
+
 ::: info
-That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level or a camera to pick by, are decided. How the levels are made, the pixel a level may be off by, the two settings' names and each rule above are how it works today, and may still change. A way to say how many pixels a level may be off by, for a weak machine, isn't in the language yet.
+That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level, a pixel tolerance or a camera to pick by, are decided. How the levels are made and the other rules above are how it works today, and may still change.
 :::
 
 ### Blend shapes to keep
@@ -413,6 +545,10 @@ asset string credits = "https://example.com/credits.txt";
 ```
 
 What was fetched is kept in the game's `.tide/`, with the server's ETag. Each build asks the server whether the file changed, and builds from what it has when the server can't be reached, so an offline build works once the file was fetched once. A URL that can't be fetched and was never cached is an error.
+
+## Assets made by code
+
+An asset's value can be a call of code that runs while the game builds, which makes it from nothing or from another asset's file: `asset Texture hero = Outlined(heroSource, Color.black);`. A sound's samples are an asset too: `asset ClipData step = "sfx/step.wav";`. See [Build code](./build-code.md).
 
 ## What's checked
 

@@ -1,5 +1,80 @@
 # `tide_add_game` and the generated header
 
+## SPLIT_CODE (2026-11-05)
+
+2026-11-06: the generated outputs are now five, `<name>_data.c` (the large constants, notes/language.md) after
+the three extra parts; with SPLIT_PLUMBING, `<name>_plumbing_data.c`. It takes ThinLTO and, with the plumbing, -O2
+like the other parts.
+
+`tide_add_game(... SPLIT_CODE)` passes `tidec --split-code`, declares the three extra generated C outputs, compiles
+all four with ThinLTO and enables it at link time (lld explicitly on non-Apple native targets). CMake opt-in is explicit (the CLI automatically uses a 4 MiB
+threshold). Combined with SPLIT_PLUMBING, only the plumbing is split; all its parts take O2 and ThinLTO while game
+code stays a single source with the target's own flags. Four E2E variants exercise crossplatform, nested, tasks and
+compute, and nested_split_debug explicitly compiles game.c at O0. Stable generation/cache tests and full native/web
+validation are described in language.md and cli-and-packages.md. Manifest files are for the CLI/custom pipelines;
+CMake knows its output names ahead of time and does not glob stale generated files.
+
+## SPLIT_PLUMBING (2026-11-04)
+
+`tide_add_game(... SPLIT_PLUMBING)` passes `tidec --split-plumbing` and compiles `<name>_plumbing.c` with the
+game's other sources, its source property adding `-O2` after the target's flags: the generated C as `tide`'s debug
+builds compile it (notes/cli-and-packages.md, Optimized plumbing in debug builds). The debugger fixture
+(`tidec_debugger_fixture`) uses it, so the natvis and LLDB tests debug a game built that way. No other target does.
+
+## Build code's tools (2026-11-03)
+
+`cmake/Tide.cmake` sets `TIDE_BUILD_CODE_FLAGS` once: `--build-cc` (`TIDE_CLANG`, the toolchain's own clang, else
+`CMAKE_C_COMPILER`, so a cross build's target flags don't reach it), `--build-include` and `--build-engine` (the
+engine's folders). Every `tide_add_game` tidec command passes them, so a game with build code builds in any
+preset; one without it never compiles anything with them. tidec keeps the program and what it made under the
+game's output folder (`.tide/`), as it has no `--game` there. Details: notes/assets-and-files.md, Build code.
+
+## Retarget baking dependencies (2026-10-30)
+
+`tide_add_game` passes `tidec --depfile <name>.d` and consumes it through
+the custom command's DEPFILE. Compiler-resolved transitive inputs now rebuild
+the pack: humanoid profile reference models and external glTF buffers, alongside
+ordinary source/assets. Existing configure-time asset globs and the asset-list
+dependency still detect additions/deletions. Main writes standard Make escaping
+and fails the compile if the requested dependency file cannot be written.
+Ninja consumes that file directly under scoped CMP0116 OLD: CMake's depfile
+transformer removes dollar/hash escaping (reproduced with 3.31.3 and still in
+its 4.1 implementation). The command runs from the top build directory with a
+relative output path so Ninja's output matches. Only this policy workaround's
+deprecation warning is suppressed locally. The isolated Ninja regression covers
+unchanged builds and edits to profiles, models and external buffers with spaces,
+dollar signs and hashes in their paths; all pass.
+
+Native tidec now links the same CPU `tide` archive as the browser compiler;
+the tools-only cross-build host creates that archive too. This replaces duplicate
+importer-side engine objects and lets the baker reuse runtime sampling/maps.
+It links no platform layer. Baking contracts and coverage are in
+assets-and-files.md; focused build/dependency validation is recorded there.
+
+Pre-merge integration validation: the native ASan suite passed all 2,924 enabled
+real checks across the full run and a focused correction run. The first run
+exposed an outdated expected asset-type diagnostic and a JSON fixture directory
+accidentally registered as a multi-file error test; both were corrected, with
+all nine affected diagnostics passing. The full web-debug suite passed all
+2,812 enabled checks. Each suite retains the pre-existing disabled Newton
+right-turn test. The docs site build also passed. Private tests against five
+Kubold clips and the Bannerlord prototype's Synty character cover 1,181 sample
+times, including bake-grid midpoints; native/WASM printed error measurements
+match, with no failures and maximum model-endpoint discrepancy 0.00000101 m.
+Licensed inputs and measurements stay under ignored build/; no prototype assets
+or game source are part of this commit.
+
+Final integration after merging dev through 05d92a922: both complete builds
+passed, then all 2,900 enabled native ASan checks and all 2,788 enabled web-debug
+checks passed (each still has the same disabled Newton test). Incoming mesh
+value/resource-collection codegen and Pose indexing changes were retained.
+Review found and corrected a same-slot model-facts cache lifetime bug in
+skinned compatibility; its 33-identity regression passes natively and on WASM,
+as does the pinned retarget pose hash. The five real-asset probes retain identical
+printed native/web results, including all 1,181 baked comparisons. The merged
+docs build also passes. Final release measurements were taken after the suites
+finished and are recorded in assets-and-files.md, Runtime performance follow-up.
+
 Deleted asset files (2026-10-27, owner-approved fix): the asset files a game's
 declarations name were only in tidec's DEPENDS, and Ninja never reruns a
 command because a dependency disappeared, so a file deleted from a glob's

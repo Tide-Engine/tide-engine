@@ -1,0 +1,21 @@
+// expect: a shared local starts zeroed for the whole group: it takes no value of its own
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow)
+{
+    shared int total = 3;
+    meadow.counts[0] = total;
+}
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

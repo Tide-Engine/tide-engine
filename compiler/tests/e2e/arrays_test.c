@@ -10,7 +10,7 @@ static tide_world world;
 static tide_world copy;
 static tide_local local;
 
-static const tide_entity board_entity = {1, 1};
+static tide_entity board_entity;
 
 // Whether two worlds hold the same: the same bytes (tide_world_pack, which
 // leaves out where their pages are), and the same hash.
@@ -31,6 +31,7 @@ static bool same(const tide_world *a, const tide_world *b)
 TIDE_TEST(arrays_all_checks_pass)
 {
     tide_world_init(&world, 1.0f);
+    board_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_tick(&world);
     TIDE_REQUIRE(tide_has_Results(&world, board_entity));
@@ -48,6 +49,7 @@ TIDE_TEST(arrays_all_checks_pass)
 TIDE_TEST(arrays_are_component_bytes)
 {
     tide_world_init(&world, 1.0f);
+    board_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_tick(&world);
     const Board b = tide_get_Board(&world, board_entity);
@@ -61,6 +63,7 @@ TIDE_TEST(arrays_are_component_bytes)
 TIDE_TEST(arrays_snapshot_pack_and_hash)
 {
     tide_world_init(&world, 1.0f);
+    board_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_copy(&copy, &world);
     for (int i = 0; i < 5; i++) {
@@ -109,6 +112,7 @@ TIDE_TEST(arrays_in_inputs_pack_and_repair)
     TIDE_CHECK(memcmp(&changed, &back, sizeof changed) == 0);
 
     tide_world_init(&world, 1.0f);
+    board_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_tick(&world);
     Hand bad = in;
@@ -123,6 +127,7 @@ TIDE_TEST(arrays_in_inputs_pack_and_repair)
 TIDE_TEST(arrays_in_local_state_and_views)
 {
     tide_world_init(&world, 1.0f);
+    board_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     tide_world_tick(&world);
     tide_local_init(&local);
@@ -152,6 +157,7 @@ TIDE_TEST(arrays_of_structs_repair_inner_bounds_and_padding)
         }
     }
     tide_world_init(&world, 1.0f);
+    board_entity = tide_entity_in_slot(&world.entities, 1);
     tide_world_init(&copy, 1.0f);
     tide_world_set_server_input(&world, bad);
     tide_world_set_server_input(&copy, clean);

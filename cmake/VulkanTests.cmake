@@ -15,7 +15,7 @@ find_program(TIDE_SPIRV_VAL spirv-val) # One the system has, where the SDK isn't
 find_path(TIDE_VULKAN_LAYERS VkLayer_khronos_validation.json
     PATHS /usr/share/vulkan/explicit_layer.d /usr/local/share/vulkan/explicit_layer.d NO_DEFAULT_PATH)
 
-# A GPU test (label gpu) draws with what the machine has, Vulkan first. Its
+# A GPU test (label gpu) draws with Vulkan, the desktop's one backend. Its
 # implicit layers (overlays, capture tools) stay out of it, and the
 # validation layer, where there's one, stops it at the first thing it finds
 # wrong (TIDE_VULKAN_VALIDATION, src/gpu_vk.h).
@@ -26,14 +26,10 @@ elseif(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     message(STATUS "No Vulkan validation layer (set VULKAN_SDK or TIDE_VULKAN_SDK): GPU tests draw with Vulkan unchecked")
 endif()
 
-# Labels the tests `gpu` and gives them that environment: `OPENGL` has them draw with OpenGL instead.
+# Labels the tests `gpu` and gives them that environment.
 function(tide_gpu_test)
-    cmake_parse_arguments(ARG "OPENGL" "" "" ${ARGN})
-    foreach(name IN LISTS ARG_UNPARSED_ARGUMENTS)
+    foreach(name IN LISTS ARGN)
         set_property(TEST ${name} APPEND PROPERTY LABELS gpu)
         set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT ${TIDE_GPU_TEST_ENVIRONMENT})
-        if(ARG_OPENGL)
-            set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=opengl)
-        endif()
     endforeach()
 endfunction()

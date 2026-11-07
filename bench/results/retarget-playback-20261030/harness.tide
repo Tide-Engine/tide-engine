@@ -1,0 +1,66 @@
+local scene Main { }
+struct Corner { float3 position; float3 normal; float2 uv; Color color = Color.white; }
+asset SkinnedMesh<Corner> target = "../retarget-private/in/character.fbx";
+asset Animation reference = "../retarget-private/in/rest.fbx";
+asset Animation raw = "../retarget-private/in/c0.fbx";
+asset Animation legacyBaked = "baked.glb";
+asset HumanoidRig sourceRig = "../retarget-private/bake_source.humanoid.json";
+asset HumanoidRig targetRig = "../retarget-private/bake_target.humanoid.json";
+[Retarget(sourceRig, targetRig)]
+asset Animation baked = "../retarget-private/in/c0.fbx";
+
+local singleton Bench
+{
+    int calls;
+    int mode;
+    float seconds;
+    float sum;
+    bool ready;
+    bool bakeReady;
+    RetargetMap mapping;
+    Animation runtimeBaked;
+}
+
+Pose Baked(float seconds)
+{
+    mut var pose = target.defaultPose;
+    pose.Sample(baked, seconds);
+    return pose;
+}
+Pose Retargeted(RetargetMap mapping, float seconds)
+{
+    mut var pose = target.defaultPose;
+    pose.Retarget(raw.Sample(seconds), mapping);
+    return pose;
+}
+Pose RuntimeBaked(Animation animation, float seconds)
+{
+    mut var pose = target.defaultPose;
+    pose.Sample(animation, seconds);
+    return pose;
+}
+view Measure(mut Bench bench)
+{
+    if (!bench.ready)
+    {
+        bench.mapping = RetargetMap.Create(raw.skeleton,
+            HumanoidRig.Auto(reference.Sample(0)), HumanoidRig.Auto(target.defaultPose))!;
+        var bakedResult = bench.mapping.Bake(raw, target.skeleton);
+        if (bakedResult is Animation owned)
+        {
+            bench.runtimeBaked = owned;
+            bench.bakeReady = true;
+        }
+        bench.ready = true;
+    }
+    target.skeleton.TryGetByName("Hips", out var hips);
+    mut float sum = 0;
+    for (int i = 0; i < bench.calls; i++)
+    {
+        var time = bench.seconds + float(i) * 0.00073;
+        var pose = bench.mode == 0 ? Baked(time) : bench.mode == 1
+            ? Retargeted(bench.mapping, time) : RuntimeBaked(bench.runtimeBaked, time);
+        sum += pose[hips].position.y;
+    }
+    bench.sum = sum;
+}

@@ -2668,6 +2668,9 @@ local singleton Mips
     Grid2<Color> stripes = Grid2(64, 64);
     Grid2<float> heights = Grid2(64, 64); // 1 in one column of each 8
     Texture kept;                         // The stripes, as a field holds them: it says Trilinear itself
+    [Raw, Filter(Filter.Trilinear), Wrap(Wrap.Repeat)]
+    Grid2<Color> numeric = Grid2(64, 64);
+    [Raw] Texture keptNumeric;
     [Filter(Filter.Trilinear)]
     RenderTarget drawn;                   // Red stripes `lit` pixels wide, 8 apart, drawn again each frame
     float lit = 2;
@@ -2708,6 +2711,39 @@ frag MipStepped(Vertex vertex, out Color color, Texture source)
     color = source.Sample(uv);
 }
 
+Color MipGradientRead(Texture source, float2 uv, float2 dx, float2 dy)
+{
+    return source.SampleGrad(uv, dx, dy);
+}
+Color MipGradientForward(Texture source, float2 uv, float2 dx, float2 dy)
+{
+    return MipGradientRead(source, uv, dx, dy);
+}
+// Explicit derivatives remain valid after a changing UV, discard and divergent branch,
+// and keep the texture's carried filter through two helpers.
+frag MipGradient(Vertex vertex, out Color color, Texture source)
+{
+    var dx = this.Ddx(vertex.uv);
+    var dy = this.Ddy(vertex.uv);
+    mut var uv = vertex.uv;
+    for (int i = 0; i < 2; i++) uv += float2(0, 0);
+    if (vertex.uv.x > 2) this.Discard();
+    if (vertex.uv.x < 0.5) color = MipGradientForward(source, uv, dx, dy);
+    else color = source.SampleGrad(uv, dx, dy);
+}
+frag MipGradientSaid(Vertex vertex, out Color color, Texture source)
+{
+    color = source.SampleGrad(vertex.uv, float2(0.125, 0), float2(0, 0.125), .Trilinear);
+}
+frag MipGradientRaw(Vertex vertex, out Color color, Mips mips)
+{
+    // An exact mip-2 texel center after Repeat; its base-level red and green are zero.
+    // Alpha stays 1/4 while RGB stays numeric through the Texture field and two helpers.
+    var value = MipGradientForward(mips.keptNumeric, float2(1.09375, -0.90625),
+                                   float2(0.0625, 0), float2(0, 0.0625));
+    color = Color(value.r, value.g, value.b, 1);
+}
+
 frag MipHeight(Vertex vertex, out Color color, Mips mips)
 {
     color = Color(mips.heights.Sample(vertex.uv, Filter.Trilinear).r, 0, 0, 1);
@@ -2731,9 +2767,12 @@ view Mipmaps(Art art, mut Mips mips)
             {
                 mips.stripes[x, y] = Color(x % 8 == 0 ? 1 : 0, y % 8 < 2 ? 1 : 0, 1);
                 mips.heights[x, y] = x % 8 == 0 ? 1 : 0;
+                mips.numeric[x, y] = Color(x < 32 ? (x % 4 == 0 ? 0.8 : 0) : 0.6,
+                                            y % 4 < 2 ? 0.6 : 0, 0.4, 0.25);
             }
         }
         mips.kept = mips.stripes;
+        mips.keptNumeric = mips.numeric;
         mips.drawn = RenderTarget(64, 64, 1);
         mips.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
                       Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
@@ -2793,6 +2832,22 @@ view Mipmaps(Art art, mut Mips mips)
     Draw.Transform(float2(168, 8))
     {
         Draw.Mesh(mips.small, art.faces, mips.drawn.color, MipSource);
+    }
+    Draw.Transform(float2(184, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, MipGradient);
+    }
+    Draw.Transform(float2(200, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, Filter.Bilinear, MipGradient);
+    }
+    Draw.Transform(float2(216, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, Filter.Point, MipGradientSaid);
+    }
+    Draw.Transform(float2(232, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, MipGradientRaw);
     }
 }
 
@@ -4542,13 +4597,196 @@ view ImageMeasurements(Art art, mut ImageSizes sizes)
     Draw.Mesh(art.targetQuad, art.faces, heroColors, SizedImage, ImageMetadata);
 }
 
+// Cut-outs (pass 24): a frag that says how much of its pixel it covers. A
+// sheet whose alpha climbs a 64th a pixel, from left to right, cut out with
+// this.Cutout, is drawn into a target of 4 samples, where its edge pixel is
+// half covered, and into one of a sample, where it's cut; what it covers it
+// covers wholly, where its alpha is barely over half. Its bottom rows are
+// discarded too. A sheet that covers three quarters of each pixel as it's
+// given (this.Coverage) covers that share of the samples, and is whole in
+// one sample. A card cut out, into a target of depth alone, stores depth only
+// where it's there. And how fast values change across a pixel
+// (this.Ddx, Ddy and Fwidth), into the window and into a target: the same
+// numbers, the same way round, on every backend.
+local singleton Cuts
+{
+    RenderTarget hdrOpaque;
+    RenderTarget hdrClear;
+    RenderTarget hdrMultiple;
+    RenderTarget smooth;  // 64 pixels by 64 whatever the display, 4 samples
+    RenderTarget sharp;   // ...and one
+    RenderTarget shared;  // ...4 samples, for the share
+    RenderTarget whole;   // ...and one
+    RenderTarget depth;   // ...depth alone
+    RenderTarget probe;   // ...one, for the slopes
+    DepthTexture stored;  // ...as a frag reads it
+    List<Vertex> sheet;   // 64 across from its corner, its uv.x from 0 to 1
+    List<Vertex3> card;   // 2 by 2 around the origin, the same
+    bool made;
+}
+
+// There from the middle of the sheet's 32nd pixel on, and red; its bottom tenth is discarded
+frag Edge(Vertex vertex, out Color color)
+{
+    if (vertex.uv.y > 0.9) this.Discard();
+    color = Color.red;
+    this.Cutout(vertex.uv.x + 0.5 / 64);
+}
+
+// ...and the card's
+frag Edge3(Vertex3 vertex, out Color color)
+{
+    color = Color.red;
+    this.Cutout(vertex.uv.x + 0.5 / 64);
+}
+
+// Three quarters of each pixel, as it's given
+frag Share(Vertex vertex, out Color color)
+{
+    color = Color.red;
+    this.Coverage(0.75);
+}
+
+frag HdrCoverage(Vertex vertex, out Color color)
+{
+    color = Color(4, 0.5, 0.25);
+    this.Coverage(0.75);
+}
+
+// Multiple outputs must retain their authored alpha on the unchanged path.
+frag HdrMultipleCoverage(Vertex vertex, out Color color, out Color other)
+{
+    color = Color(4, 0.5, 0.25);
+    other = Color(0.5, 0.25, 0.125, 0.25);
+    this.Coverage(0.75);
+}
+
+frag InspectCoverage(Vertex vertex, out Color color, Texture source)
+{
+    var value = source.Sample(vertex.uv, Filter.Point);
+    color = Color(value.r / 4, value.a, value.g);
+}
+
+frag InspectOtherCoverage(Vertex vertex, out Color color, Texture source)
+{
+    var value = source.Sample(vertex.uv, Filter.Point);
+    color = Color(value.r, value.a, value.g);
+}
+
+// A pixel across in pixels, a pixel down in the uv's 64ths, and a 64th across in halves: 1, 1 and 0.5
+frag Slopes(Vertex vertex, out Color color)
+{
+    color = Color(this.Ddx(this.position.x), this.Ddy(vertex.uv.y) * 64, this.Fwidth(vertex.uv.x) * 32);
+}
+
+frag StoredDepth(Vertex vertex, out Color color, Cuts cuts)
+{
+    float depth = cuts.stored.Sample(vertex.uv);
+    color = Color(depth, depth, depth);
+}
+
+[After(ImageMeasurements)]
+view Cutouts(Art art, mut Cuts cuts)
+{
+    if (art.targetPass != 24) return;
+    if (!cuts.made)
+    {
+        cuts.made = true;
+        cuts.hdrOpaque = RenderTarget(64, 64, 1, Format.Rgba16f, samples: 4);
+        cuts.hdrClear = RenderTarget(64, 64, 1, Format.Rgba16f, samples: 4);
+        cuts.hdrMultiple = RenderTarget(64, 64, 1, Format.Rgba16f, Format.Rgba16f, samples: 4);
+        cuts.smooth = RenderTarget(64, 64, 1, samples: 4);
+        cuts.sharp = RenderTarget(64, 64, 1);
+        cuts.shared = RenderTarget(64, 64, 1, samples: 4);
+        cuts.whole = RenderTarget(64, 64, 1);
+        cuts.depth = RenderTarget(64, 64, 1, Format.Depth);
+        cuts.probe = RenderTarget(64, 64, 1);
+        cuts.stored = cuts.depth.depth;
+        cuts.sheet = [Vertex { }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+        cuts.card = [Vertex3 { position = float3(-1, -1, 0) }, Vertex3 { position = float3(1, -1, 0), uv = float2(1, 0) },
+                     Vertex3 { position = float3(1, 1, 0), uv = float2(1, 1) }, Vertex3 { position = float3(-1, 1, 0), uv = float2(0, 1) }];
+    }
+    cuts.smooth.Clear(Color.black);
+    cuts.smooth.SetScreen();
+    cuts.smooth.Mesh(cuts.sheet, art.faces, Edge);
+    cuts.sharp.Clear(Color.black);
+    cuts.sharp.SetScreen();
+    cuts.sharp.Mesh(cuts.sheet, art.faces, Edge);
+    cuts.shared.Clear(Color.black);
+    cuts.shared.SetScreen();
+    cuts.shared.Mesh(cuts.sheet, art.faces, Share);
+    cuts.whole.Clear(Color.black);
+    cuts.whole.SetScreen();
+    cuts.whole.Mesh(cuts.sheet, art.faces, Share);
+    cuts.probe.Clear(Color.black);
+    cuts.probe.SetScreen();
+    cuts.probe.Mesh(cuts.sheet, art.faces, Slopes);
+    cuts.hdrOpaque.Clear(Color.black);
+    cuts.hdrOpaque.SetScreen();
+    cuts.hdrOpaque.Mesh(cuts.sheet, art.faces, HdrCoverage);
+    cuts.hdrClear.Clear(Color(0, 0, 0, 0));
+    cuts.hdrClear.SetScreen();
+    cuts.hdrClear.Mesh(cuts.sheet, art.faces, HdrCoverage);
+    cuts.hdrMultiple.Clear(Color(0, 0, 0, 0));
+    cuts.hdrMultiple.SetScreen();
+    cuts.hdrMultiple.Mesh(cuts.sheet, art.faces, HdrMultipleCoverage);
+    // From 10 in front of the card, a box 2 by 2 with no perspective: the card fills it
+    cuts.depth.Clear(Color.white);
+    cuts.depth.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(2, 2, 0.1, 30));
+    cuts.depth.SetCull(Cull.None);
+    cuts.depth.Mesh(cuts.card, art.faces, float4x4.identity, Edge3);
+
+    Draw.Clear(Color.black);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Mesh(cuts.sheet, art.faces, cuts.smooth.color, Filter.Point);
+    Draw.Transform(float2(64, 0))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.sharp.color, Filter.Point);
+    }
+    Draw.Transform(float2(128, 0))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, StoredDepth);
+    }
+    Draw.Transform(float2(192, 0))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, Slopes);
+    }
+    Draw.Transform(float2(0, 64))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.shared.color, Filter.Point);
+    }
+    Draw.Transform(float2(64, 64))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.whole.color, Filter.Point);
+    }
+    Draw.Transform(float2(192, 64))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.probe.color, Filter.Point);
+    }
+    Draw.Transform(float2(0, 128))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.hdrOpaque.color, InspectCoverage);
+    }
+    Draw.Transform(float2(64, 128))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.hdrClear.color, InspectCoverage);
+    }
+    Draw.Transform(float2(128, 128))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.hdrMultiple.colors[1], InspectOtherCoverage);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals', 21 the models' and 22 the places'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals', 21 the models', 22 the places',
+    // 23 the image sizes' and 24 the cut-outs'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {
@@ -4590,4 +4828,290 @@ view Targets(mut Art art)
         art.targetTexture = art.uploaded;
     }
     Draw.Blit(art.outputTarget.color, Draw.window, TargetInspect);
+}
+
+// Texture arrays (pass 25): images in layers read by a uv and a layer. An asset's of the sky's six files, in their
+// paths' order (nx, ny, nz, px, py, pz: cyan, magenta, yellow, red, green and blue, each with a white top left
+// quarter, 4 pixels a side); one a view paints, 4 layers of 32 pixels, each its own color with a white top left
+// quarter; and one of depth alone, 3 layers, each a plane drawn farther than the one before.
+asset TextureArray skyLayers = "sky/sky_??.png";
+// Images big enough to be compressed: an opaque one (BC1) and one with alpha (BC3), in one array, which the GPU has as
+// BC3 (or as pixels, without BC), read as the same files are as Textures
+asset TextureArray packedLayers = ["../../compiler/tests/e2e/texture_compression_assets/opaque.png",
+                                   "../../compiler/tests/e2e/texture_compression_assets/alpha.png"];
+asset Texture opaqueImage = "../../compiler/tests/e2e/texture_compression_assets/opaque.png";
+asset Texture alphaImage = "../../compiler/tests/e2e/texture_compression_assets/alpha.png";
+
+local singleton Layers
+{
+    TextureArray painted;
+    TextureArray shadows;
+    DepthTextureArray depths;
+    TextureArray none;       // Never made: reads as white
+    DepthTextureArray noDepth; // ...and its depth as the far limit
+    Grid3<Color> cells = Grid3(40, 20, 3);    // Each layer its own color, past a chunk along x
+    Grid3<float> heights = Grid3(4, 4, 5);    // Each layer a quarter more than the one before
+    TextureArray fromCells;   // ...each as an array, its z its layers
+    TextureArray fromHeights;
+    [Raw] Grid3<Color> rawCells = Grid3(4, 4, 2); // Numbers, with no alpha: as colors they'd be nothing...
+    [Raw] TextureArray fromRaw;                   // ...and as numbers they're kept
+    int paint;                // What the host has a cell of the second layer be: 0 its own color, 1 white
+    List<Vertex> small;
+    List<Vertex3> plane;
+    bool made;
+}
+
+// Which layer a draw reads, and where: its values
+struct Pick
+{
+    float2 at;
+    int layer;
+}
+
+frag AssetLayer(Vertex vertex, out Color color, Pick pick)
+{
+    color = skyLayers.Sample(pick.at, pick.layer, Filter.Point);
+}
+
+frag PaintedLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
+{
+    color = layers.painted.Sample(pick.at, pick.layer, Filter.Point);
+}
+
+// The layer differs from pixel to pixel: a quarter of the square's width each
+frag GridLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
+{
+    color = layers.fromCells.Sample(pick.at, pick.layer, Filter.Point);
+}
+
+frag RawLayer(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.fromRaw.Sample(float2(0.5, 0.5), 1, Filter.Point);
+    color.a = 1;
+}
+
+frag HeightLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
+{
+    float height = layers.fromHeights.Sample(pick.at, pick.layer, Filter.Point).r;
+    color = Color(height, float(layers.fromHeights.count) / 16, float(layers.fromCells.size.x) / 160);
+}
+
+frag LayerAcross(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.painted.Sample(float2(0.75, 0.75), int(vertex.uv.x * 4), Filter.Point);
+}
+
+// Between a layer's smaller images: a layer of one color is that color however small it's drawn
+frag LayerSmall(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.painted.Sample(vertex.uv * 0.5 + float2(0.5, 0.5), 1, Filter.Trilinear);
+}
+
+frag DepthLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
+{
+    color = Color(layers.depths.Compare(float2(0.5, 0.5), pick.layer, 0.4), layers.depths.Sample(float2(0.5, 0.5), pick.layer), 0);
+}
+
+frag NoLayers(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.none.Sample(float2(0.5, 0.5), 0) * Color(layers.noDepth.Sample(float2(0.5, 0.5), 0), 1, layers.noDepth.Compare(float2(0.5, 0.5), 0, 0.4));
+}
+
+// What an array says of itself, on the GPU: how many layers, a layer's pixels
+frag LayerMeasure(Vertex vertex, out Color color, Layers layers)
+{
+    color = Color(float(layers.painted.count) / 8, float(layers.painted.size.x) / 64,
+                  float(layers.depths.count + skyLayers.count + layers.depths.size.y) / 64);
+}
+
+frag PackedLayer(Vertex vertex, out Color color, Pick pick)
+{
+    color = packedLayers.Sample(pick.at, pick.layer, Filter.Point);
+}
+
+frag PackedImage(Vertex vertex, out Color color, Pick pick)
+{
+    color = pick.layer == 0 ? opaqueImage.Sample(pick.at, Filter.Point) : alphaImage.Sample(pick.at, Filter.Point);
+}
+
+// Drawn an eighth of their size: between their smaller images, which came with their blocks
+frag PackedSmall(Vertex vertex, out Color color)
+{
+    color = packedLayers.Sample(vertex.uv, 1, Filter.Trilinear);
+}
+
+frag ImageSmall(Vertex vertex, out Color color)
+{
+    color = alphaImage.Sample(vertex.uv, Filter.Trilinear);
+}
+
+Color LayerColor(int layer)
+{
+    if (layer == 0) return Color(1, 0, 0);
+    if (layer == 1) return Color(0, 1, 0);
+    if (layer == 2) return Color(0, 0, 1);
+    return Color(1, 1, 0);
+}
+
+[After(CubeReads)]
+view LayersPaint(Art art, mut Layers layers)
+{
+    if (art.targetPass != 25) return;
+    if (!layers.made)
+    {
+        layers.made = true;
+        layers.painted = TextureArray(32, 32, 4, 1);
+        layers.shadows = TextureArray(16, 16, 3, 1, Format.Depth);
+        layers.depths = layers.shadows.depth;
+        layers.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                        Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        layers.plane = [Vertex3 { position = float3(-2, -2, 0) }, Vertex3 { position = float3(2, -2, 0) },
+                        Vertex3 { position = float3(2, 2, 0) }, Vertex3 { position = float3(-2, 2, 0) }];
+        for (int z = 0; z < 3; z++) for (int y = 0; y < 20; y++) for (int x = 0; x < 40; x++) layers.cells[x, y, z] = LayerColor(z);
+        for (int z = 0; z < 5; z++) for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) layers.heights[x, y, z] = z * 0.25;
+        layers.fromCells = layers.cells;
+        layers.fromHeights = layers.heights;
+        for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) layers.rawCells[x, y, 1] = Color(1, 0.5, 0.25, 0);
+        layers.fromRaw = layers.rawCells;
+    }
+    // A cell of the second layer, as the host says: written to the GPU alone when it changes
+    layers.cells[35, 15, 1] = layers.paint == 1 ? Color.white : LayerColor(1);
+    for (int layer = 0; layer < 4; layer++)
+    {
+        var into = layers.painted.layers[layer];
+        into.SetScreen();
+        into.Clear(LayerColor(layer));
+        into.Rect(float2(8, 8), float2(16, 16), Color.white);
+    }
+    // Each depth layer a plane 5, 10 and 15 from a camera with no perspective, near 0.1 and far 30
+    for (int layer = 0; layer < 3; layer++)
+    {
+        var into = layers.shadows.layers[layer];
+        into.Clear(Color.white);
+        into.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.LookRotation(float3(0, 0, 1), float3(0, 1, 0)), float3(1)),
+                       float4x4.Ortho(2, 2, 0.1, 30));
+        into.Cull(Cull.None)
+        {
+            into.Mesh(layers.plane, art.faces, float4x4.TRS(float3(0, 0, -10 + 5 * (layer + 1)), quaternion.identity, float3(1)));
+        }
+    }
+}
+
+[After(LayersPaint)]
+view LayersRead(Art art, Layers layers)
+{
+    if (art.targetPass != 25) return;
+    Draw.Clear(Color(0.5, 0.5, 0.5));
+    Draw.SetScreen();
+    Draw.SetClip();
+    for (int layer = 0; layer < 6; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 32, 8)) { Draw.Mesh(layers.small, art.faces, AssetLayer, Pick { at = float2(0.25, 0.25), layer = layer }); }
+        Draw.Transform(float2(24 + layer * 32, 8)) { Draw.Mesh(layers.small, art.faces, AssetLayer, Pick { at = float2(0.75, 0.75), layer = layer }); }
+    }
+    for (int layer = 0; layer < 4; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 32, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.25, 0.25), layer = layer }); }
+        Draw.Transform(float2(24 + layer * 32, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.75, 0.75), layer = layer }); }
+    }
+    // Past its layers, the nearest: the last and the first
+    Draw.Transform(float2(136, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.75, 0.75), layer = 9 }); }
+    Draw.Transform(float2(152, 24)) { Draw.Mesh(layers.small, art.faces, PaintedLayer, Pick { at = float2(0.75, 0.75), layer = -2 }); }
+    Draw.Transform(float2(8, 40)) { Draw.Mesh(layers.small, art.faces, LayerAcross); }
+    Draw.Transform(float2(24, 40)) { Draw.Mesh(layers.small, art.faces, LayerSmall); }
+    Draw.Transform(float2(40, 40)) { Draw.Mesh(layers.small, art.faces, NoLayers); }
+    Draw.Transform(float2(56, 40)) { Draw.Mesh(layers.small, art.faces, LayerMeasure); }
+    for (int layer = 0; layer < 3; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 16, 88)) { Draw.Mesh(layers.small, art.faces, GridLayer, Pick { at = float2(0.1, 0.1), layer = layer }); }
+    }
+    Draw.Transform(float2(56, 88)) { Draw.Mesh(layers.small, art.faces, GridLayer, Pick { at = float2(35.5 / 40, 15.5 / 20), layer = 1 }); }
+    Draw.Transform(float2(72, 88)) { Draw.Mesh(layers.small, art.faces, HeightLayer, Pick { at = float2(0.5, 0.5), layer = 3 }); }
+    Draw.Transform(float2(88, 88)) { Draw.Mesh(layers.small, art.faces, RawLayer); }
+    for (int layer = 0; layer < 2; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 32, 72)) { Draw.Mesh(layers.small, art.faces, PackedLayer, Pick { at = float2(0.3, 0.6), layer = layer }); }
+        Draw.Transform(float2(24 + layer * 32, 72)) { Draw.Mesh(layers.small, art.faces, PackedImage, Pick { at = float2(0.3, 0.6), layer = layer }); }
+    }
+    Draw.Transform(float2(72, 72), 0, 2) { Draw.Mesh(layers.small, art.faces, PackedSmall); }
+    Draw.Transform(float2(104, 72), 0, 2) { Draw.Mesh(layers.small, art.faces, ImageSmall); }
+    for (int layer = 0; layer < 3; layer++)
+    {
+        Draw.Transform(float2(8 + layer * 16, 56)) { Draw.Mesh(layers.small, art.faces, DepthLayer, Pick { layer = layer }); }
+    }
+}
+
+// A depth pre-pass (pass 26), as a forest's leaves are drawn: into a target of 4 samples of four floats, a far card
+// and a near one cut out as Edge3's is (its bottom tenth discarded too) write depth alone, the near one through a
+// frag that writes white, the far one as the engine's own mesh. Then each is lit where its depth is the one there,
+// added, the near one through a frag that neither discards nor cuts, the far one as the engine's mesh, and a third
+// card between them, which the pre-pass never drew, nowhere. So a sample shaded twice, a sample lit by what's
+// hidden, or the pre-pass's white would all show: each pixel is a half of red or green, or both at the near card's
+// edge, where its samples are the cut-out's.
+local singleton Prepass
+{
+    RenderTarget scene;
+    List<Vertex> sheet; // 64 across from its corner
+    List<Vertex3> card; // 2 by 2 around the origin, its uv.x from 0 to 1
+    bool made;
+}
+
+// The pre-pass's frag: white, which goes nowhere, cut out where the near card's edge is
+frag CutWhite(Vertex3 vertex, out Color color)
+{
+    if (vertex.uv.y > 0.9) this.Discard();
+    color = Color.white;
+    this.Cutout(vertex.uv.x + 0.5 / 64);
+}
+
+// The near card's lit frag: what the pre-pass covered, with no discard and no cut
+frag LitRed(Vertex3 vertex, out Color color)
+{
+    color = Color(0.5, 0, 0);
+}
+
+[After(LayersRead)]
+view Prepasses(Art art, mut Prepass pre)
+{
+    if (art.targetPass != 26) return;
+    if (!pre.made)
+    {
+        pre.made = true;
+        pre.scene = RenderTarget(64, 64, 1, Format.Rgba16f, samples: 4);
+        pre.sheet = [Vertex { }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                     Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+        pre.card = [Vertex3 { position = float3(-1, -1, 0) }, Vertex3 { position = float3(1, -1, 0), uv = float2(1, 0) },
+                    Vertex3 { position = float3(1, 1, 0), uv = float2(1, 1) }, Vertex3 { position = float3(-1, 1, 0), uv = float2(0, 1) }];
+    }
+    var near = float4x4.identity;
+    var between = float4x4.Translate(float3(0, 0, 1));
+    var far = float4x4.Translate(float3(0, 0, 2));
+    // From 10 in front of the near card, a box 2 by 2 with no perspective: each card fills it
+    pre.scene.Clear(Color.black);
+    pre.scene.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(2, 2, 0.1, 30));
+    pre.scene.SetCull(Cull.None);
+    pre.scene.Depth(Depth.Only)
+    {
+        pre.scene.Mesh(pre.card, art.faces, far);
+        pre.scene.Mesh(pre.card, art.faces, near, CutWhite);
+    }
+    pre.scene.Depth(Depth.Equal)
+    {
+        pre.scene.Blend(Blend.Add)
+        {
+            pre.scene.Mesh(pre.card, art.faces, near, LitRed);
+            pre.scene.Tint(Color(0, 0.5, 0))
+            {
+                pre.scene.Mesh(pre.card, art.faces, far);
+            }
+            pre.scene.Tint(Color(0, 0, 0.5))
+            {
+                pre.scene.Mesh(pre.card, art.faces, between);
+            }
+        }
+    }
+    Draw.Clear(Color.black);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Mesh(pre.sheet, art.faces, pre.scene.color, Filter.Point);
 }

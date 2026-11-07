@@ -468,6 +468,8 @@ static bool command(const uint32_t id, const int sender, const int level)
     tide_bits_put(&bits, id, 16);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
     tide_bits_put_varint(&bits, tide_zigzag(level));
     const uint32_t size = tide_bits_end(&bits);
     return tide_game_api.command(&world, player(sender), 0,

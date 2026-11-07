@@ -1,5 +1,311 @@
 # ECS and simulation state
 
+## Sparse cache CI fixture capacities (2026-11-07)
+
+The private sparse-cache differential fixture now derives chunk and task counts
+from generated column metadata instead of assuming 2,048-row chunks. Entity128
+makes the same 2,081/2,082-row tables span three 1,024-row chunks each. Retained
+page storage grows with actual chunks; every fast/slow task still compares page
+reference/hash/was metadata, used bytes, whole-world hashes and packed output,
+including mixed-reference snapshots, short tails and zero-match selections.
+The stale-presence test explicitly verifies a cache reference before forcing COW.
+Its apparent COW failure was downstream of the old capacity assertion returning
+before cache publication, not a failure to retain the published presence page.
+Validation: fresh checkout-generated native optimized ASan private cases 7/7,
+public cases 3/3 and the codegen ownership check pass. WASI's public/private/
+codegen CTest targets pass 3/3 with the existing external-project configuration.
+The raw Entity hostile-input fixture also avoids typed casts into its packed
+28-byte-header payload: native slots require eight-byte alignment, so malformed
+slot edits use aligned locals plus memcpy. The duplicate/free-list rejection
+assertions are retained; the runtime already byte-copies into aligned pages.
+Fresh Windows ASan entity tests pass 19/19; Linux CI supplies alignment UBSan.
+
+## Logical entity identities and private slots (2026-11-06)
+
+Owner-approved in response to mount-and-rifle's projected client divergence:
+Entity is now the opaque 16-byte `{uint64_t birth, lineage}`. `birth` is the
+public 64-bit simulation identity clock (starting at 1), not Time's wrapping
+32-bit tick; `lineage` is the generated causal hash. Both zero is null. Generated
+match spawning supplies the complete permanent key before Spawn returns; physical
+slot reuse, hidden allocations and row compaction cannot choose it. The compiler
+records the causal-key construction and canonical iteration contract in
+language.md and schedule-and-threads.md. This intentionally changes Entity's C
+ABI, packed worlds, seeds and world hashes; session protocol is 25.
+
+`entity.c` separates that key from dense private slots. A full-key open-addressed
+map resolves locations, and slot enumeration remains physical for implementation
+walks. Lookup capacity follows live population: tombstone pressure rehashes at the
+same capacity rather than growing with lifetime spawn/despawn count.
+`tide_entities_ordered` caches sorted ALIVE logical keys (including pending
+spawns). Short per-table atomic locking serializes lazy publication against
+structural registration/destruction; queries borrow immutable arrays. A changed
+keyset retires its prior array until `tide_entities_settle`, keeping an outer
+query valid when it spawns, destroys or triggers a nested query. Location, snap-
+count and presentation writes preserve the cache. Snapshots retain no cache
+pointer and build their own on demand. `tide_entities_ordered_archetypes` owns
+ascending unique archetype-ID sets and caches only their ALIVE keys; repeated
+nested queries therefore traverse matching archetypes rather than every entity
+in the world. Actual archetype changes invalidate these subsets, row-only moves
+preserve them, and the global keyset cache survives both. Sparse presence remains
+checked live by generated traversal. Subset arrays have the same retirement and
+snapshot ownership rules; caller/code-reload pointers are never retained. Cache
+pointers/locks and capacities never enter hashes or packed bytes. Native ASan tests
+exercise four real Windows reader threads against 500 structural changes, retained nested-query arrays, snapshot
+isolation and unchanged hashes. Map pages are COW snapshots; grown descriptors
+stay until systems settle, so concurrent lookup does not follow freed index
+storage. Capacity and addresses are derived metadata, excluded from hashing and
+packing. The key never contains a slot, generation, worker number or hidden
+allocation counter. Unkeyed trusted-C and LocalEntity allocation uses the separate
+`{0, monotonic_counter}` namespace; it is not an interface for visibility-stable
+match spawning.
+
+The current-clock key registry includes destroyed spawns. A repeated full key,
+backwards clock, zero match clock or exhausted identity namespace ends with an
+explicit diagnostic; the allocator never probes for a different ID based on
+occupancy. The registry is copied and serialized in sorted-key order with private
+allocator state. Recipient projections import only permitted existing IDs with
+`install`, reconstruct private dense storage and do not transmit hidden allocator
+or collision-registry entries. The public world identity clock is transferred by
+the generated canonical codec. Shard away markers retain the exact key while using
+their own private slots; release takes the full key.
+
+Full-key equality and lexicographic ordering are shared inline helpers; entity
+hashing feeds all sixteen little-endian bytes. Random field seeds use that full
+key. Event deduplication uses the permanent target key, never the older 32-bit
+presentation `born` sidecar. Text prints both words as fixed hexadecimal values.
+The old presentation sidecar remains outside match hashing/wire state.
+
+Focused Windows ASan validation: 35 entity/table tests, 27 text/random/events
+tests and 9 page/rows tests pass. New cases give server/client different hidden
+allocation and recycled-slot histories, then verify identical public spawn IDs;
+exercise high 64-bit key halves, COW snapshots and raw/delta reconstruction; and
+reject every truncated keyed table and duplicate imported storage without changing
+the destination. The complete WASI engine unit binary passed 679/680 initially;
+the sole failure was the intentional `crossplatform_random` pin after full-key
+field seeding. Native ASan independently produced the same new 0xEA0690516561A349
+value, then that expected pin was updated. The 36 focused protocol25
+command/session/ visibility/view-time native ASan tests also passed. Broader
+generated-game validation accompanies the coordinated compiler ABI change. Earlier
+index/generation and sparse global-slot entries below describe the superseded
+representation.
+
+The full-world delta now carries the current-clock collision registry as an
+exact set edit against same-clock XOR baselines, or as separately negotiated
+1024-key (16KB) hash/need regions. Full literal serialization remains bounded by
+remaining input bytes. This avoids retransmitting all 20,000 seeded Stone keys
+when the joiner already regenerated them. Native ASan and WASI both send 1,089
+bytes in random_net's seeded-join regression (previously 320,943), preserving its
+existing 16KB bound. Two new tests cover large unchanged registries, prefix
+insertion and same-clock replacement, truncated transfers, cross-region repeated
+or backwards keys and wrong clocks, preserving the destination on rejection.
+The raw registry representation, logical hashes and projected privacy are unchanged.
+
+The sparse rows/masks/cache and function-acts fixtures derive expected traversal
+from an independent lexicographic full-key sort, retaining their ordinal-based
+filter/value models and the cache fixture's physical-hole model. Initializer ordinal
+and private row order are no longer traversal or event-delivery order oracles.
+The refreshed WASI entity filter passes 31/31 including subset membership,
+borrowed lifetime and snapshot tests; sparse rows/masks/cache, function-acts,
+destroy-rows and stable-async pass 6/6. The existing 4096-Work/two-Fighter query
+fixture now finishes in 1.63 seconds total (355.6 ms for its 16-tick match case),
+where the first full-suite run exceeded its unchanged 120-second timeout while
+walking every world key per inner query. Remaining query assertions/hash pins
+are updated separately against canonical order and cross-platform results.
+The browser's full threaded240-tick fixture initially exceeded its unchanged
+45-second bound: profiling showed canonical system wrappers scanning every world
+key, including thousands of irrelevant entities, rather than a worker failure.
+Using the same admitted-archetype cache for systems and preparing their component
+lanes once per chunk restores the fixture to 19.61 seconds on this machine. All
+240 serial/pooled tick hashes, background-worker completion and sleeping-worker
+assertions remain enabled. Temporary profiling was removed; failures now print
+existing timing/progress counters to distinguish stalled work from CPU cost.
+
+The final rows fixture derives chunk capacity from generated column metadata,
+checks its original COW lane contracts across every actual chunk, and validates
+Cargo's frozen/unfrozen value changes on every row. Extern-system batching
+expectations come from an independent full-key sort and contiguous physical-run
+model; Badge lane offsets come from offsetof/sizeof. Big-world snapshot lookups
+use the snapshot's own logical key rather than a possibly destroyed current-world
+slot. All three fixtures pass native ASan and WASI. Fresh canonical row/query,
+World.Set/read/helper, destroy-rows and seeded-network tests pass WASI (10/10).
+
+## Loop views: lists indexed through a view found before the loop (2026-11-02)
+
+The owner, of the 14x gap between a mesh's normals over a world list and the same loop over C arrays: "im ok with redesigning things, if it doesnt touch language and is a net position = do it". No language or ordering change; generated code and `tide/list.h` only.
+
+What the gap was, measured on a 256 x 256 plane (66,049 64-byte vertices in 260 chunks, 393,216 indices), release flags, the Geometry package's `RecalculateNormals` and the same loop written in Tide, best of 25 ticks: 6.1 ms against 0.45 ms for C over arrays. Refilling the run cache was a small part of it (a cache that remembered two runs cut refills from 264k to 2k and saved nothing); the cost was every element checking that its cache still holds (the list's handle, the run, the count behind the list's block, the heap's `moves` behind the heap, all reloaded from `tide_lc` on the stack because a miss hands the cache to a function), and `count` decoding the list's handle in every loop test.
+
+- **Caches by index** (`cache_slot` in `compiler/src/codegen.c`, `index_key`): a list's cache is now its place's key and the index's variable (`vertices[a]`, `vertices[b]`, with `t + 1` and `t - 2` as `t`), so indexes that move through a list apart keep a run each. Any other index shares the list's one cache, as before. 6.1 to 4.2 ms.
+- **Loop views** (`tide_list_loop`, `tide_list_loop_find`, `tide_list_loop_at`, `tide_list_loop_at_mut` in `tide/list.h`; `tide_list_loop_chunk` and `tide_list_loop_own` in `engine/src/list.c`): before a `for` or `while` loop, generated code finds each list the loop indexes and keeps the shape of (`open_loop_views`): its count, and where its elements are, side by side (`flat`; the scratch area's, an asset's), or its chunks' directory. An element is then a bounds check against that count and, in chunks, a look in a table of `TIDE_LIST_LOOP_WAYS` (16) chunks by their numbers, filled the first time one of a chunk's elements is read (its page as it is) or written (`tide_heap_write`, the world's own, as `tide_list_at_mut` makes it). A chunk read and then written is found again as the world's own, which later reads of it read; a list side by side is made the world's own at its first write. The view's helpers (`tide_list%d_lget`, `_lat`, `_lslot`, `_lset`) take the same arguments as the cached ones, so each access site picks one by name (`loop_view_of`), and `count` in the loop is the view's. A loop inside one with a view goes on with it.
+- **What keeps a list's shape** (`lv_stmt`, `lv_expr`, `lv_keeps`): nothing in the loop's condition, step and body names the list, or a place that holds it, other than to index it or read its `count`: no method of it (`Add`, `Clear`, `Resize`, ...), no assignment to it or to what holds it, no argument naming it or what holds it (it could be a `mut` one), no method called on what holds it, and no local of its root's name. A list's element as an argument is a copy, read. And no view at all in a loop with a method call on the code's own value, an Action, a lambda, a World or query, an await, a `foreach`, a `switch`, or anything else the walk doesn't know; nor in inlined code, tasks, parallel steps or a Sort's comparison. Elements are plain values (`loop_viewed`: no text, lists, maps or sets in them), written as bytes.
+- **Why it holds:** code reaches a list only through its place (functions see their parameters), so a list no code in the loop hands on, resizes or reassigns keeps its count, block and chunks for the whole loop. A page made the world's own moves the heap and leaves the old page to the snapshot that shares it, which is still read rightly; nothing in the loop reads the list through it once its view has the world's own. A loop that writes a list prepares it first (`tide_list_prepare`), so an asset's or the pack's elements are made its own before the view is found, as a slot's write would; a list a loop only reads is never prepared or made the world's own.
+- **Measured** (same plane, best of 25): `RecalculateNormals` 6.1 to 1.8 ms (4x C, from 13.5x); `RecalculateTangents` 37 to 22; `WeldPositions` 18 to 16; appending shapes (`Plane`, 4,096 boxes) unchanged, as `Add` makes a loop keep its cache.
+- **Tests:** `tidec_e2e_loop_views` (`compiler/tests/e2e/loop_views.tide`): scattered reads and writes of a list in chunks with two indexes, indexes past both ends, a list side by side written whole, nested loops sharing a view, a loop that adds (cache kept), a loop that hands the list to a function that writes it through its own view, a function's scratch lists, an asset's list read and a copy of it written while the asset stays as it was; and a snapshot taken before a tick keeping its chunks when the tick's loops write them, with rolling back to it giving the same world. The full native and web suites cover every game's loops with the change.
+- **A parallel step's caches are counted in its own text** (`close_list_caches` at the end of each step in `gen_par_steps`): a step's `tide_lc` was sized only when the next function declared its caches, after the step's text had been copied out, so it stayed 1. Harmless while a step indexed one list through one cache; caches by index gave `tide_e2e_parallel_work`'s step two, and ASan caught the overflow.
+- **Not done:** `Add` per element (shape building) is still one runtime call each; a `foreach` over a list, query loops and parallel loops have their own paths and get no views.
+
+## 64-bit handles: built (2026-10-30)
+
+As designed below; what differs from the design or follows from it, and what
+holds it:
+
+- **Lists stop at their count, not at 1 GiB.** A list's elements were capped at
+  1 GiB of bytes, the offsets' reach; now a list grows to INT32_MAX elements
+  (its count is an `int`) as memory allows, so `list.Resize(int.MaxValue)` on
+  a list of ints asks for 8 GiB and, where that isn't there, ends the program
+  as running out of memory does, where it was left as it was. The `lists`
+  safety fixture's sizes line no longer tries it. A block side by side in a
+  world's heap is still 128 MiB at most; one in the scratch area is as big as
+  memory (`tide_scratch_block` takes a `uint64_t`).
+- **Heap.** `LIMIT` is 2^46 (64 TiB, the 32-bit page indices' reach); received
+  heaps are bounded by their bytes (notes/memory-safety.md, 64-bit handles).
+- **Scratch area.** The slot table grows by doubling from 64 slots; the pack
+  is read past `TIDE_PACK_BASE` from `tide_pack_memory`.
+- **Generated C.** `type_layout` gives text, lists and grids {8, 8}, maps and
+  sets {32, 8}, raw meshes {16, 8}; marks are `uint64_t` (`tide_mark`, the
+  `const uint64_t tide_mark` parameter of row tasks); the few emitted locals
+  that held a handle or a heap offset (`tide_blend_grid_snapshot`,
+  `tide_worker_grid_capture`, retargeting assets' `base`) are `tide_handle`
+  or `uint64_t`; the mesh-glob metadata row (`tide_ref_mesh_entry`) lost the
+  pad it had after a 4-byte key. Every generated game was checked with clang's
+  `-Wshorten-64-to-32` for narrowing from a 64-bit value, as were the engine,
+  compiler and platform sources (all of which had none before).
+- **C that mirrors layouts.** Box2D's, Box3D's and Newton's bridges
+  (notes/box2d.md, box3d.md, newton.md). Box3D's live-shape "source" skipped
+  its list handles as 4 bytes each (`(const char *)s + 4`), so with 8 the
+  material bytes it compares moved under a hull's `offset`:
+  `box3d_invalid_live_geometry_disables_and_can_be_repaired` caught it; it
+  skips `sizeof(tide_list)` now.
+- **Unity.** The Sample's `com.tide.game/schema.json` and the test fixture
+  `compiler/cli/tests/unity_rules_physics/schema.json` came from `tide unity`
+  runs of the old layout. They were laid out again by a script that applies C's
+  rules to each field (text, lists and grids 8, maps 32, the rest as they were;
+  defaults moved with their fields), checked first against schemas the old and
+  the new tidec give the same games (platform/tests/embed.tide and the
+  `nested` e2e game: identical but for the hash). Their `hash` is the old one,
+  so the Sample's package is written again at its first real build. The
+  Sample's `TideGame.cs` is what `unity_code.c` writes from it.
+- **Tests that changed with the formats** (a helper agent converted most of
+  the C tests by hand-checked rules): the pack tests (`tests/test_pack.c`,
+  `pack_fingerprint_test.c`: 64-bit builder offsets, forged `link`s,
+  `tide_pack_region_size`, 24-byte trailers), the list limits
+  (`tests/test_list.c`), lane numbers of a component with text and a list
+  (`rows_test.c`: a handle's high word stays the same zero, so only its low
+  lane is written apart), the embed packet's map keys (`embed.c`), an empty
+  pack as C (48 bytes: a 40-byte header to 16), mesh value swaps
+  (`mesh_values_test.c`, 16-byte elements), grid textures' handles
+  (`textures_test.c`), and `uint32_t` copies of handles in Earth's and the
+  assets' tests.
+- **Pins that moved** (world, page or physics-image hashes, and one size),
+  each new value the same natively (Windows ASan) and on the web (WASI and
+  browsers), as the shared pins say: `compiler/tests/CMakeLists.txt`'s
+  `NESTED_HASH`, `ARRAYS_HASH`, `FBX_HASH`, `SKINNED_HASH`, `CHARS_HASH`,
+  `JSON_HASH`, `OPTIONAL_FIELDS_HASH`; `assets_same.h`'s
+  `ASSETS_EMPTY_WORLD_HASH`; `DECODE_WORLD_HASH`; the `rows`, `rolls`,
+  `crossplatform_text` and `retargeting_dynamic` worlds; Sumo's and Towers'
+  match and replay hashes; Box2D's and Box3D's world, sequence and image
+  hashes (stack, sleep, course, kit, complete, joints, mesh); Newton's robot
+  and microduck worlds; `bench_sand`, `bench_gallery` and `bench_earth`'s
+  `--expect`s; an empty pack as C, 32 bytes to 48. The image hashes moved as
+  the packages' C state holds records of Tide types with lists. Pins of games
+  that hold no text, lists, maps or grids in the match didn't move (the
+  crossplatform math and randomness pins among them), and nor did the asset
+  fingerprints (`tidec_pack_fingerprint`).
+- **Validation**: native `sanitize` 2,910 tests and web 2,798, all passing;
+  CI runs the other platforms.
+- **Measured** (notes/benchmarks.md, 64-bit handles, before and after): the
+  versus programs, views, Sand and Gallery within -3% to +3% of before in
+  release; worlds a few hundred bytes a megabyte bigger in memory, and the
+  same on the wire.
+- **Not done**: the world as bytes (`tide_world_pack`, `tide_reader`) still
+  counts in `uint32_t`, so a world packed whole stays under 4 GiB, a limit of
+  the serialization rather than of handles; a pack's file entry and a text are
+  still at most 4 GiB each (`tide_pack_bytes` takes a `uint32_t`). Neither was
+  asked for.
+
+## 64-bit handles: design (2026-10-30)
+
+The owner's decision ("Full 64-bit handles"), knowing it changes every layout
+holding text, lists, maps, sets or grids, the world's bytes and hash, and the
+generated C. Why: a handle was one `uint32_t`, two bits saying where its block
+is and 30 its offset, so a world's heap and a thread's scratch area stopped at
+1 GiB and the asset pack, mapped into the scratch area's offsets from
+`TIDE_PACK_BASE` (2^29), at 512 MiB, which bannerlord-duel's textures passed
+(`past_handles` in `engine/src/pack.c`). Every tag value is taken, so there was
+no cheap widening.
+
+**Layout.** A handle is `tide_handle`, a `uint64_t`: where (`TIDE_IN_MATCH` 0,
+`TIDE_IN_LOCAL` 1, `TIDE_IN_SCRATCH` 2, `TIDE_IN_VERIFIED` 3, as before) in the
+top two bits (`TIDE_WHERE_SHIFT` 62), the offset in the low 62. Everything
+reads and makes them through `tide_handle_where`, `tide_handle_offset` and
+`tide_handle_of` (`tide/text.h`). The tag stays on top, rather than in low
+bits that alignment frees, so a match handle (tag 0) below 4 GiB has a zero
+high word: what deltas and hashes of handle columns see is mostly zeros, as
+before. Considered and not taken: keeping 32 bits and counting offsets in
+16-byte units, which gives 16 GiB a heap, another limit of handle bits (and
+the scratch area's text is only 4-aligned).
+
+- **Heap** (`tide/heap.h`): offsets, `used`, `free[]` and `pending` are 64 bits.
+  Page indices (`pages`, `room`, `tide_page.first`) stay 32 bits, so it stops
+  at 2^32 places of 16 KiB, 64 TiB (`LIMIT`), which memory reaches first.
+  A block's header stays 16 bytes: `link` (its size class in the low 8 bits,
+  above them the next block of a free or pending list, or a pack block's
+  trailer distance, which `next` held), then `a` and `b` as they were,
+  through `tide_block_class`, `tide_block_next` and `tide_block_link`.
+- **Lists**: a chunked list's directory holds 8-byte chunk offsets (was 4).
+- **Grids**: a chunk's record is `{int32_t chunk[3]; uint32_t zero; uint64_t
+  block}`, 24 bytes (was 16). A grid's `Texture` keeps the handle's low word in
+  `image.version`, where it was, and the high word in `image.width`, which a
+  grid's texture didn't use.
+- **Maps and sets**: `tide_map` is 32 bytes (two handles, live count, zero
+  padding, last order; was 24). Entries hold 8-byte handles for text keys and
+  values that hold text or lists.
+- **Scratch area** (`tide/text.h`): offsets and marks are 64 bits. A thread's
+  slot table grows as its pieces need (a thread-local pointer and its room)
+  instead of 1,024 fixed slots, so it holds what memory holds. Blocks are at
+  least 8-aligned (their header has a `uint64_t`).
+- **Pack** (`tide/pack.h`): the region is at `TIDE_PACK_BASE` = 2^61 in the
+  scratch area's offsets. `tide_scratch_at` tests for it (one predictable
+  branch) and reads it from its own base, a thread-local copy `tide_pack_use`
+  sets, where the slots mapped it before. Format version 3: the header's
+  region place and size, entries' offset and size and the builder's sizes are
+  64 bits; handles in the region are 8 bytes, as in the game's structs. The
+  builder's and the loader's limits are memory (and wasm32's 4 GiB).
+
+**Memory.** A text, list or grid field is 8 bytes, 8-aligned (was 4): two of a
+component's 4-byte lanes, and up to 4 bytes of padding where it follows a
+4-byte field. A map or set field is 32 bytes (was 24), a `Mesh` 16 (was 8), a
+`SkinnedMesh`'s lists 24 (was 12). Heap blocks cost what they did; a chunked
+list 4 bytes more a 16 KiB chunk, a grid 8 more a chunk.
+
+**Wire and hash.** No hash function changes, but page bytes do, so every
+pinned world hash moves, and `PROTOCOL` goes from 20 to 21. Raw world bytes
+(saves, a join with no base) grow by 4 bytes a handle a row and the heap's
+numbers go as `uint64_t`; deltas send handle columns XOR'd and as runs of
+zeros, and the heap's numbers as varints, so small handles stay small. The
+asset dictionary's descriptor locations and pack offsets are 64 bits (its
+`UINT32_MAX` "same as the base" mark becomes `UINT64_MAX`). Commands and
+inputs carry text and list bytes, never handles, and recipient (visibility)
+state encodes values, not offsets: neither changes but by struct sizes.
+Generated headers say `Heap ABI: ... 64-bit handles (1)`; the Unity embed ABI goes up (8), as
+its C# mirrors change (`TideText`, `TideList`, `TideGrid` hold a `ulong`,
+`TideMap` is 32 bytes).
+
+**Phases.** (1) The helpers above, with `tide_handle` still 32 bits, through
+the engine, generated C, packages and tests: no byte changes, every pin
+stays. (2) The widening: `tide_handle` 64 bits and everything above, the
+compiler's layouts (`type_layout`), generated marks and handle locals, debug
+views, migration, the Unity mirrors, packages, docs; pins and `PROTOCOL` move,
+native and web agreeing on each.
+
+**What C changes.** `.at` is a `tide_handle` (`uint64_t`); a scratch mark
+(`tide_scratch_mark`) is a `uint64_t`, which a `uint32_t` would cut; functions
+that take or give a block's offset (`tide_heap_alloc`, `tide_heap_release`,
+`tide_heap_block`, `tide_scratch_block`'s handle, `tide_grid_record.block`,
+the pack builder's offsets) take or give `uint64_t`; `tide_block`'s
+`size_class` and `next` are `link`, read and made through its helpers. Code
+that only calls `tide_text_*`, `tide_list_*` and the rest is unchanged.
+
 ## Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied (2026-10-30)
 
 Two costs bannerlord-duel's tools/army (20,000 fighters) found in views that
@@ -10,7 +316,7 @@ run once per entity, both in the generated C:
   argument holding lists (the receiver too) whenever any `mut` argument held
   a list, whatever its type: `KeepFar(mut FarCrowd crowd, FarSkins skins, ...)`
   copied all of `FarSkins` (four lists, one of 25,905 matrices, 1.7 MB) into
-  the scratch area for each fighter, about 30 µs a call, 337 ms a frame in the
+  the scratch area for each fighter, about 30 Âµs a call, 337 ms a frame in the
   army. Now it copies only when a Set through the world could change it, or a
   `mut` argument or `mut` receiver holds lists and one of the two types can
   hold the other (`value_contains_type` either way, as `indirect_value`
@@ -47,6 +353,18 @@ run once per entity, both in the generated C:
     whole), views that start tasks, and components past 1,024 lanes or 4 KiB.
   - The duel's `DrawFighter` reads 183 of `Fighter`'s 308 bytes (its pose
     helpers read most fields); before the local-field rule it was all 308.
+- **Correction (nightly.62)**: the analysis knew a parameter by its address,
+  and `bind_views` (codegen) adds a `tide_bound<n>` parameter to a view for
+  what its frags and verts read that it doesn't take, after its code was
+  checked. When that grew the view's parameters past their room (eight to
+  nine), they moved, and the code's names still pointed at the copy from
+  before (the arena keeps it): nothing matched, the view seemed to read
+  nothing of its component, and the lanes it read were never copied.
+  bannerlord-duel's campaign `Figures` (eight parameters, frags reading
+  singletons) read `party.doing` and `party.at` as garbage and drew no
+  figures. The analysis now knows a parameter by name and type too
+  (`same_param`; a wrong match can only add reads). `view_reads`' `Figures`
+  is that shape and fails without it.
 - **Tests**: `view_reads` (a component of about twenty lanes: fields, a struct's field, a
   helper handed it whole, a field that jumped alone, `[Snap]`, a component that
   jumped whole, query rows, a `mut` view with local fields read through a
@@ -527,7 +845,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## ECS and simulation state
 
-- Read-only entity queries are parameters of systems, views and synchronous event and command handlers: `query (Body body, with Fighter, without Shield) fighters`, iterated with `foreach (var fighter in fighters)`. Their nested component bindings and filters select a second set, never the code's outer entity. Each row exposes its `entity` handle and named read-only component values. In ordinary control flow outside parallel loops and callback blocks; no writable bindings, storing queries or whole rows, passing whole rows, nested query parameters or singletons. Queries can be explicitly borrowed by ordinary synchronous functions/methods, retaining the source selection and timing; see Borrowed query parameters in language.md. Async handlers and tasks take none yet. Component values can be copied or passed on. Traversal is normal deterministic ECS order, including sparse presence checks, with no Entity-ID or nearest-hit ordering promise. In a system, query bindings count as global component reads in access analysis, scheduling and tooling, and reuse the `World` reads-own-writes rule when the outer system writes one of them. Structural changes and events remain deferred. A comparison block and a parallel loop's step, which are functions of their own handed the parameters of the code around them, are never handed a query (`sort_captures`, `par_captures` in `compiler/src/codegen.c`): it's no C value, and a row can't be captured either, which the checker says. `compiler/tests/e2e/query_blocks` builds and runs both beside a query.
+- Read-only entity queries are parameters of systems, views and synchronous event and command handlers: `query (Body body, with Fighter, without Shield) fighters`, iterated with `foreach (var fighter in fighters)`. Their nested component bindings and filters select a second set, never the code's outer entity. Each row exposes its `entity` handle and named read-only component values. In ordinary control flow outside parallel loops and callback blocks, or as a parallel loop's own rows (`parallel (var f in fighters)`, 2026-11-05: notes/schedule-and-threads.md); no writable bindings, storing queries or whole rows, passing whole rows, nested query parameters or singletons. Queries can be explicitly borrowed by ordinary synchronous functions/methods, retaining the source selection and timing; see Borrowed query parameters in language.md. Async handlers and tasks take none yet. Component values can be copied or passed on. Traversal is normal deterministic ECS order, including sparse presence checks, with no Entity-ID or nearest-hit ordering promise. In a system, query bindings count as global component reads in access analysis, scheduling and tooling, and reuse the `World` reads-own-writes rule when the outer system writes one of them. Structural changes and events remain deferred. A comparison block and a parallel loop's step, which are functions of their own handed the parameters of the code around them, are never handed a query (`sort_captures`, `par_captures` in `compiler/src/codegen.c`): it's no C value, and a row can't be captured either, which the checker says. `compiler/tests/e2e/query_blocks` builds and runs both beside a query.
 - **Queries in views and local handlers** (agreed 2026-10-05; `docs/spec.md`, Read-only entity queries, and its Provisional picks under Views and drawing): local code reads the match, so its queries do too, as that code sees it.
   - A view's rows are what the view sees: blended between ticks like its own parameters, with corrections smoothed, over the entities of the world it draws. `verified` in a query follows the rule for views: all of it `verified`, the confirmed world's entities (`param.query_verified_entities`); some of it, the drawn world's that are the same entity in the confirmed one (`param.query_verified_join`, by `tide_born_same`), filters included. A query is all the match's or all local: a local one reads the local world as it is, through the code a system's query generates.
   - A local handler's rows are the match as the tick that sent its event left it, once the tick is done (Provisional: not as each event's turn left things), and a query of local entities the local world as it is. A handler of a local event takes only those.
@@ -547,6 +865,10 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - `list.Resize(count)` sizes a list in one call (`tide_list_resize`; Provisional in `docs/spec.md`, Lists). Growing writes nothing but the count in a world: a heap's blocks start zeroed and whatever takes elements out of a list zeroes where they were (a page's hash covers them), so the room past a list's count is zeros. A list in the scratch area, whose memory is whatever was there, zeroes what it grows by. Shrinking a world's list zeroes the end of the last chunk it keeps and gives the chunks past it back to the heap (`cut`), where `Clear` keeps them all, zeroed; a list in chunks that's left with none gives its block back too, so there's never a list of no chunks. Elements that hold text let go of it first, in generated code, as `Clear`'s do. A list type's helper (`tide_list<n>_resize`) is only in the C of a game that calls it (`decl.resized`), so the others generate what they did.
 - Grids (`Grid2<T>`, `Grid3<T>`, `tide/grid.h`) keep their cells in chunks of 4096 cells (fewer for cells over 4 bytes, so a chunk is never more than a page), a heap block each (its header is cells too, until it's released), listed in the grid's directory: a table by chunk position (by index for a grid sized on every axis with 65,536 chunks at most, else hashed) and each chunk's record (its position and block). A chunk only exists once a cell in it is set to something other than zero. Grids are fields of components, singletons and scenes only, never copied: tidec keeps them out of locals, structs, events, inputs and functions. Generated code reads and writes cells through a chunk cache per grid type in each function (`tide_grid_cache`, `tide_gc`), so a loop looks each chunk up once rather than at every cell; it holds while the heap's `moves` count (a page copied to be changed, or blocks released) is what it was, so whatever the code calls meanwhile, it never reads stale cells.
 - Text and lists that code makes along the way live in a scratch area outside the world, cleared after each system, view and handler runs, and are only ever copied into a world. It's a stack of bytes per thread, addressed by offsets of 30 bits, which grows as it needs in pieces of whole slots of 1 MiB (`tide_scratch_at` in `tide/text.h`), each as big as what it's made for, so a list or text of any size is whole and the same whatever else was made before it; a piece goes when the area goes back to a mark from before it, the biggest (up to 64 MiB) kept as a spare for the next. Running out of memory, or of the offsets, ends the program with a message naming what didn't fit, as `tide_out_of_memory` does for worlds.
+- **Spares go once nothing takes them, and memory is waited for** (2026-11-06, the owner, after mount-and-rifle's native crash: "do 2 and 3 ... if instead of a crash we have a stutter i think thats more acceptable"). The crash: `bind_nodes` (`skinned.c`, a `SkinnedMesh` draw in the view `Infantry.HeldWeapon`) asked for 876 bytes with 2,097,040 in the area, a new 1 MiB piece, and `malloc` gave NULL: the dump said 84.8 of 94.2 GB committed system-wide just after, the game 6.9 GB private, no job limit, so Windows' commit was full for a moment. Now:
+  - A spare (what `tide_scratch_reset_to` keeps of the pieces it lets go) that nothing took for a second goes (`tide_scratch_trim(idle_ns)`, `SPARE_IDLE_NS`): checked when a thread leaves a tick's work (`work` in `engine/src/jobs.c`, the library's own copy in a reloading run, as the host's pool would trim the host's copy of the area), and every 256th time the area goes back to empty with a spare kept. When a spare is let go or taken again its time starts over, so code that makes something big for each entity, each frame, keeps it; a thread that did once doesn't keep up to 64 MiB of commit for good. Where things go in the area doesn't change: a piece made of the spare takes only the slots asked for, as before.
+  - A piece's `malloc` that fails waits (`tide_memory_wait`, notes/memory-safety.md, Running out of memory) and tries again; past the wait, or when the offsets are used up (which says so, and doesn't wait), the program ends as before, now with the memory's figures (`tide_memory_ran_out`).
+  - Test: `scratch_spare_goes_when_nothing_takes_it` (`tests/test_scratch.c`).
 - A piece of text is where its text is: `Substring` gives a `tide_str` into the same bytes, and copies nothing (2026-10-08, with `char`: see `notes/language.md`). So a `tide_str`'s next byte is a NUL only when it's a whole text or the end of one, which was already so for text another was joined to in place: what needs C text goes through `tide_str_c`, never `ptr` alone. A text's characters are read by index (`tide_str_char`) and in turn (`tide_str_next`), inline where its bytes and its characters are as many, and by counting from the start otherwise.
 - Text searches (`Contains`, `IndexOf`, and the searches in `Replace`, `engine/src/text.c`) compare counted bytes, with `IndexOf` converting the first matching byte offset to a UTF-8 character index afterwards. Patterns shorter than 32 bytes skip to their first byte with `memchr`; longer ones use Crochemore and Perrin's Two-Way search, with constant extra space and linear worst-case work even for repeated prefixes. `Replace` searches each remaining suffix, keeps nonoverlapping matches, and returns its input when nothing matches or the pattern is empty. No search allocates. `tests/test_text.c` compares both search paths against a plain reference over periodic and varied counted buffers (including zero and high bytes), checks Unicode positions/replacements, and searches/replaces a long nearly matching repeated prefix. Measured on Windows in release, seven batches of ten searches, a 1 MiB string of `a` and a 16 KiB pattern of `a` ending in `b`: the median was 164.1 ms before and 1.05 ms after; the straightforward linear KMP reference took 3.24 and 3.36 ms respectively. These are local microbenchmark times, not a cross-platform timing promise.
 - Tasks are state machines tidec makes from async code (`gen_task_resume` in `compiler/src/codegen.c`), as C# does: a resume function per async function or handler and world, which goes on from where its frame says it stopped, until it waits again or ends. A frame is a generated struct: where it stopped, its parameters, its value, the frames of the async functions it awaits (so a task is one frame however deep it awaits, and nothing awaits itself), and a slot for each C local in scope at a wait, which goes in before the task waits and comes back after. No task keeps an address: components and singletons are got again from the task's owner entity each time it goes on. A world keeps its waiting tasks in a `tide_table` (one column: `tide_task`, then the frame) per async function and handler, and goes through them in its task pass, once its tick's changes (or its frame's) are in: those whose time has come go on one at a time, in the order they started, on copies of their frames, as tasks they start may move rows; those whose owner is gone end. A system that starts tasks runs them until they first wait, inside it, so it doesn't split, and waits for systems that start tasks, spawn or change text (`CONFLICT_TASKS`).
@@ -557,7 +879,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - They go at the start of `tide_frame` (`tide_local_forget`), when either world's tick changed: an entity's when neither the world views draw nor the verified one has it with the component, born as the row's was, a singleton's (back to its defaults) when there's no match, and all of them after `tide_local_disconnected`. Handlers of `Forgotten` run first, with the fields there; it's never queued.
   - What they hold is in the local world's heap. The match only has a heap for what the match holds (`world_heap` in `compiler/src/codegen.c`).
   - A rollback can give an entity's handle to another entity (a predicted spawn, where the server had another), so a row is kept for the entity, not the handle: by what it was born as, a number of the tick and what it was spawned with (its archetype, its scene and each component's bytes, never the spawn's struct, which has padding: `tide_born` in the generated C, set as the spawn applies). The entity table keeps it beside the slots (`tide_entity_set_born`, `tide_entity_born` in `tide/entity.h`: pages after the slots' in `tide_entities.page`, made when one is first set, which snapshots share and copy when they change). It's beside the world and never in it: not hashed, packed or sent, so a world that came as bytes or as a delta has none, and 0, not known, is the same as anything (`tide_born_same`); rows C sets have 0 too. A game with local fields or correction-tagged fields on a component sets it (`entities_born` in `compiler/src/codegen.c`), so others' spawns and entity tables are as they were. A replay that spawns something else on a handle drops what was kept there, and the same spawn again keeps it; hot reloading carries each row's with it.
-- Worlds grow as they need, with no limits but memory (no engine limit stands in for checking inputs: that's the game's): running out of memory ends the program. A world's heap is the exception: its offsets have 30 bits, so it holds 1 GiB, in blocks of 128 MiB at most (`engine/src/heap.c`), and past either the program ends the same way. The one depth that's checked is a chain of events, each sent or spawned by a handler of the one before: an endless one would never stop, so past `TIDE_MAX_CHAIN` (100,000) in one tick the program stops, naming the event. Each queued change records how far down its chain it is. Their data is in pages (`tide/page.h`): each archetype's rows in chunks, each chunk's column a page (`tide/table.h`), the entity table's slots and the heap. A snapshot (`tide_world_copy`) shares the world's pages, and whoever changes a shared page first gets a copy of their own, so a world and its snapshots cost the memory of what's different. A page nothing refers to any more is handed out again (`tide_page_give`, `tide_page_take` in `engine/src/page.c`): a client lets go of as many pages every tick as the tick changed, with the snapshot it drops, and takes as many, and a new page of these sizes comes from the system each time, with a page fault as each 4 KiB of it is first written, where one just let go of is still in the CPU's caches. Copying into new ones took five times as long (2,400 Box3D bodies: a tick from 2.5 ms to 1.75, `packages/box3d`'s `box3d_costs`; `bench_gallery`'s client snapshots a quarter less, `bench/results/gallery.jsonl`, `page-spares`). They're kept by size, each thread its own, and what a thread has too many of goes where the others find them, as the thread that drops a snapshot is often not the one whose system writes; a page that comes from there is another thread's, so the web's memory is synced (`tide_memory_sync`). What takes one sets every byte of it: it's whatever it was. A generated Tide system's loop over a chunk writes the lanes it declares `mut` in place when the table alone has their pages. When a snapshot shares any lane it changes, it reads all the changed lanes where they are and writes them apart, into pages of the table's own (`tide_table_lanes_begin` with `apart`, chosen by `tide_table_lanes_shared`): nothing is copied first, including for systems with sparse filters or input. Once the loop is done, a page with a row that changed is the table's and one with none is let go (`tide_table_lanes_end`, which keeps it for the next: `spares`), so a page that nothing changed stays shared, with its hash good, however many systems declare it `mut`. A system that reads through its World a component it changes (`world_reads_own_writes`) still writes in place, copying a shared page first: it must see its earlier rows' writes through the World on every machine. Handlers and spawns, which change one row, make the page their own as they write, and a component put back for one entity (a handler's `mut`, `world.Set`, `tide_set_<Component>`) only where a lane isn't what's there already (`tide_table_scatter`): code that changes one field of a component of forty lanes leaves the other pages shared and their hashes good.
+- Worlds grow as they need, with no limits but memory (no engine limit stands in for checking inputs: that's the game's): running out of memory ends the program. A world's heap is the exception: its offsets have 30 bits, so it holds 1 GiB, in blocks of 128 MiB at most (`engine/src/heap.c`), and past either the program ends the same way. The one depth that's checked is a chain of events, each sent or spawned by a handler of the one before: an endless one would never stop, so past `TIDE_MAX_CHAIN` (100,000) in one tick the program stops, naming the event. Each queued change records how far down its chain it is. Their data is in pages (`tide/page.h`): each archetype's rows in chunks, each chunk's column a page (`tide/table.h`), the entity table's slots and the heap. A snapshot (`tide_world_copy`) shares the world's pages, and whoever changes a shared page first gets a copy of their own, so a world and its snapshots cost the memory of what's different. A page nothing refers to any more is handed out again (`tide_page_give`, `tide_page_take` in `engine/src/page.c`): a client lets go of as many pages every tick as the tick changed, with the snapshot it drops, and takes as many, and a new page of these sizes comes from the system each time, with a page fault as each 4 KiB of it is first written, where one just let go of is still in the CPU's caches. Copying into new ones took five times as long (2,400 Box3D bodies: a tick from 2.5 ms to 1.75, `packages/box3d`'s `box3d_costs`; `bench_gallery`'s client snapshots a quarter less, `bench/results/gallery.jsonl`, `page-spares`). They're kept by size, each thread its own, and what a thread has too many of goes where the others find them, as the thread that drops a snapshot is often not the one whose system writes; a page that comes from there is another thread's, so the web's memory is synced (`tide_memory_sync`). What takes one sets every byte of it: it's whatever it was. A new, zeroed page (`tide_page_new`) of these sizes is a spare zeroed too (2026-11-02; a projection loaded every tick takes as many as it let go of, notes/netcode.md, A lone player's take, cheaper); other sizes are `calloc`'s. A generated Tide system's loop over a chunk writes the lanes it declares `mut` in place when the table alone has their pages. When a snapshot shares any lane it changes, it reads all the changed lanes where they are and writes them apart, into pages of the table's own (`tide_table_lanes_begin` with `apart`, chosen by `tide_table_lanes_shared`): nothing is copied first, including for systems with sparse filters or input. Once the loop is done, a page with a row that changed is the table's and one with none is let go (`tide_table_lanes_end`, which keeps it for the next: `spares`), so a page that nothing changed stays shared, with its hash good, however many systems declare it `mut`. A system that reads through its World a component it changes (`world_reads_own_writes`) still writes in place, copying a shared page first: it must see its earlier rows' writes through the World on every machine. Handlers and spawns, which change one row, make the page their own as they write, and a component put back for one entity (a handler's `mut`, `world.Set`, `tide_set_<Component>`) only where a lane isn't what's there already (`tide_table_scatter`): code that changes one field of a component of forty lanes leaves the other pages shared and their hashes good.
   - Sparse filters count matching rows before the chunk's lanes are taken (`gen_rows_count`). A whole chunk with none is left alone, its pages and hashes too. When writing apart, the loop writes the rows it skips as they were, so filtered systems need no first copy of a page.
   - A system that takes its entities' input reads their Owner from the lanes the loop reads (`gen_row_owner`), including when it changes Owner and writes it apart. The schedule counts that as a read of Owner (see Determinism).
   - A chunk in pieces begins its changed lanes once before the pieces and ends them once after (`tide_table_lanes_begin_pieces`, `tide_table_lanes_piece`, `tide_table_lanes_end_pieces`; see Determinism for who calls them). Apart, the page to write is in the table from the start and remembers the old page in `tide_page.was`; each piece writes all its rows, including the skipped ones unchanged. The end keeps the old shared page when no row changed. A whole chunk with no matching rows takes no pages for its pieces.

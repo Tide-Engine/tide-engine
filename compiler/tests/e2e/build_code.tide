@@ -1,0 +1,249 @@
+// Build code (docs/spec.md, Build code): assets and constants whose value code makes as the game builds. Each kind
+// made from a file (a source asset of the data its code reads) and from nothing, constants of a plain value, text
+// and a list, build functions and ordinary ones, code that reads what other code made, and match code that reads
+// all of it.
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float shade = 0.25;
+}
+
+struct Pair
+{
+    int count;
+    float scale;
+}
+
+// Changes an image where it is: ordinary code, which build code calls
+void Outline(mut Grid2<Color> image, Color color)
+{
+    for (int y = 0; y < image.size.y; y++)
+    {
+        image[int2(0, y)] = color;
+    }
+}
+
+// Runs only as the game builds
+build Grid2<Color> Outlined(Grid2<Color> source, Color color)
+{
+    mut Grid2<Color> image = source.Copy();
+    Outline(image, color);
+    return image;
+}
+
+build Pair MakePair(int count)
+{
+    return Pair { count = count, scale = count * 0.5 };
+}
+
+// An ordinary function, which build code and match code both call
+float Twice(float x)
+{
+    return x * 2;
+}
+
+// The files build code reads, as the data it reads them as. Only build code reads heroSource, so a game built without
+// what nothing reads (--strip-unused-assets) leaves it out; match code reads beepSource's samples too
+asset Grid2<Color> heroSource = "assets/hero.png";
+asset ClipData beepSource = "assets/beep.wav";
+
+asset Grid2<Color> hero = Outlined(heroSource, Color(1, 0, 0, 1));
+asset Texture heroTexture = Outlined(heroSource, Color(0, 0, 1, 1));
+
+build Grid2<Color> Made()
+{
+    mut Grid2<Color> made = Grid2(4, 2);
+    made[int2(3, 1)] = Color(0, 1, 0, 1);
+    return made;
+}
+
+asset Grid2<Color> made = Made();
+
+// Reads what other code made, which runs first
+build Grid2<Color> FirstOf(Grid2<Color> from)
+{
+    mut Grid2<Color> one = Grid2(1, 1);
+    one[int2(0, 0)] = from[int2(3, 1)];
+    return one;
+}
+
+asset Grid2<Color> fromMade = FirstOf(made);
+
+asset string rulesSource = "assets/rules.txt";
+asset string rules = rulesSource + Exclaim();
+asset string greeting = Greet(NAME);
+
+string Exclaim()
+{
+    return "!";
+}
+
+build string Greet(string name)
+{
+    return "hello " + name;
+}
+
+build List<byte> Table()
+{
+    mut List<byte> table = [];
+    for (int i = 0; i < 5; i++)
+    {
+        table.Add(byte(i * 3));
+    }
+    return table;
+}
+
+asset List<byte> table = Table();
+
+asset Mesh<Corner> quadSource = "assets/meshes/quad.glb";
+
+build Mesh<Corner> Doubled(Mesh<Corner> source)
+{
+    mut List<Corner> vertices = source.vertices;
+    for (int i = 0; i < vertices.count; i++)
+    {
+        mut Corner c = vertices[i];
+        c.position = c.position * 2;
+        c.shade = 0.5;
+        vertices[i] = c;
+    }
+    return Mesh(vertices, source.indices);
+}
+
+asset Mesh<Corner> quad = Doubled(quadSource);
+
+// Levels of detail of its own: a triangle of the quad's vertices, then one of its other three
+build Mesh<Corner> Leveled(Mesh<Corner> source)
+{
+    mut List<MeshLevel> levels = [];
+    levels.Add(MeshLevel { indices = [0, 1, 2], error = 0.5 });
+    levels.Add(MeshLevel { indices = [0, 2, 3], error = 2 });
+    return Mesh(source.vertices, source.indices, levels);
+}
+
+asset Mesh<Corner> leveled = Leveled(quadSource);
+
+build ClipData Tone()
+{
+    mut ClipData tone = ClipData { rate = 8000, channels = 1 };
+    for (int i = 0; i < 800; i++)
+    {
+        tone.samples.Add(i % 2 == 0 ? 0.5 : -0.5);
+    }
+    return tone;
+}
+
+asset Clip tone = Tone();
+
+build ClipData Silenced(ClipData source)
+{
+    mut ClipData quiet = source;
+    for (int i = 0; i < quiet.samples.count; i++)
+    {
+        quiet.samples[i] = 0;
+    }
+    return quiet;
+}
+
+asset Clip beep = Silenced(beepSource);
+
+build List<float> Curve()
+{
+    mut List<float> curve = [];
+    for (int i = 0; i < 8; i++)
+    {
+        curve.Add(Twice(i));
+    }
+    return curve;
+}
+
+const string NAME = Name();
+const List<float> CURVE = Curve();
+const float HALF = Twice(0.25);
+const Pair PAIR = MakePair(3);
+const int RULES_LENGTH = Length(rules); // A constant's code reads an asset's code's value
+
+string Name()
+{
+    return "tide";
+}
+
+build int Length(string text)
+{
+    return text.length;
+}
+
+// C the game has, which match code calls and build code doesn't: the program that runs build code is built without it
+extern float BuildCodeNoise(float x);
+
+singleton Probe
+{
+    float noise;
+    Color heroCorner;
+    Color heroNext;
+    int2 madeSize;
+    Color madeCell;
+    Color fromMadeCell;
+    int rulesLength;
+    string greeting;
+    int tableCount;
+    int tableLast;
+    int quadCount;
+    float3 quadFirst;
+    float quadShade;
+    float curveTwo;
+    int curveCount;
+    float half = HALF;
+    Pair pair;
+    int rulesLengthConstant;
+    string name;
+    int beepRate;
+    int beepChannels;
+    int beepSamples;
+}
+
+system Read(mut Probe probe)
+{
+    probe.heroCorner = hero[int2(0, 0)];
+    probe.heroNext = hero[int2(1, 2)];
+    probe.madeSize = made.size;
+    probe.madeCell = made[int2(3, 1)];
+    probe.fromMadeCell = fromMade[int2(0, 0)];
+    probe.rulesLength = rules.length;
+    probe.greeting = greeting;
+    probe.tableCount = table.count;
+    probe.tableLast = table[table.count - 1];
+    probe.quadCount = quad.vertices.count;
+    probe.quadFirst = quad.vertices[0].position;
+    probe.quadShade = quad.vertices[0].shade;
+    probe.curveTwo = CURVE[2];
+    probe.curveCount = CURVE.count;
+    probe.pair = PAIR;
+    probe.rulesLengthConstant = RULES_LENGTH;
+    probe.name = NAME;
+    probe.noise = BuildCodeNoise(2);
+    probe.beepRate = beepSource.rate;
+    probe.beepChannels = beepSource.channels;
+    probe.beepSamples = beepSource.samples.count;
+}
+
+// Runtime-only drawing must not prevent any of the constants or assets above from being built.
+// Keep the font reference in a helper too: build code emits ordinary functions as well as views.
+void BoldLabel(string text)
+{
+    Draw.Text(text, float2(20, 20), 20, Color.white, Anchor.MiddleLeft, Font.Bold);
+}
+
+view Show()
+{
+    GUI.Draw()
+    {
+        BoldLabel($"{CURVE[3]}");
+    }
+}
+
+scene Main
+{
+}

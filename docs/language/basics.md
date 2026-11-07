@@ -11,10 +11,12 @@ Tide is a language of its own. Its basics are the familiar kind, braces and semi
 - Types, systems and methods use PascalCase: `Transform`, `MovePlayer`, `Spawn(...)`.
 - Fields, parameters and locals use camelCase: `trs.position`, not `trs.Position`. So do public properties, even static ones: `Color.red`, `quaternion.identity`.
 - True constants use FULL_CASE: `Math.PI`, `Math.TAU`.
-- Names are ASCII. Other characters go in comments and text. Names starting with `tide_` are the engine's, for the C it generates.
+- Names are ASCII. Other characters go in comments, text and character literals. Save source files as UTF-8. Names starting with `tide_` are the engine's, for the C it generates.
 - Braces go on lines of their own, and so does an `else` after a block. A block that fits on one line can stay there: `scene Main { }`, `if (dead) { return; }`.
 
 The editors' formatter lays code out this way (see [Editors](../tools/editors.md)).
+
+Compiler diagnostics name the source file, line and column. Start with the first error and read its following notes: they can show the required syntax, a supported alternative or the declaration involved. For an invalid number, check its base, digit separators and suffix; for an out-of-range literal, use the range or alternative the note describes. A `var` declaration needs a value to infer its type; write an explicit type when assigning it later.
 
 ## Types
 
@@ -45,7 +47,7 @@ The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI
 
 Everything is a value: assigning copies it, and nothing is shared, text and lists included. That's what keeps the whole world plain data, which the engine copies to take snapshots.
 
-The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what they hold. Containers can nest, such as `Map<string, List<int>>`. Declaring your own generic types or functions isn't supported yet; a struct or function names the concrete types it uses.
+The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what they hold. Containers can nest, such as `Map<string, List<int>>`. Functions can be [generic](./generics.md) too, `T Max<T>(T a, T b)`; structs can't be yet, so a struct names the concrete types it uses.
 
 Give a concrete type another name with a [type alias](./namespaces.md#type-aliases), declared at namespace scope: `using Points = List<float3>;`. `Points` is the same type as `List<float3>`, with the same behavior and restrictions. Aliases don't declare type parameters of their own.
 
@@ -120,6 +122,7 @@ system Regenerate(mut Health health, Time time)
 ```
 
 - The type is written out. The value is worked out from literals, other constants, constructors, `Math` and operators, like a field's default. It can't read fields, singletons or `Time`, nor an [asset](../game/assets.md), which only a field's default names.
+- A constant whose value calls a function is made by [build code](../game/build-code.md) as the game builds: `const List<float> CURVE = Curve(64);`.
 - Constants are named in FULL_CASE.
 - A constant is the same on every machine. Any code can read one: systems, views, handlers, functions and other constants. Reading one never makes a system wait for another.
 - They work anywhere a constant value is needed: field defaults, `[Clamp]` bounds, `case` labels and the values of enum members. In the last two, int constants and operators on them work: `case MAX_LEVEL + 1:`.
@@ -147,6 +150,7 @@ settings
 | `maxPlayers` | How many players a match takes, from 1 to 65536. Builds with different values can't play together (see [Matches](../multiplayer/matches.md#how-many-players)) | 16 |
 | `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](../multiplayer/matches.md#host-migration)) | `false` |
 | `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](../multiplayer/matches.md#input-delay)) | `Prediction.Rollback` |
+| `predictionRange` | With `Prediction.Rollback`: how far from its player's own entities a client predicts, in world units. Farther entities stay as the server confirmed them, and tick once (see [Predicting what's near](../multiplayer/matches.md#predicting-what-s-near)) | Everything is predicted |
 | `appId` | The app's ID on phones, like `com.studio.game`: what Android and iOS, and their app stores, know it by (see [Android](../tools/cli.md#android)) | `dev.tide.<the game's name>`, to test with |
 | `version` | The version people see, like `1.2.0`: one to three numbers between dots. Each build's version code, which app stores order updates by, goes up by itself | `1.0` |
 | `stats` | Shows the stats in the window's bottom right corner: the frame rate, and at a click on it or F8, the rest (see [The tide command](../tools/cli.md#stats)). It's in what `tide build` makes too, so take it out before players get the game, unless the frame rate is theirs to see | `false` |
@@ -161,7 +165,7 @@ settings
 
 ## Logging and asserting
 
-`Debug.Log(text)` prints a line: to the terminal under `tide run`, to the browser's console on the web, to the system's log on Android. `Debug.Assert(condition)`, or `Debug.Assert(condition, text)`, stops the program when the condition is false and says where, with the source line and the text. Both go anywhere: systems, views, handlers, functions.
+`Debug.Log(text)` prints a line: to the terminal under `tide run`, to the browser's console on the web, to the system's log on Android. On desktop and Android it also goes into the game's `Player.log`, which a player can send you (see [Logs and crashes](../game/files.md#logs-and-crashes)). `Debug.Assert(condition)`, or `Debug.Assert(condition, text)`, stops the program when the condition is false and says where, with the source line and the text. Both go anywhere: systems, views, handlers, functions.
 
 Standalone [release builds](../tools/cli.md#run-and-build) keep assertions and messages you wrote, but replace the source path with an ID and omit the copied source line. Keep the build's private `game.names` map to resolve reported source IDs and line numbers.
 

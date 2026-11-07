@@ -1,0 +1,3 @@
+// expect: an indexed pose is a copy, so 'Retarget' can't change it in place
+scene Main { }
+bool Change(mut List<Pose> poses, Pose source, RetargetMap mapping) { return poses[0].Retarget(source, mapping); }

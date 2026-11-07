@@ -41,8 +41,11 @@ static const struct {
     {"Texture", TY_TEXTURE, "texture", "tide_texture_ref"},
     {"DepthTexture", TY_DEPTH_TEXTURE, "depth", "tide_depth_ref"},
     {"Cubemap", TY_CUBEMAP, "cubemap", "tide_cubemap_ref"},
+    {"TextureArray", TY_TEXTURE_ARRAY, "array", "tide_texture_array_ref"},
+    {"DepthTextureArray", TY_DEPTH_TEXTURE_ARRAY, "depths", "tide_depth_ref"},
     {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
     {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
+    {"Font", TY_FONT, "font", "tide_font_ref"},
     {"Resident", TY_RESIDENT, "resident", "tide_resident"},
 };
 
@@ -58,7 +61,8 @@ static const generic_form generic_forms[] = {
      "',' between the map's key and value types, like 'Map<int, string>'", "'>' after the map's value type"},
     {"Set", 1, {GENERIC_KEY}, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
     {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
-    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid3<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"GPUList", 1, {GENERIC_ELEMENT}, {"the list's element type, like 'GPUList<float4>'"}, NULL, "'>' after the list's element type"},
     {"Mesh", 1, {GENERIC_VERTEX}, {"the mesh's vertex type, like 'Mesh<Vertex3>'"}, NULL, "'>' after the mesh's vertex type"},
     {"SkinnedMesh", 2, {GENERIC_VERTEX, GENERIC_ELEMENT},
      {"the mesh's vertex type, like 'SkinnedMesh<Vertex3>'", "an optional animation and bone contract struct"},
@@ -150,7 +154,7 @@ bool type_is_asset_collection(const type t)
     if ((t.kind != TY_LIST && t.kind != TY_MAP) || !t.decl) return false;
     if (t.kind == TY_MAP && t.decl->fields.items[0].type.kind != TY_STRING) return false;
     const type element = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
-    return element.kind == TY_TEXTURE || element.kind == TY_CLIP || element.kind == TY_MESH;
+    return element.kind == TY_MESH;
 }
 
 int matrix_dim(const type t)
@@ -182,10 +186,16 @@ layout type_layout(const type t)
     if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
     if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
     if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
+    if (t.kind == TY_TEXTURE_ARRAY) return (layout){40, 8}; // tide_texture_array_ref: a target, a name, its layers
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) return (layout){24, 8}; // tide_depth_ref: the array's target
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
+    if (t.kind == TY_FONT) return (layout){8, 8};           // tide_font_ref: a number of the registry's
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
-    if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){24, 8}; // tide_map: two lists, count, padding and insertion order
-    if (t.kind == TY_MESH) return (layout){8, 4};                     // tide_mesh_lists: two lists
+    if (t.kind == TY_GPU_LIST) return (layout){16, 8};      // tide_gpu_list: its id, then its capacity and stride
+    // Text, lists and grids are a handle each (tide_handle: 64 bits, see tide/text.h)
+    if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_GRID) return (layout){8, 8};
+    if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){32, 8}; // tide_map: two lists, count, padding and insertion order
+    if (t.kind == TY_MESH) return (layout){16, 8};                    // tide_mesh_lists: two lists
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);
         return (layout){saturated((int64_t)e.size * t.decl->array_length), e.align};
@@ -194,7 +204,7 @@ layout type_layout(const type t)
     if (matrix_dim(t) > 0) return (layout){4 * matrix_dim(t) * matrix_dim(t), 4};
     switch (t.kind) {
     case TY_QUATERNION: case TY_COLOR: case TY_RECT: return (layout){16, 4};
-    case TY_ENTITY: case TY_LOCAL_ENTITY: return (layout){8, 4};
+    case TY_ENTITY: case TY_LOCAL_ENTITY: return (layout){16, 8};
     case TY_PLAYER: return (layout){4, 4};
     case TY_ENUM: { // A byte or a ushort, as `enum Voxel : byte` says, or an int
         const int width = t.decl->width == 1 || t.decl->width == 2 ? t.decl->width : 4;
@@ -309,6 +319,14 @@ bool type_is_texture_grid(const type t)
     return cell == TY_COLOR || cell == TY_FLOAT;
 }
 
+// A Grid3 of colors or of floats: what's a TextureArray where one is wanted, its layers its z.
+bool type_is_array_grid(const type t)
+{
+    if (t.kind != TY_GRID || !t.decl || t.decl->dims != 3 || t.decl->fields.count < 1) return false;
+    const type_kind cell = t.decl->fields.items[0].type.kind;
+    return cell == TY_COLOR || cell == TY_FLOAT;
+}
+
 static bool skin_catalog_guarantees(const decl *wanted, const decl *known)
 {
     if (known->skin_metadata_status != 1) return false;
@@ -358,6 +376,9 @@ bool type_assignable(const type to, const type from)
         const int from_side = from.decl->task_origin ? from.decl->task_origin->task_side : from.decl->task_local ? TASK_LOCAL : TASK_MATCH;
         return to_side == TASK_EITHER || from_side == TASK_EITHER || to_side == from_side;
     }
+    // An Asset<Mesh<V>> is a Mesh<V>: the same identity, with no geometry of its own
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->asset_ref_geometry && from.decl->asset_ref_of
+        && !from.decl->asset_ref_geometry && from.decl->asset_ref_of == to.decl->asset_ref_of) return true;
     if (to.kind == TY_COMPONENT && from.kind == TY_COMPONENT
         && (to.decl->placement_of ? to.decl->placement_of : to.decl)
             == (from.decl->placement_of ? from.decl->placement_of : from.decl)) return true;
@@ -367,6 +388,12 @@ bool type_assignable(const type to, const type from)
         // inferred catalog's compile-time guarantees.
         return (!to.decl->skin_metadata_status && !to.decl->skin_inferred && !to.decl->skin_catalog.count)
             || skin_catalog_guarantees(to.decl, from.decl);
+    }
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_SKELETON
+        && from.decl->skin_kind == SKIN_SKELETON) {
+        const decl *wanted = to.decl->skin_bones;
+        return (!wanted->skin_metadata_status && !wanted->skin_inferred && !wanted->skin_catalog.count)
+            || skin_catalog_guarantees(wanted, from.decl->skin_bones);
     }
     if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_MESH
         && from.decl->skin_kind == SKIN_MESH) {
@@ -389,6 +416,7 @@ bool type_assignable(const type to, const type from)
     // A char goes where an int does, as its code point; an int becomes a char only with char(n)
     if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
+    if (to.kind == TY_TEXTURE_ARRAY) return type_is_array_grid(from); // ...and one of three dimensions an array
     if (type_is_double_based(to)) {
         if (matrix_dim(to)) return matrix_dim(to) == matrix_dim(from) && !type_is_double_based(from);
         return (type_dim(to) == type_dim(from) && (type_is_int_based(from) || type_is_float_based(from)))
@@ -432,6 +460,7 @@ const char *type_name(const type t)
     case TY_GRID:
     case TY_ARRAY:
     case TY_MESH:
+    case TY_GPU_LIST:
     case TY_OPTIONAL:
     case TY_FAILABLE: {
         char *b = buf[next++ % 4];
@@ -454,6 +483,7 @@ const char *type_c_name(const type t)
     if (t.kind == TY_MAP || t.kind == TY_SET) return "tide_map";
     if (t.kind == TY_GRID) return "tide_grid";
     if (t.kind == TY_MESH) return "tide_mesh_lists";
+    if (t.kind == TY_GPU_LIST) return "tide_gpu_list";
     if (t.kind == TY_DRAW_LIST) return "tide_draw_list *";
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {
         if (builtins[i].kind == t.kind) return builtins[i].c_name;

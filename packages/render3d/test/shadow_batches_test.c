@@ -86,7 +86,7 @@ static bool next_event(shadow_iterator *it, shadow_event *out)
                     return false;
                 }
                 *out = (shadow_event){.command = c, .run = run, .mesh = &draw.meshes[run->mesh - 1u],
-                    .instance = draw.instances + run->first + (size_t)it->item * size,
+                    .instance = tide_draw_run_instance(&draw, run, it->item),
                     .camera = it->camera, .fit = it->fit, .mirrored = it->mirrored,
                     .clip = it->clip, .stencil = it->stencil};
                 if (++it->item == run->count) it->item = 0, it->at++;

@@ -322,8 +322,8 @@
           }
         },
         {
-          "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave, audio Echo, extern system MoveInC",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override|extern)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(system|view|frag|vert|audio)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave, compute Cull, audio Echo, extern system MoveInC",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override|extern)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(system|view|frag|vert|compute|audio)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -395,7 +395,7 @@
         },
         {
           "comment": "Methods and functions: [virtual] [async] [mut] Type Name(, where Type can be List<T> or T?, at the start of a line. An override's name is written with what it's in: override float Combat.Damage(, override bool Stats.IsDead(",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|compute|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|indexed|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -509,7 +509,7 @@
         },
         {
           "name": "keyword.control.tide",
-          "match": "\\b(if|else|return|switch|case|default|break|while|for|foreach|parallel|continue|fail|try|await)\\b"
+          "match": "\\b(if|else|return|switch|case|default|break|while|for|foreach|parallel|indexed|continue|fail|try|await)\\b"
         },
         {
           "comment": "Keywords that only start declarations, where the declaration rules didn't see one",
@@ -527,6 +527,13 @@
           "comment": "Parse(text) is int score",
           "name": "keyword.operator.expression.is.tide",
           "match": "\\bis\\b"
+        },
+        {
+          "comment": "A scene's preparation block",
+          "match": "^\\s*(prepare)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.tide" }
+          }
         },
         {
           "comment": "An input's Sample(), Sanitize() and Predict()",
@@ -761,7 +768,7 @@
         },
         {
           "comment": "List<int>, Map<int, Cell>, Set<int>, Grid2<Cell>, Mesh<Corner>, SkinnedMesh<Corner, Rig>: the built-in types that hold another",
-          "match": "(?<!\\.)\\b(List|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh|Asset)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
+          "match": "(?<!\\.)\\b(List|GPUList|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh|Asset)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
           "captures": {
             "1": { "name": "support.class.tide" },
             "2": { "name": "punctuation.definition.typeparameters.begin.tide" },
@@ -781,7 +788,7 @@
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",
           "name": "support.class.tide",
-          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|Map|Set|Grid2|Grid3|Task|LocalTask)\\b"
+          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|GPUList|GPU|Map|Set|Grid2|Grid3|Task|LocalTask)\\b"
         },
         {
           "comment": "Spawn(...), Send(...)",

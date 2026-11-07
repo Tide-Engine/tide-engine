@@ -125,6 +125,9 @@ static void player_frame(player *p, const double now, const float seconds)
     if (p->enter) p->enter(p);
     tide_session *s = p->session;
     tide_local_frame_time(&p->local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&p->local, seconds);
+#endif
     tide_event_log *heard = tide_session_events(s);
     tide_network_match_update(&p->network, tide_network_get());
     tide_session_update(s, now);

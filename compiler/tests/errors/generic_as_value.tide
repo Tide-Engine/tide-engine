@@ -1,0 +1,5 @@
+// expect: 'Max' is generic: as a value, it's one of its instantiations, which a name alone doesn't say
+scene Main { }
+T Max<T>(T a, T b) { return a > b ? a : b; }
+singleton S { int x; }
+system Run(mut S s) { Func<int, int, int> f = Max; s.x = f(1, 2); }

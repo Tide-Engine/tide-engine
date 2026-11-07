@@ -360,12 +360,19 @@ typedef struct pool {
 static pool the_pool;
 static bool made;
 
+// One sleeping worker for the job just queued: a worker takes background jobs until there are none, so each job
+// needs one awake, and a burst of them wakes one each. Nothing's asked when none sleeps: a worker counts itself
+// asleep before it looks for jobs (worker_loop), so one on its way to sleep sees this one. Waking them all for each
+// job cost the frame's thread ~9 µs a job on 12 threads (notes/rendering.md, Passes recorded on the pool's threads).
 static void background_notify(void)
 {
     pool *p = &the_pool;
-    LOCK(&p->lock);
-    for (uint32_t g = 0; g < p->groups; g++) WAKE_ALL(&p->start[g]);
+    uint32_t g = 0;
+    while (g < p->groups && !__atomic_load_n(&p->asleep[g], __ATOMIC_SEQ_CST)) g++;
+    if (g == p->groups) return;
+    LOCK(&p->lock); // ...so one that had looked already is waiting by now
     UNLOCK(&p->lock);
+    WAKE_ONE(&p->start[g]);
 }
 
 static void worker_loop(const uint32_t thread)

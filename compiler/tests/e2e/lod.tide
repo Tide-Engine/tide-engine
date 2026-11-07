@@ -18,6 +18,13 @@ asset Mesh<Vertex3> whole = "assets/lod/ball.glb";              // The same file
 [LOD] asset List<Mesh<Vertex3>> many = "assets/lod/ball.glb";
 [LOD] asset Map<string, Mesh<Vertex3>> named = "assets/lod/b*.glb";
 [LOD] asset SkinnedMesh<Corner> arm = "assets/lod/arm.glb";
+const float CoarseTolerance = 2;
+[LOD(CoarseTolerance)] asset Mesh<Vertex3> coarse = "assets/lod/ball.glb";
+[LOD(1)] asset Mesh<Vertex3> explicitOne = "assets/lod/ball.glb";
+[LOD(1.0 / 4)] asset Mesh<Vertex3> tight = "assets/lod/ball.glb";
+[LOD(2)] asset List<Mesh<Vertex3>> coarseMany = "assets/lod/ball.glb";
+[LOD(2)] asset Map<string, Mesh<Vertex3>> coarseNamed = "assets/lod/b*.glb";
+[LOD(2)] asset SkinnedMesh<Corner> coarseArm = "assets/lod/arm.glb";
 
 singleton Seen
 {
@@ -127,6 +134,53 @@ view Show(mut Art art)
         case 5: // A skinned mesh, at rest
             Draw.SkinnedMesh(arm, At(2.2));
             Draw.SkinnedMesh(arm, At(900));
+            break;
+        case 7: // Asset multipliers compose with draw tolerance on every asset form
+            Draw.SetLODPixels(4);
+            Draw.Mesh(ball, At(6));
+            Draw.Mesh(coarse, At(6));
+            Draw.Mesh(tight, At(6));
+            Draw.Mesh(explicitOne, At(6));
+            Draw.Mesh(coarse.vertices, coarse.indices, At(6));
+            Draw.Mesh(coarseMany[0], At(6));
+            Draw.Mesh(coarseNamed["assets/lod/ball.glb"], At(6));
+            Draw.Instanced(coarse, art.places);
+            Draw.SkinnedMesh(coarseArm, At(2.2));
+            Draw.LOD(0)
+            {
+                Draw.Mesh(coarse, At(901));
+            }
+            break;
+        case 6: // Pixel tolerance, nested defaults and independent target settings
+            Draw.SetLODPixels(4);
+            Draw.Mesh(ball, At(6));
+            Draw.LODPixels(0.25)
+            {
+                Draw.Mesh(ball, At(6));
+                Draw.LODPixels()
+                {
+                    Draw.Mesh(ball, At(6));
+                }
+                Draw.Mesh(ball, At(6));
+            }
+            Draw.Mesh(ball, At(6));
+            art.shadow.SetLODCamera(Draw.CameraTransform(), Draw.CameraProjection());
+            art.shadow.SetLODPixels(100);
+            art.shadow.Mesh(ball, At(6));
+            Draw.Mesh(ball, At(6));
+            art.shadow.LODPixels()
+            {
+                art.shadow.Mesh(ball, At(6));
+            }
+            art.shadow.Mesh(ball, At(6));
+            art.shadow.SetLODPixels();
+            art.shadow.Mesh(ball, At(6));
+            Draw.LOD(0)
+            {
+                Draw.Mesh(ball, At(6));
+            }
+            Draw.SetLODPixels();
+            Draw.Mesh(ball, At(6));
             break;
     }
 }

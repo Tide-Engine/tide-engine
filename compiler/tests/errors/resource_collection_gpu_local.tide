@@ -1,0 +1,4 @@
+// expect: 'Indirect' uses resource collections, which CPU helpers read
+int Indirect() { List<Clip> clips = []; return clips.count; }
+frag Shade(Vertex vertex, out Color color) { color = Color(Indirect(), vertex.uv.x, 0, 1); }
+scene Main;

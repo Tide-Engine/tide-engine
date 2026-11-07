@@ -229,6 +229,23 @@ TIDE_TEST(cli_packages_pin_one_tide)
     TIDE_CHECK(packages_pin_kept("0.4.0", "0.5.0-dev")); // Someone working on tide
 }
 
+TIDE_TEST(cli_packages_pin_release_channels)
+{
+    const char *channels[] = {"nightly", "stable"};
+    for (int i = 0; i < 2; i++) {
+        char text[64];
+        snprintf(text, sizeof text, "tide = %s\n", channels[i]);
+        char *dir = write_packages("channel_pin", text);
+        packages_file f;
+        TIDE_CHECK(packages_read(dir, &f, NULL, NULL));
+        TIDE_CHECK(f.pinned && strcmp(f.pinned, channels[i]) == 0);
+        TIDE_CHECK(packages_pin_kept(channels[i], "0.5.0"));
+        packages_free_file(&f);
+        free(dir);
+    }
+    TIDE_CHECK(!packages_channel("latest") && !packages_channel("../nightly"));
+}
+
 // Everything reported, a line each: "<line>: <message> (<note>)".
 typedef struct said {
     char text[4096];

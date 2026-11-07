@@ -55,7 +55,7 @@ static void gen_hierarchy(gen *g)
         "        count++;",
         "    }",
         "    if ((uint64_t)count * sizeof(tide_entity) > SIZE_MAX) return result;",
-        "    const uint32_t mark = tide_scratch_mark();",
+        "    const uint64_t mark = tide_scratch_mark();",
         "    tide_entity *chain = tide_scratch_memory((size_t)count * sizeof(*chain));",
         "    tide_entity at = e;",
         "    for (uint32_t i = 0; i < count; i++) { chain[i] = at; at = @P@parent_of(w, at); }",

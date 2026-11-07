@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/font.h"
 #include "tide/page.h"
 
 // stb_truetype, kept to this file (its functions are static), so a game's C
@@ -19,9 +20,11 @@
 #pragma clang diagnostic pop
 
 // The regular weight's file, which the build makes an array of
-// (cmake/embed.cmake). The bold's is another array, which this file doesn't
-// name, so that a program only has it when its own code does (see font.h).
+// (cmake/embed.cmake). The bold's is another, with tide_font_bold, which this
+// file doesn't name, so that a program only has it when its own code does
+// (see font.h).
 extern const unsigned char tide_font_ttf[];
+extern const unsigned int tide_font_ttf_size;
 
 // What glyphs are fitted to pixels by (see Fitting, below), in font units: the
 // heights letters share, which are their tops (the x-height, the capitals')
@@ -33,11 +36,12 @@ typedef struct zone {
     bool top;
 } zone;
 
-// A weight of the font: its file, and what's measured of it once.
+// A font: its font data (tide/font.h), checked, and what's measured of it once.
 typedef struct weight {
-    const unsigned char *file; // NULL until it's started
-    stbtt_fontinfo font;
-    uint16_t id;       // In its glyphs' keys: another whenever its file is
+    uint64_t font;      // Its tide_font's id: 0 for the regular weight
+    const uint8_t *data; // Its font data: the tide_font's, or for the engine's own weights, `made`
+    uint8_t *made;
+    uint16_t id;       // In its glyphs' keys
     float em;          // Font units in the font's size: what text's size is
     float baseline;    // From a line's top to its baseline, for text of size 1
     float line;        // From one line's top to the next's
@@ -48,58 +52,102 @@ typedef struct weight {
     float usual_stem[2];
 } weight;
 
-static weight regular, bold;
-static uint16_t weight_ids;
+// Every font text has been drawn or measured in, each where it was made: a
+// glyph's key has its place. The regular weight is always the first.
+static weight **weights;
+static uint32_t weight_count, weight_room;
 
 static void measure_fitting(weight *w);
 
-static weight *weight_of(const unsigned char *font);
+static weight *regular(void);
 
 // The weight a code point is drawn in: the regular one, for one that `w` has
 // no glyph for. `*index` is its glyph there.
 static const weight *weight_with(const weight *w, const uint32_t codepoint, int *index)
 {
-    *index = stbtt_FindGlyphIndex(&w->font, (int)codepoint);
-    if (*index != 0 || w == &regular) return w;
-    w = weight_of(NULL);
-    *index = stbtt_FindGlyphIndex(&w->font, (int)codepoint);
+    *index = (int)tide_font_data_glyph_index(w->data, codepoint);
+    if (*index != 0 || w->font == 0) return w;
+    w = regular();
+    *index = (int)tide_font_data_glyph_index(w->data, codepoint);
     return w;
 }
 
 // In font units of `w`'s, whichever weight the code point is drawn in.
 static int advance_of(const weight *w, const uint32_t codepoint)
 {
-    int index, advance = 0, bearing = 0;
+    int index;
     const weight *with = weight_with(w, codepoint, &index);
-    stbtt_GetGlyphHMetrics(&with->font, index, &advance, &bearing);
+    const int advance = tide_font_data_glyph(with->data, (uint32_t)index)->advance;
     return with == w ? advance : (int)((float)advance * w->em / with->em + 0.5f);
 }
 
-static weight *weight_of(const unsigned char *font)
+static weight *add_weight(const uint64_t font, const uint8_t *data, uint8_t *made)
 {
-    weight *w = font ? &bold : &regular;
-    const unsigned char *file = font ? font : tide_font_ttf;
-    if (w->file == file) return w;
-    // Its file is another than it was (a game's library that was built
-    // again has its own): nothing of the old one is read again, and the
-    // glyphs drawn from it are no longer found
-    *w = (weight){.file = file, .id = ++weight_ids};
-    if (!stbtt_InitFont(&w->font, file, stbtt_GetFontOffsetForIndex(file, 0))) {
-        fprintf(stderr, "tide: the platform's font isn't one\n");
-        abort();
+    if (weight_count == weight_room) {
+        const uint32_t room = weight_room ? weight_room * 2u : 4u;
+        weights = tide_realloc(weights, weight_room * sizeof *weights, room * sizeof *weights);
+        weight_room = room;
     }
-    w->em = 1.0f / stbtt_ScaleForMappingEmToPixels(&w->font, 1.0f);
-    int up = 0, down = 0, gap = 0;
-    stbtt_GetFontVMetrics(&w->font, &up, &down, &gap);
+    weight *w = tide_alloc_zeroed(1, sizeof *w);
+    weights[weight_count++] = w;
+    *w = (weight){.font = font, .data = data, .made = made, .id = (uint16_t)weight_count};
+    const tide_font_data_header *h = tide_font_data_header_of(data);
+    // As stb_truetype's 1 / stbtt_ScaleForMappingEmToPixels(1), to the bit
+    w->em = 1.0f / (1.0f / (float)h->em);
     // A line is as tall as text's size. The font's own lines are taller, from
     // its ascent to its descent: that's in the size's middle, so capitals are
     // too, and what goes past (accents above, tails below) goes past evenly.
-    w->baseline = 0.5f + (float)(up + down) * 0.5f / w->em;
-    w->line = (float)(up - down + gap) / w->em;
+    w->baseline = 0.5f + (float)(h->ascent + h->descent) * 0.5f / w->em;
+    w->line = (float)(h->ascent - h->descent + h->gap) / w->em;
     if (w->line < 1.2f) w->line = 1.2f;
+    if (w->line > 4.0f) w->line = 4.0f; // A font that says lines are further apart than this says it wrong
     for (uint32_t c = 32; c < 256; c++) w->advances[c] = advance_of(w, c);
     measure_fitting(w);
     return w;
+}
+
+// The engine's own weight in `file`: its font data, which a file of its own always makes.
+static uint8_t *engine_font(const unsigned char *file, const size_t size)
+{
+    uint8_t *data;
+    size_t data_size;
+    if (tide_font_data_make(file, size, &data, &data_size) != TIDE_FONT_OK) {
+        fprintf(stderr, "tide: the platform's font isn't one\n");
+        abort();
+    }
+    return data;
+}
+
+static weight *regular(void)
+{
+    if (weight_count == 0) {
+        uint8_t *data = engine_font(tide_font_ttf, tide_font_ttf_size);
+        add_weight(0, data, data);
+    }
+    return weights[0];
+}
+
+static weight *weight_of(const tide_font *font)
+{
+    if (!font) return regular();
+    regular(); // First, so a glyph a font has none of has a weight to be drawn in
+    for (uint32_t i = 1; i < weight_count; i++) {
+        weight *w = weights[i];
+        if (w->font != font->id) continue;
+        // The same id is the same outlines: a game's library that was built
+        // again has them at another address, and only that address is read
+        if (!w->made && font->data) w->data = font->data;
+        return w;
+    }
+    if (font->data) {
+        // The registry's fonts are checked as they're added, and a game's C
+        // that makes one of its own is checked here
+        if (weight_count > UINT16_MAX - 1u || !tide_font_data_check(font->data, font->size)) return regular();
+        return add_weight(font->id, font->data, NULL);
+    }
+    if (!font->file || weight_count > UINT16_MAX - 1u) return regular();
+    uint8_t *data = engine_font(font->file, font->file_size);
+    return add_weight(font->id, data, data);
 }
 
 uint32_t tide_utf8_next(const char **text)
@@ -120,7 +168,7 @@ uint32_t tide_utf8_next(const char **text)
     return c ? c : 0xFFFDu;
 }
 
-float tide_font_baseline(const unsigned char *font)
+float tide_font_baseline(const tide_font *font)
 {
     return weight_of(font)->baseline;
 }
@@ -148,7 +196,7 @@ static int advance_pixels(const weight *w, const uint32_t codepoint, const int p
     return (int)((float)units * (float)pixels / w->em + 0.5f);
 }
 
-int tide_font_advance(const unsigned char *font, const uint32_t codepoint, const int pixels)
+int tide_font_advance(const tide_font *font, const uint32_t codepoint, const int pixels)
 {
     return advance_pixels(weight_of(font), codepoint, pixels);
 }
@@ -158,12 +206,12 @@ static float pitch_of(const weight *w, const int pixels, const float stretch)
     return floorf(w->line * (float)pixels * stretch + 0.5f);
 }
 
-float tide_font_pitch(const unsigned char *font, const int pixels, const float stretch)
+float tide_font_pitch(const tide_font *font, const int pixels, const float stretch)
 {
     return pitch_of(weight_of(font), pixels, stretch);
 }
 
-void tide_font_size(const unsigned char *font, const char *text, const float size, const float scale_x,
+void tide_font_size(const tide_font *font, const char *text, const float size, const float scale_x,
                     const float scale_y, float *width, float *height)
 {
     const weight *w = weight_of(font);
@@ -186,7 +234,7 @@ void tide_font_size(const unsigned char *font, const char *text, const float siz
     *height = size + (float)(lines - 1) * pitch_of(w, pixels, stretch) / scale_y;
 }
 
-float tide_font_measure(const unsigned char *font, const char *text, const float size, const float scale)
+float tide_font_measure(const tide_font *font, const char *text, const float size, const float scale)
 {
     float width, height;
     tide_font_size(font, text, size, scale, scale, &width, &height);
@@ -338,22 +386,20 @@ static void outline_point(outline *o, const int first, const float x, const floa
 }
 
 // False for a glyph with nothing to draw.
-static bool outline_of(const stbtt_fontinfo *font, const int index, outline *o)
+static bool outline_of(const weight *w, const int index, outline *o)
 {
     *o = (outline){0};
-    stbtt_vertex *shape = NULL;
-    const int count = stbtt_GetGlyphShape(font, index, &shape);
-    if (count <= 0) {
-        stbtt_FreeShape(font, shape);
-        return false;
-    }
+    const tide_font_glyph_data *glyph = tide_font_data_glyph(w->data, (uint32_t)index);
+    const tide_font_vertex *shape = tide_font_data_vertices(w->data, glyph);
+    const int count = glyph->count;
+    if (count <= 0) return false;
     o->points = tide_alloc((size_t)count * CURVE_PIECES * sizeof(*o->points));
     o->ways = tide_alloc((size_t)count * CURVE_PIECES);
     o->ends = tide_alloc((size_t)count * sizeof(int));
     int first = 0;
     float x = 0.0f, y = 0.0f;
     for (int i = 0; i <= count; i++) {
-        if (i == count || shape[i].type == STBTT_vmove) {
+        if (i == count || shape[i].type == TIDE_FONT_MOVE) {
             // A contour ends where it started: once is enough
             if (o->point_count - first > 1) {
                 const float *start = o->points[first].at, *last = o->points[o->point_count - 1].at;
@@ -364,18 +410,12 @@ static bool outline_of(const stbtt_fontinfo *font, const int index, outline *o)
             first = o->point_count;
             if (i == count) break;
         }
-        const stbtt_vertex *v = &shape[i];
-        if (v->type == STBTT_vcurve || v->type == STBTT_vcubic) {
+        const tide_font_vertex *v = &shape[i];
+        if (v->type == TIDE_FONT_CURVE) {
             for (int k = 1; k <= CURVE_PIECES; k++) {
                 const float t = (float)k / (float)CURVE_PIECES, s = 1.0f - t;
-                if (v->type == STBTT_vcurve) {
-                    outline_point(o, first, s * s * x + 2.0f * s * t * (float)v->cx + t * t * (float)v->x,
-                                  s * s * y + 2.0f * s * t * (float)v->cy + t * t * (float)v->y);
-                } else {
-                    const float a = s * s * s, b = 3.0f * s * s * t, c = 3.0f * s * t * t, d = t * t * t;
-                    outline_point(o, first, a * x + b * (float)v->cx + c * (float)v->cx1 + d * (float)v->x,
-                                  a * y + b * (float)v->cy + c * (float)v->cy1 + d * (float)v->y);
-                }
+                outline_point(o, first, s * s * x + 2.0f * s * t * (float)v->cx + t * t * (float)v->x,
+                              s * s * y + 2.0f * s * t * (float)v->cy + t * t * (float)v->y);
             }
         } else {
             outline_point(o, first, (float)v->x, (float)v->y);
@@ -383,7 +423,6 @@ static bool outline_of(const stbtt_fontinfo *font, const int index, outline *o)
         x = (float)v->x;
         y = (float)v->y;
     }
-    stbtt_FreeShape(font, shape);
     if (o->contour_count == 0) {
         outline_free(o);
         return false;
@@ -546,15 +585,13 @@ static void measure_fitting(weight *w)
         bool top;
     } shown[] = {{'x', true}, {'H', true}, {'d', true}, {'p', false}};
     for (size_t i = 0; i < sizeof(shown) / sizeof(shown[0]); i++) {
-        const int index = stbtt_FindGlyphIndex(&w->font, shown[i].letter);
-        int left = 0, bottom = 0, right = 0, top = 0;
-        if (index && stbtt_GetGlyphBox(&w->font, index, &left, &bottom, &right, &top)) {
-            add_zone(w, (float)(shown[i].top ? top : bottom), shown[i].top);
-        }
+        const uint32_t index = tide_font_data_glyph_index(w->data, (uint32_t)shown[i].letter);
+        const tide_font_glyph_data *g = tide_font_data_glyph(w->data, index);
+        if (index && g->boxed) add_zone(w, (float)(shown[i].top ? g->y1 : g->y0), shown[i].top);
     }
     outline o;
-    const int index = stbtt_FindGlyphIndex(&w->font, 'o');
-    if (!index || !outline_of(&w->font, index, &o)) return;
+    const int index = (int)tide_font_data_glyph_index(w->data, 'o');
+    if (!index || !outline_of(w, index, &o)) return;
     for (int axis = 0; axis < 2; axis++) {
         edge edges[EDGES];
         const int count = edges_of(&o, axis, em * EDGE_SHORTEST, edges);
@@ -664,7 +701,7 @@ static int fit(const weight *w, const outline *o, const int axis, const float sc
     return count;
 }
 
-bool tide_font_glyph_for(const unsigned char *font, const uint32_t codepoint, const int pixels, tide_font_glyph *out)
+bool tide_font_glyph_for(const tide_font *font, const uint32_t codepoint, const int pixels, tide_font_glyph *out)
 {
     const weight *asked = weight_of(font);
     if (glyph_count * 4u >= glyph_capacity * 3u) grow_glyphs();
@@ -674,14 +711,15 @@ bool tide_font_glyph_for(const unsigned char *font, const uint32_t codepoint, co
         return true;
     }
     tide_font_glyph g = {.codepoint = codepoint, .pixels = (uint16_t)pixels, .weight = asked->id};
-    g.advance = (int16_t)advance_pixels(asked, codepoint, pixels);
+    const int advance = advance_pixels(asked, codepoint, pixels);
+    g.advance = (int16_t)(advance > INT16_MAX ? INT16_MAX : advance);
     // Drawn from the weight that has it, fitted by that one's measures
     int index;
     const weight *w = weight_with(asked, codepoint, &index);
     const float scale = (float)pixels / w->em;
 
     outline o;
-    if (outline_of(&w->font, index, &o)) {
+    if (outline_of(w, index, &o)) {
         // Its points where they're drawn, in pixels from the pen on the baseline, y down
         knot across[KNOTS], up[KNOTS];
         const int across_count = fit(w, &o, 0, scale, across), up_count = fit(w, &o, 1, scale, up);
@@ -699,9 +737,13 @@ bool tide_font_glyph_for(const unsigned char *font, const uint32_t codepoint, co
         // never takes one more
         float steps = 64.0f;
         while (steps > 1.0f && furthest * steps > 32000.0f) steps *= 0.5f;
-        stbtt_vertex *shape = tide_alloc((size_t)o.point_count * sizeof(stbtt_vertex));
-        float low[2] = {FLT_MAX, FLT_MAX}, high[2] = {-FLT_MAX, -FLT_MAX};
-        for (int c = 0, i = 0; c < o.contour_count; c++) {
+        // A glyph a font says is bigger than a short holds even in whole
+        // pixels, or than the atlas, has nothing drawn: no text is that big
+        const bool drawable = furthest * steps <= 32000.0f && furthest * 2.0f + 2.0f < (float)ATLAS_WIDTH;
+        stbtt_vertex *shape = drawable ? tide_alloc((size_t)o.point_count * sizeof(stbtt_vertex)) : NULL;
+        float low[2] = {0.0f, 0.0f}, high[2] = {0.0f, 0.0f};
+        if (drawable) low[0] = low[1] = FLT_MAX, high[0] = high[1] = -FLT_MAX;
+        for (int c = 0, i = 0; drawable && c < o.contour_count; c++) {
             for (const int first = i; i < o.ends[c]; i++) {
                 const float at[2] = {round_to_pixel(o.points[i].at[0] * steps), round_to_pixel(o.points[i].at[1] * steps)};
                 for (int axis = 0; axis < 2; axis++) {
@@ -717,7 +759,7 @@ bool tide_font_glyph_for(const unsigned char *font, const uint32_t codepoint, co
         }
         const int x0 = (int)floorf(low[0] / steps), y0 = (int)floorf(low[1] / steps);
         const int width = (int)ceilf(high[0] / steps) - x0, height = (int)ceilf(high[1] / steps) - y0;
-        if (width > 0 && height > 0) {
+        if (drawable && width > 0 && height > 0 && width + 2 <= ATLAS_WIDTH && height + 2 <= ATLAS_MAX_HEIGHT) {
             if (!place(width, height, &g.x, &g.y)) {
                 atlas_full = true;
                 free(shape);

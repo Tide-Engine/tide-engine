@@ -39,6 +39,7 @@ typedef enum tok_kind {
     T_FOR,
     T_FOREACH,
     T_PARALLEL,
+    T_INDEXED, // indexed foreach/parallel: the loop must visit only rows its guard can pass
     T_CONTINUE,
     T_THIS, // The entity the code runs for
     T_FAIL, // fail error;: ends a function that `fails`

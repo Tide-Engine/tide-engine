@@ -18,6 +18,10 @@ int tide_upgrade(const char *root, const char *channel, const char *version);
 // Publishes the complete folder last; never updates editors or the main install.
 bool tide_install_version(const char *root, const char *version);
 
+// Caller holds the channel's exclusive usage lock. Checks on every new command;
+// offline/download failures retain a complete installed release when possible.
+bool tide_install_channel(const char *root, const char *channel);
+
 // At most once a day, prints a line when a newer version is out. Quiet when
 // offline, and off with TIDE_NO_UPDATE_CHECK.
 void tide_check_for_update(const char *root);

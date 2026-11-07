@@ -120,6 +120,11 @@ static inline void tide_run_frame_time(void *local, const float seconds)
 }
 
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
+static inline void tide_run_local_age_views(void *local, const float seconds)
+{
+    tide_local_age_views(local, seconds);
+}
+
 static inline void tide_run_local_correct(void *local, const tide_view_correction *correction)
 {
     tide_local_correct(local, correction);
@@ -177,7 +182,11 @@ static inline uint32_t tide_run_entity_count(const void *world)
 static inline void tide_run_unload(void)
 {
     tide_render_targets_free();
+    tide_gpu_lists_free();
     tide_scratch_free();
+#ifdef TIDE_HAS_LOOP_INDEXES
+    tide_loop_indexes_free(); // The indexes indexed loops keep outside the worlds
+#endif
 #ifdef TIDE_HAS_ASSETS
     tide_pack_unload();
 #endif
@@ -262,9 +271,12 @@ static const tide_host_game tide_host_game_api = {
     .rebind_resources = tide_run_rebind_resources,
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
     .correct_views = tide_run_local_correct,
+    .age_views = tide_run_local_age_views,
 #endif
     .network = tide_network_get,
     .voice = tide_voice_get,
+    .screen_keyboard = tide_screen_keyboard_get,
+    .gpu_reads_share = tide_gpu_reads_share,
     .shaders = tide_game_shaders,
 #ifdef TIDE_HAS_EMBED
     .layout = &tide_game_layout,

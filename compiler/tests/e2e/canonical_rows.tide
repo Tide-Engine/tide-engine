@@ -1,0 +1,27 @@
+component Cell
+{
+    int number;
+    int tideWrites;
+    int cWrites;
+    float3 untouched = float3(1, 2, 3);
+    Entity reference;
+    bool marked = true;
+}
+component Alternate { }
+singleton Order { int writes; }
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 3000; i++)
+    {
+        if (i % 2 == 0) Spawn(Cell { number = i });
+        else Spawn(Cell { number = i }, Alternate);
+    }
+}
+system TideStep(mut Cell cell, mut Order order)
+{
+    cell.tideWrites += 1;
+    order.writes += 1;
+}
+[NativeName("canonical_c_step")]
+extern system CStep(mut Cell cell);

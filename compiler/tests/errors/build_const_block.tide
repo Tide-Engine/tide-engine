@@ -1,0 +1,6 @@
+// expect: a constant needs a value: 'const List<float> CURVE = ...;'
+// expect: code that works it out goes in a function, which its value calls
+const List<float> CURVE
+{
+}
+scene Main { }

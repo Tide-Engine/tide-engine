@@ -1,8 +1,10 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "tide/delta.h"
+#include "recipient_delta.h"
 #include "tide_test.h"
 
 // Regions of a delta (tide/delta.h), filtered by a stride: whichever the
@@ -61,6 +63,72 @@ static uint32_t round_trip(const uint8_t *now, const uint32_t size, const uint8_
     free(out);
     free(data);
     return ok ? packed : 0u;
+}
+
+// The recipient codec splits its flat, variable-length byte stream into 16 KiB
+// regions. Keep a standalone reproduction of the loss of delta locality when
+// an early list grows. The size is measured, not pinned: a better codec should
+// be able to reduce it without weakening this round-trip check.
+static uint32_t recipient_regions_round_trip(const uint8_t *now, uint32_t size,
+                                            const uint8_t *base, uint32_t base_size)
+{
+    tide_delta_writer d;
+    tide_delta_begin(&d, true, NULL, 0, 42);
+    for (uint32_t at = 0; at < size;) {
+        const uint32_t n = size - at < 16384u ? size - at : 16384u;
+        const uint32_t bn = at < base_size ? (base_size - at < 16384u ? base_size - at : 16384u) : 0u;
+        tide_delta_region(&d, now + at, n, bn ? base + at : NULL, bn, false, 0);
+        at += n;
+    }
+    tide_delta_close(&d);
+    uint32_t packed = 0;
+    uint8_t *bytes = tide_delta_end(&d, &packed);
+    uint8_t *out = calloc(size, 1);
+    tide_delta_reader r;
+    uint64_t hash = 0;
+    bool ok = out && tide_delta_open(&r, bytes, packed, true, &hash) && hash == 42;
+    for (uint32_t at = 0; ok && at < size;) {
+        const uint32_t n = size - at < 16384u ? size - at : 16384u;
+        const uint32_t bn = at < base_size ? (base_size - at < 16384u ? base_size - at : 16384u) : 0u;
+        ok = tide_delta_get(&r, out + at, n, bn ? base + at : NULL, bn);
+        at += n;
+    }
+    ok = ok && tide_delta_closed(&r) && memcmp(out, now, size) == 0;
+    free(out);
+    free(bytes);
+    return ok ? packed : 0u;
+}
+
+TIDE_TEST(delta_recipient_shifted_records_round_trip)
+{
+    const uint32_t size = 1000u * 512u;
+    uint8_t *base = malloc(size), *now = malloc(size + 1u);
+    TIDE_REQUIRE(base && now);
+    uint32_t x = 0x1287abcdu;
+    for (uint32_t i = 0; i < size; i++) {
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        base[i] = (uint8_t)x;
+    }
+    memcpy(now, base, size);
+    now[1000] ^= 1;
+    const uint32_t changed = recipient_regions_round_trip(now, size, base, size);
+    memcpy(now + 1, base, size);
+    now[0] = 7;
+    const uint32_t shifted = recipient_regions_round_trip(now, size + 1u, base, size);
+    TIDE_CHECK(changed > 0 && shifted > 0);
+    uint32_t improved = 0;
+    uint8_t *packed = tide_recipient_delta_pack(now, size + 1u, base, size, &improved);
+    uint8_t *out = malloc(size + 1u);
+    TIDE_REQUIRE(packed && out);
+    TIDE_CHECK(tide_recipient_delta_unpack(out, size + 1u, base, size, packed, improved));
+    TIDE_CHECK(memcmp(out, now, size + 1u) == 0);
+    TIDE_CHECK(improved < 4096u && improved < shifted / 20u);
+    if (getenv("TIDE_VISIBILITY_METRICS"))
+        printf("recipient 1000 x 512-byte records: one changed byte %u, prefix insertion %u -> %u bytes\n", changed, shifted, improved);
+    free(out);
+    free(packed);
+    free(now);
+    free(base);
 }
 
 TIDE_TEST(delta_strides_come_back_as_they_were)

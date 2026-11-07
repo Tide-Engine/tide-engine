@@ -438,7 +438,7 @@ void tide_json_begin_bytes(tide_json *j, const tide_list bytes)
         return;
     }
     // A list in the scratch area or the pack has its bytes side by side; a world's can be in chunks
-    const uint8_t *side_by_side = bytes.at >> 30 == TIDE_IN_SCRATCH ? tide_list_at(bytes, 0, 1) : NULL;
+    const uint8_t *side_by_side = tide_handle_where(bytes.at) == TIDE_IN_SCRATCH ? tide_list_at(bytes, 0, 1) : NULL;
     if (!side_by_side) {
         uint8_t *copy = tide_scratch_memory((size_t)count);
         for (int32_t i = 0; i < count; i++) {
@@ -642,7 +642,7 @@ bool tide_json_text(tide_json *j, tide_text *v)
     if (written > 0) {
         if (!spend(j, written + (uint32_t)sizeof(tide_block) + 1u)) return false;
         // A block as text in the scratch area has (tide_text_temp): its bytes and characters, the text, a NUL
-        uint32_t at;
+        tide_handle at;
         tide_block *b = tide_scratch_block(written + 1u, "text", &at);
         uint8_t *out = (uint8_t *)(b + 1);
         uint32_t bytes, chars;

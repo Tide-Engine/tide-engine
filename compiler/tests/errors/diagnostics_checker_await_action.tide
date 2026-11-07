@@ -1,0 +1,4 @@
+// expect: 'await' waits, and only async functions and handlers can
+// expect: a function that takes an Action can't be async; move the wait into an async function called outside the callback
+void Use(Action action) { await Wait.Ticks(1); action(); }
+scene Main;

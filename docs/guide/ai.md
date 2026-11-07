@@ -27,6 +27,9 @@ lines such as `2 mouse 640 353` and `3 button left`, then send `step 30`.
 Wait for `tide: interactive ready 31`, inspect another capture and choose the
 next actions. The game waits while the agent thinks; `quit` or closing input
 ends it. Executed actions are saved to `play.txt` for normal scripted replay.
+For GUI widgets, `controls` lists each one with its label and position, and
+`click "Play"` (or `click 1`) clicks it. This works whatever size the
+picture is, with no guessing of pixels.
 For an agent's terminal tools, use a persistent terminal session (a PTY when
 needed) and retain its session handle. Launch the command without waiting for
 the game to exit. Write subsequent control lines to that same session. After
@@ -39,6 +42,38 @@ control channel or game-specific integration.
 See [Interactive play](../tools/cli.md#interactive-play) for the protocol,
 multiple players and limits. This uses ordinary player input and rendered
 pictures; it does not require game-specific agent code.
+
+## Profile a game
+
+An agent can collect a structured report from the standard host without opening
+the profiler panel or writing a custom C host:
+
+```sh
+tide run --release --script play.txt --frames 360 --profile profile.json --profile-warmup 60
+```
+
+Set `TIDE_HIDDEN=1` in the agent's shell before native runs. Use a script that
+reaches the situation being investigated; interactive play can record it first.
+Keep the same seed, resolution, player count and saves for comparisons. The
+report is written when the run ends and identifies measured frames, CPU work,
+system/view source locations, GPU totals and per-pass timings with shader membership,
+and engine draw counters. For GPU optimization, rank `gpu_passes.rows` and inspect
+its coverage counters before changing rendering work.
+It measures actual work rather than treating the hidden run's fixed simulation
+step as a frame-time result. Capture is currently native desktop only.
+Check the schema version, measured-frame count, build metadata and dropped-row
+counters before ranking costs. Source locations identify declarations; worker
+rows are aggregate categories, and helpers remain inside their caller's time.
+
+Ask the agent to connect cost to useful work: for example, how many mesh
+instances were tested and rejected while recording an expensive view. A low
+culling rejection rate suggests inspecting earlier visibility selection; it
+does not prove culling can be removed, especially for another camera or shadow
+pass. Make one change, replay the same scenario in an optimized build, compare
+the report and inspect captures. Include simulation checks when the change
+could affect the match, and repeat measurements when noise could explain the
+difference. See [Profile captures](../tools/debug-views.md#profile-captures) for
+timing meanings, limits and the culling example.
 
 ## Keep project context between conversations
 

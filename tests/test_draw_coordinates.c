@@ -369,7 +369,7 @@ TIDE_TEST(draw_coordinates_targets_forget)
 static tide_target_size measured_in;
 static bool measured_in_window;
 
-static tide_float2 note_measure(const char *text, const float size, const tide_target_size *target, const unsigned char *font)
+static tide_float2 note_measure(const char *text, const float size, const tide_target_size *target, const tide_font *font)
 {
     (void)text, (void)font;
     measured_in_window = target == NULL;

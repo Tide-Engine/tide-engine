@@ -1,5 +1,1276 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
+## A depth pre-pass: `Depth.Only` and `Depth.Equal` (2026-11-06)
+
+Task (asked for by Mount & Rifle, through a parent agent): its cut-out foliage was lit where a nearer leaf hid it,
+since a frag that can discard runs before depth settles; a game had no draw that wrote depth alone into a color
+target, nor one that passed only at equal depth. The names and rules are Claude's picks, Provisional in
+`docs/spec.md` (Draw settings, Depth).
+
+- **Two members appended to `Depth`** (`tide_depth`, so the old numbers stand): `Depth.Only` (3) reads and writes
+  depth and stencil as `ReadWrite`, and writes no color; `Depth.Equal` (4) passes only at equal depth and writes
+  none. A setting like the others: `tide_draw_set_depth` clamps past `TIDE_DEPTH_EQUAL` to `ReadWrite`, and each
+  is a run of its own. `ordered_levels` keeps naming `Depth.Read` alone, so `Equal` draws gather and GPU-cull as
+  solid ones do; `Equal` draws stay occlusion-culled (`hiz_member`): their own pre-pass depth can't cull them, as the
+  test is strict (`look.nearest >` the farthest).
+- **The GPU's** (`gpu.h`): `TIDE_GPU_DEPTH_ALONE` (4: tested LEQUAL, written, every color image's write mask 0) and
+  `TIDE_GPU_DEPTH_EQUAL` (5: `EQUAL`, not written), after `RESET` so Unity's and `tide.js`'s numbers stand. Vulkan
+  (`gpu_vk.c`), WebGPU (`tide.js` `depths`, `DEPTH_ALONE`'s targets `writeMask: 0`), Unity (`TideRender.cs`: ZTest
+  Equal; depth alone blends Zero/One, which leaves color, as its shaders have no ColorMask property). Alpha to coverage
+  still runs with no color written, so a pre-pass's `this.Cutout`/`Coverage` sets each sample's depth.
+  `platform.c`: `DEPTHS` is `TIDE_DEPTH_EQUAL + 1`, `gpu_depths` maps both, and `depth_written` (`ReadWrite` or
+  `Only`) is what `writes_depth` and cull.inc's `hiz_writes_depth` ask.
+- **Invariant positions.** `Equal` needs both draws on the same bits, through two frags (two pipelines, two vertex
+  modules) or a frag and the engine's own mesh shader. Every game shader's `tide_corner` position is
+  `@builtin(position) @invariant` (`shader.c`), and so is `mesh_3d_wgsl`'s (`shaders.h`); the WGSL reader takes
+  `@invariant` (`attrs.invariant`), SPIR-V decorates the vertex output `Invariant` (18), HLSL makes it `precise`. The 54
+  `compiler/tests/shaders/*.txt` changed by that word alone. Unity's checked-in Sample shaders are rewritten by the
+  next `tide unity`.
+- **Tests:** `platform/tests/shaders.c` `run_prepass_checks` (`Prepasses`, pass 26 in shaders.tide): a 4-sample
+  Rgba16f target, a far card (engine mesh) and a cut-out near card (white frag, bottom tenth discarded) under `Only`,
+  then each lit under `Equal` and `Blend.Add` (red through a frag, green through the engine's mesh) and a card between
+  them that the pre-pass never drew (blue): every pixel is exactly half of one card, both at the cut's edge, never
+  blue, white or summed. Passes on Vulkan and WebGPU, again and prewarmed. `tests/test_draw_settings.c`
+  (`draw_depth_is_the_3d_meshes_own`), `compiler/tests/e2e/draw_depth` (the values), `lsp_draw_depth` (completion).
+- **Measured:** `bench/prepass` (`notes/benchmarks.md`, A depth pre-pass).
+- **Not built:** a color mask for draws other than 3D meshes (stencil masks still use a clear color); `Equal`
+  for anything not drawn the same way (another vert, LOD level).
+
+## The culling's lists in the pools (2026-11-05)
+
+cull.tide's lists (and occlusion's `depths`) are ranges of the renderer's two pools since GPU lists in pools
+(`notes/compute.md`): `cull_ranges` and `cull_counts` for `cull_buffers`, the pool each is in by its elements
+(`cull_pool_of`: its `GPUList<int>`s in the pool of ints), its kernels' tables written by `cull_slot`, and what its
+draws read at their ranges' offsets (`cull_at`: the places as instance vertices, the arguments and the counts of
+`draw_indexed_indirect_count`, the reads back for stats and `tide_platform_cull_compare`). The pyramid kernel binds the
+pool of ints and takes its levels' words offset by the range. Lists a frame's pools can't hold leave the frame's culled
+runs undrawn and the CPU deciding the frames after (`cull_failed`, said). The same pixels and counts:
+`tide_platform_cull`, `_cull_decided`, `_occlusion` (Vulkan with the validation layer, sets too) and on web-debug
+`_cull`, `_cull_fallback`, `_occlusion`.
+
+## A culled set's join past its top level (2026-11-05)
+
+The owner's "random" Mount & Rifle crash (`tide run`, release, 2026-11-05 15:20 local, nightly.67: the app just
+closed) was in `tide_draw_shaded_culled`, symbolized from WER's dump (`%LOCALAPPDATA%\CrashDumps\game.exe.39104.dmp`)
+by the instruction bytes around the fault found once in a `tide build --release` of the game at its commit then
+(45c7cff) with nightly.67, whose PDB names draw.c:4034: the join's check read `d->meshes[run.mesh - 1u]` for a run
+whose `mesh` was 0x45400000 (3072.0f, stack garbage). Cause: a listed draw joining the set recorded just before it
+made runs for levels `top + 1` to `high` from `meshes[level]`, which holds only `low` to `high`; a draw whose lowest
+level was past the set's top plus one (a far block after a near one of the same list, or Draw.LOD 1 then 3) gave the
+levels between a run with an unset mesh. The renderer drew it with whatever that was, and the next draw joining read
+it as an index. No reload was involved (`loaded-1` is a watching run's first library).
+
+Seen in the game: its 45c7cff built with this checkout (sanitize, a scratch `TIDE_EXTERNAL_DIRS` folder) and a print
+where a join would have crossed a gap (not committed). Its performance route (title menu only: its first click misses
+the menu), the route with clicks on Start new and Begin (5,000 frames on foot), and the look-around route hit none. A
+random 14,000-frame walk (seed 7: turns, steep pitches, sprints, the scope, the map) hit it on frames 4780 to 4782,
+right after Tab opened the map while the view was pitched steeply: a one-instance draw at level 6 after a set ending
+at level 4 (set low 0). That matches the game's `KeepVegetationMaps`, which draws one-instance lists at `LOD(16)`
+right after `DrawFlora` while the view is pitched steeply on foot. Every run passed under ASan and Vulkan validation
+with the fix.
+
+Fix: such a draw doesn't join (`low <= top + 1u`), so it's a set of its own: one more call where it happens, no
+level mesh made for nothing. The check's loop also bounds each run's mesh. Test:
+`draw_culled_join_leaves_no_level_without_a_mesh` (`tests/test_draw_culled.c`): Draw.LOD 1, 3, 3, 1 of one list,
+every culled run's mesh one of its levels, a set's runs a level each, three sets, and the CPU's pictures; it fails
+without the fix (a run's mesh past the list's meshes).
+
+## Occlusion's two pixels on Chrome's D3D12 (2026-11-05)
+
+`tide_platform_occlusion`'s two differing pixels in the hardware web lane (RTX 4080 SUPER, Dawn on D3D12) aren't
+occlusion's: no box it hid is at them, and its culled set, the pyramid's reads of every sample and the measure point
+are as they should be. The measure ends the destination's pass, and that device draws a 4-sample frame a little
+differently when a box is drawn in a pass that loaded an earlier one's (or after another pipeline), with nothing of
+Tide's (`notes/repro/msaa_pass_split.html`). The test now compares such a shot with the CPU's path drawn with its
+passes ended at the same places, byte for byte (`Shot.split`). No renderer change: a measure has to end the pass,
+since WebGPU can't read depth a pass is drawing into. `notes/testing.md`, A 4-sample pass ended and begun again.
+
+## A culling kernel that can't be made (2026-11-05)
+
+Task (owner, through a parent agent): Dawn's D3D11 couldn't compile CullListed and the depth pyramid (FXC: notes/
+shaders.md, Kernels on Dawn's Direct3D 11, fixed there); a pipeline that can't be made must never leave a player with
+a wrong frame. Every pick is Claude's, Provisional.
+
+- **What happened before** (read from the code, and seen in the tests on D3D11): a player's page makes pipelines in
+  the background (`tide/host.h` turns it on unless headless), so a refused kernel's promise rejected, `tide.js` printed
+  `the pipeline of the renderer's CullListed wasn't made: FXC compile failed ...`, and the pipeline was never ready:
+  every frame the CPU decided the culled runs and spans weren't measured, so the frames were right, but nothing said
+  the culling was gone and `tide_platform_prewarm_waiting` counted those pipelines forever (a loading screen waiting
+  for it would never end). A page that makes pipelines at once (headless runs, benchmarks,
+  `tide_platform_background_pipelines(false)`) got an invalid pipeline that was ready at once: each frame's culling
+  pass was an invalid command buffer (an error a frame) and the culled runs drew from records nobody wrote, missing
+  (the D3D11 tests' hundreds of differing pixels), the test pages stopping at the first error.
+- **Now:**
+  - `gpu.h`: `pipeline_failed(id)` (optional; WebGPU's `gpu_pipeline_failed`): true once the backend knows it couldn't
+    make that pipeline. `tide_gpu_pipeline_desc.optional`: one the renderer does without until it's ready; a backend
+    that makes pipelines in the background makes it so whatever `background` says. The culling's four kernels and the
+    pyramid's two are optional (`cull_kernels`), so on WebGPU they're never used before they're known to be made, in
+    any mode; till then (a frame or a few in a headless run) the CPU decides, the same pixels, as it did already while
+    they were being made in the background.
+  - `tide.js` (`addPipeline`): a pipeline whose background promise rejects, or one made at once whose error scopes
+    (`validation`, `internal`, pushed around it) catch an error, is `failed`, its pipeline let go and the reason
+    printed once (a test page stops, as before, unless the page asked for it: below). One made at once is used until
+    its scopes settle, a moment later; only optional pipelines avoid that window, by never being made at once.
+  - The renderer: `pipeline_usable` (compute.inc) is false for a failed pipeline, so a game's `GPU.Run` of a kernel
+    the device refused is left out, not dispatched invalid; a draw step's (`pipeline_made`) the same; prewarm doesn't
+    wait for one (`tide_platform_prewarm_waiting`). `cull_kernels` says once a device `tide: this device can't make
+    the renderer's CullListed, a kernel of the GPU culling: runs recorded to be culled are decided on the CPU as they're
+    drawn`, and for the pyramid `... draws testing occlusion are culled without it`; the culling is then off for the
+    device (`cull_failed`, `hiz_failed`, cleared with a lost device's state, so a new device tries again).
+  - Reports: `tide_platform_cull_report.failed` and `tide_platform_occlusion_report.failed`.
+- **Testing a refusal anywhere:** `fail-pipeline=<parts of names, by commas>` in a page's address makes `tide.js`
+  build those pipelines from a module without their entry point, so making them really fails (a validation error, the
+  promise's rejection) and is reported as asked for. `tide_platform_cull_fallback` (web, `pixels`) is
+  `tide_platform_cull` with `fail-pipeline=CullListed,pyramid`: every shot (3 cameras by 6 settings) is the CPU path's,
+  byte for byte, both failures said once, the reports' `failed` set, the geometry rows the CPU's, no error from a
+  pipeline used that isn't there; as with `TIDE_GPU_CULLING=decide`, it ends before losing the device. On SwiftShader,
+  D3D12 and D3D11.
+- **Layout:** `tide_platform_cull_report.failed`, `tide_platform_occlusion_report.failed`, `tide_gpu.pipeline_failed`,
+  `tide_gpu_pipeline_desc.optional`; the page's `gpu_pipeline_failed` and `gpu_pipeline_optional` imports. Hosts,
+  libraries and games rebuild together; the release runtime was regenerated.
+- **Gaps:** Vulkan aborts on a pipeline it can't make (`gpu_vk.c`, "made no compute pipeline"), unchanged: no Vulkan
+  driver here refuses one. A non-optional pipeline made at once on WebGPU is still used until its error scopes settle.
+  A game kernel that can't be made has no fallback: its runs are left out, said once by the page.
+
+## Occlusion's measure made cheaper, listed runs in culled runs' calls (2026-11-05)
+
+Task (owner, through a parent agent): make the depth pyramid cheaper without changing results, and let ordinary
+listed runs go through the culled runs' count-drawn calls. Internal: no Tide or generated-C change; every pick is
+Claude's, Provisional.
+
+- **One dispatch a pyramid** (`hiz_one_wgsl` / `hiz_samples_wgsl` + `hiz_wgsl`, shaders.h; SPIR-V at build as the
+  renderer's other shaders, HLSL through `tide unity` as theirs). AMD's single-pass downsampler's shape: a group of 256
+  makes 16 by 16 texels of level 0 (one an invocation, from the 2 by 2 pixels it covers) and, in workgroup memory,
+  levels 1 to 4 (one texel a group at 4); the last group done (an `atomicAdd` on element 2 of `depths`, `HIZ_DONE`,
+  which that group sets back to 0) makes levels 5 on from every group's level 4. A first version made 64 by 64 a
+  group (4 by 4 an invocation, levels to 6): 135 groups at 1080p, 256 loads in a row each, and Mount & Rifle's GPU
+  0.06 ms slower than the per-level dispatches it replaced; a texel an invocation is about 2,000 groups. The levels are exactly
+  HiZFirst/HiZDown's (both gone from cull.tide, with HiZSource and their uniforms): a texel is the farthest of the
+  texels below it that exist, the second of each way read where the level before has it, so odd edges and -0 come
+  out alike. Every element is an `atomic<i32>` (stores and loads device-scoped relaxed atomics, `storageBarrier`
+  before the count), as texels one group writes another reads: WGSL promises no more across groups, and SPD on
+  WebGPU relies on the same. Written in WGSL by hand rather than Tide: Tide's kernels have no multisampled depth.
+- **Samples read where they are** (`gpu.h depth_now(target, &samples)`, replacing `depth_far`;
+  `TIDE_GPU_READ_SAMPLES`, `texture_depth_multisampled_2d`): a multisampled target's depth is no longer resolved by
+  its farthest sample into a texture of its own first; the kernel loads every sample of the 2 by 2 pixels. Vulkan: a
+  4-sample target's depth image is made `SAMPLED` where `sampledImageDepthSampleCounts` has its count
+  (`vk_target.samples_read`), seen through a depth-only view as a texture of its own (`samples_texture`, freed with the
+  target), turned to `DEPTH_STENCIL_READ_ONLY_OPTIMAL` by `depth_now` and back by the next pass, `resolve_depth` or
+  `depth_now`'s MAX resolve (`samples_back`); a device that can't sample so many keeps the MAX resolve, and samples 1.
+  WebGPU: the samples' texture as a texture of the program's (`t.samples`, its bind groups let go with the target);
+  `depthFarthest` is gone. The window keeps its copy (Vulkan) or its canvas texture (WebGPU), one sample.
+- **Measured where the pass has ended anyway** (`hiz_plan`, `cull_spans_at`, `cull_spans_start`). Each span gets an
+  `at`: the last step no later than its first at which no pass is going on whatever happens at run time (a kernel's
+  run or GPU list operation came just before, or the step before went into another destination, and nothing since
+  draws), if that's after something wrote depth into the destination since its last clear; else its first, as
+  before. At `at` with no pass going on (and the destination begun this frame), or at its first in any case, the span
+  is measured; past its first unmeasured, never. Depth only gets nearer from `at` to the span's draws (no clear
+  between), so what the earlier depth hides is hidden later too: the same pixels; what's drawn between hides nothing
+  more. `tide_platform_occlusion_report.breaks` counts the passes ended for a measure.
+- **One pyramid a destination while nothing's drawn into it** (`hiz_room`): each destination a span measures has its
+  own room in `depths` (rooms laid one after another; at most `HIZ_MOST_WORDS`); a span whose room's pyramid was made
+  since the destination's last pass began (`frame_target.passes`) uses it. Spans measured at the same step share one,
+  and all of a step's are one compute pass. `report.measured` (spans culled again) and `report.pyramids` (made).
+- **Spans that can hide nothing aren't**: where nothing has written depth into the destination since its last clear
+  (or this frame, for a target the frame doesn't clear), a span is no span: no measure, no pass ended, its draws keep
+  the frame's culling. Not built: a test of the run's whole bounds against a pyramid's top level before measuring
+  (Mount & Rifle's field and the benchmark's town span the screen, so it would skip nothing there).
+- **Ordinary listed runs in culled runs' calls** (cull_run, `cull_listed_takes`, `cull_fixed`). A listed step drawn
+  through its listed pipeline (a 3D shader's own mesh, not decided by the CPU for a culled run, not indirect or pulled)
+  that draws alike beside culled steps (cull_joins_with, now also comparing the GPU lists a shader reads) is a bucket
+  of their join: no groups, `CullBucket.a.w` its count of places, which the CPU writes into its region of `places`
+  from the list's instances; CullOffsets counts them in (`sums + a.w`) and CullDraws writes its record as any other's.
+  First a pass over the steps finds runs of steps that draw alike; only those with a culled step take their listed
+  ones in (a call gained), the rest draw as before. A run's culled steps all test occlusion or none does, a listed one
+  taking the side of the run's first (so no join begins before a span it reaches into); listed buckets inside a span
+  are counted again unchanged. Stats count them by the GPU's records; an absorbed step's geometry rows are its own
+  instances; `tide_platform_cull_report.listed`, and `runs` the culled alone.
+- **Not built, and why**: levels of different meshes in one call (their vertices are other buffers: a family of
+  several meshes' vertices too, copied on the GPU, with records' base vertices) and a draw whose levels start lower
+  than its set's joining that set at recording. In Mount & Rifle's menu field 11 neighbouring culled runs a frame
+  fail to join only for another mesh, of 719 calls; levels starting lower are records within one call already, not
+  calls; and the scene has no ordinary listed runs. (Counted with temporary counters in cull_run, not committed.) What keeps neighbours apart there: another pipeline (175 a
+  frame), other textures (156), other values (39), another mesh (27).
+- **Layout**: `tide_platform_occlusion_report` `measured`, `breaks`; `tide_platform_cull_report.listed`;
+  `frame_target.passes`; `gpu.h depth_now` (was `depth_far`), `TIDE_GPU_READ_SAMPLES`; cull.tide's `Culling` lost
+  `from`..`toHeight`. Hosts, libraries and games rebuild together; the recorder's packet and the embed ABI are
+  unchanged (the recorder never culls on the GPU).
+- **Tests**: `tide_platform_occlusion` gains shots with something drawn into another target between the walls and the
+  field (`Shot.aside`): both runs testing it measured there, one pyramid, no pass ended for them; every shot checks its
+  spans (two, none for the camera inside the field, whose walls are out of view, and none after `ClearDepth`),
+  measured, pyramids and breaks (two each without `aside`); whether the GPU culled is now `cull_report.runs`. Vulkan
+  with validation 282 checks, also with `TIDE_VULKAN_DESCRIPTOR_SETS=1`, `TIDE_VULKAN_INDIRECT_COUNT=0`, and once by
+  hand with `samples_read` forced off (the MAX resolve's path: 282); WebGPU 194. `tide_platform_cull`: setting 5's
+  camera 2 sees no wall, so it measures nothing; the half-mirrored patch's ordinary listed runs (CPU-culled) are
+  drawn by the culled runs' calls beside them (5 over the shots), records read back as written (`misdrawn` 0), the
+  same pixels: Vulkan 168 checks in each of the three modes, WebGPU 94. `tide_platform_kernels` 45 in each mode;
+  `_compute`, `_compute_vulkan_sets`, `_draw`, `_draw_vulkan_sets`, `_targets`, `_cull_decided`, `tide_spirv_shaders_valid`,
+  `tide_hlsl_shaders_valid` (the pyramid's HLSL through fxc), `tide_platform_embed`, `_embed_shards`,
+  `tide_editor_embed`, `bench_occlusion --quick`, `tide_tests` (653), native ASan; on web-debug `tide_tests` and the
+  platform draw (and RGBA fallback), targets, compute, kernels, occlusion and cull pages.
+- **Measured** (release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER; the previous commit d9af710b3 against this, both
+  through one scratch `TIDE_EXTERNAL_DIRS` folder):
+  - `bench_occlusion`, two alternating pairs of 4 blocks of 300 frames: with one prop a list (the measure's fixed
+    cost) 0.123 / 0.123 -> 0.101 / 0.101 ms with occlusion on, 0.052 off both; the town 0.528 / 0.532 -> 0.425 /
+    0.420 ms median on (off 6.3 ms both, at the clocks of that session).
+  - Mount & Rifle f34b07a's menu field scene (`SetOcclusion(true)` at DrawFlora's start under a define, so the same
+    game with it off is the base; `--profile --profile-warmup 300`, 1,800 frames, fresh `--data-dir`, alternating):
+    the scene target's passes 35.81 -> 34.81 a frame with occlusion on (34.81 off): its span is measured 3 steps
+    before its first, where the pass had ended anyway; the same 1.109 M of 1.968 M instances hidden. GPU p50 with
+    occlusion on 5.342 / 5.375 -> 5.261 / 5.291 ms (another session's three pairs: 5.40-5.55 -> 5.34-5.35), off
+    5.21-5.23 -> 5.20: occlusion's cost there about 0.15 -> 0.07 ms. Draw calls 719.5 a frame both ways, as the scene
+    has no ordinary listed runs. Runs where another program used the GPU (frames of 6-9 ms, either build and either
+    way) are left out; the machine was shared with other agents' GPU tests.
+- **Gaps**: the window's Vulkan copy stays (a one-sample image read in place would save it; no test draws the
+  window's span measured); occlusion's cost in Mount & Rifle is now mostly the measure itself (the samples' layout
+  turns and the pyramid's reads of 4 samples, about 0.07 ms), which its far, cheap levels don't win back; a span's own
+  draws still don't hide each other; the cross-group handoff relies on device-scoped atomics, as SPD does on WebGPU;
+  WebGPU on hardware, other GPUs, Linux, macOS and Android unmeasured.
+
+## Occlusion with runs drawn by a count, joined (2026-11-05)
+
+Task: merge the two branches built from 6c2b5d53c the same day (Culled runs drawn by a count, joined; Occlusion culling
+from a depth pyramid, both below) and make them work together, the same pixels as the CPU path. Internal; every pick
+Claude's, Provisional.
+
+- **A span's draw records written again.** CullDraws takes `Culling.first` as its first join (cull.tide), so a span's
+  culling (`cull_span_start`) runs CullListed's phase 1 over its groups, CullOffsets over its buckets (their `counts`),
+  CullScatter over its groups, then CullDraws over its joins (`cull_span.first_join`, `joins`, found by `hiz_plan` from
+  the steps that make a join's call), in the span's own compute pass before any of its draws. The frame's culling is
+  the same helpers over everything from 0 (`cull_places_of`), CullListed and CullScatter skipped without candidates.
+- **No join crosses a span's edge.** Two culled steps join only where both test occlusion (`hiz_member`) or neither
+  (cull_run): a span is culled again at its first step, so a join begun before it would draw its records before they
+  were rewritten, and one drawn from inside it would rewrite a bucket outside. With that, steps of one join have the
+  same destination and nothing between them, so they're all in one span or none, and a span's first step is a join's
+  first. Without the rule, `tide_platform_cull` setting 5 fails (a wall's run joined to the field's: one record not
+  as kept).
+- **Stats and rows are occlusion's.** The frame's records (`counted_frame_end`) and CullListed's `groups` (geometry
+  rows) are copied after the frame's last pass, so after every span's rewrite: `tide_platform_draw_vertices` and
+  `tide_platform_draws` count what occlusion left. `tide_platform_cull_compare` reads counts, records and draws after
+  phase 1 too (`misdrawn` checks the rewritten records; `missing` counts what occlusion hid, and more where the
+  matching loses its place, so occlusion settings don't check it).
+- **Tests**: `tide_platform_cull` setting 5 (cull.tide: a wall, then the field with `Draw.SetOcclusion(true)`): on
+  Vulkan with validation, camera 0 hides 3,507 of 5,841 tested, 10 culled runs in 5 calls (8 joined), records as kept,
+  the same pixels; cameras 1 and 2 hide none, still joined; WebGPU (SwiftShader) the same pixels and calls. 166 checks
+  (Vulkan, also `TIDE_VULKAN_DESCRIPTOR_SETS=1` and `TIDE_VULKAN_INDIRECT_COUNT=0`). `tide_platform_occlusion` now also
+  reads each shot's records back (natively: `misdrawn` 0) and checks a steady frame's stats as the GPU's counts come
+  back: the CPU path's vertices less 36 indices a hidden box (74,526 - 36 x 1,450 = 22,326, exactly, Vulkan and
+  WebGPU), and draws the calls the CPU knows plus the runs the GPU drew; 164 checks on Vulkan. Its 16 patches are one
+  set (one run), so it has no joins; setting 5 is where spans and joins meet.
+- **The pixel at (139, 38)** (the occlusion section's "found while testing"): SwiftShader's, not ours. The web tests'
+  Chrome draws WebGPU in software (`run_web_served_test.mjs`: `--use-webgpu-adapter=swiftshader`), not on the RTX 4080
+  SUPER as that section said. With the wall alone and box 32 alone, solid colors: box 32 is at z 10.4-12.9, at least
+  1.2 units behind the wall's back face (its samples' depths about 0.98748 against the wall's 0.98628, some 20,000
+  24-bit steps), and alone covers 3 of the pixel's 4 samples; with the wall before it, SwiftShader draws one of those
+  samples red (the resolve 1/4 box), at walls 9 to 13, moving with the box (nudged 0.2 sideways it's a row lower), never
+  with the wall alone. Chrome on the hardware adapter (`TIDE_WEBGPU_FLAGS=--enable-unsafe-webgpu`: Dawn, D3D12) draws
+  the wall there, byte for byte what Vulkan draws. Not precision, not the frag (the WGSL writes no `frag_depth`; depth is
+  the interpolated position), not MSAA resolve (one sample is wrongly the box's): SwiftShader's multisampled depth test
+  at a triangle's edge. The test keeps leaving walls 9 to 13 out, its comment saying why.
+- **Found on the hardware adapter, not fixed**: a 4-sample target on Chrome's own GPU (D3D12) differs from the CPU path
+  by one in a color byte at a few pixels (1 to 12 a shot of `tide_platform_occlusion`, at walls 4 and 6 too), with
+  occlusion off as well (fewer), never in one-sample destinations; Vulkan doesn't. A resolve of samples whose colors
+  differ by rounding between the listed and ordinary vertex stages is the likely cause; unexamined. No test draws WebGPU
+  on hardware (the runner's default is SwiftShader). (Since, the same day: not the vertex stages, and not ours. That
+  device draws the same 4-sample frame differently from one time to the next, the CPU path too, and a replay of the pass
+  with nothing of Tide's does as well. `tide_platform_occlusion` notes those shots there rather than failing them, and
+  the hardware lane runs it: `notes/testing.md`, A GPU whose 4-sample frames differ from themselves.)
+- **Not measured**: Mount & Rifle with occlusion on and off at this merge. `bench_occlusion --quick` passes (sanitize). (Since: Occlusion's measure made cheaper, above.)
+
+## Culled runs drawn by a count, joined (2026-11-05)
+
+Task (owner: close compute's gaps, "draw indirect count" among them): a multi-draw indirect call whose count the GPU
+writes, used by the GPU culling so empty level buckets cost nothing and runs that draw alike are one call; stats
+from the GPU's own counts. Internal: no Tide or generated-C change, the same pixels. Every pick is Claude's,
+Provisional.
+
+- **gpu.h** (`notes/compute.md`, gpu.h contract): `draw_indexed_indirect_count(buffer, offset, most, counts,
+  count_offset)` draws records of five words, 20 bytes apart, as many as the uint32 at `count_offset` says and at most
+  `most`; records past the count must be of no instances, since a backend without `TIDE_GPU_INDIRECT_COUNT` draws all
+  `most` (a call each). `indirect()` says `TIDE_GPU_INDIRECT_COUNT` (one call the GPU counts) and
+  `TIDE_GPU_INDIRECT_FIRST_INSTANCE` (records' first instances taken as they are; else they're 0). `buffer_copy` may
+  copy from an index buffer too (Vulkan's index buffers gained TRANSFER_SRC, WebGPU's COPY_SRC).
+  - Vulkan: `vkCmdDrawIndexedIndirectCount` where the device has `drawIndirectCount` (Vulkan12Features, enabled where
+    there), else one `vkCmdDrawIndexedIndirect` of `most` records with `multiDrawIndirect`, else a loop.
+    `drawIndirectFirstInstance` was already enabled where there. `TIDE_VULKAN_INDIRECT_COUNT=0` turns the first two off
+    (tests of the loop).
+  - WebGPU: Chrome's `multiDrawIndexedIndirect` where the device has `chromium-experimental-multi-draw-indirect` (or a
+    standard `multi-draw-indirect`) and the method exists; otherwise a `drawIndexedIndirect` per record up to `most`:
+    the cost of the fallback is `most` validated indirect draws a call, zero-instance ones included (Chrome validates
+    each indirect draw on the GPU; with no count, empty buckets cost what they did before). `indirect-first-instance`
+    is requested where the adapter has it. `Tide.gpuIndirect()` on a page says the bits.
+  - Recorder: `TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT` (buffer, offset, most, counts, count_offset), embed ABI
+    12 with `TideLibrary.Abi`; `indirect()` is 0 (Unity's instance ids count from 0 whatever the first instance).
+    TideRender replays it as `most` DrawIndexedIndirect ops (capped at 65,536). The renderer never culls on the GPU
+    under the recorder, so no game sends it yet.
+- **The culling's emission** (`cull.inc`, `cull.tide`). Contract, for the Hi-Z work on the same kernels: CullListed's
+  inputs and `groups`/`scratch` are unchanged; CullOffsets now writes each bucket's kept count to `counts` (not into
+  its draw record); `CullBucket` is two int4 (`a`: first group, groups, places start, 0; `b`: its mesh's index count,
+  its first index in its join's index buffer, 0, 0); a new `CullJoin` (first bucket, buckets, 1 where records carry
+  first instances) list `joins`; `args` holds one 5-word record a bucket, written only by the new fourth kernel
+  CullDraws (an invocation a join: the records of its buckets that kept any, in order, then zero records to its
+  buckets' count) and `draws` one count a join. One compute pass of four dispatches; CullListed and CullScatter are
+  skipped where no draw has candidates (CullOffsets and CullDraws still run, so every count is written). (Since the
+  merge with occlusion, above: CullDraws from `Culling.first`, run again over a span's joins.)
+  - A **join** (`cull_joins`, made in `cull_run`) is culled steps one after another in `steps` (nothing between) with
+    the same pipeline, destination, stencil, camera, values (bytes), textures (the page too), sampling and tint, whose
+    meshes are levels of one mesh at one index width, all drawable with their pipeline made, on a device with
+    `TIDE_GPU_INDIRECT_FIRST_INSTANCE`, and whose listed vertex stage doesn't read `instance_index` (a vert or frag that
+    rolls: first instances would change its numbers; found once a shader by its listed WGSL). Its first step draws it
+    all (`draw_step.join`, 1 + the join), the others nothing. Records' first instances say where each bucket's places
+    start, the places bound from the list's first. Draw order within the call is the steps' order, so pixels are the
+    per-bucket draws' (the GPU-vs-CPU byte test passes).
+  - Levels of one mesh have their own index buffers, so a join draws through its **family**'s (`cull_family`): the
+    mesh's and its levels' indices one after another in one storage buffer, copied on the GPU from the meshes' index
+    buffers (hollow meshes have no CPU copy) before the frame's first pass, kept per mesh (`gpu_mesh.family`), laid out
+    anew when a level it hasn't is asked for, but after what it holds where a join earlier in the frame already drew
+    through it (each call takes the family's buffer as it is). 256 families, the longest unused let go; one unused for
+    300 frames goes; a device lost forgets them.
+  - Anything else (no first instances, a rolling shader, a span a family can't hold) is a join of one bucket: its own
+    mesh's indices, its places bound where they start, records' first instance 0, still one count call (`most` 1).
+- **Stats** (`counted_*`, cull.inc). `tide_platform_draw_calls` counts a join's call once. As a frame ends its records
+  (every culled join drawn, and each indirect draw over a GPU list's arguments, `counted_step`) are copied into a
+  buffer of its own and read back (four frames' reads at most in flight; with none free the frame isn't counted);
+  `counted_poll` at the next frames' start sums them: `tide_platform_draw_vertices` adds the newest frame read back's
+  index count x instances, and the new `tide_platform_draws` counts calls the CPU knows plus records that drew. A
+  frame with no GPU-decided draw counts none at once. GPU-index draws (`draw_indirect`) count their corners x
+  instances. GPU pass rows (`gpu_passes`) count CPU-known vertices only.
+- **Geometry rows** for culled draws: `tide_draw_shaded_culled` keeps, with diagnostics, each level's row
+  (`tide_draw_cull.rows`, `rows_revision`, by `tide_draw_geometry_row_of`); with diagnostics the frame's read also
+  copies CullListed's `groups`, and each part's (a draw at a level) kept count goes to its row
+  (`tide_draw_geometry_add`, nothing where the diagnostics were cleared since). Runs the CPU decides count each draw's
+  own decisions as they're drawn (`cull_decided_rows`).
+- **Fifth page**: can't arise. Pages are found by one of four ids (`listed_page_id`), so a list has at most four page
+  textures; `cull_page_of`'s refusal stays as a guard.
+- **Layout**: `tide_draw_cull` gains `rows`, `rows_revision`; `tide_platform_cull_report` `calls`, `joined`, `draws`,
+  `misdrawn`; gpu.h `draw_indexed_indirect_count`, `indirect`; embed ABI 12. Hosts, libraries and games rebuild together.
+- **Tests**: `tide_platform_cull` now also checks each call's records against the read-back counts (the runs that kept
+  any, in order, their index counts, first indices and first instances, then zero records, and the join's count:
+  `misdrawn` 0), that runs join where draws take first instances (9 culled runs in 4 calls at the first shot), the
+  stats a frame or more later (vertices those of the CPU's culling exactly, 37,341; draws the calls the CPU knows of
+  plus the runs the GPU drew), and the geometry rows of one GPU-culled frame read back (6,154 instances, the CPU's),
+  again after the device is lost; under `TIDE_GPU_CULLING=decide` the rows of the CPU's decisions. Vulkan with the
+  validation layer: 140 checks, also with `TIDE_VULKAN_DESCRIPTOR_SETS=1` and `TIDE_VULKAN_INDIRECT_COUNT=0` (the
+  draw-a-record loop); WebGPU (Chrome 156 here offers `indirect-first-instance`, not multi-draw: the loop, with joins).
+  `tide_platform_compute`: two records of three counted (the second's first index and first instance), a count of none;
+  `embed_render_compute`: the op's words; Unity `ComputeReplayTests` 4/4 (the new `CountedDrawsDrawTheirRecords`).
+- **Measured** (Mount & Rifle f34b07a, its menu's field scene, built with this checkout and with its parent 6c2b5d53c
+  through a scratch `TIDE_EXTERNAL_DIRS` folder, release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER, 1,800 frames, the
+  first 300 left out, fresh `--data-dir`, three alternating pairs each way):
+  - Draw calls 807.6 -> 719.5 a frame (the game culls its trees' cards with its own kernels since the last
+    measurement, so the base is no longer 938). Vertices 5.28M -> 8.73M a frame: the base counted a culled run's index
+    count once; this is what the GPU drew.
+  - With `--profile`: views 1.07-1.41 -> 0.88-1.35 ms, render 1.86-2.22 -> 1.47-2.06, CPU work 3.05-3.79 -> 2.44-3.54,
+    GPU 5.14-5.19 (one run 8.69) -> 5.19-5.60 (p50 5.11-5.16 -> 5.16-5.19): within the runs' noise. A first version
+    found each culled part's join by going through the joins (render +0.6 ms with diagnostics); now a bit a record.
+    DrawFlora's mesh recording 0.03 -> 0.06-0.08 ms with `--profile` (each culled draw's level rows).
+  - Without `--profile` (the game's PERF probes): frame 4.90-4.92 -> 4.90-4.98 ms (GPU-bound), views 0.67-0.70 ->
+    0.68-0.70 ms.
+- **Not done / gaps**:
+  - Chrome's multi-draw-indirect path is written to its documented signature but unrun: Chrome here doesn't offer the
+    feature, so WebGPU draws a record a call (empty buckets cost a validated zero-instance draw each, as before).
+  - Sets still don't join runs of bytes (a culled set beside an ordinary listed or copied run of the same mesh: a
+    separate pipeline, or places in another buffer); joins are of culled steps alone. (Since: ordinary listed runs drawn
+    through their listed pipeline join; runs of bytes still don't. Occlusion's measure made cheaper, above.) A draw whose levels start lower
+    than its set's still starts another set at recording; the renderer joins them back into one call where they're
+    one after another, but they're separate draws in the call.
+  - Levels of different meshes can't share a call (their vertices are other buffers); a shader that rolls is a call a
+    run; a device without draws' first instances (some Android GPUs, Unity's replay) gets a count call a run.
+  - Stats come a frame or two late and the GPU passes' rows count CPU-known vertices only. The recorder draws every
+    record. Lists that mirror and don't, and blended Depth.Read draws, stay on the CPU (not emission).
+
+## Occlusion culling from a depth pyramid (2026-11-05)
+
+Task (owner, the culling plan's next step, "close the gaps"): Hi-Z occlusion in the GPU culling of listed runs, with a
+per-draw setting; pixel-identical frames as the bar. Every pick below is Claude's, Provisional (spec: Draw settings,
+`Occlusion`).
+
+- **What it is.** `Draw.Occlusion(enabled) { }` / `Draw.SetOcclusion(enabled)` / `Draw.SetOcclusion()`, a
+  destination's own (`target.Occlusion`), off each frame (`tide_draw_place.occlusion`, `tide_draw_set_occlusion`,
+  `_unset_`, `_push_`, `TIDE_DRAW_SAVED_OCCLUSION`; `add_setting` in builtins.c, so both forms, misuse errors, quick
+  fixes and completion are the family's). Each GPU-culled draw carries it (`tide_draw_cull.occlusion`, a byte of the
+  old padding); a set joins only draws with the same value.
+- **The test is against this frame's depth drawn so far, not last frame's.** Before the first of a *span* (GPU-culled
+  steps into one destination whose draws all have it on, with any steps between them but GPU-culled ones without it,
+  till a clear of that destination: `hiz_plan`, cull.inc), the renderer ends the pass, measures the destination's
+  depth into a max pyramid and culls the span's buckets again (`cull_span_start`). Depth only gets nearer between
+  there and each draw (LESS/LEQUAL tests, writes only where nearer; a clear ends the span), so an instance whose box
+  is behind the pyramid everywhere it can cover fails the depth test at every sample when drawn: the frame is the
+  same pixels, by construction, with no assumption about what was drawn before (see-through depth writers included),
+  camera cuts, moving occluders, resizes, first frames. Draws in a span don't hide each other (their depth isn't in the
+  measure). Spans in a destination whose pass hasn't begun this frame (`frame_target.begun`: the window's first pass
+  clears) aren't measured.
+- **Why not last frame's depth, as planned.** Last frame's depth (projected with last frame's camera) is only a guess
+  for this frame: anything that moved, or a cut, can uncover what it hid. Built first was the two-phase form (phase 0
+  leaves out what last frame's pyramid hid; at the span's end the pyramid of this frame's depth finds those it doesn't
+  hide and they're drawn there). Vulkan passed byte for byte, but WebGPU's frames differed by 1-15 pixels exactly on
+  frames that redrew instances: drawing them later than their place changes which of two surfaces at the same 24-bit
+  depth wins (where boxes interpenetrate, every seam is such a tie). No compare op fixes that order. So it was
+  replaced; no frame-to-frame state is left.
+- **Kernels** (cull.tide, `tidec --kernels` with `occlusion.tide`): `HiZFirst` (8 by 8 groups) reads the depth
+  texture (a `local singleton HiZSource { DepthTexture depth; }`: a values struct can't hold a texture) and writes level
+  0, each texel the farthest of the 2 by 2 pixels it covers; `HiZDown` halves a level; a level k is
+  `((size - 1) >> (k + 1)) + 1` texels across, the last texel of an odd level covering one less. Levels are float bits
+  in `Culling.depths` (a `GPUList<int>`: depths are never negative, so the greatest bits are the farthest) after four
+  count words (tested, hidden; `AtomicAdd` once a group). `CullListed` with `phase` 1: frustum and level as phase 0,
+  then where its job's `more.w` is 1 and the box was frustum-tested, `HiZFind` (occlusion.tide, pure numbers) and the
+  max of four texels: hidden when `nearest > max`.
+- **HiZFind**: the box's 8 corners through world-to-clip x transform (the job's camera's `toClip`, new in
+  `CullCamera`), each number with an allowance of 2^-17 of |M||T||v| (far past a vertex stage's rounding); any corner's
+  w within that of 0 or below: not sure (never culled: across the near plane, behind). The rectangle is every pixel a
+  sample of it can fall in (floor of each edge, one more each way, clamped), the level the first where its level-0
+  texels fit 2 by 2, and `nearest` is the corners' least (z/w+1)/2, nearer by 2^-20 than the 24-bit step and rounding.
+  Valid for any projection with LESS/LEQUAL depth: z/w over a box in front of the camera is least at a corner. The
+  rows are from the top, (1 - y/w)/2, as both backends store depth.
+- **Depth to measure: `gpu.h depth_far(target)`** (optional): a one-sample target's own depth texture; a multisampled
+  target's samples resolved by the farthest into a texture of its own (Vulkan `VK_RESOLVE_MODE_MAX_BIT` where
+  `supportedDepthResolveModes` has it, else 0: those targets aren't measured; WebGPU a pass whose frag loads every
+  sample, `depthFarthest`), never the sample-0 `resolve_depth` texture games read; the window (target 0): Vulkan copies
+  its depth image (now `TRANSFER_SRC`) into a texture (`window_far`), WebGPU makes the canvas's depth sampled and gives
+  it. NULL on the recorder and `gpu_none`.
+- **Renderer** (cull.inc, platform.c): the frame's culling (phase 0) as before, then `hiz_plan` marks span jobs
+  (`CullJob.more.w`) and sizes the pyramid's room (one region all spans take turns in: each span's is made and read in
+  its own compute pass). In the step loop, after the destination is selected and before its pass begins,
+  `cull_span_at(i)` ends the pass and `cull_span_start` runs HiZFirst, HiZDown a level at a time, then CullListed (phase
+  1, `first` = the span's first group), CullOffsets and CullScatter (`first` = its first bucket / group) over the span
+  alone, rewriting its buckets' places and arguments, which its draws then read. `cull_frame_end` begins a read of the
+  counts; `tide_platform_occlusion(report, wait)` gives the last ones back (with `serial`), and `tide/host.h` adds each
+  frame's to `--profile`'s report (`"occlusion": {frames, tested, hidden}`, `tide_profile_report_occlusion`).
+- **Contract for the emission work (multi-draw indirect, joined runs, stats) to merge with this** (met by the merge:
+  Occlusion with runs drawn by a count, joined, above): phase 1 is the
+  frame's culling again over a contiguous range of groups and buckets, so (1) whatever kernels turn kept candidates
+  into places and draw arguments must take an offset (`Culling.first`) and rewrite exactly that range's outputs; (2) a
+  GPU draw count or a joined draw that spans buckets must be recomputed at the span's start for the buckets it touches
+  (or spans must not share a joined draw with buckets outside them); (3) the span's draws must read their arguments
+  after the span's compute pass (they're drawn later in the same frame, so any per-frame count buffer written at the
+  frame's start is stale for them). `tide_platform_cull_compare` reads places after phase 1: with occlusion its
+  "missing" counts what occlusion hid.
+- **Unity**: the recorder never culls on the GPU (`cull_plan`), so the setting draws everything there; `depth_far` is
+  NULL for it. Nothing new is recorded.
+- **Layout**: `tide_draw_place.occlusion`, `tide_draw_cull.occlusion`, `frame_target.begun`, `tide_gpu.depth_far`,
+  `tide_platform_occlusion_report`; hosts, libraries and games rebuild together. Generated code calls only the
+  setting's three functions.
+- **Tests**: `tide_platform_occlusion` (platform/tests/occlusion.tide, .c; Vulkan with validation, label `gpu`, and
+  WebGPU, `pixels`): HiZFind for 9 crafted boxes (small far: level <= 1; big near: higher; past the left edge; across
+  the near plane and behind: never; flat; orthographic; a 1x1 and a 1000x3 pyramid) and 1,400 random ones, on the CPU
+  (the same Tide as C) and the GPU, each checked against doubles: no corner at or behind w = 0 when sure, `nearest`
+  never nearer than a corner, the four texels covering every pixel a sample can fall in, the level within two of the
+  least (530 sure, 0 wrong, 242 at the least, CPU and GPU agreeing on all 1,409). Then 12 shots into the window, a
+  target and a 4-sample target (walls sliding, a cut to the field's far side, a camera inside it, the window resized),
+  each with a see-through pane writing depth before the field, a second span after a draw without it and a third after
+  `ClearDepth`: each the same pixels as the CPU path, byte for byte; on Vulkan each shot with walls before the field
+  hid some (about 12,000 instances over the window's shots) and every span made its pyramid; then a lost device and
+  all again. Vulkan 96 checks, WebGPU 92. `draw_culled_carry_occlusion` (tide_tests: the setting per destination,
+  blocks put back, carried per draw, sets split by it), `tidec_e2e_draw_frustum` mode 4 (every form, early exit, a
+  target's own), `tidec_error_draw_occlusion_without_block` and `_not_bool`, `profile_report` (the report's
+  `"occlusion"`), `bench_occlusion --quick` (gpu).
+- **Found while testing, not occlusion's**: a 4-sample target on WebGPU draws a box that's wholly behind a wall at one
+  pixel: wall 1 and box 32 of the first patch alone, the camera of shot 3, pixel (139, 38) is the box's color mixed in,
+  with culling on or off, CPU path or GPU; Vulkan draws the wall. The test shoots the walls at 4 rather than 9-13, where
+  that happens. (Since: SwiftShader's, the software adapter the web tests use, not Dawn's D3D12 as said here: Occlusion
+  with runs drawn by a count, joined, above.)
+- **Measured** (release, hidden, Vulkan, RTX 4080 SUPER):
+  - `bench_occlusion` (a town at street level, 256 lists of 1,000 balls of 320 triangles behind houses, 1920x1080,
+    two alternating pairs of 300 frames): GPU 3.88 / 3.62 ms -> 0.355 / 0.344 ms a frame (median), 96% of the 167k-180k
+    tested instances hidden, about 160 M indices a frame not drawn; the same frame both ways is the same bytes. With one
+    prop a list (nothing to save) 0.053 -> 0.126 ms: the measure's fixed cost at 1080p, one sample.
+  - Mount & Rifle at its dev f34b07a, a copy built through a scratch `TIDE_EXTERNAL_DIRS` folder as in benchmarks.md,
+    `stage.scene.SetOcclusion(true)` at DrawFlora's draws (under a define, so the same code with it off is the base);
+    menu field scene, 1920x1080, `--profile --profile-warmup 300`, 1,500 frames, three alternating pairs, and a
+    temporary per-frame read back of the culled runs' arguments (not committed): occlusion tested 2,623 flora
+    instances a frame and hid 1,470 (56%), but they're far, cheap levels: the culled runs' indices 6.71 -> 6.34 M a
+    frame (-5.5%), the vegetation pass 0.662 -> 0.617 + 0.072 ms (split by the measure), and the whole GPU 5.34 / 5.34 /
+    5.45 -> 5.68 / 5.81 / 5.76 ms. The scene is a 4-sample Rgba16f target: splitting its pass (an extra color resolve
+    and load) and resolving its depth by the most cost about 0.35-0.45 ms, which this scene doesn't win back. Its route
+    still can't run at this commit (its first click misses the new menu).
+- **Gaps**: no occlusion among a span's own draws (the two-phase form that had it couldn't keep ties' order); the
+  measure always splits the pass at the span (riding a break the destination already has before it would save most of
+  the multisampled cost, and a single-dispatch downsample the per-level barriers; both built since, with samples read
+  in place: Occlusion's measure made cheaper, above); the visible window's paths
+  (Vulkan's copy, WebGPU's canvas texture) are built but run by no test (every test draws into targets, and no window
+  may be shown); a Vulkan device without the MAX depth resolve measures no multisampled target; the CPU's decided runs
+  and the recorder don't occlusion-cull; counts are per frame, not per draw row; Linux, macOS, Android, other GPUs and
+  WebGPU's timings unmeasured.
+
+## Meshes of a world's lists kept as the game keeps them (2026-11-05)
+
+The owner, after Turning round (below): is 64 MiB enough, and should a game tune it? Ideally games don't worry
+about it. As Unity keeps a loaded mesh until the game unloads it (and drops its CPU copy where it's not
+readable), a mesh of a world's lists is now kept while the game keeps its lists as they were, with no budget
+but the device's. Internal; no Tide or C API change. Benchmarked on Mount & Rifle against the engine before the
+day's work and against `dev` before this, as the owner asked, to be sure it's a net gain.
+
+- **No budget for them.** A hollow mesh (Turning round) is outside the list's budgets: no count, no bytes. It
+  goes when a frame draws its lists at another version (the superseding rule the others have), after
+  `TIDE_MESH_IDLE_FRAMES` frames unused, or when the renderer drops it. The renderer keeps the buffers of every
+  idle mesh of a world's lists (`relisted` or `hollow`: one the list hasn't yet given its copy up for, as the
+  frame that leaves it behind draws, is one too) unless the device runs short (`mesh_held_bytes`): all it has
+  within three quarters of `tide_gpu.device_memory`, or where a device doesn't say, 256 MiB of them
+  (`TIDE_MESH_HELD_BYTES`); farthest from the camera first. Other idle meshes keep `TIDE_MESH_IDLE_BYTES`
+  (64 MiB). The device-sized budget of Turning round is gone. `tide_mesh_held_most` is a test hook.
+- **Tried and dropped: checking each idle mesh's lists every frame** (`tide_draw_mesh_lists_kept`, a safe read
+  of a handle that may have gone: `list_readable` checks the block and its chunks lie within the heap's `used`).
+  At `tide_draw_reset` Mount & Rifle's lists don't resolve to their heap (every check failed as unreadable), so
+  it let them all go. The check stays for appending a hollow mesh (`tide_draw_mesh_relist`), during the frame.
+- **Measured** (mount-and-rifle 2330682, 1920x1080, release, hidden, Vulkan, RTX 4080 SUPER, pinned; three
+  builds run alternately: the engine at 47fb11512, `dev` at 42bde0c0f, this). Ten 180° turns: each turn after
+  the first 76-88 / 6-12 / 5.2-6.8 ms; the first 131-151 / 131-155 / 131 (first sight). Performance route, four
+  runs of the base and of this: mean 6.31-6.69 against 5.84-6.37 ms (one run 7.23, its sprint and aim slow),
+  p95 10.8-11.7 against 10.1-10.7 (14.9 in that run), p99 16.6-18.0 against 16.1-16.7. Peak working set 3.35 GB
+  in all three; peak dedicated GPU memory 1.13-1.25 GB / 1.35-1.41 / 1.35-1.41 (the scenery kept).
+- A first version weighed a world's meshes in the renderer's 64 MiB budget on the frame that left them behind
+  (the list gives their copies up only at its reset after): they were dropped, couldn't give their copies up, and
+  turning back made 479, 364 and 137 new places on the first three turns (57, 33, 15 ms).
+- **Tests**: `draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy` (a hollow mesh drawn at another version
+  goes, one unused goes after exactly `TIDE_MESH_IDLE_FRAMES`); `hollow_meshes_kept` (stays on the GPU
+  however long unused, goes when the device runs short, and when its list is drawn changed). Native ASan: tide_tests (640) and 615
+  draw/mesh/LOD/skinned/target/embed/prewarm/shader/compute/Render3D/game CTests; web: tide_tests, the platform
+  draw/targets fixtures and the instancing/LOD/frustum/skinned/compute e2es.).
+## Meshes over GPU lists and Draw.Transform on indirect draws (2026-11-05)
+
+`Draw.Mesh`/`Draw.Instanced`/a target's `Mesh` over a `GPUList` of vertices, with a `GPUList<int>` or `List<int>` of
+indices, and `Draw.Transform` around a `Draw.Instanced` over a GPU list: notes/compute.md, Meshes over GPU lists. In
+the draw list: a pulled shader's run has a stand-in mesh (`tide_draw_mesh_fill_pulled`: one vertex of zeros and the
+CPU's indices kept as they are, or one unused triangle), its lists in `storage`; an indirect 3D run's uniforms hold
+Draw.Transform's matrix at `tide_shader.instance_through`, and a mirroring one sets `TIDE_DRAW_MIRRORED`. Generated
+code calls nothing new. Layout: `tide_shader.instance_through`, `.vertex_storage`, `.index_storage`; hosts, libraries
+and games rebuild together.
+
+## Listed runs culled on the GPU (2026-11-05)
+
+Task (owner, step 1 of compute's plan): cull listed runs on the GPU (frustum), pick their levels and split their
+mirrored instances there, compact survivors in order, draw indirect, the CPU recording one entry per run; the
+culling written as a Tide compute kernel compiled with the engine. Internal: no Tide or generated-C change, the
+same pixels. Every pick below is Claude's, Provisional.
+
+- **The kernels are Tide** (`platform/src/cull.tide`): `CullListed` (a group of 64 candidates of one part: reads
+  each one's transform from its page, picks its level by pick_level's rule and tests its box by the quick test's
+  reject rows, keeps those of its bucket's level the frustum keeps; the group's ranks from a popcount of a shared
+  bit mask, its kept places to its 64 of `scratch`, its count to `groups`), `CullOffsets` (one group a bucket: a
+  blocked prefix sum of its groups' counts, each group's place in `places`, the bucket's count into its indirect
+  arguments) and `CullScatter`. Three dispatches in one compute pass a frame, before its first pass and inside its
+  GPU timing. Survivors are in their candidates' order whatever order the GPU ran them in: bit-stable.
+- **Built with the platform**: `tidec --kernels <file.h>` (`write_kernels`, shader.c) writes each kernel's WGSL
+  (under `__wasm__`), SPIR-V (under `TIDE_SPIRV`), `tide_shader`, and an enum of where each field of its values
+  goes (`_STORAGE_<field>`, `_TEXTURE_<field>`, `_COUNT_<field>`: the uniform int with a list's count). The
+  platform's CMake runs it (`TIDEC_COMMAND`: the host tidec on the web) into `kernels/cull_kernels.h`, and
+  `platform/src/cull.inc` binds by those names, so a layout change is a compile error. Kernels that roll or Add
+  are refused there (nothing gives them a frame's number or Add's scratch). cull.inc packs cull.tide's structs'
+  words (floats, then ints) by hand: `CullCamera` 92 words, `CullJob` 28, parts and buckets 4.
+- **Recording** (`tide_draw_shaded_culled`, draw.c, called by `tide_draw_mesh_shaded_list` once the list's region
+  is written): where the host asks (`tide_draw_list.gpu_culling`, which the standard host sets each frame from
+  `tide_platform_gpu_culling`: any backend but the recorder, as every backend computes, unless `TIDE_GPU_CULLING=0`). A draw is a
+  `tide_draw_cull` (its page and places, its bounds as `draw_bounds` gives them, its camera) and a
+  `tide_draw_cull_camera` (the world-to-clip matrix the frustum is built from, the lod_view's 16 numbers and the
+  forced level), each camera kept once a frame. It records one shaded run a level (`tide_draw_run.culled`,
+  `culled_count`: its set of draws), the level's mesh (made then by level_mesh), listed, `count` the candidates.
+  Not where the CPU path keeps an order the GPU can't: blended Depth.Read draws (`ordered_levels`), a list whose
+  transforms mirror and don't (the CPU interleaves runs; one all mirrored is culled, its runs' cull
+  `TIDE_DRAW_MIRRORED`), a 3D transform set, or the frame's 65,535 groups of 64 used up.
+- **Which levels a draw's runs cover**: a list's numbers are summed up as they're written
+  (`tide_draw_listed_stats`, list_data_cache.h: how many mirror, whether all are affine, the translations' box,
+  the least and the most biggest-column length). `cull_levels` bounds pick_level's `away` over that box widened by
+  how far a transform moves the ball's center (sqrt 3 x biggest column x |center|) and over the radius's range,
+  widened by 2^-12 of the magnitudes summed, and `allowed` by 2^-12 more: every pick, the CPU's or the GPU's in its
+  floats, is within `low..high`. A list surely past one plane (`cull_list_outside`: its translations' box widened
+  by a ball of the bounds' reach, against the exact test's allowance, only where every transform is affine)
+  records nothing, as the CPU culls all of it. Without these the GPU path drew every level of every draw, mostly
+  empty.
+- **Sets** gather as the CPU's `tide_draw_gather_levels` does: a draw just after a set of the same mesh, shader,
+  page, values, textures, sampling, tint and settings, whose lowest level is no lower than the set's first's,
+  joins it (its levels' runs count it; higher levels are appended), so a set's runs are the list's last commands,
+  levels in order, and a level's instances are in draw order, as gathered. A draw whose levels start lower starts
+  a set of its own, where the CPU would have interleaved the runs. Culled runs never join other runs
+  (`shaded_instances`, `level_follows` and the gather skip them).
+- **The GPU's decisions against the CPU's.** Frustum: the quick test's float reject rows (`tide_draw_cull_planes`)
+  with 2^-14 more slack, on the box size's coefficient (of the largest |n|) and on the bound (of |w|), over the
+  quick test's 2^-16 against rounding under 2^-20 whatever the GPU's compiler fuses or reorders. Only transforms
+  whose every number is under 2^40 (by its bits, which WGSL's assumption that nothing is infinite or NaN can't
+  undo) and that are affine are tested, and boxes under 2^40; others are drawn (at level 0 where a number is too
+  big or not finite). So the GPU culls a subset of what the CPU culls. Levels: pick_level's formula in floats; the
+  GPU's sqrt, division and fused multiply-adds can pick the next level for an instance within about 1e-6 of a
+  threshold, the one way GPU and CPU frames can differ in pixels.
+- **The renderer** (`cull.inc`): `cull_plan` (not the recorder, the kernels' pipelines made: on the web in the
+  background), then `upload_shaded` gives a culled run to the GPU where its listed pipeline is made and its
+  page is one of four; otherwise the CPU decides its instances as it's drawn (`tide_draw_culled_places`:
+  frustum_cull.h's exact answers and pick_level, the CPU path's decisions, in order), as places through the listed
+  pipeline or gathered bytes through the ordinary one. `cull_run` packs the frame's cameras, draws, parts (a draw's
+  candidates in a bucket, whole groups) and buckets, writes the lists' headers and dispatches. A GPU-culled step
+  binds `places` at its bucket's region as its instance buffer and draws `draw_indexed_indirect` with its bucket's
+  arguments (first instance 0, as gpu.h has it). Buffers are the renderer's own (`made_buffer`, so counted), kept
+  and grown, made again on another device (`forget_culling`, from forget_compute); the pipelines are prewarmed
+  with the renderer's own (`cull_warm`). `TIDE_GPU_CULLING=decide` has the renderer decide on the CPU, for tests. The CPU's deciding stays for what still
+  needs it: a pipeline or kernel not made yet (the web makes them in the background), a fifth page, and the recorder
+  (Unity's replay, which a host doesn't ask to cull on the GPU anyway); with the GL backends gone (2026-11-05) no
+  backend lacks compute.
+- **What reads runs**: `tide_draw_run_instance` gives nothing for a culled run; `tide_draw_run_uncull`
+  (`tide_draw_uncull` for all) makes one an ordinary listed run of the CPU's places; `tide_draw_append` unculls
+  its source first, and `tide_draw_run_unlist` unculls before unlisting. Render3D's transparent sort only reaches
+  Depth.Read blended runs, which are never culled.
+- **Diagnostics**: `tide_draw_diagnostic.gpu_culled` (`"gpu_culled"` in `--profile`'s report) counts candidates
+  handed to the GPU, neither tested nor submitted on the CPU; a list culled whole counts as tested and rejected.
+  `tide_platform_cull_compare` reads back the last frame's places and counts (where the backend waits for reads)
+  and sets them beside the CPU's decisions.
+- **Layout**: `tide_draw_run` (`culled`, `culled_count`), `tide_draw_list` (`gpu_culling`, `culls`,
+  `cull_cameras`, `cull_groups`, `frustum_matrix`), `tide_draw_listed_entry.stats`, `tide_draw_diagnostic`;
+  hosts, libraries and games rebuild together. Generated code calls nothing new.
+- **Tests**: `tests/test_draw_culled.c`: `draw_culled_runs_draw_what_the_cpu_draws` (12 lists over 7 frames:
+  levels, a forced level, a coarser tolerance, culling off, another camera, a list drawn twice; each level's
+  instances, in order, those of the CPU path after `tide_draw_uncull`; every candidate's pick, the CPU's and the
+  GPU's followed in C with and without fused multiply-adds, within its draw's levels; the GPU's float test, both
+  ways, never culling what the CPU draws, its slack under 1% of candidates); `draw_culled_gpu_never_culls_what_the_cpu_draws`
+  (28,000 boxes bisected onto the exact test's turn, +-3 floats, and the far ones culled);
+  `draw_culled_declines_and_hands_over` (Depth.Read blended, mixed mirrors, a host not asking, append, unlist).
+  Platform: `tide_platform_cull` (`platform/tests/cull.tide`, `cull.c`): 24 patches of boxes with two levels, one
+  patch mirrored and one half mirrored, three cameras and five settings (picked levels, a forced level, coarser,
+  culling off, a render target with a LOD camera of its own), each drawn GPU-culled and CPU-culled: the same pixels
+  byte for byte; on Vulkan the GPU's places read back hold every instance the CPU draws, in order (none extra in
+  any shot); then the device is lost and it's all again. Natively `tide_platform_cull` and `_decided` (the renderer's CPU
+  fallback; no device loss), both labelled `gpu`; on the web `tide_platform_cull` (WebGPU, label `pixels`: pixels,
+  then a lost device). The `_opengl` twin (the CPU, OpenGL) and the WebGL page went with the GL backends.
+- **Measured** (Mount & Rifle 2330682 built with this checkout through a scratch `TIDE_EXTERNAL_DIRS` folder as in
+  benchmarks.md; release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER, `--profile --profile-warmup 300`, 1,500
+  frames, a fresh `--data-dir` each, three alternating pairs, the same binary with `TIDE_GPU_CULLING=0` before).
+  The route (`tools/performance-route.txt`) can't run at this game commit with today's dev: its first click misses
+  the new menu, and past Start new and Begin the world stays at "Drawing the borders" (97%) for 25,000 frames with
+  either culling (a local worker that never returns; not this change). So this is the menu's field scene, DrawFlora
+  about 69,000 candidates a frame (23,000 frustum-tested on the CPU path):
+  - Views: 2.10 / 1.92 / 1.68 -> 1.05 / 1.07 / 0.99 ms (p50 2.02 / 1.59 -> 1.02 / 1.02).
+  - DrawFlora's mesh recording: 0.60 / 0.55 / 0.49 -> 0.045 ms a frame; Present's 0.20 / 0.19 / 0.17 -> 0.03.
+  - Whole CPU work: 4.13 / 3.81 / 3.36 -> 2.85 / 2.93 / 2.76 ms.
+  - Render: 1.89 / 1.75 / 1.57 -> 1.71 / 1.75 / 1.68 ms (draw calls 772 -> 938 a frame).
+  - GPU, the culling's compute pass included: 8.55 (an outlier) / 4.43 / 4.26 -> 4.17 / 4.22 / 4.16 ms.
+  - Captures at frame 600 differ run to run with either culling (91k-136k pixels, at most 9 levels, between two
+    runs of one mode as between modes): the game's own frames aren't bit-stable, as before.
+- **Gaps**: Hi-Z occlusion is built since (Occlusion culling from a depth pyramid, above). 166 more draw calls
+  a frame on that scene: levels of a draw's range that end up empty are still indirect draws, sets don't join runs
+  of bytes, and a draw whose levels start lower than its set's starts another. Stats' vertices count a GPU-culled
+  run's index count once (its count is the GPU's), and geometry rows don't see them. Lists that mirror and don't,
+  blended Depth.Read draws and a fifth page stay on the CPU. (Since 2026-11-05: Culled runs drawn by a count, joined,
+  above: empty levels draw nothing, runs one after another that draw alike are one call, stats and rows are the
+  GPU's, and a fifth page can't arise.) The web has no read-back comparison (no waiting read).
+  WebGPU's timings, other GPUs, Linux, macOS and Android are unmeasured, and the route waits on the game's loading
+  hang above.
+
+## Runs, GPU lists and indirect draws in the draw list (2026-11-05)
+
+`TIDE_DRAW_COMPUTE` (a kernel's run, `tide_draw_list.computes`) and
+`TIDE_DRAW_GPU_LIST` (Set, Clear or SetCount of a GPU list, `gpu_ops`, with Set's
+words in `gpu_words`) are appended command kinds, recorded in order with draws
+(`tide_draw_compute_run`, `tide_draw_gpu_list_set/_clear/_count`). A run's GPU
+lists are ids in `tide_draw_list.storage` (`tide_draw_storage`), as are a
+shaded run's (`tide_draw_run.storage`, set for the next draw by
+`tide_draw_set_storage`). `Draw.Instanced` over a GPU list is one run with
+`tide_draw_run.indirect` its list (`tide_draw_shaded_indirect`,
+`tide_draw_mesh_shaded_indirect`), through `shaded_visible` with no instances,
+so no culling, level picking or mirroring split applies; such a run never joins
+another, and runs with different lists don't join. (Since 2026-11-05 a culled
+one whose shader has `instance_sides` is two runs, wound each way, each keeping
+one side's instances on the GPU: notes/compute.md, Closing the gaps.) `tide_draw_reset` empties the
+new arrays, `tide_draw_forget` forgets runs' shaders. Tests: `tidec_e2e_compute`.
+`notes/compute.md`, Built.
+
+## Turning round: idle meshes without copies, farthest first, kept copies (2026-11-05)
+
+The owner, after the section below: the 180° stutter happens every time, not only the first ("maybe it's
+something else"). A route turning back and forth ten times showed it: each turn back copied about 750 meshes
+again (55-65 ms of the views) and sent them (16 ms), every one of them let go by the 64 MiB idle mesh budget
+the frame after the turn before (about 760 at once, a 17-22 ms frame). The first look the other way is the only
+real first sight. A test build with a 1 GiB budget turned in 7-10 ms. The owner chose, from Claude's options,
+not to hold a fixed larger budget but to be smarter about what's kept: the three below. Internal; no Tide or C
+API change.
+
+- **No second copy of a world's lists** (`tide_draw_mesh_data.hollow`, `relisted`). A mesh copied from two
+  lists that aren't made along the way and aren't a made mesh's key notes their versions (`note_relisted` in
+  `engine/src/mesh.c`). As a frame ends, one the frame didn't draw and the renderer has gives its copy up
+  (`hollow_mesh`): its counts, bounds, levels and versions stay, `vertices` and `indices` are NULL. Found
+  again, it's drawn from the GPU's buffers. Its bytes count for nothing in the list's budget, only its count.
+  Copies go before the budget is weighed: a first version weighed first, so the ~750 meshes a turn left idle in
+  one frame still counted their copies and went, and each turn back copied 250-840 again.
+- **The renderer says what it has** (`tide_draw_list.mesh_gpu`, a byte a place: `TIDE_MESH_GPU_NONE`, `_HAS`,
+  `_DROPPED`). The renderer writes it through the const list as it draws: `_HAS` where it uploaded a place or
+  found it current, `_DROPPED` where its budget let one go that the list still has, or where it met a hollow
+  place it hasn't got (a lost device, a new epoch, the Unity recorder reset). That place isn't drawn that frame
+  (`mesh_drawable`); at the reset the list lets a dropped hollow place go, so the next draw copies it again from
+  its lists, and a dropped full one is sent again. A new or freed place is `_NONE`.
+- **The renderer's budget is the device's** (`mesh_idle_bytes`; replaced the same day by Meshes of a world's lists kept as the game keeps them, above): `TIDE_MESH_IDLE_BYTES`, or a sixteenth of
+  `tide_gpu.device_memory` where that's more (1 GiB on the RTX 4080 SUPER; 64 MiB on integrated GPUs, phones
+  and the web). `TIDE_MESH_IDLE_COUNT` went from 4,096 to 16,384 (a hollow place is about 400 bytes).
+- **Farthest first** (`tide_draw_mesh_data.where`, `placed`, `tide_draw_list.idle_eye`). As a frame ends,
+  `note_mesh_places` reads where each mesh it drew put its first instance (a 3D mesh command's first matrix, a
+  3D shader run's first instance's transform, through `tide_draw_run_instance`) and where the window's 3D camera
+  was, or where the window has none, the first camera that sees in perspective (Mount & Rifle draws its scene
+  into a target, and its sun images' cameras are orthographic, set first). Past a budget, the list and the renderer let go of the idle meshes farthest from it first, then the
+  longest unused, then by place (`idle_mesh_order`, and `tide_texture_idle.far`, 0 for images, which stay by
+  age). Without a camera every distance is 0, as before. Turning in place lets nothing near go.
+- **Copies kept for the next** (`tide_draw_list.spare_copies`, `struct tide_draw_copies` in draw.c). A place
+  that goes, and a copy a place gives up, keeps its two blocks for meshes made later (`copy_take`: the
+  smallest of at least the size, at most twice it and 64 KiB more), within 64 MiB; past that, 8 MiB is freed a
+  frame. Freeing hundreds of copies as one frame ended was the 17-22 ms frame after a turn, and a new copy's
+  memory was touched for the first time as it was written.
+- **Appending** a hollow mesh to another list reads its lists again (`tide_draw_mesh_relist`) where they're at
+  the versions copied (they were, as the frame drew it); otherwise the copy is empty and draws nothing.
+- Hollow places' bounds are those cached when they were drawn; one drawn by a shader whose position field is
+  another's has none, and isn't culled (drawn, as unknown bounds are).
+- **Layout**: `tide_draw_list` gained `mesh_gpu`, `idle_eye`, `idle_eye_set`, `spare_copies`;
+  `tide_draw_mesh_data` `where`, `placed`, `relisted`, `hollow`, `vertices_version`, `indices_version`;
+  `tide_texture_idle` `far`. Hosts, libraries and games rebuild together.
+- **Tests**: `draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy` (hollow when idle and had, found
+  uncopied, appended read again, dropped and copied again, lists made along the way keep copies);
+  `draw_idle_meshes_past_the_budget_go_farthest_first` (the far one goes though drawn last). Platform:
+  `hollow_meshes_kept` (Vulkan with its device-loss pass, and WebGPU: drawn again from the GPU after
+  a skipped frame, nothing sent, no copy in the list; let go by the GPU, copied and sent again).
+- **Measured** (mount-and-rifle 2330682, a scratch route turning 180° back and forth ten times from frame 1440,
+  1920x1080, release, hidden, Vulkan, RTX 4080 SUPER, pinned; game PERF wall ms, two runs each, the previous
+  commit against this): each turn after the first 76-88 -> 5.4-7.0 ms; the frame after each turn 17-30 ->
+  5.4-7.0 ms; the first turn 131-138 -> 124-134 ms (first sight, unchanged). The performance route, two
+  alternating pairs then three more runs: section means within noise (yaw turns 8.3/8.4 -> 7.8-9.2 ms, pitch
+  5.0/5.7 -> 4.8-6.0); one run had a 265 ms pitch frame that four others didn't.
+- **Not done**: the first look at much new scenery is still a long frame (about 850 meshes copied and sent at
+  once); spreading uploads over frames would change what's drawn (pop-in) and is the owner's call. Overlay
+  lists share the renderer's mesh places by number with the frame's list, as before. Other GPUs, web timings
+  and Android unmeasured.
+
+## Idle listed regions, held pages and one-frame meshes (2026-11-05)
+
+Task (owner, from Mount & Rifle's gap "What's drawn every other frame is packed and sent again each time"):
+measure what makes the route's yaw turns stutter, then give listed regions, listed pages and one-frame meshes an
+idle budget like meshes'. Internal; no Tide or C API change. The budgets' numbers are Claude's picks.
+
+- **What the yaw turns' long frames were** (mount-and-rifle 2330682, route `tools/performance-route.txt`
+  without captures, release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER, pinned to logical CPUs 0-11, temporary
+  per-frame counters, not committed). The worst frame (1480, the -1300 turn, 120-150 ms) is first sight: about
+  850 meshes no frame had drawn (lists never seen, at any version) are copied into the list (about 275 MB,
+  65-75 ms of the views) and sent to the GPU (about 240 MB, 26-38 ms of `upload_shaded`). Frame 1440 is the same
+  at a quarter of the size (about 240 new meshes, 37-45 ms). Eviction was a smaller part: listed regions dropped
+  and written again (about 300 on 1480, 385 on each pitch frame, 1-5 ms), a page pack after the turn (17 MB moved
+  and sent), and the 64 MiB idle mesh budget letting 270-900 meshes go right after a turn, whose frees took up to
+  19 ms in one reset (frame 1521). Frame 1456 (25-40 ms) does no drawing work: it's outside the draw list. So
+  the owner's hypothesis is refuted for the worst frames; first-time mesh copies and uploads are what's left
+  (Not done, below). Corrected the same day: that route turns round once; turning round again and again, each
+  turn back was the mesh idle budget's (Turning round, above).
+- **One-frame meshes** (`forget_idle_meshes`, `spare_unused_meshes`). A mesh only one frame drew (`made ==
+  frame`) is kept `TIDE_MESH_ONCE_FRAMES` (8) frames, within its own budget, `TIDE_MESH_ONCE_COUNT` (1,024) and
+  `TIDE_MESH_ONCE_BYTES` (16 MiB), the longest unused first, then by place; found again, it's in the ordinary
+  budget. Lists drawn at another version still supersede it. The renderer keeps its buffers the same way (a
+  second `tide_texture_idle_trim` over the once-drawn places). So a mesh drawn every other frame, or every few, is
+  neither copied nor sent again; one made again each frame of scratch lists (told apart by version alone) costs
+  up to 8 frames of copies and buffers, which then become spares as before.
+- **Made meshes** (`tide_draw_mesh_key`'s `UINT64_MAX`) are told apart by version alone, as scratch lists are
+  (`mesh_of_scratch`): before, any made mesh drawn in a frame superseded every other idle one.
+- **Listed regions** (`listed_trim`, at the frame's first listed draw, before `listed_pack`). A region whose list
+  wasn't drawn this frame or the last stays for `TIDE_DRAW_LISTED_IDLE_FRAMES` (36,000) skipped frames, within
+  `TIDE_DRAW_LISTED_IDLE_BYTES` (32 MiB) of such regions, the longest unused first, then by page and place. A
+  region that finds no room beside the ones that stay lets every idle one go and looks again. A list drawn
+  intermittently uses its numbers as they are (`listed_steady` already took them whatever frame it was last
+  asked in).
+- **Gaps among them** (`tide_draw_listed_spans`). With idle regions kept, a page has no room at its end more often,
+  and the first version looked for a gap by going through all 8,192 entries and sorting them for every region it
+  placed: 216 of 216 placements on frame 1440, 0.1 ms each, the listed writes 20-40 ms on the turns. Each page now
+  keeps its regions in order for the frame, found once and kept as regions are placed (`listed_spans_add`) or
+  moved (`listed_spans_remove`); trimming, packing, a page lost and a full table make them found again.
+- **Held pages** (`tide_draw_listed_hold`, `tide_draw_texture.held`). As `tide_draw_reset` ends a frame, a page
+  with a region that stays is held: it isn't let go as a texture a frame didn't draw with, and its `frame` is
+  kept. The renderer keeps a held texture as it is on the GPU (`hold_textures`, before `prepare_data_textures`,
+  whose pool of spares leaves it alone, and `forget_textures`); once the list lets it go, the next frame frees
+  it. Only pages are held: other data textures are the frame's as before.
+- **Layout**: `tide_draw_texture.held`, `tide_draw_listed.spans`; hosts, libraries and games rebuild together.
+  `tide_draw_listed_clear` frees the spans with the list and on `tide_draw_forget`.
+- **Tests**: `draw_idle_meshes_are_kept_for_when_drawn_again` (a one-frame mesh found uncopied after a skipped
+  frame, one drawn once gone after 8 more, made meshes on alternate frames each found);
+  `draw_idle_meshes_past_the_budget_go_longest_unused_first` (the once budget's count, apart from the other);
+  `draw_levels_are_meshes_with_the_full_meshes_vertices` (a level one frame drew keeps its place);
+  `draw_listed_numbers_are_sent_once` (a skipped frame keeps the page held and its version);
+  `draw_listed_numbers_stay_while_skipped` (alternate frames write nothing after the first; kept for exactly
+  `TIDE_DRAW_LISTED_IDLE_FRAMES` skipped frames, written again after more); `draw_listed_idle_regions_past_the_budget_go`
+  (two idle lists over the budget: the one on the later page goes). Platform: `idle_meshes_kept` (a one-frame mesh
+  stays on the GPU through a skipped frame and isn't sent again; drawn once, it goes after 9 frames);
+  `held_data_textures` (a held texture stays counted, isn't sent again, and goes once let go);
+  `check_gpu_memory` now draws 9 frames past a disposed target, as its blit's quad is a one-frame mesh.
+  `transient_data_textures` is unchanged: its data textures aren't pages. Native ASan: `tide_tests` (635) and 566
+  draw/mesh/LOD/skinned/target/embed/prewarm/shader/Render3D/game CTests including every `gpu` one, Vulkan and
+  OpenGL. Web debug: `tide_tests`, `tide_platform_draw` and `_targets` on WebGL, WebGPU and the RGBA fallback, and
+  the instancing/LOD/frustum/skinned e2es (the external Foldline layout check fails as before, unrelated).
+- **Measured** (the route above, two alternating before/after pairs each, the same counters):
+  - Shadows as the game draws them (each frame): listed regions dropped and written again 4,047-4,078 -> 111-143
+    over the route, packs 36-39 -> 2-3 (262-268 MB -> 18-40 MB moved). Section means unchanged within noise (yaw
+    turns 8.5-8.7 vs 8.6-8.8 ms, worst 120-126 ms both: first sight, above).
+  - The sun's near and far images drawn on alternate frames (a scratch copy of the game; `castNear`/`castFar`
+    gating the Clear and the draws in stage.tide, compound_kit, ways, farmen, rig, FloraCast and FloraCastFar;
+    shadows' look not checked): regions written again 280,733/281,175 -> 142/176, texture bytes sent 13.3-13.4 GB
+    -> 1.2-1.5 GB, packs 81-83 -> 3-4. Frame means: on foot 8.07/8.52 -> 6.76/6.57 ms, aim 6.35/5.96 -> 5.41/5.30,
+    sprint 7.19/7.63 -> 6.72/6.55; against shadows every frame (on foot 6.9-7.4) alternating now gains.
+  - What it costs: the list's reset 0.06 -> 0.12 ms a frame and the listed writes' time 0.027 -> 0.053 ms a frame
+    on the route (more idle meshes weighed each reset, `listed_trim`'s pass over the entries).
+- **Not done**: first-sight copies and uploads of many new meshes in one frame (the turn's 100+ ms) would need
+  them spread over frames or made cheaper to copy (the copies are fresh allocations: page faults); the game's idle
+  meshes are over the 64 MiB budget (`TIDE_MESH_IDLE_BYTES`), so a turn back fills about 100 again and the frees
+  after a turn take up to 19 ms; a budget by the device's memory, as images have, is the owner's call. Other GPUs,
+  web timings and Android unmeasured.
+
+## Geometry attribution (2026-11-03)
+
+Capture-only geometry rows retain mesh/version, view source, destination and
+selected LOD. Contribution chains reuse the mesh commands' otherwise unused
+text/shape word, preserving command size, batch compatibility and Unity packet
+layout. Mesh acquisition records diagnostic list handles for name lookup, never
+reads them later. Chains follow normal/shader/listed merging and LOD regrouping;
+append copies owned row identities even across collector/list lifetimes. Reset
+retains link capacity and drops frame links; clear revisions prevent stale rows
+aliasing a new capture; free releases links. Limits are 1,024 rows/1 MiB of text
+per collector and 65,536 links per list/frame, with dropped-instance accounting.
+No world state, drawing order, pixels or draw API changes. Built-in unshaded 2D
+meshes/shapes/text stay aggregate-only. Tests: draw_profile and platform draw LOD.
+
+
+## Camera-relative placement (2026-11-02)
+
+The distant-camera gap keeps each recorded camera's original transform,
+projection and combined world-to-clip matrix, plus its origin and a relative
+projection. Built-in cameras remove view translation before multiplying the
+projection. Invertible affine custom cameras invert their untranslated transform
+before projection; singular, nonfinite and projective custom transforms keep the
+combined matrix with origin zero. Camera deduplication compares the original
+parts and relative data as well as the combined matrix.
+
+CAMERA_3D commands retain a bounded 1-based cameras_3d reference alongside their
+original matrix slot. Append copies that complete record, preserving precision
+and readable original parts after the source list is freed. Handwritten commands
+without a valid data reference retain the combined-matrix fallback. All hosts and
+game libraries rebuild for the camera record layout change; no generated runtime
+entry point or simulation state changes.
+
+GPU placement rebases the model columns before multiplying local geometry, so
+small local offsets are not first rounded into a large world position. The
+homogeneous row is retained, including projective instance transforms. The
+shader's world position remains the ordinary world-space model product, and
+explicit clip outputs remain authoritative. CPU WorldToClip, coordinate/ray
+queries and culling keep their original combined-matrix arithmetic; their
+rounding need not match the more precise GPU path. No depth format, near/far
+policy, floating origin in simulation, or guarantee for coplanar surfaces changes.
+
+Two new runtime tests check translation-independent relative matrices, affine
+scale/shear/mirror cameras, unchanged original matrices, projective fallback,
+owned append records and invalid data-slot fallback. The four draw_camera tests
+pass Windows ASan. GPU regressions and integration validation: rendering.md.
+
+
+## Instance lists kept on the GPU (2026-11-02)
+
+Task: a `Draw.Instanced(mesh, list, ...)` whose list didn't change still had
+every candidate converted by generated code into scratch, each visible run
+copied into `tide_draw_list.instances`, and those bytes uploaded whole every
+frame (mount-and-rifle: about 42,000 instances, 4 MB a frame). Internal: no
+Tide or draw API change, the same runs and pixels. Claude's design, under the
+task's authorization for internal choices.
+
+- **What's kept, keyed by what.** An item's instance (the packing the
+  instance attributes read: float packs then int packs,
+  `tide_shader_instance_size` bytes) is written by a generated
+  `tide_shader_N_listed` `tide_list_words_fn`, the instance loop's body. The
+  draw list keeps these in a *region* of a *page*: a TIDE_PIXELS_LIST
+  TIDE_TEXELS_INTS texture of 1024-pixel rows, one 16-byte pixel a pack, that
+  many lists share (`tide_draw_listed`, `engine/src/list_data_cache.h`; the
+  code is in `engine/src/mesh.c`). An entry is keyed by list handle, item size
+  and layout (tidec's number from the shader's id, top bit set), and holds the
+  list's `list_version` and its region. It keeps no pointer.
+- **Why pages and not a texture a list.** A first version gave each list its
+  own texture (`tide_draw_list_data`). Runs of different lists then couldn't
+  merge, where their copied bytes had been one run: the route's draw calls went
+  from 312 to 646 a frame and render got slower. Pages make one texture of
+  them, so adjacent runs merge as before.
+- **When a list keeps its numbers.** A world's list keeps them from the
+  first frame it's drawn (`listed_steady`). Its region is written once and
+  then sends nothing while the list's version stays the same. A frame whose
+  list changed, a scratch list, and a list whose version changed four frames
+  in a row (not asked again for 16) draw their bytes as before. Then only the
+  visible ones are sent and nothing goes through a texture. A third version
+  wrote changed and scratch lists into a one-frame region of the page instead.
+  That sent all of a rebuilt list each frame as a texture upload, which
+  `bench_skinned_baked`'s warmed-residency check caught (16 KB a frame).
+- **Runs still join where listed and copied meet.** A copied run next to a
+  listed one of the same shader, mesh, textures, uniforms and settings would
+  otherwise be a run of its own. The route showed about 18 more draw calls a
+  frame before this. `tidec_e2e_instancing` and `tidec_e2e_lod` pin a mesh
+  drawn alone and a list's instances as one run. So `shaded_instances` puts
+  the copied run's bytes into the frame's own room of the listed run's page
+  (`tide_draw_listed_put`) and records them as places. That works either way:
+  copied after listed, or the run before turned listed. `tide_draw_gather_levels`
+  does the same for a level group that mixes them (`gather_listed`). A put
+  needs room in the page as it is, so no page pixels move under the pointers
+  culling holds. Pages grow with a quarter more room than asked for this. With
+  no room, the runs stay apart: the draws are the same, in the same order.
+- **What goes each frame.** A listed run (`tide_draw_run.listed`) has
+  `uint32_t` places (`region start / packs + i`) in `tide_draw_list.instances`,
+  and its page as `textures[texture_count]`, so pruning, forgetting and the
+  renderer's data-texture protection treat it as any run texture. Culling (the
+  quick four-at-a-time test from origin/dev), levels of detail and mirroring
+  read each transform from the page's CPU copy, in the order they read the
+  scratch copy. They make the same runs; only survivors' places are written.
+  Level sorting now sorts places on both paths and gathers bytes once
+  (`shaded_from`), where it copied instances twice.
+- **The GPU side.** tidec writes a second vertex stage for eligible shaders
+  (`shader.listed`: instanced, 3D, not skinned, every per-instance value the
+  item's or the identity transform, fewer than 16 textures). Its fields are
+  `tide_shader.glsl_listed_vertex`, `wgsl_listed` and `spirv_listed`. They
+  hold one int instance attribute where the packs were, and load each pack
+  with `texelFetch` / `textureLoad` and a bitcast into the same private values.
+  The fragment stage is shared. The renderer makes it as its own pipeline
+  (`listed_pipeline_for`, id `listed_id`). Where there's none (the Unity
+  recorder, or a background pipeline not ready yet), `upload_shaded` gathers
+  the instances' bytes from the page into the instance buffer after the list's
+  (`draw_step.instances_at`) and draws the ordinary pipeline.
+  `tide_draw_append` gathers. `tide_draw_run_instance` gives any run's
+  instance bytes, and `tide_draw_run_unlist` turns a run back to bytes;
+  Render3D's `SortTransparent` unlists its span first.
+- **Invalidation.** List mutation gives a new version. That frame the list
+  draws its bytes; the next, its region is rewritten in place where it fits
+  and only those rows are sent (`tide_draw_texture_changed`, the exact pixels
+  for a put within one row). Since versions are page hashes, a list sharing a
+  heap page with one that changed counts as changed too. Hot reload: entries
+  hold numbers only, and a changed instance layout is another shader id and
+  layout. A page not drawn in a frame is let go at reset, as any texture; its
+  generation (`made`) changes and its lists are written again.
+  `tide_draw_forget` clears the table. Lost devices and render-target
+  recreation: the page is an ordinary data texture, made again from the list's
+  copy. (Since 2026-11-05 a page with regions that stay is held through frames that skip it: Idle listed
+  regions, held pages and one-frame meshes, above.) Prewarming makes each shader's listed pipeline beside its ordinary one
+  (`warm_key`), since `tide_platform_shaders` checks that nothing is made after
+  prewarming.
+- **Memory bounds.** At most `TIDE_DRAW_LISTED_PAGES` (4) pages of
+  `TIDE_DRAW_LISTED_ROWS` (2,048) rows, 32 MiB each, on the CPU and the GPU.
+  A page grows by doubling from 16 rows, in place (its pixels kept). The table
+  holds `TIDE_DRAW_LISTED_MOST` (4,096) lists; when full, those not drawn this
+  frame or the last go. A region not drawn this frame or the last is free (since 2026-11-05 it stays within an idle
+  budget: Idle listed regions, held pages and one-frame meshes, above). At
+  a frame's first listed draw, before any run names a place, a page whose span
+  exceeds its live regions by half plus 65,536 pixels is packed down
+  (`listed_pack`: memmove in its copy, the moved rows sent). A list bigger than
+  a page, or with no room left, draws as before. On the route one page is
+  enough (the one-frame-region version peaked at about 1.35M of its 2M pixels).
+- **Pixels.** The game's captures aren't bit-stable run to run in either
+  build: background terrain builds land in other frames. Between the baseline's
+  own runs, `perf-ground` and `perf-horizon` differ by about 1,360 pixels (up
+  to 14 levels), the rest by up to 17. In the final dev-vs-after pairs below,
+  16 of the 18 after-captures equal a baseline capture or are within 21 pixels
+  of one at 1 level. One run's `perf-ground` / `perf-horizon` are 707 / 727
+  pixels (max 10 levels) from the nearest baseline, in the same scattered
+  pattern. Draw calls are 431.7–432.0 a frame in both builds.
+- **Measured** (mount-and-rifle at 355677f, route `tools/performance-route.txt`,
+  release, hidden, 1280×720, frames 201–3220, Vulkan, RTX 4080 SUPER, driver
+  617.42). Three alternating pairs; "before" is origin/dev at 9abc3c4bc, built
+  the same way, which includes the quick frustum test. Means of `cpu_phases`,
+  before → after, per pair:
+  - Views: 3.43 / 3.58 / 3.57 → 2.88 / 2.94 / 2.88 ms (medians 3.57 → 2.88,
+    −19%; p50 3.37 → 2.48).
+  - Render: 0.89 / 0.94 / 0.92 → 0.71 / 0.71 / 0.68 ms (medians 0.92 → 0.71).
+  - GPU: 2.85 / 2.80 / 2.91 → 2.60 / 2.79 / 2.84 ms (medians 2.85 → 2.79).
+  - Match, unchanged code, as a control: 0.51 / 0.53 / 0.53 → 0.48 / 0.50 /
+    0.49 ms.
+  - DrawFlora's `mesh_recording_ms`: 0.70 → 0.63 ms a frame.
+  - Against this checkout's dev before the merge (without the quick frustum
+    test), the same route and game went views 5.29 → 3.37 ms and render
+    1.14 → 0.91 ms, both changes together.
+  - Earlier, on game 223f932 and with this change alone, the stack sampler
+    (14 s, main thread) showed `memcpy` self 9.95% → 4.07%, `memcmp` 5.0% →
+    2.7%, and the generated Groundcover / Clumps / TreeCards conversion loops
+    3.96 / 2.11 / 1.65% → under 0.5%.
+- **Not done.** On the web, a listed pipeline made in the background gathers
+  bytes until it's ready. Lists sharing a heap page with data written every
+  frame copy every frame, as before. Two shaders reading the same fields of
+  one list keep two regions. A 3D `Draw.Transform` around an instanced draw
+  copies, as before. Android, macOS, Linux, other GPUs and the web's own
+  timings are unmeasured.
+
+The new generated call is `tide_draw_mesh_shaded_list` (`tide/mesh.h`),
+within the drawing maintenance exception (notes/runtime-ownership.md).
+
+## Quick frustum test (2026-11-02)
+
+The owner's Mount & Rifle route spent about 2.1 ms a frame (23-25% of the main
+thread) in `bounds_visible`, on about 59,000 candidate instances. The test now
+lives in `engine/src/frustum_cull.h`. Its decisions are identical to the old
+test's, not just conservative.
+
+- **Exact test** (`cull_exact`): the old double-precision support test,
+  unchanged apart from taking the whole transform. `cull_frustum_build` is the old
+  plane construction. `tests/test_frustum_quick.c` keeps verbatim copies of both
+  and pins planes byte for byte.
+- **Quick test**: float, four instances at a time (`cull_four`, planes in a
+  loop over splatted rows `tide_draw_frustum.quick[6][11][4]`). One instance at
+  a time (`cull_instance`, the single-draw paths) uses the planes across eight
+  lanes instead (`lanes[11][8]`). The coefficients are built with the planes, once
+  per camera. The quick test answers only when an error bound proves the exact
+  test's answer. The derivation is beside `cull_quick_build`. Float rounding is
+  < 2^-20·S (S = |p3| + Σ|n|·magnitude), and the slack is 2^-16·S plus a
+  2^-12-relative margin on the 1e-5 allowance. The box's three magnitudes are
+  summed into one `size` (max|n|, max r per plane), so each test costs one
+  multiply-add. Its pass bound drops the allowance's magnitude term (it is ≥ 0).
+  Anything else, including boxes within the bound of a threshold, takes the
+  exact test (`cull_slow`, out of line): non-affine transforms, magnitudes over
+  1e28, planes or rounding coefficients over 1e8, and non-finite numbers. An
+  infinity or NaN makes `size` non-finite, so there is no separate finiteness
+  check.
+- **`Draw.Transform`** (`through`): computed per instance with
+  `tide_mul_f4x4`'s exact lane arithmetic, so the product's bits and its
+  finite/affine checks match the old test. Transforming the planes by `through`
+  once instead would need a per-instance |T|·|O| bound and wasn't worth it: the
+  route doesn't use it.
+- **Callers**: `shaded_placed` and `instances_placed` go four at a time; a short
+  final group repeats its last instance and resolves only the real ones.
+  `frustum_camera` is called once per call, not per instance. Profile counters
+  are summed locally and added once (`cull_counted`, `cull_add`). Totals are
+  unchanged.
+- **Layout**: `tide_draw_frustum` gained `quick_ready`, `quick` and `lanes`
+  (inside `tide_draw_list`). Hosts, libraries and games rebuild together.
+
+Tests: `frustum_quick_*` compare the new path with the old one. The cases cover
+random perspective, infinite-far, orthographic and arbitrary/extreme cameras;
+boxes, including zero and huge extents and huge centers; rotated, scaled,
+mirrored, sheared, flat, projective, huge, NaN, infinite and subnormal
+transforms; with and without `through`; one at a time and in groups of one to
+four. They also bisect to the exact reject threshold along random lines and test
+±3 floats around it on each axis. The suite runs 1M random single
+comparisons, 160k batched groups and the boundary set, with zero differences. It also requires the quick test to
+answer more than 80% of the ordinary cases; 87% are answered, and the rest are
+the deliberately odd values. One local run at 100× (100M single and 16M batched,
+plus the boundary set) also had zero differences. Native ASan: `tide_tests` and
+179 draw/frustum/LOD/profile CTests, including `tide_platform_profile`'s pinned
+culling counts and culling-on/off PNGs, all pass. Web: `tide_tests` and the
+draw/frustum/LOD/profile tests (see the merge commit).
+
+Measured, Windows, Clang 23, release `-O2`, SSE2 baseline. Microbenchmark of
+59,000 grass-like instances (perspective camera, about 77% rejected), ns per
+instance:
+
+| Path | Old | New |
+|---|---|---|
+| Bulk, random order | 26.5 | 8.3 |
+| Bulk, spatial order | 18.0 | 6.3 |
+| Bulk with `Draw.Transform` | 29.7 | 10.6 |
+| One instance a call | 18-30 | 15-17 |
+
+`-mavx2` gained under 10%, so there is no CPU dispatch. Mount & Rifle route,
+pinned nightly.12 (same draw.c as this base) against nightly.12 with this change,
+one run each (hidden, release, 1280×720, seed 42, `--profile-warmup 200`):
+
+| | Before | After |
+|---|---|---|
+| DrawFlora `mesh_recording`, ms/frame | 2.13 | 0.73 |
+| Present rows | 0.105 | 0.029 |
+
+Rejected/tested counts are identical on the deterministic rows. DrawFlora's
+counts differ between any two runs, before or after, by a few hundred of 180M.
+The stack sampler puts culling (inlined in `shaded_placed`, plus `cull_slow`)
+at ≤ 8.5% of main-thread samples, against 23-25%. Whole-frame CPU means vary
+±25% between runs on this machine, so they are not a measure of this change.
+
+## Agent profiling of mesh recording (2026-11-02)
+
+The owner approved structured profiling and evidence for unnecessary culling.
+`tide/draw_profile.h` supplies host-owned `tide_draw_diagnostics`, attached by
+`tide_draw_list.diagnostics`. Generated views lend `profile_source` only while
+they record; rows copy the full source name, path, line and column. The draw
+list borrows the collector, preserves it on reset and never frees it. Reset
+clears the transient source and active row. The host clears/frees the collector.
+All hosts, libraries and games rebuild for the draw-list layout change.
+
+Rows separate source/destination/camera: target 0 is the window, other targets
+use their recorded identities. `camera_slot` is the one-based order of distinct
+camera settings first used by that source/destination each frame. It stays the
+same when a camera moves and recording order stays the same; conditional camera
+order changes can regroup it. It is not a semantic camera name or a GPU pass ID.
+
+One measured interval surrounds each ordinary or shaded 3D instance/batch call
+after mesh acquisition. `mesh_recording_ns` includes bounds lookup/build,
+frustum tests, LOD selection and instance emission, not isolated culling time,
+geometry capture, shader-data capture, GPU uploads or execution. Bulk instance
+loops read no clocks; one batch increments `calls` once. The diagnostic lookup
+itself precedes the timer; the enclosing view time includes that overhead too.
+Disabled collection reads no clocks and allocates no diagnostic storage.
+
+Counters are candidates, tested, rejected, untestable, bypassed and submitted.
+`tested` means valid bounds/camera/affine transform reached plane tests;
+`rejected` is its subset. Unknown bounds, unavailable cameras and invalid or
+projective transforms remain conservatively drawn and count as `untestable`.
+An explicit frustum opt-out counts as `bypassed`. `submitted` counts instances
+retained in CPU draw commands, not actual GPU draws or vertices. Bounds-cache
+hits/builds and frustum-plane rebuilds expose repeated preparation. Append
+copies already filtered commands without testing or counting them again.
+
+The collector retains at most `TIDE_DRAW_PROFILE_ROWS` (1,024) identities and
+`TIDE_DRAW_PROFILE_SOURCE_BYTES` (1 MiB) of copied names. It drops new rows on
+either limit, counting dropped calls/candidates; existing rows continue to
+collect. Names are never truncated into colliding identities. All profile state
+is outside simulation memory and affects no recording or culling decision.
+
+`tests/test_draw_profile.c` covers exact single/stored/bulk/shaded culling
+counts, conservative fallbacks, opt-outs, unchanged command/matrix bytes,
+camera motion/order, separate targets and views, owned long source strings,
+reset/clear/free, disabled collection, append, and both limits. Native ASan and
+WASM validation passes in the full suites recorded in standard-host.md.
+
+## Drawing a mesh at a given version (2026-11-02)
+
+`tide_draw_mesh_key(d, lists, key)` (tide/mesh.h, owner-approved) tells the
+next draw of exactly those two list handles that `key` is their version.
+`take_mesh_key` runs first in `mesh3_slot`, `tide_draw_mesh_shaded_instances`
+and the 2D `mesh_lists`, before any early return, and always clears the hint;
+other handles get no key. Keyed meshes use the slot id `MESH_KEYED`
+(UINT64_MAX, no handle's) for both lists, so every copy of a made mesh is one
+GPU mesh, with no list read. Generated code sets the key right before a
+`Mesh<V>` draw and clears it after; `tide_draw_reset` clears it too. Keys
+without bit 63 are none, so assets' ids keep the list-version path (and their
+pack versions and LOD). `tide_mesh_key(vertices, size, indices)` hashes counts,
+vertex size and both lists' bytes (`tide_hash_more`, flattened chunks) and sets
+bit 63. The draw-list layout gained three words: hosts, libraries and games
+rebuild together. Tests: `mesh_runtime` (one run, one mesh across copies and
+frames; a mismatched hint is ignored and cleared).
+
+## Levels for meshes a game makes (2026-11-02)
+
+What the draw list relies on (the feature, its tests and the simplifier's move: assets-and-files.md, Levels of
+detail for meshes a game makes):
+
+- **The request is list state for one draw.** `tide_draw_list.lod_want` (0 for none) and `lod_layout` are set by
+  `tide_draw_want_levels` just before a mesh draw's call and cleared just after, in one comma expression of
+  generated code; `tide_draw_reset` clears it too. Arguments with ordered effects are hoisted before the
+  statement, so no other mesh draw runs between. It records no command and isn't a destination's setting.
+- **A mesh that asks is its own slot.** `tide_draw_lod_version` mixes the multiplier and the layout into the
+  version `mesh3_slot` and `tide_draw_mesh_shaded_instances` look the slot up by, so the same lists drawn without
+  `lod:` keep their slot, whole. After filling (and after a pack's levels, which win), `tide_draw_lod_request`
+  sets `tide_draw_mesh_data.lod_key` (a hash of the copied vertices and indices, vertex size, layout and
+  `LOD_VERSION`, never 0) and `lod_want`, which `give` passes as `tide_mesh_levels.multiplier`.
+- **Results reach slots only at `tide_draw_reset`**, after it lets go of the meshes no frame drew: each slot whose
+  `lod_key` is the result's and that has no levels gets them through `tide_draw_mesh_levels`, which checks every
+  index against the slot's own vertices again. So commands recorded in a frame never see levels change under
+  them, and a slot reused for another mesh (its key is set again at fill) never takes another mesh's levels.
+- **The kept levels** (`tide_draw_lod_builds.kept`, at most 64 MiB beside the newest, least recently used out)
+  outlive slots and `tide_draw_forget`; they're freed with the list. A result with no levels is kept too, so a
+  mesh that has none isn't made again; a stopped job's result is never kept.
+- **Jobs** (`lod_job`, a `tide_background` each) own copies of what they read; the only code they run is
+  `make_levels` of whichever engine copy called `tide_draw_prepare`, which is the host's, so unloading a game's
+  library on a reload can't unload a job's code. `tide_draw_free` stops them all, then helps the provider
+  (`help`) and yields until each submitted one is done, as `tide_workers_free` does.
+- **A model's bones** (`tide_draw_want_bones`) are a borrowed list handle on the list (`lod_model`), read only by
+  the request inside that draw, cleared with the want and at reset; the job owns the weights it read.
+- Layout: `tide_draw_list` gained `lod_builds`, `lod_want`, `lod_layout` and `lod_model`, `tide_draw_mesh_data` `lod_key` and
+  `lod_want`; hosts, libraries and games rebuild together.
+
+## Repeated flat numeric-list captures (2026-11-02)
+
+Forest profiling identified repeated shader-data list hashing and texture lookup
+inside per-entity material recording. `tide_draw_list_data` now keeps eight
+frame-local captures in a draw-list-owned fixed-size allocation. Only ordinary
+nonchunked heap lists qualify. A probe resolves the current heap and page, then
+checks the handle, heap identity/used span, count, element size, word layout,
+writer, and the page's valid hash plus hashed byte count. It validates the
+captured texture slot's identity/version, dimensions, integer format and writer
+kind before returning it. Dirty pages always take the original hashing path.
+
+The cache retains no source/page/header pointer. Heap identity is a uintptr_t;
+current storage is resolved on every probe. Hits increment `heap.moves` exactly
+as `tide_heap_block_hash` does, preserving retained writable list/grid cache
+invalidation, and mark the texture used this frame. Reset and forget clear entries
+before texture pruning; free releases the bounded metadata. Scratch, packed,
+asset-backed, chunked and map/grid captures retain their existing paths.
+
+Three `draw_list_data_cache` regressions compare complete texture identities,
+versions, layouts and padded bytes against fresh conversion across in-place
+cached writes, COW/verified endpoints, layout/size changes, overwritten texture
+slots/kinds, empty/resize, frame/prune/forget/free, source disposal and same-offset
+reuse, scratch reuse and chunked mutations. All three pass on Windows ASan.
+The first same-offset test used different allocation size classes; it was fixed
+to exercise actual same-class reuse. Full integration passes all 2,908 native
+Windows sanitizer CTests and all 2,794 web-release CTests. Three 1920x1080
+before/after forest captures (10k canopy, 100k wide and 100k ground) have zero
+changed RGBA pixels. Independent cache review found no blocking issues.
+[Measured forest results and reproduction](../bench/results/forest-opt-20261102/README.md)
+record the complete optimization task; those timings do not isolate this cache.
+
+## Picks out of the camera's view (2026-11-04)
+
+Mount & Rifle's gap ("A render target's LOD pixel tolerance barely moves instanced
+props' levels"): its 3072x3072 sun image, told the viewer's camera with
+`SetLODCamera`, drew 11.07 M vertices, 7.9 M at `SetLODPixels(32..128)`, 1.52 M at
+`LOD(5)`. Cause: `pick_level` measured how far a mesh is by the pick camera's clip
+`w` (its depth) and drew whole anything at or behind `w = 0`. A shadow map covers
+props beside and behind the viewer, whose depth is near or under 0 however far out
+they are, so they drew whole at every tolerance. Not the custom vert, the
+orthographic destination (with a LOD camera only that camera counts) or a clamp.
+
+- **Rule (Provisional, spec Levels of detail):** how far is the most of `w - r*|w|`,
+  `|x| - r*(|x| + 2|w|)`, `|y| - r*(|y| + 2|w|)` and `-w - 3r*|w|`, `r` the ball's
+  radius times the transform's biggest scale and `|row|` a clip row's xyz length. A
+  ball touching the view's sides (x = ±w, y = ±w) or in front of `w = 0` gets `w`'s
+  term from the max, so every pick the camera could show is the bits it was; the
+  others only take over out of view. NaN `w` still draws whole. Around the camera
+  (every term under 0) draws whole.
+- `lod_view` carries the x and y rows and their lengths. A `fit` camera (the
+  position/rotation/fov form, recorded for a square screen) has its x row narrowed
+  by the pick screen's height/width as the renderer does, else a 16:9 window's
+  sides would count as out of view; the pick screen is `lod_screen` (the window's
+  with a LOD camera, else the target's). `tide_draw_list.lod_seen` grew to five
+  words (the width joined the key) and `lod_view` to 16 floats.
+- **Tests** (`tests/test_draw_levels.c`): `draw_levels_out_of_view_go_by_how_far_out`
+  (beside and behind, the tolerance there, a ball across the view's side keeping
+  its depth's pick to the threshold, around the camera, instances and one at a time
+  through a target with a LOD camera); behind at 100 is now the last level, not
+  whole; `draw_levels_of_draws_in_a_row_are_gathered` uses markers a tenth apart,
+  as its old ones (x 1..7 at depth 2) were out of view. Native ASan: tide_tests
+  (632), `tidec_e2e_lod`, `_lod_generated`, `draw_frustum`, `draw_settings`,
+  `render_targets`, `skinned_instanced`, `instancing`, `tide_platform_draw` (Vulkan,
+  OpenGL, Vulkan sets), `tide_render3d_lod`; WASM: tide_tests, the two LOD e2es and
+  `draw_frustum`.
+- **Measured** with a scratch game (`[LOD(2)]` ball scan, 441 instances over 200 m
+  through a custom vert, ortho 1024 targets, LOD camera at the grid's edge): vertices
+  a frame unset/8/32/128/`LOD(5)` 3.76/3.51/3.48/3.48/0.37 M before, 0.34/0.13/0.12/
+  0.12/0.37 M after (the ball's chain ends there). The game itself wasn't rebuilt
+  against dev.
+
+## Asset tolerance multiplies draw tolerance (2026-10-31)
+
+Each leveled mesh retains `lod_multiplier` from `tide_mesh_levels.multiplier`,
+normalized to positive finite with C zero/invalid values defaulting to 1.
+Picking multiplies its existing allowed error by this value in double, avoiding
+overflow/underflow in the multiplication while preserving the default's float
+threshold. Ordinary, bulk, shaded and skinned paths share this pick. Forced
+levels bypass it. Recording/gathering/append order is unchanged. Pack identity
+and native ASan/WASM validation are in assets-and-files.md, Asset LOD tolerance
+multiplier. There are no additional runtime functions or owned resources.
+
+## Automatic LOD pixel tolerance (2026-10-31)
+
+Follow-up: `GUI.Draw` generated setup no longer copies the removed global
+`lod_pixels` field. Its draw list uses ordinary destination-local settings,
+as its other settings do. The native ASan and WASM `gui_custom` fixtures
+exercise these generated blocks and pass.
+
+The owner approved exposing the existing error tolerance for performance.
+`Draw.LODPixels(pixels) { ... }` and `Draw.SetLODPixels(pixels);` also work on
+render targets. Each destination owns `tide_draw_place.lod_pixels`; the former
+draw-list-wide field is removed. Zero represents the default 1 pixel. Positive
+finite values are accepted, including fractions; all other values restore 1.
+No-argument forms restore 1, blocks restore their previous value on exit, and
+frame/reset defaults clear every destination. Forced LOD levels still win.
+
+The retained single-instance camera calculation includes the selected
+destination's tolerance in its key; bulk and shaded draws read the same state.
+Generation, chains, error weights, ordering and simulation remain unchanged.
+Triangle density is not a selection criterion. The C setter is now
+`tide_draw_set_lod_pixels`; its unset and two push functions follow the other
+settings. Hosts and games rebuild for the changed draw structures.
+
+Validation: 83 drawing-related C tests pass on Windows ASan and WASM, including
+fractional/coarser selection, nested/default scopes, restoring another target,
+invalid values, forced levels and frame/default resets. LOD, draw-settings and
+render-target e2e fixtures pass on both. The native language-server suite and
+six LOD diagnostic fixtures pass. The production docs build passes (expected
+unstaged example 404s). No backend code changed; GPU pixels and other native
+platforms were not exercised for this change.
+
 ## Fills (2026-10-29)
 
 `Draw.Rect(rect, radius|radii, fill)` and `Draw.Shape(shape, fill)` with a
@@ -352,7 +1623,6 @@ reads as 1. The metadata is local, needs no GPU allocation/readback and survives
 ordinary draw reset like other host metadata. All hosts/game libraries rebuild
 for the C layout change. Tests and validation are in `notes/language.md`.
 
-
 ## Explicit skinned instances (2026-10-20)
 
 Owner-approved: `Draw.Instanced(model, instances[, texture/filter/wrap][, vert][, frag][, values])`
@@ -412,7 +1682,7 @@ The owner approved automatic culling for ordinary draws, conservative developer 
 
 The fitted destination camera's planes and rounding coefficients are cached by camera/destination/epoch/size and invalidated on reset. Conservative box support tests use double intermediates and a rounding allowance. Infinite projections omit the redundant far plane. Mirroring, nonuniform scale and shear work; nonfinite/projective instance transforms, unknown sizes and unusable bounds keep the draw. `LODCamera` never supplies the culling camera. Bulk APIs filter each item, appending surviving intervals through existing batching and preserving their order. No backend, occlusion, spatial-index or match-visibility feature is added.
 
-Culling happens during recording. The standard host already supplies logical window size; C hosts use `tide_draw_screen_size`. Fixed targets use captured dimensions even without a window size. Append copies already filtered draws without reculling. A source list intended for several destination aspects must disable recording-time culling; rejected geometry cannot be reconstructed from commands. CPU geometry caches can retain offscreen meshes, but wholly rejected runs submit no GPU draw or mesh upload. Place, mesh-cache, shader and draw-list C layouts changed; all hosts/libraries/games rebuild together.
+Culling happens during recording. The standard host already supplies logical window size; C hosts use `tide_draw_screen_size`. Fixed targets use captured dimensions even without a window size. Append copies already filtered draws without reculling. A source list intended for several destination aspects must disable recording-time culling; rejected geometry cannot be reconstructed from commands. CPU geometry caches can retain offscreen meshes, but wholly rejected runs submit no GPU draw or mesh upload. (Since 2026-11-02 their GPU buffers stay too, under the idle mesh budget: `notes/rendering.md`, Meshes a frame skips stay resident.) Place, mesh-cache, shader and draw-list C layouts changed; all hosts/libraries/games rebuild together.
 
 Tests: `tests/test_frustum.c` covers planes/intersections, near/infinite far, mirror/shear/nested transforms, survivor order/batching, shader bounds, invalid/extreme values, target/frame/default isolation, aspect changes, geometry versions, LOD base bounds and append. `draw_frustum` E2E checks nonzero vertex offsets, settings, target control, early exits and operand effects on rejected draws; `skinned_rest_test.c` pins absent automatic skinned bounds. Two diagnostics exercise setting forms. The platform draw fixture compares enabled/disabled pixels with visible content and confirms one fewer GPU draw, also after device loss. Older command-inspection fixtures disable culling for intentional offscreen/origin submissions; original assertions remain.
 

@@ -8,12 +8,12 @@ TIDE_TEST(loops_run_as_written)
     tide_world_init(&world, 1.0f);
     tide_world_tick(&world);
     TIDE_CHECK(tide_world_entity_count(&world) == 5);
-    const Spark last = tide_get_Spark(&world, (tide_entity){4, 1});
-    TIDE_REQUIRE(tide_has_Spark(&world, (tide_entity){4, 1}));
+    const Spark last = tide_get_Spark(&world, tide_entity_in_slot(&world.entities, 4));
+    TIDE_REQUIRE(tide_has_Spark(&world, tide_entity_in_slot(&world.entities, 4)));
     TIDE_CHECK(last.index == 2);
 
-    const Tally t = tide_get_Tally(&world, (tide_entity){1, 1});
-    TIDE_REQUIRE(tide_has_Tally(&world, (tide_entity){1, 1}));
+    const Tally t = tide_get_Tally(&world, tide_entity_in_slot(&world.entities, 1));
+    TIDE_REQUIRE(tide_has_Tally(&world, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(t.sum == 55);
     TIDE_CHECK(t.countdown == 3);
     TIDE_CHECK(t.evens == 5);

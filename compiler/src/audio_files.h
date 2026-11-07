@@ -14,3 +14,7 @@
 // outputs are cleared and why describes the format and what is wrong.
 // Imports are limited to 128 MiB of source, 256 MiB of PCM and 30 minutes.
 bool audio_file_read(const uint8_t *data, size_t size, uint8_t **converted, size_t *converted_size, char why[256]);
+
+// A float32 WAV of `frames` frames of `channels` interleaved samples (little-endian floats, as `samples` holds
+// them) at `rate`: what a Clip build code made is (build_code.c). malloc'd, its bytes in *size.
+uint8_t *audio_float_wav(const void *samples, uint32_t frames, uint32_t channels, uint32_t rate, size_t *size);

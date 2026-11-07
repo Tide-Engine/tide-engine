@@ -8,6 +8,7 @@
 // tide_host_run_library swaps in each new build of it that tide makes: hot
 // reloading. The table is what lets one loop do both.
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,10 +19,14 @@
 #include "tide/page.h"
 #include "tide/platform.h"
 #include "tide/profiler.h"
+#include "tide/profile_report.h"
 #include "tide/session.h"
+#include "tide/sha256.h"
 #include "tide/stats.h"
 #include "tide/time.h"
 #include "tide/voice.h"
+#include "tide/screen_keyboard.h"
+#include "tide/worker.h"
 
 typedef struct tide_run_desc {
     const char *title;      // The window's title, over the game's title setting; NULL for that
@@ -127,6 +132,16 @@ typedef struct tide_host_game {
     // Every shader the game's draws can go through, and NULL after them (tidec's tide_game_shaders), whose pipelines
     // the host has the renderer make before anything draws with them (tide_platform_prewarm). Optional for C hosts.
     const tide_shader *const *shaders;
+    // Optional: age existing presentation corrections before a session update.
+    // Separate from frame_time so updates between draws neither change Frame.dt
+    // nor reseed local randomness. Seconds cover only time since the last update.
+    void (*age_views)(void *local, float seconds);
+    // Optional: tide_screen_keyboard_get, the keyboard on screen the game's C
+    // registered (tide/screen_keyboard.h) in its own engine copy.
+    const tide_screen_keyboard *(*screen_keyboard)(void);
+    // Optional: tide_gpu_reads_share, which the host calls with its own table of GPU lists' reads as it loads the
+    // library, so the game's reads (in its own engine copy) are the ones the host's renderer begins and finishes.
+    void (*gpu_reads_share)(tide_gpu_reads *table);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -162,16 +177,24 @@ static const tide_host_game *tide_run_game;
 static uint8_t *tide_run_pack;
 static size_t tide_run_pack_size;
 
+// The pack from `bytes` (malloc'd, the host's from here on), which the game
+// has loaded (`loaded`) or found isn't one.
+static inline void tide_run_assets_kept(uint8_t *bytes, const size_t size, const bool loaded)
+{
+    if (tide_run_pack != bytes) free(tide_run_pack);
+    tide_run_pack = bytes;
+    tide_run_pack_size = size;
+    if (!loaded) fprintf(stderr, "tide: the game's pack isn't one: its assets read as empty\n");
+    tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
+}
+
 // The pack from `bytes` (malloc'd, the host's from here on): the game loads it.
 static inline void tide_run_assets_from(uint8_t *bytes, const size_t size)
 {
-    free(tide_run_pack);
-    tide_run_pack = bytes;
-    tide_run_pack_size = size;
-    if (tide_run_game->assets && bytes && !tide_run_game->assets(bytes, size)) {
-        fprintf(stderr, "tide: the game's pack isn't one: its assets read as empty\n");
-    }
-    tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
+    free(tide_run_pack); // The last one's bytes first: a pack can be gigabytes
+    tide_run_pack = NULL;
+    const bool loaded = !tide_run_game->assets || !bytes || tide_run_game->assets(bytes, size);
+    tide_run_assets_kept(bytes, size, loaded);
 }
 
 // The pack the build left with the program, for a game that has assets.
@@ -202,6 +225,11 @@ static tide_profiler tide_run_profiler;
 static bool tide_run_profiling; // The profiler is shown
 static bool tide_run_f7;        // F7 was held at the last frame
 static bool tide_run_debug_told;
+static tide_profile_report tide_run_report;
+static const char *tide_run_report_path;
+static uint32_t tide_run_report_warmup, tide_run_report_frames;
+static bool tide_run_reporting, tide_run_report_started;
+static char tide_run_report_executable[65];
 // What ticks run on where the platform has no pool: this thread, which still
 // has a profile to fill
 static tide_jobs tide_run_alone = {.threads = 1};
@@ -221,12 +249,18 @@ static uint32_t tide_run_shards;
 static double tide_run_shard_width;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
+// Rendered frames' summed seconds. A GPU wait can service the match ahead of
+// this clock; the next frame includes that wait and must not count it twice.
+static double tide_run_frame_now;
 // --latency, --jitter and --loss: this machine's way to a match it joins, as
 // the command line says for everyone or for this player of several
 static tide_net_conditions tide_run_conditions;
 // The server went away or turned this machine away: not because it left,
-// couldn't start, was kicked, or the match ran out of scenes
+// couldn't start, was kicked or banned, or the match ran out of scenes
 static bool tide_run_dropped;
+// The game asked to quit (Application.Quit): the program ends after the
+// frame, or inside another program, that program hears it (tide_embed_status)
+static bool tide_run_quit;
 // Host migration: when this machine went to its match's room again, or 0
 static double tide_run_migrating_since;
 // The last Join or Connect asked for, which a script's `rejoin` asks for again
@@ -278,6 +312,59 @@ static double tide_run_work_ms;                         // A frame's work, over 
 static double tide_run_render_ms, tide_run_gpu_ms;       // Rendering on the CPU and GPU, over the last half second
 static uint64_t tide_run_memory;                        // tide_platform_memory, as of then
 static double tide_run_memory_at = -1.0;                // When the profiler last had it read, in tide_run_now
+
+static int tide_run_report_finish(const int code)
+{
+    const tide_jobs *jobs = tide_platform_jobs();
+    const tide_float2 size = tide_platform_screen_size(), scale = tide_platform_screen_scale();
+    tide_platform_gpu_profile_read();
+    const tide_profile_report_info info = {
+        .title = tide_run_settings.title, .renderer = tide_platform_renderer(), .compiler = __clang_version__,
+        .executable_sha256 = tide_run_report_executable[0] ? tide_run_report_executable : NULL,
+        .layout_hash = tide_run_game->game->hash, .simulation = tide_run_game->game->simulation,
+        .total_frames = tide_run_report_frames, .warmup = tide_run_report_warmup,
+        .player = tide_platform_player(), .players = tide_platform_players(), .threads = jobs ? jobs->threads : 1u,
+        .width = (uint32_t)size.x, .height = (uint32_t)size.y, .scale_x = scale.x, .scale_y = scale.y,
+#ifdef __OPTIMIZE__
+        .optimized = true,
+#endif
+#if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+        .sanitized = true,
+#endif
+        .gpu_pending_passes = tide_platform_gpu_profile_pending(),
+        .exit_code = code,
+    };
+    char *path = tide_platform_players_file(tide_run_report_path);
+    FILE *file = fopen(path, "wb");
+    bool ok = file && tide_profile_report_write(&tide_run_report, file, &info);
+    if (file && fclose(file) != 0) ok = false;
+    if (!ok) fprintf(stderr, "tide: couldn't write profile '%s'; choose a writable JSON path\n", path);
+    else fprintf(stderr, "tide: profile written to %s\n", path);
+    free(path);
+    tide_run_draw.diagnostics = NULL;
+    tide_platform_gpu_profile(NULL, NULL);
+    tide_profile_report_free(&tide_run_report);
+    return !ok && code == 0 ? 1 : code;
+}
+
+static inline void tide_run_report_identity(void)
+{
+    tide_run_report_executable[0] = '\0';
+    if (!tide_run_settings.argc || !tide_run_settings.argv[0]) return;
+    FILE *file = fopen(tide_run_settings.argv[0], "rb");
+    if (!file) return;
+    tide_sha256 sha;
+    tide_sha256_init(&sha);
+    uint8_t bytes[16384];
+    size_t n;
+    while ((n = fread(bytes, 1, sizeof bytes, file)) != 0) tide_sha256_add(&sha, bytes, n);
+    const bool ok = !ferror(file);
+    fclose(file);
+    if (!ok) return;
+    uint8_t digest[32];
+    tide_sha256_end(&sha, digest);
+    for (uint32_t i = 0; i < 32u; i++) snprintf(tide_run_report_executable + 2u * i, 3, "%02x", (unsigned)digest[i]);
+}
 
 static inline void tide_run_reset_timing(const bool active)
 {
@@ -519,6 +606,17 @@ static inline void tide_run_request(const tide_session_request *request, const v
     case TIDE_REQUEST_KICK_ALL:
         tide_session_kick_all(s, request->text);
         break;
+    case TIDE_REQUEST_BAN:
+        tide_session_ban(s, request->player, request->text);
+        break;
+    case TIDE_REQUEST_UNBAN:
+        tide_session_unban(s, request->player);
+        break;
+    case TIDE_REQUEST_QUIT:
+        // After this frame, as when the window closes (tide_run_close). Another program's frame: that program decides
+        tide_run_quit = true;
+        if (!tide_run_embedded) tide_platform_quit();
+        break;
     case TIDE_REQUEST_JOIN:
         tide_run_discard_commands();
         tide_network_match_leave(&tide_run_network);
@@ -680,18 +778,38 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_shards = 0;
     tide_run_shard_width = 0.0;
     tide_run_data_directory = NULL;
+    tide_run_report_path = NULL;
+    tide_run_report_warmup = tide_run_report_frames = 0;
+    tide_run_reporting = tide_run_report_started = false;
     tide_run_conditions = (tide_net_conditions){0};
     double conditions[3][33]; // --latency, --jitter and --loss, as tide_run_condition has them: -1 unsaid
     for (uint32_t kind = 0; kind < 3u; kind++) {
         for (uint32_t player = 0; player <= 32u; player++) conditions[kind][player] = -1.0;
     }
-    bool scaled = false;
+    bool scaled = false, profile_warmup = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
         const char *arg = tide_run_settings.argv[i];
         if (strcmp(arg, "--stats") == 0) {
             tide_run_settings.stats = true; // Keep the host's chosen initial drawer state.
         } else if (strcmp(arg, "--debug-views") == 0) {
             tide_run_settings.debug_views = true;
+        } else if (strcmp(arg, "--profile") == 0) {
+            if (tide_run_report_path) {
+                fprintf(stderr, "tide: --profile takes one JSON report path\n");
+                exit(2);
+            }
+            tide_run_report_path = tide_run_value(&i, arg, "a JSON report path, like --profile profile.json");
+            if (!*tide_run_report_path || *tide_run_report_path == '-') {
+                fprintf(stderr, "tide: --profile takes a nonempty JSON report path, like --profile profile.json\n");
+                exit(2);
+            }
+        } else if (strcmp(arg, "--profile-warmup") == 0) {
+            if (profile_warmup) {
+                fprintf(stderr, "tide: --profile-warmup takes one frame count\n");
+                exit(2);
+            }
+            tide_run_report_warmup = tide_run_whole(&i, arg, 1000000000u, "a frame count from 0 to 1000000000");
+            profile_warmup = true;
         } else if (strcmp(arg, "--data-dir") == 0) {
             tide_run_data_directory = tide_run_value(&i, arg, "a save directory, like --data-dir test-saves");
             if (!*tide_run_data_directory || *tide_run_data_directory == '-') {
@@ -760,6 +878,14 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             tide_run_headless_desc.hub = tide_run_whole(&i, arg, 65535u, takes);
         }
     }
+    if (profile_warmup && !tide_run_report_path) {
+        fprintf(stderr, "tide: --profile-warmup requires --profile <file.json>\n");
+        exit(2);
+    }
+    if (tide_run_report_path && !tide_run_headless_desc.frames && !tide_run_headless_desc.script && !tide_run_headless_desc.interactive) {
+        fprintf(stderr, "tide: --profile requires --frames, --script or --interactive to bound or control the run\n");
+        exit(2);
+    }
     // This machine's: a player's own where the command line says one, and everyone's otherwise
     const uint32_t players = tide_run_headless_desc.players;
     const uint32_t own = !players ? 0u : tide_run_headless_desc.player >= 2u && tide_run_headless_desc.player <= players
@@ -808,6 +934,10 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_headless_desc.argc = tide_run_settings.argc;
     tide_run_headless_desc.argv = tide_run_settings.argv;
 #if defined(__wasm__) || defined(__ANDROID__)
+    if (tide_run_report_path) {
+        fprintf(stderr, "tide: --profile exports desktop reports; web and Android export is not supported\n");
+        exit(2);
+    }
     if (tide_run_data_directory) {
         fprintf(stderr, "tide: --data-dir overrides native desktop saves, not web or Android storage\n");
         exit(2);
@@ -817,12 +947,27 @@ static inline void tide_run_configure(const tide_run_desc *desc)
         tide_run_headless = false;
     }
 #endif
+    if (tide_run_report_path) {
+        tide_run_headless_desc.finished = tide_run_report_finish;
+        tide_run_report_identity();
+    }
 }
 
 // Opens tide_run_game's window, as `desc` and the game's settings say, or
 // none for a run that asked for none.
+static inline void tide_run_end(void);
+
+// The window closed, or the game quit: the match is left (its server's
+// players told, or with host migration handed over) and the local state let
+// go before the program ends (tide_platform_on_close).
+static inline void tide_run_close(void)
+{
+    if (tide_run_session) tide_run_end();
+}
+
 static inline void tide_run_open(const tide_run_desc *desc)
 {
+    tide_platform_on_close(tide_run_close);
     tide_run_configure(desc);
     if (tide_run_headless) {
         tide_platform_open_headless(&tide_run_headless_desc);
@@ -871,10 +1016,10 @@ static inline void tide_run_debug_views(void)
     tide_run_f7 = f7;
     // The stats list the slowest systems while their drawer is open
     const bool listed = tide_run_stats() && tide_run_drawer.open;
-    tide_profile *profile = listed || tide_run_profiling ? &tide_run_profiler.profile : NULL;
+    tide_profile *profile = listed || tide_run_profiling || tide_run_reporting ? &tide_run_profiler.profile : NULL;
     tide_platform_jobs_profile(profile);
     tide_run_alone.profile = profile;
-    tide_run_gui.profile = tide_run_profiling ? profile : NULL;
+    tide_run_gui.profile = tide_run_profiling || tide_run_reporting ? profile : NULL;
 }
 
 // A session for tide_run_game, in no match yet. Its matches tick at the game's
@@ -905,23 +1050,34 @@ static inline tide_session *tide_run_new_session(void)
     });
 }
 
-// Bind local files before startup handlers or restored tasks can use them.
-static inline void tide_run_bind_io(const tide_host_game *game, void *local)
+// Names the game to the platform: its folders, its log, and how its pipelines are made. Again for the same game,
+// nothing changes. Its ID, written in `fallback` where the game has none of its own.
+static inline const char *tide_run_name_game(const tide_host_game *game, char *fallback, const size_t size)
 {
-    char fallback[512];
     const char *id = game->game->app_id;
     if (!id) {
         const char *name = tide_run_settings.game_name ? tide_run_settings.game_name : "game";
-        snprintf(fallback, sizeof fallback, "dev.tide.%s", name);
+        snprintf(fallback, size, "dev.tide.%s", name);
         for (char *p = fallback; *p; ++p)
             if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '.'))
                 *p = '_';
         id = fallback;
     }
     tide_platform_name_game(id); // Its folders: the renderer's cache too, whether the game uses files or not
+    // Its log, and what a crash leaves, beside its saves: for a player's runs and the developer's, not a run with
+    // no window, whose output is the test's, nor another program's, whose log is its own
+    if (!tide_run_headless && !tide_run_embedded) tide_platform_log_begin(id, tide_run_settings.title, tide_run_data_directory);
     // A game's frames don't wait for a GPU pipeline to be made: what's drawn with one shows once it's made. Not in
     // a run with no window, whose frames are read back and go the same every time
     tide_platform_background_pipelines(!tide_run_headless);
+    return id;
+}
+
+// Bind local files before startup handlers or restored tasks can use them.
+static inline void tide_run_bind_io(const tide_host_game *game, void *local)
+{
+    char fallback[512];
+    const char *id = tide_run_name_game(game, fallback, sizeof fallback);
     if (!game->set_io) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;
@@ -986,6 +1142,163 @@ static inline void tide_run_begin(void)
     }
 }
 
+// A game's pack can take seconds to read and check (a big game's is
+// gigabytes), so in a window it loads on a thread of the pool's while the
+// frames show how far it got, as a page does while it fetches one (tide.js):
+// the window answers meanwhile, and isn't blank. The game starts once it's in
+// (tide_run_loading_frame). A run with no window loads it in place, as nobody
+// waits on one and it goes the same every time; so does a page, which has the
+// pack already, and a machine whose pool has no background threads.
+typedef struct tide_run_loader {
+    tide_background job;
+    char *path;           // The file read, or NULL: the program's own pack (tide_platform_pack_counted)
+    uint64_t progress[2]; // Bytes read so far, and the file's, as the reading thread stores them
+    uint32_t checking;    // 1 once it's read and the game is loading it (atomic)
+    uint8_t *bytes;       // What was read, and whether the game loaded it: the thread's until the job's done
+    size_t size;
+    bool loaded;
+    bool read;      // A pack is read on the pool: none, where the game has no pack or it was read in place
+    bool on;        // Frames show where it is, until it's in and the game has begun
+    bool warming;   // It's in, and the game's pipelines are being made (tide_run_prewarm)...
+    uint32_t warm_total; // ...this many, the most that were left at once
+    double seconds; // How long they've shown it, for the bar that moves while nothing can say how far
+    tide_draw_list list;
+} tide_run_loader;
+static tide_run_loader tide_run_loading;
+
+static inline void tide_run_load_work(void *context)
+{
+    tide_run_loader *l = context;
+    size_t size = 0;
+    uint8_t *bytes = l->path ? tide_platform_read_counted(l->path, &size, l->progress)
+                             : tide_platform_pack_counted(&size, l->progress);
+    __atomic_store_n(&l->checking, 1u, __ATOMIC_RELAXED);
+    l->loaded = !bytes || tide_run_game->assets(bytes, size);
+    l->bytes = bytes;
+    l->size = size;
+}
+
+// Starts loading the pack at `path` (NULL: the program's own) on the pool, if
+// this run loads it there: false where it's to be loaded in place.
+static inline bool tide_run_load_shown(const char *path)
+{
+#ifdef __wasm__
+    (void)path;
+    return false;
+#else
+    const tide_jobs *pool = tide_platform_jobs();
+    if (!tide_run_game->assets || tide_run_headless || tide_run_embedded || !pool || !pool->background) return false;
+    tide_run_loader *l = &tide_run_loading;
+    *l = (tide_run_loader){.job = {.work = tide_run_load_work, .context = l}, .read = true, .on = true};
+    if (path) {
+        const size_t n = strlen(path) + 1u;
+        l->path = malloc(n);
+        if (!l->path) abort();
+        memcpy(l->path, path, n);
+    }
+    pool->background(pool->self, &l->job);
+    return true;
+#endif
+}
+
+// Starts the game once its pack is in, unless it's loading on the pool, and its pipelines are made: the loading
+// frames wait for them in a window, as they do once a pack is read (tide_run_loading_frame).
+static inline void tide_run_begin_loaded(void)
+{
+    tide_run_loader *l = &tide_run_loading;
+    if (l->on) return;
+    if (tide_run_headless || tide_run_embedded || !tide_run_game->shaders) {
+        tide_run_begin();
+        return;
+    }
+    *l = (tide_run_loader){.loaded = true, .on = true};
+    l->job.done = 1u; // Nothing to read: the first frame makes the pipelines
+}
+
+// A frame while the pack loads: the loading screen, as the web's shell has it
+// (platform/web/shell.html), with how much of the pack is read, then a bar
+// that moves while the game checks what it read. Once it's in, the game's
+// pipelines are made (tide_run_prewarm), which takes a minute or more where
+// the driver has none of them yet: where the backend makes them in the
+// background, the frames go on saying how many are made, and the game begins
+// once all are, so its first frames draw everything. This frame is then the
+// game's first.
+static inline int tide_run_frame(void *user, float seconds);
+static inline int tide_run_loading_frame(void *user, const float seconds)
+{
+    tide_run_loader *l = &tide_run_loading;
+    // What's pressed meanwhile isn't the game's: it starts from what's held
+    tide_platform_poll(&tide_run_devices);
+    tide_devices_consume(&tide_run_devices);
+    if (!l->warming && __atomic_load_n(&l->job.done, __ATOMIC_ACQUIRE)) {
+        if (l->read && !l->bytes && !l->path) {
+            fprintf(stderr, "tide: the game's pack of assets isn't with the program (<program>.pack beside it): they read as empty\n");
+        }
+        free(l->path);
+        l->path = NULL;
+        if (l->bytes) tide_run_assets_kept(l->bytes, l->size, l->loaded);
+        char fallback[512];
+        (void)tide_run_name_game(tide_run_game, fallback, sizeof fallback); // How its shaders drew before, read first
+        tide_run_prewarm();
+        l->warming = true;
+    }
+    const uint32_t waiting = l->warming ? tide_platform_prewarm_waiting() : 0u;
+    if (l->warming && !waiting) {
+        l->on = false;
+        tide_draw_free(&l->list);
+        tide_run_begin();
+        return tide_run_frame(user, seconds);
+    }
+    if (waiting > l->warm_total) l->warm_total = waiting;
+    l->seconds += tide_is_finite_d((double)seconds) && seconds > 0.0f ? (double)seconds : 0.0;
+    const uint64_t read = l->warming ? l->warm_total - waiting : __atomic_load_n(&l->progress[0], __ATOMIC_RELAXED);
+    const uint64_t total = l->warming ? l->warm_total : __atomic_load_n(&l->progress[1], __ATOMIC_RELAXED);
+    const bool known = l->warming || (!__atomic_load_n(&l->checking, __ATOMIC_RELAXED) && total);
+    char text[64];
+    if (l->warming) {
+        snprintf(text, sizeof text, "Compiling shaders %u / %u", (unsigned)read, (unsigned)total);
+    } else if (known) {
+        const double mb = 1048576.0;
+        const int places = total < 10u * 1048576u ? 1 : 0;
+        snprintf(text, sizeof text, "Loading %.*f / %.*f MB", places, (double)read / mb, places, (double)total / mb);
+    } else {
+        snprintf(text, sizeof text, "%s", total ? "Preparing" : "Loading");
+    }
+
+    const tide_float2 screen = tide_platform_screen_size();
+    const tide_float2 measured = tide_platform_measure_text(text, 14.0f, NULL, TIDE_FONT_REGULAR);
+    // The bar, then the text 16 pixels under it, the two in the middle of the window
+    const float bar_w = 220.0f, bar_h = 4.0f, gap = 16.0f;
+    const float top = floorf((screen.y - (bar_h + gap + measured.y)) * 0.5f);
+    const float left = floorf((screen.x - bar_w) * 0.5f);
+    float from = 0.0f, width = 0.0f; // The bar's filled part, from its left
+    if (known) {
+        width = bar_w * (float)((double)read / (double)total);
+    } else { // A third of it going side to side, easing in and out, every 1.2 seconds
+        const double phase = fmod(l->seconds / 1.2, 2.0);
+        const float t = (float)(phase < 1.0 ? phase : 2.0 - phase);
+        width = bar_w * 0.3f;
+        from = (bar_w - width) * t * t * (3.0f - 2.0f * t);
+    }
+    tide_draw_list *d = &l->list;
+    tide_draw_reset(d);
+    d->target_pixels = tide_platform_target_pixels;
+    d->target_content = tide_platform_target_content;
+    d->screen_scale = tide_platform_screen_scale();
+    tide_draw_clear(d, (tide_color){14.0f / 255.0f, 14.0f / 255.0f, 20.0f / 255.0f, 1.0f});
+    tide_draw_set_screen(d);
+    tide_draw_round_rect(d, tide_f2(left + bar_w * 0.5f, top + bar_h * 0.5f), tide_f2(bar_w, bar_h), bar_h * 0.5f,
+                         (tide_color){36.0f / 255.0f, 36.0f / 255.0f, 46.0f / 255.0f, 1.0f});
+    if (width >= 1.0f) {
+        tide_draw_round_rect(d, tide_f2(left + from + width * 0.5f, top + bar_h * 0.5f), tide_f2(width, bar_h), bar_h * 0.5f,
+                             (tide_color){106.0f / 255.0f, 140.0f / 255.0f, 1.0f, 1.0f});
+    }
+    tide_draw_text(d, text, tide_f2(floorf((screen.x - measured.x) * 0.5f), top + bar_h + gap), 14.0f,
+                   (tide_color){154.0f / 255.0f, 154.0f / 255.0f, 174.0f / 255.0f, 1.0f});
+    tide_platform_draw(d);
+    return TIDE_KEEP_RUNNING;
+}
+
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
@@ -1011,6 +1324,7 @@ static inline void tide_run_end(void)
     tide_run_local = NULL;
     tide_run_start = NULL;
     tide_run_dropped = false;
+    tide_run_quit = false;
     tide_run_migrating_since = 0.0;
     tide_draw_free(&tide_run_gui.list);
     memset(&tide_run_gui, 0, sizeof tide_run_gui);
@@ -1078,9 +1392,74 @@ static inline void tide_run_send_commands(void)
     }
 }
 
-static inline int tide_run_frame(void *user, const float seconds)
+// Only between complete frames: no views, GPU calls, reload, session requests
+// or local event handlers run here. The last polled devices keep held input;
+// sampling consumes their edges once, as it does in an ordinary frame.
+static inline double tide_run_wait_update(void *user, const double elapsed)
 {
     (void)user;
+    tide_session *s = tide_run_session;
+    if (!s) return 1.0 / 60.0;
+    const double at = tide_run_frame_now + elapsed;
+    if (at > tide_run_now && tide_is_finite_d(at)) {
+        const uint64_t began = tide_run_timing || tide_run_profiling ? tide_time_now_ns() : 0;
+        const float seconds = (float)(at - tide_run_now);
+        tide_run_now = at;
+        if (tide_run_game->age_views) tide_run_game->age_views(tide_run_local, seconds);
+        tide_network_match_update(&tide_run_network, tide_run_registered());
+        tide_session_update(s, tide_run_now);
+        if (began) {
+            const uint64_t work = tide_time_now_ns() - began;
+            if (tide_run_timing) tide_run_stats_work += work;
+            if (tide_run_profiling) tide_run_profiler.part_ms[TIDE_FRAME_MATCH] += (double)work * 1e-6;
+        }
+    }
+    return tide_session_until_tick(s);
+}
+
+// The machine slept (tide_platform_slept): it was gone from its match all the
+// while, as a phone that went to the background is, so it leaves a match
+// other machines can be in, as Session.Leave does: one it joined, one it was
+// moving to, or one it runs that's open or has others in it. Their match goes
+// on without it, through host migration where the game has it. A match it
+// runs alone and closed (single-player) goes on where it stopped, as nobody
+// waited for it.
+static inline void tide_run_slept(void)
+{
+    const tide_session *s = tide_run_session;
+    const tide_session_status status = tide_session_status_of(s);
+    char code[TIDE_ROOM_CODE_LENGTH + 1], key[TIDE_ROOM_KEY_LENGTH + 1];
+    const bool others = status.server ? status.open || tide_session_remote_players(s) > 0
+                                      : status.client.state != TIDE_SESSION_OFFLINE || tide_session_migrating(s, code, key);
+    if (others || tide_run_hosting) tide_run_request(&(tide_session_request){.kind = TIDE_REQUEST_LEAVE}, NULL);
+}
+
+// Whether the player types, once a frame: the system's keyboard shows where
+// there is one (tide_platform_typing), and the game's own is told once each
+// time it changes (tide/screen_keyboard.h). One registered while the player
+// types, or by a new build, is told at once. Runs with no window, and runs
+// nobody watches, show neither.
+static tide_screen_keyboard tide_run_screen_keyboard_was; // The game's keyboard as of the last frame ({0} for none)...
+static bool tide_run_screen_keyboard_typing;              // ...and what it was told
+
+static inline void tide_run_typing(const tide_host_game *game, const bool typing)
+{
+    tide_platform_typing(typing);
+    const bool shown = !tide_run_headless && !tide_run_embedded && !tide_hidden();
+    const tide_screen_keyboard *k = shown && game->screen_keyboard ? game->screen_keyboard() : NULL;
+    const tide_screen_keyboard now = k ? *k : (tide_screen_keyboard){0};
+    // One that's new to the host was told nothing
+    const tide_screen_keyboard was = tide_run_screen_keyboard_was;
+    if (now.self != was.self || now.typing != was.typing) tide_run_screen_keyboard_typing = false;
+    tide_run_screen_keyboard_was = now;
+    if (!now.typing || typing == tide_run_screen_keyboard_typing) return;
+    tide_run_screen_keyboard_typing = typing;
+    now.typing(now.self, typing);
+}
+
+static inline int tide_run_frame(void *user, const float seconds)
+{
+    if (tide_run_loading.on) return tide_run_loading_frame(user, seconds); // The game's pack isn't in yet
     const tide_host_game *game = tide_run_game;
     // Asked every frame: a reload can bring the setting, or take it away. Inside another program's frame they're
     // drawn with the frame, as the views' drawing is, and say only what's Tide's
@@ -1090,7 +1469,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     // ...and for a page that measures the netcode, with its session's update apart
     const bool measured_netcode = tide_platform_netcode_wanted();
     const uint64_t frame_began = measured_netcode ? tide_time_now_ns() : 0;
+    tide_run_reporting = tide_run_report_path && ++tide_run_report_frames > tide_run_report_warmup;
     tide_run_debug_views();
+    if (tide_run_reporting) tide_profile_report_begin(&tide_run_report, &tide_run_profiler.profile, tide_run_report_frames);
     // Where the frame's time goes, part by part, while the profiler is shown
     tide_profiler *profiler = tide_run_profiling ? &tide_run_profiler : NULL;
     tide_profiler_begin(profiler, seconds);
@@ -1102,14 +1483,23 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_run_reset_timing(timing);
         tide_run_timing = timing;
     }
-    if (!tide_run_embedded) tide_platform_gpu_timing(timing);
+    if (tide_run_reporting && !tide_run_report_started) {
+        // Discard any timer results belonging to warmup, including ones the
+        // stats drawer requested. Pending measured results stay asynchronous.
+        tide_platform_gpu_timing(false);
+        tide_run_report_started = true;
+    }
+    if (!tide_run_embedded) tide_platform_gpu_timing(timing || tide_run_reporting);
     // F8 may have changed the drawer after debug_views selected a profile.
     // Bind it before ticks, so a closing press stops measuring at once.
-    tide_profile *measured = timing || tide_run_profiling ? &tide_run_profiler.profile : NULL;
+    tide_profile *measured = timing || tide_run_profiling || tide_run_reporting ? &tide_run_profiler.profile : NULL;
     tide_platform_jobs_profile(measured);
     tide_run_alone.profile = measured;
-    tide_run_now += seconds;
+    tide_run_frame_now += seconds;
+    const float update_seconds = tide_run_frame_now > tide_run_now ? (float)(tide_run_frame_now - tide_run_now) : 0.0f;
+    if (tide_run_frame_now > tide_run_now) tide_run_now = tide_run_frame_now;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
+    if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_INPUT);
     // A script's leave and rejoin, in a run of several players, as the frame's poll had them
     for (tide_players_action action; (action = tide_platform_players_action()) != TIDE_PLAYERS_NONE;) {
         const tide_session_request again = tide_run_joined;
@@ -1117,9 +1507,12 @@ static inline int tide_run_frame(void *user, const float seconds)
         else if (again.kind) tide_run_request(&again, NULL);
         else fprintf(stderr, "tide: player %u has nothing to rejoin: it never joined a match\n", (unsigned)tide_platform_player());
     }
+    // Before the session's update, which would otherwise go on as if no time had passed
+    if (!tide_run_embedded && tide_platform_slept()) tide_run_slept();
 
     tide_session *s = tide_run_session;
     // Existing visual errors age before this update adds fresh corrections.
+    if (game->age_views) game->age_views(tide_run_local, update_seconds);
     game->frame_time(tide_run_local, seconds);
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
@@ -1162,7 +1555,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     while (tide_session_next_event(s, &event)) {
         const bool connected = event.kind == TIDE_SESSION_CONNECTED_EVENT;
         tide_run_dropped = !connected && event.reason != TIDE_DISCONNECT_LEFT && event.reason != TIDE_DISCONNECT_FAILED &&
-                           event.reason != TIDE_DISCONNECT_ENDED && event.reason != TIDE_DISCONNECT_KICKED;
+                           event.reason != TIDE_DISCONNECT_ENDED && event.reason != TIDE_DISCONNECT_KICKED &&
+                           event.reason != TIDE_DISCONNECT_BANNED;
         if (connected) game->connected(tide_run_local);
         else game->disconnected(tide_run_local, event.reason, event.message);
     }
@@ -1190,6 +1584,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     }
     memcpy(tide_run_room, room, sizeof tide_run_room);
     tide_profiler_mark(profiler, TIDE_FRAME_MATCH);
+    if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_MATCH);
 
     // Views draw at the frame rate, the match blended between its last two ticks
     tide_view_worlds view = tide_session_view(s);
@@ -1199,9 +1594,12 @@ static inline int tide_run_frame(void *user, const float seconds)
     }
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
+    tide_run_draw.diagnostics = tide_run_reporting ? &tide_run_report.draw : NULL;
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
     tide_run_draw.target_pixels = tide_platform_target_pixels;
+    tide_run_draw.target_content = tide_platform_target_content;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
+    tide_run_draw.gpu_culling = tide_platform_gpu_culling();
     if (tide_run_view_camera) {
         tide_draw_set_camera_matrices(&tide_run_draw, tide_run_view_camera_transform, tide_run_view_camera_projection);
     }
@@ -1217,6 +1615,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_gui_begin(&tide_run_gui, seen, tide_platform_screen_size(), tide_platform_measure_text);
     tide_run_gui.copy = tide_platform_copy;
     tide_run_gui.jobs = tide_platform_jobs();
+    tide_platform_list_controls(&tide_run_gui);
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
@@ -1234,22 +1633,45 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);
+    if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_VIEWS);
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
-    tide_platform_typing(tide_gui_typing(&tide_run_gui));
+    tide_run_typing(game, tide_gui_typing(&tide_run_gui));
     tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
     if (timing && tide_run_draw.epoch != tide_run_timing_epoch) {
         // A retained native reload keeps the host, but the samples are the old build's.
         tide_run_reset_timing(true);
         tide_platform_gpu_timing(true);
     }
+    tide_platform_gpu_profile(tide_run_reporting ? tide_profile_report_gpu_pass : NULL,
+                              tide_run_reporting ? &tide_run_report : NULL);
     const uint64_t render_began = timing ? tide_time_now_ns() : 0;
     tide_run_prewarm();
     if (!tide_run_embedded) tide_platform_draw(&tide_run_draw);
     tide_platform_audio(&tide_run_audio); // Embedded, for the other program to play (tide_embed_audio)
     const uint64_t rendered = timing ? tide_time_now_ns() : 0;
     tide_profiler_mark(profiler, TIDE_FRAME_RENDER);
+    if (tide_run_reporting) {
+        tide_profile_report_mark(&tide_run_report, TIDE_FRAME_RENDER);
+        if (!tide_run_embedded) { // The renderer's parts of it
+            double parts[TIDE_RENDER_PARTS];
+            tide_platform_render_parts(parts);
+            tide_profile_report_render(&tide_run_report, parts);
+        }
+    }
     if (measured_netcode) tide_run_netcode(&status, update_ns, tide_time_now_ns() - frame_began);
 
+    if (tide_run_reporting) tide_platform_gpu_profile_read();
+    if (timing || tide_run_reporting) {
+        for (uint32_t i = 0; i < 4; i++) {
+            const double ms = tide_platform_gpu_ms();
+            if (ms < 0.0) break;
+            if (tide_run_reporting) tide_profile_report_gpu(&tide_run_report, ms);
+            if (timing) {
+                tide_run_stats_gpu += ms;
+                tide_run_stats_gpu_samples++;
+            }
+        }
+    }
     if (timing) {
         if (began) {
             tide_run_stats_work += rendered - began;
@@ -1257,12 +1679,6 @@ static inline int tide_run_frame(void *user, const float seconds)
         }
         tide_run_stats_render += rendered - render_began;
         tide_run_stats_rendered++;
-        for (uint32_t i = 0; i < 4; i++) {
-            const double ms = tide_platform_gpu_ms();
-            if (ms < 0.0) break;
-            tide_run_stats_gpu += ms;
-            tide_run_stats_gpu_samples++;
-        }
         tide_stats_collect(&tide_run_drawer, match ? &tide_run_profiler.profile : NULL, seconds);
         tide_run_timing_span += seconds;
         if (tide_run_timing_span >= 0.5) {
@@ -1319,6 +1735,9 @@ static inline int tide_run_frame(void *user, const float seconds)
             .delay_ticks = status.client.delay_ticks,
             .up = tide_run_up,
             .down = tide_run_down,
+            .resyncs = status.client.resyncs,
+            .repairs = status.client.repairs,
+            .world_bytes = status.client.world_bytes,
             .entities = open && match ? game->entity_count(match) : 0u,
             .profile = &tide_run_profiler.profile,
         };
@@ -1353,6 +1772,17 @@ static inline int tide_run_frame(void *user, const float seconds)
         profiler->memory = tide_run_memory;
         profiler->gpu_memory = tide_platform_gpu_memory();
     }
+    if (tide_run_reporting) {
+        tide_profile_report_end(&tide_run_report, &tide_run_profiler.profile, tide_platform_draw_calls(),
+                                tide_platform_draw_vertices());
+        // Occlusion culling's counts, each frame's once as they come back
+        static uint64_t occlusion_serial;
+        tide_platform_occlusion_report occlusion;
+        if (tide_platform_occlusion(&occlusion, false) && occlusion.serial != occlusion_serial) {
+            occlusion_serial = occlusion.serial;
+            tide_profile_report_occlusion(&tide_run_report, occlusion.tested, occlusion.hidden);
+        }
+    }
     tide_profiler_end(profiler, status.client.again_ticks);
     return TIDE_KEEP_RUNNING;
 }
@@ -1362,7 +1792,8 @@ _Noreturn static inline void tide_host_run(const tide_run_desc *desc, const tide
 {
     tide_run_game = game;
     tide_run_open(desc);
-    tide_run_load_assets();
-    tide_run_begin();
+    if (!tide_run_load_shown(NULL)) tide_run_load_assets();
+    tide_run_begin_loaded();
+    tide_platform_update_while_waiting(tide_run_wait_update, NULL);
     tide_platform_run(tide_run_frame, NULL);
 }

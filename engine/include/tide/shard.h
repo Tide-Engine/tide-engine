@@ -38,23 +38,19 @@
 // Message kinds: a message is its kind (one byte), its sender (u32), its number
 // (u32, 0 for messages that aren't numbered), then what the kind says.
 typedef enum tide_shard_kind {
-    // Orchestrator: u32 shard id, u8 role (tide_shard_role), the regions (u32
-    // count, each u32 shard, its box's lo and hi as six doubles, and u64 the
-    // match its host knows it by), then the entity index ranges this shard
-    // allocates from (u32 count, each u32 first and u32 end).
+    // Orchestrator: u32 shard id, u8 role, u64 public identity clock, then
+    // regions (u32 count, each u32 shard, six doubles and u64 match).
     TIDE_SHARD_CONFIG = 1,
     // Orchestrator: the regions, as in CONFIG.
     TIDE_SHARD_MAP = 2,
-    // Orchestrator: one more range of entity indices (u32 first, u32 end).
-    TIDE_SHARD_RANGE = 3,
     // A shard's ghosts for this one, since the last it sent: u32 count of
     // trees, each u8 0 and the tree as tide_shard_game.border packs it, or u8 1
-    // and what changed of one this shard holds as a ghost of the sender's: u32
-    // index, u32 generation (its root), u64 tide_hash of the tree's bytes as
+    // and what changed of one this shard holds as a ghost of the sender's: u64
+    // birth, u64 lineage (its root), u64 tide_hash of the tree's bytes as
     // this shard packs its ghost of it (the base), u32 size, then that many
     // bytes of runs, each varint bytes the same, varint bytes changed and those
     // bytes XOR the base's; then u32 count of handles it no longer holds near
-    // here (u32 index, u32 generation each), then u8 whether the singletons
+    // here (u64 birth, u64 lineage each), then u8 whether the singletons
     // follow, and if so, them. A base that isn't what the sender sent is asked
     // for whole (STALE).
     TIDE_SHARD_GHOSTS = 4,
@@ -62,15 +58,15 @@ typedef enum tide_shard_kind {
     // shard it's borrowed from, then the entity as border packs it.
     TIDE_SHARD_ARRIVE = 5,
     // Numbered: a shard asks for an entity: u32 the shard asking, then the
-    // entity (u32 index, u32 generation). The one that owns it lends it, and
+    // entity (u64 birth, u64 lineage). The one that owns it lends it, and
     // one that doesn't hands the request on to the one that does.
     TIDE_SHARD_BORROW = 6,
-    // Numbered: the entity a shard asked for is gone (u32 index, u32 generation).
+    // Numbered: the entity a shard asked for is gone (u64 birth, u64 lineage).
     TIDE_SHARD_GONE = 7,
-    // Numbered: an event for an entity this shard owns: u32 index, u32
-    // generation, u32 the event's number, u32 its sender (a command's), then its value.
+    // Numbered: an event for an entity this shard owns: u64 birth, u64
+    // lineage, u32 the event's number, u32 its sender (a command's), then its value.
     TIDE_SHARD_EVENT = 8,
-    // Numbered: a scene unloaded: its entities here go too (u32 index, u32 generation).
+    // Numbered: a scene unloaded: its entities here go too (u64 birth, u64 lineage).
     TIDE_SHARD_UNLOAD = 9,
     // Orchestrator: everything this shard sent, numbered up to and including
     // this (u32), has been delivered.
@@ -92,8 +88,8 @@ typedef enum tide_shard_kind {
     // id): everything it owns goes, by position, and what has no position to
     // that shard, after which it ends.
     TIDE_SHARD_RETIRE = 15,
-    // Numbered: an entity of an index this shard gave was destroyed on the
-    // shard it went to (u32 index, u32 generation): the index is free again.
+    // Numbered: an entity died (u64 birth, u64 lineage). The coordinator
+    // removes its owner entry and releases retained AWAY metadata elsewhere.
     TIDE_SHARD_FREED = 16,
     // Numbered, to the root: a region's code wrote the root's fields of the
     // singletons holding a C library's state ([Native]): their bytes, as GHOSTS
@@ -125,7 +121,7 @@ typedef enum tide_shard_route {
     TIDE_SHARD_TO_OWNER = 1,  // to whichever shard owns `entity` now
     TIDE_SHARD_TO_ALL = 2,    // to every shard but the sender
     TIDE_SHARD_TO_ORCHESTRATOR = 3,
-    TIDE_SHARD_TO_RANGE = 4,  // to the shard whose range of indices has `entity`'s
+    TIDE_SHARD_TO_RELEASE = 4, // Removes the dead key's directory and retained AWAY metadata
 } tide_shard_route;
 
 // A region: the box of positions a shard owns, from lo up to (not including)
@@ -177,8 +173,7 @@ typedef struct tide_shard_status {
     uint32_t waiting;    // Handlers and commands waiting for a border
     uint32_t outbox;     // Messages not yet acknowledged
     uint32_t lent;       // Requests for what it owns, waiting until it can lend it
-    uint64_t indices;    // Entity indices it has left to give its spawns
-    uint64_t ranges_end; // The end of the highest range of indices it was given
+    uint64_t identity_clock; // Public logical birth clock of this endpoint
 } tide_shard_status;
 
 // What a sharded game gives the runtime: tide_game.shards, generated for
@@ -244,11 +239,35 @@ void tide_shard_note_dropped(uint32_t count);
 // Code that touched what its shard doesn't own: the code (its number in the
 // game), the entity it ran for, which of that code's runs this tick it was,
 // and what it touched.
+// Tagged dependency; singleton indices never occupy Entity identity bits.
+// singleton is index + 1, or zero for an entity. Nonapplicable fields are zero.
+typedef struct tide_shard_ref {
+    tide_entity entity;
+    uint64_t singleton;
+} tide_shard_ref;
+_Static_assert(sizeof(tide_shard_ref) == 24u, "shard references have three explicit words");
+
+static inline tide_shard_ref tide_shard_entity_ref(const tide_entity e)
+{
+    return (tide_shard_ref){e, 0};
+}
+
+static inline tide_shard_ref tide_shard_singleton_ref(const uint32_t index)
+{
+    return (tide_shard_ref){{0, 0}, (uint64_t)index + 1u};
+}
+
+static inline int tide_shard_ref_compare(const tide_shard_ref a, const tide_shard_ref b)
+{
+    if (a.singleton != b.singleton) return a.singleton < b.singleton ? -1 : 1;
+    return tide_entity_compare(a.entity, b.entity);
+}
+
 typedef struct tide_shard_attempt {
     uint32_t code;
     uint32_t occurrence;
     tide_entity entity;
-    tide_entity touched;
+    tide_shard_ref touched;
 } tide_shard_attempt;
 
 // Two entities a run's code says act on each other now (Shards.Together, +1)
@@ -294,6 +313,7 @@ extern TIDE_THREAD_LOCAL int32_t tide_shard_delay_now;
 // The code running now touched `touched`, which its shard doesn't own: it's
 // noted, under a lock, as systems run on several threads.
 void tide_shard_note(tide_shard_tick *t, tide_entity touched);
+void tide_shard_note_singleton(tide_shard_tick *t, uint32_t singleton);
 // Shards.Together(a, b) (delta 1) and Shards.Apart(a, b) (-1), noted the same
 // way. NULL: a world that's no shard, where nothing's noted.
 void tide_shard_pair_note(tide_shard_tick *t, tide_entity a, tide_entity b, int32_t delta);
@@ -309,7 +329,7 @@ void tide_shard_tick_begin(tide_shard_tick *t, uint32_t codes);
 void tide_shard_tick_free(tide_shard_tick *t);
 // The entities a skipped run of code touched: up to `capacity` into `out`, and how many.
 uint32_t tide_shard_touched(const tide_shard_tick *t, uint32_t code, tide_entity entity, uint32_t occurrence,
-                            tide_entity *out, uint32_t capacity);
+                            tide_shard_ref *out, uint32_t capacity);
 
 // Shards.Owns: what the world being ticked or drawn says, which its tick or
 // frame tells this thread (tide_shard_use); true with none.

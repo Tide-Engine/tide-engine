@@ -12,13 +12,13 @@ static bool reads(const tide_text t, const char *expected)
 }
 
 // Main is slot 0; Setup spawns a, b, three attackers, the healer and two watchers.
-static const tide_entity A = {1, 1};
-static const tide_entity B = {2, 1};
-static const tide_entity ATTACKER_A = {3, 1};
-static const tide_entity ATTACKER_B = {4, 1};
-static const tide_entity IDLE = {5, 1};
-static const tide_entity WATCHES_A = {7, 1};
-static const tide_entity WATCHES_B = {8, 1};
+static tide_entity A;
+static tide_entity B;
+static tide_entity ATTACKER_A;
+static tide_entity ATTACKER_B;
+static tide_entity IDLE;
+static tide_entity WATCHES_A;
+static tide_entity WATCHES_B;
 
 // Each tick: Attack sends hits (applied at the end), Heal gives b 2 at once,
 // then Spread runs for a then b, each reading the other's Health as it is
@@ -26,6 +26,13 @@ static const tide_entity WATCHES_B = {8, 1};
 TIDE_TEST(world_reads_and_changes_other_entities)
 {
     tide_world_init(&world, 1.0f);
+    A = tide_entity_in_slot(&world.entities, 1);
+    B = tide_entity_in_slot(&world.entities, 2);
+    ATTACKER_A = tide_entity_in_slot(&world.entities, 3);
+    ATTACKER_B = tide_entity_in_slot(&world.entities, 4);
+    IDLE = tide_entity_in_slot(&world.entities, 5);
+    WATCHES_A = tide_entity_in_slot(&world.entities, 7);
+    WATCHES_B = tide_entity_in_slot(&world.entities, 8);
     tide_world_tick(&world);
     // a: 7, +1, -3 = 5. b: 20, +2 (healed), +1, -1 = 22.
     TIDE_CHECK(tide_get_Health(&world, A).value == 5);

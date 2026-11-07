@@ -1,5 +1,6 @@
 #include "asset_usage.h"
 #include "asset_files.h"
+#include "build_code.h"
 #include "version.h"
 #include "types.h"
 #include "tide/sha256.h"
@@ -107,7 +108,7 @@ static void value_type(asset_usage *w, const type t)
 
 static void use_asset(asset_usage *w, const decl *d)
 {
-    if (!d || d->kind != DECL_ASSET) return;
+    if (!d || (d->kind != DECL_ASSET && !(d->kind == DECL_CONST && d->asset))) return;
     insert(&w->used, d);
     // Its vertex type can have defaults that read other assets, including
     // defaults inherited through nested types or evaluated by helpers.
@@ -126,6 +127,16 @@ static void attributes(asset_usage *w, const attribute *items, const int count)
         }
         number(w, items[i].values.count);
         for (int k = 0; k < items[i].values.count; k++) queue(w, USAGE_EXPR, items[i].values.items[k]);
+        // Retarget profiles are build inputs; their baked result and transitive
+        // dependencies already contribute through the animation's asset bytes.
+        // Keep option constants in the semantic digest without retaining rigs
+        // in a stripped runtime pack merely because a bake used them.
+        if (items[i].call) {
+            for (int k = 2; k < items[i].call->args.count; k++) {
+                if (k < items[i].call->arg_names.count) text(w, items[i].call->arg_names.items[k]);
+                queue(w, USAGE_EXPR, items[i].call->args.items[k]);
+            }
+        }
     }
 }
 
@@ -166,7 +177,10 @@ static void recipient_state_schema(asset_usage *w)
 {
     const program *prog = w->prog;
     recipient_schema schema = {0};
-    ctext(w, "Tide recipient logical state schema 2");
+    // 3: [Native] fields 0 in projections, a client's hidden spawns left out (2026-11-04)
+    ctext(w, "Tide recipient logical state schema 3");
+    // Projection hashes of singletons as trees, a container's hash kept while its pages are (2026-11-04)
+    if (prog->visibility_state && !prog->hierarchy[0]) ctext(w, "singleton tree hashes");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
         if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0] || d == prog->task_slots[0]) continue;
@@ -363,14 +377,21 @@ static void declaration(asset_usage *w, const decl *d)
     if (w->server && d->asset_ref_of) {
         for (int i = 0; i < w->prog->assets.count; i++) {
             const decl *asset = w->prog->assets.items[i];
-            if (type_asset_reference_accepts(d, asset->return_type)) use_asset(w, asset);
+            type value = asset->return_type;
+            if (value.kind == TY_LIST || value.kind == TY_MAP)
+                value = value.decl->fields.items[value.kind == TY_MAP ? 1 : 0].type;
+            if (type_asset_reference_accepts(d, value)) use_asset(w, asset);
         }
     }
+    // What build code made is the value, and the code that made it is what made it so; a game's pack has what it made,
+    // not what that code read, which only the build program has (strip_assets)
+    if (w->hash) queue(w, USAGE_DECL, d->build_fn);
+    if (w->hash && d->built) tide_sha256_add(w->hash, d->built->hash, sizeof d->built->hash);
     value_type(w, d->return_type);
     value_type(w, d->skin_vertex);
     if (!w->server) queue(w, USAGE_DECL, d->local_part);
     if (!w->server) queue(w, USAGE_DECL, d->interpolate);
-    queue(w, USAGE_EXPR, d->value);
+    if (!d->build_fn || w->hash) queue(w, USAGE_EXPR, d->value); // Build code's, which build_fn has
     if (!w->server || d->kind != DECL_INPUT) queue(w, USAGE_STMT, d->body);
     queue(w, USAGE_STMT, d->sanitize);
     if (!w->server || w->hash) queue(w, USAGE_STMT, d->predict);
@@ -454,7 +475,11 @@ static void expression(asset_usage *w, const expr *e)
         }
     }
     if (e->bind == BIND_ASSET) use_asset(w, e->constant);
-    else if (e->bind == BIND_CONST) queue(w, USAGE_DECL, e->constant);
+    else if (e->bind == BIND_CONST) {
+        // A list build code made is the pack's, as an asset is (build_code.c)
+        if (e->constant && e->constant->build_fn && e->constant->asset) insert(&w->used, e->constant);
+        queue(w, USAGE_DECL, e->constant);
+    }
     queue(w, USAGE_DECL, e->type.decl);
     queue(w, USAGE_DECL, e->type_decl);
     queue(w, USAGE_DECL, e->method);
@@ -467,6 +492,7 @@ static void expression(asset_usage *w, const expr *e)
     queue(w, USAGE_EXPR, e->skin_mesh);
     queue(w, USAGE_EXPR, e->skin_pose);
     queue(w, USAGE_EXPR, e->values);
+    if (e->mesh_lod) queue(w, USAGE_EXPR, e->mesh_lod); // Preserve identities of programs without lod:.
     number(w, e->args.count);
     for (int i = 0; i < e->args.count; i++) queue(w, USAGE_EXPR, e->args.items[i]);
     number(w, e->written.count);
@@ -534,7 +560,7 @@ static void strip_assets(program *prog, const bool server)
             if (!d->is_local && !d->is_view && (d->kind == DECL_SYSTEM || (d->kind == DECL_COMPONENT && d->is_scene)
                 || d->kind == DECL_SINGLETON || d->kind == DECL_INPUT
                 || d->kind == DECL_EVENT)) queue(&w, USAGE_DECL, d);
-        } else if (d->kind != DECL_ASSET) queue(&w, USAGE_DECL, d);
+        } else if (d->kind != DECL_ASSET && !d->is_build) queue(&w, USAGE_DECL, d); // Build code isn't the game's
     }
     if (!server) {
         for (int i = 0; i < prog->local_parts.count; i++) queue(&w, USAGE_DECL, prog->local_parts.items[i]);
@@ -571,6 +597,28 @@ static void strip_assets(program *prog, const bool server)
 
 void program_strip_unused_assets(program *prog) { strip_assets(prog, false); }
 void program_strip_server_assets(program *prog) { strip_assets(prog, true); }
+
+void program_strip_build_assets(program *prog)
+{
+    if (!prog->assets.count) return;
+    // What build code's program runs: each root's code, and what that reaches. Marked as a server's are
+    // (decl.server_asset), so codegen declares the others without loading them
+    asset_usage w = {.prog = prog};
+    for (int i = 0; i < prog->build_roots.count; i++) queue(&w, USAGE_DECL, prog->build_roots.items[i]->build_fn);
+    while (w.pending.count) {
+        const usage_node n = w.pending.items[--w.pending.count];
+        if (n.kind == USAGE_DECL) declaration(&w, n.value);
+        else if (n.kind == USAGE_EXPR) expression(&w, n.value);
+        else statement(&w, n.value);
+    }
+    int count = 0;
+    for (int i = 0; i < prog->assets.count; i++) {
+        decl *d = prog->assets.items[i];
+        d->server_asset = contains(&w.used, d);
+        if (d->server_asset) prog->assets.items[count++] = d;
+    }
+    prog->assets.count = count;
+}
 
 bool program_simulation_id(const program *prog, uint8_t out[32], const bool conservative_assets)
 {
@@ -639,4 +687,30 @@ bool program_simulation_id(const program *prog, uint8_t out[32], const bool cons
     }
     tide_sha256_end(&hash, out);
     return w.used.count != 0;
+}
+
+void program_build_key(const program *prog, const decl *root, uint8_t out[32], const decl ***reads, int *read_count)
+{
+    tide_sha256 hash;
+    tide_sha256_init(&hash);
+    asset_usage w = {.prog = prog, .hash = &hash};
+    ctext(&w, "Tide build code 1");
+    ctext(&w, tide_version_text());
+    ctext(&w, tide_simulation_runtime());
+    queue(&w, USAGE_DECL, root);
+    VEC(const decl *) found = {0};
+    for (int at = 0; at < w.pending.count; at++) {
+        const usage_node n = w.pending.items[at];
+        number(&w, at + 1);
+        number(&w, n.kind);
+        if (n.kind == USAGE_DECL) {
+            const decl *d = n.value;
+            if (d && d != root && d->build_fn && (d->kind == DECL_ASSET || d->kind == DECL_CONST)) vec_push(found, d);
+            declaration(&w, d);
+        } else if (n.kind == USAGE_EXPR) expression(&w, n.value);
+        else statement(&w, n.value);
+    }
+    tide_sha256_end(&hash, out);
+    *reads = found.items;
+    *read_count = found.count;
 }

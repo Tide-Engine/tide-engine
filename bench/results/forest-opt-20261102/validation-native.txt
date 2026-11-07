@@ -1,0 +1,14 @@
+2904/2908 Test #2901: tide_box3d_rewind_network .................................   Passed   13.09 sec
+2905/2908 Test #2905: sumo_tests ................................................   Passed   21.72 sec
+2906/2908 Test #2906: two_forks_tests ...........................................   Passed   21.48 sec
+2907/2908 Test #2790: earth_tests ...............................................   Passed   40.18 sec
+          Start    9: tide_server_shards_journal
+2908/2908 Test    #9: tide_server_shards_journal ................................   Passed    3.54 sec
+
+100% tests passed, 0 tests failed out of 2908
+
+Label Time Summary:
+gpu       = 212.28 sec*proc (69 tests)
+safety    =   9.31 sec*proc (29 tests)
+
+Total Test time (real) = 103.93 sec

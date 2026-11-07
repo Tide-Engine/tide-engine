@@ -1,0 +1,4 @@
+// expect: local handlers can't read current match readiness; check Scene.IsPrepared in a view
+scene Main;
+local singleton Seen { bool ready; }
+local event(Spawned) Check(with Main, mut Seen seen) { seen.ready = Scene.IsPrepared(this); }

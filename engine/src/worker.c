@@ -296,7 +296,7 @@ static void parallel_take(void *context)
 {
     tide_memory_sync();
     parallel_work *p = context;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_heap *match = tide_world_heaps[TIDE_IN_MATCH], *local = tide_world_heaps[TIDE_IN_LOCAL];
     tide_text_use(p->match, p->local);
     const worker_item *previous = current_worker;

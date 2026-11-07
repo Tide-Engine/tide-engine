@@ -8,10 +8,10 @@
 
 // Memory a world keeps variable-length data in, such as the text of its
 // components' string fields. It's part of the world, in pages its snapshots
-// share (see tide/page.h), and it grows as it needs, up to the 1 GiB its
-// offsets' 30 bits reach, in blocks of 128 MiB at most (the biggest size
-// class). Past either, tide_heap_alloc ends the program, as running out of
-// memory does (tide_out_of_memory).
+// share (see tide/page.h), and it grows as it needs, in blocks of 128 MiB at
+// most (the biggest size class). Its offsets are 64 bits, so it holds what
+// memory does: past that, or past a block's size, tide_heap_alloc ends the
+// program, as running out of memory does (tide_out_of_memory).
 //
 // Deterministic: blocks come from size classes, reused in a fixed order, so
 // the same allocations and releases give the same offsets on every machine.
@@ -30,16 +30,30 @@
 
 // Every block starts with its header: what it holds after it.
 typedef struct tide_block {
-    uint32_t size_class;
-    uint32_t next; // In a free list or the pending list
-    uint32_t a;    // Text: its bytes
-    uint32_t b;    // Text: its characters
+    // Its size class in the low 8 bits, and above them the next block, in a
+    // free list or the pending list (tide_block_class, tide_block_next)
+    uint64_t link;
+    uint32_t a; // Text: its bytes
+    uint32_t b; // Text: its characters
 } tide_block;
 
+static inline uint32_t tide_block_class(const tide_block *b)
+{
+    return (uint32_t)(b->link & 255u);
+}
+static inline uint64_t tide_block_next(const tide_block *b)
+{
+    return b->link >> 8;
+}
+static inline uint64_t tide_block_link(const uint32_t size_class, const uint64_t next)
+{
+    return next << 8 | size_class;
+}
+
 typedef struct tide_heap {
-    uint32_t used;                    // Bytes handed out from the start, headers included
-    uint32_t free[TIDE_HEAP_CLASSES]; // Released blocks of each class, most recent first
-    uint32_t pending;                 // Blocks released while code runs, freed when it's done
+    uint64_t used;                    // Bytes handed out from the start, headers included
+    uint64_t free[TIDE_HEAP_CLASSES]; // Released blocks of each class, most recent first
+    uint64_t pending;                 // Blocks released while code runs, freed when it's done
     uint32_t pages;                   // Pages as far as `used` goes
     uint32_t room;                    // Pages `page` has room for
     // Counts the times a block may have moved or gone: a page copied to be
@@ -64,7 +78,7 @@ typedef struct tide_heap {
 
 // A block with room for `bytes` bytes after its header. Offsets are never 0.
 // A zeroed heap is empty.
-uint32_t tide_heap_alloc(tide_heap *h, uint32_t bytes);
+uint64_t tide_heap_alloc(tide_heap *h, uint32_t bytes);
 
 // For snapshots: `to` becomes `from`, sharing its pages. The hash covers
 // what's been handed out.
@@ -81,7 +95,7 @@ void tide_heap_free(tide_heap *h);
 // keeps a block's address to write through (a grid's chunk cache) wouldn't
 // say the page changed again, so this counts as a move: it looks its block
 // up once more.
-uint64_t tide_heap_block_hash(tide_heap *h, uint32_t block);
+uint64_t tide_heap_block_hash(tide_heap *h, uint64_t block);
 
 // The heap as bytes, for sending a world and carrying it over, and reading
 // it back into an empty heap (false when the bytes aren't one).
@@ -100,7 +114,7 @@ void tide_heap_hash_pages(const tide_heap *h, tide_writer *w);
 void tide_heap_need_pages(const tide_heap *base, tide_needs *n);
 
 // Gives a block back. It's freed at the next tide_heap_flush.
-void tide_heap_release(tide_heap *h, uint32_t block);
+void tide_heap_release(tide_heap *h, uint64_t block);
 
 // Frees the released blocks, zeroed, for reuse. Generated code calls it once
 // the code that released them is done.
@@ -118,32 +132,32 @@ void tide_heap_settle(tide_heap *h);
 
 // A block, to read. Its page is read as one, since the system changing the
 // heap may be growing it or copying a page meanwhile.
-static inline tide_block *tide_heap_block(const tide_heap *h, const uint32_t block)
+static inline tide_block *tide_heap_block(const tide_heap *h, const uint64_t block)
 {
     tide_page *const *pages = __atomic_load_n(&h->page, __ATOMIC_ACQUIRE);
     const tide_page *p = __atomic_load_n(&pages[block >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
-    return (tide_block *)(uintptr_t)((const uint8_t *)tide_page_data(p) + (block - (p->first << TIDE_HEAP_PAGE_SHIFT)));
+    return (tide_block *)(uintptr_t)((const uint8_t *)tide_page_data(p) + (size_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)));
 }
 
 // A block, to change: its page made this heap's own. Pages this heap owns
 // already are changed in place, and the rest are copied first
 // (tide_heap_write_shared).
-tide_block *tide_heap_write_shared(tide_heap *h, uint32_t block);
+tide_block *tide_heap_write_shared(tide_heap *h, uint64_t block);
 
 // A block whose first `bytes` after its header are about to be written over,
 // all of them: as tide_heap_write, but a page that's copied first is copied
 // without them, as a big list's chunk would otherwise be copied only to be
 // replaced. Until they're written they're whatever was in memory, so only for
 // a block nothing else reads meanwhile.
-tide_block *tide_heap_write_over(tide_heap *h, uint32_t block, uint32_t bytes);
+tide_block *tide_heap_write_over(tide_heap *h, uint64_t block, uint32_t bytes);
 
-static inline tide_block *tide_heap_write(tide_heap *h, const uint32_t block)
+static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
 {
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
     // A page bigger than one place has a reference for each (see tide_heap)
     const uint32_t places = p->size > (1u << TIDE_HEAP_PAGE_SHIFT) ? p->size >> TIDE_HEAP_PAGE_SHIFT : 1u;
     if (p->refs != places) return tide_heap_write_shared(h, block);
     p->hashed = UINT32_MAX; // What it hashed to is out of date
-    return (tide_block *)(uintptr_t)((uint8_t *)tide_page_data(p) + (block - (p->first << TIDE_HEAP_PAGE_SHIFT)));
+    return (tide_block *)(uintptr_t)((uint8_t *)tide_page_data(p) + (size_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)));
 }
 

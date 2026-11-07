@@ -129,8 +129,20 @@ async function build(extra = []) {
 try {
     // A first build fetches the URL, packs everything, and the pack is one
     game(`http://127.0.0.1:${port}/credits.txt`);
-    let r = await build(["--pack-c"]);
+    let r = await build(["--pack-c", "--asset-sizes"]);
     check(r.code === 0, `the first build failed:\n${r.said}`);
+    // --asset-sizes: a line for each declaration, biggest first, under the total
+    const sized = r.said.split(/\r?\n/).filter((line) => /^\s+[\d.]+ (B|kB|MB|GB)\s/.test(line));
+    check(/Assets in the pack: [\d.]+ (B|kB|MB) in 5 declarations, biggest first/.test(r.said), `the sizes' total:\n${r.said}`);
+    check(sized.length === 5, `a size for each of the five declarations:\n${r.said}`);
+    for (const [name, what] of [["dot", "Grid2<Color> 2x2"], ["rules", "string"], ["credits", "string"],
+                                ["everyCredit", "List<string> 1 file"], ["creditsByUrl", "Map<string, string> 1 file"]])
+        check(sized.some((line) => line.includes(` ${name} `) && line.endsWith(what)), `${name}'s size says ${what}:\n${r.said}`);
+    const bytesOf = (line) => {
+        const [, amount, unit] = line.match(/^\s+([\d.]+) (B|kB|MB|GB)/);
+        return Number(amount) * { B: 1, kB: 1e3, MB: 1e6, GB: 1e9 }[unit];
+    };
+    check(sized.every((line, i) => !i || bytesOf(sized[i - 1]) >= bytesOf(line)), `sizes biggest first:\n${r.said}`);
     check(requests.length === 1 && requests[0] === "", "the first build should fetch the URL once, with no ETag, however many declarations name it");
     const pack = readFileSync(join(r.out, "game.pack"));
     check(pack.subarray(0, 8).toString() === "TIDEPACK", "the pack starts with its magic");
@@ -215,7 +227,7 @@ try {
     r = await build(["--pack-c"]);
     check(r.code === 0, `the plain build failed:\n${r.said}`);
     check(!existsSync(join(r.out, "game.pack")), "a game with no assets has no pack");
-    check(readFileSync(join(r.out, "game_pack.c"), "utf8").includes("tide_game_pack_size = 32;"), "...and an empty pack as C: its header alone");
+    check(readFileSync(join(r.out, "game_pack.c"), "utf8").includes("tide_game_pack_size = 80;"), "...and an empty pack as C: its header alone, to 16 bytes");
     console.log("ok");
 } finally {
     server.close();

@@ -16,6 +16,12 @@ on:
       test-jobs:
         required: true
         type: number
+      shard:
+        default: 1
+        type: number
+      shards:
+        default: 1
+        type: number
       version:
         required: true
         type: string
@@ -38,7 +44,9 @@ jobs:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
-      CCACHE_MAXSIZE: 500M
+      # Instrumented objects overflowed 500 MB and triggered 127 cleanups in
+      # run 41043006631. Leave room for the full sanitizer working set.
+      CCACHE_MAXSIZE: ${{ inputs.preset == 'sanitize' && '2G' || '500M' }}
       CCACHE_COMPILERCHECK: content
       CCACHE_NODIRECT: 'true'
     defaults:
@@ -78,8 +86,8 @@ jobs:
         run: |
           major=${LLVM_VERSION%%.*}
           codename=$(lsb_release -cs)
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-          echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          bash .github/llvm-key.sh
+          echo "deb https://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
           sudo apt-get install -y clang-$major lld-$major llvm-$major lldb-$major ninja-build zstd ccache libx11-dev libxrandr-dev \
             libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
@@ -127,11 +135,13 @@ jobs:
               | zstd -d -q --long=31 | tar -x -f - -C /c/llvm --strip-components=1 "$name/bin" "$name/lib/clang"
           fi
           echo "LLVM_ROOT=C:/llvm" >> "$GITHUB_ENV"
-      # Apple's clang builds native code; web builds need Homebrew's LLVM, and its lld for wasm-ld.
+      # Use the same newer LLVM for native and web: AppleClang 21 spends many
+      # minutes optimizing tag_fallback's generated C (run 41043006631).
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install ninja llvm lld zstd ccache
+          echo "LLVM_ROOT=$(brew --prefix llvm)" >> "$GITHUB_ENV"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
       # Web builds download wasi-sdk's C library (cmake/wasi-toolchain.cmake),
       # and MinGW builds llvm-mingw's (cmake/mingw-toolchain.cmake).
@@ -166,7 +176,8 @@ jobs:
       # CMake inherits these launchers in its native host builds too. ccache
       # hashes the compiler and preprocessed source, including optional headers.
       - name: Cache compiled objects
-        uses: actions/cache@v4
+        id: compiled-objects
+        uses: actions/cache/restore@v4
         with:
           path: build/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-${{ env.LLVM_VERSION }}-${{ github.sha }}
@@ -178,7 +189,7 @@ jobs:
       # rendering CPU when grouped together, so keep their usual ordering.
       # Only scheduling data is cached; every selected test still runs.
       - name: Cache test durations
-        if: inputs.preset == 'release' || inputs.preset == 'mingw-release'
+        if: inputs.preset == 'release' || inputs.preset == 'mingw-release' || inputs.preset == 'sanitize'
         uses: actions/cache@v4
         with:
           path: build/${{ inputs.preset }}/Testing/Temporary/CTestCostData.txt
@@ -186,9 +197,8 @@ jobs:
           restore-keys: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-
 
       # Native tests that open a window (label gpu: the demo's smoke test, the
-      # renderer's) need OpenGL in a window, which no runner has: Windows' and
-      # Linux's have no GPU, and on macOS's GLFW finds no OpenGL to open one
-      # with. The web ones run in headless Chrome.
+      # renderer's) need Vulkan 1.3 on a GPU, which no runner has. The web ones
+      # run in headless Chrome, on its software WebGPU.
       - name: Test (native)
         if: inputs.preset == 'release'
         run: |
@@ -238,9 +248,11 @@ jobs:
           Write-Output "Windows process session: $((Get-Process -Id $PID).SessionId)"
           "TIDE_WEB_BROWSER=$($chromePath.Replace('\', '/'))" >> $env:GITHUB_ENV
 
-      # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
-      # Linux's runners leave them out: without a GPU, Chrome there draws with
-      # WebGPU but gives nothing back when the test reads its pixels.
+      # Every web test draws with the browser's software WebGPU. On Linux's
+      # runners the page reads WebGPU's pixels back as zeros (and SwiftShader's
+      # Vulkan, which shows them under WSL, gives no adapter there:
+      # cmake/run_web_served_test.mjs), so they leave out the tests that read
+      # pixels (label `pixels`), which Windows and macOS run.
       - name: Test (web)
         if: inputs.preset == 'web-release'
         run: |
@@ -255,10 +267,14 @@ jobs:
           # Software-rendered pages reserve the host's CPUs in CTest. Private
           # Windows/Linux runners have two CPUs, despite the four-job default.
           web_test_jobs="$(node -p 'require("node:os").availableParallelism()')"
+          # Interleave CTest's test indices across independent runners; keep
+          # each browser's whole-CPU reservation within its runner.
+          shard=(-I '${{ inputs.shard }},,${{ inputs.shards }}')
           if [ "$RUNNER_OS" = Linux ]; then
-            ctest --preset web-release --parallel "$web_test_jobs" -LE webgpu
+            # ...and with no WebGPU adapter there, pages draw with a GPU that draws nothing (gpu=none)
+            TIDE_WEB_GPU_NONE=1 ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}" -LE pixels
           else
-            ctest --preset web-release --parallel "$web_test_jobs"
+            ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}"
           fi
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
@@ -272,7 +288,7 @@ jobs:
       # (KVM). Its SDK is on the runners; the emulator and its image come
       # through the SDK's manager, under Google's license.
       - name: Free disk space for Android
-        if: runner.os == 'Linux' && inputs.preset == 'package'
+        if: runner.os == 'Linux' && (inputs.preset == 'package' || inputs.preset == 'android')
         run: |
           # The 6 GiB userdata partition needs 7.2 GiB free before booting.
           # Tide uses neither of these SDKs preinstalled on the hosted image.
@@ -282,12 +298,21 @@ jobs:
       # Java for the SDK's tools, and for the checks of what's made for Google
       # Play.
       - uses: actions/setup-java@v4
-        if: runner.os == 'Linux' && inputs.preset == 'package'
+        if: runner.os == 'Linux' && (inputs.preset == 'package' || inputs.preset == 'android')
         with:
           distribution: temurin
           java-version: 21
-      - name: Test (Android)
-        if: runner.os == 'Linux' && inputs.preset == 'package'
+      # The Android job runs its suite on the emulator, and Linux's package job
+      # tries its Google Play bundle there: each boots it in the background
+      # while it builds, and .github/wait-for-android.sh waits for it. The
+      # suite's renderer apps (label gpu) draw with Vulkan 1.3, which the
+      # emulator's lavapipe (Mesa's, in its package) gives the device. The
+      # package job's emulator keeps SwiftShader, whose Vulkan is 1.2, so the
+      # bundle's app shows the screen saying it needs 1.3
+      # (platform/android/activity.c): what a device without it shows, and a
+      # frame drawn, which is all that check asks of it.
+      - name: Start the Android emulator
+        if: runner.os == 'Linux' && (inputs.preset == 'package' || inputs.preset == 'android')
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
@@ -302,22 +327,18 @@ jobs:
           mkdir -p "$ANDROID_AVD_HOME"
           echo no | "$tools/avdmanager" create avd -n tide -k "system-images;android-36;default;x86_64" --force
           # The memory and disk Android 16 wants, which a new AVD's defaults don't give it
-          "$ANDROID_HOME/emulator/emulator" -avd tide -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect \
-            -no-snapshot -memory 4096 -cores 4 -partition-size 6144 > emulator.log 2>&1 &
-          emulator=$!
-          adb="$ANDROID_HOME/platform-tools/adb"
+          "$ANDROID_HOME/emulator/emulator" -avd tide -no-window -no-audio -no-boot-anim \
+            -gpu ${{ inputs.preset == 'android' && 'lavapipe' || 'swiftshader_indirect' }} \
+            -no-snapshot -memory 4096 -cores 4 -partition-size 6144 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          echo "ANDROID_EMULATOR_PID=$!" >> "$GITHUB_ENV"
+          echo "ANDROID_EMULATOR_DEADLINE=$(( $(date +%s) + 900 ))" >> "$GITHUB_ENV"
+      - name: Test (Android)
+        if: inputs.preset == 'android'
+        run: |
           # Build while Android boots; only running tests needs the device.
           cmake --preset android-debug -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset android-debug
-          # Until Android says it booted. An emulator that ends first, or hasn't
-          # booted in 15 minutes, fails the step with what it said.
-          until [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
-            if ! kill -0 $emulator 2>/dev/null || [ $SECONDS -gt 900 ]; then
-              cat emulator.log
-              exit 1
-            fi
-            sleep 2
-          done
+          bash .github/wait-for-android.sh
           ctest --preset android-debug
 
       # The package's Android half is the platform layer for each CPU, built
@@ -354,8 +375,8 @@ jobs:
           cp demo/demo.tide build/try/
           build/dist/tide/bin/tide version
           build/dist/tide/bin/tide build build/try
-          build/dist/tide/bin/tide build build/try --release --web
-          build/dist/tide/bin/tide build build/try --release --web --single-file
+          build/dist/tide/bin/tide build build/try --distribution --web
+          build/dist/tide/bin/tide build build/try --distribution --web --single-file
           build/dist/tide/bin/tide build build/try --android
           cmake -DTIDE="$PWD/build/dist/tide/bin/tide${{ runner.os == 'Windows' && '.exe' || '' }}" \
             -DBUNDLE="$PWD/build/dist/tide/editors/tide-jetbrains-installer.zip" \
@@ -366,19 +387,45 @@ jobs:
       - name: Try the package (C++)
         if: inputs.preset == 'package'
         run: cmake -DTIDE=build/dist/tide/bin/tide -DWORK=build/try-cpp -DANDROID=ON -P compiler/cli/tests/cpp_test.cmake
+      # Its three parts at once, each with its own copy of the installation:
+      # one after another they took most of the package job (9-15 minutes).
       - name: Try the package (incremental builds)
         if: inputs.preset == 'package'
-        run: node compiler/cli/tests/cache_test.mjs --tide build/dist/tide/bin/tide --web
+        run: |
+          parts=(modes at-once cache)
+          pids=()
+          for part in "${parts[@]}"; do
+            node compiler/cli/tests/cache_test.mjs --tide build/dist/tide/bin/tide --web --part "$part" \
+              > "$RUNNER_TEMP/cache-$part.log" 2>&1 &
+            pids+=($!)
+          done
+          status=0
+          for i in "${!parts[@]}"; do
+            code=0
+            wait "${pids[$i]}" || code=$?
+            echo "::group::Incremental builds: ${parts[$i]} (exit $code)"
+            cat "$RUNNER_TEMP/cache-${parts[$i]}.log"
+            echo "::endgroup::"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::Incremental builds, part ${parts[$i]}, failed"
+              status=1
+            fi
+          done
+          exit $status
       # Its app and bundle made to ship, checked with Google's tools: apksigner,
       # Java's JAR signatures, and bundletool (pinned), which Play runs on what
       # it's given. Then the APKs bundletool makes of the bundle, signed with
-      # tide's key as Play signs with its own, play on the emulator, which the
-      # Android tests started.
+      # tide's key as Play signs with its own, start on the emulator, which the
+      # Android tests started, and stay resumed (with no Vulkan 1.3 there, on
+      # the screen that says what the game needs: a frame drawn all the same).
+      # The manifest asks for Vulkan 1.3 (0x403000, as Vulkan's apiVersion),
+      # which is what Play leaves devices out by; Android itself doesn't.
       - name: Try the package (Google Play)
         if: runner.os == 'Linux' && inputs.preset == 'package'
         run: |
+          bash .github/wait-for-android.sh
           printf 'settings\n{\n    appId = "dev.tide.trydemo";\n}\n' > build/try/settings.tide
-          build/dist/tide/bin/tide build build/try --android --release
+          build/dist/tide/bin/tide build build/try --android --distribution
           tools=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
           "$tools/apksigner" verify --verbose build/try/.build/try.apk
           "$JAVA_HOME/bin/jarsigner" -verify build/try/.build/try.aab | tee jarsigner.log
@@ -386,6 +433,9 @@ jobs:
           curl -fsSL -o bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
           echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar" | sha256sum -c
           java -jar bundletool.jar validate --bundle=build/try/.build/try.aab
+          java -jar bundletool.jar dump manifest --bundle=build/try/.build/try.aab \
+            --xpath '/manifest/uses-feature[@android:name="android.hardware.vulkan.version"]/@android:version' | tee vulkan.log
+          grep -qx '0x00403000' vulkan.log
           openssl pkcs12 -export -in ~/.android/tide.pem -inkey ~/.android/tide.pem -out tide.p12 -passout pass:tide -name tide
           java -jar bundletool.jar build-apks --bundle=build/try/.build/try.aab --output=try.apks --connected-device \
             --ks=tide.p12 --ks-pass=pass:tide --ks-key-alias=tide --key-pass=pass:tide
@@ -405,6 +455,15 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1 # Only the release job reads them, and they count against the account's storage
+
+      # A failing test must not discard the successful compilation before it:
+      # the next fix can reuse those objects. Cancelled jobs should stop promptly.
+      - name: Save compiled objects
+        if: always() && !cancelled() && steps.compiled-objects.outputs.cache-primary-key != '' && steps.compiled-objects.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/ccache
+          key: ${{ steps.compiled-objects.outputs.cache-primary-key }}
 
       - name: Compiler cache statistics (end)
         if: always()

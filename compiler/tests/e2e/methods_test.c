@@ -3,13 +3,15 @@
 
 static tide_world world;
 
-static const tide_entity first = {1, 1};
-static const tide_entity second = {2, 1};
+static tide_entity first;
+static tide_entity second;
 
 // One tick: Fight, Rage, Record, Mend, ReadInput.
 static void one_tick(void)
 {
     tide_world_init(&world, 1.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
 }
 
@@ -44,8 +46,8 @@ TIDE_TEST(functions_change_their_mut_arguments)
 TIDE_TEST(component_methods_see_their_entity)
 {
     one_tick();
-    const tide_entity a = {3, 1};
-    const tide_entity b = {4, 1};
+    const tide_entity a = tide_entity_in_slot(&world.entities, 3);
+    const tide_entity b = tide_entity_in_slot(&world.entities, 4);
     const Tracker ta = tide_get_Tracker(&world, a);
     const Tracker tb = tide_get_Tracker(&world, b);
     TIDE_REQUIRE(tide_has_Tracker(&world, a) && tide_has_Tracker(&world, b));
@@ -58,6 +60,8 @@ TIDE_TEST(component_methods_see_their_entity)
 TIDE_TEST(functions_run_in_sample)
 {
     tide_world_init(&world, 1.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     const tide_devices devices = {0};
     tide_world_set_server_input(&world, tide_input_sample(&devices, NULL));
     tide_world_tick(&world);

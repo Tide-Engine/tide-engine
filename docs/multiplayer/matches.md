@@ -45,6 +45,8 @@ A game that starts in a menu selects a local scene as its entry, such as a local
 | `Session.Close()` | Lets no one else join; the players in the match stay |
 | `Session.Kick(player, message)` | Sends a player out of the match this machine runs, telling them why (the message is optional) |
 | `Session.KickAll(message)` | The same for every player on another machine |
+| `Session.Ban(player, message)` | Kicks a player and keeps them out for the rest of the match (the message is optional) |
+| `Session.Unban(player)` | Lets a banned player join again |
 | `Session.Join(code)` | Joins the match in the room with this code, like `"K7QF2M"`, or on [a network of the game's own](./own-network.md), by the text that network takes |
 | `Session.Connect(address)` | Joins another machine's match by its address: `"192.168.1.5"`, `"192.168.1.5:7777"` or a name like `"localhost"` |
 | `Session.Connect(address, port)` | The same, on another port than 7777 |
@@ -63,6 +65,19 @@ There's one kind of match. It starts closed, so single-player is just a match no
 Session.Close();
 Session.KickAll("Thanks for playing!");
 ```
+
+### Bans
+
+`Session.Ban(player, message)` kicks a player, who goes offline with `Banned` and the message, and keeps them out for the rest of the match: each time they try to join again, open or closed, they're refused with the same `Banned` and message. `Session.Unban(player)` lets them in again, as the same player, while the match is open. Like kicks, bans only change a match this machine runs, and its own player can't be banned.
+
+A ban is of the player as the match knows them, the `PlayerID` they joined as. Their `PlayerID` stays theirs while they're banned, so nobody new is given it, and a ban goes with the match when [host migration](#host-migration) hands it to another machine, message and all. A returning player is known by the secret their machine was given when it first joined, so a ban can't stop someone who comes back without it: from another device, after clearing what the game kept, or by joining a migrated match at its new host's address. A [dedicated server](#dedicated-servers) whose host checks accounts binds the ban to the account as well, which a fresh start doesn't escape.
+
+```csharp
+view Players(Session session, mut Moderation moderation)
+{
+    if (!session.server) return;
+    if (GUILayout.Button("Ban the cheater")) Session.Ban(moderation.reported, "Cheating");
+}
 
 ```csharp
 local scene Main { }
@@ -179,6 +194,7 @@ The built-in local events `Connected` and `Disconnected` say when that changes. 
 | `Failed` | It couldn't start: no network, a port in use, an address that isn't one, or a room nobody has |
 | `Ended` | The match's last scene unloaded (see [Scenes](../game/scenes.md#loading-and-unloading)), or the machine running it called `Session.End()` |
 | `Kicked` | The server's machine sent it away, saying why in `message` |
+| `Banned` | The server's machine banned it, or turned it away as banned, saying why in `message` |
 
 ```csharp
 local event(Disconnected gone) BackToMenu(mut Menu menu)
@@ -253,6 +269,18 @@ Then, when the machine running a room's match leaves or stops answering, another
 
 This migration path requires the full authoritative world. [Visibility-enabled](../game/visibility.md) clients receive partial worlds and cannot currently promote one into a host: Tide refuses that takeover until a trusted complete-state handover exists. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 
+## A machine that sleeps
+
+A machine that sleeps, such as a Steam Deck, a laptop or a phone, is gone from its match all the while. It leaves a match other machines can be in, as `Session.Leave()` does: local code gets `Disconnected` with `Left`, and goes on from there as after any leave. That's a match it joined, or one it runs that's open or has other players in it. The others' match goes on without it, through [host migration](#host-migration) when the game has it, and the player can join again as the same player.
+
+On Linux, a Steam Deck's SteamOS among them, the machine leaves as it goes to sleep, with a goodbye, so the others' match changes hands at once: the system waits a moment for the game to leave first. Elsewhere it leaves when it wakes, and the others notice it went a few seconds after it stopped answering.
+
+A game that's only in the background, minimized or behind another app, isn't asleep: its match goes on at its full tick rate, drawing nothing, until the player comes back. A phone's system may stop an app in the background after a while, which is as if it slept.
+
+A match a machine runs alone and closed, as single-player is, goes on where it stopped: nobody waited for it.
+
+On the web, the browser freezes a page it hides, and the page's match is noticed the way any silent machine is.
+
 ## Players in the match
 
 In the match, players come and go through the built-in events `PlayerJoined` and `PlayerLeft`, with the player's `PlayerID`. The server's own player joins before the match's first tick.
@@ -284,6 +312,32 @@ settings
 ```
 
 Then clients never predict. Their inputs are delayed so that every player's reach the server before its tick, and ticks run once each, as the server confirms them: nothing is ever rolled back, at the cost of input delay of about a round trip and a half. A game whose ticks are expensive, or whose views can't show a rollback well, picks it; the server runs the match the same either way.
+
+### Predicting what's near
+
+A big world can predict only what's near each player:
+
+```csharp
+settings
+{
+    predictionRange = 40;
+}
+```
+
+A client then runs its predicted ticks only for entities within 40 world units of its player's own entities (those whose `Owner` is the player), along each axis. What's farther stays as the server last confirmed it. It runs once a tick, as each tick is confirmed, as with `Prediction.Delay`, and is drawn that far behind. In predicted ticks, what's near meets what's far as it stands: a far entity can still be read or queried, but systems and handlers that run for each entity don't run for it until the tick is confirmed. Rollbacks then run again only what's near, so a busy world costs a client less input delay. In exchange, the client runs every confirmed tick for the whole world once. While what's near goes as it predicted, its predicted ticks then stand, with what's far as of an older confirmed tick, up to a quarter of a second older; past that, or when what's near went otherwise, it runs them again.
+
+An entity's position is its first `[Position]` field, or its `Transform`'s, as with [shards](./shards.md); an entity in a hierarchy goes by its root's. One with neither is always predicted, as is anything spawned in a predicted tick. A player who owns nothing with a position predicts everything. Views draw far entities as confirmed, blended between confirmed ticks as `verified` parameters are, without correction smoothing; components holding text, lists or grids move a tick at a time. An entity crossing the range jumps between where it was predicted and where it was confirmed. A system written in C is handed the runs of near entities. The setting needs `Prediction.Rollback`.
+
+Code that goes through every entity at once, like a singleton system's query, still runs them all. It can leave far entities out itself with the filter `Far`: `without Far` takes what's near, and `with Far` what's far, in a system's or a query's parameters. Only a client's predicted ticks have anything far, so on the server and in confirmed ticks `without Far` takes everything:
+
+```csharp
+system Separate(mut Crowd crowd, query (Body body, without Far) near)
+{
+    // ...
+}
+```
+
+The physics packages do this for their step: in a predicted tick, far bodies are held where they were confirmed, and near bodies meet them as walls that don't move. A far body that touches a near one still moves in the physics world, though its component stays as confirmed.
 
 ## How many players
 

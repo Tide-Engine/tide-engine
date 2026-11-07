@@ -1,0 +1,19 @@
+// expect: a shared local is a kernel's group's: it goes in a 'compute' declaration's own body
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+view Show(Meadow meadow)
+{
+    shared int[4] sums;
+}

@@ -78,9 +78,59 @@ Queries use normal deterministic ECS traversal. They do not sort by entity ID, d
 
 Query data reads the current world and participates in [the schedule](./schedule.md). A system that also changes a queried component runs on one thread, following the same rule as reading its own writes through `World`: it sees rows changed earlier in that run. Events and structural changes still wait for the end of the tick, so sending a hit or recording a destroy through `fighter.entity` does not change what this iteration reads.
 
-Queries have read-only component bindings and component filters. Queries are used directly in `foreach`, or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query) with the same `query (...)` parameter syntax. The caller's selection and data timing stay intact. Queries and whole rows cannot be stored or returned; whole rows cannot be passed to functions. Keep iteration and forwarding outside parallel loops and callback blocks. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
+Queries have read-only component bindings and component filters. Queries are used directly in `foreach`, or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query) with the same `query (...)` parameter syntax. The caller's selection and data timing stay intact. Queries and whole rows cannot be stored or returned; whole rows cannot be passed to functions. Keep iteration and forwarding outside parallel loops (other than the query's own, below) and callback blocks. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
 
 Systems, views and synchronous event and command handlers take queries. A match handler reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
+
+### Going through the rows at once
+
+A `parallel` loop goes through a query's rows at once, on threads, where each row's work doesn't depend on the others:
+
+```csharp
+system Hits(query (Body body, with Fighter) fighters, Arena arena)
+{
+    parallel (var f in fighters)
+    {
+        if (Math.Distance(f.body.position, arena.center) > arena.radius) continue;
+        f.entity.Send(Hit { damage = 1 });
+    }
+}
+```
+
+The row is a foreach's: `f.entity` and the bindings, read-only. Steps follow a [parallel loop's rules](../language/grids.md#going-through-every-cell): they change only the variables they declare, and can't spawn, add, remove, destroy or draw. Unlike a list's or a grid's steps, they can send the match's events, to the world or to an entity, and those arrive in the order the `foreach` would have sent them, so the results are the same on any number of threads. An event that holds text or lists can't be sent from a step. A query with a `mut` binding, and reading a row's local fields, need a `foreach` for now. This is provisional.
+
+## Only the rows that can pass
+
+A loop that starts by skipping rows is read by the compiler. When the condition bounds a number of the row by values the loop doesn't change, the loop visits only the rows within those bounds, found through an index, instead of every row:
+
+```csharp
+system Separate(mut Body body, Sight sight, query (Body other, with Boid) boids)
+{
+    foreach (var b in boids)
+    {
+        if (Math.Distance(b.other.position, body.position) > sight.range) continue;
+        body.velocity += Push(body, b.other);
+    }
+}
+```
+
+Each boid looks at the boids near it, not at all of them. Nothing changes about what the loop does: the condition still runs for every row the index gives, and the rows come in the loop's normal order.
+
+The condition can be a distance (`Math.Distance`, `DistanceSq`, `Length` or `LengthSq` of a difference, or `dx * dx + dy * dy`), a box written axis by axis, a comparison of one of the row's numbers (`b.unit.health < 10`), or an equality (`b.unit.team == myTeam`), combined with `&&`, `||` and `!`, written in the loop or in a function that returns it. Read-only locals can come first. The same goes for lists: `foreach (var wall in level.walls)`.
+
+Write `indexed` before a loop that has to be indexed:
+
+```csharp
+indexed foreach (var b in boids) { ... }
+```
+
+`indexed` changes nothing about the loop. It turns a loop that can't be indexed into an error that says why, instead of a loop that quietly looks at every row. Common reasons:
+
+- Something happens before the condition, such as a `Send`. Move the condition first.
+- The value compared with changes inside the loop.
+- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so move that change into a system of its own.
+
+`tidec --schedule` lists every loop that skips rows, and whether an index finds the rest or why not. An index of rows that don't change, like walls, is made once and kept across ticks.
 
 ## Other entities: the World
 

@@ -17,6 +17,9 @@ static void frame(const float seconds, const tide_float2 at)
     tide_pointer_poll(&devices, true);
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), NULL);
     tide_local_frame_time(&local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, seconds);
+#endif
     tide_frame(NULL, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }

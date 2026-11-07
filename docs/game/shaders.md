@@ -1,5 +1,5 @@
 ---
-description: "Write Tide frag and vert shaders for the GPU, with textures, per-draw values, instancing, shadow maps and multiple render outputs."
+description: "Write Tide frag and vert shaders and compute kernels for the GPU, with textures, per-draw values, instancing, GPU lists, shadow maps and multiple render outputs."
 ---
 
 # Frags and verts
@@ -446,7 +446,7 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights)
 - Elements are what the GPU has values of: numbers, bytes, vectors, colors, matrices, enums, bools, structs of those, and [arrays](#arrays) in them. Not text, longs, entities or other lists.
 - The GPU reads a list, and changes none: there's no `Add` there. A view or a system fills it.
 - A local can name it, and a function can take it, as anywhere: see [Naming a list and passing it on](#naming-a-list-and-passing-it-on).
-- Each list a draw's code reads is one of its 12 textures, as that's how its numbers travel: an image of numbers, read by an element's place.
+- Each list a draw's code reads is one of its 16 textures, as that's how its numbers travel: an image of numbers, read by an element's place.
 - **Only what's read is sent.** Of an element, the GPU gets the fields that some frag or vert of the game reads, and no others: a `Light` with a dozen fields of which the frags read `position` and `color` costs those two. It's the same whether the code writes `lights.items[i].color`, reads it off a `foreach`'s variable, or off a local that holds an element (`var light = lights.items[i];`). A struct inside an element counts field by field. Handing a whole element to a function, or returning one, reads all of it.
 - **Only what changed is sent again.** A list that didn't change since the last frame costs nothing. In one that did, the elements that changed go to the GPU and the rest stay as they are there, so a few lights moving in a list of thousands cost those few. A list that's only counted (`items.count`) sends nothing at all.
 - A component's list is its entity's own, so entities with lists are drawn one by one, not all in one draw call. What many entities share belongs in a singleton, with each entity saying where its part starts.
@@ -469,7 +469,7 @@ frag Tiles(BoxVertex vertex, out Color color, Board board)
 }
 ```
 
-- A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 12 textures, once more if it's also sampled.
+- A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 16 textures, once more if it's also sampled.
 - As with a list, only the fields of a cell that the code reads are sent, and when cells change, only those cells go to the GPU again.
 - An asset's grid, and an asset's list, are read by name in the functions a frag or vert calls too.
 - A grid with no size on an axis is read like any other: its cells are wherever they were set, before 0 too, `size` is 0 on that axis as it is on the CPU, and a cell nothing set is zeros.
@@ -507,7 +507,7 @@ frag Tiles(BoxVertex vertex, out Color color, Land land)
 - Read-only, as lists are: a view or a system fills the map. There's no `Get` there either, as it gives a value that may be missing: `TryGet` asks the same.
 - `TryGet`'s `out` argument is a local, `out var value` or a variable declared before.
 - A lookup reads a pixel or two of an index the engine sends beside the entries, however many keys the map has, so it costs about what reading two list elements does.
-- A map or a set is one of the draw's 12 textures, and isn't sent again while it doesn't change. Of its values, only the fields the code reads are sent, as a list's elements'. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
+- A map or a set is one of the draw's 16 textures, and isn't sent again while it doesn't change. Of its values, only the fields the code reads are sent, as a list's elements'. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
 
 ### Naming a list and passing it on
 
@@ -544,6 +544,37 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights, Board board)
 - A function that takes a grid is the GPU's alone: frags, verts and the functions they call call it. On the CPU a grid's cells are read through its component or singleton, `board.owner[x, y]`. A grid's local is in a frag, a vert or such a function.
 - A function samples the texture it takes too, a grid among them: see [In a function](#in-a-function).
 
+### Passing on what holds a list
+
+A struct, a singleton or a component that holds lists, grids, maps or sets goes to a function whole, and its methods are called on it, so the code that reads it needn't name each list:
+
+```csharp
+struct Poses
+{
+    int bones;
+    List<float4> rows;
+
+    float4 Row(int row, int bone)
+    {
+        return rows[row * bones + bone];
+    }
+}
+
+float4 Hips(Poses poses, int row)
+{
+    return poses.Row(row, 0);
+}
+
+vert Play(mut Corner corner, Item item, Poses poses)
+{
+    corner.position += Hips(poses, item.row).xyz;
+}
+```
+
+- It's the one the frag or vert was given, by its name: its own parameter (the draw's values, a singleton, a component), or a function's parameter that stands for one. Nothing is handed to the function for it: its fields are read where the frag or vert reads them, and only the fields some code reads are sent.
+- It's read, never changed: a `mut` method or parameter is an error. It isn't kept in a local, made, returned or picked between there, as a list isn't.
+- A struct that holds no list is a value as before, passed and kept like any other.
+
 ### Arrays
 
 An [array of a fixed length](../language/text-and-lists.md#arrays) is a value like a vector: `float[8]`, `Stop[4]`. As a field of a component, a singleton or a draw's values it's sent with the other fields the code reads, and in code it's a local, a parameter or a function's result like any other value:
@@ -563,7 +594,7 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 ```
 
 - `a[i]` reads an element, zeros past the ends; `a[i] = v` writes one, and does nothing past the ends; `a.count` is its length; `foreach` goes through it.
-- An array is sent whole, with a draw's other values: those hold 3,984 bytes, about 249 float4s, for everything a draw reads of singletons. Past a few dozen elements, a list is the better fit.
+- An array is sent whole, with a draw's other values: those hold 3,984 bytes in 2D (249 float4s) or 3,968 bytes in 3D (248 float4s), for everything a draw reads of singletons. Past a few dozen elements, a list is the better fit.
 - An array of arrays is one too: `float[4][8] rows`, with `rows[i][j]` read and written by the same rules at each index, and `rows[i]` a row to keep, pass on, assign or `foreach` through.
 - `?:` picks between arrays, as between structs and matrices: `var stops = night ? ramp.dark : ramp.light;`. Both sides are worked out, as everywhere on the GPU.
 - A `for`'s step can write an element (`for (var k = 0; k < 6; counts[k % 3]++)`), and a `continue` still comes to it.
@@ -607,7 +638,7 @@ Past 0 and 1, `uv` reads what the [wrap](./meshes-and-textures.md#past-the-edges
 - A draw can say it for that draw, after the texture: `Draw.Mesh(corners, faces, tiles, Filter.Bilinear, Wrap.Clamp, Shade)` gives `source` blended and clamped, whatever `tiles` says.
 - A filter and a wrap written at a `Sample` are written out, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs. Where they come with the texture, the engine tells it for each draw.
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: corner.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
-- One texture can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 12 textures a draw samples, and the same way twice counts once. A `Sample` that says nothing and one that says the default are two ways for a `Texture` parameter or field, since the texture may say otherwise.
+- One texture can be read several ways in one frag, clamped here and repeated there. It counts once among the 16 textures a draw reads, however it's read. Each way of reading takes a sampler, and a draw has 16 of those too: textures read the same way share one, and the same way twice is one. A `Texture` parameter or field whose `Sample` leaves its filter or wrap to the texture has a sampler of its own for that, since the texture says how at each draw; so there, a `Sample` that says nothing and one that says the default are two samplers.
 - A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
 
 `Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./meshes-and-textures.md#drawn-smaller):
@@ -630,6 +661,32 @@ The GPU picks which copies to read by how fast the `uv` changes from one pixel t
 - **Not of** a variable that changes (`mut var`, one a loop counts): `tiles.Sample(corner.uv + float2(i * 0.01, 0), Filter.Trilinear)` in a loop is an error, which says so. Sample those with `Filter.Bilinear`, or work each `uv` out before the loop.
 - Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says, and tidec warns about it: write `Filter.Bilinear` there to say that's what you want, or make the `uv` one the frag can work out as it starts.
 - A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
+
+When a UV changes in a loop or needs a different sampling footprint, give its
+derivatives explicitly with `Texture.SampleGrad`:
+
+```tide
+var dx = this.Ddx(vertex.uv);
+var dy = this.Ddy(vertex.uv);
+mut var uv = vertex.uv;
+// Adjust uv here, including in branches or loops.
+color = source.SampleGrad(uv, dx, dy, Filter.Trilinear, Wrap.Repeat);
+```
+
+`SampleGrad(float2 uv, float2 dx, float2 dy[, filter[, wrap]])` takes the UV
+change per destination pixel to the right and down. It uses those values as
+given, without working the UV out again as the frag starts. Compute derivatives
+of the original UV with `this.Ddx` and `this.Ddy`, then pass them alongside the
+adjusted UV when that is the footprint you want. It works in a frag and in its
+GPU helper functions, including after a discard and inside varying branches or
+loops. A helper takes the derivatives as ordinary `float2` parameters.
+
+The optional filter and wrap follow `Sample`'s rules and default to the texture's
+own. `Filter.Point` and `Filter.Bilinear` still read only its base image;
+`Filter.Trilinear` uses the supplied derivatives to choose its smaller images.
+Ordinary colors and `[Raw] Texture` fields keep their usual channel behavior.
+`SampleGrad` is for `Texture`; verts, CPU code, grids, cubemaps and depth textures
+do not expose it.
 
 ### In a function
 
@@ -654,9 +711,9 @@ frag Shade(Corner corner, out Color color, Models models, Texture source)
 - **The parameter is a `Texture`**, which a `Grid2<Color>` and a `Grid2<float>` are too, a [`DepthTexture`](#a-target-s-depth) or a [`Cubemap`](#skybox-and-reflections), and the function reads it as a frag would: `Sample`, with a filter and a wrap or without, a depth's `Compare`, a cube's `Sample(direction)`.
 - **The call names the texture**: a field of a component or a singleton the frag or vert takes, its own `Texture`, an asset, or in a function, a parameter of its own, passed on. Not one picked as the code runs, like `flag ? models.wood : models.stone`: sample each under its own name, and pick between the colors.
 - **It isn't handed over as the code runs.** No GPU passes a texture to a function, so which texture a name stands for is settled as the shader is written, and the function is written once for each texture it's called with, as it is for [a list](#naming-a-list-and-passing-it-on). It costs nothing while it runs. A function reads the texture it takes: no `mut` or `out`, and none is returned, kept in a local or in a struct.
-- **What a `Sample` there leaves out is still the texture's**: `Soft(tiles, ...)` reads `tiles` as its declaration says, and `Soft(source, ...)` as the texture the draw gave says. Each way each texture is read counts among the draw's 12.
+- **What a `Sample` there leaves out is still the texture's**: `Soft(tiles, ...)` reads `tiles` as its declaration says, and `Soft(source, ...)` as the texture the draw gave says. Each way each texture is read counts among the draw's 16.
 - **A function that samples is the GPU's alone**: frags, verts and the functions they call call it. A view or a system that calls one is an error that says so, as nothing on the CPU reads a texture's pixels. A function that only takes a texture and passes it to C, say, is still everyone's.
-- **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, or sample in the frag.
+- **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, sample in the frag, or use `SampleGrad` with explicit derivatives passed from the frag.
 - **A [`[Raw]`](#textures-that-are-numbers) source keeps numeric sampling through GPU helpers.** Pass the original Raw asset, Raw texture field or Raw grid field expression to the helper's `Texture` parameter. The compiler specializes the helper for that source; this does not allow a Raw texture to escape through an ordinary CPU `Texture` value.
 
 ### Textures that are numbers
@@ -690,12 +747,14 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 }
 ```
 
-- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a `Texture` or `Grid2<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A `Grid2<float>` needs none: it has no alpha.
+- It goes before an asset that's one `Texture`, a `TextureArray`, a `Cubemap` or one `Grid2<Color>`, and on a `Texture`, `TextureArray`, `Cubemap`, `Grid2<Color>` or `Grid3<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A grid of floats needs none: it has no alpha.
+- Arrays and cubes follow the same rules as `Texture`: a `[Raw] TextureArray` field takes a `[Raw]` array asset, another `[Raw] TextureArray` field or a `[Raw] Grid3<Color>`, and a `[Raw] Cubemap` field a `[Raw]` cube asset or another such field. Their `Sample` gives the numbers as they are.
 - A `[Raw] Texture` field accepts `default`, a singular `[Raw] Texture` asset, another `[Raw] Texture` field, or a `[Raw] Grid2<Color>` field or asset. A grid-backed texture still names the grid's cells, with the [same lifetime rules](./meshes-and-textures.md#a-texture-is-a-value). Assigning an ordinary color texture to a Raw field is an error.
 - A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
 - Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.
 - `rawField.size` is available as ordinary texture metadata, including `int2(0)` for a default or unavailable image; pack reload follows the currently bound asset. Reading its size does not read or convert its pixels.
-- The same file can be declared twice, once `[Raw]` and once not: they're two textures.
+- The same file can be declared twice, once `[Raw]` and once not: they're two textures. Where `[Raw]` changes nothing, as for an image with no transparency, the pack and the GPU keep one copy for both.
+- A Raw `Texture` asset is [compressed](./assets.md#gpu-compression) as a color one is, when it's big enough: BC1 or BC3, its channels as the file has them, each a little off. For numbers that must be exact, a lookup table or a flow map, add `[Lossless]`: `[Raw, Lossless] asset Texture flow = "art/flow.png";`.
 - `[Filter]` and `[Wrap]` go beside Raw assets and grid fields as on other textures. A `Texture` field retains the bound texture's filter/wrap settings; those attributes do not go on the field itself. Code reads a `[Raw]` grid's cells as it reads any grid's.
 
 ## A target's depth
@@ -723,7 +782,7 @@ float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there
 - **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
 - **`size`** gives the depth image's width and height as an `int2` of physical pixels, on the CPU and GPU. It follows target resize, display scale and the device's size limit; missing or disposed depth gives `int2(0)`. Reading dimensions copies no pixels and uses no texture binding. For pixel-sized shadow offsets, use `float2 texel = 1.0 / float2(lamp.shadow.size)` after checking that the size is nonzero.
 
-`uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [12 textures](#what-the-gpu-runs).
+`uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. A depth is one of its draw's [16 textures](#what-the-gpu-runs) however it's read: sampled and compared, it's one texture through two samplers.
 
 A function reads a depth it takes as a parameter the same two ways, so every frag that's lit shares one lookup. The frag names the depth where it calls:
 
@@ -793,7 +852,7 @@ frag Sky(Corner corner, out Color color)
 
 - **`Sample(direction)`** takes a `float3` of any length, in the world's axes. One face goes on in the next, so there's no edge, and nothing to [wrap](./meshes-and-textures.md#past-the-edges).
 - **`Sample(direction, filter)`** says how it's read between its pixels, written there like a texture's: `Filter.Bilinear` when left out, `Filter.Point` for the nearest pixel, and `Filter.Trilinear` between its [smaller images](#textures) too, in a frag, of a direction the frag can work out as it starts.
-- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too, and so does a function that takes a `Cubemap`, which reads the one its call names (see [In a function](#in-a-function)). Each way a frag reads one is one of its draw's [12 textures](#what-the-gpu-runs).
+- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too, and so does a function that takes a `Cubemap`, which reads the one its call names (see [In a function](#in-a-function)). It's one of its draw's [16 textures](#what-the-gpu-runs), and each filter it's read with is one of its 16 samplers.
 - A cube that was never set reads as black.
 
 There are two kinds, and a frag reads both the same way.
@@ -840,6 +899,68 @@ The scene below has both. The sky is the asset, drawn on a ball around the camer
 - **Six passes a frame is what a live reflection costs.** A cube that only holds what doesn't move is drawn once and kept: its images stay from frame to frame, like any target's.
 - **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. There's no choosing the level yet, so a rough surface's blurred reflection isn't there.
 
+## Texture arrays
+
+Images of one size in layers are a `TextureArray`, read by a uv and a layer. An asset's is a glob's files, in their paths' order, or a list of them in its own:
+
+```tide
+asset TextureArray ground = ["art/grass.png", "art/rock.png", "art/sand.png"];
+
+frag Ground(Vertex3 vertex, out Color color, Terrain terrain)
+{
+    int material = int(terrain.splat.Sample(vertex.uv).r * 2.99); // Any int, which can differ from pixel to pixel
+    color = ground.Sample(vertex.uv * 16, material, Filter.Trilinear, Wrap.Repeat);
+}
+```
+
+- The layer is an int. One past the layers reads the nearest one.
+- The filter and the wrap are written at the `Sample`, as a cube's filter is, or on the asset (`[Filter]`, `[Wrap]`). An array that says none is read blended and clamped. `SampleGrad(uv, dx, dy, layer)` takes its derivatives as a texture's does.
+- An array is one of a draw's [16 textures](#what-the-gpu-runs), however many layers it has.
+
+A view makes one to draw into, a layer at a time: `TextureArray(width, height, layers)`, sized as a [render target](./render-targets.md) is, with a `Format` last when a layer holds anything but `Format.Rgba8`. `array.layers[i]` is a `RenderTarget`, and `array.depth` is a `DepthTextureArray`, each layer's depth, which a frag reads as a [target's depth](#a-target-s-depth) with a layer: `Sample(uv, layer)` and `Compare(uv, layer, value)`. Shadow cascades are layers of depth alone:
+
+```tide
+local singleton Lamp { TextureArray maps; DepthTextureArray cascades; }
+
+view Shadows(mut Lamp lamp)
+{
+    if (lamp.maps.count == 0)
+    {
+        lamp.maps = TextureArray(2048, 2048, 3, 1, Format.Depth);
+        lamp.cascades = lamp.maps.depth;
+    }
+    for (int c = 0; c < 3; c++)
+    {
+        var into = lamp.maps.layers[c];
+        into.Clear(Color.white);
+        // ...each cascade's camera and casters
+    }
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp, Sun sun)
+{
+    int cascade = Cascade(this.world, sun); // Your own choice of cascade, per pixel
+    float lit = lamp.cascades.Compare(ToLamp(this.world, sun, cascade), cascade, Depth(this.world, sun, cascade));
+    color = Color(lit, lit, lit);
+}
+```
+
+`array.size` and `array.count` say a layer's pixels and how many there are, in a view or a frag. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
+
+An asset's layers are compressed as a [`Texture` asset's](./assets.md) are, where they're big enough; `[Lossless]` before it keeps them exact.
+
+A `Grid3<Color>` or a `Grid3<float>` is an array wherever one goes, its z its layers, as a `Grid2` of them is a texture: the GPU gets the parts whose cells changed.
+
+```tide
+local singleton Terrain { Grid3<Color> paint = Grid3(256, 256, 4); TextureArray layers; }
+
+view Paint(mut Terrain terrain)
+{
+    terrain.paint[10, 20, 2] = Color.red; // Layer 2, sent as that part alone
+    terrain.layers = terrain.paint;
+}
+```
+
 ## Where the pixel is
 
 The engine supplies the draw's transform through `Instance instance`, and the pixel a frag runs for through `this`:
@@ -871,9 +992,11 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
   - `this.world`, a `float3`: where on the mesh the pixel is, in the world.
   - `this.position`, a `float2`: where it is in the destination's logical pixels from the top left, as [`Draw.Screen`](./views.md#on-the-screen)'s.
   - `this.depth`: how far it is, from 0 at the camera's near side to 1.
-  - `this.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture. Nothing is written for it: no color, no depth and no [stencil](./draw-settings.md#stencil).
+  - `this.Discard()` leaves the pixel undrawn, and ends the frag there: for holes. Nothing is written for it: no color, no depth and no [stencil](./draw-settings.md#stencil). For an edge cut out of a texture, [`this.Cutout`](#cut-outs) is smoother.
+  - `this.Cutout(alpha)` and `this.Coverage(share)` say how much of the pixel the frag covers: see [Cut-outs](#cut-outs).
+  - `this.Ddx(v)`, `this.Ddy(v)` and `this.Fwidth(v)` say how fast a value changes across the pixel: see [How fast a value changes](#how-fast-a-value-changes).
 
-`this` is context accessed through its fields and `Discard()`: it can't be copied, stored or passed whole. It belongs to the frag itself: a vert has no pixel yet (its `this` is its vertex, [as it's placed](#where-a-vertex-lands)), and an ordinary function a frag calls has no implicit `this`. Pass any pixel coordinates a helper needs as ordinary values. An old built-in `Pixel pixel` parameter is an error that says to remove it and use `this`; a game can still declare a type of its own named `Pixel`.
+`this` is context accessed through its fields and methods: it can't be copied, stored or passed whole. It belongs to the frag itself: a vert has no pixel yet (its `this` is its vertex, [as it's placed](#where-a-vertex-lands)), and an ordinary function a frag calls has no implicit `this`. Pass any pixel coordinates a helper needs as ordinary values. An old built-in `Pixel pixel` parameter is an error that says to remove it and use `this`; a game can still declare a type of its own named `Pixel`.
 
 ```csharp
 frag Leaves(BoxVertex vertex, out Color color, Models models)
@@ -885,11 +1008,61 @@ frag Leaves(BoxVertex vertex, out Color color, Models models)
 
 The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw.SetCamera` reads it too, and take that.
 
+### How fast a value changes
+
+`this.Ddx(v)` is how much `v` changes from this pixel to the next one across, `this.Ddy(v)` to the next one down, and `this.Fwidth(v)` the two's sizes added: `Math.Abs(this.Ddx(v)) + Math.Abs(this.Ddy(v))`. `v` is a `float`, a float vector or a `Color`, and what comes back is of its type. It's how a frag knows how big a pixel is in its own units, wherever the mesh is, however it's turned, scaled or far away. A signed distance over it is an edge one pixel wide:
+
+```csharp
+frag Ring(Vertex3 vertex, out Color color)
+{
+    var d = Math.Abs(Math.Length(vertex.uv - float2(0.5)) - 0.4) - 0.02;  // Under 0 on the ring
+    var edge = Math.Saturate(0.5 - d / this.Fwidth(d));                    // 1 inside, 0 outside, a pixel between
+    color = Color(1, 1, 1, edge);
+}
+```
+
+The GPU answers by comparing each pixel with its neighbors, and it only can before any branch or loop: a neighbor in another branch has no value to compare. So the frag works `v` out a first time as it starts, asks there, and the call has that answer wherever it is: in an `if`, in a loop, after `this.Discard()`. You write nothing for it. What it asks of you is a `v` the frag can work out as it starts, as a [`Sample` between smaller images](#textures) does: made of the frag's parameters, `this`, constants, functions of them, textures read, and variables declared with `var` and never assigned again. A `v` made of a variable that changes, or one a loop counts, is an error that says so.
+
+- `this.Ddy` goes down the destination's rows, as `this.position` counts them, on every backend and in a target too.
+- A `v` the frag works out as it starts costs working it out twice, on pixels a branch would have skipped too.
+
+### Cut-outs
+
+An edge `this.Discard()` cuts is decided once a pixel, so it's a staircase however many [samples](./render-targets.md#smooth-edges) the target has: leaves, grass, hair and fences alias where the triangles around them are smooth. `this.Cutout(alpha)` says the frag is there where `alpha` is 0.5 or more, in place of the discard:
+
+```csharp
+frag Leaves(BoxVertex vertex, out Color color, Models models)
+{
+    color = models.leaves.Sample(vertex.uv);
+    this.Cutout(color.a);  // There where its alpha is 0.5 or more
+}
+```
+
+- **Its edge is as smooth as its target's samples.** The engine sharpens the alpha to a pixel by how fast it changes (`(alpha - 0.5) / this.Fwidth(alpha) + 0.5`), and the GPU makes it the share of each pixel's samples the frag covers (alpha to coverage): an edge pixel is part the leaf's color and part what's behind it, as a triangle's edge is. A texture's soft or blurred alpha, or its smaller images far away, still give an edge one pixel wide.
+- **Into a target of one sample, it's cut at 0.5**, as the discard would: in the window, in a target without `samples`, and in a [shadow map](#a-shadow-map), whose casters with holes can be the same frag as the scene's.
+- **What it covers, it covers wholly.** A cut-out isn't see-through: its color's own alpha isn't read, and it's drawn as if it were 1. It writes its depth and [stencil](./draw-settings.md#stencil) at the samples it covers and nowhere else, so it needs no sorting and no `Depth.Read`. Under `Blend.Alpha`, which is every draw's at first, a covered sample is replaced; `Blend.Add` and `Blend.Multiply` add and multiply its color whole there. With samples, the target's alpha at an edge pixel's covered samples is how much the frag covered: a scene drawn over an opaque clear stays opaque inside, and close to it along its edges.
+- **The tint's alpha fades it the same way:** under `Draw.Tint` with an alpha of 0.5, the share is halved, so a cut-out fades out by covering less, not by blending.
+- **Anywhere in the frag:** in a branch too, and more than once, the last it reaches counting. A pixel whose path says nothing is covered whole. It's a statement of its own, in the frag itself.
+- **The pixel's color says what's covered, for all of a frag's [outputs](#several-outputs);** the others are finished as any frag's are. `this.Discard()` still discards.
+
+`this.Coverage(share)` is the same, with the share as it's given, from 0 to 1, and nothing sharpened: with 4 samples, `this.Coverage(0.5)` covers two of them, which dithers a fade or a soft edge where blending would need sorting. Into a target of one sample, it's there from 0.5. A frag sharpens its own way with `this.Fwidth`, at another cutoff, say:
+
+```csharp
+frag Hair(Vertex3 vertex, out Color color, Strands strands)
+{
+    color = strands.color;
+    var alpha = strands.mask.Sample(vertex.uv).a;
+    this.Coverage(Math.Saturate((alpha - 0.3) / this.Fwidth(alpha) + 0.5));  // Cut at 0.3, a pixel wide
+}
+```
+
+A frag says how much it covers one way: `this.Cutout` and `this.Coverage` in one frag is an error.
+
 ## What the GPU runs
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, bytes, ints, chars (ints there, their code points), floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int, a char or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 12 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
+- **It has** bools, bytes, ints, chars (ints there, their code points), floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int, a char or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 16 of them to a draw and 16 [ways of reading them](#textures), anywhere in the code: in a branch, in a loop, in a vert.
 - **It doesn't have** text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list, map or set. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
@@ -1056,8 +1229,220 @@ Every mote below is an item of a list, and none is an entity. A vert places the 
 
 A struct parameter that's meant as an instance's is supplied by `Draw.Instanced` and a list of that type. With `Mesh`, or a list of another type, the draw is an error, unless it gives a struct of that type as [its values](#values-for-one-draw), which every instance then shares.
 
+## Compute
+
+A `compute` declaration is code the GPU runs that isn't tied to a draw: a kernel. `GPU.Run` runs it over a count or a size, from a view or a function it calls, and what it writes goes to GPU lists, which draws after it read. Culling, scattering, simulating particles and counting all fit.
+
+```csharp
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades; // Every blade, filled once
+    GPUList<Blade> shown;  // This frame's, in order
+    float reach;
+}
+
+[Group(64)]
+compute CullBlades(Meadow meadow, Eye eye)
+{
+    Blade blade = meadow.blades[this.index];
+    if (Math.Distance(blade.root, eye.position) < meadow.reach)
+        meadow.shown.Add(blade);
+}
+
+view DrawMeadow(Meadow meadow, Models models)
+{
+    meadow.shown.Clear();                  // In frame order: before the run adds to it
+    GPU.Run(CullBlades, meadow.blades);    // Once for each blade the GPU has
+    Draw.Instanced(models.blade, models.faces, meadow.shown, Sway, Grass); // As many as it kept
+}
+```
+
+A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, and `Sample` at a texture's own level.
+
+### Which invocation
+
+A kernel's `this` is the invocation it runs as:
+
+| | |
+| --- | --- |
+| `this.index` | Its place in the whole run, an `int`: `x + y * count.x + z * count.x * count.y` |
+| `this.at` | Where it is in the run's size, an `int3` |
+| `this.local` | Where it is in its group, an `int3` |
+| `this.group` | Which group it's in, an `int3` |
+| `this.count` | The run's size, an `int3` |
+
+`GPU.Run(kernel, over[, values])` runs it over:
+
+- an `int`, `int2` or `int3`: that many invocations along each axis;
+- a `List<T>`: its count;
+- a `GPUList<T>`: its count on the GPU, as the GPU has it when the run happens. Nothing is read back, so kernels chain: one fills a list and the next runs over it.
+
+Invocations run in groups, 64 when the kernel says nothing: `[Group(64)]`, `[Group(8, 8)]` or `[Group(4, 4, 4)]` before it says how many along each axis, at most 256 in all and 64 along z, what every GPU runs. Invocations past the run's size don't run its body: a kernel over 200 needs no `if (this.index >= 200) return;`.
+
+### GPU lists
+
+A `GPUList<T>` is a list that lives on the GPU. It's this machine's, as a `RenderTarget` is, never the match's: a local field or a local singleton keeps it, and local code makes it with its capacity, the most elements it holds.
+
+```csharp
+view Setup(mut Meadow meadow)
+{
+    if (meadow.blades.capacity == 0)
+    {
+        meadow.blades = GPUList<Blade>(100000);
+        meadow.shown = GPUList<Blade>(100000);
+    }
+}
+```
+
+- Its elements are GPU values: numbers, vectors, colors, quaternions, float matrices, bools, enums, and fixed arrays and structs of those.
+- Its contents and count stay from frame to frame until something writes them. Copies share the list, and writing it needs no `mut`: it's a handle.
+- Kernels, frags and verts read `list[i]`, `list.count`, `list.capacity` and `foreach`. Past the count, an element is zeros.
+- Kernels write `list[i] = value` (past the capacity it goes nowhere, and the count stays as it was), `list.Add(value)` and, on a `GPUList<int>`, atomics.
+- Local code sends a list's elements with `list.Set(items)`, sets the count with `list.Clear()` and `list.SetCount(n)`, in frame order with the draws and runs around them; `list.Resize(capacity)` makes it empty at another capacity, and `list.Dispose()` lets it go.
+- `list.contentRevision` changes when the list was made again empty: a lost device, a `Resize`, or a hot reload that changed its element. A game that filled it once fills it again then.
+- A frag, vert or kernel can name up to 64 GPU lists, and a kernel can `Add` to as many as it names. Lists live side by side in the GPU's memory; one can never read or change another's elements.
+
+Functions the GPU runs take a GPU list as a parameter, `GPUList<T>`, as they take a `List<T>`: the call names one by its field, or passes on its own parameter. What a kernel can do to a list, a function it calls can do to the one it's given, and the kernel then does it to the list it passed: write elements, `Add` and atomics.
+
+```csharp
+float Tallest(GPUList<Blade> blades)
+{
+    mut float most = 0.0;
+    foreach (var blade in blades)
+        most = Math.Max(most, blade.height);
+    return most;
+}
+
+void Keep(GPUList<Blade> into, Blade blade)
+{
+    into.Add(blade);
+}
+
+[Group(64)]
+compute CullBlades(Meadow meadow)
+{
+    Blade blade = meadow.blades[this.index];
+    if (blade.height * 2 > Tallest(meadow.blades))
+        Keep(meadow.shown, blade);
+}
+```
+
+- A GPU list isn't a value there: it's named where it's used, so a local can't keep one, nor can a function return one or `?:` pick between two.
+- A function that writes, adds to or uses atomics on a GPU list is a kernel's: a frag or a vert calling it is an error, as the CPU calling one is.
+
+The CPU can't read a GPU list as it draws: `count` there is an error. Local async code reads one back, a copy, once the frame drawn next is done on the GPU:
+
+```csharp
+local singleton Census { int shown; }
+
+async void Count(Meadow meadow, mut Census census)
+{
+    if (await meadow.shown.ReadCount() is int count) census.shown = count;
+}
+```
+
+`await list.Read()` gives a `List<T>` of its elements, and `await list.ReadCount()` its count, each failing with `IOError` where the device was lost before the read was done. A run without a window (`--capture`, `--frames`, `--script`) has each read done at the next frame's start, so its frames repeat exactly.
+
+### Adding in order
+
+`list.Add(value)` in a kernel keeps invocation order: what invocation 3 adds comes before what invocation 7 adds, whatever order the GPU ran them in, and the count goes up by how many were added. Captures stay the same from run to run. Past the capacity, nothing more is added.
+
+- An invocation adds to a list once at the most, on any path, and never in a loop: "'CullBlades' can add to 'shown' twice". To add several, run over more invocations, or count places with an atomic and write them by index.
+- A call of a function that adds to a list counts as an `Add` of it: once on a path, not in a loop, and a statement of its own.
+- A kernel that adds has a group of one axis, `[Group(64)]`: this.index's order is then the groups' order, even over a size of two or three axes.
+
+### Atomics
+
+On a `GPUList<int>`, `AtomicAdd(i, value)`, `AtomicSub`, `AtomicMin`, `AtomicMax`, `AtomicAnd`, `AtomicOr`, `AtomicXor` and `AtomicExchange` change element `i` at once for every invocation, and give what it was; `AtomicCompareExchange(i, compare, value)` puts `value` there where it's `compare`. Only ints: no GPU has portable float atomics. What an atomic gives depends on which invocation came first, so results that depend on it can differ from one run to the next (GPU results are visual only).
+
+```csharp
+compute Histogram(Meadow meadow, Bins bins)
+{
+    int bin = int(meadow.blades[this.index].height * 10);
+    bins.counts.AtomicAdd(bin, 1);
+}
+```
+
+### Within a group
+
+`shared int[64] sums;` at the top of a kernel's body is a local its whole group shares: one copy a group, zeroed as the group starts, any GPU value or fixed array of them, 16 KiB at most. `GPU.Barrier()` waits until every invocation of the group reaches it, with what they wrote to shared memory and to GPU lists seen.
+
+```csharp
+[Group(64)]
+compute Sum(Values values)
+{
+    shared float[64] partial;
+    int i = this.local.x;
+    partial[i] = values.items[this.index];
+    GPU.Barrier();
+    for (var step = 32; step > 0; step /= 2)
+    {
+        if (i < step) partial[i] += partial[i + step];
+        GPU.Barrier();
+    }
+    if (i == 0) values.sums[this.group.x] = partial[0];
+}
+```
+
+- Every invocation reaches a barrier: it's in no `if`, `switch` or `while`, in `for` loops only from a constant to a constant that nothing leaves early, and after no `return`. A kernel with a barrier runs its body for every invocation of its groups, those past the run's size too, so it checks `this.index` itself.
+- Atomics work on a `shared int[N]`'s elements too: `seen.AtomicAdd(0, 1)`.
+- One place of shared memory written by every invocation of a group, each with its own value, is a race: some invocation's value is left, and which isn't said. To have one known value, have one invocation write it, `if (this.local.x == 0) ...`, and the others read it after a barrier. It runs everywhere, Unity's Direct3D 11 too.
+
+### Drawing what a kernel made
+
+`Draw.Instanced(vertices, indices, list, vert, frag)` over a GPU list draws as many instances as the list has on the GPU, each read there: one indirect draw, with nothing read back. Its element is the instance struct, as a list's is, its `float4x4 transform` too where it has one. No culling or level picking happens on the CPU, which has no instances to test: the kernel that filled the list does that. A game draws one list a level, each filled by the kernel that picks them. Inside `Draw.Transform`, each instance's transform goes through it, as a `List<T>`'s instances' do. An instance whose own transform mirrors its mesh is drawn with its front the other way round, as a list's is: such a draw is two runs, one for the instances that mirror and one for those that don't, unless it's inside `Draw.Cull(Cull.None)`.
+
+A mesh's vertices and indices can be a kernel's too: `Draw.Mesh` and `Draw.Instanced` take a `GPUList` of the vertex struct where the vertices go, and a `GPUList<int>` or a `List<int>` where the indices go, in 2D and 3D, and so does a target's `Mesh`. Each vertex is read on the GPU by its index, zeros past the list's count, and indices on the GPU draw as many triangles as that list's count has there, with nothing read back.
+
+```csharp
+struct Dot
+{
+    float2 position;
+    Color color;
+}
+
+local singleton Sparks
+{
+    GPUList<Dot> corners;
+}
+
+[Group(64)]
+compute Spark(Sparks sparks, Burst burst)   // Burst: a local singleton of the game's
+{
+    float2 at = burst.center + float2(float(this.index % 16), float(this.index / 16)) * burst.spacing;
+    int first = this.index * 4;
+    sparks.corners[first] = Dot { position = at + float2(-1, -1), color = burst.color };
+    sparks.corners[first + 1] = Dot { position = at + float2(1, -1), color = burst.color };
+    sparks.corners[first + 2] = Dot { position = at + float2(1, 1), color = burst.color };
+    sparks.corners[first + 3] = Dot { position = at + float2(-1, 1), color = burst.color };
+}
+
+view DrawSparks(Sparks sparks, Burst burst)
+{
+    sparks.corners.SetCount(burst.count * 4);
+    GPU.Run(Spark, burst.count);
+    Draw.Mesh(sparks.corners, burst.quads); // burst.quads: a List<int> of 0, 1, 2, 0, 2, 3, 4, 5, 6, ...
+}
+```
+
+A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's. Instances of such a mesh from a `List<T>` are frustum culled by the bounds [`Draw.Bounds`](./draw-settings.md) gives, a box around every vertex the kernel can make: the CPU has none of its own for them, and without them, every instance is drawn.
+
+### Order in a frame
+
+A frame's GPU work happens as if in the order it was recorded: a draw after a run sees what it wrote, and one before it doesn't, as do runs after runs, and `Set`, `Clear` and `SetCount` among them. A run that no draw before it depends on is done before them, so it costs the draws around it nothing: write runs where they read best.
+
+### Where kernels run
+
+Kernels run everywhere Tide draws: Vulkan (desktop and Android), WebGPU, and Unity's compute-capable graphics APIs. Compute is guaranteed, so a game never needs a path without it. [`tide shaders`](#looking-at-what-s-generated) prints each kernel's WGSL.
+
 ## Looking at what's generated
 
-`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, instance data, vert and frag a mesh draw uses.
+`tide shaders` prints each shader Tide writes for the game, as WGSL (which Vulkan's SPIR-V and Unity's HLSL are translated from): one for each combination of vertex struct, instance data, vert and frag a mesh draw uses, and each kernel's WGSL.
 
 [Shipping builds](../tools/cli.md#run-and-build) shorten identifiers derived from your function, type, field, parameter and local names. Shader entry points and renderer bindings retain their names; expressions and layouts are unchanged. The private `game.names` build map records the shortened identifiers by stage. With a custom compiler pipeline, `tidec --shaders --strip-names` shows the shortened form; `--spirv` and `--hlsl` also accept `--strip-names`.

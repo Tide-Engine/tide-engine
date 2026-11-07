@@ -11,14 +11,18 @@ static tide_draw_list draw;
 static tide_gui gui;
 
 // Main occupies slot 0; these are Setup's spawn handles.
-static const tide_entity THREE = {1, 1};
-static const tide_entity NINE = {2, 1};
-static const tide_entity ONE = {3, 1};
-static const tide_entity FIVE = {4, 1};
+static tide_entity THREE;
+static tide_entity NINE;
+static tide_entity ONE;
+static tide_entity FIVE;
 
 TIDE_TEST(query_blocks_sort_and_loop_beside_a_query)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    THREE = tide_entity_in_slot(&world.entities, 1);
+    NINE = tide_entity_in_slot(&world.entities, 2);
+    ONE = tide_entity_in_slot(&world.entities, 3);
+    FIVE = tide_entity_in_slot(&world.entities, 4);
     tide_world_tick(&world); // Setup's spawns come in at the end of this tick
     tide_world_tick(&world);
     TIDE_CHECK(world.Board.racers == 4 && world.Board.first == 9 && world.Board.last == 1);

@@ -45,7 +45,7 @@ TIDE_TEST(skinned_checked_catalogs_contracts_sampling_and_decode)
     start();
     const Probe *p = &world.Probe;
     if (p->firstFailure) printf("    check %d of %d failed\n", p->firstFailure, p->checks);
-    TIDE_CHECK(p->checks == 38 && p->passed == p->checks);
+    TIDE_CHECK(p->checks == 44 && p->passed == p->checks);
     TIDE_CHECK(p->position == -6.0f && position(&world, false) == -6.0f);
     TIDE_CHECK(position(&world, true) == 0.0f);
     TIDE_CHECK(tide_list_read_count(&world.heap, p->model.vertices) == 4);
@@ -91,7 +91,7 @@ TIDE_TEST(skinned_persistent_pose_sampling_reuses_storage)
 {
     start();
     for (int i = 0; i < 60; i++) tide_world_tick(&world);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     for (int i = 0; i < 100; i++) tide_world_tick(&world);
     TIDE_CHECK(world.heap.used == used && world.Probe.passed == world.Probe.checks);
     tide_world_free(&world);

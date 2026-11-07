@@ -19,7 +19,8 @@ static void gen_editor_preview(gen *g)
     bool comma = false;
     if (takes_world(factory)) { sb_put(o, "&p->world"); comma = true; }
     if (takes_local(factory)) { sb_printf(o, "%s&p->local", comma ? ", " : ""); comma = true; }
-    if (takes_scene(g->prog, factory)) sb_printf(o, "%s(tide_entity){0}", comma ? ", " : "");
+    if (takes_scene(g->prog, factory)) { sb_printf(o, "%s(tide_entity){0}", comma ? ", " : ""); comma = true; }
+    if (takes_cause(factory)) sb_printf(o, "%sUINT64_C(%llu)", comma ? ", " : "", (unsigned long long)causal_code(factory));
     sb_put(o, ");\n    tide_apply_commands(&p->world);\n    tide_local_apply_commands(&p->local);\n    return p;\n}\n\n"
         "static const tide_draw_list *tide_editor_frame(void *context, float seconds, tide_rect r,\n"
         "    tide_float4x4 camera, tide_float4x4 projection, tide_measure_fn measure)\n{\n"
@@ -38,6 +39,9 @@ static void gen_editor_preview(gen *g)
         "    tide_gui_begin(&p->gui, &devices, tide_f2(r.width,r.height), measure);\n"
         "    tide_draw_render_target(&p->gui.list, tide_editor_target);\n"
         "    tide_local_frame_time(&p->local, seconds);\n"
+        "#ifdef TIDE_HAS_VIEW_CORRECTIONS\n"
+        "    tide_local_age_views(&p->local, seconds);\n"
+        "#endif\n"
         "    tide_frame(&p->world, NULL, 1, NULL, NULL, 1, &p->local, &p->draw, &p->gui);\n"
         "    tide_gui_end(&p->gui, &p->draw);\n"
         "    const uint32_t texture = tide_draw_texture_source(&p->draw, tide_render_target_color(tide_editor_target));\n"

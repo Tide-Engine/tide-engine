@@ -51,7 +51,7 @@ typedef struct tide_table {
 // Whether a row of an archetype's table is a hole: its entity is the null one.
 static inline bool tide_row_gone(const tide_entity *e)
 {
-    return e->generation == 0u;
+    return tide_entity_is_null(*e);
 }
 
 // Whether chunk `chunk` has no holes, so its rows from 0 to tide_table_rows are all entities.

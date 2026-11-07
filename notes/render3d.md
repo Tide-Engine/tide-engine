@@ -1,5 +1,317 @@
 # Render3D package
 
+## Post test sampler mapping (2026-11-05)
+
+The full native/web validation of generated-C partitioning found the post tests still indexing run sampling by
+texture slot after dev's separate image/sampler change. The test now visits the samplers in each texture's mask
+(`tide_shader_texture_samplers`) when checking bilinear/clamp. Routing, filters and rendering are unchanged; this
+retains the assertions for every sampler used by a bound source. Focused native-ASan and web post tests pass.
+
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
+## Forest depth order after quiet measurements (2026-11-02)
+
+The first quiet foliage cohort completed twelve release processes and 1200 GPU
+samples without recognized contention. It exposed a ground-view GPU regression
+with the distant atlas, despite lower CPU view-recording time. Primary atlas
+cards occupy the bark rows, which were submitted before nearby cutout foliage.
+That ordering plausibly prevented early rejection behind the nearby canopy.
+
+The scoped experiment reverses only the forest's planting part order: foliage
+rows precede bark/proxy rows. It adds no renderer pass, query scan, state or API.
+Per-tree mesh/material/transform/wind values depend on tree index and remain
+the same. Entity IDs and world hashes change with planting order; each variant
+must independently preserve its own match state. Opaque shadow batches still
+precede cutout shadows, retaining each class's order. An extra package pass was
+rejected because query snapshots would add work even without impostors.
+
+Release/native-ASan/web forest builds and all five native/seven web focused
+checks pass, including the moving camera. Three 1920x1080 captures retain exact
+representation/draw/vertex counts. Ground/canopy/wide change 4/18/0 RGBA pixels
+out of 2073600 each, consistent with LESS_OR_EQUAL depth ownership at touching
+surfaces; this is not pixel equivalence. No shader expressions were edited;
+source-position changes regenerate callback identifiers, so raw shader byte
+identity is not claimed. The candidate's twelve-process/1200-sample quiet cohort
+passes. Paired CPU view-recording medians are 18–33% lower with the atlas;
+canopy GPU improves, ground is mixed and wide is effectively neutral. Separate
+source cohorts are not an interleaved causal test of the ordering change, and
+these intervals are not FPS. Detailed ranges and tails remain in the report.
+After merging compiler list-loop work from dev 8dfacea84, six native/eight web
+checks pass; three captures and GPU programs/layouts match the frozen candidate.
+The original timing cohort remains pinned; post-merge CPU was not remeasured.
+
+## Foliage quality reference and moving representations (2026-11-02)
+
+The owner approved adapting established foliage techniques after identifying
+the benchmark's tree-only fog. This pass keeps the ordinary ECS/material path:
+two entities per tree, machine-local representations, authored response/maps,
+and a source-mesh impostor prototype. It adds the conventional GPU-only
+`Texture.SampleGrad` operation without new syntax or generated runtime calls.
+It does not add a retained forest renderer, Gaussian splats or a runtime tree generator.
+
+`WindResponse` supplies explicit bend/flutter amplitudes and branch/leaf phase
+cycles. The scalar overload's arithmetic is unchanged; zero phase response
+uses it. Locally constant weights/phases preserve the analytic Jacobian.
+Connected bark uses one response to keep joints together; disconnected sprays
+carry explicit asset RGB response/phase data, consumed only by the example's
+callback and then restored to white material tint. The package imposes no
+vertex-channel convention. Authored leaf normal and raw ORM/transmittance maps
+add folds/veins, occlusion and optical-depth variation through existing hooks.
+`SurfaceInput.mask` exposes the already-sampled raw channels to the surface
+callback; its default is (1,1,0,1). No extra vertex/varying channel is added.
+
+`FogSettings` on Renderer applies exponential distance fog to completed Lit
+radiance, including specular/emission, before exposure/tonemapping. It starts
+disabled and nonpositive density returns the original radiance. The forest
+uses the linear HDR sky-clear color, so terrain and trees share the same fog.
+Custom shaders remain responsible for their own fog.
+
+Static MeshRenderer's attached local meshOverride/hidden/hideShadows select
+geometry and visibility without changing match state. Main, opaque-shadow and
+cutout-shadow paths all use VisualMesh; defaults retain authored behavior.
+Material's local colorOverride/fade/ditherFade are prepared once at Prepare+1
+into renderColor, replacing the old instance color read without adding an
+attribute. A component-value copy cannot retain attached fields; preparation
+keeps the original component capability and readonly DrawMesh binding reuse.
+Ordered coverage uses a 4x4 destination-pixel pattern, with outgoing 1-t and
+incoming -t complementary. Texture cutoff is independent of geometry fade.
+It is not temporal AA. Ordinary materials leave these controls disabled.
+
+The original procedural broadleaf reference has curved/tapered branching,
+tightly fitted spray polygons and smooth crown normals. It has 1670/668/90
+triangles at its three geometry levels; forest-meshes.h/json pin exact counts
+and wind-expanded bounds. Leaf 512-square PNG sources and authored full DDS mip chains
+are reproducible with make-assets.mjs; source artwork is not scanned/downloaded.
+Alpha mip coverage is explicit at .32, with finite-texel/tie limitations, and
+the texture importer preserves complete chains on native and web backends.
+The DDS/BC-fallback boundary and Unity limitation are in textures.md.
+
+The offline impostor baker rasterizes the actual near OBJ/leaf maps into 24
+hemisphere views (8 azimuths, 3 elevations; 8x4 padded 128-square tiles). It emits albedo,
+raw model-normal/depth and ORM/transmittance atlases, exact bounds/settings,
+card geometry and source hashes. Material.impostor selects neighboring views,
+depth approximation and existing map resources. Internal ImpostorDeform/Lit
+programs reserve existing corner channels for their projection payload; no
+larger varying budget or renderer backend is required. The pre-wind source-plane
+payload is preserved while the sprite sways. This rest-pose, nearest-layer approximation
+cannot recover disoccluded geometry or animate individual baked branches.
+Very coarse atlas mips eventually mix view tiles; the shader bounds sampling
+footprints while each view is still resolvable.
+Impostors explicitly skip both static/skinned shadow collection and direct
+masked-caster helpers; otherwise default opaque materials cast a full rest
+quad and cutout materials sample unrelated atlas views. A local-LOD fixture
+checks opaque/cutout exclusion and restoration. Only baked albedo, model
+normal/depth and mask maps apply. UV/height/emission maps are unsupported;
+constant emission and the configured surface hook remain available.
+
+The forest recomputes local representations from the moving camera every
+frame, crossfading 80..100 m and 250..310 m, with the prototype atlas 430..510 m.
+Extra draws exist only in a transition band, through the same package helpers
+and live material, then restore local state. A shadow-view-outer transition
+pass preserves batching opportunities. The transition queries exit before
+traversing rows when no tree is in a band. Current source/target/visible counts
+are reported separately; tree count and match state remain unchanged by views.
+Travel/orbit, forced-mesh/atlas, parallax, fog and finite sequence captures are
+explicit diagnostic controls. Image/CPU/GPU evidence is recorded separately
+from the older unchanged-quality optimization cohorts.
+
+Initial validation found/fixed a non-void test-helper return, a DDS diagnostic
+priority, and a stale WebGPU fallback upload marker (a full 128 chain is 87380
+bytes). New wind/leaf/LOD/fog numeric and GPU cases pass in the initial scoped
+runs. A forest-only shader gradient expansion caused pathological Vulkan
+pipeline memory/time and browser timeouts. Separating the optional atlas
+programs from ordinary Lit/Deform and supplying four affine SampleGrad
+footprints reduced the largest SPIR-V from 258308 to 97012 bytes. Initial
+depth estimates stay bilinear; final atlas maps retain trilinear filtering.
+Bounded Vulkan standard/forced-atlas/motion checks pass without activating
+the memory/time guard; 63 compiler, 36 native and 47 web scoped CTests pass.
+Close-up source/forced-atlas and 100000-tree ground/canopy/wide captures are
+under build/foliage-quality. These short capture runs are correctness evidence,
+not timing comparisons. The first 90-second quiet attempt launched no timing
+child because another browser test remained active. Final integration and
+measurement status is recorded in bench/results/foliage-quality-20261102.
+
+Final integration after merging dev 440909c72 passes 115 native ASan and 120
+web-release CTests, plus native/web/release and documentation builds. Two
+explicit Render3D consumers (bench_render3d and declarations_only.cmake) now
+include wind/fog/impostor dependencies. Final 100000-tree captures and the
+16-frame approach/retreat witness pass; results and scoped coverage are in
+[the foliage report](../bench/results/foliage-quality-20261102/README.md).
+Both bounded measurement attempts closed normally with zero children because
+recognized external correctness checks stayed active. New quality-path timings
+and speedup claims are withheld; no forest gate/build/GPU work remains queued.
+
+Technique references: [Crytek vegetation animation](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis),
+[SpeedTree leaf rendering](https://developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-4-next-generation-speedtree-rendering),
+[Castaño's alpha coverage](https://www.ludicon.com/castano/blog/articles/computing-alpha-mipmaps/),
+and [Epic's impostor baker](https://dev.epicgames.com/documentation/en-us/unreal-engine/impostor-baker-plugin-in-unreal-engine).
+
+## Shared binding preparation without shader changes (2026-11-02)
+
+The owner approved preparing shared material/resource bindings once after the
+first forest optimization. Exact package-level grouping would need equality for
+arbitrary texture and callback bindings and another material sampling wrapper.
+Instead, the compiler now reuses completed bindings inside a proven read-only
+view invocation. The existing Lit shader, derivative sampling, per-instance
+material packet, order, culling and automatic GPU instancing remain intact.
+
+The forest DrawMesh runner activates two entries for each of its two reachable
+shade wrappers. Exact uniform/resource keys and captured slot witnesses decide
+reuse. Scratch sources, pending heap releases, mutable or unsupported code retain
+the general path. Managed texture-size host callbacks disable reuse before the
+callback; other host callbacks and implicit effects disqualify the view. There
+is no public API, runtime entry point, engine layout or match-state change.
+Compiler contracts and the conservative exclusions are in language.md.
+
+All 2,911 native Windows ASan and 2,797 web-release CTests pass. The final narrow
+Draw.MeasureText exclusion and sixteen-scenario fallback fixture additionally
+pass three focused CTests on each platform. The private positive fixture counts
+two list and two texture conversions for six A/B/A/B/A/B draws, checks every
+instance tint, edits source data between frames and verifies scope restoration.
+
+The merge with generated mesh LOD work additionally traverses its retained
+`lod:` expression in compiler effect/read/write/order analysis. Two regressions
+bring the fallback fixture to eighteen scenarios. Four focused native/web probes
+and 61/65 affected native/web tests pass, including draw/mesh/Render3D and forest
+dependencies. A rebuilt release executable again produces byte-identical shader
+blocks and zero changed pixels in all three captures. These post-merge captures
+are correctness checks; the original timed binaries and results stay pinned.
+
+The subsequent generic-function/skinned-LOD merge passes another 26 focused
+native ASan and 26 web-release checks after including retained LOD in the skinned
+written-operand path. The final rebuilt release again matches all shader blocks,
+pixels, draw work and world hashes. validation-finaldev.json pins this integration;
+no further paired timings were run.
+
+The clean merge of dev's mesh residency update adds five native ASan and six
+web runtime/draw/forest dependency checks, all passing. Rebuilt release shader
+blocks and three capture pixels/work/world hashes still match the baseline;
+validation-residency.json records this separate check without new timing claims.
+
+The runtime static Mesh-value compiler merge passes another 14 native ASan and
+15 web-release overlap checks. Constructors take the existing unsupported-call
+fallback. Rebuilt release shaders and three capture pixels/work/world hashes
+still match baseline; validation-meshvalue.json records the dependency check.
+
+Frozen baseline/candidate forest programs have byte-identical 28 GLSL, 14 WGSL,
+14 SPIR-V and 14 shader metadata/layout blocks. Three 1920x1080 same-timestep
+captures (10k canopy, 100k wide and ground) match every decoded RGBA pixel.
+Meshes, placement, distance tiers, wind, lighting and shadows are unchanged.
+All 18 elapsed-timing processes retain matching work/hashes, zero warmed texture
+uploads and 1,800 completed GPU queries. Timing variability, including an adverse
+ground-view pair, is retained rather than hidden by a single speedup aggregate.
+Recognized build-process lifetimes overlap later runs. A supplemental CPU-time
+control could not start after 21.1 minutes behind the quiet guard; its own queued
+gate was cancelled without launching a child. No reliable 100k speedup is claimed.
+
+[Full measurements, scopes, identities and validation](../bench/results/forest-batch-20261102/README.md).
+Other native OSes/mobile/Unity and hardware-web performance were not run locally.
+Per-entity gathering, transforms and instance packing remain; this is not a
+retained scene cache, new foliage representation or a claim of playable 100k trees.
+
+## Forest preparation cost without quality changes (2026-11-02)
+
+The owner requested optimizing the foliage stress scene while preserving visual
+fidelity. The combined change adds a bounded flat shader-list capture cache in
+the drawing runtime, applies existing partial numeric-lane reads to non-drawing
+views of shader component types, and shares each forest callback factory's layout.
+No mesh, placement, camera, distance tier, wind, lighting or shadow setting changes.
+
+The opt-in benchmark --profile uses the existing per-view profiler; default runs
+attach none. Initial diagnostics attribute about 85 of 104 ms recording to main
+DrawMesh, 10 ms to Cast, 5 ms to BindForest and 3 ms to transparent collection at
+100k ground/1280x720. These are instrumented single-run averages, not isolated
+contributions or paired improvements. Whole-process sampling includes setup and
+hashing, and its percentages are not percentages of a rendered frame.
+
+Three alternating optimized Vulkan pairs per camera/count give median paired
+CPU-recording reductions of 9.4% (10k canopy), 17.6% (100k wide) and 16.2% (100k
+ground). Absolute median-of-process-medians are 16.16 to 14.82, 151.09 to 118.72
+and 148.35 to 129.58 ms. GPU variation and separate scopes prevent a GPU/FPS claim;
+per-entity recording remains expensive. No quality budget was lowered for timing.
+
+All 18 processes verify 1,800 measured frames/completed GPU queries, matching
+representation/draw/vertex/main-tree counts, zero warmed uploads and unchanged
+world hashes. Three 1920x1080 same-timestep before/after captures match every RGBA
+pixel. Independent moving wind/shadow/material fixtures remain unchanged. This
+image comparison covers those three frames, not every possible camera/state.
+
+Both full builds and suites pass: 2,908 Windows ASan CTests and 2,794 web Release
+CTests, including native Vulkan/OpenGL and WebGL/D3D11/WebGPU. New cache lifetime
+and partial-load fixtures pass; independent source reviews found no blockers.
+Native other OSes/mobile/Unity and hardware-web scaling remain untested locally.
+No extra CI was dispatched. No public language/runtime function was introduced;
+all hosts/libraries rebuild for the private draw-list cache pointer.
+
+[Measured evidence, ranges, identities, captures, diagnostics and reproduction](../bench/results/forest-opt-20261102/README.md).
+Runtime contracts belong to drawing.md/runtime-ownership.md; compiler contracts
+to language.md. Measurements cover the combined changes. A forced-inline idea
+was not successfully measured or shipped. Remaining work includes reducing
+per-mesh binding/preparation further; this is not a claim of playable 100k forests.
+
+
+## Foliage wind, thin leaves and forest stress (2026-11-01)
+
+The owner approved the first foliage slice and requested a large forest stress
+scene. The package now supplies plain shared `Wind` values and `ApplyWind`,
+plus `LeafSettings`, `ApplyThinLeaf` and the captured `ThinLeaf` surface callback.
+No compiler, language, backend, runtime entry point or ABI changes are needed.
+
+Wind has a game-owned local clock. Root-world travelling gusts combine slow
+height-squared bend and height-scaled flutter using smooth triangle waves, with
+no per-vertex trig or noise texture. Local y <= 0 anchors; the analytic shear
+Jacobian corrects normals/tangents. Color/UV/tangent sign stay intact. Callers
+choose response weights explicitly; no vertex-color convention silently changes
+tint/coverage. Shared species captures keep compatible draws instanced.
+
+Thin-sheet transmission is a linear RGB diffuse fraction, attenuated by optical
+thickness and each light's normal attenuation/visibility. It reduces reflected
+diffuse, leaves specular intact and defaults zero on ordinary Surface values.
+LeafSettings are captured uniforms rather than new Material instance attributes;
+this preserves saturated mapped/skinned attribute layouts. This approximation
+has opaque/cutout shadow maps, not colored multi-leaf transport or volumetric SSS.
+
+Attached local Material.customBounds/boundsCenter/boundsSize provide full
+mesh-local post-deformation boxes for static/skinned color and shadow passes.
+Scopes restore target state; false preserves existing automatic/unknown bounds.
+Opaque prepared batches split by enabled flag and box values. Generated C review
+confirms CastBatch borrows its handle and nested lists without per-cascade clones.
+
+The new CPU wind fixture covers roots/disabled/placement, finite-difference
+normals, frame captures/hashes, actual opaque/cutout culling and differing/mixed
+opaque bounds. Its guarded first tick permits C scenario setup before spawning.
+Thin-leaf CPU checks use analytic lighting budgets and bitwise zero-transmission
+controls. GPU witnesses cover two sides, optical tint/thickness, cutout holes,
+real occluder shadows and independently predicted moving color/shadow silhouettes
+at two wind extrema and 1x/2x sizes. Existing package regressions remain unchanged.
+
+`bench/forest` uses the ordinary ECS/material renderer with two meshes per tree,
+shared callbacks built once each frame, a 2.4 km terrain and three fixed cameras.
+It supports 100,000 planted trees across 1.74 km. Procedurally authored geometry
+uses 292/114/32 triangles per detailed/medium/far tree, selected once at setup
+for that fixed camera (90/280 m thresholds). This is not dynamic LOD switching
+or an impostor baker. Casters are limited to 260 m, receivers to 160 m; high wide
+cameras can consequently have no tree shadow work. Tree representation and culling
+counts accompany timing rows. Independent bark/foliage command witnesses prevent
+a terrain-only image from passing the smoke. Generator assertions cover maximum
+wind displacement at the smallest tree scale; review expanded far bounds XZ
+from 14 to 16. No tree counts were reduced to make the workload pass.
+
+Windows Clang 23.1.2 ASan and WASI/web Release builds pass focused package and
+forest correctness, including Vulkan/OpenGL and WebGL/D3D11/WebGPU. The first
+combined CTest selections included unbuilt post targets, corrected by building
+and running those targets; a leaf WebGPU expected-output prefix and a stale
+forest build were corrected without changing assertions/tolerances. Production
+docs build passes with existing unstaged-example prerender 404 notices.
+Other native OSes/mobile/Unity execution remain unavailable locally. Final
+measurements and reproduction are in notes/benchmarks.md and the forest evidence.
+
+Remaining work: authored production tree art, branch-specific weight conventions,
+coverage-preserving alpha mipmaps/AA, camera-moving representation transitions,
+impostor baking and any further submission optimization indicated by stress runs.
+Gaussian splats are not part of this slice. No language proposal was implemented.
+
+
 ## GPU fixture use-after-free resolved (2026-10-29)
 
 The owner requested investigating the intermittent native skinning crash rather

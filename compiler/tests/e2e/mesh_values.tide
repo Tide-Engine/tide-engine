@@ -1,0 +1,54 @@
+asset Mesh<Vertex3> box = "assets/meshes/box.obj";
+asset Mesh<Vertex3> quad = "assets/meshes/quad.glb";
+asset List<Mesh<Vertex3>> models = "assets/meshes/*.glb";
+asset Map<string, Mesh<Vertex3>> named = "assets/meshes/*.glb";
+using Model = Mesh<Vertex3>;
+struct Choice { Model model; string label; }
+singleton Saved
+{
+    Model single;
+    Model[2] pair;
+    List<Model> list;
+    List<Model[2]> arrays;
+    Map<int, Model> map;
+    List<Choice> choices;
+    int count;
+    int ticks;
+    int copied;
+    int asyncCount;
+    int firstCount;
+}
+scene Main;
+List<Model> Copy(List<Model> values) { return values; }
+void Append(mut List<Model> values, Model model) { values.Add(model); }
+Model Pass(Model model) { return model; }
+async void Later(Model model, mut Saved saved)
+{
+    await Wait.Ticks(1);
+    saved.asyncCount = model.indices.count;
+}
+system Tick(mut Saved saved)
+{
+    if (saved.ticks == 0)
+    {
+        Later(box, saved);
+        saved.single = box;
+        saved.pair = [box, quad];
+        saved.list = Copy(models);
+        Append(saved.list, box);
+        saved.arrays = [[box, quad]];
+        saved.map[7] = named["assets/meshes/quad.glb"];
+        saved.choices = [Choice { model = Pass(box), label = "box" }];
+        mut var copy = saved.list;
+        copy[0] = default;
+        saved.copied = copy[0].vertices.count;
+    }
+    saved.firstCount = saved.list[0].indices.count;
+    Debug.Assert(saved.single == saved.single.Value);
+    saved.count = saved.single.indices.count + saved.pair[1].indices.count
+        + saved.list[2].indices.count + saved.arrays[0][1].indices.count
+        + saved.map[7].indices.count + saved.choices[0].model.indices.count;
+    Debug.Assert(saved.list[0].indices.count > 0);
+    Debug.Assert(saved.list[99].vertices.count == 0);
+    saved.ticks++;
+}

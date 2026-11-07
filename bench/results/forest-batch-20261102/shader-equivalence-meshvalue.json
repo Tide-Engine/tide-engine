@@ -1,0 +1,433 @@
+{
+  "candidate_stage": "final-meshvalue",
+  "baseline_generated_c_sha256": "f497a527f9dfa0e365c397ba83767c3594aaa41b074e7fd608b78f64c0265f6e",
+  "candidate_generated_c_sha256": "9e0cde5fd9f94f605696942248a1191da440ef288a1fc85d7d897cda2324a523",
+  "candidate_directory": "build/forest-batch/final-meshvalue",
+  "glsl_programs": 28,
+  "wgsl_programs": 14,
+  "spirv_programs": 14,
+  "shader_metadata_and_layouts": 14,
+  "all_bytes_identical": true,
+  "entries": [
+    {
+      "name": "tide_shader_0_vertex",
+      "bytes": 594,
+      "sha256": "41285953a9adec2779a7f92d9975c4ec03deb4a13cd13f62d07769289435e3c7",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_0_fragment",
+      "bytes": 3526,
+      "sha256": "9b22dde85c673d5c486cf598d550e1e23da9dd9593ff4736094e8290c611eaf6",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_0_wgsl",
+      "bytes": 4680,
+      "sha256": "9afedce44a377d8d7fef3224c0896785de9b4d347578c0ddd95614f7a32edd2a",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_1_vertex",
+      "bytes": 594,
+      "sha256": "41285953a9adec2779a7f92d9975c4ec03deb4a13cd13f62d07769289435e3c7",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_1_fragment",
+      "bytes": 2948,
+      "sha256": "37956f955b8f7fd786eb4ba3c9029bdc712f7aaae8810befbeacbbc10a374cbf",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_1_wgsl",
+      "bytes": 4061,
+      "sha256": "d39d4967ac03c9a7c88bc76e7b125d3fcfcd52ccef0639235774a34ea21fd40d",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_2_vertex",
+      "bytes": 602,
+      "sha256": "723e8dab45010fbd456a2b258129f7ddaf03365956d0b06cc59295c92943bbe3",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_2_fragment",
+      "bytes": 2258,
+      "sha256": "6359a60c8818fbd89a1fdd47d24488a0221b0c8359bb52f4d57eb362c9215086",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_2_wgsl",
+      "bytes": 3342,
+      "sha256": "6a5739f50f19aaf786f95d909df8b3c88c5f40021aaea4195c3a8140d46a5197",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_3_vertex",
+      "bytes": 8040,
+      "sha256": "933287e3aaea1e2d0dc1d200283c6b0c2c766570c53a773c9b0ead17f2d468ac",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_3_fragment",
+      "bytes": 528,
+      "sha256": "2b691fcde4bde44b0d2eefebb9533f3f1e387b88aca4ee115f2b9cc6892ff7fb",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_3_wgsl",
+      "bytes": 9528,
+      "sha256": "6b57e8944285f1431e132a49676a505dd905868db8b88b65b872d6bba8fe070f",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_4_vertex",
+      "bytes": 1363,
+      "sha256": "d8afe5efb4e603eb122e9c938a234f328bf924489c2b9d2da257b917641f7969",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_4_fragment",
+      "bytes": 455,
+      "sha256": "57b3cdabc27c3d21a57c9aa60ed7756d85f1da5d49880d3e4c3254e798a1fa56",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_4_wgsl",
+      "bytes": 2390,
+      "sha256": "a737d692930a41cdc41980c90392f2b05eb50b4e901e31390195bbdc56000328",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_5_vertex",
+      "bytes": 1363,
+      "sha256": "d8afe5efb4e603eb122e9c938a234f328bf924489c2b9d2da257b917641f7969",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_5_fragment",
+      "bytes": 455,
+      "sha256": "57b3cdabc27c3d21a57c9aa60ed7756d85f1da5d49880d3e4c3254e798a1fa56",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_5_wgsl",
+      "bytes": 2390,
+      "sha256": "a737d692930a41cdc41980c90392f2b05eb50b4e901e31390195bbdc56000328",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_6_vertex",
+      "bytes": 9435,
+      "sha256": "2ad2bd1f6953df2206a34b8e60148ca36e2f3027ad2c51087a35108ce3eb9d3a",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_6_fragment",
+      "bytes": 10324,
+      "sha256": "303306b8ec8a3bdce993f03c3946b26c1f4827093d36f12a42d8f07f1d94b893",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_6_wgsl",
+      "bytes": 21463,
+      "sha256": "e1e57860d74ea2a00f98b3bd35216d928b179225b2cd0ea2938738a90bf0ac37",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_7_vertex",
+      "bytes": 2776,
+      "sha256": "0e73e7a901104b70998f7f7bb6af4577f8629ff81830480e0b668d2e30621116",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_7_fragment",
+      "bytes": 10269,
+      "sha256": "17871ddbe0be19c53218d2f707f23c9b63c145ce7d01246893fd25c163d5c88f",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_7_wgsl",
+      "bytes": 15061,
+      "sha256": "45fecf1e02261fd11ed3a31bd054751d7a2f9ecac428d474cf3d8b0401436c3e",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_8_vertex",
+      "bytes": 11618,
+      "sha256": "c75d3e63606567295400c2b095a6cfb02119c0b723a6c7cf17c75aff49c9099b",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_8_fragment",
+      "bytes": 10411,
+      "sha256": "93021c8643329941386a046b77b6c84c7ce9e0e7674f73b7a5551dc2414c77a8",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_8_wgsl",
+      "bytes": 24136,
+      "sha256": "f0290a169177367c74c9b48341468c4de694b3637ea27199090c18b17896b175",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_9_vertex",
+      "bytes": 10511,
+      "sha256": "d00f746e487be93b7cd18c8cef16089c66ca6d300cf12ffa3179fdb9b83c6359",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_9_fragment",
+      "bytes": 615,
+      "sha256": "80c5b58f0c1dd116a8f5b8455e23b647a243233ea29b4315360afc953ba4f3ba",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_9_wgsl",
+      "bytes": 12570,
+      "sha256": "f6c53cf5382ba1f5671a25296bb2f56b4fd7dadc6662e2966db35374942323eb",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_10_vertex",
+      "bytes": 9609,
+      "sha256": "bdff48c81ecea4a19e9e97d96a9e61b9aa0ba6c19cdf3aea4058fb4af7d8f35c",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_10_fragment",
+      "bytes": 35101,
+      "sha256": "530a779eda3ebac7fc28fc1e29963f6c22208206503b8214f99217042659b389",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_10_wgsl",
+      "bytes": 47450,
+      "sha256": "b93bcbf642140b456028d323178cc4771a91f49fc4e0397f4fe994b96394eea6",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_11_vertex",
+      "bytes": 2885,
+      "sha256": "8bb92d192e28545c0d2bc6bd74833918312b5258f76daa214cba5eb3863fa0c5",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_11_fragment",
+      "bytes": 34942,
+      "sha256": "7a1b3f95fa18f9242a7e6d2f9aacebfd8ac224aae55f73814f18be1b4af4ec1d",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_11_wgsl",
+      "bytes": 40987,
+      "sha256": "b47ce71ba830829b2c6ea558fd017790dda351e13806d538477cfe2e3085fc79",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_12_vertex",
+      "bytes": 11792,
+      "sha256": "9490c783ee7bba121e0f55b88dc79d28dc44a06a09056896dd4a0aea0852865c",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_12_fragment",
+      "bytes": 35188,
+      "sha256": "f7740432b63f29199ed1484005b2b6816301abfef74b48a235a2278df3fe9428",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_12_wgsl",
+      "bytes": 50125,
+      "sha256": "3f11c33d68224dc65ef6f8300f14909fba13516533f711d29821f3fc5e6af15e",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_13_vertex",
+      "bytes": 575,
+      "sha256": "0b68e3a1636d3f74e7d1144f26f6690c67fb60d046a44bcc058199f7c303e192",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_13_fragment",
+      "bytes": 2944,
+      "sha256": "f3558514fefa6168c74dc417acdd4252b00744b0d4848d96670a3e06d8ffae13",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_13_wgsl",
+      "bytes": 3987,
+      "sha256": "bd8262035c0e21da514b243ccde83879c519efb004d77dd4c60b0c018cf00bcf",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_0_spirv",
+      "bytes": 8636,
+      "sha256": "bbaee6b70779335f906b949ba337247a63702167d1863fd68335607ee57fb997",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_1_spirv",
+      "bytes": 7412,
+      "sha256": "152f43ba241360bbd3ee74a756166159ed35dc4d7bd50c4ddc0d86808390ff36",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_2_spirv",
+      "bytes": 5912,
+      "sha256": "da427c20c4f290050c8544386aab45d9f46fc34f53759377ec28d3e1f7efdba5",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_3_spirv",
+      "bytes": 14876,
+      "sha256": "7539aa7f46a76e2c00e1e968647649c12659f09348c7447117afd255d44dab26",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_4_spirv",
+      "bytes": 3988,
+      "sha256": "d6dbb320873c984284eacc90746fca6627aa721ecf8a2e2ac1252e1ae6fa4c65",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_5_spirv",
+      "bytes": 3988,
+      "sha256": "d6dbb320873c984284eacc90746fca6627aa721ecf8a2e2ac1252e1ae6fa4c65",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_6_spirv",
+      "bytes": 32328,
+      "sha256": "d563009b37e7a2fa091444d3b7c03b1de89481e8ff0c246a15fca4672e240746",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_7_spirv",
+      "bytes": 22952,
+      "sha256": "820f87478bea0fd95b350576e58952dd8dbe4a04134f3098442a0c675daf64f2",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_8_spirv",
+      "bytes": 37696,
+      "sha256": "53f02aebe0cd55618cd9fd9405938e0b4b1495d4ff195bfda80f4416bce0c353",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_9_spirv",
+      "bytes": 21352,
+      "sha256": "95617363d63569c59bc7e35660649e9c5784817b3797cebbc3b868366f08bd5a",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_10_spirv",
+      "bytes": 72064,
+      "sha256": "a3a9c517daf658eab1c879404287fdacbcd846d1d5ed934531ef8e9e56689f45",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_11_spirv",
+      "bytes": 62704,
+      "sha256": "d44199f14656374df850b627c36241942a54cb39b0b19cea0ebe2f85f917c49a",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_12_spirv",
+      "bytes": 77268,
+      "sha256": "62ab04d46e941907c5d5a5c05368bd809156f7ffc982f845d74f2029dd6a6246",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_13_spirv",
+      "bytes": 7240,
+      "sha256": "05939528aa222b2b7970058606d58db5dbeada08cc3645ee04042c5b9ecfb693",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_0_metadata",
+      "bytes": 726,
+      "sha256": "f8cbe4196379256720b064ae0fad75057266eaafe10d1e8524078d69f22e08a0",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_1_metadata",
+      "bytes": 724,
+      "sha256": "f08690757fce4f7666d695c46a347219d755fe4bda153a4105108170b463d93b",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_2_metadata",
+      "bytes": 729,
+      "sha256": "b9b43de6e90cc9ef6b90c0f206ee7f046dae7080159887dff9630cf4beb7c087",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_3_metadata",
+      "bytes": 893,
+      "sha256": "9787d94fe39169b4c135e20573e7afa2f4bac47f55037714f9e17b9a6739e8cc",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_4_metadata",
+      "bytes": 892,
+      "sha256": "061aa74eec92192a86f44169c9a0800d8fae6809a34a66834ee3c62cb635438c",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_5_metadata",
+      "bytes": 892,
+      "sha256": "f2bad837859d5ef00d411b83f4175a9bbeaf2b7490deeef40e4afa460e7b234c",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_6_metadata",
+      "bytes": 911,
+      "sha256": "d6f7f8bf83a2ec2e521e19c0b76d3f445f85359b47ba4d2077b6127ff7805711",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_7_metadata",
+      "bytes": 910,
+      "sha256": "09d8af20aac95c2ffb90fa2be7528e23744b9f9b2efd0ec018022441f3f3e784",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_8_metadata",
+      "bytes": 1028,
+      "sha256": "579f7cd44f4fed481045d1e9ac69e4488a8c0863030e4bc56535e6da44fcc6da",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_9_metadata",
+      "bytes": 963,
+      "sha256": "8f0a30d84709f3f96f277312507cd22554cef6cd0e0c8451281c1919a5a870a8",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_10_metadata",
+      "bytes": 1117,
+      "sha256": "338a0e5f6e2fb5c5dd1861ac5ba843aebe17651386deb8e806e02b5de83dc7c9",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_11_metadata",
+      "bytes": 1173,
+      "sha256": "6d45f4dd9c6c670fc9bdf7355458ccb2d82cb959463e144edfa6029842bfb71b",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_12_metadata",
+      "bytes": 1164,
+      "sha256": "2a4d2257bb2dcb52f5202c4a7102bd98333bbfe229bc35dab7134aee418f54ac",
+      "identical": true
+    },
+    {
+      "name": "tide_shader_13_metadata",
+      "bytes": 732,
+      "sha256": "a5cdec12c4b5058675694766d3976e2a7efb273b98da16434ce97da58824707c",
+      "identical": true
+    }
+  ]
+}

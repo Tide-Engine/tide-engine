@@ -1,5 +1,227 @@
 # The docs site
 
+## Camera smoke waits for rendered updates (2026-11-06)
+
+Docs run 42263895626 failed only the material example's exact Reset-image
+comparison. The camera helper's `afterFrames` actually waited for 20 GPU draw
+calls; Render3D issues many calls per frame, so this did not establish even two
+rendered updates. Reset is handled by Overlay after Present: one update can
+still draw the camera state from before the button was handled.
+
+The test now counts completed animation callbacks that issued actual GPU draws,
+wrapping the game's existing requestAnimationFrame callback and preserving its
+receiver. Empty callbacks and callbacks that only prepare resources do not count.
+Each camera action waits for two such updates. This is neither 20 real frames
+nor an independent animation timer; scene equality, scene-change witnesses,
+input coordinates, shader/error checks and existing deadlines remain unchanged.
+No renderer, game, runtime or production website behavior changed.
+
+Validation uses the exact failed workflow's docs-site artifact, Node 24.22.1,
+and muted headless Chrome with software WebGPU. The focused materials run and
+combined render3d/materials/effects run pass all source, camera, exact Reset,
+material and collapsed-control assertions. A 30x CPU-throttled materials probe
+also passes: the new gate advances at least two completed drawing callbacks.
+The corresponding old-gate probe records waits of only one callback (33-42 draw
+calls), demonstrating the counter defect. Its Reset happened to pass locally;
+the exact hosted timing failure was not reproduced. Correct initial/reset
+captures share the failing CI run's final-image hash, while its earlier initial
+hash differed. Captures and diagnostic logs are under build/ci-docs-camera-final
+and build/ci-docs-materials-*; the production docs build passes. Hosted
+confirmation remains the integrating task's normal dev workflow.
+
+## The examples' test runs on Windows (2026-11-05)
+
+With WebGL gone, the docs' examples draw with WebGPU, and GitHub's Linux runners draw it without the page ever
+showing it (Chrome's software WebGPU; notes/testing.md, GL backends removed), so `npm run test:examples` failed
+there: the render3d examples compare what they show, and Chrome's GPU process also lost its device after a few
+examples. `.github/workflows/docs.yml` now has three jobs: Build (Linux: the examples, the site and its other
+tests, uploading `docs/build`, `docs/static` and `docs/prototypes.json` as the `docs-site` artifact), Examples
+(windows-2025, whose Chrome draws WebGPU through WARP: `npm ci`, the artifact, `npm run test:examples`) and Deploy
+(dev only, after both: the artifact into `docs/`, `flyctl deploy`). The site deploys only once every example drew.
+
+## Playground editor: Monaco, Tide colors and the browser language server (2026-11-04)
+
+The owner asked for Tide colors and completion in the playground, and for a wider
+code area ("the code editing part is very small horizontally"), keeping it in the docs.
+The textarea is now Monaco 0.57 (`src/lib/components/playground/editor.ts`, imported
+only after mount). It loads only the editor feature modules it uses
+(`monaco-editor/features/*/register`, plus the suggest widget's controller, which
+`features/suggest` doesn't bring), not Monaco's other languages. Colors come from
+`tools/tide-syntax`'s grammar through Shiki (`@shikijs/monaco`), as in the docs' code
+blocks, with the github light/dark themes on the site's code background. The site's
+theme toggle switches the editor's theme.
+
+The language server is the real tidels: `tidels_browser` (docs/playground/CMakeLists.txt)
+builds `compiler/lsp/*.c` without its stdio `main.c`, plus `docs/playground/tidels.c`,
+as a WASI reactor (`-mexec-model=reactor`). Its exports take one JSON-RPC message
+(`tidels_input`/`tidels_handle`) and return what the server sent, NUL-separated
+(`tidels_output`/`_len`). It runs without `defer`, so each change is analysed at once;
+the page sends the whole text after a 200 ms pause, and before any request so
+positions match. The compiler sources are now the static library
+`tide_browser_compiler`, shared by `tidec_browser` and `tidels_browser`, with
+unchanged flags. `language.mjs` (the client, shared by its worker and the Node test)
+and `language-worker.mjs` run it off the page's thread. The editor wires completion,
+hover, signature help, diagnostics (markers and a clickable problem list), document
+highlights, definition within the file, rename, formatting and folding. Definitions
+in engine headers are dropped, as the page has no tab for them. A server trap stops
+the language features; editing and compiling continue.
+
+Staging adds `tidels.bin` (1.17 MiB compressed) and `headers.bin` (0.39 MiB, the
+`include/tide/` headers that hovers and built-ins read), checked for imports like
+tidec. The editor downloads only these on load, while the compiler's 25 MiB still
+waits for the first build. `assets.mjs` holds the manifest/hash/gunzip loading both
+workers share.
+
+Layout: the playground's docs column has no maximum width, and a draggable,
+keyboard-adjustable divider sets the code's share (30-78%, default 60%, kept in
+localStorage). **Expand** fills the window below the header; Esc or Exit returns.
+Phones keep the stacked layout. `section.playground` carries `tideEditor` (value,
+setValue, focus, hasFocus) for the browser smoke. The layout's `.content.playground`
+div shares the class, so tests select the section.
+
+Validation: the web-release `docs_playground` build, `svelte-check` (zero errors and
+warnings) and the production build pass. All playground Node tests pass, including
+two new ones against the staged `tidels.bin`: hover on a component field and an
+engine built-in, member completion, error diagnostics and their clearing, rename
+and formatting. `TIDE_EXAMPLES=playground node tests/examples.mjs` (WebGL) passes
+with new checks for grammar coloring, editor markers and the problem list during
+a syntax error and their clearing after Reset. Screenshots checked by eye: dark,
+light, Expand, the member suggestion list and phone. Other browsers, the WebGPU
+smoke and real phones are not exercised.
+
+## Browser host and native build code (2026-11-03)
+
+Merging the new build-code feature exposed native process headers (`spawn.h`,
+signals/wait) in the browser compiler's source glob. The playground cannot run
+native executables. Its target now substitutes a host implementation of
+`build_code_run` for the native runner: programs without build roots continue
+through the same compiler, while a root gets a source diagnostic explaining the
+browser limit and pointing to `tide build` or `tide run --web`. No native build
+runner or language/checker behavior changes. This follows the existing host
+boundary that refuses native URL-fetch processes; it adds no browser execution
+service. The playground and Build code pages describe the installed-tool path.
+
+The actual merged Clang 23/WASI compiler, demo and staging import checks pass.
+All seven playground integration tests pass, including build-code refusal with
+its source location and actionable note, real texture packs and the existing
+compiler/reload/error-recovery checks. Six focused Windows ASan CLI CTests pass
+after the merge, including all eight overlap scenarios. The production docs
+build passes. Linux/macOS and final package/release validation remain CI gates.
+
+## Browser compiler asset-cache integration (2026-11-03)
+
+The persistent importer cache exposed two missing pieces in the browser target:
+its direct compiler-source build lacked the vendor fingerprint that native
+`tidec_core` receives through a source property, and WASI requires explicit
+`getpid` emulation. The compiler CMake directory now exports that same computed
+fingerprint for `tidec_browser`; its build defines `_WASI_EMULATED_GETPID` and
+links `wasi-emulated-getpid`. The placeholder process ID and per-process serial
+serve temporary cache filenames inside each compilation's private virtual
+filesystem. Browser builds still start with a fresh filesystem; this does not
+add persistent browser storage or change native cache behavior.
+
+Validation: the actual Clang 23/WASI `docs_playground` build and staging import
+checks pass. All six `test:playground` integration tests pass, including a new
+real PNG import compiled twice in separate virtual filesystems with identical
+nonempty packs, alongside reload exports, syntax recovery, layout changes,
+missing assets and unsupported-import rejection. The next normal push run
+validates the Linux Docs build and deployment.
+
+## Geometry capture guidance (2026-11-03)
+
+Debug views documents `geometry.rows`, asset/view attribution, stored versus
+submitted counts, LOD, repeated passes, coverage/identity limitations and bounded
+loss. Its Python example ranks meshes by submitted triangles per measured frame.
+No route, browser or export pipeline change. Node 24.22.1 production build
+passes, including the usual allowed unstaged playable-page 404 diagnostics.
+
+
+## GPU pass capture guidance (2026-11-03)
+
+Debug views now documents the additive gpu_passes report object, target/order/
+size and shader membership, completed-sample work counts, percentile ranking,
+coverage/storage limits and platform availability. The AI guide, compact context
+and starter AGENTS.md point agents to that breakdown during GPU optimization.
+Mixed passes have no fabricated per-shader/view attribution; CPU recording and
+frame GPU total keep their meanings. Runtime tests are in standard-host.md and
+rendering.md. The Node 24.22.1 production docs build passes with the usual
+allowed unstaged playable-page 404 diagnostics. No browser UI or route changes.
+
+
+## Profile captures and agent guidance (2026-11-02)
+
+The CLI and Debug views pages document native desktop JSON captures independent
+of panels, bounded runs, warmup, per-player reports, actual CPU work and source-
+attributed draw diagnostics. Debug views distinguishes draw recording from GPU
+submission and frustum-only timing, and explains a controlled scoped-culling
+comparison without treating low rejection as proof of redundant work. The AI
+guide, compact overview, starter AGENTS.md and portable skill link that workflow.
+The Debug views reference describes schema/version checks, build metadata,
+source declarations versus helper attribution, aggregate worker categories,
+CPU phase/source-row denominators, asynchronous GPU availability, empty
+captures, 4,096-sample percentile estimates and independent source/draw caps.
+Its Python example ranks views and inclusive mesh recording without treating
+camera ordinals as stable named passes or low rejection as proof of waste.
+Markdown/LLM/skill exports continue to derive from these same sources; no export
+format, route, navigation, browser behavior or dependency changes. Runtime and
+CLI contracts/tests belong in standard-host.md and cli-and-packages.md.
+Validation: Node 24.22.1 `npm ci` and `npm run build` passed (logs
+`build/profile-docs-install.log` and `build/profile-docs-build.log`), with the
+existing allowed unstaged example/game 404s. Windows ASan CLI dispatch, help and
+hidden-run checks and the generated stripped-metadata regression pass. Final
+native/web profiler integration results are recorded in notes/standard-host.md;
+no new onboarding trial or performance result is claimed by the prose change.
+
+## Code-oriented particle package guide (2026-11-02)
+
+The package overview and sidebar include Particles, with a guide covering
+code-defined emission/movement, local ownership, capacity and timing,
+instanced 2D/3D drawing, custom shaders and explicit render targets. Its
+source-shown smoke/sparks example uses the ordinary pure-Tide package map,
+local state, pointer bursts and compact controls above the host stats corner.
+The example builder links a package target only when the package has C sources;
+a pure-Tide package's same-named test executable is not a library dependency.
+No site infrastructure, language or engine rendering behavior changed.
+Package contracts and focused validation are recorded in `notes/particles.md`.
+The production docs build passes on Node 24.22.1, with the existing allowed
+404 diagnostics for unstaged playable pages in this checkout.
+
+## Render2D package example (2026-11-02)
+
+The new package guide and sidebar/overview entry link an interactive lantern
+garden. The ordinary docs-example build selects the render2d package, with
+analytic color/normal/alpha PNGs and their standard-library generator beside
+the source. Raised copper plates, cutout foliage and two shadowed point lights
+demonstrate elevation, normal maps, GI and bloom with independent controls.
+The camera and compact controls fit both 376x400 embeds and 960x540 windows.
+
+Native and web-release examples compile without warnings. Scripted native
+captures verify the toggles; narrow and wide captures were visually inspected.
+The Node 24.22.1 production docs build and selected source/rendering checks pass
+on WebGL and WebGPU, with the existing allowed unstaged-example 404s. Rendering
+contracts, backend tests, measured costs and limitations are in render2d.md.
+After merging dev's compiler and draw-resource changes, the native/web example
+rebuilds, docs build and both selected browser smoke checks pass again.
+
+## Newton removal (2026-10-31)
+
+Owner retired the slow experimental Newton package. Its public page and
+sidebar entry are removed, along with references in the package overview,
+usage guide, README and sharding spec. Eight bundled packages remain, including
+two physics integrations (Box2D and Box3D). No redirect or alternate Newton
+integration is introduced. Removal/build validation is in notes/newton.md.
+
+
+## Unity version selection (2026-10-31)
+
+The CLI's Unity guide and package README document Window > Tide > Versions,
+paired package/compiler switching, dev updates and unpublished-commit handling.
+The release endpoint adds an exact-match flag; releases-and-ci.md and unity.md
+record its contracts and regression tests. Node 24.22.1 docs production build
+passes with the existing allowed unstaged game/example 404s. Normal dev
+deployment publishes the endpoint; no manual deployment was requested.
+
+
 ## Compact desktop minimize example (2026-10-29)
 
 The owner requested improving or removing gui-desktop because it overflowed
@@ -1895,7 +2117,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Validation**: `earth_tests` natively and on the web: in one world, the townsfolk and traffic, two players landing by a town's fountain (out of it), walking about 5 m in a second on the ground, turning into a car and driving across country to over 15 m/s, and back, a townsperson's car stopping short of a player standing in front of it and going on, two players high-fiving once, a leaving player's walker gone; and in four regions, a player going to a town on one shard then one on another, owned once all along, gone 25 seconds after leaving. Scripted native captures and the web-release page over WebGL and WebGPU in headless Chrome: the globe, a town, the country, the transform half done, driving. Not tried: a phone, a slow GPU (the planet's frag loops over eleven roads and ten towns a pixel), many players at once.
 - A whole game is one frame on its page (the owner, 2026-10-06, of Siege, which Towers has since taken the place of, and of Alley, the game Sumo took the place of, which were two frames in one match: "make it only one game instance with a lobby setup"): an iframe in the page's Markdown, `<iframe class="demo-frame" src="/<name>/?embedded" ...>`, as Duel's is, and the game's own lobby is how a reader gets other machines in. `roomy` beside `demo-frame` (`docs/src/app.css`) gives a game that opens on a lobby the height it needs at narrow widths, as `duel` gives Duel. Nothing shows two frames of a whole game any more: `::: tide-game` is gone, with its CSS and its part of the test. A frame that was in the page as it came, and clicked before the page's script ran, shows its focus all the same (`showsFocus` in `docs/src/lib/examples.ts` looks at `document.activeElement`).
 - Pages have live examples beside their code, wherever a small game says it better (`docs/guide/examples.md` lists them all, and a page that explains something a game can show gets one). Each is a standalone game in `docs/examples/<id>.tide`, included as code with `<<< @/examples/<id>.tide` inside `::: tide-example <id> <title>`. Code and the running game come from the same source, and a page shows the source of every example it runs.
-  - An example starts by itself once it's in view, and stops once it's more than a screen away, so a page runs what its reader is looking at and nothing else (agreed: the owner asked why they'd have to start each one). In view is half of where it draws on screen, and still there a moment later, so scrolling past starts nothing. Stop holds until the reader presses Run, Restart starts it over, and leaving the page disposes its frames. A reader who asked their system for less motion or less data starts each one themselves. `backend=` in a docs page's address goes on to its games.
+  - An example starts by itself once it's in view, and stops once it's more than a screen away, so a page runs what its reader is looking at and nothing else (agreed: the owner asked why they'd have to start each one). In view is half of where it draws on screen, and still there a moment later, so scrolling past starts nothing. Stop holds until the reader presses Run, Restart starts it over, and leaving the page disposes its frames. A reader who asked their system for less motion or less data starts each one themselves. (`backend=` in a docs page's address went on to its games until 2026-11-05, when the web's one backend became WebGPU.)
   - One comes up in one step, with nothing to watch load (the owner, 2026-10-05: the placeholder, then an empty frame, then the game was slow and distracting; about 800 ms on the live site, of which 450 an empty frame). It loads within a screen of the view, its program waiting (`wait`, see Web builds), so that once it has been in view a moment, starting it is all that's left: about 30 ms. Its frame is there unseen until its game has drawn (`Tide.start()`'s promise, then the `shown` class), over the background the examples draw on, and what it says while it loads only shows after most of a second (`.example-status.loading` in `docs/src/app.css`). A match loads its first player so, and the second once the first has its room's code. What loads in a docs build without compiled examples isn't a game (it has no `Tide.start`), which is how the page tells: no request asks first.
   - A page downloads all its examples once it has loaded and has nothing else to do (the owner, 2026-10-05: "why dont we pre-download it"), nearest the view first and one at a time, each after the examples near the view have loaded theirs (a frame's download takes no `fetchpriority`: Chrome gives every one its highest), each in a frame nobody sees with `#download` after its address (see Web builds), which is removed once it loaded (`download` in `docs/src/lib/examples.ts`). So an example the reader jumps to, or scrolls to faster than a screen ahead, has no download left: its frame asks whether its page changed (a few hundred bytes) and has it from the cache. The site sends no freshness for these pages, only an ETag, so nothing is ever stale after a deploy. Not for a reader who asked for less data or motion, nor a match's second player, whose address has the room's code; and the example in view as a page opens has no head start.
   - The page scrolls over them (`embedded`, see Web builds): the wheel always, and a finger until it taps the game, from when a swipe on the game is the game's until a tap elsewhere. A frame whose game has the focus, and so the keyboard and those swipes, shows it with an outline (`focused`, which `showsFocus` in `docs/src/lib/examples.ts` sets from the frame's own focus and blur: CSS's `:focus` isn't an iframe's whose page has the focus), and a press on the page elsewhere takes the focus back from the frame, as not every browser does that for a press on text. Sand's and Duel's frames, in their pages' Markdown, say `?embedded` in their address and show the focus the same way.
@@ -1907,7 +2129,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - The Assets page also documents PSD imports (2026-10-08): a saved RGB 8/16-bit composite as `Texture`, `Grid2<Color>` or a cubemap face, with Photoshop's Maximize Compatibility for saving and no Photoshop installation for builds. The spec and Editors page name both PNG and PSD image assets and completion formats. Runtime `grid.Decode` remains PNG-only. The docs build passed; decoding and asset behavior are checked by compiler tests rather than another live sprite example.
   - Two examples are built with a package that comes with tide: `physics-2d` with Box2D and `physics-3d` with Box3D, on the pages of `docs/packages/`. `tide_add_game` reads no `tide.packages`, so `docs/examples/CMakeLists.txt` names each with its package's folder (`TIDE_DOC_PACKAGE_<id>`) and builds it as tide builds a game that lists the package: the package's `.tide` files as `PACKAGES`, so they compile first and its systems run before the example's, its `bridge.c` with the example's C, and the library's own sources as `tide_box2d` or `tide_box3d`, which `packages/CMakeLists.txt` builds for its tests. So the top `CMakeLists.txt` adds `docs/examples` after `packages`. It's the same natively and on the web, and `docs_examples` builds them with the rest, so the docs workflow builds what it did.
   - The 2D example draws a ball's spoke and each crate's turn. Box2D's `Body.angle` is now tagged `[Rotation]`, so a view blends the shortest way across the ±π wrap. The physics pages describe the current package limits (what's lost, asleep or not sent, each checked with a game), where they apply or under Not there yet: a line goes from its page when its package no longer does it.
-- To build these locally: `cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON`, then `cmake --build --preset web-release --target docs_examples`. The target stages their self-contained pages at `docs/static/examples/<id>/index.html`; these generated files are ignored. The docs workflow builds them and runs `npm run test:examples` after the site build (`docs/tests/examples.mjs`): headless Chrome or Edge finds every example in the Markdown and checks that each shows its source and draws once it's scrolled into view (of two players, the first frame; the second joins through a relay in the test's process, which nothing checks), that the frame of each whole game that opens on a lobby (Towers, Sumo: the frames the Markdown marks `demo-frame roomy`) draws on its page, and that each game the Samples gallery links to draws on its own page. That's all, on purpose (the owner, 2026-10-07: "its not that deep, just get the damn docs up"): the test used to drive the pages' scrolling, two players meeting through the relay, the lobbies' buttons and the phone layout in the browser, six minutes of the flakiest kind of test there is, between a docs change and the site; what a page does around a game is the platform tests' (`web_embedded`, `web_lag`, `web_rooms`) and the games' own. It lists a page's examples, and the gallery's cards, once the page's document is parsed (`document.readyState`), never as soon as the first one is there: the views page was over a megabyte of HTML then (the frags' page still is), and listed at first sight it came up short of its last example, which failed a run on CI (2026-10-07; made to happen here with the page's own check in a loop, and on a slow connection nearly every time). `TIDE_BROWSER` selects a browser; `TIDE_EXAMPLE_BACKEND=webgpu` checks WebGPU too. `TIDE_EXAMPLES=<id>,<id>` runs only those (a game's name like an example's), and `TIDE_DOCS_SCREENSHOTS=<folder>` saves a picture of each as it runs in its page, to look at. A game whose page isn't in `docs/static/` fails there, so the workflow builds them first.
+- To build these locally: `cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON`, then `cmake --build --preset web-release --target docs_examples`. The target stages their self-contained pages at `docs/static/examples/<id>/index.html`; these generated files are ignored. The docs workflow builds them and runs `npm run test:examples` after the site build (`docs/tests/examples.mjs`): headless Chrome or Edge finds every example in the Markdown and checks that each shows its source and draws once it's scrolled into view (of two players, the first frame; the second joins through a relay in the test's process, which nothing checks), that the frame of each whole game that opens on a lobby (Towers, Sumo: the frames the Markdown marks `demo-frame roomy`) draws on its page, and that each game the Samples gallery links to draws on its own page. That's all, on purpose (the owner, 2026-10-07: "its not that deep, just get the damn docs up"): the test used to drive the pages' scrolling, two players meeting through the relay, the lobbies' buttons and the phone layout in the browser, six minutes of the flakiest kind of test there is, between a docs change and the site; what a page does around a game is the platform tests' (`web_embedded`, `web_lag`, `web_rooms`) and the games' own. It lists a page's examples, and the gallery's cards, once the page's document is parsed (`document.readyState`), never as soon as the first one is there: the views page was over a megabyte of HTML then (the frags' page still is), and listed at first sight it came up short of its last example, which failed a run on CI (2026-10-07; made to happen here with the page's own check in a loop, and on a slow connection nearly every time). `TIDE_BROWSER` selects a browser; the examples draw on its software WebGPU (since 2026-11-05 the only backend; `TIDE_EXAMPLE_BACKEND`, which chose WebGL or WebGPU, is gone). `TIDE_EXAMPLES=<id>,<id>` runs only those (a game's name like an example's), and `TIDE_DOCS_SCREENSHOTS=<folder>` saves a picture of each as it runs in its page, to look at. A game whose page isn't in `docs/static/` fails there, so the workflow builds them first.
   - The quick way to look at one while writing it is the native build, with no browser: `cmake --preset debug -DTIDE_DOC_EXAMPLES=ON`, `cmake --build --preset debug --target docs_example_<id>` (dashes as underscores), then `build/debug/bin/docs_example_<id> --frames 40 --capture x.png --size 376 400`, or a `--script` for its clicks.
 - The docs' Markdown fences Tide as `csharp`, which GitHub highlights; the site highlights it with the editors' grammar (`tools/tide-syntax`). The workflow tests the grammar first, through the site's Shiki: `npm run test:grammar` in `docs/` checks the scopes of `tools/tide-syntax/test/probe.tide`'s cases and of the compiler's test programs.
 

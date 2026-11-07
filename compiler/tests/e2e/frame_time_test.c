@@ -20,6 +20,9 @@ static void draw_frame(const tide_world *w)
 static void frame(const tide_world *w, const float seconds)
 {
     tide_local_frame_time(&local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, seconds);
+#endif
     draw_frame(w);
 }
 

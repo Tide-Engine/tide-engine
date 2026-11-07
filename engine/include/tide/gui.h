@@ -133,6 +133,7 @@ typedef struct tide_gui_theme {
     float text_size;      // Text's size, in pixels; a widget's height follows it
     float padding;        // Inside an area, around its content, and inside a button, from its sides
     float spacing;        // Between widgets
+    const tide_font *font; // Its text's (tide/draw.h): TIDE_FONT_REGULAR, the default, or any other
 } tide_gui_theme;
 
 // What the player is doing with a control (GUI.Control). Tide's GUIControl
@@ -275,6 +276,52 @@ typedef struct tide_gui_rect {
     uint32_t scroll; // Innermost scroll container for wheel routing
 } tide_gui_rect;
 
+// What kind of widget a remembered place is, for a tool that lists them
+// (tide_gui_controls). 0 is a place nothing described: an area, or a widget
+// of a kind without a name here.
+typedef enum tide_gui_kind {
+    TIDE_GUI_KIND_NONE,
+    TIDE_GUI_KIND_BUTTON,
+    TIDE_GUI_KIND_CONTROL, // GUI.Control: a widget its view draws itself
+    TIDE_GUI_KIND_TOGGLE,
+    TIDE_GUI_KIND_SLIDER,
+    TIDE_GUI_KIND_NUMBER, // An int or float field, or one box of a vector's or a color's
+    TIDE_GUI_KIND_TEXT,
+} tide_gui_kind;
+
+#define TIDE_GUI_LABELS 65536 // Bytes of a frame's labels a listing keeps: past them, labels are empty
+
+// A place's description, beside tide_gui.rects: what it is and its label.
+typedef struct tide_gui_described {
+    uint8_t kind; // tide_gui_kind
+    bool disabled;
+    uint16_t label_length;
+    uint32_t label; // Where its label starts in the listing's labels
+} tide_gui_described;
+
+// What a frame's widgets were, kept by a GUI whose host gives it one
+// (tide_gui.listing): an agent's interactive run lists them, so it can click
+// one by its number or label rather than by guessing pixels from a picture.
+// Nothing describes a widget without one.
+typedef struct tide_gui_listing {
+    tide_gui_described places[TIDE_GUI_MAX_RECTS], places_next[TIDE_GUI_MAX_RECTS];
+    char labels[TIDE_GUI_LABELS], labels_next[TIDE_GUI_LABELS];
+    uint32_t label_size, label_size_next;
+} tide_gui_listing;
+
+// One of a frame's widgets, as tide_gui_controls gives it.
+typedef struct tide_gui_listed {
+    tide_rect rect;  // Where it is on the screen, in logical pixels, less what a scroll's clip hides
+    tide_float2 at;  // A point on it where it's on top: a click there is its; its rect's center when covered
+    tide_gui_kind kind;
+    const char *label; // The listing's copy, label_length bytes, not terminated
+    uint32_t label_length;
+    uint32_t id;
+    bool disabled; // In a Disabled block: it takes no clicks
+    bool covered;  // Another widget or an area is over every part of it
+    bool focused;
+} tide_gui_listed;
+
 // A key or a gamepad's button that went down while the keyboard and the
 // gamepad were the GUI's: it's the GUI's until it's let go, whatever became of
 // the widget meanwhile. From views until a frame has seen it up, and from the
@@ -332,6 +379,14 @@ typedef struct tide_gui {
     // Where the frame's views say how long each took (tide/profile.h), or
     // NULL: nothing is measured. The host's, set before each tide_frame.
     tide_profile *profile;
+    // Where the frame's widgets are described (tide_gui_controls), or NULL:
+    // nothing is. The host's, set before each tide_frame.
+    tide_gui_listing *listing;
+    bool listed; // The last frame had one: its places are described
+    // The description the next widget's place takes (describe in gui.c)
+    uint8_t describing;
+    uint32_t describing_id;
+    const char *describing_label;
 
     // Kept between frames
     uint32_t frame;
@@ -436,6 +491,11 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw);
 // view said shows the keyboard (GUI.ShowKeyboard) in the frame that just
 // ended. Phones show their keyboard meanwhile (tide_platform_typing).
 bool tide_gui_typing(const tide_gui *g);
+// The widgets the last frame drew, in the order it drew them, into `out`, up
+// to `capacity`; returns how many there were. A place nothing described
+// (an area) isn't one; nor is a widget under a modal, which takes no clicks.
+// Only a GUI with a listing describes its widgets: 0 without one.
+uint32_t tide_gui_controls(const tide_gui *g, tide_gui_listed *out, uint32_t capacity);
 
 // Whether the game wants the cursor locked: a view asked (Cursor.Lock) in the
 // frame that just ended, and no modal is up, whose widgets need the pointer.

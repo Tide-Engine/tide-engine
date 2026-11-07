@@ -7,51 +7,78 @@
 
 #include "tide/list.h"
 #include "tide/pack.h"
+#include "tide/time.h"
 
 // ---------------------------------------------------------------------------
 // The scratch area: a stack of bytes, one per thread, in pieces (see
 // tide/text.h).
 //
-// What's in it is addressed by offsets of 30 bits (tide_text, tide_list), so
-// the area can't move what it holds, and it grows by adding a piece instead:
-// memory of its own, a whole number of slots of TIDE_SCRATCH_BYTES, which
-// takes the offsets from the next slot's start, and is as big as what it's
-// made for needs, so a list or a text of any size the offsets reach is in one
-// piece, side by side. The offsets a piece skips at the end of the one before
-// are never used. The area starts with a piece of one slot, which stays, as
+// What's in it is addressed by offsets (tide_text, tide_list), so the area
+// can't move what it holds, and it grows by adding a piece instead: memory of
+// its own, a whole number of slots of TIDE_SCRATCH_BYTES, which takes the
+// offsets from the next slot's start, and is as big as what it's made for
+// needs, so a list or a text of any size is in one piece, side by side. The
+// table of slots grows as the pieces need it to. The offsets a piece skips at
+// the end of the one before are never used. The area starts with a piece of one slot, which stays, as
 // the area did when it was one allocation; the others go when the area goes
 // back to a mark from before them, but the biggest of those let go at once is
 // kept as a spare for the next piece (up to SPARE_SLOTS), so code that makes
-// something big for each entity doesn't allocate it each time. A piece made
+// something big for each entity doesn't allocate it each time. A spare nothing
+// took for SPARE_IDLE_NS goes too (tide_scratch_trim), so a thread that made
+// something big once doesn't keep its memory from the rest. A piece made
 // of the spare only takes the slots asked for, so where things go depends on
 // what was made since the mark, never on what came and went before.
 
-TIDE_THREAD_LOCAL char *tide_scratch_slots[TIDE_SCRATCH_SLOTS];
-TIDE_THREAD_LOCAL uint32_t tide_scratch_top; // The top of the stack: an offset (tide/text.h)
-static TIDE_THREAD_LOCAL uint32_t scratch_end;  // Where the piece the top is in ends: no room past it
+TIDE_THREAD_LOCAL char **tide_scratch_slots;
+TIDE_THREAD_LOCAL char *tide_pack_memory; // Set by tide_pack_use (pack_load.c)
+TIDE_THREAD_LOCAL uint64_t tide_scratch_top;   // The top of the stack: an offset (tide/text.h)
+static TIDE_THREAD_LOCAL uint64_t scratch_end; // Where the piece the top is in ends: no room past it
+static TIDE_THREAD_LOCAL uint64_t slot_room;   // The slots tide_scratch_slots has room for
 
 typedef struct scratch_piece {
-    uint32_t start; // Its first offset: a slot's start
-    uint32_t slots; // The slots it takes
-    uint32_t room;  // The slots its memory has: as many or more
+    uint64_t start; // Its first offset: a slot's start
+    uint64_t slots; // The slots it takes
+    uint64_t room;  // The slots its memory has: as many or more
     char *memory;
 } scratch_piece;
 
 #define SPARE_SLOTS 64u // The biggest piece kept as a spare: 64 MiB
+#define SPARE_IDLE_NS 1000000000u // A spare nothing took for this long goes: a second
 
 static TIDE_THREAD_LOCAL scratch_piece *pieces; // In order, the first at offset 0
 static TIDE_THREAD_LOCAL uint32_t piece_count;
 static TIDE_THREAD_LOCAL uint32_t piece_room;
 static TIDE_THREAD_LOCAL scratch_piece spare; // Let go, kept for the next piece; `memory` NULL for none
+static TIDE_THREAD_LOCAL uint64_t spare_since; // When it was let go (tide_time_now_ns)
+static TIDE_THREAD_LOCAL uint32_t empties;     // Times the area went back to empty with a spare, for tide_scratch_trim
+
+bool tide_scratch_trim(const uint64_t idle_ns)
+{
+    if (!spare.memory) return false;
+    if (idle_ns && tide_time_now_ns() - spare_since < idle_ns) return true;
+    free(spare.memory);
+    spare.memory = NULL;
+    return false;
+}
 
 static void map_piece(const scratch_piece *p, const bool mapped)
 {
-    for (uint32_t k = 0; k < p->slots; k++) {
-        tide_scratch_slots[(p->start >> TIDE_SCRATCH_SHIFT) + k] = mapped ? p->memory + ((size_t)k << TIDE_SCRATCH_SHIFT) : NULL;
+    const uint64_t first = p->start >> TIDE_SCRATCH_SHIFT;
+    if (mapped && first + p->slots > slot_room) { // Only this thread reads its table, so it can move
+        uint64_t room = slot_room ? slot_room : 64u;
+        while (room < first + p->slots) room *= 2u;
+        if (room > SIZE_MAX / sizeof *tide_scratch_slots) tide_out_of_memory();
+        tide_scratch_slots = tide_realloc(tide_scratch_slots, (size_t)slot_room * sizeof *tide_scratch_slots,
+                                          (size_t)room * sizeof *tide_scratch_slots);
+        memset(tide_scratch_slots + slot_room, 0, (size_t)(room - slot_room) * sizeof *tide_scratch_slots);
+        slot_room = room;
+    }
+    for (uint64_t k = 0; k < p->slots; k++) {
+        tide_scratch_slots[first + k] = mapped ? p->memory + ((size_t)k << TIDE_SCRATCH_SHIFT) : NULL;
     }
 }
 
-void tide_scratch_reset_to(const uint32_t mark)
+void tide_scratch_reset_to(const uint64_t mark)
 {
     if (mark >= tide_scratch_top) return;
     tide_scratch_top = mark;
@@ -68,6 +95,9 @@ void tide_scratch_reset_to(const uint32_t mark)
                 free(p.memory);
             }
         }
+        if (spare.memory) spare_since = tide_time_now_ns();
+    } else if (!mark && spare.memory && ++empties % 256u == 0) { // Now and then, not at every row
+        tide_scratch_trim(SPARE_IDLE_NS);
     }
     const scratch_piece *top = &pieces[piece_count - 1u]; // Which the mark is in: the one after it started where it ends
     scratch_end = top->start + (top->slots << TIDE_SCRATCH_SHIFT);
@@ -85,18 +115,25 @@ void tide_scratch_free(void)
     piece_room = 0;
     free(spare.memory);
     spare.memory = NULL;
+    free(tide_scratch_slots);
+    tide_scratch_slots = NULL;
+    slot_room = 0;
     tide_scratch_top = 0;
     scratch_end = 0;
 }
 
-// Ends the program: `what` of `bytes` bytes can't go in the scratch area, for
-// the reason `why`.
-static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const char *why)
+// Ends the program: `what` of `bytes` bytes can't go in the scratch area, as
+// its offsets are used up, or there's no memory for it after `waited` ms
+// (tide_memory_wait).
+static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const bool offsets, const uint32_t waited)
 {
-    fprintf(stderr,
-            "tide: out of memory: %s of %llu bytes can't go in the scratch area (%s), which holds %u bytes on this thread: the text, "
-            "lists and grids code makes along the way, kept until their system, view or handler is done\n",
-            what, (unsigned long long)bytes, why, (unsigned)tide_scratch_top);
+    char said[512];
+    snprintf(said, sizeof said,
+             "%s of %llu bytes can't go in the scratch area, which holds %llu bytes on this thread: the text, lists and grids code "
+             "makes along the way, kept until their system, view or handler is done",
+             what, (unsigned long long)bytes, (unsigned long long)tide_scratch_top);
+    if (!offsets) tide_memory_ran_out(said, waited);
+    fprintf(stderr, "tide: out of memory: %s; its offsets are used up\n", said);
     abort();
 }
 
@@ -104,21 +141,24 @@ static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const
 // last on, and the top of the stack moved to its start.
 static void add_piece(const uint64_t bytes, const char *what)
 {
-    // The pack (tide/pack.h) has the offsets from TIDE_PACK_BASE on while one is loaded
-    const uint64_t limit = tide_pack_region_slots ? TIDE_PACK_BASE : (uint64_t)TIDE_SCRATCH_SLOTS << TIDE_SCRATCH_SHIFT;
     const uint64_t start = scratch_end; // A slot's start: pieces are whole slots
     const uint64_t slots = (bytes + TIDE_SCRATCH_BYTES - 1u) >> TIDE_SCRATCH_SHIFT;
-    if (start + (slots << TIDE_SCRATCH_SHIFT) > limit) {
-        scratch_full(what, bytes, tide_pack_region_slots ? "past the 512 MiB a thread's offsets reach beside the pack" : "past the 1 GiB a thread's offsets reach");
+    // Memory runs out first: the pack (tide/pack.h) has the offsets from TIDE_PACK_BASE on, and size_t is a
+    // piece's size
+    if (slots > (TIDE_PACK_BASE - start) >> TIDE_SCRATCH_SHIFT || slots > SIZE_MAX >> TIDE_SCRATCH_SHIFT) {
+        scratch_full(what, bytes, true, 0);
     }
-    scratch_piece p = {(uint32_t)start, (uint32_t)slots, (uint32_t)slots, NULL};
+    scratch_piece p = {start, slots, slots, NULL};
     if (spare.memory && spare.room >= slots) {
         p.room = spare.room;
         p.memory = spare.memory;
     } else {
         free(spare.memory);
-        p.memory = malloc((size_t)slots << TIDE_SCRATCH_SHIFT);
-        if (!p.memory) scratch_full(what, bytes, "the machine has no more memory");
+        spare.memory = NULL;
+        const size_t size = (size_t)slots << TIDE_SCRATCH_SHIFT;
+        uint32_t waited = 0; // Where the system has none for a moment, it waits for it
+        while (!(p.memory = malloc(size))) if (!tide_memory_wait(size, &waited)) scratch_full(what, bytes, false, waited);
+        tide_memory_waited(size, waited);
         tide_memory_sync(); // Before anything touches it (see tide/page.h)
     }
     spare.memory = NULL;
@@ -135,10 +175,10 @@ static void add_piece(const uint64_t bytes, const char *what)
 
 // Room for `bytes` bytes (one at least), at an offset that's a multiple of
 // `align` (a power of two): the offset. `what` is for when there's none.
-static uint32_t scratch_take(const uint32_t bytes, const uint32_t align, const char *what)
+static uint64_t scratch_take(const uint64_t bytes, const uint32_t align, const char *what)
 {
-    uint32_t at = (tide_scratch_top + align - 1u) & ~(align - 1u);
-    if ((uint64_t)at + bytes > scratch_end) {
+    uint64_t at = (tide_scratch_top + align - 1u) & ~(uint64_t)(align - 1u);
+    if (at > scratch_end || bytes > scratch_end - at) {
         add_piece(bytes, what); // Its start is a slot's: aligned
         at = tide_scratch_top;
     }
@@ -727,10 +767,14 @@ tide_str tide_str_add_entity(tide_str a, const tide_entity e, const bool local)
 {
     a = add_ascii(a, local ? "LocalEntity(" : "Entity(", local ? 12 : 7);
     if (tide_entity_is_null(e)) return add_ascii(a, "none)", 5);
-    if (tide_entity_is_temporary(e)) return add_ascii(a, "new)", 4); // Its ID comes once its system is done
-    a = tide_str_add_int(a, (int32_t)e.index, 0);
-    a = add_ascii(a, ":", 1);
-    a = tide_str_add_int(a, (int32_t)e.generation, 0);
+    char identity[33];
+    static const char hex[] = "0123456789abcdef";
+    for (uint32_t i = 0; i < 16; i++) {
+        identity[i] = hex[(e.birth >> ((15u - i) * 4u)) & 15u];
+        identity[17u + i] = hex[(e.lineage >> ((15u - i) * 4u)) & 15u];
+    }
+    identity[16] = ':';
+    a = add_ascii(a, identity, sizeof identity);
     return add_ascii(a, ")", 1);
 }
 
@@ -1190,7 +1234,7 @@ bool tide_str_from_bytes(const tide_list bytes, tide_str *text)
     const int32_t count = tide_list_count(bytes);
     if (count <= 0) return true;
     char *to = scratch_alloc((uint32_t)count);
-    if (bytes.at >> 30 == TIDE_IN_SCRATCH) { // Side by side
+    if (tide_handle_where(bytes.at) == TIDE_IN_SCRATCH) { // Side by side
         memcpy(to, tide_list_at(bytes, 0, 1u), (size_t)count);
     } else {
         for (int32_t i = 0; i < count; i++) {
@@ -1216,7 +1260,7 @@ tide_list tide_str_split(const tide_str a, const tide_str separator)
         pieces++;
         i += at + separator.bytes;
     }
-    uint32_t list;
+    tide_handle list;
     tide_block *b = tide_scratch_block((uint32_t)pieces * (uint32_t)sizeof(tide_text), "a list", &list);
     tide_text *texts = (tide_text *)(b + 1);
     b->a = (uint32_t)pieces;
@@ -1234,14 +1278,14 @@ tide_list tide_str_split(const tide_str a, const tide_str separator)
 tide_list tide_str_split_char(const tide_str a, const int32_t separator)
 {
     char bytes[4];
-    return tide_str_split(a, separator ? char_text(separator, bytes) : TIDE_STR_EMPTY); // ' ' is no character
+    return tide_str_split(a, separator ? char_text(separator, bytes) : TIDE_STR_EMPTY); // '\0' is no character
 }
 
 // ---------------------------------------------------------------------------
 // Text in fields
 
-#define TEXT_WHERE(at) ((at) >> 30)
-#define TEXT_OFFSET(at) ((at) & 0x3FFFFFFFu)
+#define TEXT_WHERE(at) tide_handle_where(at)
+#define TEXT_OFFSET(at) tide_handle_offset(at)
 
 TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[4]; // By `where`: the scratch area's stays NULL
 
@@ -1256,7 +1300,7 @@ void tide_text_use_verified(const tide_heap *verified_heap)
     tide_world_heaps[TIDE_IN_VERIFIED] = (tide_heap *)(uintptr_t)verified_heap; // Read only (tide_heap_read)
 }
 
-static tide_str view_block(const tide_heap *heap, const uint32_t offset)
+static tide_str view_block(const tide_heap *heap, const uint64_t offset)
 {
     const tide_block *b = tide_heap_block(heap, offset);
     return (tide_str){(const char *)(b + 1), (int32_t)b->a, (int32_t)b->b};
@@ -1271,7 +1315,7 @@ tide_str tide_text_view(const tide_text t)
 {
     if (!t.at) return TIDE_STR_EMPTY;
     const uint32_t where = TEXT_WHERE(t.at);
-    const uint32_t offset = TEXT_OFFSET(t.at);
+    const uint64_t offset = TEXT_OFFSET(t.at);
     if (where == TIDE_IN_SCRATCH) {
         const tide_block *b = (const tide_block *)(uintptr_t)tide_scratch_at(offset);
         return (tide_str){(const char *)(b + 1), (int32_t)b->a, (int32_t)b->b};
@@ -1283,27 +1327,27 @@ tide_str tide_text_view(const tide_text t)
 tide_text tide_text_temp(const tide_str value)
 {
     if (value.bytes == 0) return (tide_text){0};
-    // A header, like a heap block's, at a 4-aligned offset, then the text and a NUL
-    const uint32_t at = scratch_take((uint32_t)sizeof(tide_block) + (uint32_t)value.bytes + 1u, 4u, "text");
+    // A header, like a heap block's, at an 8-aligned offset (for its link), then the text and a NUL
+    const uint64_t at = scratch_take((uint64_t)sizeof(tide_block) + (uint32_t)value.bytes + 1u, 8u, "text");
     tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(at);
-    *b = (tide_block){0, 0, (uint32_t)value.bytes, (uint32_t)value.chars};
+    *b = (tide_block){0, (uint32_t)value.bytes, (uint32_t)value.chars};
     char *bytes = (char *)(b + 1);
     memcpy(bytes, value.ptr, (size_t)value.bytes);
     bytes[value.bytes] = '\0';
-    return (tide_text){TIDE_IN_SCRATCH << 30 | at};
+    return (tide_text){tide_handle_of(TIDE_IN_SCRATCH, at)};
 }
 
 // A block in `heap` holding `value`, tagged as `where`'s.
-static uint32_t heap_copy(tide_heap *heap, const uint32_t where, const tide_str value)
+static tide_handle heap_copy(tide_heap *heap, const uint32_t where, const tide_str value)
 {
-    const uint32_t block = tide_heap_alloc(heap, (uint32_t)value.bytes + 1u);
+    const uint64_t block = tide_heap_alloc(heap, (uint32_t)value.bytes + 1u);
     tide_block *b = tide_heap_write(heap, block);
     b->a = (uint32_t)value.bytes;
     b->b = (uint32_t)value.chars;
     char *bytes = (char *)(b + 1);
     memcpy(bytes, value.ptr, (size_t)value.bytes);
     bytes[value.bytes] = '\0';
-    return where << 30 | block;
+    return tide_handle_of(where, block);
 }
 
 void tide_text_set(tide_text *field, const tide_str value, const uint32_t where)
@@ -1314,7 +1358,7 @@ void tide_text_set(tide_text *field, const tide_str value, const uint32_t where)
         return;
     }
     // The new text first: `value` may be the old text itself.
-    const uint32_t at = value.bytes > 0 ? heap_copy(heap, where, value) : 0u;
+    const tide_handle at = value.bytes > 0 ? heap_copy(heap, where, value) : 0u;
     tide_text_release(field, where);
     field->at = at;
 }
@@ -1339,17 +1383,14 @@ void tide_text_release(tide_text *field, const uint32_t where)
 
 void *tide_scratch_memory(const size_t bytes)
 {
-    if (bytes >= (uint64_t)TIDE_SCRATCH_SLOTS << TIDE_SCRATCH_SHIFT) {
-        scratch_full("memory", bytes, "past the 1 GiB a thread's offsets reach");
-    }
-    return tide_scratch_at(scratch_take(bytes ? (uint32_t)bytes : 1u, 16u, "memory"));
+    return tide_scratch_at(scratch_take(bytes ? (uint64_t)bytes : 1u, 16u, "memory"));
 }
 
-tide_block *tide_scratch_block(const uint32_t bytes, const char *what, uint32_t *at)
+tide_block *tide_scratch_block(const uint64_t bytes, const char *what, tide_handle *at)
 {
-    *at = scratch_take((uint32_t)sizeof(tide_block) + bytes, 16u, what);
-    tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(*at);
-    *b = (tide_block){0, 0, 0, 0};
-    *at |= TIDE_IN_SCRATCH << 30;
+    const uint64_t offset = scratch_take((uint64_t)sizeof(tide_block) + bytes, 16u, what);
+    tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(offset);
+    *b = (tide_block){0, 0, 0};
+    *at = tide_handle_of(TIDE_IN_SCRATCH, offset);
     return b;
 }

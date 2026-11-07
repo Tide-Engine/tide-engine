@@ -1,4 +1,4 @@
-// Twelve ordinary sampled resources, high-slot read kinds, and eight maps plus skinning.
+// Twelve ordinary sampled resources, high-slot read kinds, eight maps plus skinning, and sixteen that share samplers.
 scene Main { }
 asset SkinnedMesh<Vertex3> model = "../../../platform/tests/skinned.gltf";
 asset Cubemap sky = "../e2e/cubes/sky/sky_??.png";
@@ -88,6 +88,38 @@ frag CapacityKinds(Vertex vertex, out Color color, CapacityArt art)
     color = number == 7 && depth > 0.99 && compared > 0.99 && cube.r > 0.99 && cube.g < 0.01
         ? Color.green : Color.red;
 }
+// Fifteen textures: twelve sampled the same way, as their code says, through one sampler, the first read another way
+// too through another; a depth read and compared, a cube and a list, through samplers of their own or none
+frag CapacitySixteen(Vertex vertex, out Color color, CapacityArt art)
+{
+    float sum = art.pad0.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r * art.pad0.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat).r +
+        art.pad1.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.pad2.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.pad3.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.pad4.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.pad5.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.pad6.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.pad7.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.high0.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.high1.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.high2.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r +
+        art.high3.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r;
+    float number = float(art.words[0]);
+    float depth = art.depth.Sample(vertex.uv);
+    float compared = art.depth.Compare(vertex.uv, 0.5);
+    Color cube = sky.Sample(float3(1, 0, 0), Filter.Point);
+    color = sum > 11.5 && number == 7 && depth > 0.99 && compared > 0.99 && cube.r > 0.99 ? Color.green : Color.red;
+}
+// One texture read three ways said here, another two ways it leaves to its Texture, and a depth read and compared: three
+// textures, seven samplers
+frag CapacityWays(Vertex vertex, out Color color, CapacityArt art)
+{
+    float said = art.pad0.Sample(vertex.uv, Filter.Point, Wrap.Clamp).r + art.pad0.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat).r
+        + art.pad0.Sample(vertex.uv, Filter.Point, Wrap.Mirror).r;
+    float carried = art.pad1.Sample(vertex.uv).r + art.pad1.Sample(vertex.uv, Filter.Point).r;
+    float depth = art.depth.Sample(vertex.uv) + art.depth.Compare(vertex.uv, 0.5);
+    color = said > 2.5 && carried > 1.5 && depth > 1.99 ? Color.green : Color.red;
+}
 frag CapacitySkin(Vertex3 vertex, out Color color, CapacityArt art)
 {
     float low = (art.pad0.Sample(vertex.uv, Filter.Point).r +
@@ -120,6 +152,16 @@ view CapacityDraw(mut CapacityArt art)
     if (art.mode == 2)
     {
         Draw.Mesh(art.quad, art.indices, CapacityReserve, CapacityKinds);
+        return;
+    }
+    if (art.mode == 5)
+    {
+        Draw.Mesh(art.quad, art.indices, CapacitySixteen);
+        return;
+    }
+    if (art.mode == 6)
+    {
+        Draw.Mesh(art.quad, art.indices, CapacityWays);
         return;
     }
     if (art.mode == 3)

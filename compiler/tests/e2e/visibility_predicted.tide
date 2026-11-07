@@ -1,0 +1,62 @@
+// A client's own tick of its projection (visibility_predicted_test.c). What
+// it spawns into a group hidden from it isn't in its projection, as it isn't
+// in the server's; what it spawns into a group it's in is (with the client's
+// group number, not the server's); [Native] fields, a C library's own, are 0
+// in both.
+//
+// Hidden and shown spawns are tested apart (Mode): an entity a client makes
+// goes after the last one it was sent, the server's after the last it has,
+// hidden ones too, so a client's spawn after a hidden one has another handle.
+
+settings { maxPlayers = 2; }
+
+component Walker { int steps; VisibilityGroup group; }
+component Secret { int code; }
+component Handle { int kind; [Native] long made; }
+
+// What a C library would keep: a setting the game writes, and its own state
+singleton Library
+{
+    int setting = 3;
+    [Native] long state;
+    [Native] List<long> made;
+}
+
+singleton Count { int secrets; int shown; }
+singleton Mode { bool shown; }   // The test's: Walkers in a group, or Secrets
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Walker { });
+    Spawn(Handle { kind = 1 });
+    Spawn(Handle { kind = 2 });
+}
+
+// Each tick someone no player sees, or now and then one everyone does
+system Make(mut Count count, Mode mode, Time time)
+{
+    if (!mode.shown)
+    {
+        Spawn(Secret { code = 0x5EC12E7 + time.tick }, Visibility { group = Visibility.CreateGroup(Audience.None) });
+        count.secrets += 1;
+    }
+    else if (time.tick % 4 == 0)
+    {
+        var group = Visibility.CreateGroup(Audience.All);
+        Spawn(Walker { steps = time.tick, group = group }, Visibility { group = group });
+        count.shown += 1;
+    }
+}
+
+system Walk(mut Walker walker) { walker.steps += 1; }
+
+// As a library attaches what it hasn't: its handles are its own on each machine
+system Attach(mut Handle handle, mut Library library)
+{
+    if (handle.made != 0) return;
+    library.state = library.state == 0 ? 0x7A11D00D5EC12E7 : library.state + 1;
+    handle.made = library.state;
+    library.made.Add(handle.made);
+}

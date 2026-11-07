@@ -30,14 +30,14 @@ static const tide_draw_run *run(int n)
 static float instance_float(const tide_draw_run *r, const uint32_t instance, const uint32_t word)
 {
     float v;
-    memcpy(&v, draw.instances + r->first + instance * tide_shader_instance_size(r->shader) + word * 4u, sizeof v);
+    memcpy(&v, (const uint8_t *)tide_draw_run_instance(&draw, r, instance) + word * 4u, sizeof v);
     return v;
 }
 
 static int32_t instance_int(const tide_draw_run *r, const uint32_t instance, const uint32_t word)
 {
     int32_t v;
-    memcpy(&v, draw.instances + r->first + instance * tide_shader_instance_size(r->shader) + r->shader->instance_floats * 16u + word * 4u,
+    memcpy(&v, (const uint8_t *)tide_draw_run_instance(&draw, r, instance) + r->shader->instance_floats * 16u + word * 4u,
            sizeof v);
     return v;
 }
@@ -78,7 +78,9 @@ TIDE_TEST(shaders_a_draw_sends_what_its_frag_and_vert_read)
     TIDE_CHECK(s->attributes[0].format == TIDE_SHADER_FLOAT3 && s->attributes[0].offset == offsetof(BoxVertex, position));
     TIDE_CHECK(s->attributes[1].format == TIDE_SHADER_FLOAT3 && s->attributes[1].offset == offsetof(BoxVertex, normal));
     TIDE_CHECK(s->attributes[2].format == TIDE_SHADER_FLOAT2 && s->attributes[2].offset == offsetof(BoxVertex, uv));
-    TIDE_CHECK(strstr(s->glsl_vertex, "gl_Position") && strstr(s->glsl_fragment, "tide_pixel"));
+#ifdef __wasm__ // A shader has its WGSL on the web (natively, its SPIR-V)
+    TIDE_CHECK(strstr(s->wgsl, "@vertex fn vertex(") && strstr(s->wgsl, "@fragment fn fragment("));
+#endif
     TIDE_CHECK(strcmp(s->name, "Wave and Shade on BoxVertex") == 0 && s->id != 0);
 
     // An instance: its transform, then the fields of Box the frag reads, in
@@ -185,10 +187,7 @@ TIDE_TEST(shaders_a_frag_or_a_vert_alone_and_neither)
     TIDE_CHECK(strcmp(h->name, "Fan and Take on Corner") == 0 && handed->mesh == flat->mesh);
     TIDE_CHECK(h->instance_floats == 0 && h->instance_ints == 0 && h->uniform_floats == 1 && h->uniform_ints == 0);
     TIDE_CHECK(uniform_float(handed, 0) == 0.25f); // Models.fade, which the vert reads
-    TIDE_CHECK(strstr(h->glsl_vertex, "out float tide_h0_0;") && strstr(h->glsl_fragment, "in float tide_h0_0;"));
-    TIDE_CHECK(strstr(h->glsl_vertex, "out vec4 tide_h0_2;") && strstr(h->glsl_fragment, "in vec4 tide_h0_2;"));
-    TIDE_CHECK(!strstr(h->glsl_vertex, "tide_h0_1") && !strstr(h->glsl_fragment, "tide_h0_1")); // No frag reads it
-#ifdef __wasm__ // A shader has its WGSL on the web
+#ifdef __wasm__ // A shader has its WGSL on the web: what goes from the vert to the frag, but what no frag reads
     TIDE_CHECK(strstr(h->wgsl, "tide_h0_0: f32") && strstr(h->wgsl, "tide_h0_2: vec4f") && !strstr(h->wgsl, "tide_h0_1"));
 #endif
     TIDE_CHECK(run(11) == NULL);

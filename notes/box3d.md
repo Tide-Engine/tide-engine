@@ -1,5 +1,96 @@
 # The Box3D package
 
+## Far bodies held in predicted ticks (2026-11-04)
+
+Under `predictionRange` a client's predicted ticks leave far entities out
+(notes/netcode.md, Predicting near the player alone). The package's step held
+nothing, so far bodies were stepped and moved in every predicted tick. Now, as
+the owner agreed (picks in the spec's `predictionRange` entry):
+- `HoldFar(Body body, mut Physics physics, with Far)`, a C system at `Step`
+  offset 19, gives `b3t_hold_far` the far bodies' ids; it returns at once when
+  the world holds bodies already. `b3t_step` holds them
+  (`b3World_HoldBodies`, box3d/TIDE.md) after code's sleeps and before the
+  step, noting the ids into the stamp (`'f'`), once for each run of predicted
+  ticks: each starts from the verified world, which holds nothing, and the
+  ticks after it find the world holding. Bodies made later in the run aren't
+  held.
+- What's held: each awake island of far bodies alone, put to sleep, and each
+  sleeping set of far bodies alone. A near body that starts touching a held
+  body meets it as a static one: not woken, island not merged, contact in the
+  near island alone, `Touched`/`Hit` reported. A near island touching a held
+  body doesn't fall asleep in predicted ticks. Islands mixing near and far
+  (touching or jointed) aren't held and step whole. Kinematic bodies have no
+  island and aren't held: a far one moving keeps moving in the physics world.
+- `Leave` is `without Far`: far bodies' components aren't written in predicted
+  ticks, so they stay byte for byte confirmed even where the physics world moved
+  them (border islands, kinematic bodies); `Enter` then finds nothing written
+  and leaves the physics world's state alone.
+State: the hold writes the `held` flags in the solver sets' array, which every
+resident commit marks, and `b3World.holding` in the world's struct, which
+`save_struct` copies: a held world's pages restore whole, which the test checks
+with `b3t_check` on. Restoring the verified world lets everything go.
+- Test: `tide_box3d_predict_near` (`packages/test/predict_near_test.c`, shared
+  with Box2D; game `test/predict_near.tide`): a server and two clients on
+  a 100 ms loopback, range 10; a far ball rolling at x = 60, a heavy far wall
+  just past the range, a near ball rolling into it. In every frame a client
+  predicts ahead: the far ball's and the wall's `Body` equal the verified ones,
+  a near system's raycast finds the far ball where its component is (fails with
+  the hold switched off: the physics world moved it on), the near ball runs
+  ahead, never passes the wall's face and stops at it. Over 800 holds, no
+  resyncs, the far ball's confirmed state the server's. The near ball touches
+  the held wall in prediction (the held link path ran about 20-40 times in a
+  run).
+- Measured: see notes/netcode.md, Predicting near the player alone.
+- Sparse commits (same day): a held world's near-only ticks copied 230-270
+  arena pages a commit (16 KiB each), nearly all from marking every sleeping
+  set whenever one was touched and the awake set's arrays to their capacity,
+  which is the whole world's. Now only touched sleeping sets and their islands,
+  and the awake set's bodies to their counts unless one left it
+  (box3d/TIDE.md): 90-100 pages. Measured with marks counted per section of
+  `b3World_TouchChanged` (a probe not kept). What's left a sparse commit:
+  tracked bodies, shapes and contacts ~22 pages, the solver sets' array ~15,
+  islands ~20, trees ~14, pools and fat bounds ~8, events ~7. Box3D tests,
+  Sumo and the predict tests pass with `b3t_check` on; pins unchanged.
+- Then the solver sets' and islands' arrays entry by entry (same rule): 286
+  pages a commit on average, whole ones included. Left: the trees, marked
+  whole every commit, rightly: `b3DynamicTree_Rebuild` rebuilds the whole
+  dynamic tree in any step where anything in it moved, so every node is
+  written. Node-by-node marks would gain nothing.
+- A predicted world in an arena of its own was looked at and dropped: the
+  arena's bytes hold pointers to where it is, so a state can't move to
+  another arena but through canonical bytes, and every run of predictions
+  starts from the confirmed world.
+
+## A client's projection, made into a physics world (2026-11-04)
+
+A projection (a game with visibility) carried `Physics`' and the bodies'
+`[Native]` fields but never the Resident, so a client that loaded one had an
+empty C world with handles saying the bodies were made: Enter skipped them,
+every query missed, and the client's tick rewrote the bookkeeping (Mount &
+Rifle's repair stream, notes/netcode.md, same date). A projection now writes
+`[Native]` fields 0 (`gen_client_put_singleton`, `gen_client_bare`), so a client's world arrives as a
+shard's does, `Body.id` and the shape caches 0 and `Physics`' bookkeeping
+empty, and the package makes its world again in the client's next tick, as for
+bodies a match starts with. No package or bridge change. Static geometry asks
+the same of the remade world; moving bodies lose their contacts' warm start
+and sleep state, and history starts again, so a client's `Physics.Rewind`
+covers only ticks since its last projection. In one process (a server and a
+client of it, as in the test) the two worlds take turns in the one arena: the
+client's tick restores an empty arena, the server's its own pages.
+`tide_box3d_projected` (`test/projected.tide`): 60 ticks of a client loading
+the server's projection and ticking it, with static boxes and a sphere, a body
+made every 9 ticks and two probes casting down after the step; the client's
+projection and hash after each tick are the server's. Before the change its
+probes missed from the first tick.
+
+## Layouts with 64-bit handles (2026-10-30)
+
+Lists and maps in `box3d.tide`'s types are 8 and 32 bytes (notes/ecs.md,
+64-bit handles), so the bridge's mirrors changed with them: `physics` is 480
+bytes (`gone` at 96, `pending` at 288, `shard_moves` at 376), `mesh_collider`,
+`hull_collider` and `height_collider` 56, `shape_record` 40, `history_frame`
+24, each with its padding written out as the generated header has it.
+
 ## Smooth hulls within Box3D's limits (2026-10-25)
 
 Reported by the PINFALL prototype (tide-prototypes `notes/pinfall.md`): a
@@ -467,3 +558,25 @@ Physics now exposes current Raycast/Cast/Overlap/Inside as singleton methods. Wi
 Prepared scenes build an immutable preorder BVH; repeated queries use short sorted candidate lists. `rewind` pins readonly hashes, current moving walls, fractional poses, rounded shapes/parts, all shape queries and sensors, queued Snap/despawn endpoints, live opt-out, retained contexts, malformed/stale/missing times, snapshot/pack/unpack/rollback. Release, 1,024 extra colliders and 1,000 rays on this Windows machine: prepare 1.01 ms; historical batch 0.45 ms versus current 0.17 ms (one run; no timing assertion). Updated world/sequence hashes account for schema changes; body results, answer hashes and native resident digests remain unchanged. The new helpers rebind probe point arrays to the returned caller-owned struct before querying.
 
 rewind_network uses the same 28 end-to-end two-client profiles as Box2D, compiled against this package. Player-owned motion changes through sampled input; each shot is compared with the last actual verified view draw command through normal input packing, timestamp validation and rewind. Both hits and misses are checked; accepted hit-point/fraction errors must remain below 0.0001, expired 250 ms history claims must fail, and no profile may resync. The matrix and held-input prediction fix are recorded in notes/netcode.md. These accuracy bounds cover translating axis-aligned boxes; existing tests cover other native shapes/rotations. Real Internet and GPU/display scanout remain outside this deterministic harness.
+## Logical Entity bridge layout (2026-11-06)
+
+The owner-approved logical Entity migration carries both 64-bit key words through
+the bridge's existing owner/part maps, live shape records, joints and rewind
+colliders. Native Box3D body/shape/joint handles keep their own 64-bit format;
+no key is squeezed into native user data or a physical ECS index.
+
+The C mirrors now assert Joint = 136 bytes (id at 104), Part = 72,
+ShapeRecord/shape map entry/ShapeChange = 48 each and historical Collider = 208.
+Physics remains 480 bytes, with its existing list/map/resident offsets. Tests
+use full-key equality; the remove/re-add metadata test explicitly resolves its
+private slot rather than treating Entity bits as an index. Both bridge files
+pass strict C17 syntax checks. Integrated package validation is recorded with
+the completed identity change; this ABI adaptation changes no solver arithmetic.
+
+Canonical match order intentionally changes physics insertion/solver order and
+entity-derived seeds. The complete, course, sleep, stack, joints/mesh where
+present, and all-hit output pins were updated only after native ASan and WASI
+agreed on every new exact value. Gameplay, native-vs-threaded equality, raw
+restore, packed restore and replay assertions remain enabled. The native ASan
+and WASI package reruns pass with the widened ABI (all thirteen affected
+physics targets); the all-hit filters and ordering assertions are unchanged.

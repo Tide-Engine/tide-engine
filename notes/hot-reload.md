@@ -1,5 +1,142 @@
 # Hot reloading
 
+## Logical Entity clock across migration (2026-11-06)
+
+`tide_layout_world.identity_clock` is an appended offset to the match's public
+64-bit causal identity clock; zero denotes a world without that field, including
+local state. Generated layouts include the offset and migration carries all
+eight bytes to the destination offset independently of named singleton fields.
+Both offsets are checked against their header sizes. Migrating into a clocked
+world from metadata without a clock, or from a zero clock, fails with a clear
+message rather than silently reusing old spawn identities. Layout unpacking
+also rejects an out-of-bounds clock offset. The host and game rebuild together
+for the metadata ABI change; older Entity8 raw saves are not reinterpreted.
+
+The handwritten migration regression moves a clock above 2^40 between different
+header offsets and checks missing, zero and out-of-bounds clocks are refused.
+Integration validation is recorded with the complete logical Entity change.
+
+The appended lifecycle_occurrences/lifecycle_count metadata similarly carries
+clock-local public player lifecycle counters. Migration copies the common player
+prefix and zeros new slots. Count/offset spans are checked with widened arithmetic;
+missing source metadata cannot silently restart queued lifecycle identities.
+The regression moves nonzero counters, including one above 2^38, while increasing
+the configured player count, and rejects a forged UINT32_MAX count.
+
+The appended main_occurrence offset independently preserves implicit Main's
+clock-local root occurrence, whose location must not depend on the configured
+player count. Its source/destination span and presence are checked too. The
+regression carries a value above 2^34, rejects missing/out-of-bounds metadata,
+and checks packed layout validation rejects an invalid offset. The complete generated-world migration target passes on Windows ASan and
+WASI, including the combined clock/counter case and malformed packed metadata.
+
+## Preparation jobs across reload (2026-11-05)
+
+Sessions drain/discard in-flight preparation jobs and their logs before set_game/migrate/rewind or world destruction.
+No old library callback, worker pointer or observational endpoint survives unload. Pending worlds retain committed
+preparation metadata and restart against the new code; completed worlds retain completion/player bits through normal
+layout migration. A newly introduced preparation flag defaults true on already activated roots, while Scene.Load
+explicitly resets it false. Ordinary prediction uses the completed baseline instead of regenerating. Contracts and
+coverage: language.md and netcode.md, scene preparation.
+
+## GPU list reads and freed lists across a reload (2026-11-05, later)
+
+The host hands each library it loads its own table of GPU list reads (`tide_host_game.gpu_reads_share`), so the
+game's reads are the renderer's and one begun before a reload finishes after it; a list freed at unload leaves the
+table. The renderer no longer takes a freed list's buffer for a new list at the same address. `notes/compute.md`,
+GPU lists under the library host.
+
+## GPU lists across a reload (2026-11-05)
+
+`gen_resource_value` rebinds `GPUList` fields as targets are: native reloads
+adopt the state (`tide_gpu_list_adopt`, which makes a list of another element
+stride again, empty, with a new contentRevision), web reloads recreate it at the
+capacity its reference carries (`tide_gpu_list_recreate`). The renderer keeps a
+list's buffer only where the new build's first frame names it, and reads no old
+state before. `notes/compute.md`, Built.
+
+## Repeated compiler generations keep no arena-backed lane cache (2026-11-02)
+
+The mount-and-rifle web-watch corruption report reproduced in the native
+compiler without a browser: compiling its 66 game sources plus Rooms repeatedly
+in one process crashed on the third generation under Windows ASan. A small
+component, spawned entity and mutating helper reproduced a heap-use-after-free
+on the second generation, in `code_writes` in `lane_writes_codegen.inc`.
+
+`lane_memo` kept its arena-backed array and capacity while codegen reset only
+its count. The watcher's preceding `arena_reset` freed that array; later
+generations wrote through the stale pointer, potentially corrupting unrelated
+compiler objects when the allocator reused its memory. The analogous view
+helper `read_memo` also retained its array, entries and declaration pointers.
+`codegen` now zeros both complete vectors at entry. Memoization still works
+within each generation; generated contracts, scheduling, match results and
+the watcher's last-successful-build behavior are unchanged.
+
+`tidec_recompile` exercises eighteen in-process generations with arena resets:
+two valid programs alternate which component fields their helpers read/write,
+and each pair is followed by a missing-field failure. Math.Min and Draw.Text
+remain in the generated paths. Each successful program must reproduce its
+exact original C; each failed generation must preserve the last successful C.
+This tests the shared compiler used by native and web watchers, without an
+installed CLI, browser, or timing-sensitive filesystem saves.
+
+Validation: Windows ASan recompile regression and the four native wide_lanes /
+view_reads runtime and code-generation checks pass. The same real-game probe
+passes five complete generations after the fix. The game checkout and pin
+were not changed. This isolates a concrete memory-corruption cause; the actual
+long-running web-server session from the original report was not replayed.
+
+## Aligned defaults for packed local rows (2026-10-31)
+
+Run 41206262777's Linux UBSan failure in tide_platform_migrate is a real
+migration alignment bug. Attached local fields are tightly packed after
+counts/entity IDs, so their output rows need not meet the C type's alignment.
+The 64-bit text handle made Unit_local require eight-byte alignment, exposing
+carry_value calling generated typed defaults directly on an unaligned row.
+
+Attached rows now migrate in the existing malloc-aligned new_value buffer,
+then copy into the packed writer, just as component columns already do.
+Source field reads already use memcpy. Header singleton/input destinations
+remain naturally aligned by their generated layout. There is no allocation
+per row, new runtime function, ABI/layout/packed-format change or change in
+migration's field/default/entity/born rules.
+
+migrate_local_defaults_are_aligned_at_every_packed_offset checks all eight
+header offsets with one, two and three rows, widening an eight-byte local
+record to sixteen bytes. Its default callback asserts alignment before any
+typed store, so it detects the defect on Windows ASan too. It verifies kept
+64-bit values, new defaults, entity IDs, born identities and exact consumption.
+The new test fails on the old runtime and passes with the fix. The existing
+generated local-field migration and byte-preservation cases remain unchanged.
+
+Validation: Clang 23.1.2, Windows ASan migration 14/14, embed 17/17 and travel
+10/10; WASI migration 14/14 on Node 24.22.1. No Linux/UBSan run is available
+locally; the normal dev push supplies that coverage. No old run is retried or
+extra workflow dispatched. Full suites are unnecessary for this localized
+migration path; docs/spec semantics are unchanged.
+
+
+## Migration's empty heap (2026-10-30)
+
+With 64-bit handles (notes/ecs.md) a packed heap's numbers are `uint64_t`, so
+the empty heap a migration writes for a world that had none is the asset
+dictionary's count and 26 `uint64_t` (`empty_heap` in `platform/src/migrate.c`).
+Fields holding text, lists, maps, sets and grids still carry over as plain
+bytes with the heap; a build before the change and one after have different
+layouts, which a reload migrates or starts over by the usual rules.
+
+## Resource collection rebinding (2026-10-30)
+
+Generated local resource rebinding follows arrays and live list/map values,
+including nested structs/containers. It selects the local heap before traversal
+and prepares packed list wrappers before writes. Each resource uses its existing
+adopt/recreate/clear rules. No migration runtime, layout or resource API changes.
+resource_collections checks saved-local restoration, pack reload, and clearing
+external texture pointers inside lists and arrays with no heap context active,
+on Windows ASan and WASI. Detailed contracts: language.md, Resource values in
+collections.
+
+
 ## Migration skips holes (2026-10-29)
 
 A reload's migration (`platform/src/migrate.c`) gives no row in the new world to
@@ -167,7 +304,7 @@ It's for quick iteration, enabled by default under `tide run`, native and web. `
 - A game's library has its own copy of the engine code it uses. So everything the host and the library share is data: worlds and local state (with their pages, from the C library's heap, which every build of the game shares), devices, the draw list and the GUI. Render targets are what a library keeps track of itself, so the new build takes over those the local state holds (`tide_host_game.rebind_resources`, the generated `tide_local_rebind_resources`). The library frees its scratch area and what's left of its targets' bookkeeping before it's unloaded (`tide_host_game.unload`).
 - On Linux, a library's objects are compiled with `-fPIC`. The engine's are kept apart in `engine-pic`, so running and building don't rebuild each other's.
 - On the web, each build is a WebAssembly program of its own. `tide run --web` serves the page on 127.0.0.1 (`compiler/cli/serve.c`), opens it (unless `--no-open`), and keeps running until it's stopped. The editors run it with `--no-open` and show the page themselves, at the address tide prints (`tide: the game is at ...`): VS Code's **Tide: Run on the Web** in its browser, and the JetBrains plugin's Tide run configurations in the Tide Game tool window. The page asks tide for the newest build 4 times a second (`/build`: the build and restart numbers; `/game-<n>.wasm`).
-- The page starts each new build in the running one's place (`platform/web/tide.js`, between its `tide run` markers): it asks the running one for its state (`tide_reload_save`), deletes what it made in WebGL or WebGPU, and starts the new one, which carries that state over (`tide_host_run_web` in `platform/src/reload.c`). The state is the old layout, packed with offsets for pointers (`tide_layout_pack`), the server's world and the local state as bytes (`tide_world_pack`, `tide_local_pack`), the GUI, and what the host keeps of its own: whether the stats' drawer is open. The new session goes on from the world with this machine's player in it already (`tide_session_start_from`), so there's no second `PlayerJoined`. A room closes at a reload, for now: the new build goes on with the match closed, and the other players drop out.
+- The page starts each new build in the running one's place (`platform/web/tide.js`, between its `tide run` markers): it asks the running one for its state (`tide_reload_save`), deletes what it made in WebGPU (WebGL too, until 2026-11-05), and starts the new one, which carries that state over (`tide_host_run_web` in `platform/src/reload.c`). The state is the old layout, packed with offsets for pointers (`tide_layout_pack`), the server's world and the local state as bytes (`tide_world_pack`, `tide_local_pack`), the GUI, and what the host keeps of its own: whether the stats' drawer is open. The new session goes on from the world with this machine's player in it already (`tide_session_start_from`), so there's no second `PlayerJoined`. A room closes at a reload, for now: the new build goes on with the match closed, and the other players drop out.
 - A match on a game's own network (`tide/network.h`, `notes/own-network.md`) isn't carried over a native reload: its transports are functions of the library that made them, so `swap` starts the game over, as a full reload does, before that library unloads. On the web a reload goes on with the match closed, as a room's does.
 - Pages without watching (`tide build --web`, `cmake/web_page.mjs`) leave out the lines between tide.js's `tide run` markers, and web programs only link reload code when the watching run's `main.c` calls it.
 

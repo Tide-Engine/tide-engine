@@ -1,6 +1,9 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only | --part modes|at-once|cache] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
+// --part runs one third of the whole: build modes and stripping, several
+// compiles at once, or cache correctness with runs and the server. CI runs
+// the three at once, each in its own private installation.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -8,7 +11,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, gpu: false, keep: false };
+const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, optimizationOnly: false, part: null, gpu: false, keep: false };
+const parts = ["modes", "at-once", "cache"];
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -19,14 +23,23 @@ for (let i = 2; i < process.argv.length; i++) {
     else if (process.argv[i] === "--watch-only") opts.watchOnly = true;
     else if (process.argv[i] === "--strip-only") opts.stripOnly = true;
     else if (process.argv[i] === "--server-only") opts.serverOnly = true;
+    else if (process.argv[i] === "--optimization-only") opts.optimizationOnly = true;
+    else if (process.argv[i] === "--part") {
+        const value = process.argv[++i];
+        if (!parts.includes(value)) throw new Error(`--part needs one of ${parts.join(", ")}`);
+        opts.part = value;
+    }
     else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only | --part modes|at-once|cache] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
 if (!opts.tide) throw new Error("pass --tide <installation>/bin/tide");
+if (opts.part && (opts.watchOnly || opts.stripOnly || opts.serverOnly || opts.optimizationOnly))
+    throw new Error("--part runs part of the whole test: leave out --watch-only, --strip-only, --server-only and --optimization-only");
+const inPart = (part) => !opts.part || opts.part === part;
 if (!existsSync(opts.tide) && existsSync(`${opts.tide}.exe`)) opts.tide += ".exe";
 
 const env = { ...process.env, TIDE_NO_UPDATE_CHECK: "1" };
@@ -178,8 +191,14 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
             `${target}: ${name} ${release ? "leaked into release metadata" : "missing from debug metadata"}`);
     }
     const shaderNames = ["ShaderSecretHelper924", "ShaderSecretParam012", "ShaderSecretLocal123", "ShaderSecretFrag597", "ShaderSecretField539"];
-    for (const name of shaderNames)
-        check(program.includes(Buffer.from(name)) === !release, `${target}: shader identifier ${name} was not stripped correctly`);
+    // Only the web ships shader text (WGSL), which a debug build keeps readable. Native builds carry SPIR-V, which
+    // has no names; a debug one may still hold them through its C (labels, debug information), so there only a
+    // release's having none is checked
+    for (const name of shaderNames) {
+        const present = program.includes(Buffer.from(name));
+        if (target === "web") check(present === !release, `${target}: shader identifier ${name} was not stripped correctly`);
+        else if (release) check(!present, `${target}: shader identifier ${name} was not stripped correctly`);
+    }
     for (const path of [join(game, "game.tide"), join(game, "game.tide").replaceAll("\\", "/")]) {
         if (release) check(!program.includes(Buffer.from(path)), `${target}: release leaked its Tide source path`);
     }
@@ -187,9 +206,23 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
     const map = join(cache, "gen", "game.names");
     check(existsSync(map) === release, `${target}: unexpected private name map policy`);
     const stem = output.replace(/\.(html|exe)$/, "");
+    if (target === "native") {
+        const reporter = join(dirname(output), process.platform === "win32" ? "tide-crash.exe" : "tide-crash");
+        check(existsSync(reporter) && (process.platform === "win32" || (statSync(reporter).mode & 0o111) !== 0),
+            `${target}: tide-crash isn't beside the game, runnable, at ${reporter}`);
+        const link = join(dirname(output), "crash.json");
+        const linked = existsSync(link) ? JSON.parse(readFileSync(link, "utf8")) : null;
+        check(linked?.origin === "https://console.example.test" && linked?.reports === "ReportKey_0123456789-abcdef"
+            && linked?.build === createHash("sha256").update(program).digest("hex"),
+            `${target}: crash.json beside the game doesn't carry the link and the program's SHA-256: ${JSON.stringify(linked)}`);
+    }
     if (!release && target === "native") {
         for (const suffix of [".natvis", "_lldb.py", ...(process.platform === "win32" ? [".pdb"] : [])])
             check(existsSync(stem + suffix), `debug fixture didn't produce ${suffix} before the release replaced it`);
+    }
+    if (!release && target === "web") {
+        check(WebAssembly.Module.customSections(new WebAssembly.Module(program), ".debug_info").length > 0,
+            "debug/release WebAssembly lost debug information");
     }
     if (release) {
         const mapping = readFileSync(map, "utf8");
@@ -226,9 +259,13 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
 }
 
 async function strippingTests(tide, installation, root, target, embedded) {
-    console.log(`Release code stripping: ${target}`);
+    console.log(`Build modes and distribution stripping: ${target}`);
     const game = join(root, `strip-${target}`);
     mkdirSync(game);
+    // Linked to a hosting project with crash reports on: a native build has crash.json beside it
+    writeFileSync(join(game, "tide.deploy.json"), JSON.stringify({
+        origin: "https://console.example.test", project: "0123456789abcdef0123456789abcdef", reports: "ReportKey_0123456789-abcdef",
+    }));
     const engine = join(installation, "src", "engine", "strip_test.c");
     check(!existsSync(engine), "private installation already contains strip_test.c");
     const markers = {
@@ -277,21 +314,23 @@ int Native(int value)
     put(join(game, "from-c.txt"), packedMarker);
     const sharedOutput = join(root, `strip-${target}-shared${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
     try {
-        for (const release of [false, true]) {
+        for (const mode of ["debug", "release", "distribution"]) {
+            const distribution = mode === "distribution";
             // Check real compiler behavior for each side of the build: engine
             // optimization is independent of game optimization and assertions.
-            const assertionMode = Number(release);
+            const assertionMode = Number(distribution);
+            const optimized = Number(mode !== "debug");
             put(engine, `#ifndef __OPTIMIZE__\n#error engine_must_be_optimized\n#endif\n`
                 + `#if defined(NDEBUG) != ${assertionMode}\n#error engine_assertion_mode_changed\n#endif\n`
                 + functions("EngineProbe", markers.engineCalled, markers.engineUnused));
-            put(join(game, "probe.c"), `#if defined(__OPTIMIZE__) != ${assertionMode} || defined(NDEBUG) != ${assertionMode}\n`
+            put(join(game, "probe.c"), `#if defined(__OPTIMIZE__) != ${optimized} || defined(NDEBUG) != ${assertionMode}\n`
                 + `#error game_build_mode_changed\n#endif\n`
                 + functions("UserProbe", markers.userCalled, markers.userUnused));
-            const output = sharedOutput; // Release must clean the previous debug build's own sidecars.
-            const args = ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []), ...(release ? ["--release"] : [])];
+            const output = sharedOutput; // Distribution must clean the previous debug build's own sidecars.
+            const args = ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []), ...(mode === "debug" ? [] : [`--${mode}`])];
             const result = await run(tide, args, game);
             check(result.code === 0, `stripping fixture build failed:\n${result.said}`);
-            const pack = readFileSync(join(game, ".tide", `${target}-${release ? "release" : "debug"}`, "gen", "game.pack"));
+            const pack = readFileSync(join(game, ".tide", `${target}-${mode}`, "gen", "game.pack"));
             check(pack.includes(Buffer.from(packedMarker)), "C interop lost an asset without a Tide reference");
             let program = readFileSync(output);
             if (target === "web") {
@@ -309,24 +348,24 @@ int Native(int value)
                 }
                 check(!page.includes("const TIDE_PROGRAM = \""), "a split page has its program inside");
                 // ...and one self-contained page
-                const single = join(root, `strip-single-${release ? "release" : "debug"}.html`);
-                const result = await run(tide, ["build", game, "-o", single, "--web", "--single-file", ...(release ? ["--release"] : [])], game);
+                const single = join(root, `strip-single-${mode}.html`);
+                const result = await run(tide, ["build", game, "-o", single, "--web", "--single-file", ...(mode === "debug" ? [] : [`--${mode}`])], game);
                 check(result.code === 0, `single-file build failed:\n${result.said}`);
                 const singlePage = readFileSync(single, "utf8");
                 const payload = embeddedPayload(singlePage, "TIDE_PROGRAM");
-                const expectGzip = release && embedded && existsSync(join(installation, "web", "tide.release.js"));
-                check(payload.gzip === expectGzip, `web ${release ? "release" : "debug"}: unexpected program compression`);
+                const expectGzip = distribution && embedded && existsSync(join(installation, "web", "tide.release.js"));
+                check(payload.gzip === expectGzip, `web ${mode}: unexpected program compression`);
                 check(payload.bytes.equals(program), "the single page's program differs from the split page's");
                 check(embeddedPayload(singlePage, "TIDE_PACK").bytes.equals(pack), "embedded pack differs from generated pack");
             }
             for (const [name, marker] of Object.entries(markers)) {
                 // WebAssembly already collects unused code in debug. Native
-                // debug must keep it, proving that release changes the link.
-                const expected = name.endsWith("Called") || (!release && target === "native");
+                // debug keeps it, proving that release changes the link.
+                const expected = name.endsWith("Called") || (mode === "debug" && target === "native");
                 check(program.includes(Buffer.from(marker)) === expected,
-                    `${target} ${release ? "release" : "debug"}: ${name} ${expected ? "was removed" : "was retained"}`);
+                    `${target} ${mode}: ${name} ${expected ? "was removed" : "was retained"}`);
             }
-            checkReleaseMetadata(program, game, join(game, ".tide", `${target}-${release ? "release" : "debug"}`), output, target, release);
+            checkReleaseMetadata(program, game, join(game, ".tide", `${target}-${mode}`), output, target, distribution);
             if (target === "native" && process.platform === "win32") {
                 // GLFW's gamma setter shares an archive member (monitor.c)
                 // with the monitor queries the window makes, and no host
@@ -335,26 +374,145 @@ int Native(int value)
                 const unusedGlfw = Buffer.from("Invalid gamma value");
                 check(readFileSync(join(installation, "lib", "native", "libtide_platform.a")).includes(unusedGlfw),
                     "unused GLFW sentinel missing from the prebuilt platform archive");
-                check(program.includes(unusedGlfw) === !release,
-                    `native ${release ? "release" : "debug"}: unused GLFW gamma API ${release ? "was retained" : "was removed"}`);
+                check(program.includes(unusedGlfw) === (mode === "debug"),
+                    `native ${mode}: unused GLFW gamma API ${mode === "debug" ? "was removed" : "was retained"}`);
             }
-            if (release) {
+            if (mode !== "debug") {
                 // Both unused bodies/data really entered the link: their
                 // disappearance is link collection, not C-level optimization.
-                const cache = join(game, ".tide", `${target}-release`);
+                const cache = join(game, ".tide", `${target}-${mode}`);
                 check(readFileSync(join(cache, "engine", "strip_test.c.o")).includes(Buffer.from(markers.engineUnused)),
                     "unused engine sentinel missing before the release link");
                 check(readFileSync(join(cache, "c", "probe.c.o")).includes(Buffer.from(markers.userUnused)),
                     "unused user sentinel missing before the release link");
             }
         }
-        console.log("  called engine/user code remains; uncalled code/data is absent from releases");
+        console.log("  called engine/user code remains; uncalled code/data is absent from releases and distributions");
     } finally {
         removeOwned(root, engine);
     }
 }
 
-async function webRunTest(tide, root, release = false) {
+async function assetModeTests(tide, root, target) {
+    const game = join(root, `asset-modes-${target}`);
+    mkdirSync(game);
+    put(join(game, "unused.txt"), "UNUSED_ASSET_MODE_28f9b4");
+    put(join(game, "game.tide"), 'scene Main { }\nasset string unused = "unused.txt";\n');
+    for (const mode of ["debug", "release", "distribution"]) {
+        const result = await run(tide, ["build", game, ...(target === "web" ? ["--web"] : []),
+            ...(mode === "debug" ? [] : [`--${mode}`])], game);
+        check(result.code === 0, `asset mode build failed:\n${result.said}`);
+        const cache = join(game, ".tide", `${target}-${mode}`, "gen");
+        const packFile = join(cache, "game.pack");
+        const pack = existsSync(packFile) ? readFileSync(packFile) : Buffer.alloc(0);
+        check(pack.includes(Buffer.from("UNUSED_ASSET_MODE_28f9b4")) === (mode === "debug"),
+            `${target} ${mode}: wrong unused-asset policy`);
+        // A window needs a GPU, which CI's runners haven't.
+        if (opts.gpu && target === "native" && mode !== "distribution") {
+            const output = join(game, ".build", `asset-modes-${target}${process.platform === "win32" ? ".exe" : ""}`);
+            const result = await run(output, ["--frames", "2"], game, { TIDE_HIDDEN: "1" });
+            check(result.code === 0, `${mode} bounded run failed:\n${result.said}`);
+        }
+    }
+    console.log(`  ${target}: release and distribution prune unused Tide assets`);
+}
+
+async function optimizationTests(tide, installation, root, target) {
+    const game = join(root, `optimization-${target}`);
+    mkdirSync(game);
+    const engine = join(installation, "src", "engine", "optimization_test.c");
+    check(!existsSync(engine), "private installation already has optimization_test.c");
+    const probe = (name) => `#ifdef __FAST_MATH__\n#error unsafe_math_enabled\n#endif
+int ${name}(void) {
+#ifdef __OPTIMIZE__
+    return 1;
+#else
+    return 0;
+#endif
+}
+`;
+    // The engine probe also checks its flags as it compiles, so a runner
+    // without a GPU, which runs no game below, still sees them reach clang.
+    // It's outside the game's folder, so its text is no part of the game's
+    // simulation identity. Its first version's time comes back with it, for
+    // the return to -O0 to find nothing changed.
+    const firstProbe = new Date(Math.floor(Date.now() / 1000) * 1000 - 60000);
+    const engineProbe = (mode, level) => `#if defined(__OPTIMIZE__) != ${Number(level !== 0)}`
+        + ` || defined(NDEBUG) != ${Number(mode === "distribution")}\n#error engine_flags_changed\n#endif\n`
+        + probe("EngineOptimized");
+    put(engine, engineProbe("debug", 0), firstProbe);
+    put(join(game, "probe.cpp"), 'extern "C" {\n' + probe("CppOptimized") + '}\n');
+    put(join(game, "probe.c"), probe("GameOptimized") + `
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+int EngineOptimized(void);
+int CppOptimized(void);
+int CheckOptimization(void) {
+    const char *expected = getenv("TIDE_OPT_EXPECT");
+    const int optimized = expected && strcmp(expected, "1") == 0;
+    const char *assertions = getenv("TIDE_ASSERT_EXPECT");
+#ifdef NDEBUG
+    const int disabled = 1;
+#else
+    const int disabled = 0;
+#endif
+    volatile float a = 0x1.000002p0f, b = 0x1.fffffcp-1f, c = -1.0f;
+    const float separate = a * b + c;
+    uint32_t bits;
+    memcpy(&bits, &separate, sizeof bits);
+    volatile float tiny = 0x1p-140f;
+    return EngineOptimized() == optimized && GameOptimized() == optimized && CppOptimized() == optimized
+        && disabled == (assertions && strcmp(assertions, "1") == 0)
+        && bits == 0 && tiny * 2.0f == 0x1p-139f;
+}
+`);
+    put(join(game, "game.tide"), 'scene Main { }\nextern int CheckOptimization();\n'
+        + 'system Tick() { Debug.Assert(CheckOptimization() == 1, "optimization or deterministic math changed"); }\n');
+    // Not the game's folder's name: on Linux and macOS a program has no extension.
+    const output = join(root, `optimization-${target}-out${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
+    const build = async (mode, level) => {
+        put(engine, engineProbe(mode, level), mode === "debug" && level === 0 ? firstProbe : undefined);
+        const result = await run(tide, ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []),
+            ...(mode === "debug" ? [] : [`--${mode}`]), `-O${level}`], game);
+        check(result.code === 0, `${target} ${mode} -O${level} failed:\n${result.said}`);
+    };
+    try {
+        let saved;
+        const identities = new Set();
+        for (const [mode, level] of [["debug", 0], ["debug", 1], ["debug", 2], ["debug", 3],
+            ["release", 0], ["release", 3], ["distribution", 0], ["distribution", 3]]) {
+            await build(mode, level);
+            const cache = join(game, ".tide", `${target}-${mode}-O${level}`);
+            check(existsSync(join(cache, "game.o")), "explicit optimization cache missing");
+            check(existsSync(join(cache, "gen", "game.names")) === (mode === "distribution"),
+                "optimization override changed the metadata policy");
+            if (target === "native") {
+                const stem = output.replace(/\.exe$/, "");
+                check(existsSync(`${stem}.natvis`) === (mode !== "distribution"),
+                    "optimization override changed debugger sidecars");
+            }
+            if (mode === "debug") identities.add(readFileSync(`${output}.simulation`, "utf8"));
+            if (mode === "debug" && level === 0) saved = mark(cache);
+            // A window needs a GPU, which CI's runners haven't.
+            if (opts.gpu && target === "native") {
+                const result = await run(output, ["--frames", "2"], game,
+                    { TIDE_HIDDEN: "1", TIDE_OPT_EXPECT: level === 0 ? "0" : "1",
+                        TIDE_ASSERT_EXPECT: mode === "distribution" ? "1" : "0" });
+                check(result.code === 0, `${mode} -O${level} failed optimization/FP probe:\n${result.said}`);
+            }
+        }
+        check(identities.size === 4, "custom-C optimization levels must have separate simulation identities");
+        await build("debug", 0);
+        expectWrites(join(game, ".tide", `${target}-debug-O0`), saved, [],
+            "returning to -O0 reuses its engine/game objects");
+        console.log(`  ${target}: all levels build; mode policies stay independent`);
+    } finally {
+        removeOwned(root, engine);
+    }
+}
+
+async function webRunTest(tide, root, release = false, optimization = null) {
     console.log(`Cache correctness: ${release ? "release" : "debug"} web hot reload`);
     const game = join(root, `web-reload-${release ? "release" : "debug"}`);
     mkdirSync(game);
@@ -364,7 +522,7 @@ async function webRunTest(tide, root, release = false) {
     put(source, tideText);
     put(join(game, "message.txt"), "before");
     put(c, "int Native(int value) { return value + 1; }\n");
-    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7", ...(release ? ["--release"] : [])],
+    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7", ...(release ? ["--release"] : []), ...(optimization ? [optimization] : [])],
         { cwd: game, env, shell: false, windowsHide: true });
     let output = "", url = null, exited = false, exitCode = null, startError = null;
     const closed = new Promise((accept) => {
@@ -421,7 +579,7 @@ async function webRunTest(tide, root, release = false) {
         check(page.includes('Tide.arguments = [ "--seed","7"]'), "web run passes the game's arguments");
         check(page.includes("Tide.reload = true;"), "web run enables page polling by default");
         await waitFor(async () => await buildNumber() === 1, "initial web build");
-        const cache = join(game, ".tide", `web-${release ? "release" : "debug"}`);
+        const cache = join(game, ".tide", `web-${release ? "release" : "debug"}${optimization ?? ""}`);
         let before = mark(cache);
         const generated = [...before.keys()].find((file) => /^run\/watch-\d+\/game\.o$/.test(file));
         check(generated, "web run's generated object not found");
@@ -571,7 +729,7 @@ async function nativeRunTest(tide, root) {
     const capture = join(root, "native-run.png");
     const result = await run(tide, ["run", game, "--frames", "3", "--capture", capture, "--size", "32", "32"], root);
     check(result.code === 0, `headless native run failed:\n${result.said}`);
-    check(!result.said.includes("saving a .tide or C file"), "headless native run doesn't start the watcher");
+    check(!result.said.includes("save to reload"), "headless native run doesn't start the watcher");
     check(readFileSync(capture).subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), "native run captures a PNG");
     const cache = join(game, ".tide", "native-debug");
     check(!existsSync(join(game, ".build")), "native run's executable is private to its run");
@@ -600,6 +758,9 @@ async function targetTests(tide, installation, root, target, embedded) {
     await build();
     let before = mark(cache);
     check(before.has("game.o") && before.has("main.o") && before.has("c/native.c.o"), "initial build did not create expected objects");
+    // A debug build's generated plumbing is its own object, compiled as the engine is, which an edit of the game's
+    // code alone (below) leaves as it is
+    check(before.has("game_plumbing.o"), "debug build did not compile the generated plumbing apart");
     await build();
     expectWrites(cache, before, [], "unchanged build reuses every object");
 
@@ -627,7 +788,7 @@ async function targetTests(tide, installation, root, target, embedded) {
     before = mark(cache);
     put(source, originalTide.replace("int value;", "int value; int extra;").replace("+ 1;", "+ 2;"));
     await build();
-    expectWrites(cache, before, ["game.o", "main.o"], "layout change rebuilds game and launcher");
+    expectWrites(cache, before, ["game.o", "game_plumbing.o", "main.o"], "layout change rebuilds game, plumbing and launcher");
 
     before = mark(cache);
     removeOwned(root, join(cache, "game.o"));
@@ -786,6 +947,9 @@ async function atOnceTests(tide, root, target) {
     for (const jobs of [1, 0, 3]) {
         const result = await build(jobs);
         check(result.code === 0, `tide build failed with ${jobs || "a processor's worth of"} compiles at once:\n${result.said}`);
+        const total = Number(result.said.match(/tide: compiling (\d+) C\/C\+\+ files/)?.[1]);
+        check(total > 0 && result.said.includes(`tide: compiled [${total}/${total}]`),
+            `cold build did not report all completed files:\n${result.said}`);
         built.push({ jobs, files: contents(cache) });
         clean();
     }
@@ -806,10 +970,12 @@ async function atOnceTests(tide, root, target) {
     const five = alone.said.includes("broken_five"), seventeen = alone.said.includes("broken_seventeen");
     check(five !== seventeen, `one file at a time says one file's errors:\n${alone.said}`);
     clean();
+    // Completion order and the worker count are progress, not compiler diagnostics.
+    const diagnostics = (text) => text.replace(/^tide: (?:compiling \d+ C\/C\+\+ files \(\d+ jobs\)|compiled \[\d+\/\d+\] [^\r\n]*)\r?\n/gm, "");
     for (let round = 0; round < 4; round++) {
         const result = await build(round === 3 ? 2 : 0);
         check(result.code !== 0, "a file that doesn't compile fails the build, whatever runs at once");
-        check(result.said === alone.said, `several compiles at once said something else than one at a time:\n${result.said}\n--- one at a time:\n${alone.said}`);
+        check(diagnostics(result.said) === diagnostics(alone.said), `several compiles at once said something else than one at a time:\n${result.said}\n--- one at a time:\n${alone.said}`);
         if (round < 3) clean();
     }
     console.log(`  two files that don't compile: the errors of ${five ? name(5) : name(17)}.c alone, as one at a time says them`);
@@ -819,6 +985,7 @@ async function atOnceTests(tide, root, target) {
     // of the game's is compiled.
     let before = mark(cache);
     const keptLauncher = contents(cache).get("main.o");
+    const keptPlumbing = contents(cache).get("game_plumbing.o");
     check([...before.keys()].some((file) => file.startsWith("engine/")) && before.has("game.o") && before.has("main.o"),
         "a build that failed in the game's C still compiled the engine and the generated C");
     put(join(game, `${name(5)}.c`), text(5), headerTime);
@@ -829,12 +996,15 @@ async function atOnceTests(tide, root, target) {
     check(!again.some((file) => !file.startsWith("c/") && file !== "game.o"),
         `the build after the fix compiled more than the game's C and identity: ${again}`);
     const repaired = contents(cache);
-    // The launcher intentionally survives identity-only header edits. DWARF
-    // can retain the checksum of game.h from the failed build, so its debug
-    // bytes need not match a clean compile against the restored header.
-    // Require exact reuse of that object, and clean-build parity everywhere else.
+    // The launcher and a debug build's plumbing intentionally survive
+    // identity-only header edits. DWARF can retain the checksum of game.h from
+    // the failed build, so their debug bytes need not match a clean compile
+    // against the restored header. Require exact reuse of those objects, and
+    // clean-build parity everywhere else.
     check(repaired.get("main.o") === keptLauncher, "the build after the fix changed the reused launcher");
-    const differ = [...built[0].files].filter(([path, bytes]) => path !== "main.o" && repaired.get(path) !== bytes).map(([path]) => path);
+    check(repaired.get("game_plumbing.o") === keptPlumbing, "the build after the fix changed the reused plumbing");
+    const reused = new Set(["main.o", "game_plumbing.o"]);
+    const differ = [...built[0].files].filter(([path, bytes]) => !reused.has(path) && repaired.get(path) !== bytes).map(([path]) => path);
     const more = [...repaired.keys()].filter((path) => !built[0].files.has(path));
     check(!differ.length && !more.length, `the build after the fix left other files than a clean build: ${[...differ, ...more]}`);
     console.log("  a build that failed keeps what compiled, and the next one finishes it");
@@ -863,22 +1033,37 @@ async function main() {
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
+        if (opts.optimizationOnly) {
+            for (const target of opts.web ? ["native", "web"] : ["native"])
+                await optimizationTests(tide, installation, root, target);
+            if (opts.web) await webRunTest(tide, root, true, "-O3");
+            console.log("Optimization integration tests passed.");
+            return;
+        }
         if (opts.serverOnly) await serverTests(tide, root);
         if (!opts.watchOnly && !opts.serverOnly) {
-            for (const target of opts.web ? ["native", "web"] : ["native"]) await strippingTests(tide, installation, root, target, embedded);
+            if (inPart("modes")) {
+                for (const target of opts.web ? ["native", "web"] : ["native"]) {
+                    await strippingTests(tide, installation, root, target, embedded);
+                    await assetModeTests(tide, root, target);
+                    await optimizationTests(tide, installation, root, target);
+                }
+            }
             if (!opts.stripOnly) {
-                for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
-                for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
+                if (inPart("at-once"))
+                    for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
+                if (inPart("cache"))
+                    for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
             }
         }
-        if (!opts.serverOnly && !opts.stripOnly && (opts.web || opts.watchOnly)) {
+        if (!opts.serverOnly && !opts.stripOnly && (opts.web || opts.watchOnly) && inPart("cache")) {
             await webRunTest(tide, root);
             await webRunTest(tide, root, true);
             await webRerunTest(tide, root);
         }
-        if (opts.gpu && !opts.watchOnly && !opts.stripOnly && !opts.serverOnly) await nativeRunTest(tide, root);
-        if (!opts.serverOnly && !opts.watchOnly && !opts.stripOnly) await serverTests(tide, root);
-        console.log("Cache integration tests passed.");
+        if (opts.gpu && !opts.watchOnly && !opts.stripOnly && !opts.serverOnly && inPart("cache")) await nativeRunTest(tide, root);
+        if (!opts.serverOnly && !opts.watchOnly && !opts.stripOnly && inPart("cache")) await serverTests(tide, root);
+        console.log(opts.part ? `Cache integration tests (${opts.part}) passed.` : "Cache integration tests passed.");
     } finally {
         if (opts.keep) console.log(`Kept fixtures: ${root}`);
         else removeOwned(root, root);

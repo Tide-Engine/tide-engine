@@ -1,5 +1,49 @@
 # The Newton package
 
+## Removed (2026-10-31)
+
+Owner requested removing Newton because it is too slow. The package, vendored
+Newton/Warp kernels and headers, import/export tools, policy/model data, tests,
+and both dependent robotics examples (arm and MicroDuck) are removed. Their
+CMake targets and test registration are removed, so native, web and packaged
+source builds no longer compile or ship Newton. The public package page,
+navigation, overview, README, guide and spec references are removed too.
+Box2D and Box3D retain their existing implementations and behavior.
+
+Everything below is historical; source and provenance remain in Git history.
+Old measurements and validation records elsewhere in notes/ stay historical.
+
+The preceding CI investigation found run 41206262777 at 347df3e6f failed only
+Linux sanitizer tide_platform_migrate: UBSan reports a misaligned Unit_local
+write in generated defaults, reached from carry_value / tide_migrate_world.
+Newton's rollback test passed in 216.41 seconds; removing Newton does not fix
+that separate migration bug. The owner's removal request replaces work on the
+failed run; no migration runtime change or rerun of that old workflow is made.
+
+Local validation with Clang 23.1.2 / Node 24.22.1: full Windows sanitizer build
+and 2,877/2,877 CTests pass, including 61 GPU and 29 safety tests. Full web-debug
+build and 2,765/2,765 CTests pass, including WebGL, D3D11 and WebGPU. Native/web
+CTest inventories and compile manifests contain no Newton or MicroDuck entries.
+A fresh cmake --install --component tide staging contains exactly the eight
+remaining package directories, no newton. Docs production build passes with
+the existing unstaged-example 404s, and the removed page is absent from output.
+Linux UBSan, macOS, MinGW and Android remain normal CI coverage.
+
+Integration: merged origin/dev 53e709e70 cleanly. The spec's independent shader
+and sharding edits both survive. Incoming Cutout shader/compiler/embed changes
+were rebuilt for Windows ASan and WASI; the selected native compiler, LSP,
+SPIR-V/HLSL, embed, Vulkan and OpenGL checks pass 11/11. Merged docs production
+build passes. Selected WASI shader/compiler checks, including WebGL, D3D11 and
+WebGPU, pass 9/9. Full suites above precede that merge; they are not repeated
+for the unrelated incoming feature.
+
+
+## Layouts with 64-bit handles (2026-10-30)
+
+Lists and maps in `newton.tide`'s `Physics` are 8 and 32 bytes (notes/ecs.md,
+64-bit handles): the bridge's `physics` is 144 bytes, its lists from 24 and its
+maps from 48, with 4 bytes of padding written out after `status`.
+
 ## Sharded worlds (2026-10-23)
 
 `Physics`' collection lists and maps and `status` are `[Native]`, each shard's own (each steps the bodies it has); `gravity` and `substeps` are the root's on every shard. `Joint.parent` and `Joint.child` are `[Together]`, so an articulation is one shard's; a `Collider` with no position goes with the first entity it names, its body. `CollectNeighbours` (stage 3, a system for no entity with queries of every `Body` and `Collider`) adds the bodies other shards own near the border, and their enabled colliders whose body is here, to the step as they are: a dynamic one dynamic with its mass, so contacts across the border share momentum. Publishing is per entity and skips them (ghosts run no code), so what the step does to them is dropped. In a world that isn't sharded `Shards.Owns` is `true` and the system's loops skip every row; no hash pin moved, and `order.txt` has it after `CollectActuators`. Test: `tide_newton_shards` (a ball crossing keeps its speed; a 1 kg ball at 4 m/s into a 3 kg one at rest across the border: momentum about 4 and the heavy one between 1 and 3 m/s, which it isn't without the neighbours; a fixed pair crosses whole, 1.5 m apart).

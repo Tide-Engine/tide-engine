@@ -14,12 +14,14 @@ static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
 
-static const tide_entity body = {1u, 1u};
-static const tide_entity unit = {2u, 1u};
+static tide_entity body;
+static tide_entity unit;
 
 static void start(void)
 {
     tide_world_init(&world, 1.0f);
+    unit = tide_entity_in_slot(&world.entities, 2);
+    body = tide_entity_in_slot(&world.entities, 1);
     tide_local_init(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(0), 0, false, false, "");
 }
@@ -123,9 +125,8 @@ TIDE_TEST(overrides_frags_and_verts)
     TIDE_REQUIRE(shader != NULL);
     // The mesh names Wave and Shade, and draws through what's built under those names
     TIDE_CHECK(strcmp(shader->name, "Wave and Shade on Corner") == 0);
-    TIDE_CHECK(strstr(shader->glsl_vertex, "0.25") && !strstr(shader->glsl_vertex, "0.75"));
-    TIDE_CHECK(strstr(shader->glsl_fragment, "0.125") && !strstr(shader->glsl_fragment, "0.875"));
-#ifdef __wasm__ // A game has its WGSL where WebGPU is
+#ifdef __wasm__ // A game has its WGSL where WebGPU is (natively, its SPIR-V)
+    TIDE_CHECK(strstr(shader->wgsl, "0.25") && !strstr(shader->wgsl, "0.75"));
     TIDE_CHECK(strstr(shader->wgsl, "0.125") && !strstr(shader->wgsl, "0.875"));
 #endif
 }

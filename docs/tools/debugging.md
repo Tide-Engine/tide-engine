@@ -10,12 +10,12 @@ This is the debugger you'd use for C and C++. It's for your game's own logic; [d
 
 ## What a debug build has
 
-`tide run`, `tide build` without `--release`, and the game `tide unity` builds for the Unity editor are debug builds. Each has, beside the program or library:
+Native `tide run`, `tide build` and `tide unity` builds retain debug information in default debug mode and with `--release`. Each has, beside the program or library:
 
 - its debug information, which maps each line of the C the game becomes back to its `.tide` line. On Windows that's a `.pdb`, with the game's natvis inside it, which Visual Studio, VS Code, CLion and WinDbg read by themselves.
 - `<name>.natvis`, how those debuggers show the game's values, and `<name>_lldb.py`, the same for LLDB. A Unity project's are `Library/Tide/game.natvis` and `Library/Tide/game_lldb.py`.
 
-`--release` builds have no debug information. Builds for the web and Android have none of this.
+A debug build leaves your code unoptimized and optimizes what the engine generates around it and packages' C, which a debugger steps over anyway, so a large game stays playable while you debug it. `--release` optimizes game code too, while retaining debug information; inlining and optimized-away locals can affect stepping. `--distribution` builds have no debug information. Web and Android debug/release builds retain symbols, but do not produce these native debugger visualizers.
 
 ## What you see
 
@@ -28,7 +28,7 @@ This is the debugger you'd use for C and C++. It's for your game's own logic; [d
   - lists: their count and their elements, each as its type, structs with their fields: in locals, parameters and fields alike. A list local's type says which list it is, `tide_local_list3`, the list inside it as `list`. Visual Studio, VS Code and CLion show only the count of a list in async code, in a `mut` parameter, or in a function that takes an `Action`; LLDB shows those too.
   - maps and sets: their count and entries, `["ann"] = 3`.
   - enums: the member's name, in a field (LLDB: everywhere).
-  - entities: `Entity(3:1)`, or `none`.
+  - entities: their complete opaque identity, `Entity(birth:lineage)`, or `none` when both words are zero. Each word is 64 bits; neither is a storage index.
   - `T?`: the value, or `none`; `T fails E` its error; vectors `(1, 2, 3)`; `Color(1, 0, 0, 1)`.
 
 Grids show their handle, and C's own view of anything else.

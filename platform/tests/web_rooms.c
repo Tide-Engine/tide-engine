@@ -146,6 +146,19 @@ static bool said_code;
 static bool done;
 static bool registration_released;
 
+// A code is allocated before the relay knows it. Start joiners only once
+// registration is confirmed, as a player opening the host's invite would.
+static bool registered(const char *code, char invite[TIDE_INVITE_BYTES])
+{
+    tide_platform_room_invite(code, invite, TIDE_INVITE_BYTES);
+    if (!registration_released) {
+        if (invite[0]) return false;
+        registration_released = tide_web_eval("releaseRegistration()");
+        return false;
+    }
+    return invite[0] != '\0';
+}
+
 // The host's page hidden, as browsers hide it when another tab is in front,
 // only stricter: browsers stop its animation frames and slow its timers to
 // about one a second, and here they stop too, so whatever frames it gets come
@@ -292,8 +305,11 @@ static int frame_handover(void)
     }
     tide_platform_room_code(code, sizeof code);
     if (me == 1 && !said_code && code[0]) {
-        printf("room %s\n", code);
-        said_code = true;
+        char invite[TIDE_INVITE_BYTES];
+        if (registered(code, invite)) {
+            printf("room %s\n", code);
+            said_code = true;
+        }
     }
     const world *w = tide_session_world(session);
     const tide_session_status status = tide_session_status_of(session);
@@ -340,8 +356,8 @@ static int frame(void *user, const float seconds)
         tide_platform_room_invite(code, invite, sizeof invite);
         if (!registration_released) {
             if (invite[0]) return fail("an unregistered room offered an invite");
-            registration_released = tide_web_eval("releaseRegistration()");
-        } else if (invite[0]) {
+        }
+        if (registered(code, invite)) {
             printf("room %s\ninvite %s\n", code, invite);
             said_code = true;
         }

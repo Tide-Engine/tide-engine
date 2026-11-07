@@ -45,8 +45,8 @@ void b2t_images(int32_t *whole, int32_t *in_parts);
 // The server's world in the match below, on every platform and in every
 // configuration: Box2D's math, its image and the netcode, byte for byte.
 // Once in the middle of the first round, and once after a new game.
-#define RACING_HASH UINT64_C(0x678f9e944c31fa14)
-#define MATCH_HASH UINT64_C(0x659843ec2aba2d0b)
+#define RACING_HASH UINT64_C(0x5cebbb8bed2ae170)
+#define MATCH_HASH UINT64_C(0xb895d2273b9c6ec6)
 
 static tide_world world;
 
@@ -212,6 +212,8 @@ static uint32_t plain_command(const uint32_t id, uint8_t bytes[TIDE_COMMAND_BYTE
 {
     tide_bits bits = {bytes, TIDE_COMMAND_BYTES, 0, false};
     tide_bits_put(&bits, id, 16);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     return tide_bits_end(&bits);
@@ -797,6 +799,9 @@ static tide_devices devices;
 static void frame(const tide_world *w)
 {
     tide_local_frame_time(&local, 1.0f / 60.0f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 1.0f / 60.0f);
+#endif
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
     tide_frame(w, NULL, 1.0f, w, NULL, 1.0f, &local, &draw, &gui);

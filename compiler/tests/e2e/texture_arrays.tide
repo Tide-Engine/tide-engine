@@ -1,0 +1,91 @@
+scene Main { }
+
+// Texture arrays: an asset of a glob's images and one of a list of paths, and one a view draws into a layer at a time
+// with its depth beside it, each read by a uv and a layer.
+asset TextureArray sky = "cubes/sky/sky_??.png";
+asset TextureArray picked = ["cubes/sky/sky_pz.png", "cubes/sky/sky_px.png", "cubes/sky/sky_pz.png"];
+// Images big enough to be compressed, each as a Texture's is: one opaque (BC1), one with alpha (BC3); and kept exact
+asset TextureArray packed = ["texture_compression_assets/opaque.png", "texture_compression_assets/alpha.png"];
+[Lossless]
+asset TextureArray exact = ["texture_compression_assets/opaque.png", "texture_compression_assets/alpha.png"];
+
+// Numbers: kept as the files have them, and read as they are
+[Raw]
+asset TextureArray numbers = "cubes/sky/sky_??.png";
+
+local singleton Art
+{
+    TextureArray drawn;
+    TextureArray shadows;
+    DepthTextureArray depths;
+    TextureArray kept;
+    Grid3<float> heights = Grid3(5, 3, 4); // A Grid3 of floats...
+    TextureArray fromGrid;                 // ...as an array, its z its layers
+    int gridCount;
+    [Raw] Grid3<Color> rawCells = Grid3(2, 2, 2); // A Grid3 of numbers...
+    [Raw] TextureArray rawLayers;                 // ...as an array of them
+    int numbersCount;
+    List<Vertex> quad;
+    List<int> indices;
+    int count;
+    int depthCount;
+    int assetCount;
+    int pickedCount;
+    int none;
+    int frames;
+}
+
+frag Show(Vertex vertex, out Color color, Art art)
+{
+    float lit = art.depths.Compare(vertex.uv, 2, 0.5);
+    color = art.drawn.Sample(vertex.uv, 1) * art.kept.Sample(vertex.uv, 0)
+        + Color(lit, art.depths.Sample(vertex.uv, 0), art.fromGrid.Sample(vertex.uv, 3).r);
+}
+
+frag Numbers(Vertex vertex, out Color color, Art art)
+{
+    color = numbers.Sample(vertex.uv, 2) + art.rawLayers.Sample(vertex.uv, 1, Filter.Point);
+}
+
+frag Packed(Vertex vertex, out Color color)
+{
+    color = sky.Sample(vertex.uv, 3) + picked.Sample(vertex.uv, int(vertex.uv.x * 3), Filter.Point, Wrap.Repeat)
+        + packed.Sample(vertex.uv, 1) + exact.Sample(vertex.uv, 0);
+}
+
+view Make(mut Art art)
+{
+    if (art.frames == 0)
+    {
+        art.drawn = TextureArray(32, 16, 3, 1);
+        art.shadows = TextureArray(64, 64, 4, 1, Format.Depth);
+        art.depths = art.shadows.depth;
+        art.kept = sky;
+        art.heights[4, 2, 3] = 0.5;
+        art.fromGrid = art.heights;
+        art.rawCells[1, 1, 1] = Color(1, 0.5, 0.25, 0); // No alpha: its numbers stay
+        art.rawLayers = art.rawCells;
+        art.quad = [Vertex { position = float2(0, 0), uv = float2(0, 0) },
+                    Vertex { position = float2(32, 0), uv = float2(1, 0) },
+                    Vertex { position = float2(32, 32), uv = float2(1, 1) },
+                    Vertex { position = float2(0, 32), uv = float2(0, 1) }];
+        art.indices = [0, 1, 2, 0, 2, 3];
+    }
+    if (art.frames == 1) art.drawn.Resize(64, 32);
+    if (art.frames == 2) art.drawn.Dispose();
+    art.frames++;
+    art.count = art.drawn.count;
+    art.depthCount = art.depths.count;
+    art.assetCount = sky.count;
+    art.pickedCount = picked.count;
+    art.gridCount = art.fromGrid.count;
+    art.numbersCount = numbers.count + art.rawLayers.count;
+    TextureArray empty = default;
+    art.none = empty.count;
+    art.drawn.layers[1].Clear(Color.red);
+    art.drawn.layers[2].Mesh(art.quad, art.indices, Packed);
+    art.shadows.layers[3].Clear(Color.black);
+    Draw.Mesh(art.quad, art.indices, Show);
+    Draw.Mesh(art.quad, art.indices, Packed);
+    Draw.Mesh(art.quad, art.indices, Numbers);
+}

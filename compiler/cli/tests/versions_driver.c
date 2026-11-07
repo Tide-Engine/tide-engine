@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "versions.h"
 #include "telemetry.h"
 
@@ -12,5 +13,6 @@ int main(int argc, char **argv)
     const int code = tide_use_pinned(argv[1], argc - 1, argv + 1, "1.0.0");
     if (code >= 0) return code;
     puts("using invoking tide");
+    printf("update check: %s\n", getenv("TIDE_NO_UPDATE_CHECK") ? "disabled" : "enabled");
     return 0;
 }

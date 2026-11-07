@@ -25,7 +25,18 @@ typedef struct reads_root {
     const param *param;
     const stmt *row;
     const field *binding;
+    bool transient_match; // No whole-value helper narrowing; preserve opaque/captured values in full.
 } reads_root;
+
+// Whether a name's parameter is `p`. A view's frags and verts get what they
+// read that the view doesn't take as more parameters after the view's code is
+// checked (bind_views), which can move the parameters: the code's names then
+// point at the copy from before, the same parameter by its name and type.
+static bool same_param(const param *named, const param *p)
+{
+    return named == p
+        || (named && p && str_eq(named->name, p->name) && named->type.kind == p->type.kind && named->type.decl == p->type.decl);
+}
 
 static writes_place reads_place_of(const expr *e, const reads_root *root)
 {
@@ -37,7 +48,7 @@ static writes_place reads_place_of(const expr *e, const reads_root *root)
     }
     switch (e->kind) {
     case E_NAME:
-        if (!root->param || e->bind != BIND_PARAM || e->param != root->param) return none;
+        if (!root->param || e->bind != BIND_PARAM || !same_param(e->param, root->param)) return none;
         return (writes_place){true, 0, type_layout(root->param->type).size, false};
     case E_MEMBER: {
         const writes_place p = reads_place_of(e->object, root);
@@ -90,6 +101,14 @@ static void index_reads(const expr *e, const reads_root *root, byte_writes *r)
     }
 }
 
+static bool reads_direct_data_path(const expr *e)
+{
+    for (; e && e->kind == E_MEMBER; e = e->object) {
+        if (!e->field || e->property || e->local_field || e->swizzle_len) return false;
+    }
+    return e && e->kind == E_NAME;
+}
+
 static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
 {
     if (!e || r->all) return;
@@ -105,6 +124,22 @@ static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
         index_reads(e, root, r);
         return;
     }
+    if (root->transient_match && e->kind == E_MEMBER && e->swizzle_len > 0) {
+        const writes_place p = reads_place_of(e->object, root);
+        const int dims = type_dim(e->object->type);
+        if (p.rooted && !p.element && dims > 0 && p.size == type_layout(e->object->type).size
+            && p.size % dims == 0 && reads_direct_data_path(e->object)) {
+            const int each = p.size / dims;
+            for (int k = 0; k < e->swizzle_len; k++) writes_mark(r, p.off + e->swizzle[k] * each, each);
+            index_reads(e, root, r);
+            return;
+        }
+        // A property or an earlier swizzle can reorder the receiver's lanes.
+        // Read that receiver conservatively rather than interpreting its bytes
+        // as the returned vector's layout.
+        expr_reads(e->object, root, r);
+        return;
+    }
     if (e->kind == E_NAME || e->kind == E_MEMBER || e->kind == E_INDEX) {
         const writes_place p = reads_place_of(e, root);
         if (p.rooted) {
@@ -115,7 +150,7 @@ static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
     }
     // A place of it handed to a Tide function: what that function's code reads of its parameter
     const decl *callee = e->method;
-    const bool routine = callee && !callee->is_extern && callee->body && !callee->is_async && !callee->is_virtual && !callee->is_override
+    const bool routine = !root->transient_match && callee && !callee->is_extern && callee->body && !callee->is_async && !callee->is_virtual && !callee->is_override
         && !callee->replaced_by && (e->call == CALL_FUNCTION || e->call == CALL_METHOD);
     for (int i = 0; i < e->args.count; i++) {
         const expr *arg = e->args.items[i];
@@ -142,6 +177,7 @@ static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
     for (int i = 0; i < e->inits.count; i++) expr_reads(e->inits.items[i].value, root, r);
     expr_reads(e->lambda_body, root, r);
     expr_reads(e->values, root, r);
+    expr_reads(e->mesh_lod, root, r);
     expr_reads(e->skin_mesh, root, r);
     expr_reads(e->skin_pose, root, r);
     expr_reads(e->callable_receiver, root, r);
@@ -198,24 +234,62 @@ static const byte_writes *code_reads(const decl *code, const int index)
     vec_push(read_memo, m);
     const int at = read_memo.count - 1;
     byte_writes r = m.w;
-    const reads_root root = {p, NULL, NULL};
+    const reads_root root = {p, NULL, NULL, false};
     if (!r.all) stmt_reads(code->body, &root, &r);
     read_memo.items[at].w = r;
     read_memo.items[at].state = 2;
     return &read_memo.items[at].w;
 }
 
+// Views themselves do not carry the helper-only decl.draws summary. Find
+// direct drawing and calls to drawing helpers, including nested Action blocks.
+static bool stmt_has_drawing(const stmt *s);
+
+static bool expr_has_drawing(const expr *e)
+{
+    if (!e) return false;
+    if (e->call == CALL_DRAW || e->call == CALL_GUI || (e->method && e->method->draws)) return true;
+    if (expr_has_drawing(e->object) || expr_has_drawing(e->lhs) || expr_has_drawing(e->rhs)
+        || expr_has_drawing(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) if (expr_has_drawing(e->args.items[i])) return true;
+    for (int i = 0; i < e->written.count; i++) if (expr_has_drawing(e->written.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (expr_has_drawing(e->inits.items[i].value)) return true;
+    return expr_has_drawing(e->lambda_body) || expr_has_drawing(e->values) || expr_has_drawing(e->mesh_lod) || expr_has_drawing(e->skin_mesh)
+        || expr_has_drawing(e->skin_pose) || expr_has_drawing(e->callable_receiver)
+        || expr_has_drawing(e->task_source) || expr_has_drawing(e->binding_value) || stmt_has_drawing(e->block)
+        || stmt_has_drawing(e->step) || stmt_has_drawing(e->compare[0]) || stmt_has_drawing(e->compare[1])
+        || stmt_has_drawing(e->out_local) || stmt_has_drawing(e->binding);
+}
+
+static bool stmt_has_drawing(const stmt *s)
+{
+    if (!s) return false;
+    for (int i = 0; i < s->stmts.count; i++) if (stmt_has_drawing(s->stmts.items[i])) return true;
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++)
+            if (expr_has_drawing(s->cases.items[i].labels.items[k])) return true;
+        for (int k = 0; k < s->cases.items[i].body.count; k++)
+            if (stmt_has_drawing(s->cases.items[i].body.items[k])) return true;
+    }
+    return expr_has_drawing(s->cond) || expr_has_drawing(s->value) || expr_has_drawing(s->target)
+        || expr_has_drawing(s->property_set) || expr_has_drawing(s->by) || expr_has_drawing(s->offset)
+        || stmt_has_drawing(s->init) || stmt_has_drawing(s->step) || stmt_has_drawing(s->then_stmt)
+        || stmt_has_drawing(s->else_stmt);
+}
+
 // Whether a view can copy only some of component `d`'s lanes: one whose
 // blending, corrections and copies all go field by field
-static bool reads_some_allowed(const gen *g, const decl *d)
+static bool reads_some_allowed(const gen *g, const decl *d, const decl *code)
 {
     const int lanes = comp_lanes(d);
     // A frag or a vert takes a component from the entity the view draws for, through no name in the view's code
+    // Non-drawing views have no implicit shader reads: binding attached local
+    // material fields need not gather the material's numeric match lanes.
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *s = g->prog->decls.items[i];
         if (s->kind != DECL_SHADER) continue;
         for (int k = 0; k < s->params.count; k++) {
-            if (s->params.items[k].type.decl == d) return false;
+            if (s->params.items[k].type.decl == d && stmt_has_drawing(code->body)) return false;
         }
     }
     return lanes > 1 && lanes <= LANE_MASK_MOST && decl_layout(d).size <= LANE_WRITES_MOST && !decl_corrects(d) && !d->interpolate
@@ -254,7 +328,7 @@ static bool view_param_lanes(const gen *g, const decl *sys, const int i, lane_ma
     const param *p = &sys->params.items[i];
     if (!sys->is_view || !sys->body || sys->starts_tasks || sys->is_async || p->type.kind != TY_COMPONENT
         || (p->mode != PARAM_READ && p->mode != PARAM_MUT) || (p->mode == PARAM_MUT && p->type.decl->is_local) // Put back whole
-        || p->verified || joined(sys, p) || !reads_some_allowed(g, p->type.decl)) {
+        || p->verified || joined(sys, p) || !reads_some_allowed(g, p->type.decl, sys)) {
         return false;
     }
     return reads_lane_mask(p->type.decl, code_reads(sys, i), mask);
@@ -272,7 +346,7 @@ static void stmt_query_uses(const stmt *s, query_uses *u);
 static void expr_query_uses(const expr *e, query_uses *u)
 {
     if (!e) return;
-    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param == u->q) u->named++;
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && same_param(e->param, u->q)) u->named++;
     expr_query_uses(e->object, u);
     expr_query_uses(e->lhs, u);
     expr_query_uses(e->rhs, u);
@@ -281,6 +355,7 @@ static void expr_query_uses(const expr *e, query_uses *u)
     for (int i = 0; i < e->inits.count; i++) expr_query_uses(e->inits.items[i].value, u);
     expr_query_uses(e->lambda_body, u);
     expr_query_uses(e->values, u);
+    expr_query_uses(e->mesh_lod, u);
     expr_query_uses(e->skin_mesh, u);
     expr_query_uses(e->skin_pose, u);
     expr_query_uses(e->callable_receiver, u);
@@ -297,7 +372,9 @@ static void expr_query_uses(const expr *e, query_uses *u)
 static void stmt_query_uses(const stmt *s, query_uses *u)
 {
     if (!s) return;
-    if (s->kind == S_FOREACH && s->query == u->q && s->value && s->value->kind == E_NAME && s->value->param == u->q) u->looped++;
+    if (s->kind == S_FOREACH && same_param(s->query, u->q) && s->value && s->value->kind == E_NAME && same_param(s->value->param, u->q)) {
+        u->looped++;
+    }
     for (int i = 0; i < s->stmts.count; i++) stmt_query_uses(s->stmts.items[i], u);
     for (int i = 0; i < s->cases.count; i++) {
         for (int k = 0; k < s->cases.items[i].labels.count; k++) expr_query_uses(s->cases.items[i].labels.items[k], u);
@@ -321,8 +398,8 @@ static void stmt_query_uses(const stmt *s, query_uses *u)
 static void stmt_row_reads(const stmt *s, const param *q, const field *binding, byte_writes *r, int *reached)
 {
     if (!s || r->all) return;
-    if (s->kind == S_FOREACH && s->query == q) {
-        const reads_root root = {NULL, s, binding};
+    if (s->kind == S_FOREACH && same_param(s->query, q)) {
+        const reads_root root = {NULL, s, binding, false};
         stmt_reads(s->then_stmt, &root, r);
         (*reached)++;
     }
@@ -344,7 +421,7 @@ static bool view_query_lanes(const gen *g, const decl *sys, const int qi, const 
     const param *q = &sys->params.items[qi];
     const param *p = &q->query.items[b];
     if (!sys->is_view || !sys->body || !q->query_rows || q->query_verified_entities || q->query_verified_join || p->verified
-        || !reads_some_allowed(g, p->type.decl)) {
+        || !reads_some_allowed(g, p->type.decl, sys)) {
         return false;
     }
     query_uses u = {q, 0, 0};
@@ -358,6 +435,27 @@ static bool view_query_lanes(const gen *g, const decl *sys, const int qi, const 
     stmt_row_reads(sys->body, q, binding, &r, &reached);
     if (reached != u.looped) return false; // One in a block it didn't look in
     return reads_lane_mask(p->type.decl, &r, mask);
+}
+
+// A transient match foreach row: never shorten a value that can escape into
+// a task, a shard, a materialized parallel row or a whole-value consumer.
+static bool match_query_lanes(const gen *g, const stmt *s, const param *p, const field *binding, uint64_t *words)
+{
+    const decl *code = own_routine(g) ? own_routine(g) : g->code;
+    const decl *d = p->type.decl;
+    if (!code || code->is_view || code->is_local || code->is_async || code->starts_tasks || sharded(g)
+        || p->mode != PARAM_READ || p->type.kind != TY_COMPONENT || d->is_local
+        || comp_lanes(d) <= 1 || comp_lanes(d) > LANE_MASK_MOST || decl_layout(d).size > LANE_WRITES_MOST) return false;
+    const int size = type_layout(binding->type).size;
+    if (size <= 0 || size != decl_layout(d).size) return false;
+    byte_writes r = {size, false, arena_alloc((size_t)size)};
+    memset(r.bytes, 0, (size_t)size);
+    const reads_root root = {NULL, s, binding, true};
+    stmt_reads(s->then_stmt, &root, &r);
+    lane_mask mask;
+    if (!reads_lane_mask(d, &r, &mask)) return false;
+    memcpy(words, mask.w, sizeof mask.w);
+    return true;
 }
 
 // Whether any view copies only some of component `d`'s lanes: then it has

@@ -95,7 +95,7 @@ TIDE_TEST(rows_are_read_where_they_are)
     TIDE_CHECK(low[3] == 1019 && high[3] == 0);
     TIDE_CHECK(tide_rows_floats(&rows, 1, offsetof(label, weight))[4] == 10.0f);
     const tide_entity *who = tide_rows_entities(&rows);
-    TIDE_CHECK(who == tide_table_column(&t, &columns, 1, 0) && who[2].index == 18);
+    TIDE_CHECK(who == tide_table_column(&t, &columns, 1, 0) && who[2].birth == 0 && who[2].lineage == 19);
     label l;
     tide_rows_get(&rows, 1, 5, &l);
     TIDE_CHECK(l.id == 1021 && l.weight == 10.5f && !l.lit);
@@ -106,7 +106,7 @@ TIDE_TEST(rows_are_read_where_they_are)
 
     tide_rows_begin(&rows, &t, &columns, 2, 3, 4, false, reads, 3, NULL, "Read");
     TIDE_CHECK(tide_rows_count(&rows) == 4);
-    TIDE_CHECK(tide_rows_floats(&rows, 0, offsetof(place, x))[0] == 35.0f && tide_rows_entities(&rows)[3].index == 38);
+    TIDE_CHECK(tide_rows_floats(&rows, 0, offsetof(place, x))[0] == 35.0f && tide_entity_equal(tide_rows_entities(&rows)[3], (tide_entity){0, 39}));
     place p;
     tide_rows_get(&rows, 0, 3, &p);
     TIDE_CHECK(p.x == 38.0f && p.hits == 38);

@@ -13,9 +13,9 @@ static tide_gui gui;
 static tide_devices devices;
 
 // The Main scene is slot 0; its Setup spawns these in order.
-static const tide_entity HOLDER = {1, 1};
-static const tide_entity CLEARED = {2, 1};
-static const tide_entity BODY = {3, 1};
+static tide_entity HOLDER;
+static tide_entity CLEARED;
+static tide_entity BODY;
 
 // The game's C: a T? field is its value and whether there is one, zeros when there's none
 int32_t PickItem(const Plain value)
@@ -45,6 +45,9 @@ static void frame(const tide_world *now, const tide_world *previous, const float
 TIDE_TEST(optional_fields_all_checks_pass)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    HOLDER = tide_entity_in_slot(&world.entities, 1);
+    CLEARED = tide_entity_in_slot(&world.entities, 2);
+    BODY = tide_entity_in_slot(&world.entities, 3);
     tide_world_tick(&world);
     TIDE_REQUIRE(tide_has_Results(&world, HOLDER));
     const Results r = tide_get_Results(&world, HOLDER);
@@ -87,6 +90,9 @@ TIDE_TEST(optional_fields_all_checks_pass)
 TIDE_TEST(optional_fields_with_no_value_are_zeros)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    HOLDER = tide_entity_in_slot(&world.entities, 1);
+    CLEARED = tide_entity_in_slot(&world.entities, 2);
+    BODY = tide_entity_in_slot(&world.entities, 3);
     const Cleared fresh = tide_get_Cleared(&world, CLEARED);
     tide_world_tick(&world);
     const Cleared set = tide_get_Cleared(&world, CLEARED);
@@ -124,6 +130,9 @@ TIDE_TEST(optional_fields_with_no_value_are_zeros)
 TIDE_TEST(optional_fields_snapshot_pack_and_hash_the_same_everywhere)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    HOLDER = tide_entity_in_slot(&world.entities, 1);
+    CLEARED = tide_entity_in_slot(&world.entities, 2);
+    BODY = tide_entity_in_slot(&world.entities, 3);
     tide_world_tick(&world);
     const Holder holder = tide_get_Holder(&world, HOLDER);
     TIDE_CHECK(holder.target.ok && holder.target.value == 9);
@@ -176,6 +185,9 @@ TIDE_TEST(optional_fields_snapshot_pack_and_hash_the_same_everywhere)
 TIDE_TEST(optional_fields_in_the_input_pack_and_repair)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    HOLDER = tide_entity_in_slot(&world.entities, 1);
+    CLEARED = tide_entity_in_slot(&world.entities, 2);
+    BODY = tide_entity_in_slot(&world.entities, 3);
     Controls in = {0};
     in.aim = (tide_optional_float){.value = 0.25f, .ok = true};
     in.choice = (tide_optional_int){.value = -7, .ok = true};
@@ -229,6 +241,9 @@ TIDE_TEST(optional_fields_in_the_input_pack_and_repair)
 TIDE_TEST(optional_fields_cross_the_wire_in_commands)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    HOLDER = tide_entity_in_slot(&world.entities, 1);
+    CLEARED = tide_entity_in_slot(&world.entities, 2);
+    BODY = tide_entity_in_slot(&world.entities, 3);
     tide_local_init(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(0), 0, false, false, "");
     tide_world_tick(&world);
@@ -258,10 +273,10 @@ TIDE_TEST(optional_fields_cross_the_wire_in_commands)
             TIDE_CHECK(world.Game.renamedLevel.ok && world.Game.renamedLevel.value == 5);
         }
     }
-    // 10 bytes of type and target, then: a name's bit, 16 of its length and 3 bytes, a bit, a bit and two ints of a byte,
+    // 18 bytes of type and logical target, then: a name's bit, 16 of its length and 3 bytes, a bit, a bit and two ints of a byte,
     // an int (67 bits); and a bit, a bit and an int, a bit, an int of two bytes (27 bits)
-    if (sizes[0] != 19 || sizes[1] != 14) printf("    commands of %d and %d bytes\n", (int)sizes[0], (int)sizes[1]);
-    TIDE_CHECK(sizes[0] == 19 && sizes[1] == 14);
+    if (sizes[0] != 27 || sizes[1] != 22) printf("    commands of %d and %d bytes\n", (int)sizes[0], (int)sizes[1]);
+    TIDE_CHECK(sizes[0] == 27 && sizes[1] == 22);
     // The frame's local events and local entity
     frame(&world, NULL, 1.0f);
     TIDE_CHECK(!local.Seen.heard.ok && local.Seen.heard.value.at == 0); // The second Heard, with none, was the last
@@ -276,6 +291,9 @@ TIDE_TEST(optional_fields_snap_in_views)
 {
     static tide_world before;
     tide_world_init(&world, 1.0f / 60.0f);
+    HOLDER = tide_entity_in_slot(&world.entities, 1);
+    CLEARED = tide_entity_in_slot(&world.entities, 2);
+    BODY = tide_entity_in_slot(&world.entities, 3);
     tide_local_init(&local);
     tide_world_tick(&world); // x 10, a speed
     tide_world_copy(&before, &world);

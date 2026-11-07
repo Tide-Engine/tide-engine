@@ -33,6 +33,60 @@ selects a separate persistent directory. Scripted runs otherwise use the normal
 saves. The override changes relative paths and `Application.persistentDataPath`;
 explicit absolute paths still reach the files they name.
 
+## Logs and crashes
+
+A game run with a window keeps its log and its crashes in its persistent data directory (`Application.persistentDataPath`), beside its saves, so a player's problem can be looked into once they send them:
+
+| System | Log | Crashes |
+|---|---|---|
+| Windows | `%USERPROFILE%\AppData\LocalLow\<appId>\Player.log` | `%USERPROFILE%\AppData\LocalLow\<appId>\Crashes\` |
+| macOS | `~/Library/Application Support/<appId>/Player.log` | `~/Library/Application Support/<appId>/Crashes/` |
+| Linux | `~/.local/share/<appId>/Player.log` (under `$XDG_DATA_HOME` when it's set) | `~/.local/share/<appId>/Crashes/` |
+| Android | `Player.log` in the app's internal storage; the system log (`adb logcat`) has it too | The system's own crash reports |
+| Web | The browser's console | The browser's console |
+
+With [`--data-dir <folder>`](../tools/cli.md#without-a-window) they go in that folder instead.
+
+`Player.log` has everything the game wrote to stderr, after a line naming the Tide version, the game's `appId`, the system and the time it started: `Debug.Log` and `Debug.Assert`, the engine's messages and what your C prints there. The output still reaches the terminal or console too. The run before is kept as `Player-prev.log` beside it, and a log stops growing at 100 MB.
+
+A crash on Windows, macOS or Linux leaves a folder of its own in `Crashes`, named `Crash_<UTC date>_<time>`, with:
+
+- `crash.txt`: what the crash was (an access violation, a signal, an abort, as a failed `Debug.Assert` ends) and the stack, as module and offset
+- `Player.log`: a copy of the log up to the crash
+- `crash.dmp` on Windows: a minidump, which Visual Studio, WinDbg or CLion open with the build's PDB
+
+The log also notes the GPU the game draws with and its driver, which isn't printed to the terminal.
+
+A game built with `tide build` has `tide-crash` beside it, which a crash opens. It's a small window of its own, so it opens at once however big the game is. It names the game by its title and shows what the report says: the crash and its stack, then the last lines of the log, which may help a player see what led to it. Its **Show report** button opens the file manager at the crash's zip, `Crash_<UTC date>_<time>.zip` beside its folder. The zip holds `crash.txt`, `system.txt` (the system's version, processor and memory), the end of `Player.log` (at most its last 4 MB) and the minidump. On Linux it needs an X display, which Wayland desktops provide too; without one it opens nothing, and the zip is still there. `tide run` doesn't put it beside the game, so a crash while you work goes to the terminal.
+
+### What a report leaves out
+
+Before the zip is made, `tide-crash` masks what would say who the player is, with `*` in place of each character, so a report can go to you as it is:
+
+- the folder after `Users` or `home` in every path, which is usually the player's name (`C:\Users\*****\AppData\...`); `Public` and `Default` stay
+- the player's user name and the computer's name, wherever they're a whole word
+- IP addresses, except the machine's own (`127.0.0.1`, `::1`), and email addresses
+
+It masks them in the log, in `crash.txt` and `system.txt`, and in the minidump: the paths of its modules and the memory it holds. Only the zip is masked; the crash's folder keeps the files as they were. The masking can't know everything your game writes, so don't `Debug.Log` a player's account details, chat or other personal data.
+
+### Receiving reports
+
+A game linked to a hosting project with crash reports on sends each report there by itself, without asking the player. Its window then says the report was sent, and still shows what it says. Turn reports on in the project's **Settings** tab in the [hosting console](../multiplayer/hosting.md), which shows the project's report key. `tide deploy` writes the key into the game's `tide.deploy.json` as `"reports"`, or you can add it there yourself:
+
+```json
+{
+  "origin": "https://console.tide-engine.dev",
+  "project": "<project id>",
+  "reports": "<report key>"
+}
+```
+
+`tide build` then puts `crash.json` beside the game, with the key, the service's address and the build's ID (the SHA-256 of the game's program), and `tide-crash` sends there. Ship `crash.json` with the game. The console groups reports by what crashed and where, with how often and on which builds, systems and GPUs, and keeps each report's files. The hosting plan includes a monthly number of reports; past it, reports are dropped unless extra usage is on.
+
+The key ships inside the game, so all it can do is add reports to its project. Replacing it in the console stops the old one, and the next build carries the new one. Turning reports off and building again removes `crash.json`. A run with `TIDE_HIDDEN` set never sends.
+
+The ten newest crash folders and their zips are kept. Under a debugger the debugger has the crash instead. A run with no window (`--frames`, `--capture`, `--script`) writes no log, as its output is the test's.
+
 ## Whole-file operations
 
 | Call | Behavior |

@@ -56,10 +56,16 @@ TIDE_TEST(tasks_flow_run_in_either_world)
     tide_local_init(&local);
     for (int i = 0; i < 2; i++) {
         tide_local_frame_time(&local, 0.05f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+        tide_local_age_views(&local, 0.05f);
+#endif
         tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     }
     TIDE_CHECK(local.Seen.either == -1);
     tide_local_frame_time(&local, 0.05f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 0.05f);
+#endif
     tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Seen.either == 6);
     tide_local_free(&local);

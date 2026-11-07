@@ -1,0 +1,21 @@
+// expect: 'Inner' is a kernel: it's run with 'GPU.Run(Inner, over)', not drawn
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+struct Corner { float2 position; }
+compute Inner(Meadow meadow) { meadow.counts[0] = 1; }
+view Show(Meadow meadow)
+{
+    Draw.Mesh([Corner { position = float2(0, 0) }, Corner { position = float2(1, 0) }, Corner { position = float2(0, 1) }], [0, 1, 2], Inner);
+}

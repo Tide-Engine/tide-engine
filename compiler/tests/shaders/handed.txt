@@ -1,121 +1,20 @@
-// Place and Look on Corner: GLSL, vertex
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-layout(location = 0) in vec3 tide_a0;
-layout(location = 1) in vec3 tide_a1;
-layout(location = 2) in vec2 tide_a2;
-layout(location = 3) in vec4 tide_n0;
-layout(location = 4) in vec4 tide_n1;
-layout(location = 5) in vec4 tide_n2;
-layout(location = 6) in vec4 tide_n3;
-out vec2 tide_s2;
-out float tide_h0_1;
-out vec4 tide_h0_2;
-struct tt_Corner {
-    vec3 m_position;
-    vec3 m_normal;
-    vec2 m_uv;
-};
-struct tt_FromLamp {
-    vec3 m_place;
-    float m_glow;
-    vec4 m_tint;
-};
-struct tt_Fog {
-    float m_depth;
-    vec2 m_drift;
-};
-float tide_f(float x) {
-    return x;
-}
-bool tide_nan(float x) {
-    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
-}
-float tide_max1(float a, float b) {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
-}
-vec3 tide_normalize3(vec3 v) {
-    float l = dot(v, v);
-    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
-    return vec3(0.0);
-}
-void tf_Light(vec3 t_from, vec3 t_normal, inout float t_glow) {
-    t_glow = tide_max1(dot(t_normal, tide_normalize3((-t_from))), tide_f(0.0));
-}
-
-void ts_Place(inout tt_Corner t_corner, inout tt_FromLamp t_lamp, inout tt_Fog t_fog) {
-    t_corner.m_position.y = (t_corner.m_position.y + 0.1);
-    t_lamp.m_place = (t_corner.m_position - tide_u0.xyz);
-    tf_Light(t_lamp.m_place, t_corner.m_normal, t_lamp.m_glow);
-    t_lamp.m_tint = vec4(1.0, 0.9, 0.8, 1.0);
-    t_fog = tt_Fog(t_corner.m_position.z, t_corner.m_uv);
-}
-
-void main() {
-    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2);
-    tt_FromLamp tide_handed0 = tt_FromLamp(vec3(0.0), 0.0, vec4(0.0));
-    tt_Fog tide_handed1 = tt_Fog(0.0, vec2(0.0));
-    ts_Place(tide_vertex, tide_handed0, tide_handed1);
-    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
-    tide_s2 = tide_vertex.m_uv;
-    tide_h0_1 = tide_handed0.m_glow;
-    tide_h0_2 = tide_handed0.m_tint;
-}
-
-// Place and Look on Corner: GLSL, fragment
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-in vec2 tide_s2;
-in float tide_h0_1;
-in vec4 tide_h0_2;
-out vec4 tide_pixel;
-struct tt_Corner {
-    vec3 m_position;
-    vec3 m_normal;
-    vec2 m_uv;
-};
-struct tt_FromLamp {
-    vec3 m_place;
-    float m_glow;
-    vec4 m_tint;
-};
-void ts_Look(tt_Corner t_corner, tt_FromLamp t_lamp, inout vec4 t_color) {
-    if ((t_lamp.m_glow <= 0.0)) {
-        discard;
-    }
-    t_color = (t_lamp.m_tint * t_lamp.m_glow);
-    t_color.a = t_corner.m_uv.x;
-}
-
-void main() {
-    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    ts_Look(tt_Corner(vec3(0.0), vec3(0.0), tide_s2), tt_FromLamp(vec3(0.0), tide_h0_1, tide_h0_2), tide_color);
-    tide_color = tide_color * tide_tint;
-    tide_color.rgb = tide_color.rgb * tide_color.a;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
-    tide_pixel = tide_color;
-}
-
 // Place and Look on Corner: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
     tide_u0: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -123,7 +22,7 @@ var<private> tide_n3: vec4f;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_s2: vec2f,
     @location(1) tide_h0_1: f32,
     @location(2) tide_h0_2: vec4f,
@@ -193,8 +92,8 @@ fn ts_Look(t_corner: tt_Corner, t_lamp: tt_FromLamp, t_color: ptr<function, vec4
     var tide_handed0: tt_FromLamp = tt_FromLamp(vec3f(), f32(), vec4f());
     var tide_handed1: tt_Fog = tt_Fog(f32(), vec2f());
     ts_Place(&tide_vertex, &tide_handed0, &tide_handed1);
-    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     out.tide_s2 = tide_vertex.m_uv;
@@ -214,142 +113,23 @@ fn ts_Look(t_corner: tt_Corner, t_lamp: tt_FromLamp, t_color: ptr<function, vec4
     return tide_color;
 }
 
-// Place and Misty on Corner: GLSL, vertex
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-layout(location = 0) in vec3 tide_a0;
-layout(location = 1) in vec3 tide_a1;
-layout(location = 2) in vec2 tide_a2;
-layout(location = 3) in vec4 tide_n0;
-layout(location = 4) in vec4 tide_n1;
-layout(location = 5) in vec4 tide_n2;
-layout(location = 6) in vec4 tide_n3;
-layout(location = 7) in vec4 tide_n4;
-out vec3 tide_h0_0;
-out float tide_h1_0;
-out vec2 tide_h1_1;
-flat out vec4 tide_f0;
-struct tt_Corner {
-    vec3 m_position;
-    vec3 m_normal;
-    vec2 m_uv;
-};
-struct tt_FromLamp {
-    vec3 m_place;
-    float m_glow;
-    vec4 m_tint;
-};
-struct tt_Fog {
-    float m_depth;
-    vec2 m_drift;
-};
-float tide_f(float x) {
-    return x;
-}
-bool tide_nan(float x) {
-    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
-}
-float tide_max1(float a, float b) {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
-}
-vec3 tide_normalize3(vec3 v) {
-    float l = dot(v, v);
-    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
-    return vec3(0.0);
-}
-void tf_Light(vec3 t_from, vec3 t_normal, inout float t_glow) {
-    t_glow = tide_max1(dot(t_normal, tide_normalize3((-t_from))), tide_f(0.0));
-}
-
-void ts_Place(inout tt_Corner t_corner, inout tt_FromLamp t_lamp, inout tt_Fog t_fog) {
-    t_corner.m_position.y = (t_corner.m_position.y + 0.1);
-    t_lamp.m_place = (t_corner.m_position - tide_u0.xyz);
-    tf_Light(t_lamp.m_place, t_corner.m_normal, t_lamp.m_glow);
-    t_lamp.m_tint = vec4(1.0, 0.9, 0.8, 1.0);
-    t_fog = tt_Fog(t_corner.m_position.z, t_corner.m_uv);
-}
-
-void main() {
-    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2);
-    tt_FromLamp tide_handed0 = tt_FromLamp(vec3(0.0), 0.0, vec4(0.0));
-    tt_Fog tide_handed1 = tt_Fog(0.0, vec2(0.0));
-    ts_Place(tide_vertex, tide_handed0, tide_handed1);
-    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
-    tide_h0_0 = tide_handed0.m_place;
-    tide_h1_0 = tide_handed1.m_depth;
-    tide_h1_1 = tide_handed1.m_drift;
-    tide_f0 = vec4(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);
-}
-
-// Place and Misty on Corner: GLSL, fragment
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-in vec3 tide_h0_0;
-in float tide_h1_0;
-in vec2 tide_h1_1;
-flat in vec4 tide_f0;
-out vec4 tide_pixel;
-struct tt_Corner {
-    vec3 m_position;
-    vec3 m_normal;
-    vec2 m_uv;
-};
-struct tt_Fog {
-    float m_depth;
-    vec2 m_drift;
-};
-struct tt_FromLamp {
-    vec3 m_place;
-    float m_glow;
-    vec4 m_tint;
-};
-float tide_f(float x) {
-    return x;
-}
-bool tide_nan(float x) {
-    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
-}
-float tide_saturate1(float a) {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
-}
-float tf_Haze(tt_Fog t_fog) {
-    return tide_saturate1(((t_fog.m_depth * tide_f(0.1)) + t_fog.m_drift.x));
-}
-
-void ts_Misty(tt_Corner t_corner, inout vec4 t_color, tt_Fog t_fog, tt_FromLamp t_lamp) {
-    t_color = ((tide_f0 * (1.0 - tf_Haze(t_fog))) * length(t_lamp.m_place));
-}
-
-void main() {
-    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    ts_Misty(tt_Corner(vec3(0.0), vec3(0.0), vec2(0.0)), tide_color, tt_Fog(tide_h1_0, tide_h1_1), tt_FromLamp(tide_h0_0, 0.0, vec4(0.0)));
-    tide_color = tide_color * tide_tint;
-    tide_color.rgb = tide_color.rgb * tide_color.a;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
-    tide_pixel = tide_color;
-}
-
 // Place and Misty on Corner: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
     tide_u0: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -359,7 +139,7 @@ var<private> tide_f0: vec4f;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_h0_0: vec3f,
     @location(1) tide_h1_0: f32,
     @location(2) tide_h1_1: vec2f,
@@ -434,8 +214,8 @@ fn ts_Misty(t_corner: tt_Corner, t_color: ptr<function, vec4f>, t_fog: tt_Fog, t
     var tide_handed0: tt_FromLamp = tt_FromLamp(vec3f(), f32(), vec4f());
     var tide_handed1: tt_Fog = tt_Fog(f32(), vec2f());
     ts_Place(&tide_vertex, &tide_handed0, &tide_handed1);
-    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     out.tide_h0_0 = tide_handed0.m_place;
@@ -457,96 +237,23 @@ fn ts_Misty(t_corner: tt_Corner, t_color: ptr<function, vec4f>, t_fog: tt_Fog, t
     return tide_color;
 }
 
-// Place on Corner: GLSL, vertex
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-layout(location = 0) in vec3 tide_a0;
-layout(location = 1) in vec3 tide_a1;
-layout(location = 2) in vec2 tide_a2;
-layout(location = 3) in vec4 tide_n0;
-layout(location = 4) in vec4 tide_n1;
-layout(location = 5) in vec4 tide_n2;
-layout(location = 6) in vec4 tide_n3;
-struct tt_Corner {
-    vec3 m_position;
-    vec3 m_normal;
-    vec2 m_uv;
-};
-struct tt_FromLamp {
-    vec3 m_place;
-    float m_glow;
-    vec4 m_tint;
-};
-struct tt_Fog {
-    float m_depth;
-    vec2 m_drift;
-};
-float tide_f(float x) {
-    return x;
-}
-bool tide_nan(float x) {
-    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
-}
-float tide_max1(float a, float b) {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
-}
-vec3 tide_normalize3(vec3 v) {
-    float l = dot(v, v);
-    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
-    return vec3(0.0);
-}
-void tf_Light(vec3 t_from, vec3 t_normal, inout float t_glow) {
-    t_glow = tide_max1(dot(t_normal, tide_normalize3((-t_from))), tide_f(0.0));
-}
-
-void ts_Place(inout tt_Corner t_corner, inout tt_FromLamp t_lamp, inout tt_Fog t_fog) {
-    t_corner.m_position.y = (t_corner.m_position.y + 0.1);
-    t_lamp.m_place = (t_corner.m_position - tide_u0.xyz);
-    tf_Light(t_lamp.m_place, t_corner.m_normal, t_lamp.m_glow);
-    t_lamp.m_tint = vec4(1.0, 0.9, 0.8, 1.0);
-    t_fog = tt_Fog(t_corner.m_position.z, t_corner.m_uv);
-}
-
-void main() {
-    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2);
-    tt_FromLamp tide_handed0 = tt_FromLamp(vec3(0.0), 0.0, vec4(0.0));
-    tt_Fog tide_handed1 = tt_Fog(0.0, vec2(0.0));
-    ts_Place(tide_vertex, tide_handed0, tide_handed1);
-    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
-}
-
-// Place on Corner: GLSL, fragment
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-out vec4 tide_pixel;
-void main() {
-    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    tide_color = tide_color * tide_tint;
-    tide_color.rgb = tide_color.rgb * tide_color.a;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
-    tide_pixel = tide_color;
-}
-
 // Place on Corner: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
     tide_u0: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -554,7 +261,7 @@ var<private> tide_n3: vec4f;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
 }
 struct tt_Corner {
     m_position: vec3f,
@@ -612,8 +319,8 @@ fn ts_Place(t_corner: ptr<function, tt_Corner>, t_lamp: ptr<function, tt_FromLam
     var tide_handed0: tt_FromLamp = tt_FromLamp(vec3f(), f32(), vec4f());
     var tide_handed1: tt_Fog = tt_Fog(f32(), vec2f());
     ts_Place(&tide_vertex, &tide_handed0, &tide_handed1);
-    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     return out;
@@ -629,73 +336,6 @@ fn ts_Place(t_corner: ptr<function, tt_Corner>, t_lamp: ptr<function, tt_FromLam
     return tide_color;
 }
 
-// Fall and Snow on Flake: GLSL, vertex
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-layout(location = 0) in vec2 tide_a0;
-out float tide_h0_0;
-struct tt_Flake {
-    vec2 m_position;
-};
-struct tt_Fog {
-    float m_depth;
-    vec2 m_drift;
-};
-void ts_Fall(inout tt_Flake t_flake, inout tt_Fog t_fog) {
-    t_flake.m_position.y = (t_flake.m_position.y - tide_u0.x);
-    t_fog.m_depth = t_flake.m_position.y;
-    t_fog.m_drift = t_flake.m_position;
-}
-
-void main() {
-    tt_Flake tide_vertex = tt_Flake(tide_a0);
-    tt_Fog tide_handed0 = tt_Fog(0.0, vec2(0.0));
-    ts_Fall(tide_vertex, tide_handed0);
-    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
-    gl_Position = tide_camera * tide_place;
-    tide_h0_0 = tide_handed0.m_depth;
-}
-
-// Fall and Snow on Flake: GLSL, fragment
-layout(std140) uniform uniforms {
-    mat4 tide_camera;
-    vec4 tide_screen;
-    vec4 tide_tint;
-    vec4 tide_u0;
-};
-in float tide_h0_0;
-out vec4 tide_pixel;
-struct tt_Flake {
-    vec2 m_position;
-};
-struct tt_Fog {
-    float m_depth;
-    vec2 m_drift;
-};
-bool tide_nan(float x) {
-    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
-}
-float tide_saturate1(float a) {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
-}
-void ts_Snow(tt_Flake t_flake, tt_Fog t_fog, inout vec4 t_color) {
-    t_color = vec4(1.0, 1.0, 1.0, tide_saturate1(t_fog.m_depth));
-}
-
-void main() {
-    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
-    ts_Snow(tt_Flake(vec2(0.0)), tt_Fog(tide_h0_0, vec2(0.0)), tide_color);
-    tide_color = tide_color * tide_tint;
-    tide_color.rgb = tide_color.rgb * tide_color.a;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
-    tide_pixel = tide_color;
-}
-
 // Fall and Snow on Flake: WGSL
 struct tide_uniforms {
     tide_camera: mat4x4f,
@@ -707,7 +347,7 @@ struct tide_uniforms {
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
-    @builtin(position) tide_at: vec4f,
+    @builtin(position) @invariant tide_at: vec4f,
     @location(0) tide_h0_0: f32,
 }
 struct tt_Flake {

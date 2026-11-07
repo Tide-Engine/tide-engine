@@ -1,0 +1,3 @@
+// expect: profile keys and names cannot contain NUL characters
+asset HumanoidRig source = "../retarget_profiles/embedded_nul.humanoid.json";
+scene Main { }

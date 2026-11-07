@@ -1,7 +1,7 @@
-// expect: a list or a map can't hold rendering resources, including inside a struct
+// expect: 'Band' can't hold rendering resources in match state
 asset Clip hum = "../e2e/assets/beep.wav";
 
-local singleton Band
+singleton Band
 {
     List<Sound> players;
 }

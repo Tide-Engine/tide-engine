@@ -1,6 +1,6 @@
 // Frags that share a name, which a mesh names with their parameters' types,
 // and the functions they call: ones that share a name, defaults, and
-// arguments by name. Each gets a name of its own in GLSL and WGSL, and a
+// arguments by name. Each gets a name of its own in WGSL, and a
 // default is written where the call leaves it out.
 
 scene Main { }

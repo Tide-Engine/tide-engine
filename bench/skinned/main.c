@@ -21,9 +21,9 @@
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
 
-enum { WIDTH = 1024, HEIGHT = 576, MAX_COUNTS = 16, MAX_CHARACTERS = 10000, MODES = 5, DRAIN_FRAMES = 16, CLIP_FRAMES = 60 };
+enum { WIDTH = 1024, HEIGHT = 576, MAX_COUNTS = 16, MAX_CHARACTERS = 10000, MODES = 6, DRAIN_FRAMES = 16, CLIP_FRAMES = 60 };
 enum { RECORD, SUBMIT, READBACK, TOTAL, CALLS, UPLOAD, GPU, METRICS };
-static const char *mode_names[MODES] = {"static", "omitted_rest", "shared_pose", "independent_poses", "gpu_clip"};
+static const char *mode_names[MODES] = {"static", "omitted_rest", "shared_pose", "independent_poses", "gpu_clip", "baked_clip"};
 static int counts[MAX_COUNTS] = {1, 10, 100, 1000};
 static int selected_modes[MODES] = {0, 1, 2, 3};
 static int selected_mode_count = 4, mode_at;
@@ -78,7 +78,7 @@ static bool verify_gpu_clip(const tide_list data)
 {
     gpu_position_error = gpu_normal_error = 0.0f;
     for (int32_t sample = 0; sample < CLIP_FRAMES * 4; sample++) {
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         tide_list pose = {0};
         if (!tide_skinned_sample(data, 0, (float)sample / 240.0f, &pose, TIDE_IN_SCRATCH)) return false;
         const tide_list exact = tide_skinned_palette(data, pose);
@@ -139,7 +139,7 @@ static bool read_counts(const char *text)
 
 static bool read_modes(const char *text)
 {
-    static const char *short_names[MODES] = {"static", "rest", "shared", "independent", "gpu"};
+    static const char *short_names[MODES] = {"static", "rest", "shared", "independent", "gpu", "baked"};
     int parsed[MODES], n = 0;
     const char *at = text;
     while (*at) {
@@ -345,7 +345,7 @@ static bool prepare_gpu_clip(void)
         *(int32_t *)tide_list_at_mut(local.GpuClip.indices, (int32_t)i, sizeof(int32_t)) = (int32_t)index;
     }
     for (int32_t frame = 0; frame < CLIP_FRAMES; frame++) {
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         tide_list pose = {0};
         if (!tide_skinned_sample(model.data, 0, (float)frame / 60.0f, &pose, TIDE_IN_SCRATCH)) return false;
         const tide_list palette = tide_skinned_palette(model.data, pose);
@@ -457,9 +457,11 @@ static int frame(void *user, const float seconds)
     tide_platform_draw(&draw);
     const uint64_t submitted = tide_time_now_ns();
     const uint64_t uploaded = tide_platform_gpu_written() - before_upload;
-    if (mode == 4 && frame_at >= warmup_frames && warmup_frames > 0
+    if ((mode == 4 || mode == 5) && frame_at >= warmup_frames && warmup_frames > 0
         && (uploaded != 0 || tide_platform_draw_calls() != 2u)) {
-        fprintf(stderr, "skinned: GPU clip lost warmed residency or instancing\n"); return 1;
+        fprintf(stderr, "skinned: GPU clip lost warmed residency or instancing (%llu bytes uploaded, %u draw calls)\n",
+                (unsigned long long)uploaded, tide_platform_draw_calls());
+        return 1;
     }
     if (!tide_platform_draw_calls()) { fprintf(stderr, "skinned: the renderer submitted no draws\n"); return 1; }
 #ifndef __wasm__
@@ -489,17 +491,17 @@ static int frame(void *user, const float seconds)
 
 static void help(void)
 {
-    puts("usage: bench_skinned [--counts 1,10,100,1000] [--modes static,rest,shared,independent,gpu]\n"
+    puts("usage: bench_skinned [--counts 1,10,100,1000] [--modes static,rest,shared,independent,gpu,baked]\n"
          "                     [--frames 100] [--warmup 20] [--repeat 3]\n"
          "                     [--save label] [--capture image.png] [--verify-gpu] [--subframe 0..1]\n"
          "Each count runs static, omitted-rest, shared-pose and independently sampled-pose views.\n"
-         "The opt-in gpu mode interpolates resident 60 Hz palettes; it is a visual approximation.\n"
+         "The opt-in gpu mode interpolates resident 60 Hz palettes; baked does the same through BakedPoses.\n"
          "CPU view recording and submission, GPU execution, and desktop completion/readback are separate.\n"
          "--frames counts measured frames per workload; all runs end automatically.\n"
          "Counts are 1 to 10000, at most 16 entries; --modes selects a subset.\n"
          "--save appends bench/results/skinned.jsonl (web prints JSONL).\n"
          "Set TIDE_BENCH_MACHINE and TIDE_BENCH_REVISION to identify hardware and source.\n"
-         "Web: ?bench&counts=1,10,100,1000&frames=100&warmup=20&repeat=3&save=label&backend=webgpu");
+         "Web: ?bench&counts=1,10,100,1000&frames=100&warmup=20&repeat=3&save=label");
 }
 
 int main(const int argc, char **argv)

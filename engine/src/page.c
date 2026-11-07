@@ -11,12 +11,6 @@
 #include <errno.h>
 #endif
 
-_Noreturn void tide_out_of_memory(void)
-{
-    fprintf(stderr, "tide: out of memory\n");
-    abort();
-}
-
 #ifdef __wasm__
 // 64 bytes a round, with no way out inside it, so the compiler makes SIMD
 // loads of them: a run that differs is found within its first 64 bytes that
@@ -93,22 +87,68 @@ __attribute__((constructor)) static void hidden_start(void)
 // The program's memory, in WebAssembly's pages, as far as any thread grew it.
 static uint32_t grown;
 
-// The C library's sbrk, which its malloc grows the memory with: the same, and
-// it notes how far, for tide_memory_sync.
+// The end of what sbrk has handed malloc, in bytes (0 before its first call),
+// with the lock it's changed under.
+static uint64_t brk;
+static uint32_t brk_lock;
+extern char __heap_end; // The end of the memory the program starts with (wasm-ld's)
+
+// Growing by a quarter of the memory there is, 16 MiB at least and 256 MiB at most
+#define GROW_LEAST (16u * 1024u * 1024u / WASM_PAGE)
+#define GROW_MOST (256u * 1024u * 1024u / WASM_PAGE)
+
+// The C library's sbrk, which its malloc grows the memory with. It hands out
+// memory from a break of its own, and grows the memory by much more than it
+// lacks: malloc asks for what it lacks, 64 KiB at a time, holding its lock (a
+// spin lock every thread waits on), and a grow of a browser's shared memory
+// costs time with the memory's size, not the step's (Chrome: 1.5 ms at 1 GB,
+// 5 ms at 3 GB), so a gigabyte taken in small blocks was thousands of grows.
+// What it grew and didn't hand out is untouched, which costs a page little.
+// Memory the page started bigger than the program asked for is malloc's too.
+// It notes how far it grew, for tide_memory_sync.
 void *sbrk(const intptr_t increment)
 {
-    if (increment == 0) return (void *)((uintptr_t)__builtin_wasm_memory_size(0) * WASM_PAGE);
-    if (increment < 0 || (uintptr_t)increment % WASM_PAGE != 0) abort(); // As the C library's does
-    const size_t old = __builtin_wasm_memory_grow(0, (size_t)increment / WASM_PAGE);
-    if (old == SIZE_MAX) {
-        errno = ENOMEM;
-        return (void *)-1;
+    if (increment % (intptr_t)WASM_PAGE != 0) abort(); // As the C library's does
+    while (__atomic_exchange_n(&brk_lock, 1u, __ATOMIC_ACQUIRE)) {
     }
-    const uint32_t now = (uint32_t)__builtin_wasm_memory_size(0);
-    uint32_t seen = __atomic_load_n(&grown, __ATOMIC_RELAXED);
-    while (seen < now && !__atomic_compare_exchange_n(&grown, &seen, now, true, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+    if (!brk) brk = (uint64_t)(uintptr_t)&__heap_end;
+    const uint64_t old = brk;
+    void *result = (void *)(uintptr_t)old;
+    if (increment < 0) { // Malloc handing back what it couldn't use: the break goes back, the memory stays
+        brk -= (uint64_t)-(int64_t)increment;
+    } else if (increment > 0) {
+        const uint64_t end = old + (uint64_t)increment;
+        const uint64_t mine = __builtin_wasm_memory_size(0); // This thread's view, which may be behind
+        const uint64_t known = __atomic_load_n(&grown, __ATOMIC_RELAXED);
+        const uint64_t pages = known > mine ? known : mine;
+        if (end > pages * WASM_PAGE) {
+            const uint64_t lacking = (end - pages * WASM_PAGE + WASM_PAGE - 1u) / WASM_PAGE;
+            uint64_t step = pages / 4u;
+            step = step < GROW_LEAST ? GROW_LEAST : step > GROW_MOST ? GROW_MOST : step;
+            if (step < lacking) step = lacking;
+            size_t from = SIZE_MAX;
+            if (pages + step <= 65536u) from = __builtin_wasm_memory_grow(0, (size_t)step);
+            if (from == SIZE_MAX && step > lacking) { // Near the most there may be: only what's lacking
+                step = lacking;
+                from = __builtin_wasm_memory_grow(0, (size_t)step);
+            }
+            if (from == SIZE_MAX) {
+                __atomic_store_n(&brk_lock, 0u, __ATOMIC_RELEASE);
+                errno = ENOMEM;
+                return (void *)-1;
+            }
+            const uint32_t now = (uint32_t)(from + step);
+            uint32_t seen = __atomic_load_n(&grown, __ATOMIC_RELAXED);
+            while (seen < now && !__atomic_compare_exchange_n(&grown, &seen, now, true, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+            }
+        } else if (mine < pages) {
+            // Another thread grew it: malloc writes its headers in what's handed out at once, on this thread
+            __builtin_wasm_memory_grow(0, 0);
+        }
+        brk = end;
     }
-    return (void *)(old * WASM_PAGE);
+    __atomic_store_n(&brk_lock, 0u, __ATOMIC_RELEASE);
+    return result;
 }
 
 void tide_memory_sync(void)
@@ -144,25 +184,38 @@ void *tide_realloc(void *p, const size_t old_size, const size_t size)
 
 #else
 
+// Where the system has no memory for a moment, each waits for it (tide_memory_wait). The web's above don't: a
+// page's memory has a most it grows to.
+#define NO_MEMORY "there's no more memory"
+
 void *tide_alloc(const size_t size)
 {
-    void *p = malloc(size ? size : 1u);
-    if (!p) tide_out_of_memory();
+    uint32_t waited = 0;
+    void *p;
+    while (!(p = malloc(size ? size : 1u))) if (!tide_memory_wait(size, &waited)) tide_memory_ran_out(NO_MEMORY, waited);
+    tide_memory_waited(size, waited);
     return p;
 }
 
 void *tide_alloc_zeroed(const size_t count, const size_t size)
 {
-    void *p = calloc(count ? count : 1u, size ? size : 1u);
-    if (!p) tide_out_of_memory();
+    if (size && count > SIZE_MAX / size) tide_out_of_memory();
+    uint32_t waited = 0;
+    void *p;
+    while (!(p = calloc(count ? count : 1u, size ? size : 1u))) {
+        if (!tide_memory_wait((uint64_t)count * size, &waited)) tide_memory_ran_out(NO_MEMORY, waited);
+    }
+    tide_memory_waited((uint64_t)count * size, waited);
     return p;
 }
 
 void *tide_realloc(void *p, const size_t old_size, const size_t size)
 {
     (void)old_size;
-    void *grown_to = realloc(p, size ? size : 1u);
-    if (!grown_to) tide_out_of_memory();
+    uint32_t waited = 0;
+    void *grown_to;
+    while (!(grown_to = realloc(p, size ? size : 1u))) if (!tide_memory_wait(size, &waited)) tide_memory_ran_out(NO_MEMORY, waited);
+    tide_memory_waited(size, waited);
     return grown_to;
 }
 
@@ -254,9 +307,18 @@ void tide_pages_free(void)
     }
 }
 
+// A new page is zeros. One of the sizes kept spare is one let go of, zeroed (still in the caches, and no page
+// faults: a world loaded again every tick, as a lone player's projection is, takes as many as it let go of); any
+// other size is the system's, which zeroes it as it's first touched.
 tide_page *tide_page_new(const uint32_t size)
 {
-    tide_page *p = tide_alloc_zeroed(1, sizeof(tide_page) + size);
+    tide_page *p;
+    if (spare_size(size) == SPARE_SIZES) {
+        p = tide_alloc_zeroed(1, sizeof(tide_page) + size);
+    } else {
+        p = tide_page_take(size);
+        memset(p, 0, sizeof(tide_page) + size);
+    }
     p->refs = 1;
     p->size = size;
     p->hashed = UINT32_MAX;

@@ -13,7 +13,7 @@ struct Nested { Pose pose; [Snap] Pose immediate; }
 component Body { Nested state; }
 singleton Camera { [Position] float3 center; [Rotation] float angle; [Rotation] quaternion rotation; }
 singleton Rules { bool drop; bool remove; bool snapBody; bool snapCamera; }
-local singleton Observed { Nested first; Nested second; float3 center; float angle; quaternion rotation; }
+local singleton Observed { Nested first; Nested second; float3 center; float angle; quaternion rotation; float seconds; int roll; }
 
 struct DoublePose
 {
@@ -70,6 +70,8 @@ view First(Body body, Camera camera, mut Observed observed)
     observed.center = camera.center;
     observed.angle = camera.angle;
     observed.rotation = camera.rotation;
+    observed.seconds = Frame.dt;
+    observed.roll = Random.NextInt(1000000);
 }
 
 view Second(Body body, mut Observed observed) { observed.second = body.state; }

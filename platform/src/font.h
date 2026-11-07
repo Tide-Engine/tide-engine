@@ -1,16 +1,19 @@
 #pragma once
 
-// Text, in the platform's font, through stb_truetype: how wide it is, and its
-// glyphs' pixels, drawn the first time each is needed at a size into an atlas
-// the renderer draws from (platform.c).
+// Text, in the fonts of tide/font.h: how wide it is, and its glyphs' pixels,
+// drawn the first time each is needed at a size into an atlas the renderer
+// draws from (platform.c), from the font's font data, which stb_truetype's
+// rasterizer fills pixels from. No font file is read here but through
+// tide_font_data_make, the engine's own weights' too.
 //
-// The font has two weights, each a file. The regular one (font/Tuffy.ttf) is
-// built into the library, and is what a `font` of NULL means everywhere here.
-// The bold one (font/Tuffy_Bold.ttf) is in the library too, as
-// tide_font_bold_ttf (tide/draw.h), which nothing here names: a `font` that
-// isn't NULL is that file's bytes, handed over by the code that draws with
-// it, so only a program whose code names the bold weight carries its file. A
-// code point the bold weight has no glyph for is the regular one's.
+// A `font` is a tide_font (tide/font.h). NULL is the regular weight of the
+// engine's font (font/Tuffy.ttf), which is built into the library. Its bold
+// weight (font/Tuffy_Bold.ttf) is in the library too, as tide_font_bold
+// (tide/draw.h), which nothing here names: it's handed over by the code that
+// draws with it, so only a program whose code names the bold weight carries
+// its file. Any other font is the registry's, or a game C's own, whose font
+// data is checked (tide_font_data_check) the first time it's seen. A code
+// point a font has no glyph for is the regular weight's.
 //
 // A text's size is its font size, as CSS's and Unity's: the height of a line
 // of it, with its capitals in the line's middle. It's drawn on the target's
@@ -23,6 +26,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "tide/font.h"
 
 // The next code point of UTF-8 `*text`, moving it past it; 0 at its end.
 // Bytes that aren't UTF-8 read as U+FFFD, one each.
@@ -38,24 +43,24 @@ uint32_t tide_utf8_next(const char **text);
 int tide_font_pixels(float size, float scale, float *stretch);
 
 // From a line's top to its baseline, for text of size 1.
-float tide_font_baseline(const unsigned char *font);
+float tide_font_baseline(const tide_font *font);
 
 // From one line's top to the next's, in pixels, for text drawn at `pixels`
 // and shown `stretch` times bigger: a whole number of them.
-float tide_font_pitch(const unsigned char *font, int pixels, float stretch);
+float tide_font_pitch(const tide_font *font, int pixels, float stretch);
 
 // How far a code point moves the pen in text drawn at `pixels`: whole pixels.
-int tide_font_advance(const unsigned char *font, uint32_t codepoint, int pixels);
+int tide_font_advance(const tide_font *font, uint32_t codepoint, int pixels);
 
 // The width of `text` drawn at `size`, in the units `size` is in, where
 // `scale` pixels make one: its widest line's, as it's drawn.
-float tide_font_measure(const unsigned char *font, const char *text, float size, float scale);
+float tide_font_measure(const tide_font *font, const char *text, float size, float scale);
 
 // The same, and the height of its lines, the first's top to the last's
 // bottom: a line is `size` high, and each newline adds the lines' pitch.
 // `scale_x` by `scale_y` pixels make a unit: text is fitted to a line's
 // height, so to `scale_y`.
-void tide_font_size(const unsigned char *font, const char *text, float size, float scale_x, float scale_y, float *width,
+void tide_font_size(const tide_font *font, const char *text, float size, float scale_x, float scale_y, float *width,
                     float *height);
 
 // A glyph drawn for text `pixels` in size: where its pixels are in the atlas,
@@ -73,7 +78,7 @@ typedef struct tide_font_glyph {
 
 // False when the atlas has no room left for it: it's drawn from the next
 // frame on, once tide_font_frame made room.
-bool tide_font_glyph_for(const unsigned char *font, uint32_t codepoint, int pixels, tide_font_glyph *out);
+bool tide_font_glyph_for(const tide_font *font, uint32_t codepoint, int pixels, tide_font_glyph *out);
 
 // The atlas: a byte a pixel, how much of it its glyph covers, `*width` a row.
 // `*version` changes whenever its pixels or its size do.

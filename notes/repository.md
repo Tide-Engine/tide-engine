@@ -1,13 +1,14 @@
 # Repository layout and reference history
 
-Experimental Newton (2026-10-22): `packages/newton`, namespace `Newton`, adds
-statically exported NVIDIA Newton Featherstone CPU kernels for articulated
-bodies and effort control, with a two-player arm example in `examples/robotics/arm`.
-Native and WASM compile the same scalar source; articulation, rollback and
-canonical state transfer tests agree. The collision profile adds spheres,
-compound spheres and static planes with upstream rigid-contact forces; no
-CUDA runtime, Box3D fallback or separate training engine. Contracts,
-upstream pins and missing coverage: `notes/newton.md`.
+Optional height-aware 2D rendering (2026-11-02): `packages/render2d`, namespace
+`Render2D`, supplies normal-mapped sprites, lights, elevated cutout shadows,
+screen-space Radiance Cascades and bloom entirely in Tide. It is independent
+of Render3D. Contracts, limits and validation: `notes/render2d.md`.
+
+Newton removed (2026-10-31): the owner retired the slow experimental package,
+its vendored runtime/data and both robotics examples. Their CMake targets,
+tests and public documentation are gone. Historical implementation and
+validation records remain in `notes/newton.md` and Git history.
 
 Optional voice (2026-10-22): `packages/voice` is the sixth bundled package,
 with vendored libopus and its own Tide/C bridge. The engine contains only
@@ -41,15 +42,15 @@ or engine runtime API is added. Contracts and coverage: `corner-culling.md`.
 - `docs/`: the docs site (see Docs site). `docs/spec.md` is the language spec; `guide/`, `game/`, `packages/`, `multiplayer/`, `language/`, `tools/` and `c/` are the pages for users, written from the spec, `AGENTS.md` and subsystem notes (see Docs site for what goes where).
 - `platform/`: the platform layer (`tide_platform`): window, frame loop, input devices and the renderer (see Rendering and platform), and rooms (`src/rooms.c`, with desktop WebRTC in `src/rtc/`), and runs with no window (`src/script.c`, `src/png.c`). Public headers in `platform/include/tide/`: `platform.h`, and the hosts' `run.h`, `host.h` and `migrate.h`. `desktop/`, `web/` and `android/` hold what's each one's own: its window (`src/window.h`) and, on the web, the page (`tide.js`) and the WebGPU backend; `src/gpu_vk.c` is desktop's Vulkan backend; `tools/spirv_shaders.c` is the build-time tool that makes the renderer's own shaders' SPIR-V (built from `compiler/CMakeLists.txt`, so cross builds get a native one as they get tidec); `font/` holds the font text is drawn in, and `third_party/` what's vendored (`stb_truetype.h`, fflate, and Khronos's Vulkan headers in `vulkan/`).
 - `demo/`: a small game on the platform layer. `demo.tide` is the simulation and the views that draw it, and `main.c` is the host. It builds as `demo.html` on the web.
-- `examples/`: `duel`, the physics games `towers` and `sumo`, `robotics/arm` and `robotics/microduck` (Newton articulated control and transition recording), the `samples/` gallery, and `network/`, a game on a network of its own (`tide/network.h`: `notes/own-network.md`), which is the docs' walkthrough and has its test under `test/`. The physics games each have `tide.packages` and tests under `test/`. See `notes/physics-games.md`, `notes/newton.md` and `notes/docs-site.md`.
+- `examples/`: `duel`, the physics games `towers` and `sumo`, the `samples/` gallery, and `network/`, a game on a network of its own (`tide/network.h`: `notes/own-network.md`), which is the docs' walkthrough and has its test under `test/`. The physics games each have `tide.packages` and tests under `test/`. See `notes/physics-games.md` and `notes/docs-site.md`.
 - `bench/`: benchmarks, games played by bots on one machine (see Benchmarks).
-- `packages/`: the packages that come with tide (see Packaging and releases), a folder each, named as a game's `tide.packages` names it, with a `tide.packages` of its own that says `package Name`. They install into the package as they are, in `src/packages/`, but for what's this repo's own: `packages/CMakeLists.txt`, which builds their tests the way tide would build the package, and each one's `test/`. `render3d`, `cornerculling`, `box2d`, `box3d`, `newton`, `rooms`, `lobby`, `steam` and `voice` are the packages in this tree; Newton's initial profile covers articulated rigid bodies (see `notes/box2d.md`, `notes/box3d.md`, `notes/newton.md`, `notes/rooms-package.md`, `notes/lobby-package.md`, `notes/lobby-steam-package.md` and `notes/voice-package.md`). `steam` needs Steamworks' library, which isn't here: nothing builds it but its own test, against a fake of that library (`packages/steam/test/fake_steam.c`), and a game that doesn't list it builds none of it. `packages/test/` is what several packages' tests share: `rewind_network_test.c`, and `network_players.h`, players with real sessions in one program, served as the standard host serves one.
+- `packages/`: the packages that come with tide (see Packaging and releases), a folder each, named as a game's `tide.packages` names it, with a `tide.packages` of its own that says `package Name`. They install into the package as they are, in `src/packages/`, but for what's this repo's own: `packages/CMakeLists.txt`, which builds their tests the way tide would build the package, and each one's `test/`. `render2d`, `render3d`, `cornerculling`, `geometry`, `particles`, `box2d`, `box3d`, `rooms`, `lobby`, `steam` and `voice` are the packages in this tree (see `notes/render2d.md`, `notes/render3d.md`, `notes/geometry-package.md`, `notes/particles.md`, `notes/box2d.md`, `notes/box3d.md`, `notes/rooms-package.md`, `notes/lobby-package.md`, `notes/lobby-steam-package.md` and `notes/voice-package.md`). `steam` needs Steamworks' library, which isn't here: nothing builds it but its own test, against a fake of that library (`packages/steam/test/fake_steam.c`), and a game that doesn't list it builds none of it. `packages/test/` is what several packages' tests share: `rewind_network_test.c`, and `network_players.h`, players with real sessions in one program, served as the standard host serves one.
 - `relay/`: dependency-free Node room/signalling service. `relay/fly.toml` records its deployment configuration. Room/protocol deadlines use `createRelay`'s injected monotonic `clock` (`now` and `wait`), and tests advance it explicitly; TURN credential caching separately uses wall time. Transport, relay and deployment details belong in `notes/webrtc-and-rooms.md`.
 - `tests/`: tests built on the harness in `tests/tide_test.h`. New test files are picked up automatically.
 - `.github/workflows/`, `.releaserc.json`, `install.ps1`, `install.sh`: releases and installing (see Packaging and releases), and the docs site.
 - `cmake/`: shared compiler flags (`TideFlags.cmake`), the package (`package.cmake`), the file that locates clang (`clang-toolchain.cmake`), the web, MinGW and Android toolchains (`wasi-toolchain.cmake`, `mingw-toolchain.cmake`, `android-toolchain.cmake`), tide's built-in clang (`LLVM.cmake`), `tide_add_game` (`Tide.cmake`), the GLFW download (`GLFW.cmake`), files as C arrays (`embed.cmake`), and `tide_add_web_test` (`WebTest.cmake`), which runs a web page in headless Chrome or Edge as a test, and with `WEBGPU`, again on WebGPU.
 - `unity/`: Unity's Tide package, `com.tide.unity` (a git URL package: `?path=/unity/com.tide.unity`; the game's own C# is written by tide, `compiler/cli/unity_code.c`) and `Sample/`, a Unity project using the package by relative path, with its play mode test, a player smoke check and `web-smoke.mjs` for its WebGL player. The converter's fixture, a project Unity wrote, is `compiler/cli/tests/unity_project`. `notes/unity.md`.
-- `notes/`: what was built and what code relies on, a file a subsystem (see Notes).
+- `notes/`: what was built and what code relies on, a file a subsystem (see Notes). `notes/repro/` keeps reproductions of other software's bugs that a note cites, run by hand (`node notes/repro/run.mjs`), not tests.
 
 ## Other repositories (2026-10-21)
 

@@ -11,6 +11,8 @@
 #include "tide/net.h"
 #include "tide/pack.h"
 #include "tide/skinned_data.h"
+#include "asset_store.h"
+#include "mesh_levels.h"
 #include "skinned_cache.h"
 
 _Static_assert(sizeof(tide_bone_transform) == 40u, "bone transforms have ten float words");
@@ -28,14 +30,14 @@ static bool open_model(const tide_list data, model_seen *m)
     memset(m, 0, sizeof *m);
     int32_t count;
     if (tide_pack_holds(data.at)) {
-        const uint32_t offset = data.at & 0x3FFFFFFFu;
+        const uint64_t offset = tide_handle_offset(data.at);
         const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
         if (!header) return false;
         tide_block block;
         memcpy(&block, header, sizeof block);
         if (block.a != block.b || block.a > INT32_MAX) return false;
         count = (int32_t)block.a;
-        m->bytes = (void *)tide_pack_span(offset + (uint32_t)sizeof(tide_block), block.a);
+        m->bytes = (void *)tide_pack_span(offset + sizeof(tide_block), block.a);
         if (!m->bytes) return false;
     } else {
         count = tide_list_count(data);
@@ -53,6 +55,131 @@ static bool open_model(const tide_list data, model_seen *m)
 static void close_model(model_seen *m)
 {
     tide_list_unflatten(m->list, m->bytes, 1u, false, m->copied);
+}
+
+void tide_skinned_own(tide_list *data, const uint32_t where)
+{
+    if (!data) return;
+    tide_heap *heap = tide_heap_of(where);
+    if (!heap || !data->at) { tide_list_own(data, 1u, where); return; }
+    if (tide_pack_holds(data->at)) {
+        // Unlike list ownership's trusted pack path, this boundary also sees
+        // failed/invalid model values. Check the complete byte-list span first.
+        const uint64_t offset = tide_handle_offset(data->at);
+        const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
+        tide_block block = {0};
+        if (header) memcpy(&block, header, sizeof block);
+        if (!header || block.a != block.b || block.a > INT32_MAX
+            || !tide_pack_span(offset + sizeof block, block.a)) {
+            data->at = 0;
+            return;
+        }
+        tide_list_own(data, 1u, where);
+        return;
+    }
+    if (tide_asset_list(*data)) { tide_list_own(data, 1u, where); return; }
+    model_seen model;
+    tide_asset_data *asset = NULL;
+    if (open_model(*data, &model)) {
+        asset = tide_asset_model(model.bytes, (uint32_t)tide_list_count(*data));
+        close_model(&model);
+    }
+    if (!asset) { tide_list_own(data, 1u, where); return; }
+    // The payload has been copied before heap allocation can move source pages.
+    const uint64_t at = tide_heap_alloc(heap, 32u);
+    tide_asset_use(heap, asset, at);
+    tide_block *block = tide_heap_write(heap, at);
+    block->a = asset->count;
+    block->b = TIDE_LIST_ASSET;
+    memcpy(block + 1, asset->id, sizeof asset->id);
+    data->at = tide_handle_of(where, at);
+    tide_asset_release(asset);
+}
+
+// A model's bytes that can't change while its key stays the same: a block
+// within the pack file's bytes (with the pack's generation), or an owned
+// asset copy, named by the SHA-256 of what's in it.
+typedef struct model_key {
+    uint32_t kind;
+    tide_handle at;
+    uint64_t generation;
+    uint8_t id[32];
+} model_key;
+
+enum { KEY_NONE, KEY_PACK, KEY_ASSET };
+
+// The key a model's bytes would have, without opening them: a pack block's
+// still needs checking to lie within the file's bytes (key_of).
+static bool quick_key(const tide_list data, model_key *out)
+{
+    memset(out, 0, sizeof *out);
+    if (tide_pack_holds(data.at)) {
+        // Generated code never writes the pack, and the runtime's writes
+        // (loads, geometry defaults) change its generation.
+        out->kind = KEY_PACK;
+        out->at = data.at;
+        out->generation = tide_pack_generation();
+        return true;
+    }
+    const tide_asset_data *asset = tide_asset_list(data);
+    if (!asset) return false;
+    out->kind = KEY_ASSET;
+    memcpy(out->id, asset->id, sizeof out->id);
+    return true;
+}
+
+static bool key_of(const tide_list data, const model_seen *m, model_key *out)
+{
+    // Blocks laid out past the file's bytes are left out.
+    return quick_key(data, out)
+        && (out->kind != KEY_PACK || tide_pack_file_span(tide_handle_offset(data.at), (uint64_t)sizeof(tide_block) + m->view.size));
+}
+
+// What a model's header says, kept on each thread for bytes with a key:
+// indexing a Pose and its Model check the model on every use.
+typedef struct model_facts {
+    model_key key;
+    uint32_t nodes, size, node_at;
+    int32_t valid; // nodes_valid: 0 until asked, then 1 or -1
+    uint64_t fingerprint;
+    uint8_t skeleton_hash[32];
+} model_facts;
+
+enum { MODEL_FACTS = 16 };
+static TIDE_THREAD_LOCAL model_facts facts_seen[MODEL_FACTS];
+
+static uint64_t fingerprint_of(const tide_skinned_data_view *v)
+{
+    const uint64_t hash = tide_hash(v->skeleton_hash, sizeof v->skeleton_hash);
+    return hash ? hash : 1u;
+}
+
+// NULL when the bytes have no key or don't open: callers then look at them
+// as they would without this.
+static TIDE_THREAD_LOCAL model_facts *facts_last; // The last one found, checked first
+
+static model_facts *known_model(const tide_list data)
+{
+    model_facts *last = facts_last;
+    if (last && last->key.kind == KEY_PACK && last->key.at == data.at && tide_pack_holds(data.at)
+        && last->key.generation == tide_pack_generation()) return last;
+    model_key key;
+    if (!quick_key(data, &key)) return NULL;
+    uint32_t word;
+    memcpy(&word, key.kind == KEY_PACK ? (const void *)&key.at : (const void *)key.id, sizeof word);
+    model_facts *f = &facts_seen[(word * 2654435761u) >> 28];
+    if (f->key.kind && memcmp(&f->key, &key, sizeof key) == 0) return facts_last = f;
+    model_seen m;
+    if (!open_model(data, &m)) return NULL;
+    const bool kept = key_of(data, &m, &key);
+    if (kept) {
+        *f = (model_facts){.key = key, .nodes = m.view.nodes, .size = m.view.size, .node_at = m.view.node_at,
+                           .fingerprint = fingerprint_of(&m.view)};
+        memcpy(f->skeleton_hash, m.view.skeleton_hash, sizeof f->skeleton_hash);
+    }
+    close_model(&m);
+    if (kept) facts_last = f;
+    return kept ? f : NULL;
 }
 
 typedef struct skeleton_identity {
@@ -106,7 +233,7 @@ static tide_bone_transform *scratch_transforms(const tide_list transforms, const
 {
     // Scratch lists are contiguous. Keep this pointer only across loops that
     // cannot resize the list; existing heap/chunked outputs keep their COW path.
-    if (transforms.at >> 30 != TIDE_IN_SCRATCH || tide_list_count(transforms) != (int32_t)count) return NULL;
+    if (tide_handle_where(transforms.at) != TIDE_IN_SCRATCH || tide_list_count(transforms) != (int32_t)count) return NULL;
     return tide_list_at_mut(transforms, 0, sizeof(tide_bone_transform));
 }
 
@@ -145,6 +272,15 @@ static void validated_node(const tide_skinned_data_view *v, const uint32_t index
     validated_numbers(p + 44u, 3u, out->scale);
 }
 
+// A validated node's rest: only its ten stored little-endian TRS words.
+static tide_bone_transform rest_of(const tide_skinned_data_view *v, const uint32_t index)
+{
+    float rest[10];
+    validated_numbers(v->data + v->node_at + (size_t)index * TIDE_SKINNED_NODE_SIZE + 16u, 10u, rest);
+    return (tide_bone_transform){tide_f3(rest[0], rest[1], rest[2]), {tide_f4(rest[3], rest[4], rest[5], rest[6])},
+                                 tide_f3(rest[7], rest[8], rest[9])};
+}
+
 static void fill_rest(const tide_skinned_data_view *v, tide_list *transforms, const uint32_t where)
 {
     // All callers establish node validity before resizing/writing the output.
@@ -152,12 +288,8 @@ static void fill_rest(const tide_skinned_data_view *v, tide_list *transforms, co
     tide_bone_transform *flat = scratch_transforms(*transforms, v->nodes);
     tide_list_cache cache = {0};
     for (uint32_t i = 0; i < v->nodes; i++) {
-        float rest[10];
-        validated_numbers(v->data + v->node_at + (size_t)i * TIDE_SKINNED_NODE_SIZE + 16u, 10u, rest);
         tide_bone_transform *to = flat ? flat + i : tide_list_cached_at_mut(&cache, *transforms, (int32_t)i, sizeof *to);
-        if (to) *to = (tide_bone_transform){tide_f3(rest[0], rest[1], rest[2]),
-                                           {tide_f4(rest[3], rest[4], rest[5], rest[6])},
-                                           tide_f3(rest[7], rest[8], rest[9])};
+        if (to) *to = rest_of(v, i);
     }
 }
 
@@ -172,22 +304,35 @@ bool tide_skinned_valid(const tide_list data)
 
 uint64_t tide_skinned_fingerprint(const tide_list data)
 {
+    const model_facts *f = known_model(data);
+    if (f) return f->fingerprint;
     model_seen m;
     if (!open_model(data, &m)) return 0;
-    const uint64_t hash = tide_hash(m.view.skeleton_hash, sizeof m.view.skeleton_hash);
+    const uint64_t hash = fingerprint_of(&m.view);
     close_model(&m);
-    return hash ? hash : 1u;
+    return hash;
 }
 
 bool tide_skinned_compatible(const tide_list a, const tide_list b)
 {
     skeleton_identity first, second;
+    const model_facts *fa = known_model(a);
+    if (fa) {
+        // Looking up b can replace the same bounded cache slot. Preserve a's
+        // identity before the second lookup, rather than comparing b to itself.
+        first.nodes = fa->nodes;
+        memcpy(first.hash, fa->skeleton_hash, sizeof first.hash);
+        const model_facts *fb = known_model(b);
+        if (fb) return first.nodes == fb->nodes && memcmp(first.hash, fb->skeleton_hash, sizeof first.hash) == 0;
+    }
     return read_identity(a, &first) && read_identity(b, &second) && first.nodes == second.nodes
         && memcmp(first.hash, second.hash, sizeof first.hash) == 0;
 }
 
 int32_t tide_skinned_bone_count(const tide_list data)
 {
+    const model_facts *f = known_model(data);
+    if (f) return (int32_t)f->nodes;
     model_seen m;
     if (!open_model(data, &m)) return 0;
     const int32_t count = (int32_t)m.view.nodes;
@@ -206,9 +351,37 @@ int32_t tide_skinned_animation_count(const tide_list data)
 
 enum { NAMED_BONE, NAMED_ANIMATION, NAMED_SHAPE };
 
+// Names found, kept on each thread for models with a key: a rig's members
+// (`bones.head`) are looked up by name each time they're read. A name is
+// matched by its bytes, so a slot another name took only misses.
+typedef struct name_seen {
+    model_key key;
+    int32_t kind, found;
+    uint32_t length;
+    char name[40];
+} name_seen;
+
+enum { NAMES_SEEN = 64 };
+static TIDE_THREAD_LOCAL name_seen names_seen[NAMES_SEEN];
+
+static int32_t search_name(const tide_list data, const tide_str name, const int kind);
+
 static int32_t find_name(const tide_list data, const tide_str name, const int kind)
 {
     if (!name.ptr || name.bytes <= 0) return -1;
+    const model_facts *f = (size_t)name.bytes <= sizeof names_seen[0].name ? known_model(data) : NULL;
+    if (!f) return search_name(data, name, kind);
+    name_seen *seen = &names_seen[(tide_hash(name.ptr, (size_t)name.bytes) ^ (uint64_t)kind) & (NAMES_SEEN - 1u)];
+    if (seen->kind == kind && seen->length == (uint32_t)name.bytes && memcmp(&seen->key, &f->key, sizeof f->key) == 0
+        && memcmp(seen->name, name.ptr, (size_t)name.bytes) == 0) return seen->found;
+    const int32_t found = search_name(data, name, kind);
+    *seen = (name_seen){.key = f->key, .kind = kind, .found = found, .length = (uint32_t)name.bytes};
+    memcpy(seen->name, name.ptr, (size_t)name.bytes);
+    return found;
+}
+
+static int32_t search_name(const tide_list data, const tide_str name, const int kind)
+{
     model_seen m;
     if (!open_model(data, &m)) return -1;
     int32_t found = -1;
@@ -409,24 +582,6 @@ static float validated_time(const tide_skinned_data_view *v, const tide_skinned_
     return validated_number(v->data + c->times_at + (size_t)index * 4u);
 }
 
-static void validated_key(const tide_skinned_data_view *v, const tide_skinned_channel_data *c, const uint32_t index,
-                          float *time, float value[4], float in[4], float out[4])
-{
-    const uint32_t width = c->path == TIDE_SKINNED_ROTATION ? 4u : 3u;
-    const uint32_t copies = c->interpolation == TIDE_SKINNED_CUBICSPLINE ? 3u : 1u;
-    const uint8_t *p = v->data + c->values_at + (size_t)index * width * copies * 4u;
-    memset(value, 0, 4u * sizeof *value);
-    memset(in, 0, 4u * sizeof *in);
-    memset(out, 0, 4u * sizeof *out);
-    *time = validated_time(v, c, index);
-    if (copies == 1u) validated_numbers(p, width, value);
-    else {
-        validated_numbers(p, width, in);
-        validated_numbers(p + width * 4u, width, value);
-        validated_numbers(p + width * 8u, width, out);
-    }
-}
-
 enum { SAMPLE_INTERVAL_SLOTS = 4, SAMPLE_INTERVAL_KEYS = 32 };
 
 typedef struct sample_interval {
@@ -461,71 +616,76 @@ static uint32_t sampled_interval(const tide_skinned_data_view *v, const tide_ski
     return low;
 }
 
-static tide_float4 sampled_value(const tide_skinned_data_view *v, const tide_skinned_channel_data *c,
-                                const float seconds, sample_intervals *intervals)
+// Where a clock falls among a channel's keys, from sampled_interval's low:
+// the same for every channel whose key times are the same bytes.
+typedef struct key_clock {
+    uint32_t before, low;
+    bool held; // Before the first key or past the last: the value of the key before
+    float span, t;
+} key_clock;
+
+static key_clock clock_of(const tide_skinned_data_view *v, const tide_skinned_channel_data *c, const float seconds,
+                          const uint32_t low)
 {
-    const uint32_t low = sampled_interval(v, c, seconds, intervals);
-    float time, value[4], in[4], out[4];
-    const uint32_t before = low ? low - 1u : 0u;
-    float first_time, first[4], unused[4], first_out[4];
-    validated_key(v, c, before, &first_time, first, unused, first_out);
-    tide_float4 a = tide_f4(first[0], first[1], first[2], first[3]);
-    if (low == 0u || low == c->keys || c->interpolation == TIDE_SKINNED_STEP) return a;
-    validated_key(v, c, low, &time, value, in, out);
-    const tide_float4 b = tide_f4(value[0], value[1], value[2], value[3]);
-    const float span = time - first_time, t = tide_saturate_f((seconds - first_time) / span);
-    if (c->interpolation == TIDE_SKINNED_LINEAR) {
-        return c->path == TIDE_SKINNED_ROTATION ? tide_slerp_q((tide_quaternion){a}, (tide_quaternion){b}, t).value
-                                               : tide_lerp_f4(a, b, tide_f4_splat(t));
+    key_clock k = {low ? low - 1u : 0u, low, low == 0u || low == c->keys, 0.0f, 0.0f};
+    if (k.held) return k;
+    const float first_time = validated_time(v, c, k.before);
+    k.span = validated_time(v, c, low) - first_time;
+    k.t = tide_saturate_f((seconds - first_time) / k.span);
+    return k;
+}
+
+// A key's value or tangent: three lanes and a zero, or a rotation's four.
+// Fixed widths keep the decoding to loads, without library calls.
+static tide_float4 key_value(const uint8_t *p, const bool rotation)
+{
+    return tide_f4(validated_number(p), validated_number(p + 4u), validated_number(p + 8u),
+                   rotation ? validated_number(p + 12u) : 0.0f);
+}
+
+// tide_slerp_q, except that its nlerp branch leaves the normalizing to the
+// caller (one more, normalize says).
+static tide_float4 linear_rotation(const tide_float4 a, const tide_float4 b, const float t, uint32_t *normalize)
+{
+    float dt = tide_dot_q((tide_quaternion){a}, (tide_quaternion){b});
+    tide_float4 bv = b;
+    if (dt < 0.0f) {
+        dt = -dt;
+        bv = tide_neg_f4(bv);
     }
+    if (dt < 0.9995f) return tide_slerp_q((tide_quaternion){a}, (tide_quaternion){b}, t).value;
+    // tide_nlerp_q(a, bv, t)
+    const tide_float4 nv = tide_dot_q((tide_quaternion){a}, (tide_quaternion){bv}) < 0.0f ? tide_neg_f4(bv) : bv;
+    ++*normalize;
+    return tide_lerp_f4(a, nv, tide_f4_splat(t));
+}
+
+// Only the values interpolation reads are decoded. A rotation is normalized
+// `normalize` more times (tide_normalize_q) to finish it.
+static inline __attribute__((always_inline)) tide_float4 sampled_value(const tide_skinned_data_view *v,
+                                 const tide_skinned_channel_data *c, const key_clock *k, uint32_t *normalize)
+{
+    const bool rotation = c->path == TIDE_SKINNED_ROTATION, cubic = c->interpolation == TIDE_SKINNED_CUBICSPLINE;
+    const uint32_t width = rotation ? 16u : 12u;
+    const size_t key = cubic ? width * 3u : width;
+    const uint8_t *values = v->data + c->values_at + (cubic ? width : 0u);
+    *normalize = 0;
+    const tide_float4 a = key_value(values + k->before * key, rotation);
+    if (k->held || c->interpolation == TIDE_SKINNED_STEP) return a;
+    const tide_float4 b = key_value(values + k->low * key, rotation);
+    const float span = k->span, t = k->t;
+    if (!cubic) return rotation ? linear_rotation(a, b, t, normalize) : tide_lerp_f4(a, b, tide_f4_splat(t));
+    const tide_float4 out = key_value(values + k->before * key + width, rotation);
+    const tide_float4 in = key_value(values + k->low * key - width, rotation);
+    const float first[4] = {a.x, a.y, a.z, a.w}, first_out[4] = {out.x, out.y, out.z, out.w};
+    const float value[4] = {b.x, b.y, b.z, b.w}, before[4] = {in.x, in.y, in.z, in.w};
     const float t2 = t * t, t3 = t2 * t;
     const float h0 = (2.0f * t3 - 3.0f * t2) + 1.0f, h1 = (t3 - 2.0f * t2) + t;
     const float h2 = -2.0f * t3 + 3.0f * t2, h3 = t3 - t2;
     float parts[4];
-    for (uint32_t i = 0; i < 4u; i++) parts[i] = ((h0 * first[i] + h1 * span * first_out[i]) + h2 * value[i]) + h3 * span * in[i];
-    const tide_float4 made = tide_f4(parts[0], parts[1], parts[2], parts[3]);
-    return c->path == TIDE_SKINNED_ROTATION ? tide_normalize_q((tide_quaternion){made}).value : made;
-}
-
-bool tide_skinned_sample(const tide_list data, const int32_t animation, const float seconds,
-                         tide_list *transforms, const uint32_t where)
-{
-    if (!transforms || animation < 0) return false;
-    model_seen m;
-    if (!open_model(data, &m)) return false;
-    bool nonnegative = false;
-    const bool packed = tide_pack_skinned_sample_proof(data, &nonnegative);
-    tide_skinned_clip_data clip;
-    bool valid = (packed || nodes_valid(&m.view)) && tide_skinned_data_clip(&m.view, (uint32_t)animation, &clip);
-    for (uint32_t i = 0; valid && !(packed && nonnegative) && i < clip.channels; i++) {
-        tide_skinned_channel_data channel;
-        if (packed) {
-            validated_channel(&m.view, clip.first_channel + i, &channel);
-            // The ordinary proof permits first times in (-1, 0). Without
-            // the stronger load-time fact, check this selected clip only.
-            valid = validated_time(&m.view, &channel, 0u) >= 0.0f;
-        } else valid = tide_skinned_data_channel(&m.view, clip.first_channel + i, &channel)
-                   && channel_valid(&m.view, &channel);
-    }
-    if (valid) {
-        fill_rest(&m.view, transforms, where);
-        const float clock = tide_clamp_f(seconds, 0.0f, clip.length);
-        tide_bone_transform *flat = scratch_transforms(*transforms, m.view.nodes);
-        tide_list_cache cache = {0};
-        sample_intervals intervals = {0};
-        for (uint32_t i = 0; i < clip.channels; i++) {
-            tide_skinned_channel_data channel;
-            validated_channel(&m.view, clip.first_channel + i, &channel);
-            const tide_float4 value = sampled_value(&m.view, &channel, clock, &intervals);
-            tide_bone_transform *to = flat ? flat + channel.node : tide_list_cached_at_mut(&cache, *transforms, (int32_t)channel.node, sizeof *to);
-            if (!to) continue;
-            if (channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
-            else if (channel.path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
-            else to->rotation = tide_normalize_q((tide_quaternion){value});
-        }
-    }
-    close_model(&m);
-    return valid;
+    for (uint32_t i = 0; i < 4u; i++) parts[i] = ((h0 * first[i] + h1 * span * first_out[i]) + h2 * value[i]) + h3 * span * before[i];
+    *normalize = rotation;
+    return tide_f4(parts[0], parts[1], parts[2], parts[3]);
 }
 
 typedef struct named_node {
@@ -880,75 +1040,415 @@ static void report_binding(const tide_skinned_data_view *target, const tide_skin
     tide_debug_log(text);
 }
 
-static void apply_channel(tide_bone_transform *to, const uint32_t path, const tide_float4 value)
+// What sampling a clip onto a pose does, decided from the models' bytes
+// alone: whether it binds, which output node each channel writes and the
+// pose before any channel. Applying one only searches and interpolates, with
+// the expressions and channel order of the samplers before plans, so a kept
+// plan gives the same bits as one made for a single call.
+#define PLAN_SEARCH UINT32_MAX // A channel searching its own key times
+
+typedef struct plan_channel {
+    tide_skinned_channel_data channel;
+    int32_t to;     // An output node, or -1 - a folded node's slot
+    uint32_t group; // Channels whose key times are the same bytes share one search
+} plan_channel;
+
+typedef struct plan_fold {
+    int32_t to, outer; // The output node; the folded slot composed above it, or -1
+    bool inner;        // Divide rest, a folded target parent's, out of it
+    tide_bone_transform rest;
+} plan_fold;
+
+enum { PLAN_OWN = 1, PLAN_INTO };
+
+typedef struct plan_key {
+    model_key target, source;
+    int32_t animation;
+    uint32_t mode;
+} plan_key;
+
+typedef struct sample_plan {
+    plan_key key;
+    _Atomic uint32_t refs;
+    uint64_t used;
+    bool valid;
+    uint32_t target_size, source_size; // The opened views' sizes, checked again on use
+    float length;
+    uint32_t nodes, channels, folded, folds, groups;
+    tide_bone_transform *initial, *folded_initial;
+    plan_channel *channel;
+    plan_fold *fold;
+} sample_plan;
+
+// tide_skinned_sample's checks, then its channels onto the model's own nodes.
+static bool plan_own(const tide_list data, const tide_skinned_data_view *v, const int32_t animation, sample_plan *p)
 {
-    if (path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
-    else if (path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
-    else to->rotation = tide_normalize_q((tide_quaternion){value});
+    bool nonnegative = false;
+    const bool packed = tide_pack_skinned_sample_proof(data, &nonnegative);
+    tide_skinned_clip_data clip;
+    bool valid = (packed || nodes_valid(v)) && tide_skinned_data_clip(v, (uint32_t)animation, &clip);
+    for (uint32_t i = 0; valid && !(packed && nonnegative) && i < clip.channels; i++) {
+        tide_skinned_channel_data channel;
+        if (packed) {
+            validated_channel(v, clip.first_channel + i, &channel);
+            // The ordinary proof permits first times in (-1, 0). Without
+            // the stronger load-time fact, check this selected clip only.
+            valid = validated_time(v, &channel, 0u) >= 0.0f;
+        } else valid = tide_skinned_data_channel(v, clip.first_channel + i, &channel) && channel_valid(v, &channel);
+    }
+    if (!valid) return false;
+    p->nodes = v->nodes;
+    p->initial = tide_scratch_memory((size_t)v->nodes * sizeof *p->initial);
+    for (uint32_t i = 0; i < v->nodes; i++) p->initial[i] = rest_of(v, i);
+    p->length = clip.length;
+    p->channel = tide_scratch_memory((size_t)clip.channels * sizeof *p->channel + 1u);
+    for (uint32_t i = 0; i < clip.channels; i++) {
+        plan_channel *c = &p->channel[p->channels++];
+        validated_channel(v, clip.first_channel + i, &c->channel);
+        c->to = (int32_t)c->channel.node;
+        c->group = PLAN_SEARCH;
+    }
+    return true;
+}
+
+// Separate-file binding (bind_nodes): required source nodes onto the target's.
+static bool plan_bound(const tide_skinned_data_view *target, const tide_skinned_data_view *source, const int32_t animation,
+                       sample_plan *p)
+{
+    char why[400] = "";
+    uint8_t *required = tide_scratch_memory(source->nodes);
+    memset(required, 0, source->nodes);
+    node_binding binding = {0};
+    const bool valid = require_clip(source, (uint32_t)animation, required, true)
+        && bind_nodes(target, source, required, &binding, why, sizeof why)
+        && (!binding.folds || clip_folds_uniform(source, (uint32_t)animation, &binding, required, why, sizeof why));
+    if (!valid) {
+        report_binding(target, source, animation, why);
+        return false;
+    }
+    p->nodes = target->nodes;
+    p->initial = tide_scratch_memory((size_t)target->nodes * sizeof *p->initial);
+    for (uint32_t i = 0; i < target->nodes; i++) p->initial[i] = rest_of(target, i);
+    // Separate exports can store a take's starting pose as their defaults.
+    // Required ancestors must follow those source locals too, just as when
+    // binding an already sampled pose. Unrelated target nodes stay at rest.
+    int32_t *slot = binding.folds ? tide_scratch_memory((size_t)source->nodes * sizeof *slot) : NULL;
+    p->folded_initial = binding.folds ? tide_scratch_memory((size_t)source->nodes * sizeof *p->folded_initial) : NULL;
+    for (uint32_t i = 0; i < source->nodes; i++) {
+        if (!required[i] || (binding.map[i] < 0 && binding.map[i] != BIND_FOLDED)) continue;
+        tide_skinned_node_data node;
+        validated_node(source, i, &node);
+        if (binding.map[i] == BIND_FOLDED) {
+            slot[i] = (int32_t)p->folded;
+            p->folded_initial[p->folded++] = local_of(&node);
+        } else p->initial[binding.map[i]] = local_of(&node);
+    }
+    tide_skinned_clip_data clip;
+    (void)tide_skinned_data_clip(source, (uint32_t)animation, &clip);
+    p->length = clip.length;
+    p->channel = tide_scratch_memory((size_t)clip.channels * sizeof *p->channel + 1u);
+    for (uint32_t i = 0; i < clip.channels; i++) {
+        tide_skinned_channel_data channel;
+        (void)tide_skinned_data_channel(source, clip.first_channel + i, &channel);
+        const int32_t to = binding.map[channel.node];
+        if (to < 0 && to != BIND_FOLDED) continue;
+        p->channel[p->channels++] = (plan_channel){channel, to == BIND_FOLDED ? -1 - slot[channel.node] : to, PLAN_SEARCH};
+    }
+    p->fold = binding.folds ? tide_scratch_memory((size_t)source->nodes * sizeof *p->fold) : NULL;
+    for (uint32_t i = 0; binding.folds && i < source->nodes; i++) {
+        if (!required[i] || binding.map[i] < 0 || (binding.outer[i] < 0 && binding.inner[i] < 0)) continue;
+        plan_fold *f = &p->fold[p->folds++];
+        memset(f, 0, sizeof *f);
+        f->to = binding.map[i];
+        f->outer = binding.outer[i] >= 0 ? slot[binding.outer[i]] : -1;
+        f->inner = binding.inner[i] >= 0;
+        if (f->inner) {
+            tide_skinned_node_data n;
+            validated_node(target, (uint32_t)binding.inner[i], &n);
+            f->rest = local_of(&n);
+        }
+    }
+    return true;
+}
+
+// A single-key channel always writes the same value, including its final
+// rotation normalization. Bake unique writers into the initial pose once;
+// duplicate node/path channels keep their original per-call write order.
+static __attribute__((noinline)) void plan_constants(sample_plan *p, const tide_skinned_data_view *source)
+{
+    bool any = false;
+    for (uint32_t i = 0; i < p->channels; i++) any |= p->channel[i].channel.keys == 1u;
+    if (!any) return;
+    const size_t slots = ((size_t)p->nodes + p->folded) * 3u;
+    uint32_t *writers = tide_scratch_memory(slots * sizeof *writers);
+    memset(writers, 0, slots * sizeof *writers);
+    for (uint32_t i = 0; i < p->channels; i++) {
+        const plan_channel *c = &p->channel[i];
+        const uint32_t node = c->to < 0 ? p->nodes + (uint32_t)(-1 - c->to) : (uint32_t)c->to;
+        writers[(size_t)node * 3u + c->channel.path]++;
+    }
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < p->channels; i++) {
+        const plan_channel c = p->channel[i];
+        const uint32_t node = c.to < 0 ? p->nodes + (uint32_t)(-1 - c.to) : (uint32_t)c.to;
+        if (c.channel.keys != 1u || writers[(size_t)node * 3u + c.channel.path] != 1u) {
+            p->channel[count++] = c;
+            continue;
+        }
+        const key_clock k = {.held = true};
+        uint32_t more;
+        tide_float4 value = sampled_value(source, &c.channel, &k, &more);
+        const uint32_t normalize = c.channel.path == TIDE_SKINNED_ROTATION ? more + 1u : 0u;
+        for (uint32_t n = 0; n < normalize; n++) value = tide_normalize_q((tide_quaternion){value}).value;
+        tide_bone_transform *to = c.to < 0 ? &p->folded_initial[-1 - c.to] : &p->initial[c.to];
+        if (c.channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
+        else if (c.channel.path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
+        else to->rotation = (tide_quaternion){value};
+    }
+    p->channels = count;
+}
+
+// A scratch plan in one allocation of its own.
+static sample_plan *plan_keep(const sample_plan *p)
+{
+    const size_t initial = (size_t)p->nodes * sizeof *p->initial, folded = (size_t)p->folded * sizeof *p->folded_initial;
+    const size_t channels = (size_t)p->channels * sizeof *p->channel, folds = (size_t)p->folds * sizeof *p->fold;
+    _Static_assert(sizeof(sample_plan) % 8u == 0u && _Alignof(tide_bone_transform) <= 8u && sizeof(tide_bone_transform) % 4u == 0u
+                   && _Alignof(plan_channel) <= 4u && _Alignof(plan_fold) <= 4u, "a kept plan's tables follow each other");
+    uint8_t *at = tide_alloc(sizeof *p + initial + folded + channels + folds);
+    sample_plan *kept = (sample_plan *)(void *)at;
+    memcpy(kept, p, sizeof *p);
+    at += sizeof *p;
+    kept->initial = (tide_bone_transform *)(void *)at;
+    if (initial) memcpy(kept->initial, p->initial, initial);
+    kept->folded_initial = (tide_bone_transform *)(void *)(at += initial);
+    if (folded) memcpy(kept->folded_initial, p->folded_initial, folded);
+    kept->channel = (plan_channel *)(void *)(at += folded);
+    if (channels) memcpy(kept->channel, p->channel, channels);
+    kept->fold = (plan_fold *)(void *)(at + channels);
+    if (folds) memcpy(kept->fold, p->fold, folds);
+    return kept;
+}
+
+// Channels of a kept plan whose key times are the same bytes search once:
+// a 60 Hz resampled clip's channels mostly share one time track.
+static void plan_groups(sample_plan *p, const tide_skinned_data_view *source)
+{
+    uint32_t *first = tide_scratch_memory((size_t)p->channels * sizeof *first + 4u);
+    uint64_t *hashes = tide_scratch_memory((size_t)p->channels * sizeof *hashes + 8u);
+    for (uint32_t i = 0; i < p->channels; i++) {
+        plan_channel *c = &p->channel[i];
+        const uint8_t *times = source->data + c->channel.times_at;
+        const size_t bytes = (size_t)c->channel.keys * 4u;
+        const uint64_t hash = tide_hash(times, bytes);
+        uint32_t g = 0;
+        for (; g < p->groups; g++) {
+            const tide_skinned_channel_data *other = &p->channel[first[g]].channel;
+            if (hashes[g] == hash && other->keys == c->channel.keys && memcmp(source->data + other->times_at, times, bytes) == 0) break;
+        }
+        if (g == p->groups) {
+            first[g] = i;
+            hashes[g] = hash;
+            p->groups++;
+        }
+        c->group = g;
+    }
+}
+
+static void plan_apply(const sample_plan *p, const tide_skinned_data_view *source, const float seconds,
+                       tide_list *transforms, const uint32_t where)
+{
+    tide_list_resize(transforms, (int32_t)p->nodes, sizeof(tide_bone_transform), where);
+    const uint64_t mark = tide_scratch_mark();
+    tide_bone_transform *flat = scratch_transforms(*transforms, p->nodes);
+    tide_list_cache cache = {0};
+    if (flat) memcpy(flat, p->initial, (size_t)p->nodes * sizeof *flat);
+    for (uint32_t i = 0; !flat && i < p->nodes; i++) {
+        tide_bone_transform *to = tide_list_cached_at_mut(&cache, *transforms, (int32_t)i, sizeof *to);
+        if (to) *to = p->initial[i];
+    }
+    tide_bone_transform *folded = p->folded ? tide_scratch_memory((size_t)p->folded * sizeof *folded) : NULL;
+    if (folded) memcpy(folded, p->folded_initial, (size_t)p->folded * sizeof *folded);
+    key_clock few[32];
+    key_clock *clocks = p->groups <= 32u ? few : tide_scratch_memory((size_t)p->groups * sizeof *clocks);
+    for (uint32_t g = 0; g < p->groups; g++) clocks[g].low = PLAN_SEARCH;
+    const float clock = tide_clamp_f(seconds, 0.0f, p->length);
+    sample_intervals intervals = {0};
+    // Every channel's value, then the rotations' normalizing in a loop of its
+    // own, where different channels' square roots and divisions overlap,
+    // then the writes in channel order.
+    tide_float4 few_values[192];
+    uint8_t few_counts[192];
+    tide_float4 *values = p->channels <= 192u ? few_values : tide_scratch_memory((size_t)p->channels * sizeof *values);
+    uint8_t *normalize = p->channels <= 192u ? few_counts : tide_scratch_memory(p->channels);
+    for (uint32_t i = 0; i < p->channels; i++) {
+        const plan_channel *c = &p->channel[i];
+        key_clock alone;
+        const key_clock *k = &alone;
+        if (c->group == PLAN_SEARCH) alone = clock_of(source, &c->channel, clock, sampled_interval(source, &c->channel, clock, &intervals));
+        else {
+            k = &clocks[c->group];
+            if (k->low == PLAN_SEARCH) clocks[c->group] = clock_of(source, &c->channel, clock, sampled_interval(source, &c->channel, clock, NULL));
+        }
+        uint32_t more;
+        values[i] = sampled_value(source, &c->channel, k, &more);
+        // A pose's rotation is normalized once more as it's written.
+        normalize[i] = (uint8_t)(c->channel.path == TIDE_SKINNED_ROTATION ? more + 1u : 0u);
+    }
+    for (uint32_t i = 0; i < p->channels; i++) {
+        for (uint32_t n = 0; n < normalize[i]; n++) values[i] = tide_normalize_q((tide_quaternion){values[i]}).value;
+    }
+    for (uint32_t i = 0; i < p->channels; i++) {
+        const plan_channel *c = &p->channel[i];
+        tide_bone_transform *to = c->to < 0 ? &folded[-1 - c->to]
+            : flat ? flat + c->to : tide_list_cached_at_mut(&cache, *transforms, c->to, sizeof *to);
+        if (!to) continue;
+        const tide_float4 value = values[i];
+        if (c->channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
+        else if (c->channel.path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
+        else to->rotation = (tide_quaternion){value};
+    }
+    for (uint32_t i = 0; i < p->folds; i++) {
+        const plan_fold *f = &p->fold[i];
+        tide_bone_transform *to = flat ? flat + f->to : tide_list_cached_at_mut(&cache, *transforms, f->to, sizeof *to);
+        if (!to) continue;
+        tide_bone_transform local = *to;
+        if (f->outer >= 0) local = fold_into(folded[f->outer], local);
+        if (f->inner) local = fold_out(f->rest, local);
+        *to = local;
+    }
+    // Flat scratch storage was sized before the mark, so only temporary
+    // sampling arrays follow it. Other scratch writes may copy shared chunks.
+    if (flat || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
+}
+
+// Kept plans, shared by every thread: a few ways for each set, the least
+// recently used replaced. A plan stays alive while a caller holds it.
+enum { PLAN_SETS = 64, PLAN_WAYS = 4 };
+static sample_plan *plans[PLAN_SETS][PLAN_WAYS];
+static uint64_t plans_used;
+static atomic_flag plans_lock = ATOMIC_FLAG_INIT;
+
+static void plan_release(sample_plan *p)
+{
+    if (p && atomic_fetch_sub_explicit(&p->refs, 1u, memory_order_acq_rel) == 1u) free(p);
+}
+
+static sample_plan **plan_set(const plan_key *key)
+{
+    return plans[tide_hash(key, sizeof *key) & (PLAN_SETS - 1u)];
+}
+
+static sample_plan *plan_find(const plan_key *key)
+{
+    sample_plan **set = plan_set(key);
+    sample_plan *found = NULL;
+    while (atomic_flag_test_and_set_explicit(&plans_lock, memory_order_acquire)) {}
+    for (uint32_t w = 0; w < PLAN_WAYS && !found; w++) {
+        if (!set[w] || memcmp(&set[w]->key, key, sizeof *key) != 0) continue;
+        found = set[w];
+        found->used = ++plans_used;
+        atomic_fetch_add_explicit(&found->refs, 1u, memory_order_relaxed);
+    }
+    atomic_flag_clear_explicit(&plans_lock, memory_order_release);
+    return found;
+}
+
+// Keeps made (held once by the caller) unless another thread kept its equal
+// first, and returns the one kept, held once more for the caller.
+static sample_plan *plan_share(sample_plan *made)
+{
+    sample_plan **set = plan_set(&made->key);
+    sample_plan *evicted = NULL, *found = NULL;
+    while (atomic_flag_test_and_set_explicit(&plans_lock, memory_order_acquire)) {}
+    uint32_t oldest = 0;
+    for (uint32_t w = 0; w < PLAN_WAYS && !found; w++) {
+        if (set[w] && memcmp(&set[w]->key, &made->key, sizeof made->key) == 0) found = set[w];
+        else if (set[oldest] && (!set[w] || set[w]->used < set[oldest]->used)) oldest = w;
+    }
+    if (found) {
+        found->used = ++plans_used;
+        atomic_fetch_add_explicit(&found->refs, 1u, memory_order_relaxed);
+    } else {
+        evicted = set[oldest];
+        made->used = ++plans_used;
+        atomic_fetch_add_explicit(&made->refs, 1u, memory_order_relaxed);
+        set[oldest] = made;
+    }
+    atomic_flag_clear_explicit(&plans_lock, memory_order_release);
+    plan_release(evicted);
+    if (!found) return made;
+    plan_release(made);
+    return found;
+}
+
+// The plan for sampling source's clip onto target's pose (onto source's own
+// for PLAN_OWN), held once for the caller. It's kept for later calls when
+// both models' bytes have keys, and made for this call alone otherwise.
+static sample_plan *plan_for(const uint32_t mode, const tide_list target_data, const model_seen *target,
+                             const tide_list source_data, const model_seen *source, const int32_t animation)
+{
+    plan_key key;
+    memset(&key, 0, sizeof key);
+    key.animation = animation;
+    key.mode = mode;
+    const bool keyed = (mode == PLAN_OWN || key_of(target_data, target, &key.target)) && key_of(source_data, source, &key.source);
+    sample_plan *p = keyed ? plan_find(&key) : NULL;
+    if (p && p->target_size == target->view.size && p->source_size == source->view.size) return p;
+    plan_release(p);
+    const uint64_t mark = tide_scratch_mark();
+    sample_plan made;
+    memset(&made, 0, sizeof made);
+    made.key = key;
+    made.target_size = target->view.size;
+    made.source_size = source->view.size;
+    if (mode == PLAN_OWN) made.valid = plan_own(source_data, &source->view, animation, &made);
+    else if (nodes_valid(&target->view) && nodes_valid(&source->view)) {
+        // The same skeleton samples as tide_skinned_sample does, onto the clip's own nodes.
+        const bool exact = target->view.nodes == source->view.nodes
+            && memcmp(target->view.skeleton_hash, source->view.skeleton_hash, sizeof target->view.skeleton_hash) == 0;
+        made.valid = exact ? plan_own(source_data, &source->view, animation, &made)
+                           : plan_bound(&target->view, &source->view, animation, &made);
+    }
+    if (!made.valid) made.nodes = made.channels = made.folded = made.folds = 0;
+    if (keyed && made.valid) plan_constants(&made, &source->view);
+    p = plan_keep(&made);
+    atomic_init(&p->refs, 1u);
+    if (keyed && p->valid) plan_groups(p, &source->view);
+    tide_scratch_reset(mark);
+    return keyed ? plan_share(p) : p;
+}
+
+static bool plan_sample(const uint32_t mode, const tide_list target_data, const tide_list source_data, const int32_t animation,
+                        const float seconds, tide_list *transforms, const uint32_t where)
+{
+    if (!transforms || animation < 0) return false;
+    const bool own = mode == PLAN_OWN;
+    model_seen target, source;
+    if (!own && !open_model(target_data, &target)) return false;
+    if (!open_model(source_data, &source)) {
+        if (!own) close_model(&target);
+        return false;
+    }
+    sample_plan *p = plan_for(mode, target_data, own ? &source : &target, source_data, &source, animation);
+    const bool valid = p->valid;
+    if (valid) plan_apply(p, &source.view, seconds, transforms, where);
+    plan_release(p);
+    close_model(&source);
+    if (!own) close_model(&target);
+    return valid;
+}
+
+bool tide_skinned_sample(const tide_list data, const int32_t animation, const float seconds,
+                         tide_list *transforms, const uint32_t where)
+{
+    return plan_sample(PLAN_OWN, data, data, animation, seconds, transforms, where);
 }
 
 bool tide_skinned_sample_into(const tide_list target_data, const tide_list animation_data, const int32_t animation,
                               const float seconds, tide_list *transforms, const uint32_t where)
 {
-    if (!transforms || animation < 0) return false;
-    model_seen target, source;
-    if (!open_model(target_data, &target)) return false;
-    if (!open_model(animation_data, &source)) { close_model(&target); return false; }
-    bool valid = nodes_valid(&target.view) && nodes_valid(&source.view);
-    if (valid && target.view.nodes == source.view.nodes
-        && memcmp(target.view.skeleton_hash, source.view.skeleton_hash, sizeof target.view.skeleton_hash) == 0) {
-        close_model(&source);
-        close_model(&target);
-        return tide_skinned_sample(animation_data, animation, seconds, transforms, where);
-    }
-    const uint32_t mark = tide_scratch_mark();
-    char why[400] = "";
-    uint8_t *required = valid ? tide_scratch_memory(source.view.nodes) : NULL;
-    if (valid) memset(required, 0, source.view.nodes);
-    valid = valid && require_clip(&source.view, (uint32_t)animation, required, true);
-    node_binding binding = {0};
-    valid = valid && bind_nodes(&target.view, &source.view, required, &binding, why, sizeof why)
-        && (!binding.folds || clip_folds_uniform(&source.view, (uint32_t)animation, &binding, required, why, sizeof why));
-    if (valid) {
-        fill_rest(&target.view, transforms, where);
-        tide_bone_transform *folded = binding.folds ? tide_scratch_memory((size_t)source.view.nodes * sizeof *folded) : NULL;
-        // Separate exports can store a take's starting pose as their defaults.
-        // Required ancestors must follow those source locals too, just as when
-        // binding an already sampled pose. Unrelated target nodes stay at rest.
-        tide_list_cache rest = {0};
-        for (uint32_t i = 0; i < source.view.nodes; i++) {
-            if (!required[i] || (binding.map[i] < 0 && binding.map[i] != BIND_FOLDED)) continue;
-            tide_skinned_node_data node;
-            validated_node(&source.view, i, &node);
-            if (binding.map[i] == BIND_FOLDED) { folded[i] = local_of(&node); continue; }
-            tide_bone_transform *to = tide_list_cached_at_mut(&rest, *transforms, binding.map[i], sizeof *to);
-            if (to) *to = local_of(&node);
-        }
-        tide_skinned_clip_data clip;
-        (void)tide_skinned_data_clip(&source.view, (uint32_t)animation, &clip);
-        const float clock = tide_clamp_f(seconds, 0.0f, clip.length);
-        tide_list_cache cache = {0};
-        for (uint32_t i = 0; i < clip.channels; i++) {
-            tide_skinned_channel_data channel;
-            (void)tide_skinned_data_channel(&source.view, clip.first_channel + i, &channel);
-            const int32_t to_node = binding.map[channel.node];
-            if (to_node < 0 && to_node != BIND_FOLDED) continue;
-            const tide_float4 value = sampled_value(&source.view, &channel, clock, NULL);
-            tide_bone_transform *to = to_node == BIND_FOLDED ? &folded[channel.node]
-                                                             : tide_list_cached_at_mut(&cache, *transforms, to_node, sizeof *to);
-            if (to) apply_channel(to, channel.path, value);
-        }
-        for (uint32_t i = 0; binding.folds && i < source.view.nodes; i++) {
-            if (!required[i] || binding.map[i] < 0 || (binding.outer[i] < 0 && binding.inner[i] < 0)) continue;
-            tide_bone_transform *to = tide_list_cached_at_mut(&cache, *transforms, binding.map[i], sizeof *to);
-            if (to) *to = bound_local(&binding, &target.view, i, folded, *to);
-        }
-    }
-    else report_binding(&target.view, &source.view, animation, why);
-    if (!valid || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
-    close_model(&source);
-    close_model(&target);
-    return valid;
+    return plan_sample(PLAN_INTO, target_data, animation_data, animation, seconds, transforms, where);
 }
 
 bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_data, const tide_list source_transforms,
@@ -958,7 +1458,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
     model_seen target, source;
     if (!open_model(target_data, &target)) return false;
     if (!open_model(source_data, &source)) { close_model(&target); return false; }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     char why[400] = "";
     bool valid = nodes_valid(&target.view) && nodes_valid(&source.view) && tide_list_count(source_transforms) == (int32_t)source.view.nodes;
     const bool exact = valid && target.view.nodes == source.view.nodes
@@ -1023,7 +1523,7 @@ bool tide_skinned_blend(const tide_list a, const tide_list b, const float weight
     if (!out) return false;
     const int32_t count = tide_list_count(a);
     if (count < 0 || count != tide_list_count(b)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_bone_transform *made = tide_scratch_memory((size_t)count * sizeof *made);
     const float t = tide_saturate_f(weight);
     tide_list_cache ac = {0}, bc = {0};
@@ -1259,7 +1759,7 @@ static const tide_bone_transform *skin_capture_transforms(const tide_list transf
     // Actual scratch lists are contiguous and remain live through this
     // synchronous call. Retained cache/atlas captures still copy these bytes
     // before returning; heap/chunked inputs need a contiguous staging copy.
-    if (transforms.at >> 30 == TIDE_IN_SCRATCH) return tide_list_at(transforms, 0, sizeof(tide_bone_transform));
+    if (tide_handle_where(transforms.at) == TIDE_IN_SCRATCH) return tide_list_at(transforms, 0, sizeof(tide_bone_transform));
     tide_bone_transform *out = tide_scratch_memory((size_t)nodes * sizeof *out);
     tide_list_cache cache = {0};
     for (uint32_t i = 0; i < nodes; i++) {
@@ -1297,19 +1797,101 @@ static tide_float4x4 *global_matrices(const tide_skinned_data_view *v, const tid
     return global;
 }
 
+// A bone's model matrix: its ancestors' locals multiplied from the root down,
+// as global_matrices does for every node (each depends only on its
+// ancestors). The model's nodes are valid; false for a pose of another count.
+static bool chain_model(const tide_skinned_data_view *v, const tide_list transforms, const uint32_t bone, tide_float4x4 *out)
+{
+    if (tide_list_count(transforms) != (int32_t)v->nodes) return false;
+    uint32_t few[64], depth = 0;
+    uint32_t *chain = few;
+    for (uint32_t i = bone;; i = draw_word(v->data + v->node_at + (size_t)i * TIDE_SKINNED_NODE_SIZE)) {
+        if (depth == 64u && chain == few) {
+            chain = tide_scratch_memory((size_t)v->nodes * sizeof *chain);
+            memcpy(chain, few, sizeof few);
+        }
+        chain[depth++] = i;
+        if (i == 0u) break;
+    }
+    tide_list_cache cache = {0};
+    tide_float4x4 global = tide_identity_f4x4();
+    for (uint32_t k = depth; k-- > 0;) {
+        const tide_bone_transform *local = tide_list_cached_at(&cache, transforms, (int32_t)chain[k], sizeof *local);
+        if (!local) return false;
+        const tide_float4x4 matrix = tide_trs_f4x4(local->position, local->rotation, local->scale);
+        global = k == depth - 1u ? matrix : tide_mul_f4x4(global, matrix);
+    }
+    *out = global;
+    return true;
+}
+
 tide_float4x4 tide_skinned_model(const tide_list data, const tide_list transforms, const int32_t bone)
 {
     tide_float4x4 out = tide_identity_f4x4();
+    if (bone < 0) return out;
+    model_facts *f = known_model(data);
+    const uint64_t mark = tide_scratch_mark();
+    if (f && f->key.kind == KEY_PACK) {
+        // Known bytes in the pack: no need to open them again.
+        if (!f->valid) {
+            model_seen m;
+            if (!open_model(data, &m)) return out;
+            f->valid = nodes_valid(&m.view) ? 1 : -1;
+            close_model(&m);
+        }
+        const tide_skinned_data_view v = {.data = tide_pack_span(tide_handle_offset(data.at) + sizeof(tide_block), f->size),
+                                          .size = f->size, .nodes = f->nodes, .node_at = f->node_at};
+        tide_float4x4 global;
+        if (v.data && (uint32_t)bone < v.nodes && f->valid > 0 && chain_model(&v, transforms, (uint32_t)bone, &global)) out = global;
+        tide_scratch_reset(mark);
+        return out;
+    }
     model_seen m;
-    if (bone < 0 || !open_model(data, &m)) return out;
-    const uint32_t mark = tide_scratch_mark();
+    if (!open_model(data, &m)) return out;
     if ((uint32_t)bone < m.view.nodes) {
-        const tide_float4x4 *global = global_matrices(&m.view, transforms, false, NULL);
-        if (global) out = global[bone];
+        if (f && !f->valid) f->valid = nodes_valid(&m.view) ? 1 : -1;
+        tide_float4x4 global;
+        if ((f ? f->valid > 0 : nodes_valid(&m.view)) && chain_model(&m.view, transforms, (uint32_t)bone, &global)) out = global;
     }
     tide_scratch_reset(mark);
     close_model(&m);
     return out;
+}
+
+tide_list tide_skinned_models(const tide_list data, const tide_list transforms, const uint32_t where)
+{
+    tide_list out = {0};
+    model_facts *f = known_model(data);
+    const int32_t count = tide_list_count(transforms);
+    if (count <= 0) return out;
+    // Made before the scratch mark, so a list in the scratch area outlives the reset below
+    tide_list_resize(&out, count, sizeof(tide_float4x4), where);
+    if (tide_list_count(out) != count) return (tide_list){0};
+    const uint64_t mark = tide_scratch_mark();
+    const tide_float4x4 *global = NULL;
+    model_seen m;
+    bool opened = false;
+    if (f && f->key.kind == KEY_PACK) {
+        // Known bytes in the pack: no need to open them again (as tide_skinned_model).
+        if (!f->valid) {
+            if (open_model(data, &m)) {
+                f->valid = nodes_valid(&m.view) ? 1 : -1;
+                close_model(&m);
+            }
+        }
+        const tide_skinned_data_view v = {.data = tide_pack_span(tide_handle_offset(data.at) + sizeof(tide_block), f->size),
+                                          .size = f->size, .nodes = f->nodes, .node_at = f->node_at};
+        if (v.data && f->valid > 0) global = global_matrices(&v, transforms, true, NULL);
+    } else if (open_model(data, &m)) {
+        opened = true;
+        if (f && !f->valid) f->valid = nodes_valid(&m.view) ? 1 : -1;
+        global = global_matrices(&m.view, transforms, f ? f->valid > 0 : false, NULL);
+    }
+    const bool made = global != NULL;
+    if (made) memcpy(tide_list_at_mut(out, 0, sizeof(tide_float4x4)), global, (size_t)count * sizeof(tide_float4x4));
+    tide_scratch_reset(mark);
+    if (opened) close_model(&m);
+    return made ? out : (tide_list){0};
 }
 
 static tide_list palette_of(const tide_skinned_data_view *v, const tide_list transforms, const bool verified,
@@ -1395,7 +1977,7 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     memset(info, 0, 3u * sizeof *info);
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     uint64_t version, identity;
     const bool packed = tide_pack_skinned_proof(data, &identity, &version);
     bool valid = packed || tide_skinned_data_validate(m.view.data, m.view.size);
@@ -1539,7 +2121,7 @@ bool tide_draw_skinned_atlas(tide_draw_list *draw, const tide_list data, const t
     if (!tide_pack_skinned_proof(data, &identity, &version)) return tide_draw_skinned_data(draw, data, transforms, textures, info);
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const uint64_t pixels = (uint64_t)m.view.vertices + ((uint64_t)m.view.influences + 1u) / 2u;
     bool valid = m.view.palettes && m.view.palettes <= TIDE_LIST_DATA_MOST / 4u
         && pixels > 0u && pixels <= TIDE_LIST_DATA_MOST;
@@ -1682,7 +2264,7 @@ static bool draw_skinned_rest(tide_draw_list *draw, const tide_list data, const 
     if (rest && rest->version == version && skin_rest_cached(draw, rest, atlas, textures, info, &palette_bad)) return true;
     // Only the first capture needs authored TRS. Existing draw capture owns
     // those values and model dependencies before this scratch scope ends.
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list transforms = {0};
     const bool capture_atlas = atlas && !palette_bad;
     const bool valid = tide_skinned_rest(data, &transforms, TIDE_IN_SCRATCH)
@@ -1727,7 +2309,7 @@ static void prepare_atlas_poses(void *context, const uint32_t thread)
             const uint8_t *nodes = c->bytes + model->bytes;
             const uint8_t *palettes = nodes + (size_t)model->nodes * TIDE_SKINNED_NODE_SIZE;
             const tide_bone_transform *trs = (const tide_bone_transform *)(const void *)(c->bytes + pose->bytes);
-            const uint32_t mark = tide_scratch_mark();
+            const uint64_t mark = tide_scratch_mark();
             tide_float4x4 *global = tide_scratch_memory((size_t)model->nodes * sizeof *global);
             // Captured tables were fully validated while their pack proof
             // was current. Only these owned bytes and exact current TRS are
@@ -1758,7 +2340,10 @@ static void prepare_atlas_poses(void *context, const uint32_t thread)
 
 void tide_draw_prepare(const tide_draw_list *draw, const tide_jobs *jobs)
 {
-    if (draw) tide_draw_gather_levels(draw);
+    if (draw) {
+        tide_draw_gather_levels(draw);
+        tide_draw_lod_submit(draw, jobs); // Levels of detail a game's meshes asked for, made in the background
+    }
     if (!draw || !draw->skinned) return;
     struct tide_skinned_draw_cache *c = draw->skinned;
     uint64_t nodes = 0u;

@@ -1,3 +1,3 @@
-// expect: a local can't hold a grid
+// expect: a grid can't be copied: a local's grid is its own
 local worker int Build(Grid2<int> cells) { var copy = cells; return copy[0, 0]; }
 scene Main;

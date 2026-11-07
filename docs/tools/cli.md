@@ -16,7 +16,7 @@ tide <command> [folder] [options]
 | `tide build [folder]` | Builds the game into `<folder>/build`, named after the folder |
 | `tide unity [folder] -o <path>` | Builds the game for the [Tide package in a Unity project](#unity), as its files change |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
-| `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
+| `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as WGSL |
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
@@ -35,7 +35,58 @@ tide <command> [folder] [options]
 
 Project build and package commands automatically use the version pinned with
 `tide pin`, asking before downloading a missing release into the shared
-version cache. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
+version cache. Exact project pins suppress automatic upgrade notices. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
+
+In a terminal, build stages appear only after 0.5 seconds; stages that finish
+sooner leave no progress line. Each displayed stage keeps a completed line with a full bar and its
+elapsed time, with bars aligned in one column. Asset build program preparation
+(including its C generation and packing) stays in one row, followed by separate
+compiling and running rows. The program is compiled once when its cached results
+are missing or invalidated; unchanged build results are reused. The active stage shows its current source or asset on the same line as its bar,
+truncating the label at the bar column;
+changing filenames updates that stage in place. C/C++ shows the most recently
+completed file as each compilation finishes, alongside the completed/total count.
+Parsing and C/C++ compilation
+show file counts or percentages. Checking and importing assets, running the asset
+build program, generating game C, packing assets, and finalizing generated C
+have distinct labels. Stages without a reliable total show moving activity.
+Percentages count work items, not time or whole-build completion. Each stage has
+its own timer. Completed stages remain visible before game launch or completion
+output, and diagnostics appear on clean lines. A failed stage keeps its last
+observed progress. Redirected output uses plain stderr lines with file counts.
+
+Large generated C files (at least 4 MiB) compile as four stable partitions in
+parallel, with ThinLTO preserving optimization across them. Each completed
+partition advances the C compilation bar; linking has an activity indicator.
+The linker caches its work beside the game's other cached objects. Small files
+stay whole. In ordinary debug builds, the optimized generated plumbing can be
+partitioned while your game code stays unoptimized for the debugger. A body
+edit keeps unrelated partitions reusable; changes to shared types can rebuild
+them all. `TIDE_JOBS` also limits parallel ThinLTO work.
+
+
+Code objects and expensive asset processing are cached between launches.
+Imported models, generated tangents, checked/converted audio and prepared texture
+payloads are kept in `.tide/assets/imports`, alongside the existing download,
+LOD and retarget caches. Code-only edits reuse these results. Changed source
+bytes, external model buffers, import settings or compiler/decoder revisions
+invalidate affected entries. Missing or damaged caches are rebuilt automatically.
+Tide still checks the program and assembles its asset pack; CPU-readable grid
+images still use their exact image decoder.
+
+Independent engine compilation overlaps Tide and asset processing. Native
+hot-reload hosts compile in the game's C/C++ batch. `TIDE_JOBS` limits simultaneous
+C/C++ compiler processes: it defaults to the processor count, up to 64. Set it to
+`1` for serial compilation. Compiler diagnostics retain their source order.
+
+Pinned build/run/schedule/shader commands select the project version before
+validating its options. Put an explicit game folder before options introduced
+by a newer version; otherwise an unknown option uses the folder already found,
+or the current directory. Known option values are skipped during discovery.
+Older installed launchers that reject newer flags must be upgraded with
+`tide upgrade`, or bypassed by invoking the cached version directly. Changing
+the project pin cannot change an already released launcher binary.
+
 
 Managed deployment, project selection, prepaid credit and current availability
 are described in [Managed hosting](../multiplayer/hosting.md).
@@ -60,6 +111,19 @@ describes the hosting project. Positional arguments have topics too:
 Help works without a game or complete installation and performs no command
 actions. Unknown topics or arguments return exit code 2. Bare `tide` keeps
 exit code 2; explicit help returns 0.
+
+When an option needs a value, the error shows an example and its help topic.
+For example, `tide build -o` asks for an output path; use
+`tide build -o output/game` or read `tide help -o`. Unknown options point to
+the command's help. These missing-value and unknown-option errors return
+exit code 2 before building.
+
+Package write failures name the file to check for write permissions and free
+disk space. `tide eject` keeps an existing destination folder; move that
+folder aside before requesting a fresh copy. If a cached pinned executable
+reports the wrong version or cannot run, the error names its cache folder:
+move that folder aside and rerun the command in a terminal to approve a
+fresh download of the pinned release.
 
 ## ide
 
@@ -133,14 +197,18 @@ still performs only front-end validation, even with a preview flag.
 
 | Option | What it does |
 |---|---|
-| `--release` | Optimizes game and package code, the way players get it |
-| `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
+| `--release` | Optimizes game and package code for testing and profiling, keeping symbols and diagnostics; standalone builds leave out unused code, data and assets |
+| `--distribution` | Builds for shipping: `--release` plus symbol/name stripping, shader minification and packaging (smaller web pages, Android app bundles) |
+| `-O0`, `-O1`, `-O2`, `-O3` | Overrides engine, game and package C/C++ optimization; deterministic math and the chosen build mode stay unchanged |
+| `--web` | A web page (WebGPU), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace |
-| `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined without `--release`. `schedule` and `shaders` take it too |
+| `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. Builds also pass it as a C/C++ macro with value 1 to the game's and its packages' handwritten sources. `DEBUG` is defined in the default debug mode, including those C/C++ sources. Changing symbols rebuilds these sources and changes custom-C simulation compatibility. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
+| `--profile <file.json>` | `run` only, native desktop: writes a [structured profile capture](debug-views.md#profile-captures), independently of the panels. Requires `--frames`, `--script` or `--interactive` |
+| `--profile-warmup <n>` | With `--profile`: excludes the first `n` frames from measurements (default 0). They still count toward `--frames` |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--interactive`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
@@ -148,6 +216,9 @@ still performs only front-end validation, even with a preview flag.
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
 | `-o <path>` | `build` only: where the program goes |
+| `--asset-sizes` | `build` only: lists what each asset declaration adds to the pack, biggest first (see [Asset sizes](#asset-sizes)) |
+| `--strip-assets` | `build` only, with `--release` or `--distribution`: leaves out assets no Tide code names even when the game or a package has C (see [Asset sizes](#asset-sizes)) |
+| `--report <file>` | `build` only: writes a [build report](#build-reports): where the build's time went, what each asset adds to the pack, what was left out and how big each output is. A `.json` path gets JSON, any other a table |
 | `--single-file` | `build --web` only: one self-contained `.html` with the game inside, which opens from disk, instead of a folder whose page downloads the game (see [The page while it loads](#the-page-while-it-loads)) |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
@@ -177,19 +248,78 @@ existing live instances. Restart the run to play from fresh initial state.
 `--scene` leaves the output filename unchanged; use `-o` for a separate build
 artifact.
 
-The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
+By default, the engine is optimized in every build. In the default debug mode, the game's own code stays unoptimized for debugging: the C its systems, views, handlers, functions and methods become, and the game's own C/C++. What the engine generates around that code for the game (copying, hashing and packing its world, building its rows) is compiled as the engine is, and so are packages' C/C++; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
-Standalone `tide build --release` also removes readable system/view profiling labels, shader labels, event/command diagnostic names, and assertion source lines and paths. Asset loading uses the pack's existing SHA-256 name IDs directly. Assertions still check their conditions and keep messages you wrote; profiles and failures use IDs. Resolve them with `.tide/<target>-release/gen/game.names`, a private diagnostic map for that build. Keep that map with your build records, and distribute only the finished game files, never `.tide/`, generated C, debug files or the map. Replacing a native debug output with a release removes its old debugger sidecars. Debug, watched/hot-reload and Unity builds retain their names.
+Use `tide run --release --stats` to test a large game at optimized speed. Release retains debug symbols, readable profiling and diagnostic names, C assertions and native debugger visualizers, and leaves out unused code, data and assets as a distribution does. Optimized stepping may skip inlined calls or show locals as unavailable. Both optimized modes leave `DEBUG` undefined. Debug, release and distribution use separate `.tide/<target>-<mode>/` caches.
+
+For repeatable measurements or an agent-readable report, use a bounded profile capture:
+
+```sh
+tide run --release --script play.txt --frames 360 --profile profile.json --profile-warmup 60
+```
+
+This plays frames 1–360 and measures frames 61–360, unless the script quits
+earlier. The JSON is written when the run ends normally, to a path relative to
+where `tide` was invoked. It measures actual CPU work even though hidden runs
+advance simulation by a fixed step. See [Profile captures](debug-views.md#profile-captures)
+for the report, culling diagnostics and comparison workflow.
+
+### Build reports
+
+`tide build --report <file>` writes what the build did, to a path relative to where `tide` was invoked. A path ending in `.json` gets JSON for scripts and agents; any other, such as `build.txt`, a table to read:
+
+```sh
+tide build --distribution --web --report build.txt
+```
+
+- **Time**: each step of the build (preparing, resolving packages, compiling Tide code and assets, compiling C/C++, linking, packaging) with its share of the whole, and the compiler's own phases inside the Tide step: parsing, checking, running build code, generating C and packing assets.
+- **C/C++**: each file compiled and how long its compiler ran, slowest first in the table, and how many objects were already up to date. Compiles run several at once, so their times add up to more than the step's.
+- **Pack**: its size, and each asset's type and how its images are kept (as [`--asset-sizes`](#asset-sizes) says them), the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
+- **Left out**: assets the build didn't pack, and why: in `--release` and `--distribution`, assets nothing in the game's code, defaults or shaders names, and in a `--server` build those its match code never reads.
+- **This mode**: what the mode cut or kept, such as unreferenced code removed by the linker, stripped names and symbols, or why every asset was packed (a game or package with C, which could read an asset by name, unless `--strip-assets`).
+- **Outputs**: the files the build made and their sizes.
+
+A failed build still writes its report, as far as it got. The report is of the build alone; it doesn't change what's built.
+
+Choose one optimization override to experiment, for example `tide run --release -O3 --stats` or `tide build --distribution -O1`. `-O0` disables optimization; `-O1`, `-O2` and `-O3` select increasing optimization levels, which are not guaranteed to improve a particular workload. The override applies to engine sources, generated game code and game/package C/C++, including hot reload, native, web, Android, servers and `tide unity`. Prebuilt libraries keep their own optimization. Without an override, debug game code uses `-O0`, debug engine code, package C/C++ and the generated code around the game's uses `-O2`, and release/distribution use `-O2` for all of them.
+
+The override changes no build-mode policy: `tide run -O3` still defines `DEBUG`, and `tide build --release -O0` still keeps release's symbols and diagnostics. Deterministic math remains enforced, including disabled FMA contraction and fast-math. Explicit levels have separate caches, such as `.tide/native-release-O3/`, so switching experiments can reuse their objects. For builds with custom C, the selected level also enters simulation compatibility because C can branch on optimization macros. Unsupported levels and multiple optimization flags are errors.
+
+Standalone `tide build --distribution` removes readable system/view profiling labels, shader labels, event/command diagnostic names, and assertion source lines and paths. Asset loading uses the pack's existing SHA-256 name IDs directly. Assertions still check their conditions and keep messages you wrote; profiles and failures use IDs. Resolve them with `.tide/<target>-distribution/gen/game.names`, a private diagnostic map for that build. Keep that map with your build records, and distribute only the finished game files, never `.tide/`, generated C, debug files or the map. Replacing a native debug output with a distribution removes its old debugger sidecars. Debug, release, watched/hot-reload and Unity builds retain their names.
 
 Shipping shader source also replaces function, type, field, parameter and local identifiers derived from Tide names with short tokens. Renderer bindings and shader entry points stay fixed. The private map records the original identifiers for each shader stage. Expressions, numeric literals and layouts stay the same.
 
-Standalone macOS release executables expose no public symbols. Android's shipping `libgame.so` exports only `ANativeActivity_onCreate`, the entry point Android loads. Additional shared libraries supplied by your game keep their own exports; code needing a public dynamic API should provide it in a separate library. Hot-reload and Unity libraries retain their host APIs.
+Standalone macOS distribution executables expose no public symbols. Android's shipping `libgame.so` exports only `ANativeActivity_onCreate`, the entry point Android loads. Additional shared libraries supplied by your game keep their own exports; code needing a public dynamic API should provide it in a separate library. Hot-reload and Unity libraries retain their host APIs.
 
-This makes reverse engineering less convenient; it does not encrypt a game or prevent copying a downloaded demo. Game text, lookup keys, model contents and executable shader source remain available where the game needs them. For a custom compiler pipeline, `tidec --strip-names` applies the same metadata policy and writes `<name>.names` beside its generated C. CMake's standard-host `Release`/`MinSizeRel` games enable it automatically; custom hosts, layout/embed targets, `RelWithDebInfo` and explicit debugger-visualizer builds retain names unless their compiler pipeline explicitly requests stripping. `tide_add_game(... STRIP_NAMES)` opts in explicitly, including for custom hosts. Required layout/embed metadata still retains its names. The repository's `release` preset uses `RelWithDebInfo` for profiling; use `tide build --release` for a shipping build.
+This makes reverse engineering less convenient; it does not encrypt a game or prevent copying a downloaded demo. Game text, lookup keys, model contents and executable shader source remain available where the game needs them. For a custom compiler pipeline, `tidec --strip-names` applies the same metadata policy and writes `<name>.names` beside its generated C. CMake's standard-host `Release`/`MinSizeRel` games enable it automatically; custom hosts, layout/embed targets, `RelWithDebInfo` and explicit debugger-visualizer builds retain names unless their compiler pipeline explicitly requests stripping. `tide_add_game(... STRIP_NAMES)` opts in explicitly, including for custom hosts. Required layout/embed metadata still retains its names. The repository's `release` preset uses `RelWithDebInfo` for profiling; use `tide build --distribution` for a shipping build.
 
-`tide build --release --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
+### Asset sizes
 
-`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web releases compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Release pages of either kind use a smaller page runtime. Debug and hot-reload pages keep the readable runtime and original payloads.
+`tide build --asset-sizes` prints, after the build, what each asset declaration put in the pack, biggest first, under the pack's total:
+
+```text
+Assets in the pack: 96.4 MB in 41 declarations, biggest first
+     67.1 MB  69.6%  flowField        Texture 4096x4096 RGBA [Raw, Lossless]
+     11.2 MB  11.6%  groundColor      Texture 4096x4096 BC1
+      2.8 MB   2.9%  groundNormal     Texture 2048x2048 BC1 [Raw]
+```
+
+Each line has the bytes and share, the declaration's name, its type, an image's size (or how many files a list or map has) and how images are kept: `BC1` or `BC3` when [compressed](../game/assets.md#gpu-compression), `RGBA` when exact, `RGBA mips` for [authored mipmaps](../game/assets.md#authored-mipmaps). The bytes are the pack's, before a web page compresses it. A file two declarations share is in the pack once and counts toward the first. It's the pack of the build it's given with, so `--release` and `--distribution` show what pruning left. `tidec --asset-sizes` prints the same.
+
+Release and distribution builds leave out assets no Tide code, default or shader names. A game or package with C/C++ sources or prebuilt libraries keeps every asset instead, since C can find a pack entry by name. When the game's C reads no asset that way, `--strip-assets` says so, and its build is pruned like any other. An asset the C does read by name and nothing in Tide names is then missing at run time: its lookup finds nothing.
+
+Custom C build pipelines can request `tidec --split-code`: it writes
+`<name>.c`, `<name>_part1.c` through `<name>_part3.c`, `<name>_data.c` with the
+large constants (mostly shaders' code), and a `<name>_parts.txt` manifest.
+Compile and link those parts with `-flto=thin`. CMake callers can use
+`tide_add_game(... SPLIT_CODE)` to handle generation, compilation and linking.
+With `SPLIT_PLUMBING` too, only the optimized plumbing is partitioned.
+
+Custom build pipelines can pass `tidec --depfile <file>` to write Make-style dependencies for the generated C, including rig profiles, their reference models and external animation buffers. `tide_add_game` consumes this file automatically so editing those inputs rebuilds the asset pack. The flag applies to code generation, not schedule, outline or shader inspection.
+
+`tide build --distribution --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
+
+`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web distributions compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Distribution pages of either kind use a smaller page runtime. Debug, release and hot-reload pages keep the readable runtime and original payloads.
 
 ### The page while it loads
 
@@ -198,19 +328,27 @@ Until the game first draws, the page shows what it's doing: how much of the game
 - An element with the ID `tide-loading` is the loader: the game takes it away once it has drawn, and fills in the elements in it with the IDs `tide-loading-bar` (a bar, whose first child's width is how much has downloaded), `tide-loading-text` (what's happening, in words) and `tide-loading-logo` (an `<img>` for the icon). Leave it out for no loader.
 - `Tide.onProgress`, set in the `var Tide = { ... }` before the game's script, is told each step for a loader of your own: `{ stage, loaded, total, error }`, where `stage` is `download` (`loaded` of `total` bytes), `compile`, `waiting` (for `Tide.start()`, on a page that set `Tide.wait`), `start` (the game is running, until it first draws), `done` (it drew) or `error` (it couldn't start, and `error` says why).
 
-Standalone release builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Debug and hot-reload builds keep their usual code and asset loading behavior.
+### The window while it loads
+
+On desktop and Android, a game with assets opens its window at once and shows the same loader as Tide's page while it reads its pack: how many megabytes it has read, then `Preparing` while the game checks and loads them. The window keeps answering meanwhile (you can move, resize or close it), and the game starts once its assets are in; what's pressed while it loads doesn't reach the game. A big pack can take seconds. Runs [without a window](#without-a-window) load their pack before their first frame, so their frames are the same every run. The window's loader isn't replaceable yet and shows no icon.
+
+Standalone release and distribution builds remove unreachable native code and data; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Distribution builds also strip debug symbols. Debug and hot-reload builds keep all code and every declared asset.
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
 
 A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
 
-A web page draws with WebGPU where the browser has it on a GPU, and with WebGL 2 where it doesn't; games draw the same with either. Adding `?backend=webgl` (or `?backend=webgpu`) to the page's address picks one, for example to check a problem a player reports with the other.
+A web page draws with WebGPU, which every game's shaders and [kernels](../game/shaders.md#compute) need: a current Chrome, Edge or Safari has it, and so does Firefox where WebGPU is on. The page takes whatever device the browser gives, its software one too. A browser without WebGPU shows, in the game's place, a note saying what the game needs.
 
-A desktop game draws with Vulkan where the machine has a Vulkan 1.3 driver, and with OpenGL 3.3 where it doesn't; games draw the same with either, and nothing in a game says which. The `TIDE_BACKEND` environment variable picks one for a run: `TIDE_BACKEND=opengl`, or `TIDE_BACKEND=vulkan`, which ends the program with a message where there's no Vulkan rather than falling back.
+A desktop game draws with Vulkan 1.3, which any GPU of the last decade has with a current driver. A machine without it is told so, in a dialog of the system's (on Linux, the first of `zenity`, `kdialog` and `xmessage` it has) and on the program's error output, and the game ends. There's no other backend to fall back to: OpenGL was removed when compute shaders became something every game can count on.
+
+The GPU culls a `Draw.Instanced` of a list that stays as it was and picks its instances' levels of detail, and draws the same as when the CPU does it. `TIDE_GPU_CULLING=0` has the CPU do it for a run, to compare the two.
 
 On a Mac, Vulkan is MoltenVK, Vulkan on Metal: `tide build` puts `libMoltenVK.dylib` beside the game, which uses it where the Mac has no Vulkan loader of its own. Ship it with the game; its license is in the tide package's `licenses/moltenvk`.
 
-An Android game draws with Vulkan where the device has Vulkan 1.3, and with OpenGL ES 3 where it doesn't. An app started with `adb shell am start` takes the same choice as an extra of its intent: `--es tide.backend opengl` or `--es tide.backend vulkan`.
+On desktop, `tide build` also puts `tide-crash` (`tide-crash.exe` on Windows) beside the game. If the game crashes, it opens a small window that shows what the crash report says and zips it, with personal data masked, for the player to send you (see [Logs and crashes](../game/files.md#logs-and-crashes)). A game whose `tide.deploy.json` has a hosting project's report key also gets `crash.json`, and its reports go to the project by themselves ([Receiving reports](../game/files.md#receiving-reports)). Ship both with the game. Without `tide-crash`, a crash still leaves its report but shows nothing. `tide run` doesn't put it beside the game it runs, so a crash while you work shows in the terminal, not in a window.
+
+An Android game draws with Vulkan 1.3, and its manifest says so, so Google Play offers it only to devices that have it. A device without it that has the game anyway (installed from its APK) shows a screen saying what the game needs until the player leaves it.
 
 ### Stats
 
@@ -225,7 +363,7 @@ settings
 
 They're a drawer. Closed, it's one line: the frame rate, and in a match another machine runs, your ping. A click or a tap on that line opens it, and so does **F8**: the rest is listed above the line, which stays where it is, so a click in the same place closes it again.
 
-Documentation examples, sample games and the playground enable stats by default, including their separate playable pages. A web game's `stats` query option passes `--stats` to the program: `game.html?stats`, or `game.html?backend=webgl&stats` alongside other options. This enables the drawer without changing its configured initial open/closed state; an ordinary standalone page starts with the one line.
+Documentation examples, sample games and the playground enable stats by default, including their separate playable pages. A web game's `stats` query option passes `--stats` to the program: `game.html?stats`, or `game.html?embedded&stats` alongside other options. This enables the drawer without changing its configured initial open/closed state; an ordinary standalone page starts with the one line.
 
 - **It starts closed** when the game asks, with its `stats` setting, and when a build does (`tide build --stats`, CMake's `STATS`): what players get is the one line. **`tide run --stats` starts it open**, since whoever typed that wants to read it. Under `tide run`, a hot reload leaves it as you left it.
 - **A click or a tap on it is never the game's.** Neither the game's input nor its views read that press, from the frame it lands in. A press that began elsewhere and crosses the drawer stays the game's. The game still sees F8, as it sees every key.
@@ -239,20 +377,22 @@ The list is two columns, a label on the left and its value on the right, in four
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu` | What a frame's work takes on its thread, all of it: the ticks it runs, the views and the drawing, without the wait for the display |
 | `render` | Listed under `cpu` as the part of it that prepares and submits the frame's draw list, including its render targets |
-| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android), desktop OpenGL and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the backend has no GPU timer (WebGL 2, OpenGL ES 3), the draw calls have a line of their own, `draw calls` |
-| `vertices` | Vertices submitted this frame across all render-target passes, counting each index for each instance at its selected LOD. Includes shapes, text, meshes, blits and clear triangles; excludes the host's overlays. A quad counts as six, even with four shared corners. Clipped or culled geometry still counts; this measures submitted geometry, not how many pixels were visible or how often the GPU ran the vertex shader after caching |
+| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android) and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one, and so is a draw the GPU decides (instances culled on the GPU, one call for runs one after another that draw alike, or an indirect draw over a `GPUList`). Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the device has no GPU timer, the draw calls have a line of their own, `draw calls` |
+| `vertices` | Vertices submitted this frame across all render-target passes, counting each index for each instance at its selected LOD. Includes shapes, text, meshes, blits and clear triangles; excludes the host's overlays. A quad counts as six, even with four shared corners. Clipped or culled geometry still counts; this measures submitted geometry, not how many pixels were visible or how often the GPU ran the vertex shader after caching. What the GPU decides (instances culled on the GPU, indirect draws over a `GPUList`) is counted from the GPU's own numbers, read back without waiting: they're a frame or two late |
 | `ping (delay 3 ticks)` | The network's round trip to the machine running the match, in the list when it's this machine, and in its label the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `network` | What goes over the network each second, up and down: `↑2.0  ↓0.5 KB/s` |
+| `resyncs`, `repairs` | On a remote client, cumulative full world resyncs and accepted authoritative visibility repairs, respectively. Repairs can correct a projected world without a full resync. |
+| `world data` | On a remote client, cumulative MB of world transfers received, including deltas and page hashes. Compare captures to separate world traffic from the total `network` rate. |
 | `entities` | How many entities the match has |
 | `threads` | The threads ticks run on |
 | `memory` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
 | `vram` | What the game's drawing has on the GPU, by the engine's own count: every texture, mesh and render target it made, by what each holds. Not the window's own framebuffer, nor what the driver keeps beside them, so it's the same number on every backend |
-| `renderer` | What draws: Vulkan, OpenGL 3.3, OpenGL ES 3, WebGPU or WebGL 2 |
+| `renderer` | What draws: Vulkan or WebGPU |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
 Vertex counts use decimal suffixes: `123.5K` for thousands, `97M` for millions and `4.3B` for billions, continuing with `T`, `P` and `E` for larger counts. Counts below 1,000 stay exact; larger counts round to one decimal, with trailing zeroes omitted.
 
-Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
+Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. A device without timestamp queries has no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
 
 A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game, unless the frame rate in a corner is what you want them to have.
 
@@ -273,13 +413,13 @@ Cross-Origin-Embedder-Policy: require-corp
 
 ## Android
 
-`tide build --android` makes an Android app, `<folder>/build/<name>.apk`, for phones and tablets (arm64) and Android's emulator (x86-64), on Android 10 and up. With `--release`, it also makes `<name>.aab`, for [Google Play](#google-play). `tide run --android` builds it, installs it on the phone or emulator that's connected, starts it, and shows what it prints until it ends. `--host`, `--join` and `--connect` go to it as they do on a computer, and Android players play in the same rooms as everyone else.
+`tide build --android` makes an Android app, `<folder>/.build/<name>.apk`, for phones and tablets (arm64) and Android's emulator (x86-64), on Android 10 and up. With `--distribution`, it also makes `<name>.aab`, for [Google Play](#google-play). `tide run --android` builds it, installs it on the phone or emulator that's connected, starts it, and shows what it prints until it ends. `--host`, `--join` and `--connect` go to it as they do on a computer, and Android players play in the same rooms as everyone else.
 
 To play on your phone, turn on USB debugging once: in **Settings > About phone**, tap **Build number** seven times, then turn on **USB debugging** in **System > Developer options**. Connect the phone, and allow your computer when it asks.
 
 Building for Android needs two things of Google's: the NDK, Android's C library and headers, and adb, which installs apps. `tide` uses the ones Android Studio installs. Without them, the first `tide build --android` asks to download them from Google, under Google's license (the [Android SDK License Agreement](https://developer.android.com/studio/terms)), and keeps what it needs of them next to itself: about 30 MB. Set `TIDE_ACCEPT_ANDROID_LICENSE=1` to accept it without being asked, as a build server would.
 
-- The app's ID is the game's `appId` setting (see [Settings](../language/basics.md#settings)). Without one, it's `dev.tide.<the game's name>`, which is fine for testing, but `--release` needs one.
+- The app's ID is the game's `appId` setting (see [Settings](../language/basics.md#settings)). Without one, it's `dev.tide.<the game's name>`, which is fine for testing, but `--distribution` needs one.
 - Its name under its icon is the game's `title` setting, or `--title`, or else the game's name.
 - Its icon is `icon.png` in the game's folder: a square PNG, 512 by 512 pixels is plenty. Without one, it's Tide's. It's a web page's icon too, shown while the page loads (see [The page while it loads](#the-page-while-it-loads)).
 - The Android libraries in the game's folder (`.so` files) go in the app with the game (see [Calling C](../c/functions.md#android)).
@@ -294,11 +434,11 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 `<name>.aab` is an App Bundle, which is what Google Play takes: Play makes the APKs from it, each phone getting only the library for its CPU. To put a game on Play:
 
 1. Make a developer account in the [Play Console](https://play.google.com/console) (Google charges a one-time fee), and create the app there.
-2. Give the game its `appId`, and build it with `tide build --android --release`.
+2. Give the game its `appId`, and build it with `tide build --android --distribution`.
 3. Upload `.build/<name>.aab` to a release: internal testing is the quickest way to try it on your own phone. Play signs the APKs it makes with a key of its own, which it keeps (Play App Signing); `~/.android/tide.pem` is then your upload key, and Play only takes uploads signed with it.
 4. For an update, build again and upload the new `.aab`: its version code is higher than the last one's.
 
-Play's other requirements, like the version of Android an app is made for (Android 16) and support for phones with 16 KiB memory pages, `tide` meets itself. A library the game brings has to be linked for those pages too, and `tide` warns when one isn't (see [Calling C](../c/functions.md#android)). If you lose your upload key, Play can take a new one (the app's **App integrity** page asks for its certificate: the part of the key's file from `-----BEGIN CERTIFICATE-----` on).
+Play leaves out devices without Vulkan 1.3, which the game needs to draw. Play's other requirements, like the version of Android an app is made for (Android 16) and support for phones with 16 KiB memory pages, `tide` meets itself. A library the game brings has to be linked for those pages too, and `tide` warns when one isn't (see [Calling C](../c/functions.md#android)). If you lose your upload key, Play can take a new one (the app's **App integrity** page asks for its certificate: the part of the key's file from `-----BEGIN CERTIFICATE-----` on).
 
 ## Hot reload
 
@@ -347,7 +487,7 @@ and an outline of what each file declares and which packages the
 game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
-Each library is a debug build: a native debugger attached to the Unity editor
+Debug and release libraries carry debug information: a native debugger attached to the Unity editor
 stops at breakpoints in `.tide` files, with the game's natvis in its `.pdb` and
 `game.natvis` and `game_lldb.py` beside it (see [Debugging](debugging.md)).
 
@@ -355,8 +495,9 @@ The package builds with the version of `tide` its own commit is, which Unity
 locks in `Packages/packages-lock.json`, so a branch of the project and everyone
 on it build with one. A package that follows a release tag
 (`...com.tide.unity#v0.5.0-nightly.12`) is that version; any other commit is
-the highest release at it or before it, which the site answers
-(`https://tide-engine.dev/releases/for/<commit>`, kept in `Library/Tide`).
+a release built at exactly that commit, which the site answers
+(`https://tide-engine.dev/releases/for/<commit>`, cached briefly in `Library/Tide`).
+An older release is a suggestion for switching versions, never a matching compiler.
 Versions are installed side by side in the `versions` folder of where the
 installer puts `tide` (`%LOCALAPPDATA%\Tide\versions\<version>`,
 `~/.tide/versions/<version>`), or in the folder `TIDE_VERSIONS` names. A
@@ -377,8 +518,20 @@ fails explicitly. If Play reports an embed ABI mismatch, rebuild the development
 compiler to match the package or relaunch normally. Tide checks the existing host
 before entering Play. Updated VS Code and JetBrains plugins follow the active
 selection and return to the pin when that editor exits, including after a crash.
-A development package newer than the latest published compiler needs a matching
-development build or release tag.
+Open **Window > Tide > Versions**, or **Manage Tide versions** in Project
+Settings > Tide, to see the package, compiler version and available releases.
+**Use version** installs the selected release's compiler and switches the Unity
+package to the same Git tag. Unity reloads scripts, then resumes automatic
+builds when enabled. Commit `Packages/manifest.json` and `packages-lock.json`
+to share the selection. A failed download leaves the package pin unchanged.
+The window lists stable and nightly releases and disables releases without a
+compiler download for this machine.
+
+**Update / switch to dev** refreshes the development package. If it is ahead of
+published compilers, builds wait for a matching release; **Check for updates**
+retries the lookup after publication. Choose a release in the window to get a
+published package/compiler pair, or launch with a matching development compiler.
+Local folder packages are shown but are not switched by this window.
 
 In a Unity project the game is the whole of `Assets`: every `.tide` file in it,
 as every C# script is, but those in folders Unity leaves out (hidden ones, and
@@ -440,7 +593,7 @@ The rest of the game is C# too: `runner.Get<Tide.Game.Score>()` is a singleton
 as views see it this frame; `runner.On<Tide.Game.Hit>(hit => ...)` hears the
 match's events as the game's local handlers do, as soon as this machine has
 them, and `runner.OnVerified` once the server confirms them, with an entity's
-own view hearing those sent to it (`GetComponent<TideEntityView>().On`); and
+own view hearing those sent to it (`GetComponent<TideEntity>().On`); and
 `runner.Send(new Tide.Game.Buy { item = "sword" }, target)` sends a command,
 its text included, to the match or to the entity a GameObject shows. Local
 fields are on their components, shown in Play. Every Tide type has its C#: a
@@ -488,12 +641,16 @@ has the details.
 
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
 drawn with the camera's depth (so Tide's meshes and Unity's scene hide each
-other), render targets, stencil and the game's own frags and verts, as Tide
-draws them in its own window. The views' 3D camera is the runner's View Camera,
-or the main camera. tide writes a Unity shader for each of the game's shaders,
-and for Tide's own, into `Packages/com.tide.game/Resources/TideShaders`, which
-Unity compiles for every graphics API: Direct3D 11 and 12, Vulkan, Metal,
-OpenGL and WebGL 2. It draws in Unity's built-in render pipeline and in URP,
+other), render targets, stencil, the game's own frags and verts, and its
+compute kernels, GPU lists and their reads back, as Tide draws them in its own
+window. The views' 3D camera is the runner's View Camera, or the main camera.
+tide writes a Unity shader for each of the game's shaders, a compute shader
+for each kernel, and the same for Tide's own, into
+`Packages/com.tide.game/Resources/TideShaders`, which Unity compiles for every
+graphics API that runs compute shaders: Direct3D 11 and 12, Vulkan, Metal,
+desktop OpenGL 4.5 and WebGPU. On a GPU without them (OpenGL ES 3 and WebGL 2),
+which Tide has no renderer for, the views' 2D is drawn with Unity's GL alone.
+It draws in Unity's built-in render pipeline and in URP,
 whose pass the package adds by itself. In Play, the editor's scene view shows
 Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
@@ -514,7 +671,9 @@ Tide for Unity, without building it.
 `--web` builds the game once for a Unity WebGL player instead: `tide-game.js`,
 which Unity's Tide package puts in the player's page beside Unity's own, and
 the map of its prefabs and scenes. The package runs this as a WebGL player
-builds. Serve the player cross-origin isolated, as any Tide page.
+builds. Serve the player cross-origin isolated, as any Tide page. Unity's
+WebGL graphics API can't compute, so a WebGL player draws none of Tide's
+views: its simulation, sound and Unity's own rendering run as before.
 
 ## Dedicated servers
 
@@ -563,7 +722,8 @@ Closed Tide-only server builds automatically retain only simulation assets.
 Games or packages with C/C++ or prebuilt libraries retain all assets because C
 can find entries by name. `--strip-server-assets` explicitly enables server
 pruning for such projects when their C has no additional asset dependencies.
-This option also selects `--server`. Source asset validation still runs for all
+This option also selects `--server`. `tide build --strip-assets` makes the same
+promise for a release or distribution client build (see [Asset sizes](#asset-sizes)). Source asset validation still runs for all
 declarations. Standalone server links discard unreachable client code in debug
 and release. `--web`, `--android` and capture/view options do not apply to a
 server executable; browser players still connect through WebRTC.
@@ -658,6 +818,8 @@ tide run --frames 300 --capture menu.png --stats
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
 | `--interactive <replay.txt>` | Keeps the game alive for [dynamic input and captures](#interactive-play), saving executed actions as a replay script |
+| `--profile <file.json>` | Writes a [profile report](debug-views.md#profile-captures) when the run ends. Combine with `--frames`, `--script` or `--interactive` |
+| `--profile-warmup <n>` | Excludes the first `n` frames from the report, from 0 to 1,000,000,000; requires `--profile` |
 | `--players <n>` | Plays the game `n` times at once, as the `n` players of one match (see [Several players](#several-players)) |
 | `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/render-targets.md) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
@@ -680,11 +842,11 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so a run like this isn't for a match with another machine, or with another run: neither would wait for the other. A match with [several players](#several-players) is one run, which plays them all.
 
-Something has to end a run nobody can close: `--frames`, the script's `quit`, or an interactive controller's `quit`/closed input. The run's exit code says how it went:
+Something has to end a run nobody can close: `--frames`, the script's `quit`, or an interactive controller's `quit`/closed input. A game that calls [`Application.Quit()`](../game/local-state.md#quitting) ends its run at that frame too, as the script's `quit` would. The run's exit code says how it went:
 
 | Exit code | What happened |
 |---|---|
-| 0 | The run ended at `--frames` or `quit`, and its pictures and recordings were written |
+| 0 | The run ended at `--frames`, `quit` or the game's `Application.Quit()`, and its pictures and recordings were written |
 | 1 | A picture or a recording couldn't be written. Folders aren't made for it |
 | 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 
@@ -704,7 +866,7 @@ Each player is a copy of the game, a program of its own, as on a machine of its 
 - **Rooms.** A match that's open is in a room, and each player's room has a code of its own, six of one letter: `AAAAAA` is player 1's, `BBBBBB` player 2's, `CCCCCC` player 3's, and so on through the letters a code has (no `I` or `O`). [`Session.room`](../multiplayer/matches.md#where-this-machine-stands) reads it, and `Session.Join("AAAAAA")` joins player 1's match, so a script types it where a player would: `260 player 2 text AAAAAA`. A room nobody has open fails at once, with `Disconnected` and `Failed`, as a room that isn't one does.
 - **Addresses.** `Session.Connect` reaches the first player whose match is open on the address's port, 7777 unless `Session.Open(port)` picked another. The rest of the address says nothing here, and no name is looked up. A port nobody opened never answers, and the game times out, as on a network.
 - **One script for everyone.** A line says whose it is after its frame: `120 player 2 key d down`. Input that names no player is player 1's, so a script for one player plays as it did. `quit` and `--frames` end the run for everyone.
-- **Leaving and coming back.** `300 player 2 leave`, `drop` and `rejoin` say whose match changes, which tests what a game does when a player goes and returns: `PlayerLeft`, seats that free up, a player who comes back as the same `PlayerID`. A host that leaves or drops ends its match for the others, as on a network.
+- **Leaving and coming back.** `300 player 2 leave`, `drop`, `sleep` and `rejoin` say whose match changes, which tests what a game does when a player goes and returns: `PlayerLeft`, seats that free up, a player who comes back as the same `PlayerID`. A host that leaves or drops ends its match for the others, as on a network.
 - **Pictures from each.** A file gets its player's number before the extension: `capture fight.png` writes `fight-1.png` and `fight-2.png`, and `--capture`, `--record`, `record`, `--capture-audio` and `capture-audio` go the same way. `400 player 2 capture hers.png` takes player 2's alone, as `hers-2.png`.
 - **A game that stops ends the run.** When one player's game ends before the run does (it stopped, or couldn't write a picture), the run says which player's and at which frame, the others end with it, and the exit code is that game's (1, when the system stopped it).
 
@@ -776,6 +938,8 @@ frame keep their arrival order. Held input stays held until released.
 | `step <n>` | Advances every player together by exactly `n` frames, then waits; `n` is 1 to 1,000,000 and the resulting frame is at most 1,000,000,000 |
 | `capture <file.png>` | Captures the current frame without advancing; `player 2 capture hers.png` selects one player |
 | `status` | Reports the current frame without advancing |
+| `controls` | Lists the GUI widgets the current frame drew, without advancing (below) |
+| `click <n>`, `click "label"` | Clicks a widget from `controls` at the next frame; `<frame> click ...` picks a later one |
 | `clear` | Removes all pending actions; already held keys/buttons stay held |
 | `quit`, or closing standard input | Ends the session at its current frame |
 
@@ -787,6 +951,46 @@ for correction. These lines are flushed immediately; ordinary capture output
 and game logs can appear alongside them. Blank lines and comments beginning
 with `#` are accepted. A command is at most 4,094 UTF-8 bytes, excluding its
 newline; terminate each command with a newline.
+
+#### Clicking widgets by name
+
+Guessing a button's pixels from a picture misses when the picture's size or
+scale isn't the one assumed. `controls` lists the widgets the current frame
+drew, one line each, in the order they were drawn:
+
+```text
+tide: control 1 button "Play" 560 400 160 48 at 640 424
+tide: control 2 toggle "Sound" 560 460 120 28 at 620 474 focused
+tide: control 3 slider "Volume" 560 500 320 28 at 726 514
+tide: control 4 button "Quit" 560 540 160 48 at 640 564 disabled
+tide: controls 4
+tide: interactive ok 12
+```
+
+Each line has the widget's number, its kind (`button`, `toggle`, `slider`,
+`number`, `text`, or `control` for a `GUI.Control`), its label in quotes, its
+rect (x, y, width and height in logical pixels from the top left, the units of
+`mouse` lines) and `at`, a point where a click is the widget's. `disabled`
+means it takes no clicks, `covered` that something drawn over it covers all
+of it, and `focused` that it has the keyboard's focus. A vector or color
+field lists a `number` for each of its boxes, all with the field's label.
+Widgets under an open modal, and widgets a scroll hides completely, are left
+out. Areas and panels aren't widgets.
+
+`click 1` or `click "Play"` moves the mouse to that widget's `at` point and taps
+the left button at the next frame. The click completes at the frame after,
+when the button is released, so `step 2` shows the result. A label without
+quotes is the rest of the line: `click Play`. A label matches exactly, then
+ignoring case, then as part of a label. When several widgets match, the
+error names two of them so you can click by number. `<frame> click ...` queues
+the click at a later frame, still going by the widgets drawn now.
+`tide: click <frame> <x> <y>` says where the click goes. The replay file
+records it as ordinary `mouse` and `button left` lines. A disabled or covered
+widget is refused with an error; `mouse` and `button` lines can still click
+anywhere. `player 2 controls` and `player 2 click ...` go by the second
+player's widgets. Only the GUI's widgets are listed: a game that draws its
+own buttons and reads `Devices` itself has none to list, and a `GUI.Control`
+has no label.
 
 Capture and recording paths are relative to the replay file's directory,
 including when `tide run` was invoked elsewhere. Several players use the same
@@ -847,6 +1051,7 @@ tide run --script play.txt --size 1280 720 --stats
 | `record <file.gif>` | Records from this frame on, every second frame, as a GIF that loops, beside the script. It goes on to `record stop`, another `record` or the run's end. `--record`'s recording is its own, and goes on beside it |
 | `record stop` | Ends the recording, with this frame in it if it's one of its frames, and writes it out |
 | `quit` | Ends the run once this frame drew |
+| `sleep` | The machine sleeps and wakes, as a Steam Deck or a laptop does: it [leaves a match other machines can be in](../multiplayer/matches.md#a-machine-that-sleeps). In a run of several players, it says whose: `player <n> sleep` |
 | `player <n> leave` | In a run of [several players](#several-players), player `n` leaves its match, as `Session.Leave` does: the match hears `PlayerLeft` at once |
 | `player <n> drop` | ...or goes silent both ways, as a phone that went away or a lost connection: nobody hears of it until a side times out, after 5 seconds |
 | `player <n> rejoin` | ...and joins again what it last joined, as the same player: a match that let it go hears `PlayerJoined` with its `PlayerID`, and one that hadn't noticed it go hears nothing |
@@ -890,6 +1095,23 @@ tide eject rooms    # the rooms line becomes ./packages/rooms
 A package that's a folder already is left where it is, and a folder already at `packages/<name>` is an error, with nothing copied.
 
 `tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, what its packages need included, and those any `#if` leaves out of this build: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
+
+## Project version channels and cleanup
+
+`tide pin nightly` and `tide pin stable` make this game follow a release channel
+in `tide.packages`. Each uses one shared installation, updated at command startup
+while idle. Builds and watch sessions keep their selected version; updates are
+deferred while another session uses it. Offline, a complete installed channel
+is reused, with its exact version printed. The first download asks for approval;
+subsequent channel updates are automatic. Nightly uses the same release selection
+as `upgrade --nightly`, including a newer stable release.
+
+Exact pins (`tide pin 0.5.0-nightly.12`) retain separate installations. They expire
+after 30 days without use, with cleanup during project commands. Active sessions
+are protected; existing installations get a fresh grace period when first seen.
+An expired pin is downloaded again after approval when next needed. Channel and
+main installations are kept. Unity continues to select its compiler through its
+package version. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
 ## upgrade
 

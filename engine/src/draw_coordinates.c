@@ -100,7 +100,7 @@ tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, const tide_float2
 }
 
 tide_float2 tide_draw_guess_text(const char *text, const float size, const tide_target_size *target,
-                                 const unsigned char *font)
+                                 const tide_font *font)
 {
     (void)target;
     (void)font;
@@ -114,7 +114,7 @@ tide_float2 tide_draw_guess_text(const char *text, const float size, const tide_
 // size, so it's measured there. Text a transform turns or stretches is laid
 // out as it would be upright at the transform's mean scale.
 tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, const float size,
-                                   const unsigned char *font, const tide_float2 window_size,
+                                   const tide_font *font, const tide_float2 window_size,
                                    const tide_measure_fn measure)
 {
     const tide_float2 screen_size = target_size(d, window_size);

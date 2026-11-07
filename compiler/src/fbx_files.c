@@ -24,6 +24,13 @@ typedef struct fbx_buffer {
 struct fbx_builder {
     char *why, *note;
     bool failed, skinned;
+    // [Parts]: which mesh nodes are kept, by name (NULL: all), and how many were
+    tide_skinned_keep_part_fn keep_part;
+    void *keep_user;
+    uint32_t parts_kept;
+    // Each node's place among those written: UINT32_MAX for one left out with
+    // the parts (fbx_drop_parts); with no parts chosen, its own typed_id
+    uint32_t *node_index;
     ufbx_scene *scene;
     fbx_buffer bin, views, accessors, meshes, skins, animations;
     uint32_t num_views, num_accessors, num_meshes, num_skins;
@@ -285,6 +292,62 @@ static bool fbx_weights(fbx_builder *b, fbx_buffer *attrs, const ufbx_mesh *mesh
     return !b->failed;
 }
 
+// Where a node is among the nodes written (fbx_drop_parts), or UINT32_MAX for one left out.
+static uint32_t fbx_node(const fbx_builder *b, const ufbx_node *node)
+{
+    return b->node_index ? b->node_index[node->typed_id] : node->typed_id;
+}
+
+// Whether a node holding a mesh is a part [Parts] keeps: by its name, or a geometry helper's by its parent's.
+static bool fbx_part_kept(const fbx_builder *b, const ufbx_node *node)
+{
+    const ufbx_node *named = node->is_geometry_transform_helper && node->parent ? node->parent : node;
+    return b->keep_part(b->keep_user, named->name.data, (uint32_t)named->name.length);
+}
+
+// With parts chosen, the nodes left out with the parts, as the decoder's
+// drop_parts: a node holding a part left out, or a group whose children all
+// are, so long as no part kept, no bone, no joint of a kept part's skin and no
+// child kept is it or under it. Bones, sockets and empties holding no part
+// stay. A node left out has every child left out.
+static bool fbx_drop_below(fbx_builder *b, const ufbx_node *node, const uint8_t *needed, const uint8_t *parts, uint8_t *dropped,
+                           const uint32_t depth)
+{
+    bool all = depth <= 256u;
+    for (size_t c = 0; c < node->children.count; c++)
+        all = fbx_drop_below(b, node->children.data[c], needed, parts, dropped, depth + 1u) && all;
+    const uint32_t i = node->typed_id;
+    dropped[i] = !needed[i] && all && (parts[i] || node->children.count);
+    return dropped[i];
+}
+
+static bool fbx_drop_parts(fbx_builder *b)
+{
+    const size_t n = b->scene->nodes.count;
+    uint8_t *needed = calloc(n ? n : 1u, 1u), *parts = calloc(n ? n : 1u, 1u), *dropped = calloc(n ? n : 1u, 1u);
+    b->node_index = malloc((n ? n : 1u) * sizeof *b->node_index);
+    bool ok = needed && parts && dropped && b->node_index;
+    for (size_t i = 0; ok && i < n; i++) {
+        const ufbx_node *node = b->scene->nodes.data[i];
+        if (node->bone) needed[i] = 1u;
+        if (!node->mesh || !node->mesh->num_triangles) continue;
+        if (!fbx_part_kept(b, node)) { parts[i] = 1u; continue; }
+        needed[i] = 1u;
+        for (size_t s = 0; s < node->mesh->skin_deformers.count; s++) {
+            const ufbx_skin_deformer *skin = node->mesh->skin_deformers.data[s];
+            for (size_t c = 0; c < skin->clusters.count; c++) {
+                const ufbx_node *bone = skin->clusters.data[c]->bone_node;
+                if (bone && bone->typed_id < n) needed[bone->typed_id] = 1u;
+            }
+        }
+    }
+    if (ok) fbx_drop_below(b, b->scene->root_node, needed, parts, dropped, 0u);
+    uint32_t written = 0;
+    for (size_t i = 0; ok && i < n; i++) b->node_index[i] = dropped[i] ? UINT32_MAX : written++;
+    free(needed), free(parts), free(dropped);
+    return ok || fbx_fail(b, NULL, "can't allocate FBX node data");
+}
+
 static bool fbx_skin(fbx_builder *b, const ufbx_node *node, const ufbx_skin_deformer *skin, bool fallback)
 {
     if (skin->clusters.count + (fallback ? 1u : 0u) > 65536u || !skin->clusters.count) return fbx_fail(b, "split the skeleton into smaller models", "has no FBX skin clusters, or more than 65536 clusters");
@@ -300,9 +363,9 @@ static bool fbx_skin(fbx_builder *b, const ufbx_node *node, const ufbx_skin_defo
     uint32_t accessor = fbx_accessor(b, begin, (uint32_t)skin->clusters.count + (fallback ? 1u : 0u), "MAT4", 5126u);
     if (!fbx_text(&b->skins, "%s{\"inverseBindMatrices\":%u,\"joints\":[", index ? "," : "", accessor)) return false;
     for (size_t i = 0; i < skin->clusters.count; i++) {
-        if (!fbx_text(&b->skins, "%s%u", i ? "," : "", skin->clusters.data[i]->bone_node->typed_id)) return false;
+        if (!fbx_text(&b->skins, "%s%u", i ? "," : "", fbx_node(b, skin->clusters.data[i]->bone_node))) return false;
     }
-    if (fallback && !fbx_text(&b->skins, ",%u", node->typed_id)) return false;
+    if (fallback && !fbx_text(&b->skins, ",%u", fbx_node(b, node))) return false;
     return fbx_text(&b->skins, "]}");
 }
 
@@ -319,6 +382,43 @@ static bool fbx_channel_shape(fbx_builder *b, const ufbx_blend_channel *channel,
     if (!(channel->weight >= -FLT_MAX && channel->weight <= FLT_MAX)) return fbx_fail(b, NULL, "has a non-finite FBX blend shape weight");
     *out = channel->keyframes.data[0].shape;
     return true;
+}
+
+static ufbx_string fbx_channel_name(const ufbx_blend_channel *channel)
+{
+    const ufbx_blend_shape *shape = channel->keyframes.data[0].shape;
+    return shape->name.length ? shape->name : channel->name;
+}
+
+// Whether a mesh's channel k of deformer d repeats an earlier channel of the
+// mesh exactly: its name, its offsets, and a default weight of zero, so
+// leaving it out changes neither the rest geometry nor what the name moves.
+// The Tales Factory's Medieval Civilians & Soldiers has one such (its
+// DaggerSheath's MK_Armor02); any other repeated name is still refused.
+static bool fbx_channel_repeats(const ufbx_mesh *mesh, const size_t d, const size_t k)
+{
+    const ufbx_blend_channel *channel = mesh->blend_deformers.data[d]->channels.data[k];
+    if (channel->weight != 0.0) return false;
+    const ufbx_string name = fbx_channel_name(channel);
+    const ufbx_blend_shape *shape = channel->keyframes.data[0].shape;
+    for (size_t e = 0; e <= d; e++) {
+        const ufbx_blend_deformer *blend = mesh->blend_deformers.data[e];
+        for (size_t j = 0; j < (e == d ? k : blend->channels.count); j++) {
+            const ufbx_blend_channel *other = blend->channels.data[j];
+            const ufbx_string other_name = fbx_channel_name(other);
+            const ufbx_blend_shape *was = other->keyframes.data[0].shape;
+            const size_t n = shape->num_offsets;
+            if (other->weight != 0.0 || other_name.length != name.length || memcmp(other_name.data, name.data, name.length)
+                || was->num_offsets != n || was->offset_vertices.count != shape->offset_vertices.count
+                || was->position_offsets.count != shape->position_offsets.count || was->normal_offsets.count != shape->normal_offsets.count) continue;
+            if ((!n || (!memcmp(was->offset_vertices.data, shape->offset_vertices.data, shape->offset_vertices.count * sizeof *shape->offset_vertices.data)
+                        && !memcmp(was->position_offsets.data, shape->position_offsets.data, shape->position_offsets.count * sizeof *shape->position_offsets.data)
+                        && (!shape->normal_offsets.count
+                            || !memcmp(was->normal_offsets.data, shape->normal_offsets.data, shape->normal_offsets.count * sizeof *shape->normal_offsets.data)))))
+                return true;
+        }
+    }
+    return false;
 }
 
 // One morph target accessor of a part: a channel's position or normal offsets
@@ -365,6 +465,7 @@ static bool fbx_skin_vertex_has_weights(fbx_builder *b, const ufbx_skin_deformer
     *has = false;
     if (index >= skin->vertices.count) return true;
     const ufbx_skin_vertex *v = skin->vertices.data + index;
+    if (skin->skinning_method == UFBX_SKINNING_METHOD_BLENDED_DQ_LINEAR && v->dq_weight != 0.0) return fbx_fail(b, "export using linear blend skinning", "blends FBX dual-quaternion skinning into some vertices");
     if ((uint64_t)v->weight_begin + v->num_weights > skin->weights.count) return fbx_fail(b, NULL, "has an FBX skin vertex outside its weight data");
     uint32_t positive = 0u;
     for (uint32_t i = 0; i < v->num_weights; i++) {
@@ -381,6 +482,10 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
 {
     const ufbx_mesh *mesh = node->mesh;
     if (!mesh || !mesh->num_triangles) return true;
+    if (b->keep_part) { // A part is known by its node's name: a geometry helper's is its parent's
+        if (!fbx_part_kept(b, node)) return true;
+        b->parts_kept++;
+    }
     const ufbx_skin_deformer *skin = NULL;
     bool fallback = false;
     if (b->skinned) {
@@ -399,7 +504,12 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
                                       (uint64_t)b->skin_vertices + mesh->num_vertices);
             b->skin_vertices += mesh->num_vertices;
             skin = mesh->skin_deformers.data[0];
-            if (skin->skinning_method != UFBX_SKINNING_METHOD_LINEAR && skin->skinning_method != UFBX_SKINNING_METHOD_RIGID) return fbx_fail(b, "export using linear blend skinning", "uses FBX dual-quaternion or other unsupported skinning");
+            // 3ds Max and Unreal write SkinningType "Blend" with a dual-quaternion
+            // weight for each vertex; where every weight is zero that's linear
+            // skinning (fbx_skin_vertex_has_weights refuses any other).
+            if (skin->skinning_method != UFBX_SKINNING_METHOD_LINEAR && skin->skinning_method != UFBX_SKINNING_METHOD_RIGID
+                && skin->skinning_method != UFBX_SKINNING_METHOD_BLENDED_DQ_LINEAR)
+                return fbx_fail(b, "export using linear blend skinning", "uses FBX dual-quaternion skinning");
             for (size_t i = 0; i < mesh->num_vertices; i++) {
                 bool has;
                 if (!fbx_skin_vertex_has_weights(b, skin, i, &has)) return false;
@@ -469,6 +579,7 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
         for (size_t d = 0; ok && b->skinned && d < mesh->blend_deformers.count; d++) {
             const ufbx_blend_deformer *blend = mesh->blend_deformers.data[d];
             for (size_t k = 0; ok && k < blend->channels.count; k++) {
+                if (fbx_channel_repeats(mesh, d, k)) continue;
                 const ufbx_blend_shape *shape;
                 uint32_t position, normal;
                 ok = fbx_channel_shape(b, blend->channels.data[k], &shape)
@@ -502,17 +613,19 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
     if (ok) ok = fbx_text(&b->meshes, "]");
     // The channels' names and default weights, as glTF says them for a mesh
     size_t channels = 0u;
-    for (size_t d = 0; b->skinned && d < mesh->blend_deformers.count; d++) channels += mesh->blend_deformers.data[d]->channels.count;
+    for (size_t d = 0; b->skinned && d < mesh->blend_deformers.count; d++) {
+        for (size_t k = 0; k < mesh->blend_deformers.data[d]->channels.count; k++) channels += !fbx_channel_repeats(mesh, d, k);
+    }
     if (ok && channels) {
         fbx_buffer weights = {.owner=b}, names = {.owner=b};
         for (size_t d = 0; ok && d < mesh->blend_deformers.count; d++) {
             const ufbx_blend_deformer *blend = mesh->blend_deformers.data[d];
             for (size_t k = 0; ok && k < blend->channels.count; k++) {
+                if (fbx_channel_repeats(mesh, d, k)) continue;
                 const ufbx_blend_channel *channel = blend->channels.data[k];
-                const ufbx_blend_shape *shape = channel->keyframes.data[0].shape;
                 const bool first = !weights.size;
                 ok = fbx_text(&weights, first ? "" : ",") && fbx_json_float(&weights, channel->weight)
-                  && fbx_text(&names, first ? "" : ",") && fbx_string(&names, shape->name.length ? shape->name : channel->name);
+                  && fbx_text(&names, first ? "" : ",") && fbx_string(&names, fbx_channel_name(channel));
             }
         }
         ok = ok && fbx_text(&b->meshes, ",\"weights\":[") && fbx_bytes(&b->meshes, weights.data, weights.size)
@@ -722,9 +835,11 @@ static bool fbx_animations(fbx_builder *b)
             const ufbx_baked_node *node = anim->nodes.data + n;
             if (node->typed_id >= b->scene->nodes.count) { ok = fbx_fail(b, NULL, "has an FBX animation targeting a missing node"); break; }
             if (node->typed_id == b->scene->root_node->typed_id && node->translation_keys.count) root_translation = true;
-            ok = fbx_channel(b, &samplers, &channels, &count, node->typed_id, 0u, node->translation_keys.data, NULL, node->translation_keys.count, begin_time, duration)
-              && fbx_channel(b, &samplers, &channels, &count, node->typed_id, 1u, NULL, node->rotation_keys.data, node->rotation_keys.count, begin_time, duration)
-              && fbx_channel(b, &samplers, &channels, &count, node->typed_id, 2u, node->scale_keys.data, NULL, node->scale_keys.count, begin_time, duration);
+            const uint32_t at = fbx_node(b, b->scene->nodes.data[node->typed_id]);
+            if (at == UINT32_MAX) continue; // Left out with the parts
+            ok = fbx_channel(b, &samplers, &channels, &count, at, 0u, node->translation_keys.data, NULL, node->translation_keys.count, begin_time, duration)
+              && fbx_channel(b, &samplers, &channels, &count, at, 1u, NULL, node->rotation_keys.data, node->rotation_keys.count, begin_time, duration)
+              && fbx_channel(b, &samplers, &channels, &count, at, 2u, node->scale_keys.data, NULL, node->scale_keys.count, begin_time, duration);
         }
         // glTF clips have no independent duration field. A constant root channel
         // preserves an empty take and the stack's playback end when needed.
@@ -732,7 +847,7 @@ static bool fbx_animations(fbx_builder *b)
             ufbx_baked_vec3 keys[2] = {{0}};
             keys[0].value = keys[1].value = b->scene->root_node->local_transform.translation;
             keys[1].time = duration;
-            if (ok) ok = fbx_channel(b, &samplers, &channels, &count, b->scene->root_node->typed_id, 0u, keys, NULL, duration > 0.0 ? 2u : 1u, 0.0, duration);
+            if (ok) ok = fbx_channel(b, &samplers, &channels, &count, fbx_node(b, b->scene->root_node), 0u, keys, NULL, duration > 0.0 ? 2u : 1u, 0.0, duration);
         }
         if (ok) ok = fbx_text(&b->animations, "%s{\"name\":", a ? "," : "") && fbx_string(&b->animations, stack->name)
                   && fbx_text(&b->animations, ",\"samplers\":[") && fbx_bytes(&b->animations, samplers.data, samplers.size)
@@ -748,15 +863,24 @@ static bool fbx_animations(fbx_builder *b)
 
 static bool fbx_json(fbx_builder *b, fbx_buffer *json)
 {
-    bool ok = fbx_text(json, "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[%u]}],\"nodes\":[", b->scene->root_node->typed_id);
+    bool ok = fbx_text(json, "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[%u]}],\"nodes\":[", fbx_node(b, b->scene->root_node));
+    bool first = true;
     for (size_t i = 0; ok && i < b->scene->nodes.count; i++) {
         const ufbx_node *node = b->scene->nodes.data[i];
-        ok = fbx_text(json, "%s{\"name\":", i ? "," : "") && fbx_string(json, node->name) && fbx_transform_json(json, &node->local_transform);
+        if (fbx_node(b, node) == UINT32_MAX) continue;
+        ok = fbx_text(json, "%s{\"name\":", first ? "" : ",") && fbx_string(json, node->name) && fbx_transform_json(json, &node->local_transform);
+        first = false;
         if (ok && b->node_mesh[i] != UINT32_MAX) ok = fbx_text(json, ",\"mesh\":%u", b->node_mesh[i]);
         if (ok && b->node_skin[i] != UINT32_MAX) ok = fbx_text(json, ",\"skin\":%u", b->node_skin[i]);
         if (ok && node->children.count) {
             ok = fbx_text(json, ",\"children\":[");
-            for (size_t c = 0; ok && c < node->children.count; c++) ok = fbx_text(json, "%s%u", c ? "," : "", node->children.data[c]->typed_id);
+            bool none = true; // Children left out with the parts aren't named (they're all left out, or none)
+            for (size_t c = 0; ok && c < node->children.count; c++) {
+                const uint32_t child = fbx_node(b, node->children.data[c]);
+                if (child == UINT32_MAX) continue;
+                ok = fbx_text(json, "%s%u", none ? "" : ",", child);
+                none = false;
+            }
             if (ok) ok = fbx_text(json, "]");
         }
         if (ok) ok = fbx_text(json, "}");
@@ -830,10 +954,16 @@ bool fbx_file_is(const uint8_t *data, size_t size, const char *name)
 
 bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **out, size_t *out_size, char why[256], char note[256])
 {
+    return fbx_file_to_glb_parts(data, size, skinned, NULL, NULL, out, out_size, why, note);
+}
+
+bool fbx_file_to_glb_parts(const uint8_t *data, size_t size, bool skinned, const tide_skinned_keep_part_fn keep, void *keep_user,
+                           uint8_t **out, size_t *out_size, char why[256], char note[256])
+{
     *out = NULL;
     *out_size = 0u;
     why[0] = note[0] = '\0';
-    fbx_builder b = {.why=why, .note=note, .skinned=skinned};
+    fbx_builder b = {.why=why, .note=note, .skinned=skinned, .keep_part=keep, .keep_user=keep_user};
     b.bin.owner = b.views.owner = b.accessors.owner = b.meshes.owner = b.skins.owner = b.animations.owner = &b;
     if (!data || !size) return fbx_fail(&b, NULL, "has no FBX bytes");
     if (size > TIDE_FBX_MAX_BYTES) return FBX_PAST_LIMIT(&b, "split the model into smaller files", TIDE_FBX_MAX_BYTES, "bytes", size);
@@ -872,7 +1002,19 @@ bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **o
             memset(b.node_skin, 0xff, b.scene->nodes.count * sizeof *b.node_skin);
         }
     }
+    if (ok && keep) ok = fbx_drop_parts(&b);
     for (size_t i = 0; ok && i < b.scene->nodes.count; i++) ok = fbx_mesh(&b, b.scene->nodes.data[i]);
+    if (ok && keep && !b.parts_kept) { // Say some of the parts it has, so the names can be written
+        char parts[160] = "";
+        size_t used = 0;
+        for (size_t i = 0; i < b.scene->nodes.count && used < sizeof parts - 40u; i++) {
+            const ufbx_node *n = b.scene->nodes.data[i];
+            if (!n->mesh || n->is_geometry_transform_helper || !n->name.length) continue;
+            used += (size_t)snprintf(parts + used, sizeof parts - used, "%s'%.32s'", used ? ", " : "", n->name.data);
+        }
+        ok = fbx_fail(&b, used ? "its parts are the nodes holding meshes, by name" : NULL, "keeps none of its parts%s%s",
+                      used ? "; it has " : "", parts);
+    }
     if (ok && !skinned && !b.indices) ok = fbx_fail(&b, "export a polygon mesh", "has no FBX triangles: there's nothing in it to draw");
     if (ok) ok = fbx_animations(&b);
     fbx_buffer json = {.owner=&b}, glb = {.owner=&b};
@@ -887,7 +1029,7 @@ bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **o
     }
     if (ok) { *out = glb.data; *out_size = glb.size; } else free(glb.data);
     free(json.data);
-    free(b.node_mesh); free(b.node_skin);
+    free(b.node_mesh); free(b.node_skin); free(b.node_index);
     free(b.bin.data); free(b.views.data); free(b.accessors.data); free(b.meshes.data); free(b.skins.data); free(b.animations.data);
     ufbx_free_scene(b.scene);
     return ok;

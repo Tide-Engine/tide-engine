@@ -1,14 +1,16 @@
 // Serves a web build's test page to headless Chrome or Edge in real time, and
-// passes once the page exits with 0. For tests of WebGPU (see WebTest.cmake):
-// the browser's answer about its GPU doesn't come under the other web tests'
-// virtual time. The page's shell sends what the program prints and how it
+// passes once the page exits with 0. Every web test draws with WebGPU, which
+// needs real time (see WebTest.cmake).
+// The page's shell sends what the program prints and how it
 // ends back here, as platform/web/test_shell.html does when it's served.
 //
 // The page is cross-origin isolated (the headers below), so the program runs
 // on threads, sharing its memory with them. WebGPU is the browser's software
-// one, so no GPU is needed: SwiftShader, which the flags below turn on.
+// one, so no GPU is needed: SwiftShader, which the flags below turn on, or with
+// TIDE_WEB_HARDWARE=1 the machine's own GPU, and a software adapter fails the
+// test (web_gpu.mjs). Which adapter it was is asked before the test's page.
 //
-//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--routes <module.mjs>]
+//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--seconds <n>] [--routes <module.mjs>]
 //
 // With --routes, the module's default export, `(request, response) => boolean`,
 // answers the requests the page makes beside the test's own (what a program
@@ -29,6 +31,8 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { adapterVerdict, gpuFlags, hardware, probeAddress, probeRoute } from './web_gpu.mjs';
 
 const [browser, pagePath, profile, ...rest] = process.argv.slice(2);
 let expected = null; // A line the program has to print
@@ -61,9 +65,21 @@ const body = request => new Promise(done => {
     request.on('end', () => done(text));
 });
 let seen = !expected;
+let adapter = null; // What the browser's WebGPU adapter is, once the probe said
 const server = createServer(async (request, response) => {
     const path = request.url.split('?')[0];
-    if (path === '/') {
+    if (probeRoute(request, response, info => {
+        const { line, failure } = adapterVerdict(info);
+        adapter = line;
+        note(line);
+        if (hardware) console.log(line);
+        if (failure) {
+            console.log(failure);
+            finish(failure);
+        }
+    })) {
+        // The adapter's probe, before the test's page
+    } else if (path === '/') {
         note(`the page was asked for: ${request.url}`);
         response.on('close', () => { if (!response.writableFinished) note(`${request.url} was cut short as it was sent`); });
         response.writeHead(200, {
@@ -96,19 +112,15 @@ const server = createServer(async (request, response) => {
     }
 });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
-const words = [query, routes ? `port=${server.address().port}` : ''].filter(Boolean);
-const address = `http://127.0.0.1:${server.address().port}/${words.length ? '?' + words.join('&') : ''}`;
+// TIDE_WEB_GPU_NONE=1 (CI's Linux runners, whose browser gives no WebGPU adapter): pages draw with a GPU that
+// draws nothing (gpu=none), for the tests that read no pixels back, which are all a run there has
+const words = [query, routes ? `port=${server.address().port}` : '',
+    process.env.TIDE_WEB_GPU_NONE === '1' ? 'gpu=none' : ''].filter(Boolean);
+const address = `http://127.0.0.1:${server.address().port}${probeAddress(`/${words.length ? '?' + words.join('&') : ''}`)}`;
 
-// WebGPU in software, and on Windows the browser's own drawing through WARP:
-// with SwiftShader for that too (--use-angle=swiftshader, as the other web
-// tests run), Chrome has no WebGPU at all. TIDE_WEBGPU_FLAGS has other flags
-// tried in their place, like "--enable-unsafe-webgpu" alone for this
-// machine's GPU.
-const webgl = new URLSearchParams(query).get('backend') === 'webgl';
-const flags = webgl ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
-    : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
-if (!webgl && process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
-if (!webgl && process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
+// The browser's GPU flags (web_gpu.mjs): software WebGPU, or the machine's GPU with TIDE_WEB_HARDWARE=1;
+// TIDE_WEBGPU_FLAGS has other flags tried in their place
+const flags = gpuFlags();
 note(`browser: ${browser}`);
 note(`GPU flags: ${flags.join(' ')}`);
 
@@ -264,8 +276,10 @@ const timeout = setTimeout(async () => {
     finish(`no result within ${seconds} seconds`);
 }, seconds * 1000);
 
-const code = await result;
+let code = await result;
 clearTimeout(timeout);
+// The probe goes before the test's page, so its answer is in by now
+if (code === '0' && hardware && !adapter) code = 'TIDE_WEB_HARDWARE=1, but the page never said which WebGPU adapter it had';
 const passed = code === '0' && seen;
 if (code === '0' && !seen) console.log(`The page never printed "${expected}".`);
 else if (code !== '0') console.log(`The page ended with: ${code}.`);

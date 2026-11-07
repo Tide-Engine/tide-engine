@@ -50,12 +50,14 @@ TIDE_TEST(handler_queries_read_helper_writes_after_cow_and_replay_identically)
 {
     tide_world_init(&world, 1.0f / 60.0f);
     world.Seen.action = 3;
+    const bool first_before_second = tide_entity_compare(world.Seen.first, world.Seen.second) < 0;
     tide_world_copy(&snapshot, &world);
     const uint64_t before = tide_world_hash(&snapshot);
     tide_world_tick(&world);
-    TIDE_CHECK(world.Seen.before == 210 && world.Seen.after == 212 && world.Seen.dataRead == 10);
+    TIDE_CHECK(world.Seen.before == (first_before_second ? 210 : 30)
+        && world.Seen.after == (first_before_second ? 212 : 32) && world.Seen.dataRead == 10);
     TIDE_CHECK(tide_get_Sample(&world, world.Seen.first).value == 11);
-    TIDE_CHECK(tide_get_Sample(&world, world.Seen.second).value == 201);
+    TIDE_CHECK(tide_get_Sample(&world, world.Seen.second).value == (first_before_second ? 201 : 200));
     TIDE_CHECK(tide_list_count(tide_get_Sample(&world, world.Seen.first).data) == 3);
     TIDE_CHECK(tide_world_hash(&snapshot) == before);
     TIDE_CHECK(tide_get_Sample(&snapshot, snapshot.Seen.first).value == 10);

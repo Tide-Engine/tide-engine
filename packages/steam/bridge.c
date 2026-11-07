@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "steam_flat.h"
+#include "tide/screen_keyboard.h"
 #include "tide/network.h"
 #include "tide/text.h"
 
@@ -83,6 +84,7 @@ typedef struct steam {
     ISteamFriends *friends;
     ISteamMatchmaking *matchmaking;
     ISteamNetworkingMessages *messages;
+    ISteamUtils *utils; // Its keyboard, or NULL
     HSteamPipe pipe;
     uint64_t me;
     uint64_t lobby;     // The lobby this player is in, or 0
@@ -768,6 +770,21 @@ static int steam_migrated(void *self, tide_transport *out, tide_address *server)
 }
 
 // ---------------------------------------------------------------------------
+// The keyboard (tide/screen_keyboard.h)
+
+// Steam's keyboard over the game while the player types, where Steam shows
+// one (a Steam Deck, Big Picture), as a phone's shows: what's typed on it
+// comes to the game as keys and characters. Elsewhere Steam shows nothing.
+static void steam_typing(void *self, const bool typing)
+{
+    const steam *u = self;
+    if (!u->ready || !u->utils) return;
+    // No field's place: the GUI doesn't say where it is
+    if (typing) SteamAPI_ISteamUtils_ShowFloatingGamepadTextInput(u->utils, k_EFloatingGamepadTextInputModeModeSingleLine, 0, 0, 0, 0);
+    else SteamAPI_ISteamUtils_DismissFloatingGamepadTextInput(u->utils);
+}
+
+// ---------------------------------------------------------------------------
 // What steam.tide calls
 
 // Starts Steam, once, and makes its network the game's. False without Steam:
@@ -784,6 +801,7 @@ bool TideSteamStart(void)
             s->friends = SteamAPI_SteamFriends_v017();
             s->matchmaking = SteamAPI_SteamMatchmaking_v009();
             s->messages = SteamAPI_SteamNetworkingMessages_SteamAPI_v002();
+            s->utils = SteamAPI_SteamUtils_v010();
             s->ready = s->user && s->friends && s->matchmaking && s->messages;
             if (s->ready) s->me = SteamAPI_ISteamUser_GetSteamID(s->user);
             if (!s->me) s->ready = false;
@@ -792,6 +810,7 @@ bool TideSteamStart(void)
             fprintf(stderr, "tide: Steam didn't start: %s\n", error);
         }
     }
+    if (s->ready && s->utils) tide_screen_keyboard_set(&(tide_screen_keyboard){.self = s, .typing = steam_typing});
     if (s->ready) {
         tide_network_set(&(tide_network){.host = steam_host, .join = steam_join, .address = steam_address,
                                          .failed = steam_failed, .update = steam_update, .place = steam_place,

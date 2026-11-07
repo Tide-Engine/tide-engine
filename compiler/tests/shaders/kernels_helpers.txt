@@ -1,0 +1,409 @@
+// Sway and Grass on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+    tide_u0: vec4f,
+    tide_u1: vec4f,
+    tide_u2: vec4f,
+    tide_u3: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(33) var<storage, read> tide_words: array<u32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_n4: vec4f;
+var<private> tide_f0: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) @interpolate(flat) tide_f0: vec4f,
+}
+struct tt_Corner {
+    m_position: vec3f,
+}
+struct tt_Blade {
+    m_root: vec3f,
+    m_height: f32,
+}
+fn ts_Sway(t_corner: ptr<function, tt_Corner>) {
+    (*t_corner).m_position.y = ((*t_corner).m_position.y * tide_n4.x);
+}
+
+fn tide_base1() -> u32 {
+    return u32(tide_block.tide_v0.z);
+}
+
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_words[tide_base1() + tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_get1(tide_i: i32) -> f32 {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return f32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), 0, 0, 0);
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    return tide_p0.x;
+}
+
+fn tf_HeightAt_41(t_at: i32) -> f32 {
+    return (tide_get1(t_at) + f32(tide_count1()));
+}
+
+fn ts_Grass(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
+    (*t_color) = vec4f(tf_HeightAt_41(0), tide_f0.x, 0.0, 1.0);
+}
+
+fn tide_base0() -> u32 {
+    return u32(tide_block.tide_v0.x);
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_words[tide_base0() + tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), u32(tide_block.tide_v0.y)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), u32(tide_block.tide_v0.y)));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Blade {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Blade();
+    }
+    let tide_b = 4u + u32(tide_i) * 4u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    return tt_Blade(tide_p0.xyz, tide_p0.w);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    let tide_e = 4u + min(tide_instance_index, u32(max(tide_block.tide_v0.y, 1) - 1)) * 4u;
+    tide_n0.x = 1.0;
+    tide_n0.y = 0.0;
+    tide_n0.z = 0.0;
+    tide_n0.w = 0.0;
+    tide_n1.x = 0.0;
+    tide_n1.y = 1.0;
+    tide_n1.z = 0.0;
+    tide_n1.w = 0.0;
+    tide_n2.x = 0.0;
+    tide_n2.y = 0.0;
+    tide_n2.z = 1.0;
+    tide_n2.w = 0.0;
+    tide_n3.x = 0.0;
+    tide_n3.y = 0.0;
+    tide_n3.z = 0.0;
+    tide_n3.w = 1.0;
+    tide_n4.x = bitcast<f32>(tide_word0(tide_e + 3u));
+    let tide_moved = mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3) * mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3);
+    tide_n0 = tide_moved[0];
+    tide_n1 = tide_moved[1];
+    tide_n2 = tide_moved[2];
+    tide_n3 = tide_moved[3];
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0);
+    ts_Sway(&tide_vertex);
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_f0 = vec4f(tide_n4.x, 0.0, 0.0, 0.0);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_f0 = in.tide_f0;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Grass(tt_Corner(vec3f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// compute CullBlades: WGSL
+struct tide_uniforms {
+    tide_v0: vec4i,
+    tide_v1: vec4i,
+    tide_v2: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(33) var<storage, read_write> tide_words: array<u32>;
+@group(0) @binding(34) var<storage, read_write> tide_ints: array<atomic<i32>>;
+@group(0) @binding(35) var<storage, read> tide_run: array<u32>;
+var<private> tide_inv_index: i32;
+var<private> tide_inv_at: vec3i;
+var<private> tide_inv_local: vec3i;
+var<private> tide_inv_group: vec3i;
+var<private> tide_inv_count: vec3i;
+var<private> tide_adding0: bool;
+var<private> tide_added0: tt_Blade;
+var<workgroup> tide_scan: array<u32, 64>;
+struct tt_Blade {
+    m_root: vec3f,
+    m_height: f32,
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn tide_base0() -> u32 {
+    return u32(tide_block.tide_v0.x);
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_words[tide_base0() + tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), u32(tide_block.tide_v0.y)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), u32(tide_block.tide_v0.y)));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Blade {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Blade();
+    }
+    let tide_b = 4u + u32(tide_i) * 4u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    return tt_Blade(tide_p0.xyz, tide_p0.w);
+}
+
+fn tf_Tallest_40() -> f32 {
+    var t_most: f32 = 0.0;
+    for (var tide_k0: i32 = 0; tide_k0 < tide_count0(); tide_k0++) {
+        var t_blade: tt_Blade = tide_get0(tide_k0);
+        t_most = tide_max1(t_most, t_blade.m_height);
+    }
+    return (t_most + f32((tide_capacity0() - tide_count0())));
+}
+
+fn tide_base1() -> u32 {
+    return u32(tide_block.tide_v0.z);
+}
+
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_words[tide_base1() + tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_get1(tide_i: i32) -> tt_Blade {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return tt_Blade();
+    }
+    let tide_b = 4u + u32(tide_i) * 4u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), bitcast<i32>(tide_word1(tide_b + 1u)), bitcast<i32>(tide_word1(tide_b + 2u)), bitcast<i32>(tide_word1(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    return tt_Blade(tide_p0.xyz, tide_p0.w);
+}
+
+fn tide_put1(tide_i: i32, tide_v: tt_Blade) {
+    if (tide_i < 0 || tide_i >= tide_capacity1()) {
+        return;
+    }
+    let tide_b = tide_base1() + 4u + u32(tide_i) * 4u;
+    tide_words[tide_b + 0u] = bitcast<u32>(((tide_v).m_root).x);
+    tide_words[tide_b + 1u] = bitcast<u32>(((tide_v).m_root).y);
+    tide_words[tide_b + 2u] = bitcast<u32>(((tide_v).m_root).z);
+    tide_words[tide_b + 3u] = bitcast<u32>((tide_v).m_height);
+}
+
+fn tf_Tallest_41() -> f32 {
+    var t_most: f32 = 0.0;
+    for (var tide_k1: i32 = 0; tide_k1 < tide_count1(); tide_k1++) {
+        var t_blade: tt_Blade = tide_get1(tide_k1);
+        t_most = tide_max1(t_most, t_blade.m_height);
+    }
+    return (t_most + f32((tide_capacity1() - tide_count1())));
+}
+
+fn tf_Keep_41(t_blade: tt_Blade) {
+    tide_adding0 = true;
+    tide_added0 = t_blade;
+}
+
+fn tf_KeepTall_41(t_blade: tt_Blade, t_most: f32) {
+    if (((t_blade.m_height * 2.0) > t_most)) {
+        tf_Keep_41(t_blade);
+    }
+}
+
+fn tide_base2() -> u32 {
+    return u32(tide_block.tide_v1.x);
+}
+
+fn tide_word2(tide_k: u32) -> u32 {
+    let tide_at = tide_base2() + tide_k;
+    return bitcast<u32>(atomicLoad(&tide_ints[tide_at]));
+}
+
+fn tide_count2() -> i32 {
+    return i32(min(tide_word2(0u), u32(tide_block.tide_v1.y)));
+}
+
+fn tide_capacity2() -> i32 {
+    return i32(min(tide_word2(1u), u32(tide_block.tide_v1.y)));
+}
+
+fn tide_get2(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count2()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word2(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_put2(tide_i: i32, tide_v: i32) {
+    if (tide_i < 0 || tide_i >= tide_capacity2()) {
+        return;
+    }
+    let tide_b = tide_base2() + 4u + u32(tide_i) * 1u;
+    atomicStore(&tide_ints[tide_b + 0u], bitcast<i32>(bitcast<u32>(tide_v)));
+}
+
+fn tide_atomic2_AtomicAdd(tide_i: i32, tide_v: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_capacity2()) {
+        return 0;
+    }
+    let tide_at = tide_base2() + 4u + u32(tide_i);
+    return atomicAdd(&tide_ints[tide_at], tide_v);
+}
+
+fn tf_Count_42(t_at: i32) {
+    _ = tide_atomic2_AtomicAdd(t_at, 1);
+}
+
+fn tf_Mark_40(t_at: i32) {
+    tf_Count_42((t_at + 1));
+}
+
+fn tide_base3() -> u32 {
+    return u32(tide_block.tide_v1.z);
+}
+
+fn tide_word3(tide_k: u32) -> u32 {
+    return tide_words[tide_base3() + tide_k];
+}
+
+fn tide_count3() -> i32 {
+    return i32(min(tide_word3(0u), u32(tide_block.tide_v1.w)));
+}
+
+fn tide_capacity3() -> i32 {
+    return i32(min(tide_word3(1u), u32(tide_block.tide_v1.w)));
+}
+
+fn tide_get3(tide_i: i32) -> f32 {
+    if (tide_i < 0 || tide_i >= tide_count3()) {
+        return f32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word3(tide_b + 0u)), 0, 0, 0);
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    return tide_p0.x;
+}
+
+fn tide_put3(tide_i: i32, tide_v: f32) {
+    if (tide_i < 0 || tide_i >= tide_capacity3()) {
+        return;
+    }
+    let tide_b = tide_base3() + 4u + u32(tide_i) * 1u;
+    tide_words[tide_b + 0u] = bitcast<u32>(tide_v);
+}
+
+fn tf_Write_43(t_at: i32, t_height: f32) {
+    tide_put3(t_at, t_height);
+}
+
+fn ts_CullBlades() {
+    var t_blade: tt_Blade = tide_get0(tide_inv_index);
+    var t_most: f32 = (tf_Tallest_40() + tf_Tallest_41());
+    tf_KeepTall_41(t_blade, t_most);
+    tf_Count_42(0);
+    tf_Mark_40((tide_inv_index % tide_i(4)));
+    tf_Write_43(tide_inv_index, (t_blade.m_height / t_most));
+}
+
+@compute @workgroup_size(64, 1, 1) fn compute(@builtin(global_invocation_id) tide_gid: vec3u, @builtin(local_invocation_id) tide_lid: vec3u, @builtin(local_invocation_index) tide_lix: u32, @builtin(workgroup_id) tide_wid: vec3u, @builtin(num_workgroups) tide_groups: vec3u) {
+    let tide_size = vec3u(tide_run[4], tide_run[5], tide_run[6]);
+    tide_inv_at = vec3i(tide_gid);
+    tide_inv_local = vec3i(tide_lid);
+    tide_inv_group = vec3i(tide_wid);
+    tide_inv_count = vec3i(tide_size);
+    tide_inv_index = i32(tide_gid.x + tide_size.x * (tide_gid.y + tide_size.y * tide_gid.z));
+    if (all(tide_gid < tide_size)) {
+        ts_CullBlades();
+    }
+    tide_scan[tide_lix] = select(0u, 1u, tide_adding0);
+    workgroupBarrier();
+    for (var tide_d = 1u; tide_d < 64u; tide_d = tide_d * 2u) {
+        var tide_v = 0u;
+        if (tide_lix >= tide_d) {
+            tide_v = tide_scan[tide_lix - tide_d];
+        }
+        workgroupBarrier();
+        tide_scan[tide_lix] = tide_scan[tide_lix] + tide_v;
+        workgroupBarrier();
+    }
+    let tide_region0 = u32(tide_block.tide_v2.x) + (tide_wid.x + tide_groups.x * (tide_wid.y + tide_groups.y * tide_wid.z)) * 258u;
+    if (tide_adding0) {
+        let tide_o0 = tide_region0 + 2u + (tide_scan[tide_lix] - 1u) * 4u;
+        tide_words[tide_o0 + 0u] = bitcast<u32>(((tide_added0).m_root).x);
+        tide_words[tide_o0 + 1u] = bitcast<u32>(((tide_added0).m_root).y);
+        tide_words[tide_o0 + 2u] = bitcast<u32>(((tide_added0).m_root).z);
+        tide_words[tide_o0 + 3u] = bitcast<u32>((tide_added0).m_height);
+    }
+    if (tide_lix == 63u) {
+        tide_words[tide_region0] = tide_scan[tide_lix];
+    }
+    workgroupBarrier();
+}
+

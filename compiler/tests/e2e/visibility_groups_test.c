@@ -149,7 +149,7 @@ TIDE_TEST(visibility_scene_policy_exists_before_initialization_journals)
     tide_event_log events[TIDE_GAME_PLAYERS] = {{0}};
     tide_world_init(&server, 0.1f);
     server.Control.action = 11;
-    tide_game_api.tick_client_events(&server, NULL, events);
+    tide_game_api.tick_client_events(&server, NULL, events, NULL);
     TIDE_CHECK(events[0].count >= 2); // Both the root and its initialized contents.
     for (uint32_t i = 1; i < TIDE_GAME_PLAYERS; i++) TIDE_CHECK(events[i].count == 0);
     for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) tide_event_log_free(&events[i]);

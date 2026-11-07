@@ -136,7 +136,22 @@ function Stop-TaskChild([Diagnostics.Process]$Child) {
 }
 function Get-TaskArtifact([string]$Path) {
     if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return [ordered]@{path=$Path; exists=$false} }
-    return [ordered]@{path=$Path; exists=$true; bytes=(Get-Item -LiteralPath $Path).Length; sha256=(Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()}
+    # Start-Process can report exit before its redirected log writer closes.
+    # Acquire an exclusive reader so the length and digest describe final bytes.
+    $taskArtifactWait = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        try { $taskStream = [IO.File]::Open($Path, 'Open', 'Read', 'None'); break }
+        catch [IO.IOException] {
+            if ($taskArtifactWait.Elapsed.TotalSeconds -ge 5) { throw }
+            Start-Sleep -Milliseconds 25
+        }
+    }
+    try {
+        $taskDigest = [Security.Cryptography.SHA256]::Create()
+        try { $taskHash = [Convert]::ToHexString($taskDigest.ComputeHash($taskStream)).ToLowerInvariant() }
+        finally { $taskDigest.Dispose() }
+        return [ordered]@{path=$Path; exists=$true; bytes=$taskStream.Length; sha256=$taskHash}
+    } finally { $taskStream.Dispose() }
 }
 
 $taskInputExe = Resolve-TaskPath $Exe

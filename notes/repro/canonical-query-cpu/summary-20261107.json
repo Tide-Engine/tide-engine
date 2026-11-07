@@ -1,0 +1,14 @@
+[
+  {
+    "variant": "baseline",
+    "mean_wall_seconds": 16.234489175,
+    "mean_thread_cpu_seconds": 16.18359375,
+    "mean_thread_cycles": 76074765175.0
+  },
+  {
+    "variant": "candidate",
+    "mean_wall_seconds": 5.7123322,
+    "mean_thread_cpu_seconds": 5.69921875,
+    "mean_thread_cycles": 26734726120.0
+  }
+]

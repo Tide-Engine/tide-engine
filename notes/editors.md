@@ -1,5 +1,158 @@
 # The language server and the editors
 
+## Scene preparation editing (2026-11-05)
+
+Scene-owned `prepare(...)` appears as a nested method symbol and outline preparation/access entry; its generated
+handler/receiver/private fields are hidden. Own-field references/hover and completion resolve to the scene, explicit
+dependencies keep ordinary parameter editing, and scene bodies offer the prepare snippet. Scene.IsPrepared joins
+Load/Unload in completion/hover. The shared grammar scopes prepare as a function name. `lsp_scene_preparation` and
+the grammar fixture cover these paths; public usage/limits are in docs/game/scenes.md and spec Scenes.
+
+## Texture arrays (2026-11-05)
+
+`analysis.c` knows `TextureArray` and `DepthTextureArray` as it knows `Cubemap` and `DepthTexture`: type docs and
+zero-value hovers, method tables (`Sample`, `SampleGrad`, `Resize`, `Dispose`; a depth array's `Sample` and
+`Compare`) for hover, signature help and Filter/Wrap completion, members by where the code runs (`Sample`/`SampleGrad`
+on the GPU, `layers`, `depth`, `size`, `count`, `Resize`, `Dispose` in views), both type names offered for local
+fields only, `TextureArray` as an asset type with image and glob path completion, the four constructor forms' signature
+help, and its assets by name in a frag. `lsp_texture_arrays` (`compiler/lsp/tests/lsp_test.c`) covers them;
+`docs/tools/editors.md` names it among the asset types paths complete for.
+
+## Meshes over GPU lists (2026-11-05)
+
+The mesh draws' hover (`MESH_SHADER_DOC`) says vertices can be a `GPUList` and indices a `GPUList<int>`; the
+checker's forms note (`note_mesh_forms`) says the lists can be GPU lists. No completion or grammar change.
+
+## Kernels and GPU lists (2026-11-05)
+
+`compute` is a declaration word in the language server (snippets in both
+declaration completions, `HEADER_SHADER`, the declaration starts, and the
+contextual words rename checks, now 15 of them) and in both grammars (with
+`GPUList<` scoped as `List<`, and `GPU` as a support class). Completion offers
+`GPU` (Run in drawing code, Barrier in a kernel), a GPU list's members by side
+(capacity, contentRevision and Set, Clear, SetCount, Resize, Dispose, Read,
+ReadCount on the CPU; count, capacity, and in a kernel Add and the atomics on
+the GPU), and a kernel's `this` (`Invocation`, read-only, with hovers for its
+fields); `GPUList<T>` has a type hover. Tests: `lsp_compute_complete`; the
+grammar test's `compute Cull(` case and the probe's kernel line.
+
+## tidels in the docs playground (2026-11-04)
+
+The docs playground runs tidels compiled to a WASI reactor (`tidels_browser`,
+`docs/playground/tidels.c`): the same `compiler/lsp` sources without `main.c`'s
+stdio transport, one message per call, no `defer`, engine headers at `/include` and
+no packages (`packages_set_builtin_folder(NULL)`). Server changes reach it with the
+next docs build. Code that needs native-only facilities (processes, file watching,
+threads) must keep a path that works under WASI, or `tidels_browser` stops
+linking. Its tests are in `docs/tests/playground.test.mjs`. See
+notes/docs-site.md, "Playground editor".
+
+## Explicit texture gradients (2026-11-02)
+
+Texture member completion and the common method-form table expose
+`SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's,
+Wrap wrap = the texture's) -> Color`, with a three-argument insertion snippet.
+Help describes right/down UV change per destination pixel and the existing
+texture filter/wrap defaults. Frags and ordinary helper authoring offer it;
+direct verts and CPU views do not. Shared checker rules reject direct or
+transitive vertex/CPU calls; grids/depth/cubes retain their existing methods.
+`lsp_textures_in_functions` checks helper/frag completion, the snippet, full
+signature and active gradient argument, and vertex/view exclusions. Root owns
+the central native LSP build/test; no editor adapter or grammar changes.
+
+## Authored DDS asset paths (2026-11-02)
+
+The shared image suffix list includes `.dds` for Texture/Grid2<Color>/Cubemap
+path completion and list/map globs, with case-insensitive file matching.
+`lsp_asset_path_completion` now checks an uppercase DDS file and DDS glob offers.
+The narrow RGBA8 authored-chain importer supplies ordinary checker diagnostics;
+no protocol, adapter or syntax change is needed. Central native LSP validation
+is pending with the foliage pass; the format contract is in `notes/textures.md`.
+
+## LOD attribute multiplier hover (2026-10-31)
+
+LOD hover now explains `[LOD(2)]`, positive finite constants and multiplication
+with the destination's pixel tolerance. Attribute value expressions use the
+existing expression traversal for references and hover. The expanded native
+ASan `lsp_levels_of_detail` check and full language-server suite pass.
+Language and asset contracts are in language.md/assets-and-files.md.
+
+## LOD pixel tolerance completion (2026-10-31)
+
+Ordinary builtin setting registration supplies LODPixels/SetLODPixels on Draw
+and render targets, with pixel/default semantics in hover and the usual
+block/Set quick fixes. `lsp_levels_of_detail` checks both receivers' completion
+and the float/no-argument setter hover. The full native ASan `tidels_tests`
+suite passes. Runtime and compiler contracts are in drawing.md/language.md.
+
+## Ordinary mesh handles and members (2026-10-30)
+
+Mesh<V> now canonicalizes to the existing static Asset<Mesh<V>> handle. Member
+completion offers vertices/indices directly without exposing identity, and
+Value chains retain them. The type-tree walker distinguishes the vertex in
+Mesh<V> from the model argument in Asset<Mesh<V>>. Whole-mesh draw signature
+help and vertex discovery recognize handles. Mesh help describes persistent ID
+storage. Existing LSP mesh/reference/alias checks pass; two stale Clip/Texture
+borrow/refusal expectations from the preceding collection task are corrected.
+Compiler and combined native/WASI validation: language.md, Static mesh values
+keep stable IDs.
+
+
+## Humanoid retargeting (2026-10-30)
+
+The common language server offers HumanoidRig, HumanoidBone,
+HumanoidBoneStatus, RetargetMap and RetargetError in CPU type positions.
+HumanoidRig.Auto and RetargetMap.Create have static completion, hover and
+signature help, including an unfinished Create call and reordered named
+arguments. Rig values expose referencePose and GetStatus; prepared maps
+expose rootScale, rootOffset, headingDegrees, spineDistribution and
+twistDistribution, with calibration, units and distribution help. Backing
+lists and static creation methods do not appear on instances.
+
+Animation.skeleton and Pose.skeleton complete through their bone catalogs.
+Pose.Retarget describes its bool result, unchanged output on failure and
+retained target skeleton. A rig index and GetStatus argument offer anatomical
+roles, including leading-dot shorthand. CPU-only operations stay out of GPU
+completion; readonly mutation diagnostics come from the shared checker.
+Reference-pose help calls out animation-only exports whose defaults are the
+take's first frame. Existing general type and enum syntax covers these names,
+so no editor adapter or lexical grammar change is needed.
+
+Protocol regressions:
+lsp_humanoid_retargeting_completion_and_calibration_help and
+lsp_humanoid_retargeting_roles_signatures_and_restrictions. Both passed on
+Windows with native ASan. Compiler/runtime contracts and combined validation
+are recorded in notes/assets-and-files.md.
+
+HumanoidRig is also offered as a singular asset type, with .humanoid.json path
+completion and ordinary asset file rename edits. Retarget attribute completion
+offers profile assets for its first two arguments, then unused named bake
+settings; hover and signature help explain build-time baking and ordinary
+runtime sampling. The editor indexes the attribute's positional and named
+argument expressions, so profile references, namespace qualifiers and option
+constants support definition, references and rename. Editor analysis resolves
+profile paths without importing their reference models; profile validation and
+baking run during the build. An unavailable reference FBX regression pins this
+boundary. The focused
+lsp_humanoid_assets_bake_completion_and_signatures and
+lsp_humanoid_assets_paths_and_bake_references regressions cover these paths;
+the existing asset type test also excludes profile collections. Both regressions
+and lsp_asset_type_completion passed under Windows native ASan (3/3). The full
+native suite also passed, including all language-server tests.
+
+RetargetMap values now offer Bake for either an Animation or AnimationCatalog,
+returning the corresponding owned value and failing with IOError. Hover uses
+the checked result to show the matching overload; signature help lists both,
+selects the checked overload and follows reordered named source/target/sampleRate
+arguments. Inlay hints label an explicit positional sampleRate and omit an
+implicit default or an already named argument. Help describes the 60 Hz default,
+approximate interpolation and ordinary sampling after baking. Bake stays off
+static RetargetMap and GPU completion. The focused
+lsp_humanoid_runtime_bake_overloads_and_hints regression covers these editor
+contracts. All 17 affected native language-server tests passed: five humanoid,
+eight skinned, three animation and asset_type_completion. Dynamic Bake compiler
+and runtime tests passed on native and web, and the docs build passed.
+
 ## Sanitizer test builds keep their own server (2026-10-29)
 
 With TIDE_SANITIZE enabled, tidels stays in that build's bin directory and
@@ -444,9 +597,10 @@ Startup checks cover BOM/CRLF/trailing comments, invalid string RHS replacement,
 settings namespaces and name shadowing, exact disk bytes including appended
 NULs, exclusive file creation, source ownership, pending recovery and active
 .tide source baselines. A bare global prefab shadowed by a declaration in
-the settings namespace is refused before writing (any kind but a system or an
-asset, as the compiler's nearest namespace decides whatever its kind, since
-2026-10-30: a scene or struct there used to let the global prefab through);
+the settings namespace is refused before writing (a prefab, scene, type or
+alias, what takes a type's place, as the compiler's nearest namespace decides
+since 2026-10-30: a scene or struct there used to let the global prefab
+through; a system, function, constant, asset or frag/vert doesn't hide it);
 the user can move that setting to global scope. Repeated startup selection preserves the active declaration.
 The installed Play test builds/runs a no-Main unsaved scene twice with real
 Spawned/systems/unmarked views, input, camera pixels and fresh state after Stop.

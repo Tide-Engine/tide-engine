@@ -27,7 +27,7 @@ system Greet(mut Nameplate plate, Stats stats)
 - `+` joins text with anything it can show: `"score " + score`, `1 + "st"`.
 - `$"score {score}"` puts values in text. After a value, a colon and a format say how it's written: `{x:F2}` for two decimals, `{n:D3}` for at least three digits (`007`), `{n:X}` for hex. `{{` and `}}` are braces, and `?:` in a value goes in parentheses: `{(won ? 1 : 0)}`.
 
-Text can show numbers, bools, enums (their member's name, or their number when [no member has it](./basics.md#from-a-number)), vectors and quaternions (`(1, 0.5)`), `Color`, `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for one a system splitting its entities across threads just spawned, whose ID comes once it's done) and players (`PlayerID(0)`). Floats and doubles are written with the fewest digits that read back as the same value, exactly the same on every platform. Doubles also accept fixed decimal formats through `F17`, such as `$"{value:F12}"`.
+Text can show numbers, bools, enums (their member's name, or their number when [no member has it](./basics.md#from-a-number)), vectors and quaternions (`(1, 0.5)`), `Color`, `Rect`, entities (their opaque logical identity) and players (`PlayerID(0)`). Floats and doubles are written with the fewest digits that read back as the same value, exactly the same on every platform. Doubles also accept fixed decimal formats through `F17`, such as `$"{value:F12}"`.
 
 It shows whole values too, which is handy for debugging. Structs, components, singletons, events and inputs show their name and every field, and lists show their elements. Text inside them is in quotes, so empty text still shows:
 
@@ -263,6 +263,19 @@ An array of plain values is its holder's bytes and nothing more, so a system's l
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
 
+Lists, arrays and map values also hold `Clip`, `Texture`, `DepthTexture`, `Cubemap`, `RenderTarget`, `Sound`, and structs holding them. These collections belong in local state, just like their elements. Copies and helper parameters follow the ordinary collection rules:
+
+```csharp
+struct Layer { Clip clip; float volume; }
+local singleton Mixer
+{
+    List<Layer> layers;
+    Clip[2] accents;
+}
+```
+
+Playing `Sound` elements are collected automatically each frame. Their voices follow list/array positions; map voices follow insertion order. Rendering references inside collections are rebound on reload as ordinary resource fields are. Grids, ECS declarations and borrowed contexts still cannot be collection elements; mesh values store stable asset IDs, so mesh collections can persist without copying geometry.
+
 ## Changing an element where it is
 
 A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A missing map key is added when its value is written this way. Through arrays alone, text and lists are written where they are too, as an array is its holder's own bytes: `menu.tabs[1] = "Sound"`, `shelf.bags[0].label = "Tools"`, `log.lines[2] += "!"`, `menu.logs[0].Add("x")`. Text or a collection reached through a list's element or a map's value, and anything in a list or a map inside the struct element, is still taken out, changed and put back (`mut var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
@@ -294,7 +307,7 @@ system Fill(mut Table table, with Item)
 
 Past the end of the list it's in, such a write does nothing, as any write past the end does. A list inside a struct element is changed by taking the struct out and putting it back (`mut var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
 
-Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing, so a loop that only counts or reads is best written with indexes:
+Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing. A `foreach` that only reads costs nothing extra either: when its body can't change the list or what's in it, each element is read where it is. One whose body changes the list (or calls something that's given it to change, or C, or waits) copies each element it comes to, so a loop like that over big elements is cheaper written with indexes:
 
 ```csharp
 int Cells(Table table)
@@ -305,7 +318,7 @@ int Cells(Table table)
 }
 ```
 
-Text shows them inside out, `[[1, 20, 4], [3]]`. Nested collections don't go to C or into a `parallel` loop, whose list elements must be plain values. Inputs hold no lists; a [command](../game/commands.md#big-commands) can hold `List<byte>` for bytes, but no other list type.
+Text shows them inside out, `[[1, 20, 4], [3]]`. Nested collections don't go to C or into a `parallel` loop, whose list elements must be plain values. Inputs hold no lists; a [command](../game/commands.md#big-commands) can hold lists of plain values (`List<byte>`, `List<int>`, a list of structs of numbers), but no list of text or of other collections.
 
 Rows that all have one length need no second list: `cells[row * width + column]`, or a [grid](./grids.md).
 
@@ -385,6 +398,10 @@ Each step reads the list as the loop found it and changes only its own element, 
 
 The list is one the world keeps, a component's or a singleton's, and its elements hold no text: the steps run on threads, where text can't be made.
 
+### Only the elements that can pass
+
+A `foreach` or `parallel` loop over a list that starts by skipping elements, as in `if (Math.Distance(wall.center, body.position) > reach) continue;`, visits only the elements within the bounds its condition sets, found through an index, with the same results. `indexed foreach` and `indexed parallel` promise it, and say why when they can't. It works as for a query's rows: see [Only the rows that can pass](../game/systems.md#only-the-rows-that-can-pass).
+
 ## Maps and sets
 
 `Map<K, V>` holds values by key, and `Set<K>` holds keys, each once. Both start empty, and `[a, b]` makes a set where one goes:
@@ -445,9 +462,9 @@ Choose a name below and add a score. A missing name joins the map; removing and 
 
 ## Where they live
 
-A world keeps the text, lists and maps in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, up to 1 GiB, and one text in it is 128 MiB at most.
+A world keeps the text, lists and maps in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, as far as memory goes, and one text in it is 128 MiB at most.
 
-Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, up to 1 GiB on each thread, and a list stops growing at 1 GiB of elements. A heap or a scratch area that's full ends the program, as running out of memory does.
+Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, on each thread, and a list stops growing at 2,147,483,647 elements. Running out of memory ends the program. On the web, everything shares WebAssembly's 4 GiB.
 
 An input can't hold text or dynamic collections: what players send every tick is plain data, including vectors, structs and fixed-length arrays (see [Input](../game/input.md)).
 

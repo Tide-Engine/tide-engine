@@ -1,0 +1,21 @@
+// expect: GPU.Barrier takes nothing: 'GPU.Barrier();'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Wait(Meadow meadow)
+{
+    GPU.Barrier(1);
+    meadow.counts[0] = 1;
+}
+view Show(Meadow meadow) { GPU.Run(Wait, 1); }

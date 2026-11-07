@@ -11,7 +11,7 @@ static tide_devices devices;
 
 static Counter counter(void)
 {
-    return tide_get_Counter(&world, (tide_entity){1, 1});
+    return tide_get_Counter(&world, tide_entity_in_slot(&world.entities, 1));
 }
 
 TIDE_TEST(actions_run_as_the_callers_code)
@@ -19,7 +19,7 @@ TIDE_TEST(actions_run_as_the_callers_code)
     tide_world_init(&world, 1.0f); // Loads Main, which spawns the counter
     tide_world_tick(&world);
     const Counter c = counter();
-    TIDE_REQUIRE(tide_has_Counter(&world, (tide_entity){1, 1}));
+    TIDE_REQUIRE(tide_has_Counter(&world, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(c.twice == 2);
     TIDE_CHECK(c.never == 0);
     TIDE_CHECK(c.when == 10);

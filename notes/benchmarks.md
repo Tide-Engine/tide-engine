@@ -1,5 +1,668 @@
 # Benchmarks
 
+The stable-identity change intentionally updates the quick benchmark world-hash
+pins, independently matching fresh Windows ASan and WASI runs: sand tick181
+`8aef90b836a56b9e`, gallery tick272 `017398d3dd004471`, earth and deliberate
+client-divergence tick273 `85668de38fe81a0e`, earth two-shard tick273
+`8d08d2811257262c`. Other convergence/transport checks passed. The deliberate
+divergence variant reports mismatches by design and finishes at the same server
+hash as ordinary earth; no measured timings or old saved results were repinned.
+After the deliberate identity-pin update, all five quick cases pass on native
+ASan and WASI.
+
+
+## Logical Entity diagnostic and accounting migration (2026-11-06)
+
+Earth's divergence report now compares complete logical keys, looking up each
+server key in the client rather than pairing private slot numbers. A second
+walk reports client-only keys too, with the same diagnostic limit and component/
+field comparisons. Displayed identities include both 64-bit words. The correction
+benchmark's requested allocation count follows the attached table's single
+full-key hash index; the removed auxiliary generation index is no longer counted.
+Its three row columns and page allocations remain included. These are correctness
+and bookkeeping changes for Entity's approved ABI change; saved measurements and
+workloads are unchanged, and no performance comparison is claimed. Validation
+accompanies the full native/web logical-identity integration.
+
+
+## A depth pre-pass: bench_prepass (2026-11-06)
+
+`bench/prepass` (native only; its CTest, `--quick`, checks the picture alone): N full-screen cards, each cut out in
+its own sine pattern (about half covered, `this.Cutout`), farthest first, into a 1920x1036 target of 4 samples of
+Rgba16f, lit by a frag of `work` loop turns. Mode 0 lights and cuts in one frag; mode 1 is `Depth.Only` through a
+frag that only cuts, then `Depth.Equal` through the lit frag. Alternating modes, 3 rounds of 120 timed frames after
+20 warmup, GPU time (`tide_platform_gpu_ms`); every run also compares the two pictures (0 pixels differed by more
+than 2 of 255 in all of them). Release, Vulkan, RTX 4080 SUPER, 2026-11-06, medians:
+
+| Cards, work | One pass | Pre-pass + Equal | |
+|---|---|---|---|
+| 16, 48 (default) | 1.460 ms | 0.370 ms | -74.7% |
+| 8, 16 | 0.313 ms | 0.201 ms | -35.8% |
+| 16, 0 | 0.305 ms | 0.328 ms | +7.6% |
+| 4, 4 | 0.127 ms | 0.147 ms | +16.3% |
+
+The pre-pass pays where hidden lit fragments are expensive, and costs a little where lighting is cheap or little is
+hidden, as the docs say (3d.md, A depth pre-pass). Contracts: drawing.md, A depth pre-pass.
+
+## Generated C partition experiment (2026-11-05)
+
+`bench/results/generated-c-partitions-2026-11-05.json` retains the exploratory compilation/link samples and source
+identities for the four-part ThinLTO implementation. `generated-c-runtime-2026-11-05.json` keeps three alternating
+whole/split release particles runs, full stdout and executable identities. Scope, load limitations, rejected
+shader-data-only split and validation are in cli-and-packages.md, Parallel generated C with ThinLTO. No old
+benchmark records or expected simulation hashes changed.
+
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
+## GPU lists in pools (2026-11-05)
+
+The extra add in every GPU list access (each list a range of a pool, notes/compute.md, GPU lists in pools), against
+`dev` before it, each built in a worktree of its own with one scratch `TIDE_EXTERNAL_DIRS` folder (Mount & Rifle's
+game folder copied, a read-heavy measure, the kernels test as it was), release, Vulkan, RTX 4080 SUPER, alternating:
+the read-heavy kernel and frag 1.70 -> 1.63 ms a frame, `bench_occlusion` with occlusion 0.330 -> 0.322 ms, without it
+the same, Mount & Rifle's menu GPU p50 5.05 -> 5.03 ms, the old kernels test the same. Numbers and method:
+compute.md, GPU lists in pools, Measured.
+
+## Occlusion culling: bench_occlusion and Mount & Rifle's menu (2026-11-05)
+
+`bench_occlusion` (bench/occlusion: a town at street level, 256 lists of props behind houses, alternating blocks of
+frames with `Draw.Occlusion` off and on, GPU time, what it hid; `--quick` is its test). Numbers and Mount & Rifle's
+(the same scratch-folder build as below, two variants by a define): drawing.md, Occlusion culling from a depth pyramid.
+In short: the town 3.6-3.9 -> 0.35 ms of GPU a frame; Mount & Rifle's menu scene no gain (+0.35-0.45 ms, its
+multisampled scene target's split and depth resolve, for 5.5% fewer flora indices).
+
+## Indexed loops in games (2026-11-05)
+
+`bench_loops` and `bench_loops_plain` (`bench/loops`, the same game, the second built `NO_LOOP_INDEXES`): boids
+that each count the boids within 2 through a query (every boid moves every tick, so the index is made again each
+tick) and agents that each look for obstacles within 2 in a singleton's list that never changes, about ten boids
+and three obstacles near each. `bench_loops --n <count> [--boids n] [--agents n] [--ticks n] [--threads n]`;
+both print the world's hash, the same for the same options. Release, Windows, Ryzen 9 7900X, one thread, ms a
+tick:
+
+| | Plain | Indexed |
+|---|---|---|
+| 10,000 boids and 10,000 agents | 341 | 9.3 |
+| 10,000 boids | 86 | 7.6 |
+| 10,000 agents | 273 | 1.8 |
+| 1,000 of each | 2.95 | 0.72 |
+| 200 of each | 0.129 | 0.028 |
+| 50 of each | 0.0091 | 0.0064 |
+| 20 of each | 0.00148 | 0.00142 |
+
+Below 32 rows a loop runs the plain loop (its body is written twice): 20 of each cost 5.4 µs a tick before that,
+listing the rows and gathering each. The boids and agents alone are from before it.
+More threads change nothing here: the tick's estimate of a system's work counts a loop over a query as one step,
+so neither build's tick goes on threads at these sizes. Before a system's own loop searched its index with no lock
+once it was found to hold that tick, checking the index's facts under the lock for every entity made the indexed
+build 22 ms a tick at 10,000. Details: notes/indexed-loops.md, Code generation.
+
+## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
+
+Numbers, method and why the route couldn't run: drawing.md, Listed runs culled on the GPU. In short, the menu's
+field scene at 1080p, three alternating pairs: views 1.68-2.10 -> 0.99-1.07 ms, DrawFlora's mesh recording
+0.49-0.60 -> 0.045 ms, GPU 4.26-4.43 -> 4.16-4.22 ms with the culling's compute, draw calls 772 -> 938. The scratch
+folder's CMakeLists.txt was `tide_add_game(mount_and_rifle SOURCES <every .tide under game/ but .tide/> <game/*.c>
+packages/box3d/bridge.c PACKAGES Box3D ... Rooms ... DEFINES PERFORMANCE_TRACE)` linking `tide_box3d`.
+
+## Mount & Rifle's views, for parallel views (2026-11-04)
+
+Before building parallel views (agreed 2026-11-04: automatic, draws kept in source order; planned in three
+stages: independent views at once, then gathering per-entity views, then read-only per-entity views), the
+owner asked to measure them on Mount & Rifle. Its sources (D:/Projects/mount-and-rifle at f2176c1) were
+built with this checkout through a scratch `TIDE_EXTERNAL_DIRS` folder (`tide_add_game` over its `.tide`
+and `.c` files with Box3D and Rooms, `DEFINES PERFORMANCE_TRACE`), release, its route
+`tools/performance-route.txt` without the capture lines, seed 42, 1280x720, hidden, Vulkan, 3,230 frames,
+frames past 200 averaged. Its `PerfProbeMark` views bracket the views, Camera to Present.
+
+- **Without `--profile`**, two runs: views 1.46 / 1.34 ms a frame (DrawLand 0.39 / 0.35, DrawFlora and
+  what's between it and DrawLand 0.71 / 0.65, the rest 0.36 / 0.33), whole frame 3.83 / 3.74 ms.
+- **With `--profile`**: views 4.05 ms by the same probes (the profile's own views phase 4.83, DrawFlora
+  2.50 of it), whole frame 9.87. The profile's draw diagnostics (per-draw scopes, geometry rows, mesh
+  names) triple the views' time, so view and mesh-recording times from `--profile` overstate what a game
+  without it spends. The GPU's mean was 7.09 ms (p50 8.64). Fixed 2026-11-05 (standard-host.md, Cheaper
+  draw diagnostics): with `--profile` the views took 1.50 / 1.68 ms, without it 1.44.
+- **Overlapping views** (stage 1) gains little there: the heavy views run in a chain through what they
+  share (Camera writes Stage; DrawLand writes Land; DrawCompoundKits reads Land; DrawMenuMan writes Stage;
+  DrawFlora reads Land and Stage; Present writes Stage and reads Flora). Only DrawWaterSurfaces could
+  run beside DrawFlora.
+- **Culling inside one draw**: a temporary timer around `shaded_placed` (culling and recording) by the
+  call's instance count, over the run: 1-15 instances 1.15M calls 209 ms; 16-63 271K, 224 ms; 64-255 197K,
+  354 ms; 256-1,023 49K, 280 ms; 1,024-4,095 9.5K, 272 ms; none bigger. About 0.42 ms a frame in all, and
+  0.08 for draws of 1,024 instances or more: too little to share a draw's culling between threads.
+- `tide_sample --main` (`bench/profile/sample.c`) samples the program's first thread alone. Suspending
+  every thread at 1,000 Hz slowed Mount & Rifle's frames to hundreds of milliseconds; the main thread
+  alone at 2,000 Hz left it near its pace. Main-thread samples in the program's own code: `shaded_placed`
+  with its culling 19%, `shaded_instances` 5%. (`tide_heap_block` and `tide_block_next`, which first looked
+  like lists' versions being hashed, are every list access; see the next point.)
+- **Lists' versions** (2026-11-05, temporary counters over the run): 3,526 page hashes asked for a frame
+  (`tide_heap_block_hash`), of which 1.9 were worked out again (31 KB a frame): the rest were the page's kept
+  hash. `tide_heap_block_hash` as the outermost function was 3.4% of the program's main-thread samples, about
+  0.05 ms a frame. Each ask bumps `tide_heap.moves`, so tried: a separate `asked` counter that only writing
+  caches (the writable list cache, `CACHE_OWNS`, a grid cache's writes) check. List cache fills went from
+  60.7M to 59.6M over the run (half are scratch lists, never cached; the rest are code reading lists), and
+  three alternating old/new runs had the views at 1.18 / 1.23 / 1.24 against 1.21 / 1.34 / 1.25 ms: no gain,
+  so it was left out. Nothing in lists' versions is worth cutting on this route.
+
+## Singleton list parallel loops (2026-11-04)
+
+A scratch game (not kept), release build, Windows, 12 threads, timed with
+`--profile`: a 361,201-element `List<float>` resized and filled by a
+`parallel` loop whose step calls a 400-iteration Sin/Cos function, the same
+serially, and the same over a 601x601 grid. One-off ticks: list 2,494 to
+450-483 ms, grid 2,490 to 228-249 ms, serial 2,458-2,662 either way.
+Persistent lists of the same steps, mean per tick: 80 elements 0.574 to 0.088
+ms, 1,500 elements 10.3 to 1.04 ms. Cause, fix and tests:
+`notes/schedule-and-threads.md`, 2026-11-04.
+
+## Separate correction aging calls (2026-11-03)
+
+The correction and native lag harnesses follow the generated-host timing split:
+`tide_local_age_views` ages presentation errors, while `tide_local_frame_time`
+sets rendered-frame time and local randomness. The native lag harness ages
+before updating its session. The correction benchmark's timed decay interval
+still includes both frame setup and correction aging, preserving the previous
+workload and phase boundaries; its half-life check calls aging directly. Saved
+measurements are unchanged, and this migration makes no performance claim.
+Validation accompanies the compiler/host timing change in
+`notes/standard-host.md`.
+
+## Renderer overhead investigation (2026-11-02)
+
+Follow-up sampling and a generated-C-only inlining experiment identify a
+promising material-helper opportunity. Three alternating pairs force Maps,
+DrawMaterial and DrawMaterialGeometry inline: recording improves in every
+10,000-cube pair, with median paired reductions of 12.5% unshadowed and 16.8%
+mixed shadows, but substantial baseline spread. All 24 rows/2,400 GPU samples
+retain matching work/hashes; six final captures are byte-identical. Smaller
+cases include adverse pairs. No production compiler policy is changed and
+ordinary generated output is restored. Method, limits and raw results:
+[inlining experiment](../bench/results/renderer-20261102/inline-probe/README.md).
+
+The Render3D runner now waits up to five seconds for exclusive access before
+hashing artifacts: PowerShell's redirected writer can outlive process exit.
+Length and digest come from the same read handle; persistent locks still fail.
+After two retained failed attempts, six processes complete with 24 rows and
+2,400 GPU samples, exact package/direct pixels and work counts. Scene recording
+dominates the CPU cost at 10,000 cubes; warmed texture uploads are zero and
+submission remains much smaller. This does not isolate a recording bottleneck.
+
+A renderer non-aliasing annotation probe across 180 draw rows on Vulkan/OpenGL
+shows no reliable gain and is reverted. No renderer speedup is claimed. Raw
+attempts, identities, limitations and results are in
+[the renderer report](../bench/results/renderer-20261102/README.md).
+
+## Quiet forest comparison and foliage-first submission (2026-11-02)
+
+After GI released the shared host, the unchanged foliage binary completed the
+twelve-process/1200-sample cohort at 06:50:05 UTC without recognized contenders.
+All common settings match and each case/mode repeats its own world hash. CPU
+view-recording medians improved with impostors, while ground GPU intervals
+regressed; canopy and wide behaved differently. This is a representation tradeoff,
+not pixel-equivalent work, shipping FPS or a universal GPU speedup.
+
+The follow-up changes only the benchmark's planting part order so near cutout
+foliage writes depth before the bark rows that carry primary atlas cards. It
+adds no renderer scan or runtime API. Five native and seven web focused forest
+checks pass. Three captures retain identical work counts, changing 4/18/0 pixels
+for ground/canopy/wide. Initial raw rows, per-pair summaries, image comparison
+and the subsequent candidate cohort are recorded in
+[the foliage report](../bench/results/foliage-quality-20261102/README.md).
+The candidate also passes twelve processes/1200 GPU samples without recognized
+contention. Atlas CPU view-recording medians are 18–33% lower; GPU canopy improves,
+ground is mixed and wide is effectively neutral. This is not a general GPU/FPS
+win or a directly interleaved before/after source comparison. The final gate
+released/disposed at 07:10:53.332 UTC. Merging dev 8dfacea84 passes six native and
+eight web affected checks with exact candidate capture/program equality;
+post-merge CPU timings were not rerun. No forest measurement remains queued.
+
+## Forest foliage quality and moving representations (2026-11-02)
+
+The owner requested applying established foliage rendering techniques. The
+forest now selects detailed/medium/coarse mesh references each frame, with
+complementary dither crossfades at 80–100 m and 250–310 m, then a source-mesh
+impostor at 430–510 m. The offline baker rasterizes the actual detailed bark
+and leaf meshes into 24 hemisphere views with albedo, raw normal/depth and
+material-mask data. Coverage-preserving authored DDS mips use the same 0.32
+cutoff as the material. Shared wind includes explicit branch/leaf response;
+scene fog applies to terrain and every tree representation. All frame work
+uses ordinary Render3D collection/draw paths and preserves match state.
+
+`bench/forest/README.md` describes the regenerated original assets, current
+mesh counts, travel/orbit/radius/height controls, bounded motion smoke and
+JSONL counters. Crossfades submit extra instances; primary level counts cover
+all planted trees, while submitted main-target counts reflect drawing/culling.
+The rest-pose atlas retains one nearest layer, approximate card sway and proxy
+geometry for depth/lighting/fog. Unity authored-mip preservation remains absent.
+Contracts are in render3d.md and textures.md. Historical forest measurements
+below remain tied to their frozen older assets/workloads.
+
+Final scoped integration passes 115 native ASan and 120 web-release checks,
+including all moving-camera representations and transitions. Native/web/release
+and documentation builds pass. The 100000-tree captures, settings, hashes and
+bounded quiet-window attempts are retained in
+[the foliage report](../bench/results/foliage-quality-20261102/README.md).
+This entry makes no timing, FPS or speedup claim. CPU/GPU intervals overlap, native readback
+synchronizes, and software browser correctness is not hardware timing evidence.
+
+## Shared shader binding preparation (2026-11-02)
+
+The compiler reuses compatible completed numeric-list/texture bindings within a
+proven read-only view invocation, preserving per-instance capture and fallback
+for effects/host callbacks. Contracts and eighteen fallback scenarios are in
+language.md.
+
+Frozen release/Vulkan runs on the Ryzen 9 7900X / RTX 4080 SUPER retain all 18
+processes and 1,800 measured frames/completed GPU queries: three alternating
+pairs per case, 1920x1080, 20 warmup/100 measured frames, identical quality.
+Canopy consistently observes 9–15% lower elapsed recording. Large-count spread,
+ground's second-pair regression and GPU/readback variation prevent a dependable
+100k-tree speedup claim.
+
+The shared mutex/five-second initial quiet guard did not monitor the cohort.
+Surviving cmake/ninja lifetimes overlap later runs; frame-level load and causality
+were not measured. This is not an isolated CPU-work comparison. Clocks and
+desktop activity remained uncontrolled; no GPU/FPS claim is made or overlapping
+intervals added.
+
+World hashes, counts, submitted work and zero warmed uploads match. Three
+1920x1080 RGBA captures have zero changed pixels; 28 GLSL, 14 WGSL, 14 SPIR-V and
+14 shader metadata/layout blocks are byte-identical.
+
+Full Windows ASan/web-release suites pass 2,911/2,797 tests, plus three final
+focused checks each. The optional whole-process CPU control never started;
+only its owned queued gate was stopped after approximately 21 minutes. Its
+unexecuted plan supplies no CPU-consumption result.
+
+Incoming generated-mesh LOD integration passes four focused probes per platform
+and 61 affected native ASan / 65 web-release tests. The rebuilt release's three
+verification captures and all shader blocks still match the frozen baseline.
+No post-merge paired timings were run; validation-merge.json pins the separate
+executable and evidence without changing the original timing cohort.
+
+The later generic-function/skinned-LOD integration passes 26 focused native and
+26 web checks; final rebuilt release captures/programs again match the baseline.
+validation-finaldev.json pins that separate correctness-only verification.
+
+[All pairs, identities, fidelity/validation evidence and control status](../bench/results/forest-batch-20261102/README.md)
+remain recorded without exclusions or replacement runs.
+
+## Forest submission preparation (2026-11-02)
+
+The owner requested optimizing the forest without reducing visual fidelity.
+The measured change combines frame-local memoization of repeated flat numeric
+list captures, partial component-lane gathers in views without drawing, and
+shared callback factories for the forest's wind and leaf materials. Contracts
+and regression coverage are in drawing.md, language.md and runtime-ownership.md.
+The combined result does not attribute a measured percentage to each change.
+
+Windows release O2, Clang 23.1.2, Ryzen 9 7900X / RTX 4080 SUPER driver 617.42,
+Vulkan at 1920x1080. Against frozen `1f825bbe532cdfdef1318aad990b633ea480841a`,
+three alternating before/after pairs per case use the same 20 warmup and 100
+measured frames, shadows, wind, geometry representations, cameras and timesteps.
+CPU recording milliseconds, medians of three process medians (process-median
+ranges in parentheses):
+
+| Trees / camera | Before | After | Median paired reduction |
+| --- | ---: | ---: | ---: |
+| 10,000 / canopy | 16.16 (16.10–16.62) | 14.82 (14.64–15.41) | 9.4% |
+| 100,000 / wide | 151.09 (144.09–159.16) | 118.72 (114.56–128.24) | 17.6% |
+| 100,000 / ground | 148.35 (134.50–164.94) | 129.58 (112.74–145.60) | 16.2% |
+
+The reductions are the medians of the three paired relative changes, rather
+than ratios of the displayed medians. All 18 processes, 1,800 measured frames
+and 1,800 completed GPU queries are retained. Each pair matches world hashes,
+submitted indices, draw calls, zero warmed texture uploads and main-target
+bark/foliage counts: canopy 8,262 of each kind in 24 calls; wide 96,479 in six;
+ground 78,286 in 24. Separate 1920x1080 before/after RGBA captures of all three
+cases are byte-identical. The wide case remains a distant-canopy workload
+without tree shadow casters; canopy and ground retain nearby moving shadows.
+
+The shared benchmark mutex and five-second initial quiet guard separate the
+batch from task builds/tests. No task build or test ran during measurements;
+there was no per-run clock or contention monitor, and other desktop activity
+remained uncontrolled. CPU submission medians remain approximately 0.28/1.5/1.45
+ms for canopy/wide/ground. GPU observations vary between runs, including adverse
+canopy results; no GPU speedup is claimed. CPU/GPU intervals overlap and are not
+added. Native completion/readback is separate synchronization work, and these
+results establish neither shipping FPS nor playable 100,000-tree performance.
+
+The full enabled native and web correctness suites pass 2,908 and 2,794 tests,
+respectively, with zero failures. Performance uses the ordinary optimized
+native build, separately from correctness validation; no web timing claim is
+made. [Saved runs, exact ranges, identities, pixel checks, validation and reproduction](../bench/results/forest-opt-20261102/README.md)
+retain the combined result and the diagnostic view profiles.
+
+## Forest scale stress (2026-11-01)
+
+The owner requested Render3D foliage and a large forest stress test. `bench_forest`
+uses the production ECS/material path with shared wind and thin-leaf lighting,
+three fixed cameras and setup-selected detailed/medium/coarse tree meshes.
+100,000 planted trees cover 1.74 km, with two mesh entities per tree. The fixture
+and controls are documented in bench/forest/README.md; implementation/validation
+contracts are in render3d.md.
+
+Windows release O2, Clang 23.1.2, Ryzen 9 7900X / RTX 4080 SUPER driver 617.42,
+Vulkan 1920x1080. Three processes per case, 20 warmup/100 measured frames each.
+Medians of process medians, CPU recording / GPU ms: wide 1,000 2.55/5.04,
+10,000 11.15/6.36, 50,000 48.51/22.73, 100,000 113.70/36.67; canopy 10,000 16.05/9.49;
+ground 100,000 164.02/31.96. Full-detail canopy 10,000 is 16.69/12.61. Ground/wide
+100,000 main-target foliage counts are 78,286/96,479, with 24/6 total calls.
+The overview's 50,000/100,000 camera is beyond caster range: these rows contain no
+tree shadow casters. Canopy/ground supplement exercises actual nearby shadows.
+
+All 21 rows verify 2,100 measured frames/completed GPU queries, unchanged hashes,
+positive independent main-target bark/foliage counts and zero warmed texture
+uploads. At 10,000 canopy, geometry levels reduce submitted indices from 11.94M to
+4.08M with 8,262 main instances of each kind. Representations differ visually.
+CPU recording is the major large-count limit despite GPU batching. Source
+inspection suggests full entity/query/material traversals and per-mesh capture
+work, without measured attribution or a handwritten equivalent. This is not a
+claim of playable 100,000 performance, dynamic LOD/impostors or shipping FPS.
+
+The shared benchmark mutex and 5-second initial quiet guard separate both batches
+from task builds/tests. No clock or per-run contention monitoring was used;
+other desktop activity is uncontrolled. All runs/spreads are retained, including
+large GPU variation. CPU/GPU intervals overlap and are not added; native readback
+is a separate synchronization interval. No software-web timing claim is made.
+
+[Evidence, ranges, source/binary identities, verifier and reproduction](../bench/results/forest-20261101/README.md).
+24 focused native ASan and 32 web correctness CTests pass across initial/corrected
+selections, plus the docs build; limitations are recorded in render3d.md.
+
+
+## Baked poses (2026-10-31)
+
+### OpenGL investigation
+
+Release build of `4facf2ea0`, Windows/Ryzen 9 7900X/RTX 4080 SUPER,
+NVIDIA 617.42, TIDE_HIDDEN=1. Static was compared first. Baseline reproduction:
+
+```
+bench_skinned --counts 10000 --modes static,gpu,baked --frames 100 --warmup 30 --repeat 1
+```
+
+Run OpenGL (`TIDE_BACKEND=opengl`), Vulkan (`TIDE_BACKEND=vulkan`), repeated
+three times sequentially. No builds or other agent GPU runs overlapped these
+measurements; other desktop activity was uncontrolled. Saved rows in
+`bench/results/skinned.jsonl` have labels
+`opengl-investigation-20261031-final-{opengl,vulkan}-r{1,2,3}`.
+Before the fix, range of three process medians, GPU milliseconds:
+
+| 10,000 characters | OpenGL | Vulkan | GL overhead, medians of the three runs |
+|---|---:|---:|---:|
+| static | 4.404-4.418 | 4.293-4.314 | 2.4% |
+| gpu_clip | 7.149-7.227 | 4.664-4.674 | 53.7% |
+| baked_clip | 7.053-7.086 | 4.418-4.433 | 59.3% |
+
+Every row has 100 completed samples, one instanced mesh draw plus the clear,
+and zero texture-upload bytes per measured frame. This fixture submits 18,144
+indices per character, not just its 3,072 unique vertices. Temporary hardware
+invocation queries give about 65.144 million VS invocations per draw on both
+backends. A matched baked capture is byte-identical between APIs.
+
+The first three alternating pairs, before diagnostic edits and not saved to
+JSONL, gave GL static 4.414-4.710, gpu 7.416-7.510, baked 7.361-7.883; Vulkan
+4.285-4.851, 4.668-4.673, 4.434-4.691 respectively. A separate 500-frame pair
+with clock sampling gave GL 7.111/7.048 against Vulkan 4.670/4.432 for
+gpu/baked, both at comparable warm clocks. The additional saved block with
+labels lacking `final-` had larger variability (GL gpu 7.740-10.618, Vulkan
+4.684-6.418); those observations are retained, not pooled with the final block.
+
+The initial texture-heavy-shader diagnosis was corrected by a control keeping
+all attributes live with cheap ALU and no texture reads: GPU/baked still cost
+7.088/7.035 ms. Removing skinning had let the driver discard the joint/weight
+attributes. The cause is the legacy GL attribute setup's separate binding per
+attribute; sharing the existing buffer slots closes the gap without changing
+the shaders or geometry. Details and excluded hypotheses: rendering.md,
+Shared desktop OpenGL vertex bindings.
+
+Three further rounds alternate legacy GL, shared-binding GL, then Vulkan in
+one release build, same command above. Rows
+`opengl-binding-20261031-{legacy,shared,vulkan}-r{1,2,3}` label the temporary
+binding-only toggle honestly with `+vertex-binding-probe` in the revision.
+GPU ms, ranges of the three process medians:
+
+| Mode | GL before | GL shared bindings | Vulkan control |
+|---|---:|---:|---:|
+| static | 4.392-4.429 | 4.295-4.309 | 4.293-4.307 |
+| gpu_clip | 7.114-7.200 | 4.623-4.645 | 4.659-4.673 |
+| baked_clip | 7.053-7.117 | 4.345-4.358 | 4.425-4.430 |
+
+Medians of run medians: gpu_clip 7.150 -> 4.645 ms (35.0% less GPU time),
+baked_clip 7.054 -> 4.350 ms (38.3% less). OpenGL is now comparable to Vulkan.
+All 27 rows retain 100 samples, two draws and zero texture uploads. The final
+implementation configures formats at pipeline creation and binds only each
+stream at drawing; the probe configured both each draw. Both use the same
+shared attribute bindings. Earlier raw results remain for the investigation
+history, not as evidence that an inherent OpenGL penalty remains.
+The finished implementation's `opengl-binding-20261031-production` rows give
+4.272/4.611/4.336 ms for static/gpu/baked. Matched OpenGL before/after captures
+of all three modes (10,000 characters, 30 warmup + 5 frames, 1024x576) are
+byte-identical.
+
+`bench_skinned --modes baked` draws the fixture's 64-bone, 3,072-vertex
+character through `BakedPoses` (its Move clip at 60 rows a second, looping),
+each character's frame worked out on the CPU and all of them one
+`Draw.Instanced`. Release, Ryzen 9 7900X / RTX 4080 SUPER, Vulkan, rows
+`baked-poses-20261031` in `bench/results/skinned.jsonl` (3 repeats, medians
+of 100 frames). 10,000 characters:
+
+| Mode | View ms | GPU ms | Uploaded a frame |
+|---|---|---|---|
+| `gpu_clip` (hand-written resident palettes, phase on the GPU) | 2.33 | 4.97 | 0 |
+| `baked_clip` | 0.39 | 5.65 to 5.81 | 0 |
+| `independent_poses` (a sampled Pose each) | 10.3 to 10.5 | 7.7 to 7.85 | 41 MB |
+
+At 1,000: view 0.04 ms against 0.23, GPU 0.57 against 0.53. The baked vert
+is ~13% more GPU than the hand-written one, which derives its phase on the
+GPU and has no fade, socket or heaviest-bone path; run alternately the gap
+held between 11% and 17% (the GPU's clocks moved between sessions, so only
+alternating runs compare). Neither the mesh (the same vertex lists gave the
+same gap) nor per-vertex weight branches (removed) explain it, and reading a
+bone's three float4s as one element instead of three reads changed nothing
+measurable.
+
+### Second round, the same day: as cheap as no skinning
+
+The owner: "we need to ensure its as performant as we can make it since that
+is the reason it exists". Variant verts in one build, switched by the host and
+run alternately, found the cost (10,000 characters, GPU ms): the prelude's
+`Skin` 5.72; a flat vert with no per-bone range check, no "is there a next
+row" branch and the four bones summed directly 4.64; the same with the fade
+and heaviest-bone paths kept as per-instance branches, written with
+`BakedBone` methods, 4.70; that with a branch skipping zero weights 4.75 to
+4.85 here (every corner of this model has four bones) and no better on the
+Synty character bannerlord-duel draws (11.76 against 11.85: its tiny far
+triangles are bound by rasterizing). So the per-bone check and branches,
+repeated four times a corner, were the cost; struct-returning helpers and a
+matrix against dot products cost nothing measurable. `SkinRows` is now that
+shape, and `HeaviestBone` a real one-bone path. On OpenGL the old gap was
+mostly noise (0-11%); Vulkan's was steady.
+
+Rows `baked-poses-20261031b` (3 repeats; one round's GPU spiked for both GPU
+modes alike):
+
+| 10,000 characters | View ms | GPU ms |
+|---|---|---|
+| `static` (the mesh unskinned) | 0.64 | 4.28-4.29 |
+| `baked_clip` | 0.37-0.39 | 4.42-4.71 |
+| `gpu_clip` (hand-written) | 2.38-2.44 | 4.94-4.96 |
+| `independent_poses` | 10.5 | 7.65-7.80 |
+
+At 1,000 the baked draw is the unskinned one's 0.476 ms. Here the frame is
+bound by rasterizing thousands of small characters, so skinning is close to
+free; a mesh with many more vertices a character would show it again.
+Baking 3,000 rows of this 64-deep chain took ~134 ms at load (`pose.Model`
+walked each bone's ancestors); with `pose.Models()`, one pass a row, 19 ms
+(three runs 18.97-19.15, the setup frame timed around the bake). Web performance wasn't measured: a debug browser run of 10,000 was too
+slow to finish.
+
+## 64-bit handles, before and after (2026-10-30)
+
+What widening handles to 64 bits (notes/ecs.md, 64-bit handles) cost, in
+release on the Ryzen 9 7900X (Windows 11, Clang 23): `run.ps1 -Label
+handles64 -Rounds 3 -Before <cc77c23a0's binaries>`, each program from both
+builds in turn, no competing work in any run (rows `handles64-before-r*` and
+`handles64-after-r*` in `bench/results/versus.jsonl`, `sand.jsonl`,
+`gallery.jsonl`); `bench_views 60` five rounds alternating. Medians, ms a tick
+(a period for rollback, a frame for views), one thread:
+
+| | Before | After | |
+| --- | ---: | ---: | ---: |
+| versus_buckets (lists of lists, 4,096) | 0.0568 | 0.0571 | +0.5% |
+| versus_lookup, 16,384 keys, 1,024 changes | 1.106 | 1.103 | -0.3% |
+| versus_lookup, steady | 1.120 | 1.102 | -1.6% |
+| versus_rollback (100,000 movers, a list of notes) | 1.476 | 1.488 | +0.8% |
+| versus_sand / life (grids, 1024²) | 0.951 / 0.416 | 0.950 / 0.417 | 0% |
+| versus_wide / particles / systems | 1.194 / 0.435 / 0.0635 | 1.159 / 0.438 / 0.0638 | -3% / +0.7% / +0.5% |
+| versus_churn / events | 0.338 / 0.437 | 0.329 / 0.438 | -3% / 0% |
+| bench_views PitchWide / PitchSmall / QueryWide / QuerySmall / Far | 0.202 / 0.196 / 0.168 / 0.163 / 1.543 | 0.205 / 0.199 / 0.169 / 0.163 / 1.557 | +0 to +2% |
+| bench_sand client update, simulate (ms a second) | 0.238, 13.5 | 0.239, 13.5 | 0% |
+| bench_gallery client update, simulate, snapshot | 0.0617, 1.496, 0.623 | 0.0638, 1.530, 0.643 | +2 to +3% |
+
+All within the runs' spread but Gallery's client, whose snapshots and ticks
+copy pages of canvases' lists and whose handles are now twice as wide; its
+world is 9.06 MB in memory where it was 9.05, and Sand's 75.1 KB where it was
+74.9. What goes on the wire didn't change: Sand's world 11.1 KB as sent either
+way and its server 168.6 KB a second before, 169.3 after; Gallery's world
+4.41 MB as sent either way. Twelve threads show the same.
+
+## Retargeted playback temporary costs (2026-10-30)
+
+The owner's request to reduce all three animation paths keeps the retarget
+solver, baker and sampling arithmetic unchanged. Retained immutable sample
+plans fold unique single-key channels into their initial pose with the same
+rotation normalization; duplicate writers retain their ordering. Flat scratch
+sampling releases its temporary arrays. Generated code recognizes fresh
+default poses and conditionals with two fresh branches, and avoids a duration
+lookup for non-looping playback. Contracts are in assets-and-files.md and
+language.md.
+
+Windows/Ryzen 9 7900X, release O2, the same private UE4 Kubold idle clip and
+Synty character (89 source/55 target nodes): three adjacent alternating pairs
+against frozen `e7b32f297` use unchanged agent-written C/Tide harnesses. All
+task builds/tests ended before timing; no CPU quiet guard or clock monitoring
+was used, and other desktop activity remained uncontrolled. Each process takes
+nine round means, each Tide round averaging ten frames. These are medians of
+three process statistics, not pooled frame medians:
+
+| Public Tide path | 100 calls, before / after (us per pose) | 1,000 calls, before / after (ms per batch) | Median paired reduction at 1,000 |
+| --- | ---: | ---: | ---: |
+| Build-time baked | 0.688900 / 0.435400 | 1.676230 / 0.868360 | 47.98% |
+| Live sample and retarget | 4.552600 / 4.185800 | 7.163840 / 5.268320 | 26.46% |
+| Stored runtime Bake | 0.718900 / 0.453100 | 1.699460 / 0.886390 | 47.78% |
+
+The live path improves less with few calls sharing a view: 3.55% paired at one
+and 8.49% at 100. Its source-sampling scratch falls 8,624 to 5,136 bytes per C
+call; combined sampling/retargeting falls 11,200 to 7,712. The C baked-sampling
+control improves 26.74%, but raw sampling, retarget-only, combined sampling,
+Auto/Create and the older offline bake have small adverse paired medians with
+overlapping ranges. This is not a retarget solver arithmetic speedup.
+
+The first generated frame (map creation, Bake and first sample, after asset
+loading and C controls) is 30.4332 / 29.7465 ms with overlapping ranges; no
+cold-load gain is claimed. The timed work excludes drawing, skinning, IK and
+gameplay. All six processes exit zero with zero harness failures; the harness
+checks API success and baked/stored-bake hips sums, while separate correctness
+tests cover full pose bits and ownership. Complete native/web suites pass
+2,906/2,794 enabled tests with the same preexisting disabled MicroDuck test.
+
+[Saved evidence](../bench/results/retarget-playback-20261030/README.md) includes
+every final and intermediate log, the adverse raw-sampling/inlining investigation,
+process ranges and paired ratios, immutable baseline/candidate identities, the
+exact measured production diff and the asset-free harness. Licensed inputs,
+packs and generated asset data stay private. Baseline generated C/library
+identities were not preserved and are not claimed. No web timing, full-game
+FPS or universal animation speedup follows from this workload.
+
+
+## Pose.Sample, indexing and Model a call at a time (2026-10-30)
+
+bannerlord-duel found sampling a clip into a pose its biggest per-fighter
+cost: 12 µs a `Sampled(clip, t)` (`mut var pose = dummy.defaultPose;
+pose.Sample(clip, t); return pose;`) on its Synty character, an FBX clip on
+the character's rig by name. Release, this machine, µs a call; before is `dev`
+19dd3fe23. The machine was busy during the final runs (the first quiet run of
+the same before binary measured 7.4 µs where these show 8.7-10.2), so ranges
+are of three alternating runs:
+
+| Work | Before | After |
+|---|---|---|
+| Synty (55 nodes), FBX idle (54 nodes, 156 bound channels of 107 keys): rest + `sample_into` from C | 8.7-10.2 | 1.36-1.45 |
+| The same, `Sampled()` 1,000 times in a view, with a `pose[bone]` read | 11.5-11.9 | 2.46-2.58 |
+| `bench_pose`: `Pose.Sample` (rest + separate clip, 192 channels of 61 keys) | 11.8-12.9 | 1.39-1.62 |
+| `bench_pose`: `Animation.Sample` on the clip's own skeleton | 8.2-9.1 | 1.44-1.51 |
+| `bench_pose`: `Sampled()` 1,000 times in a view | 16.3-16.7 | 2.92-3.08 |
+| `bench_pose`: owned copies of the bytes, planned each call | 12.2-13.9 | 11.9-12.3 |
+
+Every pose's bits are unchanged (the Synty run hashes 20,000 poses, from
+before the clip to past it, `35d1816faa96b86d` both sides). The Synty case was
+measured with a scratch game outside the repo over the duel's own FBX files,
+which aren't the engine's to commit; `bench_pose` stands in for it.
+
+Where a call's time went before, on a quiet run of the Synty case: opening and
+checking both node tables 0.5 µs; checking every key time and value of the
+clip's 157 channels 2.8 (an ordinary packed `Animation` has no load-time
+proof); binding by name (two name tables, parent chains) 1.6; rest and source
+defaults 0.25; sampling 2.3. Now the first three are done once (kept sample
+plans: notes/assets-and-files.md), and sampling lost the per-channel `memset`
+and `memcpy` calls that variable-width key decoding compiled to, a division
+per channel (channels with the same key times share one search and one `t`:
+the FBX clip's 156 channels have 6 time tracks) and some of the latency of
+normalizing each rotation twice (values first, then the normalizing in a
+loop of its own). What's left of a separate-clip call: about 0.17 µs of
+opening, the plan's lookup and the pose's copy; 0.12 for six searches;
+0.4 for 104 translations and scales; 0.5 for 52 rotations.
+
+Left for the view's `Sampled()`, outside `Pose.Sample`:
+
+- The view makes three 2.2 KB pose lists a call (the rest, the `mut var`
+  copy of it and the returned copy), so 1,000 calls grow the scratch area by
+  about 6.6 MB. When the view's scratch is let go, every piece but the first
+  slot's is freed but one spare (engine/src/text.c), so the next frame's
+  pages are new: rest + copy + sample + copy measures 1.45 µs a call with a
+  scratch reset each call and 2.9 without. A view sampling a few poses for
+  each entity, reset per entity, doesn't see this; 1,000 in one run does.
+  Copying a fresh value (`mut var pose = model.defaultPose`) and returning a
+  local could also skip their copies in generated code. Neither is changed.
+- `pose[dummy.skeleton.bones.hips]` looks the bone up by name every time
+  (`tide_skin_bone_member`); that's now kept too (below), 32 ns a use.
+
+### Pose indexing and Model, the same day
+
+bannerlord-duel again, 1,000 calls a frame each on the Synty character:
+`pose.Model(head)` 1.5-2 µs, its `TurnBone` (one `Model`, a few quaternion
+operations) 2 µs, copying 40 bones with `pose[bone] = other[bone]` 5.9 µs.
+Each `pose[bone]`, get or set, and each `Model` checks the bone belongs to
+the pose's model (`tide_skin_pose_has`: `tide_skinned_fingerprint` and
+`tide_skinned_bone_count`), each of which opened and parsed the model's
+header again; a rig member (`bones.head`) also searched every name of the
+model (`tide_skinned_find_bone`, the whole table, to refuse duplicates);
+and `Model` checked every node and made all 55 model matrices to return one.
+Now a thread keeps each keyed model's facts and the names it was asked for
+(notes/assets-and-files.md, Kept sample plans and model facts), and `Model` multiplies only
+the bone's ancestors.
+
+Release, quiet, µs a call, three alternating runs (ranges overlap to the
+last digit unless shown); before is `v0.6.0-nightly.1`'s `skinned.c`:
+
+| Work | Before | After |
+|---|---|---|
+| Synty: `rest.Model(bones.head)` (6 deep, Bone by name) | 1.28-1.29 | 0.18-0.19 |
+| Synty: `rest.Model(head)`, the Bone in a local | 0.99-1.00 | 0.16 |
+| Synty: `rest[bones.head]` read | 0.32 | 0.03 |
+| Synty: `rest[head]` read, the Bone in a local | 0.035 | 0.009 |
+| Synty: `copy[bones.head] = rest[bones.hips]` | 0.64 | 0.06 |
+| Synty: `Sampled()` and a `pose[bones.hips]` read | 10.3-10.4 | 1.89-1.91 |
+| `bench_pose`: 40 bones `copy[bone] = rest[bone]` (`TryGetAt`) | 3.82-4.06 | 0.84-0.87 |
+| `bench_pose`: `rest.Model(bones.middle)`, 33 deep | 1.60-1.97 | 0.59-0.62 |
+| `bench_pose`: `Pose.Sample` (rest + separate clip) | 10.4-10.8 | 1.31-1.32 |
+| `bench_pose`: `Sampled()` in a view | 14.1-14.2 | 2.61-2.63 |
+
+Every checksum is the same before and after. What's left of a read through
+a held Bone (9 ns) is the two identity checks, each a thread-local lookup;
+`Model` 6 deep is seven TRS matrices and six 4×4 products.
 
 ## Views over wide components (2026-10-30)
 

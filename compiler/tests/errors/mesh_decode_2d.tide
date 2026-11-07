@@ -1,0 +1,4 @@
+// expect: 'Flat' is a 2D mesh's vertex
+struct Flat { float2 position; }
+scene Main { }
+Mesh<Flat> Read(List<byte> data) { return Mesh<Flat>.Decode(data)!; }

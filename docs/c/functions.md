@@ -153,7 +153,7 @@ Extern functions take and return plain data, by value:
 | an enum | `int32_t`, or `uint8_t` and `uint16_t` for `: byte` and `: ushort` |
 | a struct or component | a struct with the same fields, in the same order |
 
-A system that splits its entities across threads gives the entities it spawns temporary handles until it's done (see [The schedule](../game/schedule.md#splitting-across-threads)), so an `Entity` C gets from one may be temporary: `tide_entity_is_temporary(e)`, from `tide/entity.h`, tells. Tide gives the real handle to what the system kept, but not to C, so C that keeps entities should keep real ones.
+`tide_entity` is a 16-byte opaque logical identity, with two `uint64_t` words named `birth` and `lineage`. Compare complete values with `tide_entity_equal`; test null with `tide_entity_is_null`. Its bits do not name a storage slot. A spawn returns its final identity immediately, including when C observes it before deferred component installation; no temporary handle or later identity rewrite exists. C may retain that value, but must check its lifetime through the relevant world's entity API before reading state. Hosts and C libraries must rebuild for this ABI change.
 
 C often takes pointers. Tide has none, and no pointer arithmetic: the parameter says how a value goes to C, and the call takes its address by itself. Every pointer is only good until C returns.
 
@@ -284,7 +284,7 @@ int WriteImage(tide_list_out *image)
 }
 ```
 
-- `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill. What's in it is unspecified. Asking again gives memory for the new count, and the earlier one is no longer good, so C that finds it needs more asks again and starts over. It's NULL for no elements, and for more than a list holds (1 GiB of them).
+- `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill. What's in it is unspecified. Asking again gives memory for the new count, and the earlier one is no longer good, so C that finds it needs more asks again and starts over. It's NULL for no elements, and for more than a list holds (2,147,483,647 of them).
 - `tide_list_out_count(out, count)` says how many of those elements, from the first, the list has once C returns: at most the room last asked for. Never called, the list is empty.
 
 Once C returns, the list is exactly those elements, however many it had: more, fewer or none. The memory is the engine's, kept from one call to the next, so C neither frees it nor keeps it.
@@ -374,13 +374,13 @@ The match keeps a component 4 bytes at a time, each a column of its own, so a fi
 | Call | Gives |
 | --- | --- |
 | `tide_rows_floats(rows, component, offset)` | `const float *`: a `float` field, or one part of a vector (`offsetof(Position, at.y)`) |
-| `tide_rows_ints(rows, component, offset)` | `const int32_t *`: an `int` field, an enum stored as an int, half of a `long` or of an `Entity` |
+| `tide_rows_ints(rows, component, offset)` | `const int32_t *`: an `int` field, an enum stored as an int, half of a `long`, or one of the four words of an `Entity` |
 | `tide_rows_floats_mut`, `tide_rows_ints_mut` | The same to write, for a component the system takes as `mut` |
 | `tide_rows_entities(rows)` | `const tide_entity *`: each row's entity |
 | `tide_rows_get(rows, component, row, &value)` | One row's whole component, copied into a struct |
 | `tide_rows_set(rows, component, row, &value)` | The same back, for a `mut` component |
 
-`tide_rows_get` and `tide_rows_set` are for the fields that aren't arrays of 4 bytes (a `bool` or a `byte` is one byte of a column, a `long` and an `Entity` are two columns), for a component whose size isn't a multiple of 4, which is kept otherwise, and for C that would rather work with a struct at a time.
+`tide_rows_get` and `tide_rows_set` are for the fields that aren't arrays of 4 bytes (a `bool` or a `byte` is one byte of a column, a `long` is two columns and an `Entity` four), for a component whose size isn't a multiple of 4, which is kept otherwise, and for C that would rather work with a struct at a time.
 
 Nothing is copied to read: an array is the match's own memory. Writing is asked for a field at a time, and costs what's written:
 
@@ -389,7 +389,7 @@ Nothing is copied to read: an array is the match's own memory. Writing is asked 
 - An array to write has what's there in it, and is the field from then on: read through it too. An array of the same field that was asked for to read before it may no longer be the one the run writes.
 - Every array is good until C returns, and no longer.
 
-A field that holds text, a list, a map, a set or a grid is a handle into the match's memory: C leaves those as they are.
+A field that holds text, a list, a map, a set or a grid is a handle into the match's memory (`tide_handle`, 8 bytes, two columns; a map or a set is 32 bytes): C leaves those as they are.
 
 A call that can't be answered stops the program, saying which function it was, in which system, and what to write instead: a component the system doesn't take, an offset that isn't a 4-byte field's, an array to write of a component that isn't `mut`.
 
@@ -452,7 +452,7 @@ C has everything Tide's drawing APIs have, as `tide_draw_circle`, `tide_draw_tex
   ```
 
   What C sets on the view's list stays set for the view, like a `Set` in Tide, so a library that draws through a `DrawList` pushes what it needs and pops it before it returns.
-- `tide_draw_text(list, text, position, size, color)` is `Draw.Text` at its top left corner in the regular weight, and `tide_draw_text_at(list, text, position, size, color, anchor, font)` takes [an anchor and a weight](../game/views.md#text): a `tide_anchor` (`TIDE_ANCHOR_MIDDLE_CENTER`) and `TIDE_FONT_REGULAR` or `TIDE_FONT_BOLD`. C names a weight by its font file, so a program whose C says `TIDE_FONT_BOLD` carries the bold weight's file, as a game that says `Font.Bold` does.
+- `tide_draw_text(list, text, position, size, color)` is `Draw.Text` at its top left corner in the regular weight, and `tide_draw_text_at(list, text, position, size, color, anchor, font)` takes [an anchor and a font](../game/views.md#text): a `tide_anchor` (`TIDE_ANCHOR_MIDDLE_CENTER`) and a `const tide_font *` (`tide/font.h`): `TIDE_FONT_REGULAR`, `TIDE_FONT_BOLD`, or a font of the registry. A program whose C says `TIDE_FONT_BOLD` carries the bold weight's file, as a game that says `Font.Bold` does. A Tide `Font` is a `tide_font_ref`, a number, which `tide_font_find(ref.id)` turns into the registry's font (NULL for the regular weight, and for a number the registry hasn't). C reads a font file into the registry with `tide_font_decode(bytes, size, &error)`, which checks every place the file names before reading it, and gives its number, or 0.
 - The [smooth shapes](../game/views.md#smooth-shapes) are `tide_draw_round_rect`, `tide_draw_ellipse`, `tide_draw_arc` and the rest, with `_rotated` for the turned ones and `tide_draw_thick_line`, `tide_draw_thick_wire_rect` and `tide_draw_thick_wire_circle` for the ones that take a width. `tide_shape` is Tide's `Shape`, for `tide_draw_shape(list, shape)`, with `outline_color` for `outlineColor`. Start one from `TIDE_SHAPE_WHITE` rather than from zeros: its `color2` is `TIDE_COLOR_NONE`, Tide's `Color.none`, where a zeroed one is a clear color the fill would fade to.
 - `tide_vertex3` is Tide's `Vertex3`. `tide_draw_set_camera_3d(list, position, rotation, field_of_view)` and `tide_draw_set_camera_matrices(list, transform, projection)` are `Draw.SetCamera`.
 - `tide_draw_mesh_3d(list, &mesh, transform, texture, filter)` draws a 3D mesh, a `tide_mesh`: its vertices and indices, and a version (see below). Instances of one mesh drawn in a row, with one texture, filter and wrap, are drawn at once. `tide_draw_mesh_3d_wrapped` takes a `tide_wrap` after the filter. Its triangles are drawn from their front, the side their corners go clockwise on, unless `tide_draw_set_cull` says otherwise (see [Which side draws](../game/3d.md#which-side-draws)).

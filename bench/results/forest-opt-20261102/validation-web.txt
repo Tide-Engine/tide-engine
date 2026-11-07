@@ -1,0 +1,14 @@
+2792/2794 Test #2685: bench_skinned_baked_webgpu ................................   Passed    0.87 sec
+          Start 2687: bench_render3d
+2793/2794 Test #2687: bench_render3d ............................................   Passed    7.15 sec
+          Start 2688: bench_render3d_webgpu
+2794/2794 Test #2688: bench_render3d_webgpu .....................................   Passed    6.82 sec
+
+100% tests passed, 0 tests failed out of 2794
+
+Label Time Summary:
+safety         =  11.39 sec*proc (24 tests)
+webgl_d3d11    = 2576.62 sec*proc (12 tests)
+webgpu         = 2527.95 sec*proc (26 tests)
+
+Total Test time (real) = 387.22 sec

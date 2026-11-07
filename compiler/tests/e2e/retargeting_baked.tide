@@ -1,0 +1,74 @@
+// Forward profile declarations and both selected/combined imports.
+[Retarget(sourceRig, targetRig)]
+asset Animation baked = "retargeting/export.gltf";
+[Retarget(sourceRig, targetRig, rootScale: 0, rootOffset: float3(1, 0, 0), headingDegrees: 0,
+          spineDistribution: 1, twistDistribution: 1, sampleRate: 30)]
+asset AnimationCatalog stationary = ["retargeting/export.gltf", "retargeting/source.gltf"];
+asset HumanoidRig sourceRig = "retargeting/source.humanoid.json";
+asset HumanoidRig targetRig = "retargeting/target.humanoid.json";
+asset Animation raw = "retargeting/export.gltf";
+asset Animation target = "retargeting/target.gltf";
+
+singleton Probe
+{
+    int ticks;
+    int checks;
+    int passed;
+    int firstFailure;
+    HumanoidRig profile;
+    Pose pose;
+}
+scene Main { }
+void Expect(mut Probe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+bool Near(float a, float b) { return Math.Abs(a - b) < 0.0001; }
+system Verify(mut Probe p)
+{
+    if (p.ticks == 0)
+    {
+        Expect(p, sourceRig.GetStatus(HumanoidBone.LeftHand) == HumanoidBoneStatus.Manual);
+        Expect(p, sourceRig.GetStatus(HumanoidBone.RightHand) == HumanoidBoneStatus.Automatic);
+        Expect(p, sourceRig.GetStatus(HumanoidBone.LeftToes) == HumanoidBoneStatus.Manual);
+        Expect(p, targetRig.GetStatus(HumanoidBone.RightHand) == HumanoidBoneStatus.Manual);
+        Expect(p, baked.duration == raw.duration && stationary.count == 2);
+        Expect(p, baked.skeleton.bones.count == target.skeleton.bones.count);
+        Expect(p, raw.skeleton.bones.count == target.skeleton.bones.count + 1);
+        Expect(p, Near(sourceRig.referencePose[sourceRig[HumanoidBone.Hips]].position.y, 1.2));
+        Expect(p, Near(targetRig.referencePose[targetRig[HumanoidBone.Head]].position.y, 1.1));
+        var prepared = RetargetMap.Create(raw.skeleton, sourceRig, targetRig);
+        if (prepared is RetargetMap mapping)
+        {
+            mut var direct = targetRig.referencePose;
+            for (int i = 0; i <= 4; i++)
+            {
+                var seconds = float(i) * 0.25;
+                Expect(p, direct.Retarget(raw.Sample(seconds), mapping));
+                var sampled = baked.Sample(seconds);
+                var hips = targetRig[HumanoidBone.Hips];
+                Expect(p, Near(sampled[hips].position.y, direct[hips].position.y));
+                Expect(p, Near(sampled[targetRig[HumanoidBone.Head]].position.y, direct[targetRig[HumanoidBone.Head]].position.y));
+            }
+        }
+        else Expect(p, false);
+        mut var normal = target.skeleton.RestPose();
+        normal.Sample(baked, 1);
+        Expect(p, Near(normal[targetRig[HumanoidBone.Hips]].position.y, 4.4));
+        stationary.TryGetAt(0, out var stationaryClip);
+        var still = stationaryClip.Sample(1);
+        Expect(p, Near(still[targetRig[HumanoidBone.Hips]].position.x, 1)
+            && Near(still[targetRig[HumanoidBone.Hips]].position.y, 2.4));
+        p.profile = targetRig;
+    }
+    p.profile[HumanoidBone.RightHand] = default;
+    Expect(p, p.profile.GetStatus(HumanoidBone.RightHand) == HumanoidBoneStatus.Manual
+        && targetRig.GetStatus(HumanoidBone.RightHand) == HumanoidBoneStatus.Manual);
+    Expect(p, targetRig.referencePose[targetRig[HumanoidBone.RightHand]].position.x != 0
+        && p.profile.referencePose[p.profile[HumanoidBone.RightHand]].position.x == 0);
+    p.pose = baked.Sample(float(p.ticks % 5) * 0.25);
+    Expect(p, Near(targetRig.referencePose[targetRig[HumanoidBone.Hips]].position.y, 2.4));
+    p.ticks++;
+}

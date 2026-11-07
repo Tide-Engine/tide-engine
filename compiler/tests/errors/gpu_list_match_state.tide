@@ -1,0 +1,16 @@
+// expect: 'Field' can't hold rendering resources in match state
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+singleton Field { GPUList<int> counts; }

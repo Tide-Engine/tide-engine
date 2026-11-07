@@ -1,0 +1,20 @@
+// expect: a GPU list's index is an int, not float
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Look(Meadow meadow)
+{
+    meadow.counts[0] = int(meadow.blades[1.5].height);
+}
+view Show(Meadow meadow) { GPU.Run(Look, 1); }

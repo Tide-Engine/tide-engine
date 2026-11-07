@@ -1,0 +1,254 @@
+[
+  {
+    "trees": 1000,
+    "camera": "wide",
+    "distance_levels": true,
+    "visible": 988,
+    "draws": 20,
+    "submitted_vertices": 1089492,
+    "view_record_ms": {
+      "median_of_process_medians": 2.5537,
+      "range": [
+        2.4768,
+        2.64225
+      ]
+    },
+    "cpu_submit_ms": {
+      "median_of_process_medians": 0.09585,
+      "range": [
+        0.0844,
+        0.10475
+      ]
+    },
+    "completion_readback_ms": {
+      "median_of_process_medians": 6.7678,
+      "range": [
+        6.70745,
+        9.0903
+      ]
+    },
+    "gpu_ms": {
+      "median_of_process_medians": 5.03848,
+      "range": [
+        5.022,
+        6.884384
+      ]
+    }
+  },
+  {
+    "trees": 10000,
+    "camera": "canopy",
+    "distance_levels": false,
+    "visible": 8262,
+    "draws": 14,
+    "submitted_vertices": 11944128,
+    "view_record_ms": {
+      "median_of_process_medians": 16.688,
+      "range": [
+        16.55555,
+        17.0076
+      ]
+    },
+    "cpu_submit_ms": {
+      "median_of_process_medians": 0.28175,
+      "range": [
+        0.28045,
+        0.28625
+      ]
+    },
+    "completion_readback_ms": {
+      "median_of_process_medians": 14.687,
+      "range": [
+        14.01245,
+        14.9758
+      ]
+    },
+    "gpu_ms": {
+      "median_of_process_medians": 12.607088,
+      "range": [
+        11.977008,
+        12.841664
+      ]
+    }
+  },
+  {
+    "trees": 10000,
+    "camera": "canopy",
+    "distance_levels": true,
+    "visible": 8262,
+    "draws": 24,
+    "submitted_vertices": 4075218,
+    "view_record_ms": {
+      "median_of_process_medians": 16.048,
+      "range": [
+        16.02205,
+        16.21325
+      ]
+    },
+    "cpu_submit_ms": {
+      "median_of_process_medians": 0.27635,
+      "range": [
+        0.2749,
+        0.27655
+      ]
+    },
+    "completion_readback_ms": {
+      "median_of_process_medians": 11.54855,
+      "range": [
+        11.46265,
+        11.58855
+      ]
+    },
+    "gpu_ms": {
+      "median_of_process_medians": 9.491488,
+      "range": [
+        9.467616,
+        9.588288
+      ]
+    }
+  },
+  {
+    "trees": 10000,
+    "camera": "wide",
+    "distance_levels": true,
+    "visible": 9760,
+    "draws": 12,
+    "submitted_vertices": 1485966,
+    "view_record_ms": {
+      "median_of_process_medians": 11.15205,
+      "range": [
+        11.0764,
+        12.08805
+      ]
+    },
+    "cpu_submit_ms": {
+      "median_of_process_medians": 0.235,
+      "range": [
+        0.23075,
+        0.24185
+      ]
+    },
+    "completion_readback_ms": {
+      "median_of_process_medians": 8.11245,
+      "range": [
+        7.96445,
+        10.5545
+      ]
+    },
+    "gpu_ms": {
+      "median_of_process_medians": 6.36488,
+      "range": [
+        6.113456,
+        8.329904
+      ]
+    }
+  },
+  {
+    "trees": 50000,
+    "camera": "wide",
+    "distance_levels": true,
+    "visible": 48334,
+    "draws": 6,
+    "submitted_vertices": 4678476,
+    "view_record_ms": {
+      "median_of_process_medians": 48.51315,
+      "range": [
+        48.39965,
+        75.86765
+      ]
+    },
+    "cpu_submit_ms": {
+      "median_of_process_medians": 0.86345,
+      "range": [
+        0.85805,
+        0.86985
+      ]
+    },
+    "completion_readback_ms": {
+      "median_of_process_medians": 24.83445,
+      "range": [
+        19.986,
+        25.289
+      ]
+    },
+    "gpu_ms": {
+      "median_of_process_medians": 22.72592,
+      "range": [
+        17.674304,
+        23.059632
+      ]
+    }
+  },
+  {
+    "trees": 100000,
+    "camera": "ground",
+    "distance_levels": true,
+    "visible": 78286,
+    "draws": 24,
+    "submitted_vertices": 10859934,
+    "view_record_ms": {
+      "median_of_process_medians": 164.02405,
+      "range": [
+        162.0171,
+        171.1951
+      ]
+    },
+    "cpu_submit_ms": {
+      "median_of_process_medians": 5.09965,
+      "range": [
+        1.45885,
+        10.11075
+      ]
+    },
+    "completion_readback_ms": {
+      "median_of_process_medians": 36.2693,
+      "range": [
+        23.1252,
+        72.03265
+      ]
+    },
+    "gpu_ms": {
+      "median_of_process_medians": 31.95568,
+      "range": [
+        20.360896,
+        66.246928
+      ]
+    }
+  },
+  {
+    "trees": 100000,
+    "camera": "wide",
+    "distance_levels": true,
+    "visible": 96479,
+    "draws": 6,
+    "submitted_vertices": 9300396,
+    "view_record_ms": {
+      "median_of_process_medians": 113.7016,
+      "range": [
+        100.2628,
+        142.86825
+      ]
+    },
+    "cpu_submit_ms": {
+      "median_of_process_medians": 1.38825,
+      "range": [
+        1.3166,
+        1.43285
+      ]
+    },
+    "completion_readback_ms": {
+      "median_of_process_medians": 40.178,
+      "range": [
+        37.4915,
+        40.8953
+      ]
+    },
+    "gpu_ms": {
+      "median_of_process_medians": 36.66784,
+      "range": [
+        32.69672,
+        37.698864
+      ]
+    }
+  }
+]

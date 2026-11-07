@@ -1,0 +1,27 @@
+// expect: 'Keep' adds to a GPU list, and an invocation adds to one once at the most, so it can't be called in a loop
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<Blade> shown;
+}
+void Keep(GPUList<Blade> into, Blade b)
+{
+    into.Add(b);
+}
+[Group(64)]
+compute Thin(Meadow meadow)
+{
+    for (var i = 0; i < 2; i++)
+    {
+        Keep(meadow.shown, meadow.blades[i]);
+    }
+}
+view Show(Meadow meadow) { GPU.Run(Thin, meadow.blades); }

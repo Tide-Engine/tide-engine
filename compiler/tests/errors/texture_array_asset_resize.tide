@@ -1,0 +1,7 @@
+// expect: an asset's TextureArray is the pack's: it can't be resized or disposed
+asset TextureArray ground = "../e2e/cubes/sky/*.png";
+scene Main { }
+view Show()
+{
+    ground.Resize(8, 8);
+}

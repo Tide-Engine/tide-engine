@@ -88,7 +88,7 @@ TIDE_TEST(animations_owned_catalogs_survive_pack_unload_snapshots_and_serializat
     free(bytes);
     TIDE_CHECK(same(&world, &copy));
     for (int i = 0; i < 60; i++) tide_world_tick(&world);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     for (int i = 0; i < 100; i++) tide_world_tick(&world);
     TIDE_CHECK(world.heap.used == used && world.Probe.passed == world.Probe.checks);
     tide_world_free(&copy);

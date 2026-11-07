@@ -71,7 +71,7 @@
     };
   }
   var Tide = {
-    canvas: document.getElementById('canvas'), backend: 'webgl', checkGL: true,
+    canvas: document.getElementById('canvas'), checkGL: true,
     arguments: ['--' + phase], print: show, printErr: show,
     onExit(code) {
       step(`the program exited with ${code}`);

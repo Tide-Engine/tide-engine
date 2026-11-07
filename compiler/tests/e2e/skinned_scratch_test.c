@@ -5,7 +5,7 @@
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
 
-static uint32_t expected_mark;
+static uint64_t expected_mark;
 static uint32_t observed;
 static uint32_t bad_marks;
 

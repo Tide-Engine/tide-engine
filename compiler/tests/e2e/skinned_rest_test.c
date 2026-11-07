@@ -1,3 +1,4 @@
+#include "tide/draw_profile.h"
 #include <string.h>
 
 #include "game.h"
@@ -18,7 +19,9 @@ TIDE_TEST(skinned_rest_draws_without_clips_and_preserves_operand_order)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    const uint32_t mark = tide_scratch_mark();
+    tide_draw_diagnostics diagnostics = {0};
+    draw.diagnostics = &diagnostics;
+    const uint64_t mark = tide_scratch_mark();
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Calls.models == 2 && local.Calls.transforms == 2 && local.Calls.poses == 1);
     TIDE_CHECK(local.Calls.omittedOrder == 12 && local.Calls.explicitOrder == 123);
@@ -61,6 +64,9 @@ TIDE_TEST(skinned_rest_draws_without_clips_and_preserves_operand_order)
         }
     }
     TIDE_CHECK(instances == 11u);
+    TIDE_REQUIRE(diagnostics.geometry_count > 0);
+    for (uint32_t i = 0; i < diagnostics.geometry_count; i++)
+        TIDE_CHECK(!strcmp(diagnostics.geometry[i].mesh, "character"));
     TIDE_REQUIRE(authored_base >= 0 && edited_base > 0 && animated_base > 0);
     TIDE_CHECK(authored[12] == 0.0f && edited[12] == -7.0f && animated[12] == -12.0f);
     TIDE_CHECK(memcmp(authored, edited, sizeof authored) != 0);
@@ -70,4 +76,5 @@ TIDE_TEST(skinned_rest_draws_without_clips_and_preserves_operand_order)
     tide_local_free(&local);
     tide_world_free(&world);
     tide_pack_unload();
+    tide_draw_diagnostics_free(&diagnostics);
 }

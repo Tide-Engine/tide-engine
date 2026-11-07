@@ -1,0 +1,7 @@
+// expect: Draw.SetLODPixels sets it for the draws that follow, and takes no block
+// expect: write 'Draw.LODPixels(...) { ... }'
+scene Main { }
+view Show()
+{
+    Draw.SetLODPixels(4) { }
+}

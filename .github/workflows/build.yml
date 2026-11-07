@@ -38,9 +38,12 @@ env:
   TIDE_TELEMETRY: '0'
 
 concurrency:
-  group: build-${{ github.ref }}
-  # Finish the current run, then take the newest waiting push: pushes in a burst
-  # publish one nightly, of the last. A pull request's newer push replaces its run.
+  # Every push to dev gets a run of its own, which nothing cancels: its
+  # Version job claims the push's nightly version (a tag) at the start, and
+  # the run publishes it once everything passed. One that fails keeps its
+  # version, unreleased, and the others go on. Stable releases go one run at
+  # a time; a pull request's newer push cancels its older run.
+  group: build-${{ github.ref }}-${{ github.ref == 'refs/heads/dev' && github.run_id || 'serial' }}
   queue: single
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -67,19 +70,26 @@ jobs:
         with:
           node-version: '^24.22.1'
           check-latest: true
-      - name: Test release notes
+      - name: Test workflow helpers
         shell: bash
         run: |
           npm ci --prefix .github --ignore-scripts --legacy-peer-deps --no-audit --no-fund
           npm test --prefix .github
       # A nightly's version is our own to work out: semantic-release publishes
       # nothing for a commit that isn't its branch's newest any more, which
-      # dev's rarely is by the time its packages are built.
+      # dev's rarely is by the time its packages are built. The version's tag
+      # is pushed now, so overlapping runs each take their own.
       - name: Next nightly
         id: nightly
         if: github.ref == 'refs/heads/dev'
         shell: bash
-        run: node .github/next-nightly.mjs | tee -a "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: node .github/next-nightly.mjs --reserve | tee -a "$GITHUB_OUTPUT"
       - name: Next version
         id: next
         if: github.ref == 'refs/heads/release'
@@ -90,7 +100,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
 
   checks:
-    name: Test (${{ matrix.platform }}, ${{ matrix.preset }})
+    name: Test (${{ matrix.platform }}, ${{ matrix.preset }}, ${{ matrix.shard || 1 }})
     needs: version
     strategy:
       fail-fast: false # Finish every platform to report all failures
@@ -104,6 +114,17 @@ jobs:
             os: windows-2025
             preset: web-release
             test-jobs: 4
+            shard: 1
+          - platform: windows-x64
+            os: windows-2025
+            preset: web-release
+            test-jobs: 4
+            shard: 2
+          - platform: windows-x64
+            os: windows-2025
+            preset: web-release
+            test-jobs: 4
+            shard: 3
           - platform: windows-x64
             os: windows-2025
             preset: mingw-release
@@ -116,9 +137,25 @@ jobs:
             os: ubuntu-24.04
             preset: web-release
             test-jobs: 4
+            shard: 1
+          - platform: linux-x64
+            os: ubuntu-24.04
+            preset: web-release
+            test-jobs: 4
+            shard: 2
+          - platform: linux-x64
+            os: ubuntu-24.04
+            preset: web-release
+            test-jobs: 4
+            shard: 3
           - platform: linux-x64
             os: ubuntu-24.04
             preset: sanitize
+            test-jobs: 4
+          # On the emulator, which Linux's runners accelerate (KVM).
+          - platform: linux-x64
+            os: ubuntu-24.04
+            preset: android
             test-jobs: 4
           - platform: macos-arm64
             os: macos-latest
@@ -128,12 +165,25 @@ jobs:
             os: macos-latest
             preset: web-release
             test-jobs: 4
+            shard: 1
+          - platform: macos-arm64
+            os: macos-latest
+            preset: web-release
+            test-jobs: 4
+            shard: 2
+          - platform: macos-arm64
+            os: macos-latest
+            preset: web-release
+            test-jobs: 4
+            shard: 3
     uses: ./.github/workflows/check.yml
     with:
       platform: ${{ matrix.platform }}
       os: ${{ matrix.os }}
       preset: ${{ matrix.preset }}
       test-jobs: ${{ matrix.test-jobs }}
+      shard: ${{ matrix.shard || 1 }}
+      shards: ${{ matrix.preset == 'web-release' && 3 || 1 }}
       version: ${{ needs.version.outputs.version }}
       channel: ${{ github.ref_name == 'release' && 'stable' || 'nightly' }}
 
@@ -181,6 +231,28 @@ jobs:
           TEST_RESULT: ${{ needs.checks.result }}
           PACKAGE_RESULT: ${{ needs.packages.result }}
         run: test "$TEST_RESULT" = success && test "$PACKAGE_RESULT" = success
+
+  # Once replacements have been saved, trim old per-commit compiler snapshots.
+  # This includes Docs' compiler cache; dependency archives remain untouched.
+  cache-cleanup:
+    name: Clean compiler caches
+    needs: [checks, packages, docs]
+    if: always() && !cancelled() && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/release')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep two snapshots per cache family
+        continue-on-error: true # Cache maintenance must not prevent a release.
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const url = pathToFileURL(`${process.env.GITHUB_WORKSPACE}/.github/cache-cleanup.mjs`);
+            const { cleanupCompilerCaches } = await import(url.href);
+            await cleanupCompilerCaches(github, { ...context.repo, ref: context.ref }, core.info);
 
   # The plugin for JetBrains IDEs (tools/tide-jetbrains), checked against
   # the oldest IDE it supports and the newest CLion.
@@ -268,6 +340,8 @@ jobs:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
+          # Version pushed the tag and its note when the run started; this
+          # finds them there. A commit dev has moved past is published too.
           npm ci --prefix .github --ignore-scripts --legacy-peer-deps --no-audit --no-fund
           node .github/nightly-notes.mjs "$TAG" "$GITHUB_SHA" > "$RUNNER_TEMP/tide-release-notes.md"
           tag_ref="refs/tags/$TAG"

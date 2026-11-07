@@ -33,20 +33,20 @@ static void start(void)
 TIDE_TEST(heap_blocks_are_reused_in_order)
 {
     start();
-    const uint32_t a = tide_heap_alloc(&world.heap, 10);
-    const uint32_t b = tide_heap_alloc(&world.heap, 10);
+    const uint64_t a = tide_heap_alloc(&world.heap, 10);
+    const uint64_t b = tide_heap_alloc(&world.heap, 10);
     TIDE_CHECK(a != 0 && b != 0 && a != b);
     tide_heap_release(&world.heap, a);
     TIDE_CHECK(tide_heap_alloc(&world.heap, 10) != a); // Not until the flush
     tide_heap_flush(&world.heap);
-    const uint32_t c = tide_heap_alloc(&world.heap, 10);
+    const uint64_t c = tide_heap_alloc(&world.heap, 10);
     TIDE_CHECK(c == a);
 }
 
 TIDE_TEST(heap_text_fields_own_their_text)
 {
     start();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_text_set(&world.name, text("cat"), TIDE_IN_MATCH);
     TIDE_CHECK(reads(world.name, "cat"));
     TIDE_CHECK(strcmp(tide_text_read(&world.heap, world.name).ptr, "cat") == 0);
@@ -100,14 +100,14 @@ TIDE_TEST(heap_starts_with_a_block_of_a_page)
     for (uint32_t places = 1; places <= 2; places++) {
         start();
         const uint32_t bytes = (places << TIDE_HEAP_PAGE_SHIFT) - (uint32_t)sizeof(tide_block);
-        const uint32_t block = tide_heap_alloc(&world.heap, bytes);
+        const uint64_t block = tide_heap_alloc(&world.heap, bytes);
         TIDE_REQUIRE(block != 0);
         TIDE_CHECK(world.heap.pages == places + 1u);
         for (uint32_t i = 0; i < world.heap.pages; i++) TIDE_REQUIRE(world.heap.page[i] != NULL);
         uint8_t *data = (uint8_t *)(tide_heap_write(&world.heap, block) + 1);
         data[0] = 1;
         data[bytes - 1u] = 2;
-        const uint32_t small = tide_heap_alloc(&world.heap, 10);
+        const uint64_t small = tide_heap_alloc(&world.heap, 10);
         TIDE_CHECK(small >= block + (places << TIDE_HEAP_PAGE_SHIFT));
         TIDE_REQUIRE(world.heap.page[world.heap.pages - 1u] != NULL);
 
@@ -188,11 +188,18 @@ static bool all(const uint8_t *bytes, const uint32_t count, const uint8_t value)
 TIDE_TEST(pages_let_go_are_handed_out_again)
 {
     tide_pages_free();
-    tide_page *first = tide_page_new(4096);
+    // A new page of a size kept spare is one let go of, zeroed
+    tide_page *spare = tide_page_new(4096);
+    memset(tide_page_data(spare), 0xCD, 4096);
+    tide_page_release(spare, 1);
+    tide_page *fresh = tide_page_new(4096);
+    TIDE_CHECK(fresh == spare && fresh->refs == 1 && fresh->size == 4096 && fresh->hashed == UINT32_MAX);
+    TIDE_CHECK(all(tide_page_data(fresh), 4096, 0));
+
+    tide_page *first = fresh;
+    tide_page *from = tide_page_new(4096);
     memset(tide_page_data(first), 0xAB, 4096);
     tide_page_release(first, 1);
-
-    tide_page *from = tide_page_new(4096);
     memset(tide_page_data(from), 0x11, 4096);
     tide_page *copy = tide_page_copy(from, 1, 100);
     TIDE_CHECK(copy == first);
@@ -225,8 +232,8 @@ TIDE_TEST(pages_let_go_are_handed_out_again)
 TIDE_TEST(heap_blocks_written_over_keep_the_rest)
 {
     start();
-    const uint32_t a = tide_heap_alloc(&world.heap, 100);
-    const uint32_t b = tide_heap_alloc(&world.heap, 100);
+    const uint64_t a = tide_heap_alloc(&world.heap, 100);
+    const uint64_t b = tide_heap_alloc(&world.heap, 100);
     tide_block *block = tide_heap_write(&world.heap, a);
     block->a = 7;
     memset(block + 1, 0x11, 100);

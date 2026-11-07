@@ -14,6 +14,9 @@
 static void frame(tide_local *local)
 {
     tide_local_frame_time(local, 1.0f / 60.0f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(local, 1.0f / 60.0f);
+#endif
     tide_draw_list draw = {0};
     tide_gui gui = {0};
     tide_frame(NULL, NULL, 1, NULL, NULL, 1.0f, local, &draw, &gui);

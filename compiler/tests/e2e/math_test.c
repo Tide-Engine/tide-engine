@@ -6,7 +6,7 @@
 
 static tide_world world;
 
-static const tide_entity THING = {1, 1};
+static tide_entity THING;
 
 static bool near(const float a, const float b)
 {
@@ -26,6 +26,7 @@ static bool color_is(const tide_color v, const float r, const float g, const flo
 static Results results(void)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     return tide_get_Results(&world, THING);
 }
@@ -33,6 +34,7 @@ static Results results(void)
 TIDE_TEST(math_defaults)
 {
     tide_world_init(&world, 1.0f);
+    THING = tide_entity_in_slot(&world.entities, 1);
     const Body b = tide_get_Body(&world, THING);
     TIDE_REQUIRE(tide_has_Body(&world, THING));
     TIDE_CHECK(eq3(b.position, 1, 2, 3));

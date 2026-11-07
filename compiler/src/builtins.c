@@ -50,10 +50,8 @@ static const decl *depth_decl;
 static decl cull_enum;
 static const type T_CULL = {TY_ENUM, &cull_enum};
 static const decl *cull_decl;
-// And the Font enum, which Draw.Text and Draw.MeasureText take.
-static decl text_font;
-static const type T_FONT = {TY_ENUM, &text_font};
-static const decl *font_decl;
+// And Font, which Draw.Text and Draw.MeasureText take.
+static const type T_FONT = {TY_FONT, NULL};
 // ...and the Format enum, what a render target is made to hold.
 static decl format_enum;
 static const type T_FORMAT = {TY_ENUM, &format_enum};
@@ -100,15 +98,13 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
-                  const decl *font)
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull)
 {
     anchor_decl = anchor;
     shape_decl = shape;
     blend_decl = blend;
     depth_decl = depth;
     cull_decl = cull;
-    font_decl = font;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = wrap_decl = transforms_decl = NULL;
     bytes_decl = paths_decl = NULL;
@@ -168,7 +164,6 @@ static type real_type(const type t)
     if (t.decl == &format_enum && format_decl) return (type){TY_ENUM, (decl *)format_decl};
     if (t.decl == &stencil_test_enum && stencil_test_decl) return (type){TY_ENUM, (decl *)stencil_test_decl};
     if (t.decl == &stencil_op_enum && stencil_op_decl) return (type){TY_ENUM, (decl *)stencil_op_decl};
-    if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
     if (t.decl == &mesh_vertices && vertices_decl) return (type){TY_LIST, (decl *)vertices_decl};
@@ -200,7 +195,6 @@ static const char *signature_type_name(const type t)
     if (t.decl == &format_enum) return "Format";
     if (t.decl == &stencil_test_enum) return "StencilTest";
     if (t.decl == &stencil_op_enum) return "StencilOp";
-    if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
     return t.kind == TY_ENUM && !t.decl ? "Anchor" : type_name(t);
@@ -737,9 +731,11 @@ static void build_signatures(void)
     add_setting("Draw", "Depth", "tide_draw_push_depth", "tide_draw_set_depth", NULL, "mode",
                 "What the 3D meshes do with depth: `Depth.ReadWrite` (each frame's first: a mesh is hidden behind what's "
                 "nearer and hides what's drawn behind it later, whatever the order), `Depth.Read` (hidden behind what's "
-                "nearer, and hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke) or "
-                "`Depth.None` (drawn over whatever is there). Only 3D meshes have depth: the 2D draws (shapes, text and "
-                "2D meshes) draw over what's there, in order, whatever this says.",
+                "nearer, and hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke), "
+                "`Depth.None` (drawn over whatever is there), `Depth.Only` (read and written, and no color: a pre-pass, "
+                "whose frag can still discard and cover) or `Depth.Equal` (drawn only where its depth is the one there, "
+                "writing none: lit after a pre-pass, each covered pixel once). Only 3D meshes have depth: the 2D draws "
+                "(shapes, text and 2D meshes) draw over what's there, in order, whatever this says.",
                 1, &T_DEPTH);
     add_unset("Draw", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
     add_setting("Draw", "Cull", "tide_draw_push_cull", "tide_draw_set_cull", NULL, "side",
@@ -756,6 +752,13 @@ static void build_signatures(void)
                 "Custom verts and skinned meshes need explicit Bounds; unknown bounds keep the draw. "
                 "This changes drawing only, never view execution or match simulation.", 1, &T_BOOL);
     add_unset("Draw", "SetFrustumCulling", "tide_draw_unset_frustum_culling", "Enable frustum culling, as each frame starts.");
+    add_setting("Draw", "Occlusion", "tide_draw_push_occlusion", "tide_draw_set_occlusion", NULL, "enabled",
+                "Leave out the instances of 3D lists drawn instanced that the depth already drawn in the frame surely "
+                "hides, tested on the GPU: they'd fail the depth test, so the pixels are the same. Off each frame, as "
+                "measuring that depth costs GPU time: worth it where much is hidden behind what's drawn first. Needs "
+                "bounds, as frustum culling does. This changes drawing only, never views or the match.",
+                1, &T_BOOL);
+    add_unset("Draw", "SetOcclusion", "tide_draw_unset_occlusion", "Turn occlusion culling off, as each frame starts.");
     add_setting("Draw", "Bounds", "tide_draw_push_bounds", "tide_draw_set_bounds", NULL, "center, size",
                 "A conservative mesh-local box for frustum culling: center and full size, before the instance transform "
                 "and Draw.Transform. Include all skinning or custom vertex displacement. Invalid bounds keep the draw.",
@@ -772,6 +775,12 @@ static void build_signatures(void)
     add_setting("Draw", "LOD", "tide_draw_push_no_lod", "tide_draw_unset_lod", NULL, "",
                 "Back to each mesh marked `[LOD]` picking its own level of detail, by how big it is on screen, as each "
                 "frame starts.", 0);
+    add_setting("Draw", "LODPixels", "tide_draw_push_lod_pixels", "tide_draw_set_lod_pixels", NULL, "pixels",
+                "How many screen pixels of estimated error an automatic LOD may have: 1 by default. Higher values "
+                "allow coarser meshes at the same distance; values below 1 retain more detail. Nonpositive or "
+                "nonfinite values restore 1. A forced LOD level wins over this tolerance.", 1, &T_F);
+    add_setting("Draw", "LODPixels", "tide_draw_push_no_lod_pixels", "tide_draw_unset_lod_pixels", NULL, "",
+                "Restore the default automatic LOD error tolerance of 1 pixel.", 0);
     add_setting("Draw", "LODCamera", "tide_draw_push_lod_camera_3d", "tide_draw_set_lod_camera_3d", NULL,
                 "position, rotation, fieldOfView",
                 "The camera the meshes marked `[LOD]` pick their level of detail through, in place of the one they're "
@@ -880,8 +889,8 @@ static void build_signatures(void)
         "Text, `size` high: a line's height, with its capitals in the line's middle. `position` is its top left "
         "corner, or with an `anchor`, that place of its box: `Anchor.MiddleCenter` centers it there, "
         "`Anchor.UpperRight` ends its first line there. Upper is towards the top of the screen, under a camera too, "
-        "and each line of several is against the anchor's side. `font` is its weight: `Font.Regular` (the "
-        "default) or `Font.Bold`.";
+        "and each line of several is against the anchor's side. `font` is what it's in: `Font.Regular` (the "
+        "default), `Font.Bold`, an `asset Font` or one `Font.Decode` read.";
     add_draw("Text", "tide_draw_text", "text, position, size, color", text_doc, 4, &T_STR, &T_F2, &T_F, &T_COLOR);
     // With an anchor, the font is one a call can leave out; a font alone goes after the color
     defaulted(add_draw("Text", "tide_draw_text_at", "text, position, size, color, anchor, font", text_doc,
@@ -889,7 +898,7 @@ static void build_signatures(void)
     add_draw("Text", "tide_draw_text_at", "text, position, size, color, font", text_doc,
                5, &T_STR, &T_F2, &T_F, &T_COLOR, &T_FONT);
     static const char measure_doc[] =
-        "How big `Draw.Text` would draw `text` at `size` now, in the weight `font` (`Font.Regular` without "
+        "How big `Draw.Text` would draw `text` at `size` now, in `font` (`Font.Regular` without "
         "one): the width of its widest line in x and the height of its lines in y, in the units the 2D draws are "
         "in. One line is `size` high. It's the box an anchor names a place of: "
         "`Draw.Text(text, center, size, color, Anchor.MiddleCenter)` centers it.";
@@ -1396,6 +1405,8 @@ static const struct {
     {"Color", "none", TY_COLOR, "TIDE_COLOR_NONE"},
     {"Clip", "none", TY_CLIP, "((tide_clip_ref){0})"},
     {"Clip", "Microphone", TY_CLIP, "TIDE_CLIP_MICROPHONE"},
+    {"Font", "Regular", TY_FONT, "((tide_font_ref){0})"},
+    {"Font", "Bold", TY_FONT, "((tide_font_ref){1})"},
     {"Draw", "window", TY_RENDER_TARGET, "((tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Draw", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
@@ -1430,6 +1441,13 @@ static const char *member_doc(const size_t i)
                "`effect` can filter and its bus plays or mutes (`volume` 0 to only process). The device is open while a "
                "frame names such a `Sound` playing, and the system asks the player first on phones and the web: until "
                "they allow it, silence. A one-shot (`Audio.Play`) of it plays nothing.";
+    }
+    if (strcmp(members[i].owner, "Font") == 0 && strcmp(members[i].member, "Regular") == 0) {
+        return "The engine's font, its regular weight: what text is in where nothing says another, a `Font`'s default.";
+    }
+    if (strcmp(members[i].owner, "Font") == 0 && strcmp(members[i].member, "Bold") == 0) {
+        return "The engine's font, its bold weight, a file of its own: a game only carries it when its code says "
+               "`Font.Bold`. A character it has no glyph for is drawn in the regular weight.";
     }
     if (strcmp(members[i].owner, "Cursor") == 0) {
         return "Whether the window holds the mouse's cursor right now: what the system says, not what `Cursor.Lock` "
@@ -1648,7 +1666,19 @@ static bool fits(const signature *s, const expr *e)
         const expr *arg = e->args.items[i];
         const bool mut = s->mut & (1u << a);
         if (arg->enum_shorthand) {
-            if (mut || want.kind != TY_ENUM) return false;
+            if (mut) return false;
+            // .Bold is a Font where one goes, and an enum's member where that enum has it
+            const bool font = str_eq_c(arg->member, "Regular") || str_eq_c(arg->member, "Bold");
+            if (want.kind == TY_FONT) {
+                if (!font) return false;
+                continue;
+            }
+            if (want.kind != TY_ENUM) return false;
+            if (font && want.decl && want.decl->members.count) {
+                bool has = false;
+                for (int m = 0; m < want.decl->members.count && !has; m++) has = str_eq(want.decl->members.items[m].name, arg->member);
+                if (!has) return false;
+            }
             continue;
         }
         if (arg->is_out && (out_untyped(arg) || (s->out & (1u << a)))) continue;
@@ -1862,7 +1892,7 @@ type resolve_builtin_call(const str owner, expr *e)
     for (int i = 0; i < e->args.count; i++) {
         const type t = e->args.items[i]->type;
         if (t.kind == TY_ENUM && t.decl == anchor_decl && anchor_at < 0) anchor_at = i;
-        if (t.kind == TY_ENUM && t.decl == font_decl && font_at < 0) font_at = i;
+        if (t.kind == TY_FONT && font_at < 0) font_at = i;
     }
     if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Text") && font_at >= 0 && anchor_at > font_at) {
         diag_note("the anchor comes before the font: 'Draw.Text(text, position, size, color, Anchor.MiddleCenter, "
@@ -2193,6 +2223,12 @@ static const setting settings[] = {
      "frame's budget, it delays its input a tick at a time until it fits. `Prediction.Delay`: clients never predict: "
      "inputs are delayed so every player's reach the server before its tick, and ticks run once, as the server "
      "confirms them, at the cost of input delay."},
+    {"predictionRange", TY_FLOAT, "none",
+     "With `Prediction.Rollback`: how far from this player's own entities a client predicts, in world units. "
+     "Entities farther than that aren't run in its predicted ticks: they stay as the server last confirmed them, "
+     "and what's near meets them there as they are. They tick once each, as the server confirms them, as with "
+     "`Prediction.Delay`. Where an entity is comes from its `[Position]` fields, or its `Transform`; one with "
+     "neither is always predicted. Without it, a client predicts everything."},
     {"stats", TY_BOOL, "false",
      "Shows the stats in the window's bottom right corner: one line, the frame rate, and the ping in a match another "
      "machine runs. A click or a tap on it, or F8, opens it to the rest: what a frame's work takes, the bandwidth, "
@@ -2610,27 +2646,35 @@ static const char *const draw_prelude_lines[] = {
     "}",
 };
 
-const char *draw_prelude(size_t *len)
+// A prelude's lines as one text, each ended by a newline: made once.
+static const char *joined(const char *const *lines, const size_t count, char **text, size_t *length)
 {
-    static char *text;
-    static size_t length;
-    if (!text) {
-        const size_t count = sizeof draw_prelude_lines / sizeof draw_prelude_lines[0];
-        for (size_t i = 0; i < count; i++) length += strlen(draw_prelude_lines[i]) + 1;
-        text = malloc(length + 1);
-        if (!text) {
+    if (!*text) {
+        size_t n = 0;
+        for (size_t i = 0; i < count; i++) n += strlen(lines[i]) + 1;
+        *text = malloc(n + 1);
+        if (!*text) {
             fprintf(stderr, "tidec: out of memory\n");
             exit(1);
         }
         size_t at = 0;
         for (size_t i = 0; i < count; i++) {
-            const size_t n = strlen(draw_prelude_lines[i]);
-            memcpy(text + at, draw_prelude_lines[i], n);
-            text[at + n] = '\n';
-            at += n + 1;
+            const size_t k = strlen(lines[i]);
+            memcpy(*text + at, lines[i], k);
+            (*text)[at + k] = '\n';
+            at += k + 1;
         }
-        text[at] = '\0';
+        (*text)[at] = '\0';
+        *length = n;
     }
+    return *text;
+}
+
+const char *draw_prelude(size_t *len)
+{
+    static char *text;
+    static size_t length;
+    joined(draw_prelude_lines, sizeof draw_prelude_lines / sizeof draw_prelude_lines[0], &text, &length);
     *len = length;
     return text;
 }
@@ -2731,6 +2775,391 @@ bool draw_prelude_wanted(const char *const *texts, const size_t *lens, const int
                 while (last > 0 && arg[last - 1] != '.') last--;
                 if (n > last && declares_fill(texts, lens, count, arg + last, n - last)) return true;
             }
+        }
+    }
+    return false;
+}
+
+// Baked poses' own Tide code: a crowd's animation, posed once on the CPU and
+// kept on the GPU, each instance skinned there from the rows it shows
+// (BAKED_PRELUDE_PATH). A line each, as the fills' are.
+static const char *const baked_prelude_lines[] = {
+    "// Baked poses: a crowd's animation, posed once on the CPU and kept on the",
+    "// GPU, where each instance is skinned from the rows it shows. A row is one",
+    "// pose's skinning: for each bone, its model matrix times the inverse of its",
+    "// rest one, as three float4s (the matrix's top three rows). A mesh with bones",
+    "// (`Mesh<V>` with `joints` and `weights`) is the model at rest, so a corner",
+    "// goes where its bones' rows take it.",
+    "",
+    "// Where one instance is in a BakedPoses: the row it shows, going on to",
+    "// another, and the rows it fades from after a jump between clips.",
+    "struct BakedFrame",
+    "{",
+    "    int4 rows;      // x: the row shown, y: the row it goes on to; z and w: the same of the rows it fades from",
+    "    float4 blend;   // x: how far x is on to y; y: how far z is on to w; z: how much x and y show over z and w (1: all); w: 1 where each corner follows its heaviest bone alone",
+    "",
+    "    // This frame shown `shown` of the way (0 to 1) over `from`, which it fades from.",
+    "    BakedFrame FadedFrom(BakedFrame from, float shown)",
+    "    {",
+    "        return BakedFrame { rows = int4(rows.x, rows.y, from.rows.x, from.rows.y),",
+    "                            blend = float4(blend.x, from.blend.x, Math.Saturate(shown), blend.w) };",
+    "    }",
+    "",
+    "    // ...each corner following its heaviest bone alone (or not): a far",
+    "    // instance's, cheaper, where joints blending can't be seen.",
+    "    BakedFrame HeaviestBone(bool alone)",
+    "    {",
+    "        return BakedFrame { rows = rows, blend = float4(blend.x, blend.y, blend.z, alone ? 1 : 0) };",
+    "    }",
+    "}",
+    "",
+    "namespace BakedFrame",
+    "{",
+    "    // One row, still.",
+    "    BakedFrame Row(int row)",
+    "    {",
+    "        return BakedFrame { rows = int4(row, row, row, row), blend = float4(0, 0, 1, 0) };",
+    "    }",
+    "",
+    "    // `t` of the way (0 to 1) from one row to the next.",
+    "    BakedFrame Between(int row, int next, float t)",
+    "    {",
+    "        return BakedFrame { rows = int4(row, next, row, next), blend = float4(Math.Saturate(t), 0, 1, 0) };",
+    "    }",
+    "}",
+    "",
+    "// A clip's rows in a BakedPoses: `count` of them from `first`, evenly over",
+    "// its `duration`. A clip that loops has no row at its end, which is its start.",
+    "struct BakedClip",
+    "{",
+    "    int first;",
+    "    int count;",
+    "    float duration;",
+    "    bool loops;",
+    "",
+    "    // Its frame `seconds` in: between the two rows round it. Past the end it",
+    "    // stays on its last row, or goes round where it loops; before 0, its first.",
+    "    BakedFrame At(float seconds)",
+    "    {",
+    "        if (count <= 1 || !(duration > 0)) return BakedFrame.Row(first);",
+    "        int steps = loops ? count : count - 1;",
+    "        mut float along = seconds / duration;",
+    "        if (loops) along = along - Math.Floor(along);",
+    "        along = Math.Clamp(along, 0, 1) * steps;",
+    "        int whole = Math.Min(int(Math.Floor(along)), steps);",
+    "        int row = loops ? whole % steps : whole;",
+    "        int next = loops ? (row + 1) % steps : Math.Min(row + 1, steps);",
+    "        return BakedFrame.Between(first + row, first + next, along - whole);",
+    "    }",
+    "}",
+    "",
+    "// One bone's skinning in a row: the top three rows of its matrix, whose",
+    "// fourth is 0, 0, 0, 1. Blended as rows, a matrix is made once a corner.",
+    "struct BakedBone",
+    "{",
+    "    float4 x;",
+    "    float4 y;",
+    "    float4 z;",
+    "",
+    "    float4x4 Matrix()",
+    "    {",
+    "        return float4x4(float4(x.x, y.x, z.x, 0), float4(x.y, y.y, z.y, 0), float4(x.z, y.z, z.z, 0), float4(x.w, y.w, z.w, 1));",
+    "    }",
+    "",
+    "    BakedBone Times(float w)",
+    "    {",
+    "        return BakedBone { x = x * w, y = y * w, z = z * w };",
+    "    }",
+    "",
+    "    BakedBone Plus(BakedBone b)",
+    "    {",
+    "        return BakedBone { x = x + b.x, y = y + b.y, z = z + b.z };",
+    "    }",
+    "",
+    "    // A point, and a direction, through the matrix these rows are the top of",
+    "    float3 Point(float3 p)",
+    "    {",
+    "        var q = float4(p, 1);",
+    "        return float3(Math.Dot(x, q), Math.Dot(y, q), Math.Dot(z, q));",
+    "    }",
+    "",
+    "    float3 Direction(float3 d)",
+    "    {",
+    "        var q = float4(d, 0);",
+    "        return float3(Math.Dot(x, q), Math.Dot(y, q), Math.Dot(z, q));",
+    "    }",
+    "",
+    "    BakedBone Toward(BakedBone b, float t)",
+    "    {",
+    "        return BakedBone { x = Math.Lerp(x, b.x, t), y = Math.Lerp(y, b.y, t), z = Math.Lerp(z, b.z, t) };",
+    "    }",
+    "}",
+    "",
+    "namespace BakedBone",
+    "{",
+    "    BakedBone Of(float4x4 m)",
+    "    {",
+    "        return BakedBone { x = float4(m.c0.x, m.c1.x, m.c2.x, m.c3.x), y = float4(m.c0.y, m.c1.y, m.c2.y, m.c3.y),",
+    "                           z = float4(m.c0.z, m.c1.z, m.c2.z, m.c3.z) };",
+    "    }",
+    "}",
+    "",
+    "// A place on a bone that rows carry (BakedPoses.AddSocket)",
+    "struct BakedSocket",
+    "{",
+    "    int bone;",
+    "    BakedBone at;           // Where it is in the model at rest",
+    "}",
+    "",
+    "// A model's poses, baked. Made for its rest pose, `BakedPoses.Of(model.defaultPose)`,",
+    "// filled once (rows from clips, `AddClip`, or from poses the game makes,",
+    "// `Add`), then given to each draw of its instances, after the frag: the GPU",
+    "// keeps its rows while they don't change.",
+    "struct BakedPoses",
+    "{",
+    "    int bones;              // Bones a row: the skeleton's",
+    "    int rows;               // Rows so far",
+    "    List<BakedBone> skins;  // Row by row, bone by bone",
+    "    List<BakedSocket> sockets;",
+    "    List<float4x4> unbind;  // Each bone's rest model matrix, inverted",
+    "    List<float4x4> restAt;  // ...and as it is",
+    "    Pose rest;",
+    "",
+    "    // A row of `pose`, a pose of the model's skeleton: its number, or -1 for",
+    "    // a pose of another skeleton, or once the rows hold as many bones as the",
+    "    // GPU's list does (699,050: 1024 by 2048 pixels, three a bone).",
+    "    mut int Add(Pose pose)",
+    "    {",
+    "        if (pose.skeleton.bones.count != bones || bones <= 0) return -1;",
+    "        if ((rows + 1) * bones > 699050) return -1;",
+    "        var models = pose.Models();",
+    "        if (models.count != bones) return -1;",
+    "        for (int b = 0; b < bones; b++) skins.Add(BakedBone.Of(Math.Mul(models[b], unbind[b])));",
+    "        rows++;",
+    "        return rows - 1;",
+    "    }",
+    "",
+    "    // A clip's rows, `rate` a second (whole steps over its duration), as it",
+    "    // plays on this model: one of another file binds by its bones' names, as",
+    "    // `pose.Sample` binds it. Its rows stop where the GPU holds no more.",
+    "    mut BakedClip AddClip(Animation clip, float rate, Playback playback)",
+    "    {",
+    "        float duration = Math.Max(clip.duration, 0);",
+    "        bool loops = playback == Playback.Loop;",
+    "        mut int steps = 1;",
+    "        if (duration > 0 && rate > 0) steps = Math.Max(1, int(Math.Ceil(duration * rate - 0.0001)));",
+    "        int count = duration > 0 ? (loops ? steps : steps + 1) : 1;",
+    "        mut var made = BakedClip { first = rows, duration = duration, loops = loops && duration > 0 };",
+    "        mut var pose = rest;",
+    "        for (int k = 0; k < count; k++)",
+    "        {",
+    "            pose.Sample(clip, duration * k / steps, Playback.Clamp);",
+    "            if (Add(pose) < 0) break;",
+    "            made.count++;",
+    "        }",
+    "        return made;",
+    "    }",
+    "",
+    "    mut BakedClip AddClip(Animation clip, float rate)",
+    "    {",
+    "        return AddClip(clip, rate, Playback.Clamp);",
+    "    }",
+    "",
+    "    // A place on a bone that rows carry, as a prop in a hand: `offset` from",
+    "    // the bone, in its space. Its number, for Socket; -1 for a bone of none",
+    "    // of the skeleton's.",
+    "    mut int AddSocket(Bone bone, float4x4 offset)",
+    "    {",
+    "        if (bone.index < 0 || bone.index >= bones) return -1;",
+    "        sockets.Add(BakedSocket { bone = bone.index, at = BakedBone.Of(Math.Mul(restAt[bone.index], offset)) });",
+    "        return sockets.count - 1;",
+    "    }",
+    "",
+    "    mut int AddSocket(Bone bone)",
+    "    {",
+    "        return AddSocket(bone, float4x4.identity);",
+    "    }",
+    "",
+    "    // One bone's rows in `frame`, blended. Identity for a bone the skeleton hasn't got.",
+    "    BakedBone BoneRows(BakedFrame frame, int bone)",
+    "    {",
+    "        if (bone < 0 || bone >= bones) return BakedBone { x = float4(1, 0, 0, 0), y = float4(0, 1, 0, 0), z = float4(0, 0, 1, 0) };",
+    "        mut var a = skins[frame.rows.x * bones + bone].Toward(skins[frame.rows.y * bones + bone], frame.blend.x);",
+    "        if (frame.blend.z < 1)",
+    "        {",
+    "            var b = skins[frame.rows.z * bones + bone].Toward(skins[frame.rows.w * bones + bone], frame.blend.y);",
+    "            a = b.Toward(a, Math.Saturate(frame.blend.z));",
+    "        }",
+    "        return a;",
+    "    }",
+    "",
+    "    // One bone's skinning in `frame`: its model matrix there times its rest one inverted.",
+    "    float4x4 BoneSkin(BakedFrame frame, int bone)",
+    "    {",
+    "        return BoneRows(frame, bone).Matrix();",
+    "    }",
+    "",
+    "    // Four bones' rows `t` of the way from row `from` to row `to` (each a",
+    "    // row's first bone), summed by weight. Every bone is read, as a branch on",
+    "    // a weight costs more on the GPU than the read it saves (notes/benchmarks.md).",
+    "    BakedBone Weighed(int from, int to, float t, int4 joints, float4 weights)",
+    "    {",
+    "        var a = skins[from + joints.x].Toward(skins[to + joints.x], t);",
+    "        var b = skins[from + joints.y].Toward(skins[to + joints.y], t);",
+    "        var c = skins[from + joints.z].Toward(skins[to + joints.z], t);",
+    "        var d = skins[from + joints.w].Toward(skins[to + joints.w], t);",
+    "        return BakedBone { x = a.x * weights.x + b.x * weights.y + c.x * weights.z + d.x * weights.w,",
+    "                           y = a.y * weights.x + b.y * weights.y + c.y * weights.z + d.y * weights.w,",
+    "                           z = a.z * weights.x + b.z * weights.y + c.z * weights.z + d.z * weights.w };",
+    "    }",
+    "",
+    "    // A corner's skinning in `frame` as rows, by its bones and their weights,",
+    "    // which sum to 1. Its heaviest bone's alone where the frame says",
+    "    // (HeaviestBone). A joint the skeleton hasn't got reads another bone's",
+    "    // rows, or zeros: the mesh's joints are the skeleton's.",
+    "    BakedBone SkinRows(BakedFrame frame, int4 joints, float4 weights)",
+    "    {",
+    "        int now = frame.rows.x * bones;",
+    "        int next = frame.rows.y * bones;",
+    "        if (frame.blend.w > 0.5) // Each instance's corners all go one way here, so this costs no corner the other's work",
+    "        {",
+    "            mut var one = skins[now + joints.x].Toward(skins[next + joints.x], frame.blend.x);",
+    "            if (frame.blend.z < 1)",
+    "            {",
+    "                var from = skins[frame.rows.z * bones + joints.x].Toward(skins[frame.rows.w * bones + joints.x], frame.blend.y);",
+    "                one = from.Toward(one, Math.Saturate(frame.blend.z));",
+    "            }",
+    "            return one;",
+    "        }",
+    "        mut var m = Weighed(now, next, frame.blend.x, joints, weights);",
+    "        if (frame.blend.z < 1)",
+    "            m = Weighed(frame.rows.z * bones, frame.rows.w * bones, frame.blend.y, joints, weights).Toward(m, Math.Saturate(frame.blend.z));",
+    "        return m;",
+    "    }",
+    "",
+    "    // ...as a matrix.",
+    "    float4x4 Skin(BakedFrame frame, int4 joints, float4 weights)",
+    "    {",
+    "        return SkinRows(frame, joints, weights).Matrix();",
+    "    }",
+    "",
+    "    // Where socket `socket` is in `frame`, in the model: its bone's",
+    "    // skinning times where it is at rest. Identity for one there isn't.",
+    "    float4x4 Socket(BakedFrame frame, int socket)",
+    "    {",
+    "        if (socket < 0 || socket >= sockets.count) return float4x4.identity;",
+    "        var s = sockets[socket];",
+    "        return Math.Mul(BoneSkin(frame, s.bone), s.at.Matrix());",
+    "    }",
+    "}",
+    "",
+    "namespace BakedPoses",
+    "{",
+    "    // Poses baked for a model whose rest pose is `rest`: the pose its mesh",
+    "    // with bones is at, `model.defaultPose`.",
+    "    BakedPoses Of(Pose rest)",
+    "    {",
+    "        mut var poses = BakedPoses { bones = rest.skeleton.bones.count, rest = rest };",
+    "        var models = rest.Models();",
+    "        for (int b = 0; b < models.count; b++)",
+    "        {",
+    "            poses.restAt.Add(models[b]);",
+    "            poses.unbind.Add(Math.Inverse(models[b]));",
+    "        }",
+    "        return poses;",
+    "    }",
+    "}",
+    "",
+    "// What an instance shows, kept from frame to frame (a local field of its",
+    "// entity's): a jump to another clip, or other rows, fades from what it",
+    "// showed over `fadeSeconds`, where it would snap.",
+    "struct BakedFader",
+    "{",
+    "    float fadeSeconds = 0.2;",
+    "    BakedFrame shown;       // What it showed last, without its fade",
+    "    BakedFrame from;        // What it fades from",
+    "    int motion;             // What it showed: a clip's first row, or the game's own number",
+    "    bool showing;           // Whether it has shown anything (Cut: not)",
+    "    float faded = 1;        // How far its fade is, 0 to 1",
+    "",
+    "    // `clip`, `seconds` in, `dt` after the last frame.",
+    "    mut BakedFrame Play(BakedClip clip, float seconds, float dt)",
+    "    {",
+    "        return Show(clip.At(seconds), clip.first, dt);",
+    "    }",
+    "",
+    "    // `frame`, of `kind` (the game's number for what it shows: a change of",
+    "    // it is a jump), `dt` after the last frame. A jump in the middle of a",
+    "    // fade fades from whichever of the two showed more.",
+    "    mut BakedFrame Show(BakedFrame frame, int kind, float dt)",
+    "    {",
+    "        if (showing && kind != motion)",
+    "        {",
+    "            if (faded >= 0.5) from = shown;",
+    "            faded = 0;",
+    "        }",
+    "        if (!showing) faded = 1;",
+    "        motion = kind;",
+    "        showing = true;",
+    "        shown = frame;",
+    "        faded = Math.Saturate(faded + Math.Max(dt, 0) / Math.Max(fadeSeconds, 0.000001));",
+    "        if (faded >= 1) return frame;",
+    "        return frame.FadedFrom(from, Math.SmoothStep(0, 1, faded));",
+    "    }",
+    "",
+    "    // The next frame shown snaps, with no fade: after a time unseen.",
+    "    mut void Cut()",
+    "    {",
+    "        showing = false;",
+    "    }",
+    "}",
+    "",
+    "// A mesh with bones, as BakedSkin reads it: an `asset Mesh<BakedVertex>` of",
+    "// a skinned model's file.",
+    "struct BakedVertex",
+    "{",
+    "    float3 position;",
+    "    float3 normal;",
+    "    float2 uv;",
+    "    int4 joints;",
+    "    float4 weights;",
+    "}",
+    "",
+    "// An instance BakedSkin draws: where, which frame, and a tint for the frag.",
+    "struct BakedInstance",
+    "{",
+    "    float4x4 transform = float4x4.identity;",
+    "    BakedFrame frame;",
+    "    Color tint = Color.white;",
+    "}",
+    "",
+    "// The vert that skins a BakedVertex from its instance's frame:",
+    "// `Draw.Instanced(mesh, items, texture, BakedSkin, MyFrag, poses)`.",
+    "vert BakedSkin(mut BakedVertex vertex, BakedInstance item, BakedPoses poses)",
+    "{",
+    "    var skin = poses.SkinRows(item.frame, vertex.joints, vertex.weights);",
+    "    vertex.position = skin.Point(vertex.position);",
+    "    vertex.normal = Math.Normalize(skin.Direction(vertex.normal));",
+    "}",
+};
+
+const char *baked_prelude(size_t *len)
+{
+    static char *text;
+    static size_t length;
+    joined(baked_prelude_lines, sizeof baked_prelude_lines / sizeof baked_prelude_lines[0], &text, &length);
+    *len = length;
+    return text;
+}
+
+bool baked_prelude_wanted(const char *const *texts, const size_t *lens, const int count)
+{
+    // Its types' names: a game that bakes poses names BakedPoses, and one that draws them a BakedFrame or BakedSkin
+    static const char *const names[] = {"BakedPoses", "BakedFrame", "BakedClip", "BakedFader", "BakedSkin", "BakedInstance",
+                                        "BakedVertex"};
+    for (int f = 0; f < count; f++) {
+        for (size_t k = 0; k < sizeof names / sizeof names[0]; k++) {
+            if (has_text(texts[f], lens[f], names[k])) return true;
         }
     }
     return false;

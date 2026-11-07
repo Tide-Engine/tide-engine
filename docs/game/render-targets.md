@@ -33,6 +33,26 @@ Otherwise a target's color, depth and stencil persist across frames until cleare
 
 ## Post-processing
 
+For an image baked only when needed, keep its `contentRevision` in local state.
+This read-only `long` changes when its pixels are discarded by resizing, hot
+reload or device loss, including automatic window/display changes. Copies of
+the target share the revision. Ordinary drawing and clearing leave it unchanged.
+An invalid or disposed target and `Draw.window` return zero.
+
+```csharp
+if (!cache.card.valid) cache.card = RenderTarget(200, 300);
+var revision = cache.card.contentRevision;
+if (cache.bakedRevision != revision)
+{
+    cache.card.Clear(Color.black);
+    // Draw the cached image here.
+    cache.bakedRevision = revision;
+}
+```
+
+Store `bakedRevision` as a `long` alongside the target. Compare for equality;
+the revision is an invalidation token, not a count of drawing operations.
+
 ```csharp
 local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }
@@ -105,10 +125,6 @@ glow.light  = RenderTarget.Window(Format.Rgba16f);              // A color image
 
 A `Format.Rgba16f` image is read as it was written: `Sample` gives the numbers back, blended between its pixels like any texture's, and what's drawn into it is blended and added as into any other, without stopping at 1. It takes twice the memory of a `Format.Rgba8` one. A clear's color is a color, each channel from 0 to 1, whatever the image holds.
 
-::: warning Where a GPU can't draw into floats
-Nearly every machine does. An old phone, or an old browser on WebGL, may not: there a `Format.Rgba16f` image is made as a `Format.Rgba8` one, and the engine says so once, in the game's output. The game runs, with what it draws there kept from 0 to 1: light stops at white, and what's under 0 is 0.
-:::
-
 A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth, or [stencil](./draw-settings.md#stencil), which it has too:
 
 - **A clear** sets its depth back to the far limit, and its stencil to 0. It takes a color like any clear, which goes nowhere.
@@ -155,6 +171,7 @@ frag Copy(Vertex vertex, out Color color, Texture source)
 - **It costs memory:** as many colors and depths a pixel as it has samples, plus the color they come to. Four samples at the window's size is about four and a half times a plain target. A frag still runs once for each pixel a triangle covers, so drawing costs little more.
 - **A device may have fewer.** 4 is there on everything Tide draws with, for images of bytes. Where a device hasn't got what's asked, the target is drawn with the most it has under that, and the engine says so once in the game's output. WebGPU has 1 and 4 alone: 2 is 4 there, and 8 is 4.
 - **Everything draws into it** as into any target: shapes, text, meshes, frags, clears, [stencil](./draw-settings.md#stencil). What's in it persists from frame to frame, like any target's.
+- **Edges a frag cuts with `this.Discard()` aren't smoothed:** the frag decides once a pixel. A frag that calls [`this.Cutout(alpha)`](./shaders.md#cut-outs) has its alpha say where it's there instead, and those edges are as smooth as the triangles' (alpha to coverage).
 
 ## Several colors
 

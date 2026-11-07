@@ -6,8 +6,8 @@
 
 static tide_world world;
 
-static const tide_entity first = {1, 1};
-static const tide_entity second = {2, 1};
+static tide_entity first;
+static tide_entity second;
 
 static bool all_zero(const uint8_t *bytes, const size_t n)
 {
@@ -20,6 +20,8 @@ static bool all_zero(const uint8_t *bytes, const size_t n)
 TIDE_TEST(struct_defaults_nest)
 {
     tide_world_init(&world, 1.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     const Unit a = tide_get_Unit(&world, first);
     const Unit b = tide_get_Unit(&world, second);
     TIDE_REQUIRE(tide_has_Unit(&world, first) && tide_has_Unit(&world, second));
@@ -33,6 +35,8 @@ TIDE_TEST(struct_defaults_nest)
 TIDE_TEST(struct_fields_write_through_mut)
 {
     tide_world_init(&world, 1.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     const Unit a = tide_get_Unit(&world, first);
     const Unit b = tide_get_Unit(&world, second);
@@ -44,6 +48,8 @@ TIDE_TEST(struct_fields_write_through_mut)
 TIDE_TEST(struct_values_are_copies)
 {
     tide_world_init(&world, 1.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     tide_world_tick(&world);
     // Copy runs for both units, the second one last: its copy has health 0, and the unit keeps 47.
     TIDE_CHECK(world.Log.copy.health == 0.0f);
@@ -58,6 +64,8 @@ TIDE_TEST(struct_padding_is_explicit_and_zero)
     TIDE_CHECK(sizeof(Aim) == 12);
     TIDE_CHECK(sizeof(PlayerInput) == 16);
     tide_world_init(&world, 1.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     const Unit a = tide_get_Unit(&world, first);
     TIDE_REQUIRE(tide_has_Unit(&world, first));
     TIDE_CHECK(all_zero(a.stats.tide_pad0, sizeof a.stats.tide_pad0));
@@ -66,6 +74,8 @@ TIDE_TEST(struct_padding_is_explicit_and_zero)
 TIDE_TEST(struct_input_fields_are_repaired)
 {
     tide_world_init(&world, 1.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     PlayerInput in = {0};
     in.aim.direction = (tide_float2){5.0f, NAN};
     in.aim.fire = true;

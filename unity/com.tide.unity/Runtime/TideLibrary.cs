@@ -28,10 +28,12 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, float*, float*, void> cameraFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> renderFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> renderResetFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, void> renderFormatsFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, void*, uint, void> renderReadFn;
         delegate* unmanaged[Cdecl]<IntPtr, float*, float*, int, int, uint*, byte*> renderViewFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> viewFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> schemaFn;
-        delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte> commandFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, ulong, ulong, void*, uint, byte> commandFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> drawFn;
         delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void> audioFn;
         delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void> microphoneFn;
@@ -47,7 +49,7 @@ namespace Tide
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 7;
+        public const uint Abi = 18;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
@@ -169,10 +171,12 @@ namespace Tide
             cameraFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, float*, void>)Find("tide_embed_camera");
             renderFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_render");
             renderResetFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_render_reset");
+            renderFormatsFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, void>)Find("tide_embed_render_formats");
+            renderReadFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, void*, uint, void>)Find("tide_embed_render_read");
             renderViewFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, float*, int, int, uint*, byte*>)Find("tide_embed_render_view");
             viewFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_view");
             schemaFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_schema");
-            commandFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte>)Find("tide_embed_command");
+            commandFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, ulong, ulong, void*, uint, byte>)Find("tide_embed_command");
             drawFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_draw");
             audioFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void>)Find("tide_embed_audio");
             microphoneFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void>)Find("tide_embed_microphone");
@@ -186,7 +190,8 @@ namespace Tide
             replayFn = (delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte>)Find("tide_embed_replay");
             replayEndFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_replay_end");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
-                || cameraFn == null || renderFn == null || renderResetFn == null || renderViewFn == null
+                || cameraFn == null || renderFn == null || renderResetFn == null || renderFormatsFn == null || renderReadFn == null
+                || renderViewFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null
                 || travelFn == null || travelKeepFn == null || pauseFn == null || stepFn == null || showFn == null
                 || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null)
@@ -224,6 +229,8 @@ namespace Tide
         }
         public byte* Render(IntPtr embed, uint* size) => TideWebRender(size);
         public void RenderReset(IntPtr embed) => TideWebRenderReset();
+        public void RenderFormats(IntPtr embed, uint formats) => TideWebRenderFormats(formats);
+        public void RenderRead(IntPtr embed, uint token, void* data, uint size) => TideWebRenderRead(token, data, size);
         public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size)
         {
             *size = 0;
@@ -232,8 +239,8 @@ namespace Tide
         public byte* View(IntPtr embed, uint* size) => TideWebView(size);
         public byte* Schema(IntPtr embed, uint* size) => TideWebSchema(size);
         public byte* Draw(IntPtr embed, uint* size) => TideWebDraw(size);
-        public byte Command(IntPtr embed, uint type, uint index, uint generation, void* value, uint size) =>
-            (byte)TideWebCommand(type, index, generation, value, size);
+        public byte Command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size) =>
+            (byte)TideWebCommand(type, (uint)birth, (uint)(birth >> 32), (uint)lineage, (uint)(lineage >> 32), value, size);
         // Tide's program plays through the page, and hears its microphone, itself
         public void Audio(IntPtr embed, float* samples, uint frames, uint rate, uint channels)
         {
@@ -263,7 +270,9 @@ namespace Tide
         [DllImport("__Internal")] static extern byte* TideWebDraw(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebRender(uint* size);
         [DllImport("__Internal")] static extern void TideWebRenderReset();
-        [DllImport("__Internal")] static extern int TideWebCommand(uint type, uint index, uint generation, void* value, uint size);
+        [DllImport("__Internal")] static extern void TideWebRenderFormats(uint formats);
+        [DllImport("__Internal")] static extern void TideWebRenderRead(uint token, void* data, uint size);
+        [DllImport("__Internal")] static extern int TideWebCommand(uint type, uint birthLow, uint birthHigh, uint lineageLow, uint lineageHigh, void* value, uint size);
         [DllImport("__Internal")] static extern void TideWebTravel(TideTravel* travel, int size);
         [DllImport("__Internal")] static extern void TideWebTravelKeep(float seconds);
         [DllImport("__Internal")] static extern int TideWebPause(byte paused);
@@ -289,13 +298,15 @@ namespace Tide
             cameraFn(embed, (float*)transform, (float*)projection);
         public byte* Render(IntPtr embed, uint* size) => renderFn(embed, size);
         public void RenderReset(IntPtr embed) => renderResetFn(embed);
+        public void RenderFormats(IntPtr embed, uint formats) => renderFormatsFn(embed, formats);
+        public void RenderRead(IntPtr embed, uint token, void* data, uint size) => renderReadFn(embed, token, data, size);
         public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size) =>
             renderViewFn(embed, (float*)transform, (float*)projection, width, height, size);
         public byte* View(IntPtr embed, uint* size) => viewFn(embed, size);
         public byte* Schema(IntPtr embed, uint* size) => schemaFn(embed, size);
         public byte* Draw(IntPtr embed, uint* size) => drawFn(embed, size);
-        public byte Command(IntPtr embed, uint type, uint index, uint generation, void* value, uint size) =>
-            commandFn(embed, type, index, generation, value, size);
+        public byte Command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size) =>
+            commandFn(embed, type, birth, lineage, value, size);
         public void Audio(IntPtr embed, float* samples, uint frames, uint rate, uint channels) =>
             audioFn(embed, samples, frames, rate, channels);
         public void Microphone(IntPtr embed, float* samples, uint frames, uint rate, uint channels) =>

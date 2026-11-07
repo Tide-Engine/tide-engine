@@ -1,0 +1,62 @@
+{
+  "checks": {
+    "native_full": {
+      "passed": 2911,
+      "failed": 0,
+      "seconds": 173.18,
+      "full_log": "build/forest-batch/validation/test-native-final.log",
+      "sha256": "9368a4bb7c9cc17ec7dd7fcc6cd9af762de27c70b0709276133e9a563a0aa326"
+    },
+    "web_full": {
+      "passed": 2797,
+      "failed": 0,
+      "seconds": 361.81,
+      "full_log": "build/forest-batch/validation/test-web-final.log",
+      "sha256": "34dda8a1db8dafd0b20c9b5bb38dff5a34b34f42e74d479c00a72555267fb243"
+    },
+    "native_guard": {
+      "passed": 3,
+      "failed": 0,
+      "seconds": 0.18,
+      "full_log": "build/forest-batch/validation/test-native-guard.log",
+      "sha256": "6eb0f73f7c0dad5478caaeeb0b6805d8d716339c82f9d57c40627de3f3b64adf"
+    },
+    "web_guard": {
+      "passed": 3,
+      "failed": 0,
+      "seconds": 0.22,
+      "full_log": "build/forest-batch/validation/test-web-guard.log",
+      "sha256": "9361b0758d44f4e076b4041a806ca77a19094e42291a6f9acf26da6094bbb865"
+    }
+  },
+  "scope": "Full native Windows ASan and web-release suites, followed by focused native/web validation of the final narrow text-measure host-callback exclusion and all sixteen fallback scenarios. Final release benchmark rebuilt and frozen after that exclusion.",
+  "unavailable": [
+    "Other native operating systems",
+    "Mobile hardware",
+    "Unity player execution",
+    "Hardware-web performance"
+  ],
+  "manual_ci_dispatched": false,
+  "build_logs": {
+    "build-native-final.log": {
+      "path": "build/forest-batch/validation/build-native-final.log",
+      "sha256": "25d6a1526041ac1072bc34cc6093c1359a33d4b2dc0e4aee1f487c553c02727f"
+    },
+    "build-web-final.log": {
+      "path": "build/forest-batch/validation/build-web-final.log",
+      "sha256": "d75f2b2e7ee593cc48ff669331db11e655fd5f45b0262fe4496829afd0c8dd6d"
+    },
+    "build-native-guard.log": {
+      "path": "build/forest-batch/validation/build-native-guard.log",
+      "sha256": "ae3e5d01fc36d19c46c1c8e85060c2028861958a285cd384000d4a4567ad765d"
+    },
+    "build-web-guard.log": {
+      "path": "build/forest-batch/validation/build-web-guard.log",
+      "sha256": "c57834ba4d07c616579c4a43665f7b3c6f5e7b4d7791a93088b7e2135d94f750"
+    },
+    "build-release-measure-guard.log": {
+      "path": "build/forest-batch/validation/build-release-measure-guard.log",
+      "sha256": "b3ae65932ddfed66856f9378efba698d33298436de11639fc8409d910a2498a6"
+    }
+  }
+}

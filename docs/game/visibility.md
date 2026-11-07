@@ -6,6 +6,8 @@ description: "Control Tide client state with scene, entity and whole-component v
 
 Visibility decides which match scenes, entities and components a player's machine receives. The server still runs the full match. A client predicts with the state it is allowed to have, and authoritative corrections supply consequences that its partial simulation could not reproduce.
 
+The server's own machine is the exception: its player sees the whole match, as the server does, so that machine runs each tick once. Its views and local handlers see hidden entities and components too, and hear every event the match sends. Visibility keeps state from the other machines.
+
 The API names below are provisional. Visibility applies to entities and whole components. To hide a card's face while keeping its back public, put the face in a separate component; individual fields do not have visibility rules.
 
 ## Share an audience
@@ -105,6 +107,8 @@ Commands execute only on the authoritative server in this path; clients receive 
 
 Match task continuations and opaque `Resident` state stay on the authoritative server in a visibility-enabled match. They are not copied into projected clients. Publish the state needed for presentation and prediction in ordinary permitted components. Public match singletons remain public, so keep per-entity secrets in components or private scenes.
 
-The current physics packages also keep information about their whole world in public `Physics` fields. Box2D's `Physics.image` is a full native snapshot byte list. Box3D's `Physics.stamp` is a hash derived from native world operations. Both packages keep public collider and rewind-history lists. Hiding a `Body`, collider or entity does not restrict those values. Concealing players with these packages needs visibility-aware package integration first; omitting opaque `Resident` state does not hide the other public fields.
+The physics packages keep their worlds in `[Native]` fields, the library's own state: Box2D's `Physics.image`, Box3D's `Resident`, both packages' handles, collider and rewind-history lists. A client doesn't receive those. Its world arrives with them at zero, as on a shard an entity comes to, and the package makes its physics world again from the bodies the client has. A hidden body is absent from that world, so what it does to visible ones comes with the server's corrections. Rewind history starts again on a client after each correction, so a client's own `Physics.Rewind` can fail where the server's succeeds: hits are decided on the server.
+
+On a client, `Visibility.CreateGroup` can't number a group: the server does. What a client's own tick puts in a group without the client's player stays out of its projection, as it's out of the server's projection for it; what it puts in one with its player is visible to it. `Visibility.Set` does nothing there, so something coming into or going out of sight always arrives as a correction.
 
 See [Scenes](./scenes.md#private-scenes) for scene ownership and audiences and [Networking](../multiplayer/networking.md#who-sees-what) for verification and corrections.

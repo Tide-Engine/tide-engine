@@ -412,6 +412,11 @@ static void fill(tide_stats *s, const tide_stats_values *v)
         // Up and down on one line, an arrow each, drawn by the drawer: the
         // font's are too thin to tell from a 1 at this size
         line(s, "network", "%.1f  %.1f KB/s", v->up / 1024.0, v->down / 1024.0)->arrows = true;
+        if (v->remote) {
+            line(s, "resyncs", "%u", (unsigned)v->resyncs);
+            line(s, "repairs", "%u", (unsigned)v->repairs);
+            line(s, "world data", "%.2f MB", (double)v->world_bytes / (1024.0 * 1024.0));
+        }
         line(s, "entities", "%u", (unsigned)v->entities);
         group(s, from);
     }

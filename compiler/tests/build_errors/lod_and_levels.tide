@@ -1,0 +1,11 @@
+// expect: 'quad' has [LOD], which makes its levels, and its code made levels too
+struct Corner { float3 position; }
+asset Mesh<Corner> source = "../e2e/assets/meshes/quad.glb";
+build Mesh<Corner> Leveled(Mesh<Corner> from)
+{
+    mut List<MeshLevel> levels = [];
+    levels.Add(MeshLevel { indices = [0, 1, 2], error = 1 });
+    return Mesh(from.vertices, from.indices, levels);
+}
+[LOD] asset Mesh<Corner> quad = Leveled(source);
+scene Main { }

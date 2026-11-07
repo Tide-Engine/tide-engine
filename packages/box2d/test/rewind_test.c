@@ -17,7 +17,7 @@ static tide_entity tagged(tide_world *w, bool (*has)(const tide_world *, tide_en
     return (tide_entity){0};
 }
 static bool near(const float a, const float b) { return fabsf(a - b) < 0.0001f; }
-static bool same(const tide_entity a, const tide_entity b) { return a.index == b.index && a.generation == b.generation; }
+static bool same(const tide_entity a, const tide_entity b) { return tide_entity_equal(a, b); }
 static const Observed_local *probe(tide_world *w, tide_local *local, const ViewTime time)
 {
     w->Request.time = time;

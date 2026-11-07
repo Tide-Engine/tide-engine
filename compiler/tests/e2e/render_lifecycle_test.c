@@ -5,11 +5,19 @@ static tide_world world;
 static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
+static int metadata_reads;
+static tide_target_content content(tide_target_size size)
+{
+    (void)size;
+    metadata_reads++;
+    return (tide_target_content){.device = 5, .pixels = {32, 24}};
+}
 
 TIDE_TEST(render_lifecycle_copies_resize_and_local_handler_disposal)
 {
     tide_world_init(&world, 1.0f);
     tide_local_init(&local);
+    draw.target_content = content;
     gui.width = 1280.0f, gui.height = 720.0f; // Screen.width and Screen.height
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 
@@ -22,6 +30,15 @@ TIDE_TEST(render_lifecycle_copies_resize_and_local_handler_disposal)
     TIDE_CHECK(resolved.size.width == 32.0f && resolved.size.height == 24.0f && resolved.size.scale == 0.0f);
     TIDE_CHECK(tide_render_target_version(original.id) == 2);
     TIDE_CHECK(local.Buffers.frames == 1);
+    TIDE_CHECK(local.Buffers.madeRevision > 0);
+    TIDE_CHECK(local.Buffers.orderedRevision == local.Buffers.madeRevision);
+    TIDE_CHECK(local.Buffers.grownRevision > local.Buffers.madeRevision);
+    TIDE_CHECK(local.Buffers.drawnRevision == local.Buffers.grownRevision);
+    TIDE_CHECK(local.Buffers.aliasRevision == local.Buffers.grownRevision);
+    TIDE_CHECK(metadata_reads > 0);
+    const int reads_in_frame = metadata_reads;
+    TIDE_CHECK(tide_render_target_content_revision(original) == local.Buffers.grownRevision);
+    TIDE_CHECK(metadata_reads == reads_in_frame); // Frame exit restores the previous metadata scope.
     // A size in logical pixels, at the display's scale or with pixels per unit of its own
     const tide_render_target exact = tide_render_target_resolve(local.Buffers.exact);
     TIDE_CHECK(exact.size.width == 320.0f && exact.size.height == 180.0f && exact.size.scale == 1.0f);

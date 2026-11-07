@@ -71,7 +71,7 @@ TIDE_TEST(local_views_change_local_state)
     TIDE_REQUIRE(tide_has_tide_local_component_Spark(&local, local.Frames.newest));
     TIDE_CHECK(newest.position.x == 3.0f && newest.position.y == 4.0f);
     TIDE_CHECK(newest.lit);
-    TIDE_CHECK(tide_entity_equal(local.Frames.selected, (tide_entity){2, 1}));
+    TIDE_CHECK(tide_entity_equal(local.Frames.selected, tide_entity_in_slot(&world.entities, 2)));
 }
 
 TIDE_TEST(local_entities_destroy_themselves)

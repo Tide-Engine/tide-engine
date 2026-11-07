@@ -1,0 +1,90 @@
+using Render3D;
+
+scene Main;
+singleton ImpostorSimulation { int marker = 239; }
+local singleton ImpostorResults
+{
+    ImpostorBasis[24] basis;
+    float2[24] uv;
+    ImpostorBlend[4] blend;
+    float3 inverse;
+    float2 parallax;
+    float2 disabledParallax;
+    float2 clamp;
+    float3 albedo;
+    float3 normal;
+    float4 mask;
+    float4 coverage;
+    MeshVertex original;
+    MeshVertex disabled;
+    MeshVertex billboard;
+    float3 world;
+    float3 repacked;
+    float3 decodedPoint;
+    float3 decodedEye;
+    float3[16] recovered;
+    float2 offsetParallax;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view EvaluateImpostor(mut ImpostorResults results, mut Renderer renderer)
+{
+    renderer.enabled = false;
+    mut ImpostorSettings settings = ImpostorSettings {
+        enabled = true, center = float3(0, 6, 0), span = 16, depth = 8, parallax = 1
+    };
+    for (var frame = 0; frame < 24; frame++)
+    {
+        results.basis[frame] = ImpostorFrameBasis(frame);
+        results.uv[frame] = ImpostorUV(frame, float3(0), settings);
+    }
+    for (var frame = 0; frame < 16; frame++)
+    {
+        float3 source = float3(1.2, -2.3, 0.7);
+        int next = (frame / 8) * 8 + (frame + 1) % 8;
+        float2 first = ProjectImpostorUV(frame, source, settings);
+        float2 second = ProjectImpostorUV(next, source, settings);
+        results.recovered[frame] = RecoverImpostorPoint(first, second, frame, settings);
+    }
+    results.blend[0] = PrepareImpostor(float3(0), float3(0, 0, 10), float2(0, 0));
+    results.blend[1] = PrepareImpostor(float3(0), float3(0, 10, 0), float2(0, 1));
+    results.blend[2] = PrepareImpostor(float3(0), float3(0, -10, 10), float2(-0.000001, -1));
+    results.blend[3] = PrepareImpostor(float3(0), float3(0.353553391, 0.382683432, 0.853553391) * 10,
+        float2(0.0625, 0.25));
+    float4x4 shear = float4x4(float4(2, 0, 0, 0), float4(1, 3, 0, 0), float4(0.5, 0.2, -4, 0), float4(4, -2, 5, 1));
+    results.inverse = ImpostorLocalPoint(shear, float3(9.5, 4.6, -7));
+    ImpostorBlend oblique = ImpostorBlend { point = float3(0), view = float3(0.6, 0, 0.8) };
+    settings.span = 10;
+    settings.depth = 4;
+    results.parallax = ImpostorParallaxUV(0, oblique, 0.75, settings);
+    results.offsetParallax = OffsetImpostorUV(ProjectImpostorUV(0, oblique.point, settings), 0, oblique, 0.75, settings);
+    settings.parallax = 0;
+    results.disabledParallax = ImpostorParallaxUV(0, oblique, 0.75, settings);
+    results.clamp = ClampImpostorUV(float2(-1, 1), 0, 16);
+    float4 weights = float4(0.25, 0.25, 0, 0);
+    results.albedo = ImpostorAlbedo(Color(1, 0, 0), Color(0, 1, 0), Color(0, 0, 1), Color.white, weights);
+    results.normal = ImpostorNormal(Color(0.5, 0.5, 1, 0.1), Color(1, 0.5, 0.5, 0.9), Color.black, Color.white, weights);
+    results.mask = ImpostorMask(Color(0.2, 0.6, 0, 0), Color(0.8, 1, 0, 0.8), Color.black, Color.white, weights);
+    results.coverage = ImpostorCoverage(results.blend[3], Color(1, 1, 1, 0), Color(1, 1, 1, 1),
+        Color(1, 1, 1, 0.5), Color(1, 1, 1, 0.25));
+    MeshVertex original = MeshVertex { position = float3(2, 9, 0), normal = float3(0, 0, 1),
+        uv = float2(0.25, 0.75), color = Color(0.2, 0.3, 0.4, 0.5), tangent = float4(1, 0, 0, -1) };
+    results.original = original;
+    mut MeshVertex disabled = original;
+    VertexInput input = VertexInput { eye = float3(20, 18, 0), localToWorld = float4x4.Scale(float3(2)) };
+    ApplyImpostor(input, disabled, ImpostorSettings {});
+    results.disabled = disabled;
+    settings = ImpostorSettings { enabled = true, center = float3(0, 6, 0), span = 16, depth = 8 };
+    mut MeshVertex billboard = original;
+    ApplyImpostor(input, billboard, settings);
+    results.billboard = billboard;
+    results.world = Math.Mul(input.localToWorld, float4(billboard.position, 1)).xyz;
+    float3 localEye = float3(billboard.normal.z, billboard.color.b, billboard.color.a);
+    results.decodedEye = localEye;
+    results.decodedPoint = PrepareProjectedImpostor(billboard.uv, billboard.normal.xy, localEye,
+        float2(billboard.color.r, billboard.color.g), settings).point;
+    billboard.position += float3(0.3, 0, -0.2);
+    CaptureImpostor(input, billboard, settings);
+    results.repacked = PrepareProjectedImpostor(billboard.uv, billboard.normal.xy, localEye,
+        float2(billboard.color.r, billboard.color.g), settings).point;
+}

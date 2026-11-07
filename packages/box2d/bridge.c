@@ -135,6 +135,7 @@ typedef struct physics {
     bool moved;
     uint8_t unused2[3];
     int32_t dropped;
+    uint8_t unused3[4];
     tide_list image;
     tide_list gone;
     tide_list shed;
@@ -152,7 +153,7 @@ typedef struct physics {
     tide_map fixtures;
     tide_list topology;
     bool topology_changed;
-    uint8_t topology_padding[3];
+    uint8_t topology_padding[7];
     int64_t shard_moves; // Shards.moves as the last tick had it
     tide_map copies;     // Other shards' bodies near this one's border, by entity...
     tide_map copy_of;    // ...and whose each copy is
@@ -161,7 +162,7 @@ typedef struct physics {
 
 _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 336 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 256,
+                   && sizeof(physics) == 440 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 336,
                "box2d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 8
@@ -171,8 +172,8 @@ _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) ==
                    && offsetof(physics, bodies) == 36 && offsetof(physics, shapes) == 40
                    && offsetof(physics, stamp) == 48 && offsetof(physics, size) == 56
                    && offsetof(physics, moved) == 60 && offsetof(physics, dropped) == 64
-                   && offsetof(physics, image) == 68 && offsetof(physics, gone) == 72 && offsetof(physics, shed) == 76
-                   && offsetof(physics, owners) == 80 && offsetof(physics, parts) == 104 && offsetof(physics, sensors) == 128,
+                   && offsetof(physics, image) == 72 && offsetof(physics, gone) == 80 && offsetof(physics, shed) == 88
+                   && offsetof(physics, owners) == 96 && offsetof(physics, parts) == 128 && offsetof(physics, sensors) == 160,
                "Physics's fields aren't where box2d.tide lays them out any more");
 
 // A body's four bools are side by side in its component: one field of four
@@ -1116,6 +1117,38 @@ static void tune(const world *w, const float stiffness, const float damping, con
     }
 }
 
+// The bodies far from this client's player in a predicted tick (`with Far`,
+// predictionRange), which HoldFar gives the step to hold where they are
+// (b2World_HoldBodies): each island or sleeping set of them alone doesn't move,
+// and a near body meets it as a static one. Only predicted worlds are tagged,
+// so a server's tick and a confirmed one give none. Each run of predicted ticks
+// starts from a confirmed world, which holds nothing, and holds them once: the
+// ticks after it find the world holding, and give none either.
+static b2BodyId *far_bodies;
+static int32_t far_count, far_room;
+static int32_t holds, held; // For tests: holds made, and awake bodies they put to sleep
+
+int32_t b2t_holds(void) { return holds; }
+int32_t b2t_held(void) { return held; }
+
+void b2t_hold_far(tide_rows *rows, physics *p)
+{
+    (void)p;
+    if (!active || !active->made || b2World_IsHolding(active->id)) return;
+    const uint32_t count = tide_rows_count(rows);
+    const int32_t *ids = tide_rows_ints(rows, 0, offsetof(body, id));
+    const int32_t *ids_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4);
+    for (uint32_t i = 0; i < count; i++) {
+        if (ids[i] == 0) continue; // Not made yet
+        if (far_count == far_room) {
+            const int32_t room = far_room ? far_room * 2 : 256;
+            far_bodies = tide_realloc(far_bodies, (size_t)far_room * sizeof *far_bodies, (size_t)room * sizeof *far_bodies);
+            far_room = room;
+        }
+        far_bodies[far_count++] = body_of(active, (int64_t)((uint64_t)(uint32_t)ids[i] | (uint64_t)(uint32_t)ids_high[i] << 32));
+    }
+}
+
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity, const float stiffness, const float damping,
                  const float push_speed, const float bounce_speed, const float hit_speed, const bool sleeping)
 {
@@ -1127,6 +1160,8 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
     const bool turned = pulled.x != gravity.x || pulled.y != gravity.y;
     // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
     // step would leave it as it is. The stamp stays, which says so.
+    const int32_t far = far_count;
+    far_count = 0;
     if (!turned && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b2World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
@@ -1143,6 +1178,15 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
         b2World_EnableSleeping(w->id, sleeping);
     }
     slept = put_to_sleep(w);
+    // ...and what's far from this client's player is held where it is, in its predicted ticks: a world
+    // that holds bodies is another state than the one that doesn't, which the stamp says
+    if (far > 0 && !b2World_IsHolding(w->id)) {
+        note('f', far_bodies, (size_t)far * sizeof *far_bodies);
+        const int awake = b2World_GetAwakeBodyCount(w->id);
+        b2World_HoldBodies(w->id, far_bodies, far);
+        holds++;
+        held += awake - b2World_GetAwakeBodyCount(w->id);
+    }
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
@@ -1962,7 +2006,7 @@ typedef struct collider {
     int32_t group;
     uint8_t filter_padding[4];
 } collider;
-_Static_assert(sizeof(collider) == 152 && offsetof(physics, pending) == 192, "historical scene ABI changed");
+_Static_assert(sizeof(collider) == 168 && offsetof(physics, pending) == 240, "historical scene ABI changed");
 
 static b2Vec2 scene_vec(const tide_float2 p) { return (b2Vec2){p.x, p.y}; }
 static tide_float2 scene_float(const b2Vec2 p) { return (tide_float2){p.x, p.y}; }
@@ -2072,8 +2116,8 @@ void b2t_capture_history(tide_rows *rows, physics *p)
 
 // Geometry was captured by the physics step; identity/Snap metadata is final
 // only after the tick's queued changes have applied.
-typedef struct history_frame { int32_t tick; tide_list colliders; } history_frame;
-_Static_assert(sizeof(history_frame) == 8, "history frame ABI changed");
+typedef struct history_frame { int32_t tick; uint8_t padding[4]; tide_list colliders; } history_frame;
+_Static_assert(sizeof(history_frame) == 16, "history frame ABI changed");
 static void seal_history(void *context, const tide_entities *entities)
 {
     physics *p = context;

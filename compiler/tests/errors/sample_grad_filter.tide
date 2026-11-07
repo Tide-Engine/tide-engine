@@ -1,0 +1,7 @@
+// expect: the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear'
+scene Main { }
+frag Shade(Vertex vertex, out Color color, Texture source)
+{
+    var filter = Filter.Trilinear;
+    color = source.SampleGrad(vertex.uv, float2(0.1), float2(0.1), filter);
+}

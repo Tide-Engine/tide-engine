@@ -1,0 +1,7 @@
+{
+  "reference": { "file": "target.gltf", "clip": "Move", "seconds": 0 },
+  "bones": { "RightHand": "RightHand" },
+  "referenceEdits": {
+    "Head": { "positionOffset": [0, 0.1, 0], "rotationOffsetDegrees": [0, 0, 0], "scaleMultiplier": 1 }
+  }
+}

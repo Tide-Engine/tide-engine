@@ -1,0 +1,20 @@
+// expect: Add takes the element it adds: 'list.Add(value)'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Keep(Meadow meadow)
+{
+    meadow.blades.Add();
+}
+view Show(Meadow meadow) { GPU.Run(Keep, 4); }

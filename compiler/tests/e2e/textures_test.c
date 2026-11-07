@@ -107,24 +107,32 @@ static bool reads(const int i, const tide_draw_kind kind, const way *ways, const
     const tide_draw_command *c = draws[i].c;
     if (c->kind != kind) return false;
     const tide_draw_run *r = &draw.runs[c->shaded.run];
-    if (!r->shader || r->shader->texture_count != count || count > 8) return false;
+    if (!r->shader || count > 8) return false;
+    // Each way a texture is read: the texture, once, and one of the samplers it's read through
     bool used[8] = {false};
-    for (uint32_t t = 0; t < count; t++) {
-        bool found = false;
-        for (uint32_t k = 0; k < count && !found; k++) {
-            if (used[k] || r->textures[t] != ways[k].texture || tide_sampling_blended(r->sampling, t) != ways[k].blended
-                || tide_sampling_wrap(r->sampling, t) != ways[k].wrap) {
-                continue;
+    uint32_t pairs = 0;
+    for (uint32_t t = 0; t < r->shader->texture_count; t++) {
+        const uint32_t through = tide_shader_texture_samplers(r->shader, t);
+        for (uint32_t s = 0; s < TIDE_SHADER_TEXTURES; s++) {
+            if (!(through >> s & 1u)) continue;
+            pairs++;
+            bool found = false;
+            for (uint32_t k = 0; k < count && !found; k++) {
+                if (used[k] || r->textures[t] != ways[k].texture || tide_sampling_blended(r->sampling, s) != ways[k].blended
+                    || tide_sampling_wrap(r->sampling, s) != ways[k].wrap) {
+                    continue;
+                }
+                used[k] = found = true;
             }
-            used[k] = found = true;
-        }
-        if (!found) {
-            printf("draw %d: texture %u is the list's %u, %s, wrap %d\n", i, (unsigned)t, (unsigned)r->textures[t],
-                   tide_sampling_blended(r->sampling, t) ? "blended" : "nearest", (int)tide_sampling_wrap(r->sampling, t));
-            return false;
+            if (!found) {
+                printf("draw %d: texture %u is the list's %u, through sampler %u, %s, wrap %d\n", i, (unsigned)t,
+                       (unsigned)r->textures[t], (unsigned)s, tide_sampling_blended(r->sampling, s) ? "blended" : "nearest",
+                       (int)tide_sampling_wrap(r->sampling, s));
+                return false;
+            }
         }
     }
-    return true;
+    return pairs == count;
 }
 
 // A grid where a Texture goes is the texture it is: drawn, kept, passed and returned.
@@ -256,15 +264,22 @@ TIDE_TEST(textures_kept_past_their_grid_read_nothing_outside_the_heap)
 {
     start();
     const tide_texture_ref kept = local.Art.kept;
-    const tide_heap *heap = (const tide_heap *)(uintptr_t)tide_heap_read((uint32_t)kept.image.version >> 30);
+    tide_grid kept_grid;
+    tide_grid_shape kept_shape;
+    TIDE_REQUIRE(tide_texture_grid(kept, &kept_grid, &kept_shape));
+    const uint32_t where = tide_handle_where(kept_grid.at);
+    const tide_heap *heap = (const tide_heap *)(uintptr_t)tide_heap_read(where);
     TIDE_REQUIRE(heap && heap->used > 0);
     static tide_draw_list other;
-    // Every place in the heap, and past it, as a grid of colors and as one of floats
+    // Every place in the heap, and past it, as a grid of colors and as one of floats: the handle's low 32 bits
+    // in the version, its high 32 in the width
     uint32_t drawn_with = 0;
-    for (uint32_t at = 0; at < heap->used + (4u << TIDE_HEAP_PAGE_SHIFT); at += 4u) {
+    for (uint64_t at = 0; at < heap->used + (4u << TIDE_HEAP_PAGE_SHIFT); at += 4u) {
         for (uint32_t cells = 1; cells <= 2; cells++) {
             tide_texture_ref made = kept;
-            made.image.version = (made.image.version & ~UINT64_C(0xFF3FFFFFFF)) | at | (uint64_t)cells << 32;
+            const tide_handle forged = tide_handle_of(where, at);
+            made.image.version = (made.image.version & ~UINT64_C(0xFFFFFFFFFF)) | (uint32_t)forged | (uint64_t)cells << 32;
+            made.image.width = (int32_t)(uint32_t)(forged >> 32);
             tide_draw_reset(&other);
             drawn_with += tide_draw_texture_source(&other, made) != 0;
         }

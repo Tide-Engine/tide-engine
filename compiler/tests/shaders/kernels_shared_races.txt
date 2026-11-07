@@ -1,0 +1,158 @@
+// compute Races: WGSL
+struct tide_uniforms {
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(34) var<storage, read_write> tide_ints: array<u32>;
+@group(0) @binding(35) var<storage, read> tide_run: array<u32>;
+var<private> tide_inv_index: i32;
+var<private> tide_inv_at: vec3i;
+var<private> tide_inv_local: vec3i;
+var<private> tide_inv_group: vec3i;
+var<private> tide_inv_count: vec3i;
+var<workgroup> tide_zero: u32;
+var<workgroup> t_last: i32;
+var<workgroup> t_slots: array<i32, 64>;
+var<workgroup> t_pair: tt_Pair;
+struct tide_atomics_t_counted {
+    tide_cells: array<atomic<i32>, 4>,
+    tide_plain: u32,
+}
+var<workgroup> t_counted: tide_atomics_t_counted;
+struct tt_Pair {
+    m_a: i32,
+    m_b: f32,
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tide_el0(tide_a: array<i32, 64>, tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= 64) {
+        return i32();
+    }
+    var tide_all = tide_a;
+    return tide_all[tide_i];
+}
+
+fn tide_atomic_t_counted_AtomicAdd(tide_i: i32, tide_v: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= 4) {
+        return 0;
+    }
+    return atomicAdd(&t_counted.tide_cells[tide_i], tide_v);
+}
+
+fn tide_base0() -> u32 {
+    return u32(tide_block.tide_v0.z);
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_ints[tide_base0() + tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_get0(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_put0(tide_i: i32, tide_v: i32) {
+    if (tide_i < 0 || tide_i >= tide_capacity0()) {
+        return;
+    }
+    let tide_b = tide_base0() + 4u + u32(tide_i) * 1u;
+    tide_ints[tide_b + 0u] = bitcast<u32>(tide_v);
+}
+
+fn tide_load_t_counted(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= 4) {
+        return 0;
+    }
+    return atomicLoad(&t_counted.tide_cells[tide_i]);
+}
+
+fn ts_Races() {
+    if (tide_zero == 0u) {
+        t_last = tide_inv_index;
+    }
+    if (tide_zero == 0u) {
+        if (((tide_block.tide_v0.x * 2) >= 0 && (tide_block.tide_v0.x * 2) < 64)) {
+            t_slots[(tide_block.tide_v0.x * 2)] = tide_inv_local.x;
+        }
+    }
+    if (tide_zero == 0u) {
+        if (((tide_inv_group.x % tide_i(64)) >= 0 && (tide_inv_group.x % tide_i(64)) < 64)) {
+            t_slots[(tide_inv_group.x % tide_i(64))] = tide_inv_index;
+        }
+    }
+    if (tide_zero == 0u) {
+        t_pair.m_a = tide_inv_local.x;
+    }
+    if ((tide_block.tide_v0.y != 0)) {
+        if (tide_zero == 0u) {
+            t_slots[1] = tide_inv_index;
+        }
+    }
+    if (tide_zero == 0u) {
+        t_slots[3] = (tide_el0(t_slots, 3) + 1);
+    }
+    var t_at: i32 = 0;
+    t_at = (tide_block.tide_v0.x + 4);
+    if (tide_zero == 0u) {
+        if ((t_at >= 0 && t_at < 64)) {
+            t_slots[t_at] = tide_inv_index;
+        }
+    }
+    var t_fixed: i32 = (tide_block.tide_v0.x + 1);
+    if (tide_zero == 0u) {
+        t_slots[2] = t_fixed;
+    }
+    if (tide_zero == 0u) {
+        if ((tide_inv_local.x >= 0 && tide_inv_local.x < 64)) {
+            t_slots[tide_inv_local.x] = tide_inv_index;
+        }
+    }
+    for (var t_i: i32 = 0; (t_i < 2); t_i = (t_i + 1)) {
+        if (tide_zero == 0u) {
+            if ((t_i >= 0 && t_i < 64)) {
+                t_slots[t_i] = tide_inv_index;
+            }
+        }
+    }
+    if ((tide_inv_local.x == 0)) {
+        if (tide_zero == 0u) {
+            t_slots[5] = tide_inv_index;
+        }
+    }
+    _ = tide_atomic_t_counted_AtomicAdd(0, 1);
+    workgroupBarrier();
+    storageBarrier();
+    tide_put0(tide_inv_index, (((t_last + tide_el0(t_slots, tide_inv_local.x)) + t_pair.m_a) + tide_load_t_counted(0)));
+    if ((tide_inv_index > 3)) {
+        return;
+    }
+    if (tide_zero == 0u) {
+        t_slots[6] = tide_inv_index;
+    }
+}
+
+@compute @workgroup_size(64, 1, 1) fn compute(@builtin(global_invocation_id) tide_gid: vec3u, @builtin(local_invocation_id) tide_lid: vec3u, @builtin(local_invocation_index) tide_lix: u32, @builtin(workgroup_id) tide_wid: vec3u, @builtin(num_workgroups) tide_groups: vec3u) {
+    let tide_size = vec3u(tide_run[4], tide_run[5], tide_run[6]);
+    tide_inv_at = vec3i(tide_gid);
+    tide_inv_local = vec3i(tide_lid);
+    tide_inv_group = vec3i(tide_wid);
+    tide_inv_count = vec3i(tide_size);
+    tide_inv_index = i32(tide_gid.x + tide_size.x * (tide_gid.y + tide_size.y * tide_gid.z));
+    ts_Races();
+}
+

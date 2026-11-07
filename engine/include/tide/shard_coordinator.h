@@ -9,7 +9,7 @@
 // from each shard's agent's reports (tide/shard_agent.h), it decides what each
 // shard is told (its instructions) and what its host does (actions: start a
 // shard, stop one, keep a checkpoint). It carries what shards send each other
-// to where it's for, keeps where every entity is, gives out entity indices,
+// to where it's for, keeps each advertised logical entity's owner,
 // sends each region's ghosts to its neighbours, follows the players, splits a
 // region whose shard holds too much and merges quiet neighbours, and makes
 // checkpoints. It touches no world: what it knows of the shards is what they
@@ -94,7 +94,7 @@ void tide_shard_coordinator_kept(tide_shard_coordinator *c);
 // A shard started again, elsewhere, from the last checkpoint and its journal
 // (its host failed): what it was handed and hadn't applied went with it, so
 // every shard sends again what wasn't acknowledged (receivers drop what they
-// had by number), it's told the regions, its ranges and the players again, its
+// had by number), it's told the regions and the players again, its
 // neighbours send it their ghosts whole, and its first report says what it
 // owns and holds.
 void tide_shard_coordinator_restarted(tide_shard_coordinator *c, uint32_t shard);

@@ -1,0 +1,649 @@
+// Kernels written in Tide (tests/kernels.c): values worked out on the GPU
+// against the same functions on the CPU, ordered Add's order and count at
+// several group sizes, atomics, shared memory with barriers, a run over a GPU
+// list's count chained after the run that filled it, a list sent and changed
+// and read back, an indirect draw of a list a kernel filled, meshes whose
+// vertices and indices kernels made, Draw.Transform around indirect draws,
+// a run a draw before it reads what it writes, GPU lists passed on alone to
+// functions that read, write, add to and use atomics on them, a kernel adding
+// to two lists, and a 3D indirect draw whose instances' own transforms mirror
+// its mesh and don't, culled as the CPU culls a list's. A kernel naming 20 GPU
+// lists (of ints and of the rest, written, added to in two scans, and atomics)
+// and a frag reading 10 of them: every list a range of one of the renderer's
+// two pools, found by its uniforms' table.
+
+struct Item
+{
+    float a;
+    int b;
+    float2 p;
+    bool on;
+}
+
+struct Spot
+{
+    float2 at;
+    Color color;
+}
+
+struct Corner
+{
+    float2 position;
+}
+
+// A corner of a mesh a kernel makes
+struct Dot
+{
+    float2 position;
+    Color color;
+}
+
+struct Corner3
+{
+    float3 position;
+}
+
+struct Box
+{
+    float4x4 transform;
+    Color color;
+}
+
+struct Shift
+{
+    float2 by;
+}
+
+struct Wave
+{
+    float speed;
+    int keepEvery;
+}
+
+local singleton Lists
+{
+    GPUList<float> shapes;
+    GPUList<int> kept;
+    GPUList<int> keptWide;
+    GPUList<int> doubled;
+    GPUList<int> tally;
+    GPUList<int> sums;
+    GPUList<int> groups;
+    GPUList<Item> items;
+    GPUList<Spot> spots;
+    GPUList<Dot> dots;
+    GPUList<int> dotIndices;
+    GPUList<Box> boxes;
+    GPUList<Box> turned;
+    GPUList<float> shades;
+    GPUList<int> helped;
+    GPUList<int> helpCount;
+    GPUList<int> evens;
+    GPUList<int> fives;
+    List<Item> sent;
+    float scale;
+    int frame;
+    bool read;
+}
+
+// Twenty GPU lists one kernel names: three it reads, six it writes by index, four it uses atomics on, six it adds to
+// (more than a scan's four lanes) and one of structs it writes
+local singleton Wide
+{
+    GPUList<float> in0;
+    GPUList<float> in1;
+    GPUList<int> inInts;
+    GPUList<float> f0;
+    GPUList<float> f1;
+    GPUList<float> f2;
+    GPUList<float> f3;
+    GPUList<float> f4;
+    GPUList<float> f5;
+    GPUList<int> c0;
+    GPUList<int> c1;
+    GPUList<int> c2;
+    GPUList<int> c3;
+    GPUList<int> a0;
+    GPUList<int> a1;
+    GPUList<int> a2;
+    GPUList<int> a3;
+    GPUList<int> a4;
+    GPUList<float2> pairs;
+    GPUList<Item> items;
+}
+
+// Lists side by side in each pool, the middle ones full: what a kernel does past their ends must leave every other
+// list's words as they are, and read nothing of them
+local singleton Fence
+{
+    GPUList<int> before;
+    GPUList<int> mid;
+    GPUList<int> after;
+    GPUList<Item> itemsBefore;
+    GPUList<Item> items;
+    GPUList<Item> itemsAfter;
+    GPUList<int> seen;
+}
+
+local singleton FenceResults
+{
+    List<int> before;
+    List<int> mid;
+    List<int> after;
+    List<Item> itemsBefore;
+    List<Item> items;
+    List<Item> itemsAfter;
+    List<int> seen;
+    int[6] counts; // Each list's count as its header has it, which reads of its elements are held to
+}
+
+local singleton WideResults
+{
+    List<float> f0;
+    List<float> f5;
+    List<int> c0;
+    List<int> c1;
+    List<int> c2;
+    List<int> c3;
+    List<int> a0;
+    List<int> a1;
+    List<int> a2;
+    List<int> a3;
+    List<int> a4;
+    List<float2> pairs;
+    List<Item> items;
+}
+
+local singleton Results
+{
+    List<float> shapes;
+    List<int> kept;
+    List<int> keptWide;
+    List<int> doubled;
+    List<int> tally;
+    List<int> sums;
+    List<int> groups;
+    List<Item> items;
+    List<int> helped;
+    List<int> helpCount;
+    List<int> evens;
+    List<int> fives;
+    List<float> expected; // Curve on the CPU, for what Shapes works out on the GPU
+    int keptCount;
+    int reads;
+    bool failed;
+    long revision;    // The shapes list's contentRevision as it was made...
+    long revisionNow; // ...and as it is
+}
+
+// The same on the CPU and on the GPU
+float Curve(float x, float scale)
+{
+    return Math.Sin(x) * scale + Math.Sqrt(Math.Abs(x)) - x * x * 0.125;
+}
+
+bool Keeps(int i, int every)
+{
+    return i % every == 0 || i % 7 == 3;
+}
+
+[Group(64)]
+compute Shapes(Lists lists)
+{
+    lists.shapes[this.index] = Curve(float(this.index) * 0.37 - 5.0, lists.scale);
+}
+
+// Over a size of 2D, this.index along its rows: groups of one axis keep its order
+[Group(8)]
+compute KeepNarrow(Lists lists, Wave wave)
+{
+    if (Keeps(this.index, wave.keepEvery))
+        lists.kept.Add(this.index * 10);
+}
+
+[Group(256)]
+compute KeepWide(Lists lists, Wave wave)
+{
+    if (!Keeps(this.index, wave.keepEvery)) return;
+    lists.keptWide.Add(this.index * 10);
+}
+
+// Over the kept list's count on the GPU, which the run before it left
+[Group(16)]
+compute Double(Lists lists)
+{
+    lists.doubled.Add(lists.kept[this.index] * 2);
+}
+
+[Group(64)]
+compute Tally(Lists lists)
+{
+    lists.tally.AtomicAdd(this.index % 5, 1);
+    lists.tally.AtomicMax(5, this.index);
+    lists.tally.AtomicCompareExchange(6, 0, 7);
+}
+
+// Sums within each group of 64, through shared memory; and how many of a group were inside, by an atomic on it
+[Group(64)]
+compute Prefix(Lists lists)
+{
+    shared int[64] sums;
+    shared int[1] inside;
+    int i = this.local.x;
+    sums[i] = this.index < 100 ? this.index : 0;
+    if (this.index < 100) inside.AtomicAdd(0, 1);
+    GPU.Barrier();
+    for (var step = 1; step < 64; step *= 2)
+    {
+        mut int v = 0;
+        if (i >= step) v = sums[i - step];
+        GPU.Barrier();
+        sums[i] += v;
+        GPU.Barrier();
+    }
+    if (this.index < 100) lists.sums[this.index] = sums[i];
+    if (i == 0) lists.groups[this.group.x] = inside[0];
+}
+
+// Each element of a list the CPU sent, changed where it is
+[Group(32)]
+compute Bump(Lists lists)
+{
+    Item item = lists.items[this.index];
+    lists.items[this.index] = Item { a = item.a * 2.0, b = item.b + this.index, p = item.p.yx, on = !item.on };
+}
+
+[Group(4)]
+compute PlaceSpots(Lists lists)
+{
+    if (this.index % 2 == 1) return;
+    float x = float(this.index) * 10.0 - 20.0;
+    lists.spots.Add(Spot { at = float2(x, 0), color = Color(float(this.index) * 0.25, 1.0 - float(this.index) * 0.25, 0.5, 1) });
+}
+
+// Three squares' corners, written by index (the CPU says how many with SetCount): red, green and blue across
+[Group(4)]
+compute MakeDots(Lists lists)
+{
+    int square = this.index / 4;
+    int k = this.index % 4;
+    float2 corner = float2(k == 1 || k == 2 ? 3.0 : -3.0, k >= 2 ? 3.0 : -3.0);
+    Color color = square == 0 ? Color(1, 0, 0, 1) : square == 1 ? Color(0, 1, 0, 1) : Color(0, 0, 1, 1);
+    lists.dots[this.index] = Dot { position = float2(float(square) * 20.0 - 20.0, -24.0) + corner, color = color };
+}
+
+// The first and the last squares' triangles, added in order: the middle one's are left out, so the count is the GPU's
+[Group(6)]
+compute MakeIndices(Lists lists)
+{
+    int square = this.index / 6;
+    if (square == 1) return;
+    int k = this.index % 6;
+    int corner = k == 0 || k == 3 ? 0 : k == 1 ? 1 : k == 2 || k == 4 ? 2 : 3;
+    lists.dotIndices.Add(square * 4 + corner);
+}
+
+// A box placed far to the right, which Draw.Transform brings back
+[Group(1)]
+compute PlaceBoxes(Lists lists)
+{
+    lists.boxes.Add(Box { transform = float4x4.Translate(float3(96.5, 3.5, 10.0)), color = Color(1, 1, 0, 1) });
+}
+
+// Functions given GPU lists alone: each written for the list its call names
+void Store(GPUList<int> into, int at, int value)
+{
+    into[at] = value;
+}
+
+void CountOne(GPUList<int> counts)
+{
+    counts.AtomicAdd(0, 1);
+}
+
+void Keep(GPUList<int> into, int value)
+{
+    into.Add(value);
+}
+
+void KeepBox(GPUList<Box> into, float3 at, float mirror, Color color)
+{
+    into.Add(Box { transform = float4x4.TRS(at, quaternion.identity, float3(mirror, 1, 1)), color = color });
+}
+
+void KeepTurned(GPUList<Box> into, int i)
+{
+    if (i == 0) KeepBox(into, float3(3.5, 3.5, 10.0), 1.0, Color(0, 1, 1, 1));
+    else KeepBox(into, float3(1.5, 3.5, 10.0), -1.0, Color(1, 0, 1, 1));
+}
+
+float Shade(GPUList<float> shades)
+{
+    return shades.count > 0 ? shades[0] : 0.0;
+}
+
+// Through those functions, and Adds to two lists, which share their scan
+[Group(64)]
+compute Help(Lists lists)
+{
+    Store(lists.helped, this.index, this.index * 3);
+    CountOne(lists.helpCount);
+    if (this.index % 2 == 0) Keep(lists.evens, this.index);
+    if (this.index % 5 == 0) lists.fives.Add(this.index);
+}
+
+// Two boxes, the second's own transform mirrored
+[Group(2)]
+compute PlaceTurned(Lists lists)
+{
+    KeepTurned(lists.turned, this.index);
+}
+
+frag ShowTurned(Corner3 corner, Box box, Lists lists, out Color color)
+{
+    color = box.color * Shade(lists.shades);
+}
+
+[Group(64)]
+compute Spread(Wide w)
+{
+    int i = this.index;
+    float x = w.in0[i % w.in0.count] + w.in1[0];
+    int n = w.inInts[i % 4];
+    w.f0[i] = float(i) + x;
+    w.f1[i] = float(i) * 2.0;
+    w.f2[i] = float(i) * 3.0;
+    w.f3[i] = float(i) * 4.0;
+    w.f4[i] = float(i) * 5.0;
+    w.f5[i] = float(i) * 6.0;
+    w.c0.AtomicAdd(i % 4, 1);
+    w.c1.AtomicAdd(i % 4, n);
+    w.c2.AtomicMax(0, i);
+    w.c3.AtomicOr(0, 1 << (i % 31));
+    if (i % 2 == 0) w.a0.Add(i);
+    if (i % 3 == 0) w.a1.Add(i * 2);
+    if (i % 5 == 0) w.a2.Add(i + n);
+    if (i % 7 == 0) w.a3.Add(-i);
+    if (i % 11 == 0) w.a4.Add(i);
+    if (i % 4 == 1) w.pairs.Add(float2(float(i), x));
+    w.items[i] = Item { a = x, b = n, p = float2(float(i), 1.0), on = i % 2 == 0 };
+}
+
+// Every way past a list's ends: under 0, at and past its capacity, the ints' limits (and past them, wrapped), and
+// many capacities on; written, read, with atomics, and added to while it's full
+[Group(64)]
+compute Trespass(Fence f)
+{
+    int i = this.index;
+    int at = i < 16 ? -1 - i : i < 32 ? f.mid.capacity + (i - 16) : i < 40 ? 2147483647 - (i - 32)
+           : i < 48 ? -2147483647 - (i - 40) : f.mid.capacity * (i - 46);
+    f.mid[at] = 777;
+    f.mid.AtomicAdd(at, 1);
+    f.mid.AtomicExchange(at, 5);
+    f.mid.AtomicCompareExchange(at, 2001, 9);
+    f.mid.Add(888);
+    f.items[at] = Item { a = 7.0, b = 777, p = float2(7, 7), on = false };
+    f.items.Add(Item { a = 8.0, b = 888, p = float2(8, 8), on = false });
+    f.seen.AtomicOr(0, f.mid[at] | f.items[at].b | (f.items[at].on ? 1 : 0) | Math.AsInt(f.items[at].a));
+}
+
+// Ten of them read in a frag: 0.25, 0.5 and 0.75
+frag ShowWide(Corner corner, Wide w, out Color color)
+{
+    float r = w.f1[3] / 24.0 + (w.f0[0] - 10.5) + w.f2[0] + w.f3[0] + w.f4[0] + w.f5[0];
+    float g = float(w.c0[0] + w.c2[0] - 99) / 50.0;
+    float b = float(w.a0.count + w.pairs.count) / 100.0 + w.pairs[0].x - 1.0;
+    color = Color(r, g, b, 1);
+}
+
+// Every corner white, after the draws before it read them
+[Group(16)]
+compute Whiten(Lists lists)
+{
+    Dot dot = lists.dots[this.index];
+    lists.dots[this.index] = Dot { position = dot.position, color = Color(1, 1, 1, 1) };
+}
+
+vert Moved(mut Dot dot, Shift shift)
+{
+    dot.position += shift.by;
+}
+
+frag ShowBox(Corner3 corner, Box box, out Color color)
+{
+    color = box.color;
+}
+
+vert PlaceSpot(mut Corner corner, Spot spot)
+{
+    corner.position += spot.at;
+}
+
+frag ShowSpot(Corner corner, Spot spot, out Color color)
+{
+    color = spot.color;
+}
+
+view Compute(mut Lists lists, mut Results results, mut Wide wide, mut WideResults wideResults, mut Fence fence,
+             mut FenceResults fenceResults)
+{
+    if (lists.frame == 0)
+    {
+        lists.shapes = GPUList<float>(256);
+        lists.kept = GPUList<int>(1024);
+        lists.keptWide = GPUList<int>(1024);
+        lists.doubled = GPUList<int>(1024);
+        lists.tally = GPUList<int>(8);
+        lists.sums = GPUList<int>(128);
+        lists.groups = GPUList<int>(4);
+        lists.items = GPUList<Item>(16);
+        lists.spots = GPUList<Spot>(8);
+        lists.dots = GPUList<Dot>(16);
+        lists.dotIndices = GPUList<int>(32);
+        lists.boxes = GPUList<Box>(2);
+        lists.turned = GPUList<Box>(2);
+        lists.shades = GPUList<float>(1);
+        lists.helped = GPUList<int>(160);
+        lists.helpCount = GPUList<int>(1);
+        lists.evens = GPUList<int>(160);
+        lists.fives = GPUList<int>(160);
+        lists.scale = 1.5;
+        wide.in0 = GPUList<float>(4);
+        wide.in1 = GPUList<float>(1);
+        wide.inInts = GPUList<int>(4);
+        wide.f0 = GPUList<float>(100);
+        wide.f1 = GPUList<float>(100);
+        wide.f2 = GPUList<float>(100);
+        wide.f3 = GPUList<float>(100);
+        wide.f4 = GPUList<float>(100);
+        wide.f5 = GPUList<float>(100);
+        wide.c0 = GPUList<int>(4);
+        wide.c1 = GPUList<int>(4);
+        wide.c2 = GPUList<int>(1);
+        wide.c3 = GPUList<int>(1);
+        wide.a0 = GPUList<int>(100);
+        wide.a1 = GPUList<int>(100);
+        wide.a2 = GPUList<int>(100);
+        wide.a3 = GPUList<int>(100);
+        wide.a4 = GPUList<int>(100);
+        wide.pairs = GPUList<float2>(100);
+        wide.items = GPUList<Item>(100);
+        fence.before = GPUList<int>(16);
+        fence.mid = GPUList<int>(16);
+        fence.after = GPUList<int>(16);
+        fence.itemsBefore = GPUList<Item>(8);
+        fence.items = GPUList<Item>(8);
+        fence.itemsAfter = GPUList<Item>(8);
+        fence.seen = GPUList<int>(1);
+        results.revision = lists.shapes.contentRevision;
+        for (var i = 0; i < 200; i++) results.expected.Add(Curve(float(i) * 0.37 - 5.0, lists.scale));
+        for (var i = 0; i < 5; i++)
+            lists.sent.Add(Item { a = float(i) + 0.5, b = i * 3, p = float2(float(i), -float(i)), on = i % 2 == 0 });
+    }
+    results.revisionNow = lists.shapes.contentRevision;
+    lists.frame += 1;
+    Draw.Clear(Color.black);
+    lists.shapes.SetCount(200);
+    GPU.Run(Shapes, 200);
+    lists.kept.Clear();
+    lists.keptWide.Clear();
+    lists.doubled.Clear();
+    GPU.Run(KeepNarrow, int2(30, 20), Wave { speed = 1, keepEvery = 3 });
+    GPU.Run(KeepWide, 600, Wave { speed = 1, keepEvery = 3 });
+    GPU.Run(Double, lists.kept);
+    lists.tally.Set([0, 0, 0, 0, 0, 0, 0]);
+    GPU.Run(Tally, 1000);
+    lists.sums.SetCount(100);
+    lists.groups.SetCount(2);
+    GPU.Run(Prefix, 128);
+    lists.items.Set(lists.sent);
+    GPU.Run(Bump, lists.items);
+    lists.spots.Clear();
+    GPU.Run(PlaceSpots, 6);
+    lists.dots.SetCount(12);
+    GPU.Run(MakeDots, 12);
+    lists.dotIndices.Clear();
+    GPU.Run(MakeIndices, 18);
+    lists.boxes.Clear();
+    GPU.Run(PlaceBoxes, 1);
+    lists.helped.SetCount(150);
+    lists.helpCount.Set([0]);
+    lists.evens.Clear();
+    lists.fives.Clear();
+    GPU.Run(Help, 150);
+    lists.turned.Clear();
+    GPU.Run(PlaceTurned, 2);
+    lists.shades.Set([1.0]);
+    // Twenty lists in one run, then a frag reading ten of them
+    wide.in0.Set([0.5, 1.5, 2.5]);
+    wide.in1.Set([10.0]);
+    wide.inInts.Set([1, 2, 3, 4]);
+    wide.f0.SetCount(100);
+    wide.f1.SetCount(100);
+    wide.f2.SetCount(100);
+    wide.f3.SetCount(100);
+    wide.f4.SetCount(100);
+    wide.f5.SetCount(100);
+    wide.c0.Set([0, 0, 0, 0]);
+    wide.c1.Set([0, 0, 0, 0]);
+    wide.c2.Set([0]);
+    wide.c3.Set([0]);
+    wide.a0.Clear();
+    wide.a1.Clear();
+    wide.a2.Clear();
+    wide.a3.Clear();
+    wide.a4.Clear();
+    wide.pairs.Clear();
+    wide.items.SetCount(100);
+    GPU.Run(Spread, 100);
+    // Each list full, with numbers of its own
+    mut List<int> numbers = [];
+    for (var k = 0; k < 16; k++) numbers.Add(1001 + k);
+    fence.before.Set(numbers);
+    numbers.Clear();
+    for (var k = 0; k < 16; k++) numbers.Add(2001 + k);
+    fence.mid.Set(numbers);
+    numbers.Clear();
+    for (var k = 0; k < 16; k++) numbers.Add(3001 + k);
+    fence.after.Set(numbers);
+    mut List<Item> made = [];
+    for (var k = 0; k < 8; k++) made.Add(Item { a = float(k), b = 100 + k, p = float2(float(k), 1), on = true });
+    fence.itemsBefore.Set(made);
+    fence.items.Set(made);
+    fence.itemsAfter.Set(made);
+    fence.seen.Set([0]);
+    GPU.Run(Trespass, 64);
+    // Every run and list operation above goes before the clear's pass, which none of them is drawn in
+    List<Corner> square = [Corner { position = float2(-4, -4) }, Corner { position = float2(4, -4) },
+                           Corner { position = float2(4, 4) }, Corner { position = float2(-4, 4) }];
+    Draw.Instanced(square, [0, 1, 2, 0, 2, 3], lists.spots, PlaceSpot, ShowSpot);
+    Draw.Transform(float2(0, 12))
+    {
+        Draw.Instanced(square, [0, 1, 2, 0, 2, 3], lists.spots, PlaceSpot, ShowSpot);
+    }
+    // Vertices and indices a kernel made, as many as the GPU has: the first and the last squares
+    Draw.Mesh(lists.dots, lists.dotIndices);
+    // ...and the middle one's corners by the CPU's indices, moved up, with one more triangle past the vertices
+    Draw.Mesh(lists.dots, [4, 5, 6, 4, 6, 7, 12, 13, 14], Moved, Shift { by = float2(0, 44) });
+    List<Corner3> face = [Corner3 { position = float3(-0.75, -0.75, 0) }, Corner3 { position = float3(0.75, -0.75, 0) },
+                          Corner3 { position = float3(0.75, 0.75, 0) }, Corner3 { position = float3(-0.75, 0.75, 0) }];
+    Draw.Cull(Cull.None)
+    {
+        Draw.Transform(float4x4.Translate(float3(-100, 0, 0)))
+        {
+            Draw.Instanced(face, [0, 1, 2, 0, 2, 3], lists.boxes, ShowBox);
+        }
+    }
+    // Culled as the CPU culls a list's: each box's front by its own transform, the mirrored one's the other way.
+    // Wound to face the camera (the face above faces away), so the box whose transform mirrors it is wound away on
+    // the screen, and is drawn by the run wound the other way
+    Draw.Instanced(face, [0, 2, 1, 0, 3, 2], lists.turned, ShowTurned);
+    Draw.Mesh([Corner { position = float2(23, -15) }, Corner { position = float2(29, -15) },
+               Corner { position = float2(29, -9) }, Corner { position = float2(23, -9) }], [0, 1, 2, 0, 2, 3], ShowWide);
+    // A run whose list the draws before it read: after them, and the draw after it sees what it wrote
+    GPU.Run(Whiten, lists.dots);
+    Draw.Mesh(lists.dots, [0, 1, 2, 0, 2, 3], Moved, Shift { by = float2(20, 12) });
+    if (lists.read)
+    {
+        lists.read = false; // The host asks for each read
+        ReadBack(lists, results);
+        ReadWide(wide, wideResults);
+        ReadFence(fence, fenceResults);
+    }
+}
+
+async void ReadFence(Fence fence, mut FenceResults r)
+{
+    if (await fence.before.Read() is List<int> before) r.before = before;
+    if (await fence.mid.Read() is List<int> mid) r.mid = mid;
+    if (await fence.after.Read() is List<int> after) r.after = after;
+    if (await fence.before.ReadCount() is int c0) r.counts[0] = c0;
+    if (await fence.mid.ReadCount() is int c1) r.counts[1] = c1;
+    if (await fence.after.ReadCount() is int c2) r.counts[2] = c2;
+    if (await fence.itemsBefore.ReadCount() is int c3) r.counts[3] = c3;
+    if (await fence.items.ReadCount() is int c4) r.counts[4] = c4;
+    if (await fence.itemsAfter.ReadCount() is int c5) r.counts[5] = c5;
+    if (await fence.itemsBefore.Read() is List<Item> itemsBefore) r.itemsBefore = itemsBefore;
+    if (await fence.items.Read() is List<Item> items) r.items = items;
+    if (await fence.itemsAfter.Read() is List<Item> itemsAfter) r.itemsAfter = itemsAfter;
+    if (await fence.seen.Read() is List<int> seen) r.seen = seen;
+}
+
+async void ReadWide(Wide wide, mut WideResults r)
+{
+    if (await wide.f0.Read() is List<float> f0) r.f0 = f0;
+    if (await wide.f5.Read() is List<float> f5) r.f5 = f5;
+    if (await wide.c0.Read() is List<int> c0) r.c0 = c0;
+    if (await wide.c1.Read() is List<int> c1) r.c1 = c1;
+    if (await wide.c2.Read() is List<int> c2) r.c2 = c2;
+    if (await wide.c3.Read() is List<int> c3) r.c3 = c3;
+    if (await wide.a0.Read() is List<int> a0) r.a0 = a0;
+    if (await wide.a1.Read() is List<int> a1) r.a1 = a1;
+    if (await wide.a2.Read() is List<int> a2) r.a2 = a2;
+    if (await wide.a3.Read() is List<int> a3) r.a3 = a3;
+    if (await wide.a4.Read() is List<int> a4) r.a4 = a4;
+    if (await wide.pairs.Read() is List<float2> pairs) r.pairs = pairs;
+    if (await wide.items.Read() is List<Item> items) r.items = items;
+}
+
+async void ReadBack(Lists lists, mut Results results)
+{
+    if (await lists.shapes.Read() is List<float> shapes) results.shapes = shapes;
+    else results.failed = true;
+    if (await lists.kept.ReadCount() is int count) results.keptCount = count;
+    else results.failed = true;
+    if (await lists.kept.Read() is List<int> kept) results.kept = kept;
+    if (await lists.keptWide.Read() is List<int> wide) results.keptWide = wide;
+    if (await lists.doubled.Read() is List<int> doubled) results.doubled = doubled;
+    if (await lists.tally.Read() is List<int> tally) results.tally = tally;
+    if (await lists.sums.Read() is List<int> sums) results.sums = sums;
+    if (await lists.groups.Read() is List<int> groups) results.groups = groups;
+    if (await lists.items.Read() is List<Item> items) results.items = items;
+    if (await lists.helped.Read() is List<int> helped) results.helped = helped;
+    if (await lists.helpCount.Read() is List<int> helpCount) results.helpCount = helpCount;
+    if (await lists.evens.Read() is List<int> evens) results.evens = evens;
+    if (await lists.fives.Read() is List<int> fives) results.fives = fives;
+    results.reads += 1;
+}
+
+scene Main { }

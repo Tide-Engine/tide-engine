@@ -33,6 +33,7 @@ static uint32_t visibility_hides;
 static uint32_t visibility_bulk_filters;
 static uint32_t visibility_slot_filters;
 static bool visibility_continuous;
+static bool visibility_large_spread;
 
 static void visibility_start(void *world, float dt, const void *start, uint32_t seed)
 {
@@ -106,6 +107,43 @@ static bool visibility_load(void *world, const uint8_t *data, uint32_t size)
     memcpy(world, data, size);
     visibility_loads++;
     return true;
+}
+
+// A public derived payload with shifting list lengths and changing record
+// fields. Same-tick client predictions reproduce it; acknowledged-tick repairs
+// otherwise resend substantial evolution even for a one-field hidden effect.
+static uint8_t *visibility_large_state(const void *world, tide_player_id player, uint32_t *size)
+{
+    uint32_t small_size = 0;
+    uint8_t *small = visibility_state(world, player, &small_size);
+    const visibility_world *w = world;
+    const uint32_t prefix = 1u + w->tick % 7u;
+    *size = small_size + prefix + 1000u * 512u;
+    uint8_t *out = malloc(*size);
+    if (!out) { free(small); return NULL; }
+    memcpy(out, small, small_size);
+    free(small);
+    memset(out + small_size, 0, prefix);
+    uint8_t *records = out + small_size + prefix;
+    uint32_t x = 0x72ac5319u;
+    for (uint32_t i = 0; i < 1000u * 512u; i++) {
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        records[i] = (uint8_t)x;
+    }
+    for (uint32_t i = 0; i < 1000u; i++) for (uint32_t j = 0; j < 12u; j++)
+        records[i * 512u + j] ^= (uint8_t)((w->tick * 13u + j) >> (j % 4u * 8u));
+    if (visibility_large_spread) for (uint32_t i = 0; i < 8u; i++)
+        records[i * 16384u + 16u] ^= (uint8_t)w->health;
+    return out;
+}
+
+static bool visibility_large_load(void *world, const uint8_t *data, uint32_t size)
+{
+    if (size < sizeof(visibility_world)) return false;
+    visibility_world header;
+    memcpy(&header, data, sizeof header);
+    if (size != sizeof header + 1u + header.tick % 7u + 1000u * 512u) return false;
+    return visibility_load(world, data, sizeof header);
 }
 
 static uint64_t visibility_client_hash(const void *world, tide_player_id player)
@@ -200,13 +238,14 @@ static void visibility_hear(const void *world, const void *had, const tide_entit
     const visibility_world *now = world, *before = had;
     if (!before || !before->token_alive || now->token_alive) return;
     bool died = false;
-    for (uint32_t i = 0; i < count; i++) died |= destroyed[i].index == 75 && destroyed[i].generation == 1;
+    for (uint32_t i = 0; i < count; i++) died |= tide_entity_equal(destroyed[i], (tide_entity){75, 1});
     if (died) visibility_deaths++;
     else visibility_hides++;
 }
 
-static void visibility_tick_journal(void *world, const tide_jobs *jobs, tide_event_log *per_player)
+static void visibility_tick_journal(void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *all)
 {
+    (void)all; // No local handler of its own machine hears it
     visibility_world *w = world;
     const uint32_t alive = w->token_alive;
     visibility_tick(world, jobs);
@@ -235,14 +274,14 @@ static bool visibility_check_events(const uint8_t *data, uint32_t size, uint32_t
         memcpy(&event, data + at, sizeof event);
         if (event.event == TIDE_HEARD_DESTROYED_CAUSE) {
             if (event.size != sizeof(tide_heard) || event.wants || event.as || event.handlers || event.same
-                || event.target.index != 75 || event.target.generation != 1) return false;
+                || !tide_entity_equal(event.target, (tide_entity){75, 1})) return false;
             at += event.size;
             (*count)++;
             continue;
         }
         if (event.size != sizeof(tide_heard) + 8u || event.size > size - at || event.event != 91
             || event.handlers != 1 || event.wants != (TIDE_HEARD_PREDICTED | TIDE_HEARD_VERIFIED | TIDE_HEARD_LIFECYCLE)
-            || event.target.index != 75 || event.target.generation != 1) return false;
+            || !tide_entity_equal(event.target, (tide_entity){75, 1})) return false;
         at += event.size;
         (*count)++;
     }
@@ -401,7 +440,7 @@ static void visibility_run_case(tide_net_conditions conditions, bool commands, b
             if (heard->event == TIDE_HEARD_DESTROYED_CAUSE) {
                 TIDE_CHECK(heard->size == sizeof *heard && heard->wants == 0 && heard->handlers == 0);
                 TIDE_CHECK(heard->as == (TIDE_HEARD_PREDICTED | TIDE_HEARD_VERIFIED));
-                TIDE_CHECK(heard->target.index == 75 && heard->target.generation == 1 && heard->tick == 259u);
+                TIDE_CHECK(tide_entity_equal(heard->target, (tide_entity){75, 1}) && heard->tick == 259u);
                 causes++;
                 continue;
             }
@@ -446,6 +485,190 @@ TIDE_TEST(visibility_continuous_hidden_effects_coalesce_without_rtt_per_tick)
     visibility_run_case((tide_net_conditions){.latency = 0.08, .jitter = 0.06, .loss = 0.2}, false, false, true);
 }
 
+static uint32_t visibility_recorded_ticks;
+
+static void visibility_record_tick(void *world, const tide_jobs *jobs, tide_event_log *events)
+{
+    visibility_world *w = world;
+    const uint32_t tick = w->tick;
+    visibility_tick(world, jobs);
+    visibility_recorded_ticks++;
+    tide_heard *heard = tide_event_log_push(events, sizeof *heard, 0x991);
+    heard->tick = tick;
+    heard->event = 92;
+    heard->handlers = 1;
+    heard->wants = TIDE_HEARD_PREDICTED | TIDE_HEARD_VERIFIED;
+    heard->target = (tide_entity){1, 1};
+}
+
+TIDE_TEST(visibility_delay_repair_candidates_do_not_deliver_future_events)
+{
+    visibility_continuous = true;
+    visibility_recorded_ticks = 0;
+    tide_game game = visibility_game;
+    game.prediction = TIDE_PREDICTION_DELAY;
+    game.tick_events = visibility_record_tick;
+    game.client_state = visibility_large_state;
+    game.load_client_state = visibility_large_load;
+    tide_loopback *net = tide_loopback_create(91741);
+    TIDE_REQUIRE(net);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.08, .jitter = 0.04, .loss = 0.1});
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &game, .tick_rate = 60,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    uint32_t sampled = 3;
+    tide_event_log events = {.taken = true};
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &game,
+        .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
+        .sample = visibility_sample, .user = &sampled, .lead = 2, .events = &events}, 0);
+    TIDE_REQUIRE(server && client);
+    uint32_t read = 0;
+    bool predicted[800] = {false}, verified[800] = {false};
+    for (uint32_t step = 1; step <= 1400; step++) {
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        tide_client_update(client, now);
+        tide_server_update(server, now);
+        const tide_client_status status = tide_client_status_of(client);
+        for (; read < events.size;) {
+            const tide_heard *heard = (const tide_heard *)(events.bytes + read);
+            read += heard->size;
+            if (heard->event != 92) continue;
+            TIDE_REQUIRE(heard->tick < 800u);
+            // Quiet comparison ticks must neither present nor publish events.
+            TIDE_CHECK(heard->tick <= status.verified_tick);
+            bool *seen = heard->as == TIDE_HEARD_VERIFIED ? verified : predicted;
+            TIDE_CHECK(!seen[heard->tick]);
+            seen[heard->tick] = true;
+        }
+    }
+    const tide_client_status status = tide_client_status_of(client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
+    TIDE_CHECK(status.repairs > 5u && status.verified_tick > 600u);
+    // Delay normally records every tick it runs. Additional work here is the
+    // private repair comparison replay, which must not use that recording path.
+    TIDE_CHECK(status.run_ticks > visibility_recorded_ticks + 10u);
+    tide_client_destroy(client);
+    tide_event_log_free(&events);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    visibility_continuous = false;
+}
+
+TIDE_TEST(visibility_large_repairs_release_old_callbacks_on_compatible_reload)
+{
+    visibility_continuous = true;
+    tide_game template = visibility_game;
+    template.client_state = visibility_large_state;
+    template.load_client_state = visibility_large_load;
+    tide_game games[2] = {template, template};
+    uint32_t active = 0, sampled = 3;
+    tide_session *host = tide_session_create(&(tide_session_desc){.game = &games[active],
+        .sample = visibility_sample, .user = &sampled});
+    tide_session *client = tide_session_create(&(tide_session_desc){.game = &games[active],
+        .sample = visibility_sample, .user = &sampled});
+    tide_loopback *net = tide_loopback_create(61577);
+    TIDE_REQUIRE(host && client && net);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.08, .jitter = 0.04, .loss = 0.1});
+    tide_session_start(host, NULL, 0);
+    TIDE_REQUIRE(tide_session_open(host, tide_loopback_endpoint(net, 1)));
+    tide_session_join(client, tide_loopback_endpoint(net, 2), tide_loopback_address(1), 0);
+    for (uint32_t step = 1; step <= 1500; step++) {
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        tide_session_update(host, now);
+        tide_session_update(client, now);
+        // Hash offers, quiet candidate construction and patches overlap this
+        // stream. Replacing both tables repeatedly exercises each boundary.
+        if (step >= 400u && step <= 440u && step % 4u == 0u) {
+            const uint32_t next = 1u - active;
+            games[next] = template;
+            tide_session_set_game(host, &games[next]);
+            tide_session_set_game(client, &games[next]);
+            memset(&games[active], 0, sizeof games[active]); // No retained callback may use it.
+            active = next;
+        }
+    }
+    const tide_session_status status = tide_session_status_of(client);
+    const visibility_world *world = tide_session_view(client).verified;
+    TIDE_REQUIRE(world);
+    TIDE_CHECK(status.client.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(status.client.verified_tick > 650u && status.client.repairs > 10u);
+    TIDE_CHECK(world->health == 563u);
+    tide_session_destroy(client);
+    tide_session_destroy(host);
+    tide_loopback_destroy(net);
+    visibility_continuous = false;
+}
+
+// One client on a network that takes no time, so a stream of repairs would
+// go as fast as the session updates, while every tick from 90 to 570 differs
+// on the client: how many projections it loads, how many of them in the last
+// four seconds of it, and how far its verified world falls behind.
+static void visibility_count_repairs(const tide_game *game, uint32_t *loads, uint32_t *late_loads, uint32_t *most_lag)
+{
+    visibility_loads = 0;
+    visibility_continuous = true;
+    tide_loopback *net = tide_loopback_create(98123);
+    TIDE_REQUIRE(net);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = game, .tick_rate = 60,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    uint32_t sampled = 3;
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = game,
+        .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
+        .sample = visibility_sample, .user = &sampled, .lead = 2}, 0);
+    TIDE_REQUIRE(server && client);
+    uint32_t before = 0, late = 0;
+    *most_lag = 0;
+    for (uint32_t step = 1; step <= 1400; step++) {
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        tide_client_update(client, now);
+        tide_server_update(server, now);
+        if (step == 170) before = visibility_loads; // Tick 85: joined, and nothing hidden has happened yet
+        if (step == 660) late = visibility_loads;   // Tick 330, four seconds in
+        if (step == 1140) *late_loads = visibility_loads - late; // Tick 570, the last of them
+        const visibility_world *confirmed = tide_client_verified_world(client);
+        if (step >= 170 && confirmed && tide_server_tick(server) >= confirmed->tick) {
+            const uint32_t lag = tide_server_tick(server) - confirmed->tick;
+            if (lag > *most_lag) *most_lag = lag;
+        }
+    }
+    *loads = visibility_loads - before;
+    const tide_client_status status = tide_client_status_of(client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
+    TIDE_CHECK(status.repairs > 0 && status.repairs == visibility_loads - 1u);
+    const visibility_world *w = tide_client_verified_world(client);
+    TIDE_REQUIRE(w);
+    TIDE_CHECK(w->tick > 600 && w->health == 563u);
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    visibility_continuous = false;
+}
+
+TIDE_TEST(visibility_repairs_back_off_while_a_client_goes_on_differing)
+{
+    // Its first stream repairs every tick; each that has to start again as the
+    // last ends repairs half as often, to one a quarter of a second. So the
+    // last four of the eight seconds take a projection every 14 ticks or so,
+    // where they took one a tick (240 of them, and 489 in all)
+    uint32_t loads = 0, late = 0, most_lag = 0;
+    visibility_count_repairs(&visibility_game, &loads, &late, &most_lag);
+    if (getenv("TIDE_VISIBILITY_METRICS")) printf("continuous: %u loads, %u in the last 4 s, most lag %u ticks\n", loads, late, most_lag);
+    TIDE_CHECK(late <= 24u);
+    TIDE_CHECK(loads < 180u);
+    TIDE_CHECK(most_lag <= 40u); // A quarter of a second's gap, and what's on its way
+
+    // A game that rewinds for a quarter of a second backs off to a quarter of
+    // that, 3 ticks: what its clients present stays young enough to rewind to
+    tide_game rewinding = visibility_game;
+    rewinding.max_rewind = 0.25f;
+    visibility_count_repairs(&rewinding, &loads, &late, &most_lag);
+    if (getenv("TIDE_VISIBILITY_METRICS")) printf("rewinding: %u loads, %u in the last 4 s, most lag %u ticks\n", loads, late, most_lag);
+    TIDE_CHECK(late >= 60u && late <= 90u);
+    TIDE_CHECK(most_lag <= 8u);
+}
+
 TIDE_TEST(visibility_host_migration_never_promotes_a_partial_world)
 {
     visibility_continuous = false;
@@ -487,4 +710,150 @@ TIDE_TEST(visibility_host_migration_never_promotes_a_partial_world)
     tide_session_destroy(client);
     tide_session_destroy(host);
     tide_loopback_destroy(net);
+}
+
+static void visibility_large_repairs(uint8_t prediction, bool recover)
+{
+    visibility_continuous = true;
+    visibility_loads = 0;
+    tide_game game = visibility_game;
+    game.client_state = visibility_large_state;
+    game.load_client_state = visibility_large_load;
+    game.prediction = prediction;
+    game.max_rewind = 0.5f;
+    tide_loopback *net = tide_loopback_create(652311);
+    TIDE_REQUIRE(net);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.04, .jitter = 0.01, .loss = 0.03});
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &game, .tick_rate = 60,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    uint32_t input = 3;
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &game,
+        .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
+        .sample = visibility_sample, .user = &input, .lead = 2}, 0);
+    TIDE_REQUIRE(server && client);
+    uint32_t max_lag = 0;
+    for (uint32_t step = 1; step <= 1440; step++) {
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        if (!(recover && step >= 400u && step < 904u)) tide_client_update(client, now);
+        tide_server_update(server, now);
+        const visibility_world *w = tide_client_verified_world(client);
+        if (w && step > 360 && tide_server_tick(server) - w->tick > max_lag) max_lag = tide_server_tick(server) - w->tick;
+    }
+    const tide_client_status status = tide_client_status_of(client);
+    const visibility_world *w = tide_client_verified_world(client);
+    TIDE_REQUIRE(w);
+    if (getenv("TIDE_VISIBILITY_METRICS")) printf("large recipient mode %u: verified %u, repairs %u, resyncs %u, bytes %llu, max lag %u\n",
+        prediction, status.verified_tick, status.repairs, status.resyncs, (unsigned long long)status.world_bytes, max_lag);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == (recover ? 1u : 0u));
+    TIDE_CHECK(status.verified_tick > 650u && status.repairs > (recover ? 2u : 10u));
+    TIDE_CHECK(recover || max_lag < 90u);
+    TIDE_CHECK(status.world_bytes < 4u * 1024u * 1024u);
+    if (visibility_large_spread) TIDE_CHECK(status.world_bytes < 2u * 1024u * 1024u);
+    TIDE_CHECK(w->health == 563u);
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    visibility_continuous = false;
+}
+
+TIDE_TEST(visibility_large_predicted_endpoint_repairs_reuse_matching_blocks)
+{
+    visibility_large_repairs(TIDE_PREDICTION_ROLLBACK, false);
+}
+
+TIDE_TEST(visibility_large_delayed_endpoint_repairs_reuse_matching_blocks)
+{
+    visibility_large_repairs(TIDE_PREDICTION_DELAY, false);
+}
+
+TIDE_TEST(visibility_large_repair_stale_candidate_recovers)
+{
+    visibility_large_repairs(TIDE_PREDICTION_ROLLBACK, true);
+}
+
+TIDE_TEST(visibility_large_repairs_choose_cheaper_acknowledged_delta)
+{
+    // A handful of logical changes touch >64 KiB of random comparison blocks,
+    // but remain cheap against the acknowledged endpoint. Counting missing
+    // blocks alone must not force the larger patch.
+    visibility_large_spread = true;
+    visibility_large_repairs(TIDE_PREDICTION_ROLLBACK, false);
+    visibility_large_spread = false;
+}
+
+
+// Destruction frame metadata is a full logical key, even when the caller only
+// skips it while applying an authenticated frame or replaying a journal record.
+static const tide_entity full_destroyed_key = {UINT64_C(0x123456789abcdef0), UINT64_C(0xfedcba9876543210)};
+static void full_destroyed_tick(void *world, const tide_jobs *jobs)
+{
+    (void)jobs;
+    visibility_world *w = world;
+    w->tick++;
+    if (w->tick == 180u) w->token_alive = 0;
+}
+static uint32_t full_destroyed(const void *world, const void *previous, tide_player_id player,
+                               tide_entity *out, uint32_t capacity)
+{
+    (void)player;
+    const visibility_world *w = world, *had = previous;
+    if (!had || !had->token_alive || w->token_alive) return 0;
+    if (out && capacity) out[0] = full_destroyed_key;
+    return 1;
+}
+
+TIDE_TEST(visibility_full_entity_destroyed_frames_verify_and_replay)
+{
+    tide_game game = visibility_game;
+    game.tick = full_destroyed_tick;
+    game.tick_client_events = NULL;
+    game.check_client_events = NULL;
+    game.hear_visibility = NULL;
+    game.client_destroyed = full_destroyed;
+    visibility_continuous = false;
+    tide_loopback *net = tide_loopback_create(6311);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &game,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &game,
+        .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1), .lead = 2}, 0);
+    TIDE_REQUIRE(server && client);
+    uint64_t repairs_before = 0;
+    for (uint32_t step = 1; step <= 720; step++) {
+        const double now = (double)step / 60.0;
+        tide_loopback_set_time(net, now);
+        tide_server_update(server, now);
+        tide_client_update(client, now);
+        if (step == 120u) repairs_before = tide_client_status_of(client).repairs;
+    }
+    const tide_client_status status = tide_client_status_of(client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.verified_tick > 650u);
+    TIDE_CHECK(status.repairs == repairs_before && status.resyncs == 0);
+    const visibility_world *verified = tide_client_verified_world(client);
+    TIDE_CHECK(verified && !verified->token_alive);
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+
+    visibility_world replay = {0}, expected = {0};
+    visibility_start(&replay, 1.0f / 60.0f, NULL, 0);
+    expected = replay;
+    full_destroyed_tick(&expected, NULL);
+    tide_writer frame = {.grows = true}, record = {.grows = true};
+    tide_write_u64(&frame, visibility_hash(&expected));
+    tide_write_u8(&frame, 16u); // FRAME_DESTROYED, with no input/command payload.
+    tide_write_varint(&frame, 1u);
+    tide_write_varint64(&frame, full_destroyed_key.birth);
+    tide_write_varint64(&frame, full_destroyed_key.lineage);
+    tide_write_u32(&record, 0u);
+    tide_write_u32(&record, frame.size);
+    tide_write_bytes(&record, frame.data, frame.size);
+    tide_write_u32(&record, 0u); // No downloads.
+    uint64_t wanted = 0, got = 0;
+    const tide_replay_result replay_result = tide_replay_check(&game, &replay, record.data, record.size, NULL, &wanted, &got);
+    if (replay_result != TIDE_REPLAY_SAME) printf("    destroyed replay: result%d tick%u frame%u record%u expected%llu got%llu\n", replay_result, replay.tick, frame.size, record.size, (unsigned long long)wanted, (unsigned long long)got);
+    TIDE_CHECK(replay_result == TIDE_REPLAY_SAME);
+    TIDE_CHECK(visibility_hash(&replay) == visibility_hash(&expected));
+    free(frame.data);
+    free(record.data);
 }

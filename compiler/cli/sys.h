@@ -26,6 +26,7 @@ bool sys_remove_tree(const char *path); // A file, or a folder and everything in
 char *sys_read_file(const char *path, size_t *len);
 bool sys_write_file(const char *path, const char *data, size_t len);
 bool sys_write_text(const char *path, const char *text);
+bool sys_make_executable(const char *path); // Runnable by everyone, on Linux and macOS; nothing on Windows
 
 // Calls `found` with the name of every entry of `dir` (not "." or "..").
 typedef void (*sys_entry_fn)(void *user, const char *name, bool is_dir);
@@ -86,6 +87,8 @@ bool sys_process_alive(uint32_t pid); // Whether a process with that ID is runni
 // has it. The programs tide starts don't have it.
 typedef struct sys_lock sys_lock;
 sys_lock *sys_lock_file(const char *path);
+// Multiple readers may hold this file; excludes sys_lock_file on the same path.
+sys_lock *sys_lock_shared_file(const char *path);
 void sys_unlock(sys_lock *lock);
 
 // Reads lines typed into the terminal, in the background: sys_typed_line
@@ -123,6 +126,14 @@ bool sys_hidden(void);
 int64_t sys_now(void);                 // Seconds since 1970
 int64_t sys_now_ms(void);              // Milliseconds from a fixed point, never going back
 bool sys_is_terminal(void);            // Whether stdout is a terminal, not a file or a pipe
+
+// Draws activity on a helper thread while the caller does synchronous work.
+// stderr is kept in a temporary file and replayed after draw(user, true) clears
+// the display. NULL leaves stderr alone (the caller can use plain feedback).
+// No other stdout/line drawing may run until end; the work stays on its caller.
+typedef struct sys_activity sys_activity;
+sys_activity *sys_activity_begin(void (*draw)(void *user, bool done), void *user);
+void sys_activity_end(sys_activity *activity);
 
 // "a" + "/" + "b".
 char *path_join(const char *a, const char *b);

@@ -70,7 +70,7 @@ typedef struct order {
     int32_t last;
 } order;
 
-_Static_assert(sizeof(place) == 12 && sizeof(badge) == 24 && sizeof(dots) == 3 && sizeof(wheel) == 12,
+_Static_assert(sizeof(place) == 12 && sizeof(badge) == 32 && sizeof(dots) == 3 && sizeof(wheel) == 12,
                "extern_system.tide's components changed: these are theirs");
 
 // For the test: the fewest and the most rows a call of xs_spin was handed, and

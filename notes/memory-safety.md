@@ -1,5 +1,171 @@
 # No Tide code can corrupt memory
 
+## Packed Entity test alignment (2026-11-07)
+
+Linux ASan/UBSan found an alignment violation in the hostile raw-entity tests:
+the 28-byte header leaves packed slot records only four-byte aligned, whereas
+Entity128's native slot requires eight-byte alignment. Both the corrupt free-list
+row and duplicate-storage mutations now copy bytes through aligned local slots
+with memcpy; the same malformed payloads and transactional rejection checks
+remain. The runtime decoder already copies raw payload bytes into aligned page
+storage before typed slot access, and the slot-cast audit found no other raw-byte
+casts. Fresh Windows optimized ASan entity cases pass 19/19; alignment UBSan
+coverage remains Linux CI validation.
+
+## Logical Entity lookup and decoding (2026-11-06)
+
+Entity's two 64-bit words are values, never offsets. Every lookup hashes and
+compares the complete key, then validates the resolved private slot's bounds,
+state and complete key before returning its location. Null cannot resolve.
+Ordered-key arrays are immutable after publication and remain owned until
+settlement after invalidation, so nested queries and concurrent readers do not
+follow freed arrays. Their allocation sizing widens before adding the header;
+a short per-table lock protects building/publication against structural changes.
+Copies discard this derived cache rather than aliasing source ownership.
+The filtered cache owns copied archetype-ID arrays, never borrowed generated-code
+pointers. Actual archetype membership changes invalidate subsets under the same
+lock; row-only moves preserve them. Retired arrays share the settlement lifetime.
+Registry hash/need decoding uses fixed 16KB scratch regions; region count is
+admitted against the existing base plus remaining wire bytes before work. Each
+region validates exact clock and ascending full keys against the preceding region,
+so boundary duplicates/backwards keys are rejected. Same-clock set edits check
+literal payload lengths before copying base metadata, validate deletion membership
+and addition disjointness, and adopt only after both part terminators and the
+physical index validate. Hostile/truncated cases leave the destination intact.
+Private slot and hash-index sizing widens arithmetic before allocation, checks
+namespace/capacity exhaustion, and retains grown lookup descriptors until system
+settlement. COW copies retain slot, optional presentation and index pages.
+
+Raw entity state is decoded into an independent table. Counts must fit the
+remaining bytes before allocating slot pages or reading sorted registry keys;
+active/away keys must be nonnull and unique; state flags, away fields, free-list
+links/counts/cycles and current-clock registry ordering are validated. Delta
+pages have the existing base-plus-remaining-bytes admission bound. Failed reads
+release partially allocated pages/indexes and leave the existing table unchanged.
+Full logical keys, not generations, now guard stale entity accesses. The sparse
+page decoder discussion below is historical; projections use dense private slots
+for their permitted keys. Entity/table native ASan tests include raw truncation,
+malformed duplicate storage, snapshots and delta/need-base combinations.
+
+
+## Recipient copy-span deltas (2026-11-06)
+
+Protocol 23's private recipient codec accepts caller-bounded output, checking
+the expected decoded size and baseline hash before writing. Literal and baseline
+copy spans use subtraction bounds; 64-bit source tokens are checked before
+narrowing. Output copies require a strictly earlier source and support forward
+overlap within the output allocation. Every copy advances at least eight bytes;
+decoding costs output bytes plus encoded tokens, with no token-based allocation.
+Exact end/output hash checks precede loading a temporary projected world. Existing
+projection-size/allocation policy is retained. Encoder indexes have fixed 512 KiB
+size, no chains, and byte-compare every match. ASan/WASI malformed, truncation,
+wrong-base/hash and exact-copy regressions pass; details: netcode.md, protocol 23.
+
+## Running out of memory (2026-11-06)
+
+The owner, after mount-and-rifle crashed natively with the scratch area's `malloc` failing (notes/ecs.md, Spares go once nothing takes them): "if instead of a crash we have a stutter i think thats more acceptable", and the message and crash report should say clearly what ran out. Code still can't fail an allocation and go on, so where there's none in the end the program ends, as before.
+
+- `engine/src/memory.c` (OS headers, as `time.c`; `tide/page.h`): `tide_memory_wait(bytes, &waited)` lets go of the thread's scratch spare (the first time), sleeps 1, 1, 2, 4... ms up to 100 ms a step and says to try again until 10 s in all (`WAIT_MOST_MS`, Claude's pick); on the web it says no at once (a page's memory has a most; its thread can't block). `tide_memory_waited` says on stderr, once a second at most across threads, that memory came after a wait, with the figures. `tide_memory_ran_out(what, waited)` lets go of the reserve, says `tide: out of memory: <what>[ after waiting N s for more]. This program has ...`, adds "The whole system is out of memory: close other programs, or give the system a bigger page file" when the system can give less than a twentieth of what it can at most (Windows' commit; RAM free elsewhere), and aborts. `tide_out_of_memory()` is `tide_memory_ran_out("there's no more memory", 0)`.
+- `tide_memory_figures` (no allocation, its own formatting, `open`/`read` of `/proc` on Linux, so a signal handler can call it): Windows, the process's private commit and working set, all programs' commit against the commit limit, free and total RAM; Linux, VmRSS and MemAvailable/MemTotal from `/proc` (Committed_AS is read but not said: Linux overcommits); macOS, `phys_footprint` and `hw.memsize`; web, the memory's size.
+- Who waits: `tide_alloc`, `tide_alloc_zeroed`, `tide_realloc` (native; pages, heaps and the scratch area's tables come through them), a scratch piece's `malloc` (`add_piece`), and the engine's 33 `malloc`/`calloc` calls followed by `if (!p) tide_out_of_memory();` that were one pointer each, now `tide_alloc`/`tide_alloc_zeroed` (session's world copies among them). Not converted: `realloc` calls with no old size at hand, checks of several pointers at once, the platform layer's, and `malloc`s whose callers handle NULL themselves; those still end at once, with the figures.
+- The reserve: 8 MiB `malloc`ed by a constructor in every native program that links `memory.c` (commit, not RAM, until touched), let go of by `tide_memory_ran_out` and by the Windows crash handler (`tide_memory_spend_reserve`, once by atomic exchange), so the message, the dump's thread and `tide-crash` have some. A reloading run's library has its own.
+- The crash report (`platform/src/log.c`): after `tide: crashed: ...`, `crash.txt` has `said before it: <the last line on stderr>` for an abort (the tee thread keeps it, `keep_last_line`; engine stops say why first, and a library's copy of the engine writes to the same stderr, where a variable of the host's would miss it) and `memory: <figures>` for every crash. The Windows dump adds `MiniDumpWithFullMemoryInfo` (regions by size and kind, not their contents), so the next dump can say where a big footprint is.
+- Tests: `page_memory_wait_stops_after_ten_seconds` (`tests/test_page.c`: the steps, the end, no wait on the web, the figures cut to fit); `tide_platform_log`'s `out` case (`platform/tests/log.c` calls `tide_memory_ran_out`, `log.mjs` checks stderr's line and that `crash.txt` has it and the figures) and its abort case's two new lines. A real failed allocation isn't tested: it'd take the machine's commit.
+
+## Preparation owns its worlds (2026-11-05)
+
+Scene preparation (language.md) packs its input on the caller and unpacks an independent world on the worker.
+Page references are non-atomic, so a running worker never shares COW pages with another thread's worlds.
+Statement-boundary publication packs/unpacks another independent snapshot on the worker; under a lock the main
+thread takes exclusive ownership of that endpoint. Both sides synchronize WASM memory before reading a transferred
+pointer; views never race writable state. Completed worlds use ordinary COW adoption only after provider completion.
+Source identity/hash changes discard the job rather than adopt obsolete results. Cancellation drains workers before
+world/log/code release; Tide loops/helpers cooperate and trusted C must return. Root handles validate full entity
+generation and component presence, and readiness validates player bounds before shifts. Growable report arrays widen
+allocation arithmetic. Hidden metadata is preserved by normal setters and scheduled output-lane write-back, including
+whole-value scene assignments and split/snapshot lanes. Player index 64, stale/unloaded/invalid handles, packed copies,
+queued/running cancellation and real threaded progress are covered by scene_preparation fixtures.
+
+## GPU lists side by side in pools (2026-11-05)
+
+Since GPU lists in pools (`notes/compute.md`), lists share two storage buffers, so the clamp of a runtime array's index
+(Tint's, and the translators') keeps a shader inside a pool but not inside its list: each list's range is held by
+generated WGSL. Reads past the count (min of the header's and the table's capacity) give zeros, writes and atomics
+past the capacity (min of the header's and the table's) or under 0 do nothing, an indirect draw's instance index is
+held to the capacity, Adds' scatter drops past the header's capacity; the header is written only by the renderer
+(a kernel's writes start at word 4 of its range). A slot of the other pool's kind than its list's, or a list not there,
+reads the empty list at each pool's word 0. Tests: `tide_platform_kernels`' `Trespass` (every way past a full list's
+ends between neighbours in both pools, their words and counts read back: a guard made `>` for `>=` fails it), and the
+`gpu_lists` safety fixture (capacities and counts of any int, through the renderer under ASan and the Vulkan
+validation layer).
+
+## Commands' lists of values (2026-11-04)
+
+A command's `List<T>` from the wire (`gen_bits_list`, `notes/netcode.md`, Commands holding lists of values) is
+generated code over the list helpers there were. Its count is refused past `TIDE_COMMAND_LIMIT` or past the bits left
+over the fewest bits an element takes, before `tide_list_resize` makes the scratch list, so the list is at most about
+eight times the command's bytes; each element is read into a zeroed wrapper and checked for overflow before it's
+copied in, and the write side reads elements only below the list's count. Floats, enums and chars are repaired before
+anything reads them, as a field's are. `compiler/tests/e2e/command_lists` feeds hand-written counts and truncations.
+
+## Grids code owns (2026-11-03)
+
+Locals, returned grids and copies (notes/language.md, Grids as values) reach `engine/src/grid.c` with any game
+value. A scratch grid's places are checked against its size as a world's are (`tide_grid_inside`), its chunk and
+directory sizes come from the shape, never the game, and a write to the pack's grids (scratch-tagged offsets past
+`TIDE_PACK_BASE`) still finds nothing to write. A field taking a scratch grid copies its chunks into the world, so no
+world handle names scratch memory, and a scratch grid never reaches another thread: parallel loops refuse a local's or
+a parameter's grid, workers keep none, a task can't keep one across a wait and a lambda can't capture one. The
+`grid_values` safety fixture tries sizes under 0 and at 2,000,000,000, places at the int limits, copies of a grid too
+big to list its chunks and churn of 2000 grids a system, under ASan.
+
+## Levels of detail of a game's own meshes (2026-11-02)
+
+`lod:` hands game-made vertices and indices to the simplifier while the game runs (assets-and-files.md, Levels
+of detail for meshes a game makes). It reads only the draw list's copy, whose triangles past the vertices were
+already left out, copied again into the job's own arrays, so the game can change or free its lists meanwhile.
+Field offsets come from generated `offsetof`s but are checked against the vertex size before any read
+(`fits`). The maker's sizes are bounded (2^26 vertices and triangles, so its 32-bit products can't wrap),
+allocation failure and a stop give no levels instead of aborting, and positions, normals, uvs and colors that
+are no number only change costs, never an index. Results are checked again as they're given to a slot
+(`tide_draw_mesh_levels`: every index under the slot's vertices, errors rising), so a key collision could only
+show other triangles of the same mesh. `tidec_e2e_lod_generated` runs NaN positions and indices under 0 and past
+the vertices under ASan and on WASI.
+
+## Packed local-field migration alignment (2026-10-31)
+
+Migration's attached local rows may start at any byte offset in packed state.
+Their generated defaults require the destination C type's alignment. The
+runtime now uses its existing aligned value scratch and byte-copies each row
+to the packed output; the format and retained values stay unchanged. A portable
+regression asserts the callback's alignment across every eight-byte offset
+and varying row counts, before doing a typed store. It fails before the fix
+and passes on Windows ASan and WASI. Contracts and affected-test validation:
+hot-reload.md, Aligned defaults for packed local rows. No new runtime API.
+
+
+## 64-bit handles (2026-10-30)
+
+Handles are 64 bits (notes/ecs.md, 64-bit handles); what checks them is as
+strict as before, with its arithmetic 64 bits wide, and a few bounds are new
+where the wider limits would otherwise have let received bytes ask for more:
+
+- A received heap (`tide_heap_unpack`) must have the bytes it says it handed
+  out (`used`) before any page is made, and a page from bytes or a delta takes
+  no more places than the biggest block's (8,192), where `LIMIT` alone
+  allowed 1 GiB a page before and 64 TiB now. A delta's heap may say only as
+  many pages past its base's as it has bytes left (`tide_heap_unpack_delta`).
+- The asset dictionary's pack places are checked against the handle's offset
+  range and then by `tide_asset_pack`'s span; raw payloads must fit the
+  reader before they're read, and users are bounded by the bytes left.
+- The pack loader's header and span checks are the same with no 64-bit
+  overflow: `region_size <= size` and `region_at == size - region_size`,
+  `at <= size && bytes <= size - at`.
+- A command's text or list field from Unity is refused unless its high word is
+  zero (`tide_embed_command_text`, `_list`).
+- `tide_scratch_at` reads the pack's region from `tide_pack_memory` past
+  `TIDE_PACK_BASE`, NULL with no pack loaded, as the slots it had were.
+
 ## Holes keep stale bytes nothing reads (2026-10-29)
 
 A hole an entity left (notes/ecs.md, Holes) keeps its row's old bytes,
@@ -337,3 +503,10 @@ Custom view interpolation snapshots each endpoint's text, nested lists/maps/sets
 ## T? fields (2026-10-11)
 
 A field declared `T?` is its value and whether there is one, in its holder's bytes (`notes/language.md`, T? fields). What's read of one with no value is never what it held: generated code reads the value only behind `ok` (`tide_optional_<T>_get` gives zeros otherwise), `!` gives the type's default, and what's kept is zeros from the moment the field is given nothing, its text and lists released, so no handle to a block the heap gave out again is left in it. Reading one that holds a list copies the list, so no local shares a world's. A field of an element past a list's end reads as nothing and a write there does nothing, as for any field of an element. A command's or an input's flag comes off the wire as one bit, and an input from C with no value but bytes beside it is zeroed before `Sanitize`. No new runtime path takes game values: it's all generated code over the struct, text and list helpers there were. `compiler/tests/safety/optional_fields` sets, takes away and sets again text, lists and structs of them every tick for 64 ticks, assigns fields to themselves and to each other, reads and writes fields of elements at the ints' edges, and does the same in the local world, under the host's snapshots and packing; its sums would differ by any stale read.
+## Recipient endpoint hash/need helpers (2026-11-06)
+
+Private recipient_needs helpers compare only caller-supplied permitted canonical bytes. An offer contains the target byte count, complete hash and one hash per 16 KiB block. The client's fixed 512-byte mask names missing blocks; exact mask length, unused tail bits and exact offer length are checked before use. This limits negotiation to 4,096 blocks (64 MiB); larger worlds use the existing recipient codec, so no world-size limit is introduced.
+
+A patch carries its target count/hash, exact mask and individually bounded recipient-codec blocks. Copies of matching candidate blocks require complete candidate spans. Missing block encoded lengths are checked against remaining wire bytes, each decoder receives the exact bounded block output, and the final cursor and complete reconstructed hash must match. Malformed or falsely claimed matching data never reaches a game loader. Outputs are published to the caller only on complete success. No token controls indexing or allocation beyond the checked negotiation target bound; work is linear in target bytes plus encoded blocks. Session authentication, attempt/target retention, event journals and fallback remain session responsibilities (netcode.md).
+
+Validation: four focused Windows ASan and WASI cases pass: empty/matching/missing/growing/shrinking partial-block round trips; exact-sized truncations; trailing offers/patches, bad hashes, false have claims, malformed masks and UINT32_MAX encoded lengths; negotiation mask boundary and oversized headers without large allocations; a 7 MiB sparse endpoint patching exactly one block. The real-game tick-1149 pair (7,315,009 canonical bytes, four differing bytes) reconstructs exactly with a 3,588-byte hash offer, 56-byte need mask and 7,698-byte patch using the current codec. Those offline payload sizes exclude session/journal/packet overhead and do not establish live bandwidth.

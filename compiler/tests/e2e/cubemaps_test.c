@@ -151,7 +151,7 @@ TIDE_TEST(cubemaps_are_assets_of_six_files_and_cubes_a_view_draws_into)
     // ...through a function, in a struct, and in a match component's local field
     TIDE_CHECK(room->probe.cube.target.id == cube);
     const tide_entity entity = prop();
-    TIDE_REQUIRE(entity.generation != 0);
+    TIDE_REQUIRE(!tide_entity_is_null(entity));
     TIDE_CHECK(tide_get_Prop_local(&local, entity).around.target.id == cube);
 
     // A face is a RenderTarget: the cube's state, its size, and which face its id says. Each is a
@@ -180,10 +180,9 @@ TIDE_TEST(cubemaps_are_assets_of_six_files_and_cubes_a_view_draws_into)
     TIDE_REQUIRE(packed && packed->space == TIDE_PIXELS_PACK_CUBE && packed->id == version && packed->width == 4);
     TIDE_CHECK((const uint8_t *const *)(uintptr_t)packed->pixels == faces && packed->capacity == 0);
     TIDE_CHECK(tide_sampling_filter(sky_run->sampling, 0) == TIDE_FILTER_BILINEAR);
-    TIDE_CHECK(strstr(sky_run->shader->glsl_fragment, "uniform highp samplerCube pixels0;\n") != NULL);
-    TIDE_CHECK(strstr(sky_run->shader->glsl_fragment, "textureLod(pixels0, t_corner.m_normal, 0.0)") != NULL);
-#ifdef __wasm__
+#ifdef __wasm__ // A shader's text is its WGSL, which a build keeps on the web (natively, its SPIR-V)
     TIDE_CHECK(strstr(sky_run->shader->wgsl, "var pixels0: texture_cube<f32>;") != NULL);
+    TIDE_CHECK(strstr(sky_run->shader->wgsl, "textureSampleLevel(pixels0, sampler0, t_corner.m_normal, 0.0)") != NULL);
 #endif
     // It draws into a face of the cube, and into the window
     TIDE_CHECK(destination_of(drawn_through("Sky on Corner", 0)) == room->probe.front.id);
@@ -200,8 +199,10 @@ TIDE_TEST(cubemaps_are_assets_of_six_files_and_cubes_a_view_draws_into)
     TIDE_CHECK(tide_sampling_filter(mirror->sampling, (uint32_t)from_pack) == TIDE_FILTER_TRILINEAR);
     TIDE_CHECK(tide_sampling_filter(mirror->sampling, (uint32_t)from_cube) == TIDE_FILTER_POINT);
     TIDE_CHECK(tide_sampling_filter(mirror->sampling, (uint32_t)from_bright) == TIDE_FILTER_BILINEAR);
-    TIDE_CHECK(strstr(mirror->shader->glsl_fragment, "vec3 tide_dx0 = dFdx(tide_uv0);") != NULL);
-    TIDE_CHECK(strstr(mirror->shader->glsl_fragment, "textureGrad(pixels") != NULL);
+#ifdef __wasm__
+    TIDE_CHECK(strstr(mirror->shader->wgsl, "let tide_dx0: vec3f = dpdx(tide_uv0);") != NULL);
+    TIDE_CHECK(strstr(mirror->shader->wgsl, "textureSampleGrad(pixels") != NULL);
+#endif
     // A cube that's drawn into is a texture of the list's with no pixels: its id, size and version
     const tide_draw_texture *drawn = texture_of(mirror, (uint32_t)from_cube);
     TIDE_CHECK(drawn->pixels == NULL && drawn->target.width == 64.0f && drawn->version == tide_render_target_version(cube));
@@ -215,7 +216,11 @@ TIDE_TEST(cubemaps_are_assets_of_six_files_and_cubes_a_view_draws_into)
     TIDE_CHECK(tide_sampling_filter(around->sampling, (uint32_t)reads_pack_cube(around)) == TIDE_FILTER_POINT);
     const tide_draw_run *lift = run_through("Lift on Corner");
     TIDE_REQUIRE(lift && lift->shader->texture_count == 1 && lift->shader->texture_reads[0] == TIDE_SHADER_READ_CUBE);
-    TIDE_CHECK(reads_cube(lift, cube) == 0 && strstr(lift->shader->glsl_vertex, "samplerCube pixels0") != NULL);
+    TIDE_CHECK(reads_cube(lift, cube) == 0);
+#ifdef __wasm__
+    TIDE_CHECK(strstr(lift->shader->wgsl, "var pixels0: texture_cube<f32>;") != NULL);
+    TIDE_CHECK(strstr(lift->shader->wgsl, "(*t_corner).m_normal * tide_straight(textureSampleLevel(pixels0, sampler0,") != NULL);
+#endif
 
     // Two names of the same six files are one texture of the list's, told by what's in them
     const tide_draw_run *twice = run_through("Twice on Corner");

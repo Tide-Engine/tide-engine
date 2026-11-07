@@ -8,7 +8,7 @@ using UnityEngine;
 public sealed class BallTint : MonoBehaviour
 {
     Tide.Game.Ball ball;
-    TideEntityView view;
+    TideEntity view;
     Renderer shown;
     MaterialPropertyBlock block;
 
@@ -21,8 +21,8 @@ public sealed class BallTint : MonoBehaviour
     void LateUpdate()
     {
         if (ball == null) ball = GetComponent<Tide.Game.Ball>(); // The runner adds it as the entity shows here
-        if (view == null) view = GetComponent<TideEntityView>();
-        if (ball == null || view == null) return;
+        if (view == null) view = GetComponent<TideEntity>();
+        if (ball == null || view == null || !view.Showing) return;
         block.SetColor("_Color", ball.color);
         block.SetColor("_BaseColor", ball.color);
         shown.SetPropertyBlock(block);

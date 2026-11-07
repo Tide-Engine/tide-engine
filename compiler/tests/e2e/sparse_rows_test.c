@@ -1,6 +1,7 @@
 #include "game.h"
 #include "tide/jobs.h"
 #include "tide_test.h"
+#include "entity_order_test.h"
 
 enum { COUNT = 6147, TICKS = 3 };
 static tide_world world, kept;
@@ -14,15 +15,21 @@ static bool wanted(const int i)
 
 static void check_rows(const tide_list list, const int scene, const int tick)
 {
+    entity_order_value expected[COUNT * 2];
+    int count = 0;
+    for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+        if (!tide_has_Item(&world, entity)) continue;
+        const int ordinal = tide_get_Item(&world, entity).ordinal;
+        const int side = ordinal / 10000, i = ordinal % 10000;
+        if ((scene >= 0 && side != scene) || !wanted(i) || (tick > 0 && ordinal % 17 == 5)) continue;
+        expected[count++] = (entity_order_value){entity, ordinal};
+    }
+    qsort(expected, (size_t)count, sizeof *expected, entity_order_compare);
     int at = 0;
-    for (int side = 0; side < 2; side++) {
-        if (scene >= 0 && side != scene) continue;
-        for (int i = 0; i < COUNT; i++) {
-            const int ordinal = side * 10000 + i;
-            if (!wanted(i) || (tick > 0 && ordinal % 17 == 5)) continue;
-            const int32_t *value = tide_list_at(list, at++, sizeof *value);
-            TIDE_REQUIRE(value && *value == ordinal);
-        }
+    for (; at < count; at++) {
+        const int32_t *value = tide_list_at(list, at, sizeof *value);
+        TIDE_REQUIRE(value && *value == expected[at].value);
     }
     TIDE_CHECK(tide_list_count(list) == at);
 }

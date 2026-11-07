@@ -11,14 +11,14 @@ target_compile_definitions(tide_bench PRIVATE TIDE_BENCH_RESULTS="${CMAKE_CURREN
 
 tide_add_game(bench_sand SOURCES sand/sand.tide NAME sand HOST sand/main.c)
 target_link_libraries(bench_sand PRIVATE tide_bench)
-add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x6ac505971b099ca5)
+add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x8aef90b836a56b9e)
 # Sand to play, with its views and the mouse: `sand` in a window, sand.html on
 # the web, which the docs site shows (docs/guide/sand.md).
 tide_add_game(sand SOURCES sand/sand.tide sand/play.tide TITLE "Tide sand" STATS)
 
 tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST gallery/main.c)
 target_link_libraries(bench_gallery PRIVATE tide_bench)
-add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xe8641c8f2826ff50)
+add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x017398d3dd004471)
 
 # The home page's planet (examples/earth), its match as it is but for taking
 # up to 256 players rather than the page's 64, to see how far it goes. Its
@@ -36,12 +36,12 @@ tide_add_game(bench_earth NAME game HOST earth/main.c
     SOURCES "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" "${earth_dir}/city.tide" "${earth_dir}/layout.tide"
             "${earth_dir}/globe.tide" "${earth_dir}/shapes.tide" "${earth_dir}/show.tide" "${earth_dir}/terrain.tide" "${earth_dir}/plants.tide")
 target_link_libraries(bench_earth PRIVATE tide_bench)
-add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x8d679303b6836f22)
+add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x85668de38fe81a0e)
 # A town hop changes shard and what the machine sees at once: corrections put it up to two seconds behind, as
 # the engine's visibility tests allow
-add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x1019cc68d13cf499)
+add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x8d08d2811257262c)
 # Comparing one bot's world with what the server says it is, tick by tick
-add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x8d679303b6836f22)
+add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x85668de38fe81a0e)
 
 # Page hashes: the engine's beside candidates for its place, timed on the
 # shapes a world's hash reads (`bench_hash`, natively and under Node); the test
@@ -50,8 +50,40 @@ add_executable(bench_hash hash/hash.c)
 target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
+# Indexes for indexed loops (tide/index.h): building one, and searching it for
+# about 10 entries near a point, against the plain loop over every entry; the
+# test checks both loops find the same entries.
+add_executable(bench_index index/index.c)
+target_link_libraries(bench_index PRIVATE tide)
+add_test(NAME bench_index COMMAND bench_index --quick)
+
+# Indexed loops: boids looking at their neighbours through a query, agents at
+# obstacles in a list, with the loops' indexes and without (NO_LOOP_INDEXES):
+# `bench_loops --n 10000` against `bench_loops_plain --n 10000`.
+if(TIDE_PLATFORM)
+    foreach(variant "" _plain)
+        set(no_indexes "")
+        if(variant STREQUAL "_plain")
+            set(no_indexes NO_LOOP_INDEXES)
+        endif()
+        tide_add_game(bench_loops${variant} ${no_indexes} SOURCES loops/loops.tide NAME loops HOST loops/main.c)
+        target_link_libraries(bench_loops${variant} PRIVATE tide_platform)
+        add_test(NAME bench_loops${variant} COMMAND bench_loops${variant} --quick)
+    endforeach()
+endif()
+
 # Presentation correction costs, without changing Transform's defaults.
 add_subdirectory(corrections)
+
+# Occlusion culling at street level: 256 lists of props among houses, frames with Draw.Occlusion off and on in
+# turn, GPU time and what it hid (notes/drawing.md, Occlusion culling from a depth pyramid). The test checks the
+# same frame both ways is the same pixels.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(bench_occlusion SOURCES occlusion/game.tide NAME game HOST occlusion/main.c)
+    target_link_libraries(bench_occlusion PRIVATE tide_platform)
+    add_test(NAME bench_occlusion COMMAND bench_occlusion --quick)
+    tide_gpu_test(bench_occlusion)
+endif()
 
 tide_add_game(bench_workers SOURCES workers/game.tide NAME game HOST workers/main.c)
 target_link_libraries(bench_workers PRIVATE tide_platform)
@@ -78,16 +110,26 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(bench_skinned SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(bench_skinned TARGET bench_skinned
-            QUERY "counts=1,10&frames=2&warmup=1&repeat=1" WEBGPU EXPECT "renderer: WebGPU")
+            QUERY "counts=1,10&frames=2&warmup=1&repeat=1" PIXELS EXPECT "renderer: WebGPU")
         tide_add_web_test(bench_skinned_gpu_clip TARGET bench_skinned
-            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=gpu&verify-gpu&subframe=0.5" WEBGPU EXPECT "GPU clip reference:")
+            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=gpu&verify-gpu&subframe=0.5" PIXELS EXPECT "GPU clip reference:")
+        tide_add_web_test(bench_skinned_baked TARGET bench_skinned
+            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=baked" PIXELS EXPECT "baked_clip")
     else()
         add_test(NAME bench_skinned COMMAND bench_skinned --counts 1,10 --frames 2 --warmup 1 --repeat 1)
         tide_gpu_test(bench_skinned)
         add_test(NAME bench_skinned_gpu_clip COMMAND bench_skinned --counts 10 --modes gpu --frames 2 --warmup 1 --repeat 1 --verify-gpu --subframe 0.5)
         tide_gpu_test(bench_skinned_gpu_clip)
+        # Baked poses: kept on the GPU (no upload once warm) and drawn in one instanced call
+        add_test(NAME bench_skinned_baked COMMAND bench_skinned --counts 10 --modes baked --frames 2 --warmup 1 --repeat 1)
+        tide_gpu_test(bench_skinned_baked)
     endif()
 endif()
+
+# Pose.Sample of a separate animation export, a call at a time (pose/main.c);
+# the test checks that kept sample plans give the bits of one-call plans.
+tide_add_game(bench_pose SOURCES pose/game.tide NAME game HOST pose/main.c)
+add_test(NAME bench_pose COMMAND bench_pose --quick)
 
 # Static Render3D PBR and equivalent cached public-C direct submission.
 # All referenced sources exist before this registration is added; no common
@@ -97,6 +139,9 @@ if(NOT TIDE_ANDROID)
         PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/wind.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/fog.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/impostor.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
         HOST render3d/main.c render3d/direct.c)
@@ -110,17 +155,51 @@ if(NOT TIDE_ANDROID)
         tide_web_page(bench_render3d SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         # Its four light setups take CI's software WebGPU about a minute, and
         # twice that beside other tests
-        tide_add_web_test(bench_render3d TARGET bench_render3d QUERY "quick" WEBGPU EXPECT "Render3D benchmark correctness passed"
+        tide_add_web_test(bench_render3d TARGET bench_render3d QUERY "quick" PIXELS EXPECT "Render3D benchmark correctness passed"
             SECONDS 240)
     else()
         add_test(NAME bench_render3d COMMAND bench_render3d --quick)
-        add_test(NAME bench_render3d_opengl COMMAND bench_render3d --quick)
         tide_gpu_test(bench_render3d)
-        tide_gpu_test(bench_render3d_opengl OPENGL)
     endif()
 endif()
 
-# Tide's drawing benchmark's workloads by hand in OpenGL and Vulkan, timed the same way
+# Production foliage path across a kilometre-scale forest.
+if(NOT TIDE_ANDROID)
+    tide_add_game(bench_forest NAME game SOURCES forest/game.tide forest/impostor-settings.tide
+        PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/wind.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/fog.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/impostor.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
+        HOST forest/main.c)
+    target_link_libraries(bench_forest PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(bench_forest SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(bench_forest TARGET bench_forest QUERY "quick"
+            PIXELS EXPECT "Forest stress correctness passed" SECONDS 240)
+        tide_add_web_test(bench_forest_motion TARGET bench_forest QUERY "motion-smoke"
+            PIXELS EXPECT "Forest stress correctness passed" SECONDS 240)
+    else()
+        add_test(NAME bench_forest COMMAND bench_forest --quick)
+        tide_gpu_test(bench_forest)
+        add_test(NAME bench_forest_motion COMMAND bench_forest --motion-smoke)
+        tide_gpu_test(bench_forest_motion)
+    endif()
+endif()
+
+# A depth pre-pass (Depth.Only, then Depth.Equal) against cut-outs lit in one
+# pass: GPU time and the same picture. Its test is the picture alone.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(bench_prepass NAME game SOURCES prepass/game.tide HOST prepass/main.c)
+    target_link_libraries(bench_prepass PRIVATE tide_platform)
+    add_test(NAME bench_prepass COMMAND bench_prepass --quick)
+    tide_gpu_test(bench_prepass)
+endif()
+
+# Tide's drawing benchmark's workloads by hand in Vulkan, timed the same way
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(draw)
 endif()
@@ -141,6 +220,10 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
 endif()
 
 if(TIDE_NODE)
+    add_test(NAME bench_forest_assets COMMAND "${TIDE_NODE}" --test
+        "${CMAKE_CURRENT_SOURCE_DIR}/forest/alpha-mips.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/forest/foliage-assets.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/forest/impostor-bake.test.mjs")
     add_test(NAME bench_compile_validation COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/compile.test.mjs")
     if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME bench_harness COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/harness.mjs"

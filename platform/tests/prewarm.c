@@ -3,8 +3,10 @@
 // kind into a target and a blit into the window. The host has the renderer
 // make the pipelines of its shaders (tidec's tide_game_shaders) before they
 // draw (tide_platform_prewarm), with background pipelines on where the
-// backend has them, as a game's host has them. Run in this order by
-// prewarm.cmake, natively, the game's temporary cache folder the script's:
+// backend has them, as a game's host has them, and starts it as a game's host
+// does (tide_run_begin_loaded): its loading frames go on till the pipelines it
+// starts with are made. Run in this order by prewarm.cmake, natively, the
+// game's temporary cache folder the script's:
 //
 //   prewarm first     no file of how the game's shaders drew: nothing of the game's is made as it starts; once its
 //                     first frame drew the mesh, the late mesh, of its kind, is made as that was, and its first frame
@@ -27,7 +29,9 @@
 
 uint32_t tide_platform_shader_pipelines(void); // The renderer's, for a test (platform/src/gpu.h)
 
-enum { WAIT_FRAMES = 600 };
+// A bound on a hang, not on speed: headless frames take a millisecond or so, and the pool's threads compiling the
+// game's pipelines with the driver's cache cold under ASan took more than 600 of them (2026-11-06)
+enum { WAIT_FRAMES = 6000 };
 
 #define GAME_ID "dev.tide.prewarm" // What the host names the game, whose temporary cache folder has the file
 
@@ -75,20 +79,31 @@ static bool spoil(const char *mode)
 
 static int frame(void *user, const float seconds)
 {
-    static bool started;
-    static int frames;
+    static bool started, begun;
+    static int frames, loading_frames;
     static uint32_t made, calls;
     if (!started) {
         printf("renderer: %s\n", tide_platform_renderer()); // What a test of one backend looks for
         uint32_t shaders = 0;
         while (tide_game_shaders[shaders]) shaders++;
         check(shaders == 3, "tidec's table has the game's three shaders");
-        if (again) check(tide_platform_shader_pipelines() == 3, "the last run's way of drawing each made its pipeline as the game started");
-        else check(tide_platform_shader_pipelines() == 0, "with nothing known of how they draw, none is made as the game starts");
         started = true;
     }
+    const uint32_t before = tide_platform_shader_pipelines(); // ...as the frame that begins the game begins
     const int code = tide_run_frame(user, seconds);
     if (code != TIDE_KEEP_RUNNING) return code;
+    if (tide_run_loading.on) { // The pipelines it starts with are being made, while the window's frames go on
+        if (++loading_frames < WAIT_FRAMES) return TIDE_KEEP_RUNNING;
+        check(false, "the game begins once the pipelines it starts with are made, within the frames given them");
+        return failures;
+    }
+    if (!begun) {
+        begun = true;
+        printf("the game began in loading frame %d\n", loading_frames + 1);
+        check(tide_platform_prewarm_waiting() == 0, "the game began once every pipeline it starts with was made");
+        if (again) check(before == 3, "the last run's way of drawing each made its pipeline as the game started");
+        else check(before == 0, "with nothing known of how they draw, none is made as the game starts");
+    }
     frames++;
     if (!later) {
         // The frame after the first, which drew the early mesh, has the late one made
@@ -128,6 +143,6 @@ int main(const int argc, char **argv)
                                            .width = tide_run_settings.width,
                                            .height = tide_run_settings.height,
                                            .hidden = true});
-    tide_run_begin();
+    tide_run_begin_loaded();
     tide_platform_run(frame, NULL);
 }

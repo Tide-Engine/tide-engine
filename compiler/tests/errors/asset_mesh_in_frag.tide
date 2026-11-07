@@ -1,4 +1,4 @@
-// expect: a Mesh's vertices and indices aren't read as lists in code the GPU runs: the draw sends them, as the mesh they are
+// expect: mesh geometry is read in CPU code
 struct Corner
 {
     float3 position;

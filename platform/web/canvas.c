@@ -1,5 +1,5 @@
-// The web's window (see src/window.h): the page's canvas, with a WebGL 2
-// context, and the page's input, both through its JavaScript (tide.js, which
+// The web's window (see src/window.h): the page's canvas, drawn in with
+// WebGPU, and the page's input, both through its JavaScript (tide.js, which
 // tide_web.h declares) instead of Emscripten.
 //
 // The screen is the canvas in CSS pixels, which the program draws and reads
@@ -73,25 +73,26 @@ static const struct {
 
 _Static_assert(COUNT_OF(pad_buttons) == TIDE_PAD_COUNT, "every gamepad button needs the browser's index");
 
-static const tide_gpu *gpu = &tide_gpu_gl;
+// WebGPU, or for a test's page that asked for none (`gpu=none`, tide.js), a GPU that draws nothing
+static const tide_gpu *window_gpu = &tide_gpu_webgpu;
 
 bool tide_window_open(const tide_window_desc *desc)
 {
     // A resizable window is a canvas that fills the page. Tests keep the size
     // they asked for.
-    const int canvas = tide_web_init_canvas(desc->width, desc->height, !desc->hidden);
-    if (canvas == TIDE_WEB_NO_CANVAS) {
-        fprintf(stderr, "tide: this browser has neither WebGPU nor WebGL 2, or not the one the page asked for\n");
+    if (!tide_web_init_canvas(desc->width, desc->height, !desc->hidden)) {
+        // The page shows why in the canvas's place (tide.js)
+        fprintf(stderr, "tide: this game needs WebGPU, which this browser doesn't have or has turned off\n");
         return false;
     }
-    gpu = canvas == TIDE_WEB_WEBGPU ? &tide_gpu_webgpu : &tide_gpu_gl;
+    if (tide_web_eval("Tide.gpuNone === true")) window_gpu = &tide_gpu_none;
     for (size_t i = 0; i < COUNT_OF(keys); i++) tide_web_watch_key((int)keys[i].key, keys[i].code);
     return true;
 }
 
 const tide_gpu *tide_window_gpu(void)
 {
-    return gpu;
+    return window_gpu;
 }
 
 // The canvas can't close: the page goes, and the program with it.
@@ -214,12 +215,16 @@ void tide_window_typing(const bool typing)
     tide_web_typing(typing);
 }
 
-uint8_t *tide_window_pack(size_t *size)
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
 {
     *size = tide_web_pack_size();
     if (!*size) return NULL;
     uint8_t *bytes = malloc(*size);
     if (!bytes) abort();
-    tide_web_pack_copy(bytes);
+    tide_web_pack_copy(bytes); // The page fetched it, showing how far as it went (tide.js)
+    if (progress) {
+        __atomic_store_n(&progress[1], (uint64_t)*size, __ATOMIC_RELAXED);
+        __atomic_store_n(&progress[0], (uint64_t)*size, __ATOMIC_RELAXED);
+    }
     return bytes;
 }

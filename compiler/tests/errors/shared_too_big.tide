@@ -1,0 +1,21 @@
+// expect: shares 17600 bytes within a group, and a group has 16384 (16 KiB) on every GPU
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow)
+{
+    shared float4[1100] sums;
+    meadow.counts[0] = int(sums[0].x);
+}
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

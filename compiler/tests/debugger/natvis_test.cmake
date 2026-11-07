@@ -39,13 +39,16 @@ k 3
 dv
 dx -r2 *player
 dx -r3 *totals
+dx -r0 tide_debug_identity
+dx -r0 tide_debug_half
+dx -r0 tide_debug_null
 dx -r1 recent
 bc *
 bp `fixture.tide:${at_gained}`
 g
+bc *
 p
 k 1
-bc *
 bp `fixture.tide:${at_sum}`
 g
 k 2
@@ -107,8 +110,9 @@ expect("dx -r2 *player" 1 "\n +scores +: { count = 0x1 }" "a map field says its 
 expect("dx -r2 *player" 1 "\n +\\[[^\n]*ann[^\n]*\\] +: [0-9]+ \\[Type: int\\]" "a map's entries are its values by key")
 expect("dx -r2 *player" 1 "\n +seen +: { count = 0x[1-9]" "a set field says its count")
 expect("dx -r2 *player" 1 "\n +facing +: \\(0\\.0+, 0\\.0+, 0\\.0+, 1\\.0+\\)" "a quaternion is its x, y, z and w")
-expect("dx -r3 *totals" 1 "\n +pairs +: { count = 0x[1-9]" "a singleton's list of structs says its count")
+expect("dx -r3 *totals" 1 "\n +pairs +: { count = 0x2" "a singleton's list of structs says its count")
 expect("dx -r3 *totals" 1 "\n +\\[0x0\\] +\\[Type: Pair\\]\n[^\n]* a +: 2 \\[Type: int\\]" "a list's struct elements show their fields")
+expect("dx -r3 *totals" 1 "\n +\\[0x1\\] +\\[Type: Pair\\]\n[^\n]* a +: 11 \\[Type: int\\]\n[^\n]* b +: 0\\.5" "the second appended struct keeps its canonical position")
 expect("dx -r3 *totals" 1 "\n[^\n]* b +: 0\\.5" "a list's struct elements show their fields")
 expect("k 1" 1 "tide_system_Score\\+0x[0-9a-f]+ \\[[^]\n]*fixture\\.tide @ ${at_recent}\\]"
     "a step from a statement lands on the next Tide line, not on generated C")
@@ -120,6 +124,11 @@ expect("dx -r1 recent" 1 "\\[Type: tide_local_list[0-9]+\\]\n +\\[0x0\\] +: 1 \\
 expect("dx -r1 values" 1 "\\[Type: tide_local_list[0-9]+\\]\n +\\[0x0\\] +: 1 \\[Type: int\\]\n +\\[0x1\\] +: 2 \\[Type: int\\]"
     "a list parameter's elements are its element type, through its own type")
 expect("dv" 2 "\n +total = " "a mut local has its Tide name")
+
+expect("dx -r0 tide_debug_identity" 1 "Entity\\(0x12345678abcdef01:0xfedcba9876543210\\)" "an entity displays both complete logical words")
+expect("dx -r0 tide_debug_half" 1 "Entity\\(0x0:0xfedcba9876543210\\)" "a zero birth word alone is not null")
+expect("dx -r0 tide_debug_null" 1 "none" "both zero words are null")
+
 if(failures)
     message(FATAL_ERROR "The debugger didn't show the game as Tide:${failures}\n\nAll it said is in ${WORK}/said.txt")
 endif()

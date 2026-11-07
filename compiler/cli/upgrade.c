@@ -466,6 +466,52 @@ void tide_check_for_update(const char *root)
 }
 
 
+bool tide_install_channel(const char *root, const char *channel)
+{
+    char *version_path = path_join(root, "VERSION");
+    char *current = sys_read_file(version_path, NULL);
+    free(version_path);
+    if (current) current[strcspn(current, "\r\n ")] = '\0';
+#ifdef _WIN32
+    char *program = path_join(root, "bin/tide.exe");
+#else
+    char *program = path_join(root, "bin/tide");
+#endif
+    const bool whole = current && tide_version_valid(current) && tide_installation_whole(root, current) && sys_exists(program);
+    free(program);
+    char *parent = path_dir(root);
+    char name[96];
+    snprintf(name, sizeof name, ".%s-download-%u", channel, sys_pid());
+    char *work = path_join(parent, name);
+    free(parent);
+    bool ok = sys_mkdirs(work);
+    const json *releases = ok ? fetch_releases(work, true) : NULL;
+    const json *release = releases ? newest(releases, channel) : NULL;
+    if (!release) {
+        fprintf(stderr, "tide: couldn't check %s releases%s\n", channel,
+                whole ? "; using the installed version" : "; connect to the network and retry");
+        ok = whole;
+    } else if (whole && tide_version_compare(tide_release_version(release), current) <= 0) {
+        ok = true;
+    } else {
+        char *fresh = download_release(work, release);
+        ok = false;
+        if (fresh) {
+            char *trash = path_join(work, "old");
+            char failed[1024];
+            ok = tide_install(root, fresh, trash, failed, sizeof failed);
+            if (!ok) fprintf(stderr, "tide: couldn't update %s; close programs using it and retry\n", failed);
+            free(trash);
+            free(fresh);
+        }
+        if (!ok && whole) ok = tide_installation_whole(root, current);
+    }
+    sys_remove_tree(work);
+    free(work);
+    free(current);
+    return ok;
+}
+
 bool tide_install_version(const char *root, const char *version)
 {
     // root is a validated exact version below the caller's absolute cache root.

@@ -258,7 +258,7 @@ static bool run_valid(const tide_draw_list *d, const tide_draw_command *c)
     if ((uint64_t)r->first + instances > d->instance_used || (uint64_t)r->uniforms + uniforms > d->uniform_used
         || (instances && !d->instances) || (uniforms && !d->uniforms)) return fail("Invalid shader data range");
     if (r->moved > 1u || (r->moved && s->dims != 2)) return fail("Unsupported recorded shader transform");
-    if (c->blend > TIDE_BLEND_REPLACE || c->depth > TIDE_DEPTH_NONE || (c->cull & ~7u)
+    if (c->blend > TIDE_BLEND_REPLACE || c->depth > TIDE_DEPTH_EQUAL || (c->cull & ~7u)
         || (c->cull & 3u) > TIDE_CULL_NONE) return fail("Unsupported draw state");
     const tide_color white = TIDE_COLOR_WHITE;
     if (c->kind == TIDE_DRAW_BLIT && (s->dims != 2 || r->count != 1u || r->moved
@@ -326,7 +326,7 @@ static bool iterator_next(direct_iterator *it, direct_event *out)
             const uint32_t size = tide_shader_instance_size(r->shader);
             *out = (direct_event){.draw = d, .command = c, .run = r, .mesh = &d->meshes[r->mesh - 1u],
                 .target = it->target ? &d->targets[it->target - 1u] : NULL, .state = *state,
-                .instance = size ? d->instances + r->first + (size_t)it->item * size : NULL};
+                .instance = size ? tide_draw_run_instance(d, r, it->item) : NULL};
             if (++it->item == r->count) it->item = 0, it->at++;
             return true;
         }
@@ -671,7 +671,15 @@ bool render3d_direct_record(const render3d_direct *cache, tide_draw_list *draw)
                 textures[j] = record_texture(draw, &d->textures[r->textures[j] - 1u]);
                 if (!textures[j]) return false;
             }
-            const void *instances = tide_shader_instance_size(r->shader) ? d->instances + r->first : NULL;
+            // A listed run's (tide_draw_run.listed) are its list's: gathered as bytes
+            const uint32_t size = tide_shader_instance_size(r->shader);
+            uint8_t *gathered = r->listed && size ? malloc((size_t)r->count * size) : NULL;
+            for (uint32_t k = 0; gathered && k < r->count; k++) {
+                const void *bytes = tide_draw_run_instance(d, r, k);
+                if (bytes) memcpy(gathered + (size_t)k * size, bytes, size);
+                else memset(gathered + (size_t)k * size, 0, size);
+            }
+            const void *instances = gathered ? (const void *)gathered : size ? d->instances + r->first : NULL;
             const void *uniforms = tide_shader_uniform_size(r->shader) ? d->uniforms + r->uniforms : NULL;
             if (c->kind == TIDE_DRAW_BLIT) {
                 tide_draw_blit(draw, r->shader, (tide_blend)c->blend, instances, uniforms, textures, r->sampling);
@@ -693,6 +701,7 @@ bool render3d_direct_record(const render3d_direct *cache, tide_draw_list *draw)
             // do not run visibility/LOD selection a second time in cached_direct.
             tide_draw_set_frustum_culling(draw, false);
             tide_draw_shaded_instances(draw, r->shader, slot, instances, r->count, uniforms, textures, r->sampling);
+            free(gathered);
             break;
         }
         default:

@@ -1,0 +1,84 @@
+// A kernel naming 20 GPU lists, past what a GPU binds as storage buffers (7 before pools): three read, six written by
+// index, four with atomics (so its pool of ints is atomic, and its lists of floats and structs stay plain), six Adds
+// in two scans, ints and float2s (each scratch in its list's pool), one of structs; and a frag reading 10 of them.
+// Each list is a range of a pool, found by two words of the table in the uniforms (notes/compute.md, GPU lists in
+// pools).
+
+scene Main { }
+
+struct Item
+{
+    float a;
+    int b;
+    float2 p;
+    bool on;
+}
+
+struct Corner
+{
+    float2 position;
+}
+
+local singleton Wide
+{
+    GPUList<float> in0;
+    GPUList<float> in1;
+    GPUList<int> inInts;
+    GPUList<float> f0;
+    GPUList<float> f1;
+    GPUList<float> f2;
+    GPUList<float> f3;
+    GPUList<float> f4;
+    GPUList<float> f5;
+    GPUList<int> c0;
+    GPUList<int> c1;
+    GPUList<int> c2;
+    GPUList<int> c3;
+    GPUList<int> a0;
+    GPUList<int> a1;
+    GPUList<int> a2;
+    GPUList<int> a3;
+    GPUList<int> a4;
+    GPUList<float2> pairs;
+    GPUList<Item> items;
+}
+
+[Group(64)]
+compute Spread(Wide w)
+{
+    int i = this.index;
+    float x = w.in0[i % w.in0.count] + w.in1[0];
+    int n = w.inInts[i % 4];
+    w.f0[i] = float(i) + x;
+    w.f1[i] = float(i) * 2.0;
+    w.f2[i] = float(i) * 3.0;
+    w.f3[i] = float(i) * 4.0;
+    w.f4[i] = float(i) * 5.0;
+    w.f5[i] = float(i) * 6.0;
+    w.c0.AtomicAdd(i % 4, 1);
+    w.c1.AtomicAdd(i % 4, n);
+    w.c2.AtomicMax(0, i);
+    w.c3.AtomicOr(0, 1 << (i % 31));
+    if (i % 2 == 0) w.a0.Add(i);
+    if (i % 3 == 0) w.a1.Add(i * 2);
+    if (i % 5 == 0) w.a2.Add(i + n);
+    if (i % 7 == 0) w.a3.Add(-i);
+    if (i % 11 == 0) w.a4.Add(i);
+    if (i % 4 == 1) w.pairs.Add(float2(float(i), x));
+    w.items[i] = Item { a = x, b = n, p = float2(float(i), 1.0), on = i % 2 == 0 };
+}
+
+frag ShowWide(Corner corner, Wide w, out Color color)
+{
+    float r = w.f1[3] / 24.0 + (w.f0[0] - 10.5) + w.f2[0] + w.f3[0] + w.f4[0] + w.f5[0];
+    float g = float(w.c0[0] + w.c2[0] - 99) / 50.0;
+    float b = float(w.a0.count + w.pairs.count) / 100.0 + w.pairs[0].x - 1.0;
+    color = Color(r, g, b, 1);
+}
+
+view Show(Wide wide)
+{
+    GPU.Run(Spread, 100);
+    Draw.Mesh([Corner { position = float2(0, 0) }, Corner { position = float2(6, 0) }, Corner { position = float2(6, 6) }],
+              [0, 1, 2], ShowWide);
+}

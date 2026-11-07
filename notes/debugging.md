@@ -1,5 +1,90 @@
 # Debugging Tide code in native debuggers
 
+## CI append-order oracle correction (2026-11-07)
+
+Linux release LLDB exposed an outdated first-Pair value after the finalized
+causal identity order. The script now asserts exactly two Pair elements in
+append order: `(2, 0.5)`, `(11, 0.5)`. Natvis checks the same exact count and both
+entries, matching its captured Windows output; the real Windows ASan dbgeng
+CTest passes. The ordinary local/parameter lists still assert insertion order.
+No formatter or simulation code changed. LLDB's native TLS-dependent session
+remains Linux CI validation; Windows' LLDB cannot provide that coverage.
+
+## Logical Entity keys (2026-11-06)
+
+Entity's owner-approved 128-bit identity is shown from its `birth` and `lineage`
+words, never from a physical slot. Natvis displays both native 64-bit fields;
+LLDB reads both with GetValueAsUnsigned and formats the full values. Only both
+words zero displays `none`, so trusted-C/local identities with birth zero remain
+visible. The debugger fixture includes full-width high-bit sentinel values, a
+zero-birth nonnull identity and null, with assertions in the native natvis and
+Linux LLDB scripts. This supersedes historical `Entity(index:generation)`
+examples below. The source line/stepping and ordinary typed-container assertions
+remain in the same fixture; Windows ASan natvis passes the complete real dbgeng fixture, including the three
+new full-key assertions. The fixture now checks both appended Pair elements in canonical order
+(`2, 11`) and the exact list count in both scripts; the former first-element-only
+`11` expectation became stale when the causal Entity ordering was finalized.
+Ordinary local and parameter list insertion-order checks remain unchanged. LLDB source passes Python syntax compilation locally;
+actual LLDB sessions remain Linux CI coverage on this Windows machine.
+
+
+## The natvis test's step, and other threads (2026-11-05)
+
+`tidec_debugger_natvis` stops at the `[gained]` line, steps once and expects the next line. It failed now and then on CI's Windows runner, still on the `[gained]` line: the fixture's systems run on several threads, and after the step another thread hit the same breakpoint first. The script now clears breakpoints (`bc *`) before the step, so only the step can stop it. Eight repeated local runs passed.
+
+## Optimized plumbing beside unoptimized code (2026-11-04)
+
+`tide`'s debug builds now compile the generated C in two files (notes/cli-and-packages.md, Optimized plumbing in
+debug builds): `game.c`, the functions whose lines are `.tide` lines, at `-O0 -g` with the visualizer flags as
+before, and `game_plumbing.c`, everything else, with the engine's `-O2 -g`. Stepping is unchanged: the plumbing's
+helpers were `nodebug` already, and in the plumbing file those a code function calls are `TIDE_SPLIT_HELPER`,
+`nodebug` too unless `TIDE_DEBUG_PLUMBING`. Rows and tasks (`tide_rows_...`, `tide_task_...`) keep their debug
+info, now optimized. The plumbing file has no `.tide` `#line`s: its prototypes of the code's functions aren't
+preceded by theirs. Types are declared in both files; `-fno-eliminate-unused-debug-types` stays on `game.c`'s
+flags, which every type the natvis casts to reaches.
+
+`tidec_debugger_fixture` builds with `SPLIT_PLUMBING` (notes/tide-programs.md), so `tidec_debugger_natvis` and
+`tidec_debugger_lldb` check a split build: the natvis test passes locally (breakpoint on a `.tide` line, a source
+step, a breakpoint in a function with its caller, locals, lists, maps, sets, text, enums, entities). LLDB's runs
+in CI's Linux jobs.
+
+## Worker visualizer fixture in MinGW Release (2026-11-03)
+
+Run `41539750446` failed while compiling `tidec_e2e_worker_values_visualizers`:
+Release supplies no debug information, so Clang rejects the visualizer's
+`-fno-eliminate-unused-debug-types` as unused under `-Werror`. The fixture now
+explicitly requests `-g`, as the debugger and profiler fixtures already do.
+Its optimization, typed-list coverage and assertions stay unchanged. This is
+target-local; `tide_add_game`, generated code and language behavior do not change.
+
+Validation: the affected target builds and its CTest passes with Windows
+Clang 23.1.2 ASan. The target is excluded from web and Android configurations,
+so no web behavior changed. This checkout has no MinGW toolchain; the full
+MinGW Release build remains CI validation. All explicit visualizer fixtures
+were checked for the same missing debug-info flag.
+
+## Views of 64-bit handles (2026-10-30)
+
+The natvis expressions (`view_block`, `view_list_items` and maps' items in
+`compiler/src/debug_views_codegen.inc`) and `debug_views.py` read handles as
+64 bits: where from bit `TIDE_WHERE_SHIFT`, the offset under
+`TIDE_HANDLE_OFFSET`, a chunk's offset from the list's 8-byte directory
+entries, the scratch area's slots through the `tide_scratch_slots` pointer (a
+table that grows) and the pack's region from `tide_pack_memory` past
+`TIDE_PACK_BASE`. The LLDB script gets those constants from tidec, as it got
+the others.
+
+## Optimized CLI debugging (2026-10-30)
+
+CLI --release now retains -g, CodeView/PDB, natvis/LLDB visualizers and macOS
+dSYM generation; --distribution takes the old no-debug-info policy. Existing
+references below to non-release CLI builds describe the previous policy.
+Optimized functions/locals remain subject to ordinary inlining/elimination.
+Installed native release artifact checks require debugger sidecars; web
+release checks require DWARF. Full mode validation: cli-and-packages.md,
+Optimized testing versus distribution. No line mapping or visualizer generator
+changed; optimized attach/stepping was not exercised.
+
 ## Windows ASan debugger fixture (2026-10-29)
 
 The native sanitizer suite exposed dbgeng stopping at a first-chance access

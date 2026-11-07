@@ -1,0 +1,185 @@
+{
+  "schema": "tide.canonical-query-cpu-comparison.v1",
+  "date": "2026-11-07",
+  "platform": "native Windows x86_64",
+  "baseline_engine_commit": "d8c35ae91c34cbe89047f0a4656598f84e6818d2",
+  "primary": {
+    "scope": "fixed canonical query workload, not whole-game throughput",
+    "fixture": "compiler/tests/e2e/query_narrow.tide",
+    "entities": 3000,
+    "archetypes": 2,
+    "component_bytes": 352,
+    "component_lanes": 88,
+    "queries_per_tick": 24,
+    "lanes_read_per_query": 2,
+    "measured_ticks_per_block": 2000,
+    "warmup_ticks_per_block": 20,
+    "blocks": 8,
+    "order": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline",
+      "candidate",
+      "baseline",
+      "baseline",
+      "candidate"
+    ],
+    "summary": [
+      {
+        "variant": "baseline",
+        "mean_wall_seconds": 16.234489175,
+        "mean_thread_cpu_seconds": 16.18359375,
+        "mean_thread_cycles": 76074765175.0
+      },
+      {
+        "variant": "candidate",
+        "mean_wall_seconds": 5.7123322,
+        "mean_thread_cpu_seconds": 5.69921875,
+        "mean_thread_cycles": 26734726120.0
+      }
+    ],
+    "cpu_speedup": 2.8396161754626457,
+    "cpu_reduction_percent": 64.78397296644943,
+    "equivalence": "All blocks have identical initial/final world hashes, folded sequence of EVERY tick hash, result, warmup and measured tick counts.",
+    "manifest": "canonical-query-cpu/manifest-20261107.json",
+    "results": "canonical-query-cpu/results-20261107.json",
+    "negative_control": "Unsplit baseline LLVM inlines and eliminates unused gather lanes. Preliminary unsplit timings were load-confounded and are not performance claims.",
+    "conditions": "Owned builds/tests and agent game runs stopped. An unrelated owner launcher was left untouched. Alternating runs and thread CPU/cycles reduce background-load bias; this is not an isolated hardware benchmark."
+  },
+  "secondary_battle": {
+    "repository": "https://github.com/BlenMiner/mount-and-rifle",
+    "game_commit": "349c35a7de6c880b6f1341a2410476372f48da0e",
+    "defines": [
+      "BATTLE_TEST",
+      "ARMY"
+    ],
+    "build_command": "PACKAGE/bin/tide.exe build GAME --release --debug-views --define BATTLE_TEST --define ARMY --stats",
+    "run_command": "game/.build/game.exe --players 2 --latency 40 --frames 2100 --size 1280 720 --stats --script battle.txt --profile profile.json --profile-warmup 0",
+    "script": [
+      "100 player 1 key f7",
+      "100 player 2 key f7",
+      "900 player 2 capture battle-900.png",
+      "1500 player 2 capture battle-1500.png",
+      "2100 player 2 capture battle-2100.png"
+    ],
+    "pack_sha256": "1381da48fc184ccab01ff6eef22a9b9f8a6ec86253e249e4aa9fef7ee39e67f9",
+    "same_pack": true,
+    "profile_period": "All 2100 frames, no warmup exclusion; 35 nominal simulation seconds, battle log integer elapsed 0 through 34.",
+    "limits": "Secondary observational runs: Sample/input/render timing is not replay-pinned. Same tick/call counts and high-level battle counters do not prove equal full-game state. Confirmed authoritative endpoint clock/hash is not exposed by these captured profiles.",
+    "actual_generated_code": "BuildKitBodies inner Trooper query caches 2 lanes and copies x/z only on both admitted archetypes; outer Place 40-lane whole-value consumers remain conservative.",
+    "runs": [
+      {
+        "variant": "baseline",
+        "executable_sha256": "e3271b5236f8673e1f77548ad7ff8cebe3974f05d896de93380be3b8d328c2eb",
+        "layout_hash": "2faf145d63c68aff",
+        "simulation_id": "c629fc2542cfddb83cd2e089dfc52e5a3548f5e319d2facb9ed4a41cd0c37bba",
+        "optimized": true,
+        "sanitized": false,
+        "threads": 12,
+        "player": 2,
+        "frames": {
+          "total": 2100,
+          "warmup_requested": 0,
+          "measured": 2100,
+          "first": 1,
+          "last": 2100
+        },
+        "tick_count": 15977,
+        "systems_total_ms": 226264.359,
+        "systems_mean_tick_ms": 14.16188014020154,
+        "match_mean_frame_ms": 111.882729,
+        "wall_seconds": 292.3505277,
+        "hot_systems": [
+          {
+            "name": "Campaign.BuildKitBodies",
+            "calls": 15977,
+            "total_ms": 70032.476,
+            "mean_call_ms": 4.38333079
+          },
+          {
+            "name": "Infantry.FallOnField",
+            "calls": 15977,
+            "total_ms": 5091.8047,
+            "mean_call_ms": 0.318695919
+          },
+          {
+            "name": "Infantry.BotSense",
+            "calls": 15977,
+            "total_ms": 53258.4885,
+            "mean_call_ms": 3.33344736
+          }
+        ],
+        "last_logged_battle": {
+          "shots": 3024,
+          "theirs": 366,
+          "ours": 389,
+          "integer_elapsed_seconds": 34
+        },
+        "profile_artifact": "build/cpu-mount-rifle-baseline/profile-2.json",
+        "captures": [
+          "build/cpu-mount-rifle-baseline/battle-900-2.png",
+          "build/cpu-mount-rifle-baseline/battle-1500-2.png",
+          "build/cpu-mount-rifle-baseline/battle-2100-2.png"
+        ],
+        "cli_sha256": "d4bb30e1261df159ad4104b30c789bb6489832400bd088e8c8914c5223aa6ab1"
+      },
+      {
+        "variant": "candidate",
+        "executable_sha256": "03c4de8a34130730e98e7fb7a0bf8a50a92ed7f4be3f859be23d2c5983ae7b98",
+        "layout_hash": "2faf145d63c68aff",
+        "simulation_id": "319c154507ab61b00d8ac76728b365f8c425ccbf5249674b338e1683e5ee1674",
+        "optimized": true,
+        "sanitized": false,
+        "threads": 12,
+        "player": 2,
+        "frames": {
+          "total": 2100,
+          "warmup_requested": 0,
+          "measured": 2100,
+          "first": 1,
+          "last": 2100
+        },
+        "tick_count": 15977,
+        "systems_total_ms": 191661.544,
+        "systems_mean_tick_ms": 11.99609088064092,
+        "match_mean_frame_ms": 95.7544511,
+        "wall_seconds": 255.4681732,
+        "hot_systems": [
+          {
+            "name": "Campaign.BuildKitBodies",
+            "calls": 15977,
+            "total_ms": 30194.8698,
+            "mean_call_ms": 1.88989609
+          },
+          {
+            "name": "Infantry.FallOnField",
+            "calls": 15977,
+            "total_ms": 5214.0758,
+            "mean_call_ms": 0.326348864
+          },
+          {
+            "name": "Infantry.BotSense",
+            "calls": 15977,
+            "total_ms": 56885.6938,
+            "mean_call_ms": 3.56047404
+          }
+        ],
+        "last_logged_battle": {
+          "shots": 3024,
+          "theirs": 366,
+          "ours": 389,
+          "integer_elapsed_seconds": 34
+        },
+        "profile_artifact": "build/cpu-mount-rifle-candidate/profile-2.json",
+        "captures": [
+          "build/cpu-mount-rifle-candidate/battle-900-2.png",
+          "build/cpu-mount-rifle-candidate/battle-1500-2.png",
+          "build/cpu-mount-rifle-candidate/battle-2100-2.png"
+        ],
+        "cli_sha256": "5042e792b2d8979f6cf7cee3f2f1bb645c2e0e8d37a142e7e037b0160f77f21c"
+      }
+    ],
+    "profile_scope": "Client 2 only: profile-2.json metadata player=2, players=2; not combined host/client work."
+  }
+}

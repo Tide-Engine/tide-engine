@@ -1,0 +1,56 @@
+// Explicit derivatives stay ordinary arguments, including in helper chains,
+// loops, divergent branches and calls with source-ordered mutable operands.
+scene Main { }
+[Raw] asset Texture numbers = "../e2e/assets/hero.png";
+local singleton Art
+{
+    Texture image;
+    [Raw] Texture numeric = numbers;
+    List<Vertex> corners;
+}
+
+Color Gradient(Texture source, float2 uv, float2 dx, float2 dy)
+{
+    return source.SampleGrad(uv, dx, dy) + source.SampleGrad(uv, dx, dy, .Point, .Mirror);
+}
+Color Forward(Texture source, float2 uv, float2 dx, float2 dy)
+{
+    return Gradient(source, uv, dx, dy);
+}
+frag Direct(Vertex vertex, out Color color, Texture source)
+{
+    var dx = this.Ddx(vertex.uv);
+    var dy = this.Ddy(vertex.uv);
+    mut var uv = vertex.uv;
+    for (int i = 0; i < 2; i++) uv += float2(0.01, 0);
+    if (vertex.uv.x > 0.5) this.Discard();
+    color = source.SampleGrad(dy: dy, uv: uv, dx: dx, wrap: .Repeat, filter: .Trilinear);
+    color += source.SampleGrad(uv, dx, dy, .Bilinear);
+    color += source.Sample(uv, .Bilinear); // Same source/filter/wrap binding as SampleGrad
+    color += source.SampleGrad(vertex.uv, this.Ddx(vertex.uv), this.Ddy(vertex.uv), .Point);
+}
+frag Helpers(Vertex vertex, out Color color, Art art)
+{
+    var dx = this.Ddx(vertex.uv);
+    var dy = this.Ddy(vertex.uv);
+    color = Forward(art.image, vertex.uv, dx, dy) + Forward(art.numeric, vertex.uv, dx, dy)
+          + Forward(numbers, vertex.uv, dx, dy);
+}
+float2 Next(mut float2 value)
+{
+    value += float2(0.01, 0.02);
+    return value;
+}
+frag Ordered(Vertex vertex, out Color color, Texture source)
+{
+    mut var value = vertex.uv;
+    color = source.SampleGrad(Next(value), Next(value), Next(value), .Trilinear);
+    color += vertex.uv.x > 0.5 ? source.SampleGrad(Next(value), Next(value), Next(value), .Trilinear)
+                              : Color.black;
+}
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, [0, 1, 2], art.image, Direct);
+    Draw.Mesh(art.corners, [0, 1, 2], Helpers);
+    Draw.Mesh(art.corners, [0, 1, 2], art.image, Ordered);
+}

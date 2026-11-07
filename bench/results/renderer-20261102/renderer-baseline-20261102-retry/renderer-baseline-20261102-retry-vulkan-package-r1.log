@@ -1,0 +1,10 @@
+renderer: Vulkan; fixed 1920x1080; isolated static frames; CPU/GPU overlap; readback is not FPS
+equivalent: 1000 meshes + receiver, unshadowed, 9 lights, 0 shadow views, 4 calls, digest 036efccd45a2f614
+package, unshadowed, 1000 meshes: record 0.2755, submit 0.0440 ms, GPU 1.9229 ms (100/100 samples)
+equivalent: 1000 meshes + receiver, mixed, 4 lights, 8 shadow views, 12 calls, digest ee9d61083f545703
+package, mixed, 1000 meshes: record 0.3899, submit 0.0659 ms, GPU 1.2507 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, unshadowed, 9 lights, 0 shadow views, 4 calls, digest f1b569ab7f66f5d2
+package, unshadowed, 10000 meshes: record 2.7283, submit 0.1188 ms, GPU 2.7274 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, mixed, 4 lights, 8 shadow views, 12 calls, digest dfc394f65a567ab5
+package, mixed, 10000 meshes: record 4.6376, submit 0.3800 ms, GPU 2.0752 ms (100/100 samples)
+tide: captured C:\Users\blenm\.t3\worktrees\PurrEngine\t3-8c449f69\build\render3d-measurements\renderer-baseline-20261102-retry\renderer-baseline-20261102-retry-vulkan-package-r1-final.png, 1920 by 1080 pixels

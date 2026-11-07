@@ -1,0 +1,4 @@
+// expect: can't be read as a font: it isn't a TrueType or OpenType font file
+asset Font title = "font_asset_not_a_font.tide";
+
+scene Main { }

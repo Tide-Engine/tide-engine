@@ -1,0 +1,5 @@
+// expect: prepare can't load another scene, including through helpers
+event Travel {}
+scene Next;
+event(Travel) LoadNext() { Scene.Load(Next); }
+scene Main { prepare() { Send(Travel); } }

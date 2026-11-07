@@ -16,10 +16,14 @@
 #include <string.h>
 
 #include "assets.h"
+#include "asset_import_cache.h"
+#include "build_threads.h"
+#include "texture_cache.h"
 #include "audio_files.h"
 #include "folders.h"
 #include "image_files.h"
 #include "sha256.h"
+#include "tide/font.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
 
@@ -39,11 +43,20 @@ typedef struct read_file {
     uint8_t *data;
     size_t len;
     uint8_t hash[32];
+    uint8_t *prepared_texture;
+    size_t prepared_texture_size;
+    bool prepared_raw;
+    bool prepared_tried;
     bool decoded;          // Tried as an image...
     tide_png_image image;  // ...and what it gave (pixels NULL when neither decodes)
+    tide_texture_blocks image_mips;
     char image_why[256];
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
     bool sound_tried, sound;
+    bool font_tried;
+    tide_font_error font_error;
+    uint8_t *font_data; // Its font data (tide/font.h), once read as a Font
+    size_t font_size;
     char sound_why[256];
     uint8_t *sound_data; // MP3/FLAC imported as float PCM WAV; raw file bytes remain available separately
     size_t sound_size;
@@ -75,6 +88,12 @@ static struct {
     read_file *items;
     int count, cap;
 } files;
+static bool use_build_cache;
+
+void asset_files_use_build_cache(const bool enabled)
+{
+    use_build_cache = enabled;
+}
 
 static char *copy_cstr(const char *s)
 {
@@ -115,7 +134,10 @@ static void forget_file(read_file *f)
     free(f->path);
     free(f->data);
     free(f->sound_data);
+    free(f->font_data);
     free(f->image.pixels);
+    free(f->prepared_texture);
+    free((void *)(uintptr_t)f->image_mips.pixels);
     memset(f, 0, sizeof *f);
 }
 
@@ -584,7 +606,9 @@ static const char *kind_name(const asset_kind kind)
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
          : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
          : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "AnimationCatalog"
-         : kind == ASSET_ANIMATION ? "Animation" : "Grid2<Color>";
+         : kind == ASSET_ANIMATION ? "Animation" : kind == ASSET_HUMANOID ? "HumanoidRig" : kind == ASSET_FONT ? "Font"
+         : kind == ASSET_TEXTURE_ARRAY ? "TextureArray"
+         : "Grid2<Color>";
 }
 
 static bool source_extension(const char *path, const char *extension)
@@ -655,6 +679,91 @@ static const uint8_t *read_side(void *user, const char *path, size_t *size)
     return f->data;
 }
 
+static tide_skinned_keep_part_fn parts_keep;
+static void *parts_user;
+static uint8_t parts_key[32];
+
+void asset_choose_parts(const tide_skinned_keep_part_fn keep, void *user, const str *patterns, const int count)
+{
+    parts_keep = keep;
+    parts_user = user;
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    for (int i = 0; i < count; i++) {
+        const uint32_t length = (uint32_t)patterns[i].len;
+        tide_sha256_add(&h, &length, sizeof length);
+        tide_sha256_add(&h, patterns[i].ptr, length);
+    }
+    tide_sha256_end(&h, parts_key);
+}
+
+static void clear_sides(side_reader *sides)
+{
+    for (int i = 0; i < sides->count; i++) free(sides->sides[i].path);
+    free(sides->sides);
+    sides->sides = NULL;
+    sides->count = 0;
+}
+
+static bool check_cached_side(void *user, const char *path, const uint8_t hash[32])
+{
+    side_reader *sides = user;
+    const read_file *f = read_at(path);
+    if (!f || memcmp(f->hash, hash, 32)) return false;
+    mesh_side *next = realloc(sides->sides, sizeof *next * (size_t)(sides->count + 1));
+    if (!next) return false;
+    sides->sides = next;
+    sides->sides[sides->count++] = (mesh_side){copy_cstr(path), f->size, f->modified};
+    return true;
+}
+
+static void import_cache_key(uint8_t cache[32], const read_file *f, const char *name, const char *kind, const bool parts)
+{
+    tide_sha256 h;
+    uint8_t variant[32];
+    tide_sha256_init(&h);
+    tide_sha256_add(&h, f->path, strlen(f->path) + 1);
+    tide_sha256_add(&h, name, strlen(name) + 1); // Suffix-based format selection, including URLs.
+    if (parts) tide_sha256_add(&h, parts_key, sizeof parts_key);
+    tide_sha256_end(&h, variant);
+    asset_cache_key(cache, kind, f->hash, variant, sizeof variant);
+}
+
+static void write_import_cache(const char *folder, const uint8_t key[32], const side_reader *sides,
+                               const void *bytes, const size_t size)
+{
+    if (!folder) return;
+    asset_cache_dependency *deps = calloc((size_t)sides->count + 1, sizeof *deps);
+    if (!deps) return;
+    bool ok = true;
+    for (int i = 0; i < sides->count && ok; i++) {
+        const read_file *f = read_at(sides->sides[i].path);
+        ok = f != NULL;
+        if (f) { deps[i].path = sides->sides[i].path; memcpy(deps[i].hash, f->hash, 32); }
+    }
+    if (ok) asset_import_cache_write(folder, key, deps, sides->count, bytes, size);
+    free(deps);
+}
+
+bool asset_name_matches(const str pattern, const char *name, const uint32_t length)
+{
+    int p = 0, star = -1;
+    uint32_t n = 0, resume = 0;
+    while (n < length) {
+        if (p < pattern.len && pattern.ptr[p] == '*') {
+            star = p++;
+            resume = n;
+        } else if (p < pattern.len && pattern.ptr[p] == name[n]) {
+            p++, n++;
+        } else if (star >= 0) {
+            p = star + 1;
+            n = ++resume;
+        } else return false;
+    }
+    while (p < pattern.len && pattern.ptr[p] == '*') p++;
+    return p == pattern.len;
+}
+
 // Whether the files a mesh was read with are as they were then.
 static bool sides_same(const read_file *f)
 {
@@ -670,31 +779,8 @@ static bool sides_same(const read_file *f)
 // pack writer takes. Skinning keeps these vertices in geometry-local space.
 static mesh_file skin_geometry(const uint8_t *bytes, const uint32_t size)
 {
-    tide_skinned_data_view view;
-    if (!tide_skinned_data_open(bytes, size, &view)) abort();
-    mesh_file m = {0};
-    m.vertices = view.vertices;
-    m.indices = view.indices;
-    m.position = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
-    m.normal = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
-    m.uv = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
-    m.uv2 = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
-    m.color = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
-    m.tangent = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
-    m.index = malloc(sizeof(uint32_t) * (m.indices ? m.indices : 1u));
-    if (!m.position || !m.normal || !m.uv || !m.uv2 || !m.color || !m.tangent || !m.index) abort();
-    for (uint32_t i = 0; i < m.vertices; i++) {
-        tide_skinned_vertex_data v;
-        if (!tide_skinned_data_vertex(&view, i, &v)) abort();
-        memcpy(m.position + 3u * i, v.position, sizeof v.position);
-        memcpy(m.normal + 3u * i, v.normal, sizeof v.normal);
-        memcpy(m.uv + 2u * i, v.uv, sizeof v.uv);
-        memcpy(m.uv2 + 2u * i, v.uv2, sizeof v.uv2);
-        memcpy(m.color + 4u * i, v.color, sizeof v.color);
-        memcpy(m.tangent + 4u * i, v.tangent, sizeof v.tangent);
-    }
-    for (uint32_t i = 0; i < m.indices; i++) if (!tide_skinned_data_index(&view, i, m.index + i)) abort();
-    tide_sha256_of(bytes, size, m.hash);
+    mesh_file m;
+    if (!tide_mesh_data_of_model(bytes, size, &m)) abort(); // The decoder's own bytes, validated
     return m;
 }
 
@@ -771,7 +857,7 @@ static void say_missing(const char *written, const char *abs, const char *folder
 
 // Reads `path`'s file as an item of `kind`; false, having said why, when it
 // can't be read as one.
-static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at)
+static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at, const char *game_folder)
 {
     read_file *f = read_at(path);
     if (!f) {
@@ -784,21 +870,69 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     item->size = f->len;
     memcpy(item->hash, f->hash, 32);
     if (kind == ASSET_GRID || kind == ASSET_TEXTURE || kind == ASSET_CUBEMAP) {
+        // Draw-only textures can use their prepared payload without decoding
+        // float pixels. Grid consumers still take the ordinary decoder path.
+        if (use_build_cache && kind == ASSET_TEXTURE && !f->decoded) {
+            texture_cache_view view;
+            if (!f->prepared_tried) {
+                f->prepared_tried = true;
+                uint8_t cache[32];
+                texture_cache_key(cache, f->hash, key, false, true);
+                f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+                if (!f->prepared_texture) {
+                    texture_cache_key(cache, f->hash, key, true, true);
+                    f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+                    f->prepared_raw = true;
+                }
+            }
+            if (f->prepared_texture && texture_cache_open(f->prepared_texture, f->prepared_texture_size, &view)) {
+                item->image.width = view.width; item->image.height = view.height;
+                item->prepared_texture = f->prepared_texture;
+                item->prepared_texture_size = f->prepared_texture_size;
+                item->prepared_raw = f->prepared_raw;
+                return true;
+            }
+        }
         if (!f->decoded) {
             f->decoded = true;
-            image_file_read(f->data, f->len, key, &f->image, f->image_why);
+            image_file_read_mips(f->data, f->len, key, &f->image, &f->image_mips, f->image_why);
         }
         if (!f->image.pixels) {
             diag_error(at, "'%s' can't be imported as an image: %s", key, f->image_why);
-            diag_note("a %s asset accepts PNG, RGB PSD composites, JPEG, TGA or BMP; for the file's bytes as they are, "
+            diag_note("a %s asset accepts PNG, RGB PSD composites, JPEG, TGA, BMP or RGBA8 DDS; for the file's bytes as they are, "
                       "read it as a List<byte>", kind_name(kind));
             return false;
         }
         item->image = f->image;
+        item->image_mips = f->image_mips;
     } else if (kind == ASSET_CLIP) {
         if (!f->sound_tried) {
             f->sound_tried = true;
-            f->sound = audio_file_read(f->data, f->len, &f->sound_data, &f->sound_size, f->sound_why);
+            uint8_t cache[32];
+            asset_cache_key(cache, "audio", f->hash, NULL, 0);
+            size_t cached_size;
+            uint8_t *cached = asset_cache_read(game_folder, cache, &cached_size);
+            f->sound = cached && ((cached_size == 1 && cached[0] == 0)
+                || (cached_size > 1 && cached[0] == 1 && audio_file_read(cached + 1, cached_size - 1, NULL, NULL, f->sound_why)));
+            if (f->sound && cached[0] == 1) {
+                f->sound_size = cached_size - 1;
+                memmove(cached, cached + 1, f->sound_size);
+                f->sound_data = cached;
+                cached = NULL;
+            }
+            free(cached);
+            if (!f->sound) {
+                f->sound = audio_file_read(f->data, f->len, &f->sound_data, &f->sound_size, f->sound_why);
+                if (f->sound && game_folder && f->sound_size < ASSET_CACHE_MAX_BYTES) {
+                    uint8_t *encoded = malloc(f->sound_size + 1);
+                    if (encoded) {
+                        encoded[0] = f->sound_data ? 1 : 0;
+                        if (f->sound_size) memcpy(encoded + 1, f->sound_data, f->sound_size);
+                        asset_cache_write(game_folder, cache, encoded, f->sound_size + 1);
+                        free(encoded);
+                    }
+                }
+            }
         }
         if (!f->sound) {
             diag_error(at, "'%s' can't be imported as audio: %s", key, f->sound_why);
@@ -810,6 +944,77 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             item->data = f->sound_data;
             item->size = f->sound_size;
         }
+    } else if (kind == ASSET_FONT) {
+        // Read as Font.Decode reads one, so a file that builds is one the game can draw, and one that
+        // doesn't says why here
+        if (!f->font_tried) {
+            f->font_tried = true;
+            f->font_error = tide_font_data_make(f->data, f->len, &f->font_data, &f->font_size);
+        }
+        if (f->font_error != TIDE_FONT_OK) {
+            diag_error(at, "'%s' can't be read as a font: %s", key, tide_font_error_text(f->font_error));
+            diag_note("a Font asset is a TrueType font file (.ttf, an .otf of TrueType outlines, or a .ttc's first font); "
+                      "for the file's bytes as they are, read it as a List<byte>");
+            return false;
+        }
+        item->data = f->font_data;
+        item->size = f->font_size;
+    } else if ((kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) && parts_keep) {
+        // Some of its parts, for this declaration: decoded here, never into the file's cache, which has all of them
+        char *folder = asset_path_folder(path);
+        side_reader sides = {folder, NULL, 0};
+        uint8_t *bytes = NULL, *fbx_glb = NULL;
+        uint32_t size = 0;
+        size_t fbx_glb_size = 0;
+        char why[256], note[256];
+        uint8_t cache[32];
+        import_cache_key(cache, f, key, "skin-parts", true);
+        size_t cached_size;
+        bytes = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
+        bool ok = bytes && cached_size <= UINT32_MAX && tide_skinned_data_validate(bytes, cached_size);
+        if (ok) size = (uint32_t)cached_size;
+        else {
+            free(bytes); bytes = NULL;
+            clear_sides(&sides);
+            f = read_at(path);
+            if (!f) {
+                clear_sides(&sides);
+                free(folder);
+                diag_error(at, "'%s' can't be read (%s)", written, path);
+                return false;
+            }
+            const bool is_fbx = fbx_file_is(f->data, f->len, key);
+            ok = !is_fbx || fbx_file_to_glb_parts(f->data, f->len, true, parts_keep, parts_user, &fbx_glb, &fbx_glb_size, why, note);
+            // An FBX's parts were chosen as it was converted (its helpers' names are their parents'): its GLB keeps all of it
+            if (ok) ok = tide_skinned_data_decode_parts(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len, read_side, &sides,
+                                                        is_fbx ? NULL : parts_keep, parts_user, &bytes, &size, why, note);
+
+            if (ok) write_import_cache(game_folder, cache, &sides, bytes, size);
+        }
+        free(fbx_glb);
+        free(folder);
+        if (!ok) {
+            for (int i = 0; i < sides.count; i++) free(sides.sides[i].path);
+            free(sides.sides);
+            if (!asset_skinned_format_diagnostic(key, why, at)) {
+                diag_error(at, "'%s' %s", key, why);
+                if (note[0]) diag_note("%s", note);
+            }
+            return false;
+        }
+        uint8_t *copy = arena_alloc(size ? size : 1u);
+        memcpy(copy, bytes, size);
+        item->skinned = copy;
+        item->skinned_size = size;
+        item->mesh = skin_geometry(bytes, size); // Lives as the compiler does, as the arena's copy
+        tide_skinned_data_free(bytes);
+        item->side_count = sides.count;
+        item->sides = arena_alloc(sizeof(char *) * (size_t)(sides.count ? sides.count : 1));
+        for (int i = 0; i < sides.count; i++) {
+            item->sides[i] = str_to_cstr(str_from(sides.sides[i].path));
+            free(sides.sides[i].path);
+        }
+        free(sides.sides);
     } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION) {
         const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
         if (f->skin_tried && !sides_same(&sides_check)) forget_skin(f);
@@ -821,16 +1026,36 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             char why[256], note[256];
             uint8_t *fbx_glb = NULL;
             size_t fbx_glb_size = 0;
-            const bool is_fbx = fbx_file_is(f->data, f->len, key);
-            bool ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
-            if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
-                false, read_side, &sides, &bytes, &size, why, note);
-            if (!ok && !is_fbx && source_extension(key, ".glb") &&
-                (f->len < 4 || memcmp(f->data, "glTF", 4) != 0) &&
-                strstr(why, "JSON")) {
-                snprintf(why, sizeof why, "has an invalid GLB header (expected glTF 2.0)");
-                snprintf(note, sizeof note, "re-export as glTF 2.0 binary (.glb), glTF JSON (.gltf) or FBX (.fbx)");
+            uint8_t cache[32];
+            import_cache_key(cache, f, key, "skin", false);
+            size_t cached_size;
+            bytes = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
+            bool ok = bytes && cached_size <= UINT32_MAX && tide_skinned_data_validate(bytes, cached_size);
+            if (ok) size = (uint32_t)cached_size;
+            else {
+                free(bytes); bytes = NULL;
+                clear_sides(&sides);
+                f = read_at(path);
+                if (!f) {
+                    clear_sides(&sides);
+                    free(folder);
+                    diag_error(at, "'%s' can't be read (%s)", written, path);
+                    return false;
+                }
+                const bool is_fbx = fbx_file_is(f->data, f->len, key);
+                ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
+                if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
+                    false, read_side, &sides, &bytes, &size, why, note);
+                if (!ok && !is_fbx && source_extension(key, ".glb") &&
+                    (f->len < 4 || memcmp(f->data, "glTF", 4) != 0) &&
+                    strstr(why, "JSON")) {
+                    snprintf(why, sizeof why, "has an invalid GLB header (expected glTF 2.0)");
+                    snprintf(note, sizeof note, "re-export as glTF 2.0 binary (.glb), glTF JSON (.gltf) or FBX (.fbx)");
+                }
+
+                if (ok) write_import_cache(game_folder, cache, &sides, bytes, size);
             }
+            if (ok) why[0] = note[0] = '\0';
             free(fbx_glb);
             free(folder);
             f = read_at(path);
@@ -873,7 +1098,29 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             mesh_file mesh = {0};
             char why[256], note[256];
             // What it is where its first bytes don't say is its name's to say: as written, as a fetched URL's file has another
-            const bool ok = mesh_file_read(f->data, f->len, key, read_side, &sides, &mesh, why, note);
+            uint8_t cache[32];
+            import_cache_key(cache, f, key, "mesh", false);
+            size_t cached_size;
+            uint8_t *cached = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
+            bool ok = cached && asset_mesh_cache_decode(cached, cached_size, &mesh);
+            free(cached);
+            if (!ok) {
+                clear_sides(&sides);
+                f = read_at(path);
+                if (!f) {
+                    free(folder);
+                    diag_error(at, "'%s' can't be read (%s)", written, path);
+                    return false;
+                }
+                ok = mesh_file_read(f->data, f->len, key, read_side, &sides, &mesh, why, note);
+                if (ok && game_folder) {
+                    size_t encoded_size;
+                    uint8_t *encoded = asset_mesh_cache_encode(&mesh, &encoded_size);
+                    if (encoded) write_import_cache(game_folder, cache, &sides, encoded, encoded_size);
+                    free(encoded);
+                }
+            }
+            if (ok) why[0] = note[0] = '\0';
             free(folder);
             f = read_at(path); // Where it is now: reading a file beside it may have moved the list
             if (!f) {
@@ -928,7 +1175,27 @@ bool asset_mesh_tangents(asset_value *value, const loc at)
         }
         if (!f->tangent_tried) {
             f->tangent_tried = true;
-            f->tangent_ok = mesh_file_with_tangents(&f->mesh, &f->tangent_mesh, f->tangent_why, f->tangent_note);
+            uint8_t cache[32], source[32];
+            size_t encoded_size = 0, cached_size;
+            uint8_t *encoded = value->cache_folder ? asset_mesh_cache_encode(&f->mesh, &encoded_size) : NULL;
+            uint8_t *cached = NULL;
+            if (encoded) {
+                tide_sha256_of(encoded, encoded_size, source);
+                asset_cache_key(cache, "mesh-tangents", source, NULL, 0);
+                cached = asset_cache_read(value->cache_folder, cache, &cached_size);
+            }
+            f->tangent_ok = cached && asset_mesh_cache_decode(cached, cached_size, &f->tangent_mesh);
+            free(cached);
+            if (!f->tangent_ok) {
+                f->tangent_ok = mesh_file_with_tangents(&f->mesh, &f->tangent_mesh, f->tangent_why, f->tangent_note);
+                if (f->tangent_ok && encoded) {
+                    size_t size;
+                    uint8_t *bytes = asset_mesh_cache_encode(&f->tangent_mesh, &size);
+                    if (bytes) asset_cache_write(value->cache_folder, cache, bytes, size);
+                    free(bytes);
+                }
+            }
+            free(encoded);
         }
         if (!f->tangent_ok) {
             diag_error(at, "'%s' %s", item->key, f->tangent_why);
@@ -1021,9 +1288,9 @@ static bool order_cube(asset_value *v, const char *written, const loc at)
 }
 
 static bool resolve_item(asset_match *item, const char *key, const char *absolute, const asset_kind kind,
-                         const char *written, const loc at, const bool paths_only)
+                         const char *written, const loc at, const bool paths_only, const char *game_folder)
 {
-    if (!paths_only) return read_item(item, key, absolute, kind, written, at);
+    if (!paths_only) return read_item(item, key, absolute, kind, written, at, game_folder);
     item->key = str_to_cstr(str_from(key));
     item->abs = absolute ? str_to_cstr(str_from(absolute)) : NULL;
     return true;
@@ -1033,6 +1300,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
                                       const bool many, const bool is_map, const loc at, const char *game_folder,
                                       const bool paths_only)
 {
+    const char *cache_folder = use_build_cache ? game_folder : NULL;
     char *declaring = declaring_abs(declaring_as_given);
     const char *written = asset_written_path(path);
     if (!*written) {
@@ -1044,6 +1312,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
     free(declaring);
     asset_value *v = NEW(asset_value);
     v->kind = kind;
+    v->cache_folder = cache_folder;
     v->many = many;
     v->is_map = is_map;
     v->paths_only = paths_only;
@@ -1069,8 +1338,9 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
     if (url && paths_only) {
         v->items = arena_alloc(sizeof(asset_match));
         v->count = 1;
-        resolve_item(&v->items[0], written, NULL, kind, written, at, true);
+        resolve_item(&v->items[0], written, NULL, kind, written, at, true, cache_folder);
     } else if (url) {
+        compile_progress("Importing asset", written, 0, 1);
         const fetched *f = fetch_url(written, game_folder);
         if (!f->path) {
             diag_error(at, "'%s' can't be fetched: %s", written, f->failed);
@@ -1079,7 +1349,8 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
         } else {
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
-            ok = read_item(&v->items[0], written, f->path, kind, written, at);
+            ok = read_item(&v->items[0], written, f->path, kind, written, at, cache_folder);
+            if (ok) compile_progress("Importing asset", written, 1, 1);
         }
     } else if (glob) {
         const size_t prefix_len = fixed_prefix(written);
@@ -1106,8 +1377,11 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
             qsort(pairs, (size_t)w.keys.count, sizeof(char *) * 2u, key_order);
             v->items = arena_alloc(sizeof(asset_match) * (size_t)w.keys.count);
             v->count = w.keys.count;
-            for (int i = 0; i < w.keys.count && ok; i++)
-                ok = resolve_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at, paths_only);
+            for (int i = 0; i < w.keys.count && ok; i++) {
+                if (!paths_only) compile_progress("Importing asset", pairs[2 * i + 1], i, w.keys.count);
+                ok = resolve_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at, paths_only, cache_folder);
+                if (!paths_only && ok) compile_progress("Importing asset", pairs[2 * i + 1], i + 1, w.keys.count);
+            }
             free(pairs);
             if (ok && kind == ASSET_CUBEMAP) ok = order_cube(v, written, at);
         }
@@ -1121,7 +1395,9 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
         } else {
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
-            ok = resolve_item(&v->items[0], written, abs, kind, written, at, paths_only);
+            if (!paths_only) compile_progress("Importing asset", abs, 0, 1);
+            ok = resolve_item(&v->items[0], written, abs, kind, written, at, paths_only, cache_folder);
+            if (!paths_only && ok) compile_progress("Importing asset", abs, 1, 1);
         }
         free(abs);
     }
@@ -1139,6 +1415,108 @@ asset_value *asset_resolve_paths(const char *declaring, const str path, const as
                                  const bool is_map, const loc at, const char *game_folder)
 {
     return asset_resolve_impl(declaring, path, kind, many, is_map, at, game_folder, true);
+}
+
+// A file whose name says it's an image, which read_item may decode
+static bool named_as_image(const char *path)
+{
+    static const char *const suffixes[] = {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd", ".dds"};
+    const size_t n = strlen(path);
+    for (size_t i = 0; i < sizeof suffixes / sizeof *suffixes; i++) {
+        const size_t s = strlen(suffixes[i]);
+        if (n < s) continue;
+        bool same = true;
+        for (size_t k = 0; k < s && same; k++) same = tolower((unsigned char)path[n - s + k]) == suffixes[i][k];
+        if (same) return true;
+    }
+    return false;
+}
+
+typedef struct decode_ahead {
+    read_file **files;
+    const char **keys;
+} decode_ahead;
+
+static void decode_one(void *context, const uint32_t i)
+{
+    const decode_ahead *d = context;
+    read_file *f = d->files[i];
+    image_file_read_mips(f->data, f->len, d->keys[i], &f->image, &f->image_mips, f->image_why);
+}
+
+// Each image a decode holds as floats, and what decoding takes: a 4096-square one is hundreds of megabytes
+enum { DECODES_AT_ONCE = 8 };
+
+void asset_files_decode_ahead(const char *const *declaring, const str *paths, const int count, const char *game_folder)
+{
+    // The files the paths name, with each one's key, as asset_resolve finds them: only images, and only where they
+    // are files on this machine
+    VEC(char *) keys = {0};
+    VEC(char *) found = {0};
+    for (int i = 0; i < count; i++) {
+        const char *written = asset_written_path(paths[i]);
+        if (!*written || asset_path_is_url(written, strlen(written))) continue;
+        char *at = declaring_abs(declaring[i]);
+        char *folder = asset_path_folder(at);
+        free(at);
+        if (asset_path_is_glob(written, strlen(written))) {
+            const size_t prefix_len = fixed_prefix(written);
+            char *prefix = str_to_cstr((str){written, (int)prefix_len});
+            char *base = asset_path_join(folder, prefix, prefix_len);
+            const size_t base_len = strlen(base);
+            char *base_slash = malloc(base_len + 2);
+            if (!base_slash) abort();
+            sprintf(base_slash, "%s%s", base, base_len && base[base_len - 1] == '/' ? "" : "/");
+            glob_walk w = {base_slash, written + prefix_len, prefix, {0}, {0}};
+            folder_find_files_in(base_slash, glob_enters, glob_found, &w);
+            for (int k = 0; k < w.keys.count; k++) {
+                if (!named_as_image(w.paths.items[k])) continue;
+                vec_push(keys, w.keys.items[k]);
+                vec_push(found, w.paths.items[k]);
+            }
+            free(base_slash);
+            free(base);
+        } else if (named_as_image(written)) {
+            char *abs = asset_path_join(folder, written, strlen(written));
+            if (folder_file_info(abs, NULL, NULL)) {
+                vec_push(keys, str_to_cstr(str_from(written)));
+                vec_push(found, str_to_cstr(str_from(abs)));
+            }
+            free(abs);
+        }
+        free(folder);
+    }
+    // Read (which may move the files' table), then what's to decode: what read_item would decode, and not a texture
+    // its cache has prepared, as read_item looks for one first
+    for (int i = 0; i < found.count; i++) read_at(found.items[i]);
+    decode_ahead d = {arena_alloc(sizeof(read_file *) * (size_t)(found.count ? found.count : 1)),
+                      arena_alloc(sizeof(char *) * (size_t)(found.count ? found.count : 1))};
+    uint32_t n = 0;
+    for (int i = 0; i < found.count; i++) {
+        read_file *f = read_at(found.items[i]);
+        if (!f || f->decoded) continue;
+        bool listed = false;
+        for (uint32_t k = 0; k < n && !listed; k++) listed = d.files[k] == f;
+        if (listed) continue;
+        if (use_build_cache && !f->prepared_tried) {
+            texture_cache_view view;
+            f->prepared_tried = true;
+            uint8_t cache[32];
+            texture_cache_key(cache, f->hash, keys.items[i], false, true);
+            f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+            if (!f->prepared_texture) {
+                texture_cache_key(cache, f->hash, keys.items[i], true, true);
+                f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+                f->prepared_raw = true;
+            }
+        }
+        if (f->prepared_texture) continue; // A Grid of it decodes it as it's read, as before
+        d.files[n] = f;
+        d.keys[n] = keys.items[i];
+        n++;
+    }
+    build_threads_each(n, DECODES_AT_ONCE, decode_one, &d);
+    for (uint32_t i = 0; i < n; i++) d.files[i]->decoded = true;
 }
 
 void asset_watched(const char *declaring_as_given, const str path, asset_path_fn found, void *user)

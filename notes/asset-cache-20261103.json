@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-03",
+  "machine": "Windows, AMD Ryzen 9 7900X",
+  "compiler": "Clang 23.1.2, CMake Release, no sanitizers",
+  "baseline_commit": "6ba206338",
+  "measurement": "fresh-process complete tidec generation and packing, wall milliseconds; 3 samples per case",
+  "texture_fixture": "2048x2048 RGBA8 PNG, pixel (x,y)=(y%256,90,170,255), zlib compressed rows with PNG filter 0; one asset Texture and empty scene Main",
+  "mesh_fixture": "128x128 unit quad grid OBJ, x/z integer positions and y=0, uv=(x/128,z/128) to 8 decimal places, two triangles a,b,d and a,d,c per quad; position/normal/uv/float4 tangent vertex layout and empty Main",
+  "cache_protocol": "baseline 3 runs; three pairs of empty-cache new build then warm build; pack equality checked against baseline every time",
+  "results": {
+    "texture": {
+      "before_ms": [
+        93.90989999519661,
+        89.45609998772852,
+        89.9931000021752
+      ],
+      "new_cold_ms": [
+        120.29170000459999,
+        99.50069998740219,
+        99.39650000887923
+      ],
+      "warm_ms": [
+        30.05599998869002,
+        16.744200023822486,
+        17.00720001826994
+      ],
+      "before_median_ms": 89.9931000021752,
+      "cold_median_ms": 99.50069998740219,
+      "warm_median_ms": 17.00720001826994,
+      "pack_bytes": 2796352
+    },
+    "mesh": {
+      "before_ms": [
+        72.17300002230331,
+        70.36679997690953,
+        71.0755999898538
+      ],
+      "new_cold_ms": [
+        100.5756999948062,
+        97.13310000370257,
+        97.66020000097342
+      ],
+      "warm_ms": [
+        41.12930002156645,
+        41.239900019718334,
+        39.369699981762096
+      ],
+      "before_median_ms": 71.0755999898538,
+      "cold_median_ms": 97.66020000097342,
+      "warm_median_ms": 41.12930002156645,
+      "pack_bytes": 5112000
+    }
+  }
+}

@@ -441,6 +441,8 @@ void b3DestroyBody( b3BodyId bodyId )
 
 	// Remove body sim from solver set that owns it
 	b3SolverSet* set = b3Array_Get( world->solverSets, body->setIndex );
+	// Tide: the awake set has a body fewer (see b3SnapTrack)
+	world->snapTrack.awakeShrunk |= body->setIndex == b3_awakeSet;
 	int movedIndex = b3Array_RemoveSwap( set->bodySims, body->localIndex );
 	if ( movedIndex != B3_NULL_INDEX )
 	{

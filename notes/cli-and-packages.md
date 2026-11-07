@@ -1,5 +1,964 @@
 # `tide`, packages and the package
 
+## Hide stages shorter than half a second (2026-11-06)
+
+Owner: show progress only if a stage lasts at least 0.5 seconds. The terminal
+renderer now skips both active and retained rows while that stage's elapsed
+time is below 500 ms. The existing activity thread reveals a longer stage on
+its next frame; its timer still measures from the stage's actual start. A stage
+that crosses the threshold between frames still gets its completed row.
+Diagnostic replay, redirected output and reports are unchanged, including errors
+from a stage that finishes before the threshold. No added waits or build delays.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and help, build_overlap,
+build_report pass (3/3); production docs build passes. Scratch ASan feedback
+probe checks 499 ms stays hidden,
+500 ms reveals progress, fast stage transitions leave no rows, slow stages
+retain completion even without an active frame, and failed stages retain their
+actual count. No game or browser was launched; real-terminal appearance remains
+manual coverage. No generated-C, scheduling or runtime changes.
+
+## One-line active build progress (2026-11-06)
+
+Owner: put the active label beside its bar, truncating text that would overlap.
+Active build feedback now uses line_draw with the same 48-character label column
+as retained rows. Labels are padded or truncated to that width for both active
+and retained rows, so long filenames cannot shift or overwrite the bar. Existing
+line redraw clears the tail when text gets shorter. Stage timing/counts and
+compiler scheduling are unchanged; the two-row line helper remains available
+to its existing tests but is no longer used by builds.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and help, build_overlap,
+build_report pass (3/3). Scratch ASan feedback probe verifies active labels
+and bars share one line, short and long labels put the bar in column 50,
+and long filenames truncate before it. Production docs build passes.
+Real-terminal appearance remains
+manual coverage; no generated-C or runtime changes.
+
+## C/C++ completion labels (2026-11-06)
+
+Owner: show completed C files as they finish, rather than listing active jobs and
+removing their names. run_compiles now updates its terminal label immediately
+on each successful completion with that file's basename and the new count.
+It keeps the last completion visible until the next; batch start has no filename.
+Failed compiles do not advance the count or claim completion. The C/C++ stage
+still retains one summary row. Redirected completion lines, scheduling, diagnostic
+ordering and reports are unchanged. The active-jobs scan and comma-separated
+label are removed.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and help, build_overlap,
+build_report pass (3/3); production docs build passes. A scratch ASan probe checks the initial filename-free
+label and the completed basename/count, alongside retained-row alignment and
+success/failure behavior. No game or browser was launched; real-terminal
+appearance remains manual coverage. No generated or web runtime changes.
+
+## Aligned bars and asset build preparation (2026-11-06)
+
+Owner's terminal capture showed unaligned completed bars and repeated asset-build
+C-generation rows. Build summaries and the active bar now use the same 48-character
+label column. Nested generation/packing notifications stay within Preparing asset
+build program; compiling and running have separate rows. Failed rows keep the
+stage label in that column, with diagnostics providing failure detail.
+
+Inspection: build_code_run calls run_program once on a results-cache miss, then
+rechecks sources to apply its results. run_program calls codegen once, compiles
+its generated parts once, links once, and runs once. The repeated labels were
+callbacks within codegen, including pack creation before dependency fingerprints
+and the reduced build-input pack. No compiler caching or generated-C behavior was
+changed here; existing root-result and engine-object caches remain effective.
+
+Validation: Windows Clang 23.1.2 ASan CLI build, help, build_overlap and
+build_report pass. build_report initially exhausted ASan allocation while the
+docs build ran; it passes alone after that build completes. Production docs
+build passes. Scratch ASan feedback probe checks every retained bar starts at
+column 50, nested packing/generation adds no preparation rows, and failure and
+success retain correct percentages. Real terminal appearance remains manual
+coverage; compiler/runtime output and web execution are unchanged.
+
+## Retained build progress stages (2026-11-06)
+
+Owner: `tide build`/`run` erased finished bars and repeated "Generating C"
+without explaining the work. Terminal feedback now retains each completed stage
+as a summary line with a full bar and that stage's elapsed time. Active labels
+and filenames still use the two-row display. Stage transitions and drawing share
+the feedback lock, so the activity thread cannot redraw over a retained row.
+Checking and asset imports share a stage because they interleave per declaration;
+packing notifications share another regardless of singular/plural wording.
+C generation distinguishes the asset build program, game C, and asset data/final
+C generation. These are CLI labels; compiler callbacks and reports are unchanged.
+Parsing and C/C++ retain their item percentages. The other compiler stages use
+activity bars: their supplied count covers imports plus packing, not an individual
+stage. Success completes the last row; failure retains its observed progress.
+Package resolution failure does not advance to a completed package stage.
+
+Validation: Windows Clang 23.1.2 ASan CLI build and four focused CTests pass
+(unit, help, build_overlap, build_report). A scratch ASan probe of the actual
+feedback functions with controlled clock/line output checks retained rows,
+per-stage timing, filename updates without extra rows, all three C-generation
+contexts, failure at 33%, and successful final completion. No game was launched.
+The docs CLI reference and production docs build pass (usual unstaged example-page
+404s). Real-terminal appearance and other OS terminals
+remain manual/CI coverage; no game/runtime or WASM code changed.
+
+## Faster edit builds of big games (2026-11-06)
+
+Owner: time `tide run --release` of Mount & Rifle and make iterations faster. Measured with this checkout's
+packaged tide (embedded clang/lld 23.1.2) on a scratch copy of the game (unpinned), Ryzen 9 7900X, `tide build
+--release --report` after a one-constant edit in camera.tide; medians of three on a quiet machine (another worktree's
+suite made single runs 2-3x slower, those were discarded):
+
+| | before | after |
+|---|---|---|
+| edit, whole build | 27.2 s | 13-14.5 s |
+| generated C compile (the edited part) | 5.1 s | 1.0 s |
+| ThinLTO link | 12.5 s (incl. 0.6 s pack copy) | 4.5 s |
+| splitting/writing generated C | 2.3 s | ~1.6 s |
+| shader arrays' text | 1.1 s | 0.37 s |
+| unchanged rebuild | 13.4 s | 7.4 s |
+| `tide run --release --frames 2` after an edit | ~30 s | 16.7 s |
+
+Truly cold (no .tide/): 126 s, then 98 s with the parts above, then 69 s with build code's program split and
+without shaders (assets-and-files.md, Build code), then 47 s with images and levels of detail made ahead on every
+processor (same file, "Made ahead"), then ~43 s with images decoded ahead of the asset loop (same file), then ~36 s on a quiet machine with build
+code's compiles overlapping its generation on every processor (same file, Build code). Of the 69 s: asset imports 11.5 s, build code 39 s (of which
+~24 s making levels of detail one mesh at a time, cached after), C 9 s. A full recompile of the generated C
+(cached data part) takes ~19 s. Starting the game adds ~3 s (its 742 MB pack).
+
+What changed:
+- **The data part.** 93 of the game's 106 MB of generated C were shaders' SPIR-V/WGSL arrays. `write_code_parts`
+  first splits with `SPLIT_DATA` (plumbing_split.inc): constant variables larger than `SPLIT_SHARED_CONST`, whoever
+  names them (`split_name.data`), go to `<name>_data.c`, everything else stays to be partitioned. Each binary level
+  of the old split re-scanned and re-wrote all 106 MB (~0.9 s per level); the code's levels now cut ~14 MB. An edit
+  of the code leaves the data part's text, and so its object, as they were. It is compiled with ThinLTO like the
+  other parts (compiling it without LTO made no link-time difference, and LTO keeps the constants visible to the
+  optimizer as before). It is always written when splitting (possibly only declarations), so CMake can name it.
+- **More code parts.** `codegen_options.split_code_parts` (most parts, a power of two up to 16; tidec's default 4)
+  and `split_code_part_bytes` (fewer parts when each would have less code; 0 = always the most). The CLI asks for up
+  to 16 of at least 512 KiB: Mount & Rifle gets 16. Swept on the old split: 4 parts 27.2 s, 8 parts 19.4 s, 16 parts
+  17.1 s, 32 parts ~19 s (link no faster, splitting slower); with the data part: 8 parts 16.8 s, 16 parts 14.2 s.
+- **Shader arrays without a printf per element.** `gen_shader_text`/`gen_shader_spirv` format lines directly; the
+  text is byte for byte what `"%s%d,"`/`"%s0x%08x,"` wrote (checked on Mount & Rifle's 92 MB data part). Translating
+  WGSL to SPIR-V itself is 0.28 s of the remainder.
+- **The pack is left alone when it comes out the same.** tidec's `write_pack` compares the existing file first
+  (`pack_file_is`, reading is cheaper than writing 742 MB); tide's `place_pack` keeps `<gen>/game.pack.placed`
+  (destination and both files' stamps after the last copy) and copies again only when either file changed.
+
+Findings that limit the rest: a ThinLTO link where every module is cached takes 0.24 s, but any edit re-runs the
+backend of every generated module (all 16, ~4.5 s wall in parallel), even with `-import-instr-limit=0`: the cache
+keys cover more than imports. Each part's cost is its code (frontend 1 s, optimizer 4.7 s, codegen 5.2 s for a
+7 MB-of-code part without LTO); shader data and `-g` changed the backend time by under 1 s. What remains of an
+edit build is mostly the Tide side (declarations ~1.1 s, generating C ~2.1 s, packing 1 s in memory, split/write
+1.6 s). Not done: caching SPIR-V across builds, a single N-way split pass, skipping the in-memory pack build.
+
+Tests: `tidec_split_code_stable` now expects `game_data.c` in the manifest and checks the compute fixture's shader
+arrays are defined there alone; `tide_cli_build_report`'s large game reads its part list from the manifest
+(a power of two of code parts, then the data part).
+
+Validation (Windows, Clang 23.1.2, Node 24.22.1): ASan builds; tidec_split_code_stable, the five SPLIT_CODE e2e
+fixtures (crossplatform pins, nested, tasks, compute, nested_split_debug), tidec_e2e_shaders/compute,
+tidec_recompile, tide_cli_build_report/build_overlap/help pass (12/12). A locally built embedded-LLVM package
+(native half only) passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`. Mount & Rifle builds and
+runs two hidden frames in release and debug (16 plumbing parts and `game_plumbing_data.c`). Docs production build
+passes. Not run: web builds of the split fixtures, Linux/macOS, Android (CI).
+
+## One count for the Tide step (2026-11-06)
+
+Owner: the bar for assets and Tide compiling went back and forth per file. Each notification carried its own
+stage's count (a file's import 0/1 then 1/1, a glob's i/n, checking indeterminate, packing i/n), so the bar reset
+with every label. Now `compile_progress_whole`/`_reach` (common.h) give one count after parsing: check.c's asset loop
+sets it to twice the asset declarations and moves on as each is imported; build_pack takes the second half, as many as
+were declared, whatever a release leaves out (it ends at the total). While it's set, every notification carries it,
+so labels still name the file or asset while the bar only goes forward, and holds through checking and generating
+C. Parsing keeps its files' count (it ends before); a game without assets keeps the old stage counts.
+`compile_inputs` clears it before and after; build code's own codegen doesn't move it.
+Follow-up (same day, the owner: "did we ever rework the progress bars to make them clearer?"): build code said
+nothing for its seconds, so the label stayed on the last asset; it now says "Running build code: making its
+program", "...: compiling its program", then "Running build code" while it runs. The game compiled again after
+build code calls compile_progress_whole with the same total, which now keeps its place rather than starting the bar
+over. The terminal shows the Tide step's percentage without its count (`feedback.percent_only`: assets imported plus
+packed is no number to read); C/C++ keeps its files' count. Test: `compile_progress_whole_keeps_its_place_when_counted_again`.
+Not checked in a real terminal this time (the receiver's text only changed).
+Then (owner: "make capitalization consistent and rename linking to the optimization step"): `build_step_shown`
+puts a step's label in the terminal with a capital first, as the stages' labels are, and a ThinLTO link (and an
+Android one with generated_lto) shows "Optimizing across files and linking". The build report's stage names and
+redirected `tide: <step>` lines keep their lowercase words ("linking"), which build_report_test and docs/tools/cli.md
+name. CLI build report, overlap, help and run-exit tests pass under ASan. `tidec_recompile` checks that
+after parsing every count is the whole one (4 for two assets) and never goes back, reaching 2 before generating C
+and 4 after packing.
+
+## Exact pins suppress upgrade notices (2026-11-05)
+
+Exact project pin selection sets TIDE_NO_UPDATE_CHECK in the command's process
+environment before continuing or dispatching. This suppresses automatic upgrade
+notices both when the invoking release matches and when an older cached release
+is downloaded/launched, including older compilers that already honor the opt-out.
+Moving channels retain their update behavior; explicit upgrade is unchanged.
+The setting does not change the owner's shell environment.
+
+Validation: Windows Clang 23.1.2 ASan CLI/dispatcher/child builds and
+tide_cli_versions pass (Node 24.22.1). The fixture starts without the opt-out and
+checks matching-release suppression, inheritance after download and an unchanged
+nightly channel. Native host tooling only; no WASM/runtime change. Linux/macOS
+execution remains CI coverage. CLI reference updated.
+
+## Parallel generated C with ThinLTO (2026-11-05)
+
+Generated C groups at least 4 MiB now compile in four stable parts with `-flto=thin`. Small files stay whole.
+Ordinary debug keeps game code at O0 in one file, splitting only sufficiently large O2 plumbing; release and explicit
+optimization modes split the complete generated file. `generate` requests a part manifest; `queue_game` queues exactly
+those objects, including native reloads, web, Unity, servers and Android. Old extra files are ignored. Existing
+`game.o`/`game_plumbing.o` names remain; extra parts use `_part1.o` etc. Source/flags/header stamps include ThinLTO;
+only the main part keeps simulation-identity header invalidation. Shared type/header changes still invalidate every
+part. ThinLTO parts participate in size-prioritized scheduling; ordinary launchers retain their existing priority. Counts/progress are completed translation units,
+not optimization-pass percentages. Linking retains activity feedback.
+
+Native/web/Android link paths share ThinLTO flags, use `<configuration-cache>/thinlto`, and cap backend jobs at the
+same TIDE_JOBS budget as C compilation. Mach-O uses its cache/thread options; ELF/MinGW/WebAssembly use their lld
+options. A debug link uses O2 for its optimized plumbing's LTO backend; game code is a separate O0 native object.
+Explicit optimization overrides remain effective. The managed reactor's identity-bearing launcher retains its
+existing stronger header invalidation. Neither engine/package objects nor the game's handwritten C are switched to LTO.
+
+Measurements (Windows, clang/lld 23.1.2, Ryzen 9 7900X; exploratory single passes, ordinary desktop load): Mount &
+Rifle's 102,183,928-byte C took 49.47 s to compile as one file, 29.84 s with the prior two-file split, 19.39 s in four
+parts, and 6.71 s in four ThinLTO parts. Successful DLL links retaining the game API took 0.32 / 0.45 / 0.56 / 10.24 s
+respectively: about 49.8 to 17.0 s for that C-and-link work. These are MSVC-ABI experiments, not timings of the
+packaged MinGW CLI or total game builds; asset import/Tide generation and engine/package compilation are excluded.
+Separating shader arrays alone took 51.20 s and was rejected. The initial full-file time trace put 23.3 s in LLVM
+optimization and 28.7 s in backend code generation, against 5.9 s in the frontend. Raw data and identities:
+`bench/results/generated-c-partitions-2026-11-05.json`.
+
+Runtime sanity check: three alternating release particles runs, 1M particles, one thread, 300 timed ticks after 20
+warm-up ticks. Medians of process tick medians are 1.093 ms whole and 1.101 ms four-part ThinLTO (within 1%);
+every run and its C comparison ends at `0x927c09795885dac2`. One split run was 1.306 ms and desktop load was not
+guarded, so no general runtime-speed claim is made. All five Sumo variants (whole, two/four parts, with/without
+ThinLTO) pass their 18 tests. Raw runtime output: `bench/results/generated-c-runtime-2026-11-05.json`.
+
+Validation: complete Windows ASan (3,184 tests) and web-debug (3,008 tests) builds and suites, each initially
+failing only the incoming sampler-index assertion in Render3D post tests; its corrected test passes on both. The large CLI report regression checks actual automatic four-part
+selection, ThinLTO/cache/job flags, zero warm recompiles and at most the body/identity parts recompiling after a
+body edit. Focused CLI unit/help/overlap/report tests pass. Docs production build passes (the usual example-page
+404s). Linux/macOS/MinGW package and Android runtime coverage remain CI's; no emulator was run. No runtime or wire
+contract changes. The compiler identity changes normally because compiler sources changed.
+
+## Windows watched-run shutdown (2026-11-05)
+
+Closing a game's window could leave `tide run` blocked during CRT exit: its
+detached terminal reader held stdin's FILE lock in `fgets`. The Windows reader
+now uses `ReadFile` on the CRT stdin descriptor's OS handle, so it holds no
+stdio lock while waiting. This also respects redirected stdin. Restart-line
+handoff, CR/newline trimming, EOF and final partial lines remain in place;
+Windows now chunks raw bytes like POSIX (255 bytes, including CR in CRLF).
+No host/runtime boundary or watch policy changed.
+
+`tide_cli_terminal_exit` keeps an input pipe open after sending a restart line
+and returns while the reader waits again; CTest bounds shutdown to 10 seconds.
+The old Windows implementation times out in the same probe; the fixed ASan
+executable exits in 0.16 seconds. Windows Clang 23.1.2 ASan CLI build and six
+focused CTests pass: unit, run_exit, terminal_exit, help, hidden and build_overlap
+(Node 24.22.1). The overlap fixture first lacked its compiler helper; after
+building that target, it passes. No visible game was launched. Console close
+interaction and Linux/macOS remain manual/CI coverage; no WASM code changed.
+
+## Tide compilation progress labels (2026-11-05)
+
+The terminal build display now receives synchronous compiler progress through
+`compile_set_progress`/`compile_progress` in common.h. The CLI installs the receiver
+only around source generation and copies labels under its existing feedback lock.
+Parsing and method checking name the Tide source; imports name each resolved file
+(including individual glob matches); packing names the qualified asset declaration.
+Generating C has its own label. The terminal uses basenames so absolute directory
+prefixes cannot hide the filename. Redirected output and build-report stages stay
+unchanged. This is host-tool feedback only; no generated code/runtime contract changes.
+
+Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
+CLI unit/help and recompile CTests pass. The recompile regression checks actual
+parsing, checking, file import, asset packing and C-generation notifications.
+Docs production build passes with the usual unstaged example-page 404s.
+Other OS terminals remain CI/manual coverage; no web runtime code changed.
+
+
+Progress counts follow-up (2026-11-05): the compiler callback now includes
+completed/total item counts (zero total means indeterminate). Parsing counts input
+files, importing counts each resolved set of files (glob matches included), and
+packing counts asset declarations. The existing terminal bar shows those stage
+counts and percentages; checking and C generation retain activity animation.
+Counts describe work items, not time estimates or whole-build completion.
+Redirected output is unchanged. ASan CLI unit/help and compiler recompile checks
+pass, including notification count bounds and parsing/import completion. Docs
+production build passes; other host terminals remain CI/manual coverage.
+
+## Optimized plumbing in debug builds (2026-11-04)
+
+Asked for by the owner: a plain debug `tide run` of a large game (Mount & Rifle) was unplayable, while
+`tide run -O2` was not, but `-O2` also optimizes the game's code, which a debugger then steps badly. Debug builds
+(no `--release`, `--distribution` or `-O<n>`: `splits_plumbing` in `build.c`) now compile with the engine's
+`-O2 -g`:
+
+- **Package C/C++** (`queue_c_files` for a package: stamp and flags from `stamp_of(b, true)` and
+  `queue_compile_as(..., optimized)`). The game's own C stays `-O0 -g`. Packages are library code, as the
+  engine is.
+- **The generated plumbing.** tidec's `codegen_options.split_plumbing` (`tidec --split-plumbing`) writes
+  `game_plumbing.c` beside `game.c` (`compiler/src/plumbing_split.inc`, run on the finished text before `#line`
+  pinning). `game.c` keeps the functions whose lines are `.tide` lines (systems, views, handlers, functions,
+  methods, parallel steps, sort comparators, async bodies) and compiles as before; everything else (world copy,
+  hashing, packing and deltas, client state and projections, rows and tasks that call the systems, dispatch,
+  assets, shaders' data, layout, the game API) goes to the plumbing file, compiled into `game_plumbing.o` beside
+  `game.o` (`queue_game`, in the game C's objects, so every link takes it: build, run/reload, Unity, Android,
+  web, servers). Release, distribution and explicit levels still write one file.
+
+How it cuts (comments at the top of the .inc): top-level items, by a scanner that follows strings, comments,
+directives and braces. A function goes to one file. Types, prototypes, directives and macros go to both. A
+variable is the plumbing's, except a small static const both name (in both), a static only the code names, and
+the definitions codegen lists in `gen.code_at`: `tide_game_api` (it holds the simulation identity) and the
+profile's `tide_system_sources`/`tide_view_sources` (`.tide` lines), so an edit of the code alone leaves
+`game_plumbing.c` byte for byte, and its stamp (which leaves `TIDE_SIMULATION_ID` out of the header's hash, as the
+launcher's does) keeps the `-O2` object. Top-level `.tide` `#line`s go to `game.c` only, for the same reason.
+Linkage: a name one file uses and the other defines becomes external with hidden visibility (`TIDE_SPLIT`;
+`TIDE_SPLIT_HELPER` keeps `TIDE_HELPER`'s `nodebug`), declared in the other file where the definition was; who
+uses what is a fixed point over function bodies, initializers and macro bodies. A static of the plumbing's that
+becomes external is renamed `tide_split_<name>` in both files: `tide_game_pack` (world packing) is also
+`--pack-c`'s data, and `tide_embed_command/schema/view` the platform's. The game's code keeps its names, and so
+does a name that is also a field's anywhere (after `.`/`->`: `tide_request_watch`, `tide_born`), as renaming would
+reach the struct declaring it; a field mention isn't a use either. What
+it can't cut (none of this build's games) stays whole in `game.c`, and `game_plumbing.c` says why in a comment.
+Output is sized by a counting pass and `#line` pinning streams to the file (`write_pinned`): the arena never
+frees, and Mount & Rifle's 96 MB of generated C ran tide out of memory otherwise.
+
+Measured (Windows, clang 23.1.2, this checkout's installed toolchain against the same scratch copy of Mount &
+Rifle at 6e963ed, unpinned; `tools/performance-route.txt`, seed 42, 3230 frames, 1280x720, `--profile`; the
+machine ran up to three other Mount & Rifle sessions, so interleaved runs, medians):
+
+| debug, ms/frame | before (5 runs) | after (4 runs) |
+|---|---|---|
+| match (`cpu_phases.match`) | 23.1 (p50 19.4) | 17.7 (p50 14.3) |
+| match minus systems (hash, pack, load, copy) | 15.3 | 9.9 |
+| views | 10.9 (p50 10.5) | 10.8 (p50 9.5) |
+
+Single runs vary up to 2x with the other sessions' load. In 700-frame load-phase runs (2 each) match went
+29.5/30.4 to 24.2/28.1. Sumo (`examples/sumo`, 1800 frames, seed 42, 3 runs each): match 7.1 to 1.7 ms, views
+2.9 to 0.9 ms (its Box3D package C is most of it). One later split run of the route ended with the engine's "out
+of memory" while three other Mount & Rifle instances were running; its other runs and the base runs before and
+after it completed. Cold `tide build` of Mount & Rifle with a debug-built tide: 5:00, the `-O2` plumbing (86 MB,
+mostly shader data; `game.c` 14.7 MB) compiling in about a minute alongside the engine.
+
+Tests: `tidec_debugger_natvis` on the split fixture (`SPLIT_PLUMBING`, notes/tide-programs.md); every `.sources`
+list of the debug build (463) generated with `--split-plumbing --visualizers --layout`: 443 split, both halves
+compile with `-Wall -Wextra -Wpedantic -Werror` (MinGW target), no symbol defined by both, nothing undefined
+that the whole file didn't need but the engine's own functions (helpers made external are emitted); the unsplit
+output equals the previous tidec's but for the identity (it hashes tidec's sources). `build_code` fails without
+`--build-cc`, as before. `cache_test.mjs` (native) expects `game_plumbing.o` in debug, a layout change to rebuild
+it, a body edit not to, and its reuse after a failed build. CLI unit/help/run-exit tests pass. Not run here: web
+and Android builds (CI's package checks run `cache_test.mjs --web`), LLDB (CI's Linux jobs), macOS/Linux.
+## Build reports (2026-11-04)
+
+Owner: "build reports; we should be able to have some output documenting where
+time was spent building, where pack sizes come from and how big they are, what
+was stripped maybe". Built as `tide build --report <file>`; the flag, format and
+contents are my picks (Provisional). `.json` gets JSON, any other path a table.
+`build` only: `run` refuses the flag (a watched run has many builds; one-shot
+runs could take it later). User docs: docs/tools/cli.md, Build reports.
+
+- `compiler/src/build_report.{h,c}` keeps one malloc'd report per build in a
+  global (`build_report_current`), since diag phases, the checker and codegen
+  have no shared context; nothing records while none is kept. It outlives the
+  arena. `tide_build` begins it when `opts->report` is set and no report is
+  active, and writes it after the build, failed builds included
+  (`"succeeded": false`); a write failure fails the build.
+- Steps: every `build_step` label ends the previous step (`build_report_stage`),
+  plus `compiling C/C++` from `run_compiles`. Labels said twice in a row merge.
+- Tide phases: `diag_phase` (also `TIDEC_TIMES`) now records into the report by
+  name, merged across build code's second pass. New phase marks: `running build
+  code` after `build_code_run`, and `packing assets` around `build_pack`
+  (`generating C` before it), skipped for build code's own program.
+- Asset import time: check.c times the resolve block of each asset declaration
+  into `decl.import_ms`; warm import-cache hits are what it shows warm.
+- Pack bytes: the same per-declaration measurement `--asset-sizes` uses (below):
+  `asset_size` also reports each declaration, with `asset_description` (type,
+  image size, BC1/BC3/RGBA, [Raw]/[Lossless]) as the report's type, so the two
+  can't disagree. Content-hash sharing means a later asset with the same bytes
+  adds 0 (`shared`); the remainder of the pack is entries/names. The last
+  `build_pack` of a codegen wins (a server repacks). Left-out assets have
+  their plain type: nothing was stored.
+- Left out: codegen copies the asset list before `program_strip_unused_assets`
+  and reports those missing after the final pack, telling server-only cuts
+  (in `all_assets`, not kept) from unused ones.
+- C/C++: each job's wall time from start to its observed exit, named from the
+  game or installation folder; reused objects (stamp hits, engine files, an
+  already-built engine) count as `upToDate`.
+- Cuts: `report_cuts` describes the mode's policy from the same predicates the
+  build uses (`strip_game_assets`, `strip_server_assets`, package C), naming
+  `--strip-assets` where a game with C was pruned by it or could be.
+- Outputs: the program, its pack and debugger sidecars beside it, or every file
+  of a split web page's folder, plus an Android build's returned app.
+
+Not built: per-object/section binary size attribution (needs linker maps),
+per-asset compression or texture-format breakdowns, and reports for watched
+runs, `tide unity` and deploy.
+
+Test: `tide_cli_build_report` (build_report_test.mjs) uses build_overlap's
+controlled compiler with the real front end: refusals, a cold release JSON
+report (steps, phases, compiles, pack bytes equal to the file, sharing, the
+unused asset left out with why, cuts, outputs' sizes), a warm table (0 compiled,
+reused count, layout), debug packing everything, a `--server` build's
+server-only cut and its pack, and a failed build's report. Validation: Windows
+ASan build; that test, build_overlap, help, run_exit, CLI unit, server_pack and
+the asset/pack/stages tidec e2e and unit tests pass; docs production build.
+Linux/macOS and web targets' reports are CI/untested (no web build reported).
+
+## Asset sizes and `--strip-assets` (2026-11-04)
+
+From a game's feedback (notes/textures.md, `[Raw]` images compress too): finding what made its pack 618 MB meant
+reverse-engineering the pack's table of contents.
+
+- **`tide build --asset-sizes`, `tidec --asset-sizes`**: `codegen_options.asset_size_out` is called once a
+  declaration is packed (`build_pack`: the builder's size before and after it, so a block an earlier declaration
+  already put in counts as 0 for this one) with its qualified name and a description (`asset_size`: type, an
+  image's size or a list's count, the formats of its first four images from `pack_item`'s new `stored`, and
+  `[Raw]`/`[Lossless]`). `compiler/src/asset_sizes.{h,c}` collect and print them biggest first, ties by name,
+  under the total (decimal units). The CLI passes a collector in `build_options.asset_sizes`; `generate_sources`
+  empties it before each compile, so Android's per-CPU compiles report once; `command_main` prints it before
+  `Built ...`, after the progress rows. Sizes are pack bytes after pruning, before a web page's compression.
+- **`tide build --strip-assets`** (`build_options.strip_assets`): `strip_game_assets` prunes a release or
+  distribution build whose game or packages have C sources or libraries, the client's twin of
+  `--strip-server-assets`. Detecting C that reads assets automatically (the feedback's other suggestion) was
+  not built: C reaches entries through `tide_pack_find` and generated names in ways a text scan would only
+  guess at. CMake's `tide_add_game` has no such option yet.
+- Neither changes telemetry (flags aren't recorded). Docs: `docs/tools/cli.md` (Asset sizes).
+- **Tests:** `tide_cli_assets` (`assets_test.mjs`) builds with `--asset-sizes` and checks the total, a line for
+  each of five declarations with its description, and the order; `tide_cli_help` covers both flags'
+  help. `--strip-assets` itself has no fixture: it only returns true earlier in `strip_game_assets`, whose
+  pruning `tidec_asset_usage` covers.
+
+## Moving project channels and cache expiry (2026-11-03)
+
+Owner approved `tide = nightly` and `tide = stable`, with `tide pin` accepting
+both. Each occupies one installation under the shared versions cache, separate
+from the main installation and exact releases. At command startup the launcher
+checks the channel, using upgrade's existing release ordering (nightly includes
+a newer stable release), checksum and package validation. First installation
+retains download consent; selecting a channel authorizes subsequent updates.
+Offline/failed downloads reuse a whole installed release and report its exact
+version. An incomplete installation cannot run. Staging is removed after updates;
+no historical nightly installation is created for a channel.
+
+A shared process-file usage lock outside each installation covers the complete
+selected command. Exclusive updates run only while idle; another session can
+share the installed release and defers updating. A directly invoked cached CLI
+holds its own usage lock until exit and recognizes its installation to prevent
+recursive channel dispatch. The -dev and Unity package selection exceptions
+remain. Unity continues to require an exact package-matching compiler; its
+editor holds the same usage lock for selected cached compilers until reload/quit.
+
+Exact cached directories expire after 30 days without use. Startup cleanup checks
+only exact-version directories; top-level links, other folders, the main install,
+channels and active users/installers are skipped. Last-use stamps live outside
+the installations and refresh before and after commands. Legacy caches acquire
+a new 30-day grace period on first observation. Expired pins are downloaded again
+with existing consent. Lock files remain to preserve cross-process lock identity.
+No background service, runtime ABI, telemetry field or game code changes.
+
+Validation: strict warning-free Windows Clang 23.1.2 ASan builds; the seven
+focused CLI CTests and tidels_tests pass (8/8). The final version fixture passes
+after the direct cached/unpinned invocation fix, including real release CLI
+dispatch, nightly/stable pin writes, invalid pin refusal, concurrent channel
+sharing/update deferral, consent, checksum/offline fallback, last-use expiry,
+legacy grace, active exact-version protection and symlink/junction boundaries.
+It exercises both host commands and --web forwarding without running a game.
+Unity 6000.6.0f1 VersionTests passes 12 tests in a scratch Sample under
+TIDE_HIDDEN/batchmode/nographics/noAudio; one existing ABI-5-host test is ignored
+because that unrelated fixture was not supplied. Editor lock exclusion/release
+and last-use refresh pass. Node 24.22.1 docs production build and diff checks
+pass; the docs retain existing allowed unstaged-game-page 404s. Release-dispatch
+checks used an isolated 0.6.0-nightly.999 build; no user toolchain was installed
+or project pin changed. Linux/macOS (including Unity's flock path), embedded
+LLVM packaging and real game execution remain CI/manual coverage. No WASM/runtime
+code changed, so separate web runtime suites are not applicable.
+
+
+## Steady progress rows and active filenames (2026-11-03)
+
+`line_draw_pair` overwrites both rows and erases only their remaining tails,
+then flushes. It no longer clears and flushes a blank display every 100 ms,
+which caused the reported terminal flicker. Final cleanup still clears both
+rows. Width clipping and upgrade's single-line display remain in place.
+C/C++ feedback lists the basenames of currently active jobs in source order,
+clipped to the terminal width, so the last slow source remains visible while
+the batch waits. The caller copies names under the existing feedback lock;
+the drawing thread never reads compiler jobs. Redirected feedback is unchanged.
+
+Validation: warning-free Windows Clang 23.1.2 ASan CLI build; CLI unit,
+packages, build_overlap, upgrade and hidden CTests pass (5/5). The new output
+regression requires no full-row erasure between updates and tail cleanup when
+labels/bars shrink. A real ConPTY build with the controlled compiler shows
+multiple active names, then `engine.c` throughout a two-second barrier, and
+clears before completion. This exercises presentation, not real game execution.
+The production docs build and diff check pass (Node 24.22.1). Other host
+terminals/OSes remain CI/manual coverage; no game or WASM runtime code changed.
+
+## Directory order in overlap diagnostics tests (2026-11-03)
+
+The next CI run passed native Linux/Windows, MinGW and all Linux web shards.
+macOS passed 2,809/2,810 native tests; only the overlap fixture's last case
+failed. It assumed `engine.c` preceded `zlast.c`, while `folder_find` preserves
+raw directory discovery order. macOS discovered `zlast.c` first, so reporting
+its error first was correct. Production scheduling and diagnostic order remain
+unchanged.
+
+The fixture now reads discovery order with `opendirSync` (unlike `readdirSync`,
+which sorts names), makes the second discovered engine source large enough to
+start first, and requires only the earlier source's error to be reported. A
+second case recreates the two files in reversed creation order to exercise both
+enumerations on Linux. Both cases retain the barrier, game-error suppression,
+invalid engine stamp and earlier-unstarted-job checks. No assertion or timeout
+is removed to accommodate macOS.
+
+All eight scenarios pass on Windows ASan and the freshly built Linux CLI under
+WSL with its work directory on the Linux filesystem. Node syntax and diff checks
+pass. Actual APFS enumeration remains the next push's macOS CI coverage.
+
+## Build code's tools (2026-11-03)
+
+`generate` (build.c) gives tidec's codegen_options the tools for build code's program (notes/assets-and-files.md,
+Build code): its compiler command (`tide cc` when clang is built in), and for this machine whatever the game's
+target is: on Windows the MinGW target and sysroot, with `-fuse-ld=lld -nodefaultlibs`, the native libraries and the
+builtins archive; elsewhere the native libraries (and lld when built in). The installation's `include/` and
+`src/engine/` are its headers and sources. The program and its engine objects are kept in the game's
+`.tide/build-code/`, what it made in `.tide/assets/imports/`. `game_info.assets_affect_match` is set for a game with
+constants build code made, so a watched file a constant's code reads rebuilds the game rather than repacking.
+Checked by hand with a scratch installation (this checkout's tide.exe, the engine's files, the installed MinGW
+sysroot): `tide build` ran build code and linked.
+
+## Linux overlap fixture cache path (2026-11-03)
+
+With watched shutdown fixed, Linux CI's host case reached its unchanged-object
+check and exposed a Windows-only fixture path assumption. Native Linux library
+builds intentionally keep `-fPIC` objects in `engine-pic`, separately from a
+standalone build's `engine`; Windows/macOS use `engine`. The fixture now selects
+the existing platform-specific directory for its host case. Object timestamp,
+no-recompile, overlap, failure-recovery and diagnostic-order assertions remain
+unchanged; no production cache code or thresholds changed.
+
+Validation: all seven overlap scenarios pass with this checkout's freshly built
+Clang 23 Linux CLI and controlled compiler under WSL, and on Windows ASan. Linux
+unit, run-exit, help, packages and hidden CTests also pass. The WSL overlap work
+directory uses its Linux filesystem: DrvFS did not deliver a file-watch event
+for the initial gate when the same fixture lived under `/mnt/c`, while the file
+existed and the build completed after gate release. No test workaround is
+shipped for that local filesystem limitation. Node syntax/diff checks pass;
+the next push validates the normal hosted Linux filesystem and remaining gates.
+
+## POSIX watched-run shutdown (2026-11-03)
+
+Linux release CI passed 2,809/2,810 tests but hung in the overlap fixture's
+inert-host run after compilation. The detached terminal reader blocked in
+`fgets` with stdin still open; libc exit cleanup waited on its `FILE` lock after
+the host had exited. A small Linux probe using the actual `sys_read_lines`
+reproduced the main thread waiting on a futex and the reader on a pipe.
+
+The POSIX reader now reads stdin's descriptor directly, retries interrupted
+reads and preserves newline/CR trimming, 255-byte chunks, final partial lines
+and the existing atomic handoff/EOF contract. It holds no stdio lock while
+waiting, so process exit does not need terminal input. Windows retains `fgets`.
+No scheduler, host, runtime or watch policy changes. The original seven-case
+overlap fixture, assertions and timeouts remain intact.
+
+Validation: the blocked-stdin Linux probe exits successfully with the fix;
+the new terminal-boundary/EOF unit test passes on Linux and Windows ASan.
+The six focused Windows ASan CLI CTests pass (unit, run_exit, help, packages,
+hidden and build_overlap). Linux/macOS full CLI and package checks remain the
+next ordinary push run's coverage.
+
+## Overlapping build stages (2026-11-03)
+
+The owner's edit-to-test follow-up overlaps independent engine compilation with
+Tide generation/assets. After successful package resolution, `generate` queues
+engine jobs and starts up to four of the largest sources, capped at `jobs - 1`.
+This leaves a CPU for the in-process front end and avoids delaying it on dozens
+of child-process launches. The ordinary C batch adopts those same processes,
+then starts generated/game/package C within the existing TIDE_JOBS budget.
+The front end stays on its caller thread: no concurrent arena, checker or
+importer access. Already-cached engines start no speculative jobs; TIDE_JOBS=1
+keeps generation and C compilation serial. Android still generates once before
+its two ABI builds; its C batches use the shared scheduler without prelaunch.
+
+Within the existing batch, generated game.c keeps first priority, followed by
+engine sources in descending file-size order, then other C in its existing
+order. File size is a cheap scheduling heuristic, not a duration estimate.
+Diagnostics retain the original source order, including earlier jobs still
+unstarted when a later job fails. Successful objects keep their stamps;
+engine completion still requires every engine job. Failed Tide generation
+kills/joins its outstanding compilers, discards their diagnostics and leaves
+the engine stamp invalid. Retrying replaces the previous engine-object list.
+
+The initial native reload host is queued after game/package jobs in that same
+batch instead of compiling after the game library links. Host/library links
+remain serial, with their existing cache stamps and publication rules. Later
+watch builds don't queue the host. The single progress display remains owned
+by the caller; engine prelaunch keeps the Tide/assets activity label until the
+full C batch has a known file count. No runtime API, code-generation semantics,
+pack format, optimization mode or telemetry field changes. The existing source
+revision fingerprint includes build.c, so Simulation IDs change with this
+compiler revision as usual.
+
+Paired measurements (`build-overlap-20261103.json`): Windows Ryzen 9 7900X,
+Clang 23.1.2, optimized unsanitized external-compiler CLI, native default-debug
+games and 24 workers. Five pairs per case alternate baseline/new order at the
+same game/install paths. Each timed run follows an untimed build of the same
+baseline source. Code edits change only an added singleton/system's integer
+assignment; cold cases remove objects/stamps while keeping assets cached.
+Fixtures copy repository Duel/Sumo without C test hosts and package test folders.
+Times cover complete `tide build`, including linking, without game startup:
+
+| Fixture | Unchanged, before / after | Code edit, before / after | Cold code cache, before / after |
+|---|---|---|---|
+| Duel | 160.4 / 167.4 ms | 527.4 / 535.7 ms | 2147.5 / 1822.4 ms |
+| Sumo | 258.4 / 261.4 ms | 788.5 / 797.8 ms | 2727.7 / 2446.1 ms |
+
+The useful measured improvement is cold code builds (15.1% Duel, 10.3% Sumo).
+Warm/no-op and code-edit paths have no demonstrated gain. This does not measure
+the owner's game or claim a native watched-startup speedup. Each pair checks
+identical generated C/headers after normalizing only the expected compiler
+revision Simulation IDs, and exact packs where present. Starting a whole CPU's
+worth of engine processes before entering generation was discarded: process
+launch cost delayed the front end and left the long engine files until later.
+The bounded head start and larger-file priority address that scheduling gap.
+
+`tide_cli_build_overlap` uses a controlled compiler, process/file barriers and a
+local HTTP asset to prove overlap without speed assertions. It covers one-worker
+serialization, two-worker overlap, host batching and unchanged reruns, failed
+generation killing its compiler then recovering, package failure before any C
+starts, game/engine failures and source-order errors when a larger later engine
+source starts first. Its fake linked host is an inert GUI-subsystem fixture on
+Windows: it opens no game, console, window or audio device. The fixture requires
+the external-compiler CLI; embedded-LLVM packages retain their real cache tests.
+
+Validation: warning-free Windows Clang 23.1.2 ASan builds and six focused CLI
+CTests pass (unit, run_exit, help, packages, hidden, build_overlap), including
+the expanded seven-case barrier fixture. The installed native/web cache script
+passes real debug/release/distribution builds, optimization overrides, byte
+parity at one/three/default workers, failure recovery, cache invalidation,
+debug/release web watching, consecutive web runs and a bounded native dedicated
+server. A freshly built native Duel also exits successfully after two hidden
+frames. Production docs build, Node syntax and diff checks pass. Platform
+libraries were built in this checkout. Actual browser execution, real native
+watched library loading, Android, embedded LLVM and other host OSes remain CI
+coverage; no runtime code changed.
+
+## Build progress feedback (2026-11-03)
+
+Fresh build/run asset work now has a persistent import/preparation cache as well
+as the existing code-object caches. Contracts, measured cold/warm costs and
+invalidation/corruption/concurrency coverage are in assets-and-files.md,
+Persistent build-time asset imports. The older cache inspection below records
+the gap before that implementation; it is no longer the current status.
+
+Final presentation correction: terminal builds now share one two-row display,
+the current step above one bar. A single activity thread owns drawing throughout
+the initial native/web build, including C compilation and linking; nested source,
+library and compile steps update its locked status instead of printing lines or
+starting independent displays. Standalone builds, watch rebuilds and repacks
+close their own feedback scope; native/web runs close initial feedback before
+launch/serving. Android closes it around key/bundle stdout messages. The renderer
+clips rows to terminal width so wrapping does not leave extra progress rows.
+Known C batch totals use file percentages; other steps use moving activity, with
+elapsed time covering the build. Completion clears both rows and replays buffered
+diagnostics. Redirected plain output remains available. The native/web watcher
+hint is shorter, with the same reload/restart/stop behavior. `line_draw_pair`
+extends the shared line helper without changing upgrade's single-line display.
+The earlier per-stage terminal output descriptions below are superseded.
+
+Validation of the final display: warning-free Windows ASan CLI build; CLI unit,
+dispatch, help, hidden and package CTests pass (5/5), plus upgrade's regression.
+Real ConPTY runs of the delayed local-HTTP asset fixture and a controlled slow
+C compiler show the same two rows through source work, C compilation and linking,
+then only completion output; the invalid-source case clears both rows before
+its diagnostic. The docs production build, Node syntax check and diff check pass.
+Actual game execution, Android, other native hosts and the full installed web
+cache fixture were not exercised for this presentation change.
+
+Asset-cache inspection for the owner's question: asset_files.c's `read_at` cache
+keeps decoded images/audio/meshes by path/size/mtime in process memory; watch
+rebuilds reuse it, a fresh CLI process does not. Downloads have their URL/ETag
+disk cache and mesh_lod.c persists generated levels under `.tide/assets/lod`.
+codegen.c's build_pack/write_pack still constructs and writes the pack for a
+fresh generation. No general persistent import/pack cache was added here.
+
+Tide/assets follow-up: the synchronous generation step now runs under a terminal
+activity bar. Its four-character marker bounces every 100 ms with elapsed time,
+including source discovery, external-C identity hashing, checking, code generation
+and asset work. It gives no percentage for this unmeasured stage. The compiler
+stays on its caller thread; only line drawing runs on a joined helper thread.
+An event/condition variable wakes drawing immediately at completion, avoiding
+an extra 100 ms wait on fast or cached builds.
+`sys_activity_begin/end` saves stderr in a temporary file, stops/joins drawing,
+clears the line, restores stderr and replays diagnostics. Diagnostic color
+capability is cached before redirection. Allocation/file/thread startup failure
+falls back to the ordinary stage label; redirected commands create no activity
+thread or diagnostic capture. Package resolution still precedes this activity.
+No compiler, asset, generated-code or runtime interface changes.
+
+The activity regression checks repeated start/stop, animation during synchronous
+work, deferred/replayed diagnostics larger than the replay buffer including ANSI
+text/newlines, stderr restoration and later child-process diagnostics. Windows
+restores the Win32 standard handle and its inheritance as well as the CRT fd.
+Windows ASan CLI builds and
+five selected CLI CTests pass. A real ConPTY run with a local HTTP asset delayed
+1.5 seconds shows continuing animation through the wait, then successful
+generation and the ordinary C compilation bar. A second build reports an actual
+Tide error only after clearing activity. C compilation/linking in this scratch
+installation use a controlled compiler executable, not a real game binary.
+The docs production build and diff check pass. POSIX execution, Android and
+full installed-package native/web integration remain CI coverage.
+
+Owner correction: terminal feedback now follows upgrade's `line_draw`/`line_end`
+style. C/C++ batches redraw a 24-character bar in place with file percentage,
+completed/total, elapsed seconds and latest completed basename. It starts at zero
+and ends at 100 only on success; failures clear it. Diagnostics clear the active
+bar before printing, preserving their ordinary order. Other stages are short
+labels, as before. The bar advances on actual file completions, without polling
+or a time estimate. Redirected output retains the original plain stderr lines.
+The paragraph below describes that retained nonterminal behavior.
+
+Correction validation: Windows ASan CLI rebuild and the same four focused CLI
+CTests pass. A real Windows ConPTY run of the controlled compiler fixture shows
+one bar redrawn at 0%, 50% and 100%; a failing run clears the bar before its
+diagnostic and prints no completed bar. Captured output retains plain lines.
+The production docs build and whitespace checks pass. No game/runtime or
+cross-platform process-wait implementation changed.
+
+Builds now print flushed, newline-delimited stderr feedback for preparation,
+package resolution, Tide/asset compilation, C/C++ compilation and linking.
+C/C++ batches announce their file/worker counts and each successful completion
+with a completed/total count and basename; empty batches and reused links say
+they are up to date. Native runs announce launch; web/Android standalone builds
+announce packaging, and Android links identify their ABI. Shared build paths
+also give watched rebuilds this feedback. stdout completion messages, diagnostic
+ordering, cache stamps, compiler scheduling and runtime contracts stay unchanged.
+These are real file counts, not an estimated overall percentage or timer.
+
+The package cache fixture checks cold builds reach their reported file total.
+Its parallel failure comparison removes only the worker-count/completion lines,
+whose order naturally varies, retaining exact compiler diagnostic comparison.
+The CLI reference documents stderr progress under redirection.
+
+Validation: warning-free Windows Clang 23.1.2 ASan CLI build; run_exit, help,
+packages and hidden CTests pass (4/4). A scratch installation with the actual
+CLI/front end and a controlled compiler executable exercises cold completion
+counts, warm object reuse, bounded native launch and compilation failure with
+captured output. This is a feedback-path check, not real game compilation or
+GPU execution. Node 24.22.1 syntax check, production docs build and diff checks
+pass. Full installed-package native/web cache tests and Android execution were
+not run; this changes host CLI feedback, not WASM or game runtime behavior.
+
+## Telemetry queue claim race (2026-11-03)
+
+Run 41557439497's Linux release telemetry fixture timed out waiting for the two
+back-to-back commands' events. Unlike its other cases, this case starts the
+second recorder before waiting for the first sender. Inspection found the
+shared queue's append/cap and rename/read operations had no synchronization.
+A controlled POSIX interleaving reproduces data loss: the sender renames,
+reads and deletes the queue after the next writer opens it but before fwrite;
+that writer appends to the unlinked file. Only one of two events arrives and
+no queue remains. This establishes a real race consistent with the CI failure;
+the old hosted log did not record the remaining queue/event count.
+
+telemetry.c now uses the existing process-file lock for append/capping and
+claiming/recovering a batch. It releases the lock before creating the HTTP body
+file or running curl, so a network wait cannot block a command's queue write.
+Local contention has a 100 ms clock budget with 1 ms sleeps; a busy/unwritable
+queue remains best-effort, like other local I/O failures. A failed HTTP batch
+whose requeue fails keeps its sending file for a later sender's stale-file
+recovery. No usage-data field, opt-out rule, endpoint or language behavior changes.
+
+tide_cli_telemetry_queue uses actual file operations/locks with a controlled
+fopen interleaving, HTTP stub and clock. It checks lossless claim versus append,
+append during HTTP without lock waiting, bounded contention and recovery, and
+retaining/recovering an offline batch when requeue is blocked. The original
+implementation fails the POSIX interleaving (one event instead of two); the
+corrected one preserves both. Windows Clang 23.1.2 ASan builds pass, and the
+new fixture plus the original five-case local-HTTP integration pass 2/2 CTests
+(5.73 s, Node 24.22.1). The queue fixture also passes a strict C17 WSL Clang
+ASan/UBSan build on the POSIX filesystem. No WASM runtime code changed; hosted
+Linux/macOS/MinGW integration follows the next normal push.
+
+## Agent-readable profile captures (2026-11-02)
+
+The owner's approved profiling work adds run-only `--profile <file.json>` and
+`--profile-warmup <n>`. The CLI makes the report path absolute from its invoking
+directory and forwards both arguments to the ordinary standalone host. Profiling
+does not select a window/headless mode by itself: the run must also have
+`--frames`, `--script` or `--interactive`, and keeps their one-shot build/run
+behavior. Web, Android and dedicated servers are refused before building.
+Warmup is one decimal integer from 0 through 1,000,000,000, defaults to zero,
+and requires a report path. Duplicate profile/warmup options, empty/option-like
+paths, malformed numbers and missing values fail with corrective diagnostics.
+
+The shared help catalog, CLI reference and agent materials describe optimized
+repeatable captures, actual callback CPU work rather than fixed-step FPS, and
+source/counter evidence before changing culling. Report lifecycle, multiplayer
+suffixes, measurement meanings and runtime contracts are in standard-host.md.
+No usage-data field or build mode changes.
+
+Regression coverage: run_exit_test.c checks all three bounded dispatch routes,
+argument/path forwarding, warmup boundaries and early invalid/unsupported
+refusals; hidden_test.cmake checks real CLI refusals without installed engine
+sources; help_test.cmake checks topic discovery, scope and limits. Validation:
+Windows ASan `tide_cli_run_exit`, `tide_cli_help` and `tide_cli_hidden` pass,
+as does the generated stripped-metadata regression. The docs production build
+passed on Node 24.22.1 (build/profile-docs-build.log). Final native/web profiler
+integration results are recorded in notes/standard-host.md.
+
+## Actionable CLI diagnostics (2026-11-02)
+
+The diagnostic wording pass keeps accepted arguments, exit codes, build modes,
+package selection and runtime interfaces unchanged. In main.c, known options
+with a missing trailing value now show a valid example and an argument help
+topic instead of claiming the command does not take the option: output/title,
+Unity assets, join/connect, server capacity/port and shard counts/width. Upgrade's
+missing --version has a concrete install example. Unknown upgrade/editor options
+point to command help; server/player and web/Android conflicts say which option
+to remove. Reserved #if symbols and dash-prefixed save directories explain the
+replacement spelling.
+
+Package saves and missing local folders now suggest permission/path checks,
+while eject's existing destination explains moving the folder aside for a fresh
+copy. A damaged pinned executable names the precise cached folder to move aside
+and says to rerun in a terminal for a consented download. Compiler launch failures
+identify the compiler and executable check; an unrecognized library says to
+supply one built for the selected target. Package fetching distinguishes a tool
+that could not start from a transfer's exit code, and suggests updating curl for
+its success-without-output failure and checking tar/cache access after unpacking
+fails. No URLs, credentials or new telemetry values are added to messages.
+
+Regression coverage: tide_cli_help exercises missing values across real command
+dispatch, checks a valid help route, reserved-symbol guidance and retained
+wrong-command option refusals. tide_cli_versions pins the exact cache-folder
+recovery note while retaining its consent/checksum/forwarding behavior checks.
+The CLI reference describes these recovery paths. Niche Android signing,
+deployment/service responses, Unity conversion and editor-install diagnostics
+were left unchanged; existing detailed messages remain the source of recovery
+guidance there.
+
+Validation: the Windows ASan build passes without compiler warnings.
+tide_cli_tests, tide_cli_help, tide_cli_hidden, tide_cli_run_exit,
+tide_cli_packages, tide_cli_versions and tide_cli_fetch all pass, alongside the
+compiler/editor diagnostic checks (2,203 selected CTests total). The docs
+production build passes. Changed paths are native tools shared by all game
+targets; no game runtime or web behavior changed.
+
+## Compiler dependency files (2026-10-30)
+
+`tidec --depfile <path>` writes Make-style source and transitive asset dependencies
+after successful code generation, using the existing `game_info.asset_paths`
+collection. It refuses inspection-only modes and fails on output I/O errors.
+`tide_add_game` consumes the file for reference model/side-buffer rebuilds;
+the in-process CLI watcher already reads the same asset path collection.
+No game runtime ABI or telemetry fields change. Contracts and validation:
+notes/tide-programs.md and notes/assets-and-files.md.
+
+## Release prunes again; distribution keeps only shipping cuts (2026-10-30)
+
+Owner, on the split below: "also release should prune unused stuff / i think
+it moved too many things to distribution layer". Standalone `--release`
+(and so `--distribution`) builds again compile with function/data sections and
+link with --gc-sections (ELF, MinGW lld, Android) or -dead_strip (Apple), and
+Tide-only games omit unreferenced assets (`strip_game_assets`). WebAssembly
+collects sections in every mode, as before. Distribution alone keeps: symbol
+stripping (-s, Apple -S -x -no_exported_symbols, wasm -s), name/shader-name
+stripping with the private game.names map, debugger-sidecar cleanup, -DNDEBUG,
+the Windows GUI subsystem, the minified/compressed web page, Android's export
+allowlist, appId requirement, non-debuggable APK and AAB. Release keeps -g,
+PDB/dSYM, natvis/LLDB views, names and assertions. NDEBUG stays a distribution
+cut: it is no pruning, and the split's release-keeps-assertions choice stands
+until the owner says otherwise.
+
+Package CI fixes in cache_test.mjs (Nightly 41059993148): the asset-mode and
+optimization fixtures ran native games with --frames, which open a hidden GL
+window that CI's GPU-less Windows runner can't make. Those runs now need
+`--gpu`, like nativeRunTest; the optimization fixture's installed engine probe
+instead `#error`s at compile time unless __OPTIMIZE__/NDEBUG match the mode and
+level, so CI still sees each level reach clang. The probe is outside the game
+folder, so the custom-C simulation identity check is unchanged; its -O0 text
+returns with its first mtime so the reuse check still finds nothing written.
+The optimization fixture's output was `<root>/optimization-native`, the game's
+own folder on Linux/macOS (no extension), so ld failed with EISDIR; it is now
+`optimization-<target>-out`. Expectations: unused engine/user/GLFW code and
+the unused asset are gone in release and distribution, kept in debug.
+
+## Per-project optimization experiments (2026-10-30)
+
+Owner requested an explicit optimization-level flag for project experiments.
+CLI build/run/unity accepts one of -O0, -O1, -O2 or -O3. The borrowed
+build_options.optimization overrides engine, generated game, launcher and
+game/package C/C++ compile/link flags. It does not change mode, DEBUG,
+NDEBUG, visualizers, stripping or deterministic float rules. Prebuilt libraries
+are unchanged. Without the flag the existing mode defaults remain. Other
+levels, -Ofast and duplicate optimization flags fail before building.
+
+Explicit levels use caches such as native-release-O3, including watch/server/
+Android/web targets. Compile stamps include the override; returning to a level
+can reuse its objects. Trusted-C simulation identity includes the effective
+game optimization level because __OPTIMIZE__ can change custom C behavior.
+Unity's declaration fallback forwards the flag with space for its argument.
+No runtime API, Tide semantics, telemetry fields or CMake defaults changed.
+The CLI reference and focused help describe the override and its limits.
+
+Validation: strict Windows ASan CLI/dispatch builds and the two focused
+run-exit/help CTests pass. The installed optimization-only cache fixture builds
+all four levels on native/web, plus release/distribution at O0 and O3, retaining
+each mode's name-map/visualizer policy and separate custom-C identities.
+Eight bounded two-frame native runs check actual engine, game C and C++
+optimization macros, NDEBUG policy, noncontracted multiply/add bits and
+subnormal preservation. Switching back to O0 rewrites no engine/game objects.
+Release O3 web-watch passes C/Tide edits, identity/launcher reuse, custom-C pack
+changes and visual-only repacking. The production docs build, Node syntax and
+diff checks pass (Clang 23.1.2, Node 24.22.1, private staged ASan CLI using
+external clang). The normal package cache test includes the optimization cases.
+Android, Unity editor execution, embedded LLVM, other OSes and actual WASM
+runtime FP probes remain CI/follow-up coverage; this does not claim full
+all-platform determinism validation of every optimization level or measure
+performance. No workflow was manually dispatched.
+
+## Optimized testing versus distribution (2026-10-30)
+
+Owner approved three CLI modes: default debug, optimized `--release` for
+testing/profiling, and `--distribution` for shipping. This supersedes the
+older entries below that call the shipping policy `--release`.
+
+Release compiles all game/package C/C++ at -O2 -g, keeps C assertions, names,
+assets and native debugger visualizers/PDBs/dSYMs. Default game code stays
+-O0 -g and the engine -O2 -g. Distribution implies release, uses the previous
+-O2 -DNDEBUG policy, and owns standalone metadata/shader-name stripping,
+unused-asset pruning, native export/section stripping, debugger-sidecar cleanup,
+Windows GUI subsystem selection, and compressed/minified web pages. Existing
+watched/library/layout metadata exceptions remain. Required safety checks and
+tick verification are unchanged. Both optimized modes leave Tide DEBUG
+undefined; no new language symbol or telemetry field is introduced.
+
+Caches are separate <target>-debug/release/distribution directories. Custom-C
+simulation identity records all three modes because NDEBUG can affect trusted
+C. Android release APKs stay debuggable and accept the default app ID;
+distribution requires appId and produces the shipping AAB/limited exports.
+Deploy explicitly requests distribution, preserving its shipping contract.
+Unity declaration fallback forwards the selected mode. CMake configurations
+and tidec's explicit strip options are unchanged.
+
+Tests: five focused native Windows ASan CTests (CLI unit, dispatch, help,
+packages, hidden) pass. The expanded installed cache stripping fixture passes
+all three modes on native/web: optimization and NDEBUG probes, retained
+names/debug info versus stripped artifacts, shader identifiers/private maps,
+debug/release-to-distribution sidecar cleanup, split/single-file pack parity,
+custom-C assets and Tide-only unused-asset pruning. Native debug/release
+two-frame hidden smoke runs pass. Debug/release web-watch cache/repack cases
+and consecutive runs pass; native/web C++ fixture builds all three modes.
+Clang 23.1.2, Node 24.22.1, locally rebuilt MinGW/web platform libraries and
+a private staged ASan CLI using external clang. Docs production build passes.
+Parsed workflow comparison changes only three shipping smoke arguments.
+No compiler/runtime code or deterministic hash expectations changed.
+Embedded-LLVM gzip, Android execution/packaging, actual optimized debugger
+stepping, macOS/Linux and their export/dSYM behavior remain CI/follow-up
+coverage. No additional workflow was dispatched.
+
 ## What packages need resolves by itself (2026-10-30)
 
 The owner, of a game that had to list `box3d` because its local `combat`
@@ -91,7 +1050,9 @@ ASan DLL copy nothing extra. Validation is recorded in notes/testing.md.
 
 Owner requested using a project's pin and asking to download a missing release,
 without replacing the main installation. `versions.c` dispatches build/run,
-schedule/shaders and add/update/eject/fetch/publish after argument validation.
+schedule/shaders and add/update/eject/fetch/publish. Build/run/schedule/shaders
+now select before option validation (2026-11-02 entry below supersedes the
+original validation-first order).
 The original argv, working directory, stdio and exit code are preserved. Pin,
 help, version and installation commands describe/use the invoking installation;
 Unity package selection and the source-build `-dev` exception remain intact.
@@ -1105,3 +2066,33 @@ root or dependency graph. The CLI package test rejects an invalid unused prefab
 and accepts its corrected tree, exercising actual folder discovery. Watching
 rebuilds the normal game; there is no automatic rewrite of existing live instances
 and no tide open/native-editor command yet.
+
+
+## Pinned launcher option forwarding (2026-11-02)
+
+main.c selects build/run/schedule/shaders before version-specific validation,
+including hidden-run restrictions. A bounded discovery pass skips known option
+operands, including size/source-overlay pairs and optional host ports. Unknown
+options stop discovery: preserve the folder already found, or current directory.
+An explicit folder must precede newer options whose operand counts the launcher
+cannot know. The selected executable receives original argv and cwd and owns
+validation. No-pin/same-version/source builds retain the normal parser/errors;
+Unity exclusion, version probe and damaged-cache recursion protection are unchanged.
+Keep discovery arities in step with new parser options.
+
+versions_test.mjs exercises a real selected executable accepting unknown options,
+explicit folders from a different cwd, known options before the folder, implicit
+cwd, quoted values and a known value rejected by the launcher's validator.
+Windows ASan CLI builds pass; versions, run_exit, help and hidden CTests pass.
+The --web dispatch case uses the same host CLI; no WASM runtime code changed,
+so separate web runtime tests are not applicable. Other host OSes remain CI coverage.
+Old installed launchers require upgrade or direct cached-executable invocation:
+a project pin cannot repair released launcher binaries. No external project or pin
+was edited.
+## User symbols in handwritten C/C++ (2026-11-06)
+
+Mount & Rifle reported that --define affected Tide but never its C files. queue_c_files now passes each selected symbol as a separate -D argument (value 1) to handwritten game and package C/C++. This includes the existing default-debug DEBUG entry. Automatic PACKAGE_ symbols remain Tide-only. Generated code, host launchers and engine sources receive no user macros; engine-object reuse is preserved. The path is shared by native, web, Android and reload builds.
+
+The handwritten-source stamp contains exactly these additional arguments. A symbol used only by trusted C also enters the external simulation fingerprint: changing it must change compatibility even if no Tide #if reads it. No new symbol syntax or runtime API is introduced. User docs/help describe C/C++ forwarding.
+
+Validation: Windows Clang 23.1.2 ASan CLI/helper builds and help, build_overlap and build_report pass (3/3). The controlled-compiler regression checks game and package .c/.cpp macro arguments, no macros on engine/generated sources, a zero-compile unchanged rebuild, and removing a C-only symbol recompiling all four handwritten sources while retaining engine objects and changing the simulation ID. This validates the common host-side command/cache path, without a game or browser launch; Android/other OS execution remains CI coverage. The integrating task ran the production docs build; the added CLI wording changes no docs structure.

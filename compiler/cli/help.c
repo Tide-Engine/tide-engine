@@ -33,7 +33,7 @@ static const command_help commands[] = {
      "Builds into <folder>/build by default; -o selects the output path.\n"
      "A game includes .tide and .tprefab files, its C/C++ and libraries, and\n"
      "the packages listed in tide.packages. Work files are cached in .tide.\n\n"
-     "Example: tide build --release --web", BUILD},
+     "Example: tide build --distribution --web", BUILD},
     {"unity", "unity [folder] -o <path> [options]", "Build a game for Unity's Tide package",
      "Builds the game for the Tide package in a Unity project, into the path\n"
      "(the project's Library/Tide): the host Unity loads, then a library of the\n"
@@ -59,9 +59,9 @@ static const command_help commands[] = {
      "Checks the game and shows which systems can run at the same time,\n"
      "and why the others wait. Builds no executable.\n"
      "Use --define and --release to inspect a particular conditional build.", SCHEDULE},
-    {"shaders", "shaders [folder] [options]", "Show generated GLSL and WGSL",
-     "Checks the game and prints the GLSL and WGSL generated from its frags\n"
-     "and verts. Builds no executable.\n"
+    {"shaders", "shaders [folder] [options]", "Show generated WGSL",
+     "Checks the game and prints the WGSL generated from its frags, verts\n"
+     "and kernels. Builds no executable.\n"
      "Use --define and --release to inspect a particular conditional build.", SHADERS},
     {"add", "add <source>", "Add a built-in, local or git package",
      "Adds a package and its dependencies to tide.packages in the current game.\n"
@@ -80,14 +80,18 @@ static const command_help commands[] = {
      "replaces its tide.packages line with that local path. It stays a package,\n"
      "with the same namespace and dependencies. An existing destination fails.\n\n"
      "Example: tide eject rooms", EJECT},
-    {"pin", "pin [version]", "Build the game with one version of tide",
+    {"pin", "pin [version|nightly|stable]", "Select the game's Tide release or channel",
      "Writes `tide = <version>` in the current game's tide.packages: this tide's\n"
      "version, or the one given. Project commands use that version from the\n"
      "shared TIDE_VERSIONS cache, asking to download it when missing. Other\n"
-     "versions and the main installation stay installed. In a Unity project,\n"
+     "exact pins expire after 30 days without use. nightly and stable each\n"
+     "share one installation, updated when idle at command startup; offline,\n"
+     "the installed release is used. In a Unity project,\n"
      "Tide's package uses the tide of its own commit, and a pin it doesn't\n"
      "match is an error.\n\n"
      "Examples: tide pin\n"
+     "          tide pin nightly\n"
+     "          tide pin stable\n"
      "          tide pin 0.5.0-nightly.12", PIN},
     {"fetch", "fetch [folder]", "Download missing git packages",
      "Downloads the game's missing git packages at their pinned commits.\n"
@@ -167,13 +171,31 @@ static const argument_help arguments[] = {
      "update accepts several names, or none for every git package; eject takes one.", UPDATE | EJECT},
     {"file.tprefab", "<file.tprefab>", "Authored prefab or scene file",
      "Selects the file to edit or validate. Use --project to choose the game root.", OPEN},
-    {"--release", "--release", "Optimize game code for players",
-     "Engine code is always optimized. Without --release, game/package code\n"
-     "is unoptimized, assertions remain enabled and DEBUG is defined.\n"
-     "Standalone releases strip unused code; Tide-only releases also omit\n"
-     "unreferenced assets. schedule/shaders use this to leave DEBUG undefined.", COMPILE},
+    {"--release", "--release", "Optimize game code for testing and profiling",
+     "Keeps debug symbols, readable diagnostics and assertions, and optimizes\n"
+     "the game's code, which debug builds leave unoptimized. DEBUG is\n"
+     "undefined. Standalone builds collect unused code and data, and Tide-only\n"
+     "games omit unreferenced assets. Use --distribution for shipping cuts.", COMPILE},
+    {"--distribution", "--distribution", "Build an optimized game for distribution",
+     "Implies --release. Standalone builds also strip debug symbols and\n"
+     "readable diagnostic/shader names, keeping a private game.names map in\n"
+     "the build cache. Watched/embedded builds retain required metadata.\n"
+     "Android also makes an app bundle and requires the game's appId.", COMPILE},
+    {"-O0", "-O0", "Disable optimization of game and engine sources",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O1", "-O1", "Use optimization level 1",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O2", "-O2", "Use optimization level 2",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O3", "-O3", "Use optimization level 3",
+     "Choose one of -O0, -O1, -O2 or -O3 for engine, game and package C/C++.\n"
+     "Does not rebuild prebuilt libraries or change DEBUG, assertions, symbols\n"
+     "or shipping cuts. Deterministic math stays enabled; no fast-math or FMA.\n"
+     "Defaults: debug game code -O0; engine, package C and the game's\n"
+     "generated plumbing -O2; release/distribution all -O2.\n"
+     "Explicit levels use separate caches. Example: tide run --release -O3 --stats.", COMPILE},
     {"--web", "--web", "Build a web page",
-     "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
+     "Uses Clang's WebAssembly target. Pages draw with WebGPU.\n"
      "build makes a folder to put online, .build/web: index.html, which shows\n"
      "its download and caches the index.wasm and index.pack it loads.\n"
      "--single-file makes one HTML file instead. run serves the page and opens\n"
@@ -189,10 +211,11 @@ static const argument_help arguments[] = {
      "download its files.", BUILD},
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
-     "Saving rebuilds and restarts the app. Release builds also make an app\n"
+     "Saving rebuilds and restarts the app. Distribution builds also make an app\n"
      "bundle and require the game's appId. Choose native, web or Android.", RUN | BUILD},
     {"--define", "--define <SYMBOL>", "Define a symbol for #if lines",
      "Repeat for as many symbols as needed, like --define FAST --define STEAM.\n"
+     "Builds also define these macros as 1 in game/package C and C++ sources.\n"
      "DEBUG is automatic without --release; PACKAGE_<NAME> is automatic for\n"
      "each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
     {"--title", "--title <title>", "Override the game's window title",
@@ -207,6 +230,21 @@ static const argument_help arguments[] = {
      "A click or F8 toggles it, as with the game's stats setting.", RUN | BUILD},
     {"--debug-views", "--debug-views", "Enable the profiler (F7)",
      "F7 shows where frame and tick time go, as with the debugViews setting.", RUN | BUILD},
+    {"--profile", "--profile <file.json>", "Write a structured profiling report",
+     "Measures independently of the profiler and stats panels. Native desktop\n"
+     "only; combine with --frames, --script or --interactive, and use --release\n"
+     "for performance work. The path is relative to where tide was invoked.\n"
+     "The report includes CPU work, source locations and draw culling counters.", RUN},
+    {"--profile-warmup", "--profile-warmup <n>", "Skip the first n frames of a profile capture",
+     "Requires --profile. A whole number from 0 to 1000000000; default 0.\n"
+     "Warmup frames still run normally and count toward --frames.", RUN},
+    {"--report", "--report <file>", "Write where the build's time and bytes went",
+     "Writes a report of the build: the time of each step and of the compiler's\n"
+     "phases, each C/C++ file's compile time, each asset's import time and the\n"
+     "bytes it adds to the pack, assets the build left out and why, what the\n"
+     "mode cut or kept, and the size of each output. A .json path gets JSON;\n"
+     "any other a table to read. Written even when the build fails.\n\n"
+     "Example: tide build --distribution --web --report build.txt", BUILD},
     {"-o", "-o <path>", "Select the built program's output path",
      "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
     {"--once", "--once", "Build once and end",
@@ -245,6 +283,14 @@ static const argument_help arguments[] = {
     {"--strip-server-assets", "--strip-server-assets", "Opt custom C into server asset pruning",
      "Also selects --server. Tide-only server builds prune client-only assets\n"
      "automatically; use this when custom C does not need those assets.", RUN | BUILD},
+    {"--strip-assets", "--strip-assets", "Opt custom C into release asset pruning",
+     "Release and distribution builds of a game without C or libraries leave\n"
+     "out assets no Tide code names. Custom C could read any asset by name, so\n"
+     "such a game keeps them all; use this when its C reads none that way.", BUILD},
+    {"--asset-sizes", "--asset-sizes", "List what each asset adds to the pack",
+     "After the build, one line per asset declaration, biggest first: its\n"
+     "bytes, share, name, type, image size and how images are kept (BC1, BC3\n"
+     "or RGBA). Bytes shared with an earlier declaration count once.", BUILD},
     {"--anonymous", "--anonymous", "Allow unauthenticated server admission",
      "Requires run --server. Allows clients to create and join matches\n"
      "without authentication.", RUN},
@@ -273,6 +319,8 @@ static const argument_help arguments[] = {
     {"--interactive", "--interactive <replay.txt>", "Play dynamically over stdin without a window",
      "Draws frame 1, then waits for commands: future-frame script lines queue\n"
      "input; step <n> advances; capture <file.png> observes; quit or EOF ends.\n"
+     "controls lists the GUI's widgets with numbers, labels and rects;\n"
+     "click <n> or click \"label\" clicks one at the next frame.\n"
      "Reports tide: interactive ready <frame> after each step. Executed actions\n"
      "are saved as a replay script; relative captures are beside that script.\n"
      "Supports --players. Desktop only; cannot combine with --script.", RUN},

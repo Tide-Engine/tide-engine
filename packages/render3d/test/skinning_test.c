@@ -54,9 +54,18 @@ static void finish(void)
     tide_render_targets_free();
 }
 
+static uint32_t atlas_binding(const tide_draw_run *run);
+
+// A skinned run's shader skins (its WGSL, where the build keeps one: the web's), and the run sends its poses
 static bool skinned(const tide_draw_run *run)
 {
-    return run->shader->glsl_vertex && strstr(run->shader->glsl_vertex, "tide_skinning(") != NULL;
+#ifdef __wasm__
+    const bool skins = run->shader->wgsl && strstr(run->shader->wgsl, "tide_skinning(") != NULL;
+    TIDE_CHECK(skins == (atlas_binding(run) != 0));
+    return skins;
+#else
+    return atlas_binding(run) != 0;
+#endif
 }
 
 static uint32_t atlas_binding(const tide_draw_run *run)
@@ -153,7 +162,7 @@ static inspection inspect(void)
         REQUIRE_INSPECTION((uint64_t)run->first + (uint64_t)run->count * stride <= draw.instance_used);
         for (uint32_t item = 0; item < run->count; item++) {
             tide_float4x4 transform;
-            memcpy(&transform, draw.instances + run->first + (size_t)item * stride, sizeof transform);
+            memcpy(&transform, tide_draw_run_instance(&draw, run, item), sizeof transform);
             if (destination == renderer->hdr.id && phase == 2) {
                 static const float forward[] = {1, 0.5f, -0.5f, -1};
                 REQUIRE_INSPECTION(result.transparent < 4);

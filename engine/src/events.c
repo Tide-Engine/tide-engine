@@ -149,14 +149,10 @@ tide_event_log *tide_hearing_begin(tide_hearing *h, const uint32_t tick)
     return &h->fresh;
 }
 
-// Whether a mark is of the event `heard`: the same event, with the same
-// fields, sent to the same entity. An entity is the same by what it was born
-// as, where both are known (a rollback can give one's handle to another, and
-// another handle to the same one), and by its handle otherwise.
+// The logical target identity is permanent across prediction and repairs.
 static bool same_event(const tide_heard_mark *mark, const tide_heard *heard)
 {
     if (mark->event != heard->event || mark->same != heard->same) return false;
-    if (mark->born && heard->born) return mark->born == heard->born;
     return tide_entity_equal(mark->target, heard->target);
 }
 

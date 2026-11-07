@@ -1,3 +1,0 @@
-// expect: a borrowed asset collection is read-only
-void Keep(out List<Clip> values) { values = []; }
-scene Main { }

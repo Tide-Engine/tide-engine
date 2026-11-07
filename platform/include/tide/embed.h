@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 7u
+#define TIDE_EMBED_ABI 18u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -96,7 +96,10 @@ typedef struct tide_embed_status {
     char room[TIDE_NETWORK_ADDRESS_BYTES]; // The code others join the match by, as Session.room says; "" for none
     char message[TIDE_MESSAGE_BYTES];      // A kick's message, once kicked
     uint8_t microphone;      // The game listens to the microphone (Clip.Microphone): tide_embed_microphone, please
-    uint8_t tide_pad[3];
+    // The game asked to quit (Application.Quit): this program decides what that
+    // is, such as ending itself, and the game goes on until it's destroyed
+    uint8_t quit;
+    uint8_t tide_pad[2];
 } tide_embed_status;
 
 _Static_assert(sizeof(tide_embed_status) == 52 + TIDE_NETWORK_ADDRESS_BYTES + TIDE_MESSAGE_BYTES + 4,
@@ -171,7 +174,8 @@ const uint8_t *tide_embed_draw(const tide_embed *e, uint32_t *size);
 // other program's own: what the frame draws over, never cleared. The pointer
 // is valid until the next call.
 typedef enum tide_embed_render_op {
-    // id, kind (tide_gpu_buffer_kind: 0 vertices, 1 indices), size, given (0 or 1), then `size` bytes if given
+    // id, kind (tide_gpu_buffer_kind: 0 vertices, 1 indices, 2 storage), size, given (0 or 1), then `size` bytes if
+    // given. A storage buffer is zeroed where none are given.
     TIDE_EMBED_RENDER_BUFFER = 1,
     TIDE_EMBED_RENDER_BUFFER_WRITE, // id, offset, size, then `size` bytes
     TIDE_EMBED_RENDER_BUFFER_FREE,  // id
@@ -186,8 +190,10 @@ typedef enum tide_embed_render_op {
     TIDE_EMBED_RENDER_CUBE_FACE, // target id, cube id, face, its depth texture's id
     // id, its shaders' key as two uint32_ts (low first: FNV-1a's 64 bits of its SPIR-V words, or of its WGSL where
     // it has none, which tide unity names the shader it writes by), slot_count, 3 slots of stride and per_instance,
-    // attribute_count, 16 attributes of slot, format and offset, uniform_size, texture_count, texture_count reads, blend,
-    // depth, cull, stencil_test, stencil_op, into, outputs, then its name's length and bytes
+    // attribute_count, 16 attributes of slot, format and offset, uniform_size, texture_count, texture_count reads,
+    // sampler_count, sampler_count reads (sampler j at binding 2 + 2j; 4, TIDE_GPU_READ_DATA, for none), and for each
+    // texture the samplers it's read through (bit j for sampler j), blend, depth, cull, stencil_test, stencil_op,
+    // into, outputs, alpha_to_coverage, then its name's length and bytes
     TIDE_EMBED_RENDER_PIPELINE,
     TIDE_EMBED_RENDER_PIPELINE_FREE, // id
     // id, format (tide_gpu_target_format), width, height, then the ids of its 4 color textures (0 past its colors)
@@ -201,14 +207,65 @@ typedef enum tide_embed_render_op {
     TIDE_EMBED_RENDER_USE,            // pipeline
     TIDE_EMBED_RENDER_STENCIL,        // value
     TIDE_EMBED_RENDER_UNIFORMS,       // size, then `size` bytes
-    TIDE_EMBED_RENDER_SAMPLE,         // slot, texture, filter (tide_gpu_filter), wrap (tide_gpu_wrap)
+    TIDE_EMBED_RENDER_IMAGE,          // slot, texture: the pipeline's texture `slot` (its samplers: SAMPLER)
     TIDE_EMBED_RENDER_VERTICES,       // slot, buffer, offset
     TIDE_EMBED_RENDER_INDICES,        // buffer, wide (32 bits, or 16)
     TIDE_EMBED_RENDER_DRAW,           // first, count, instances
     TIDE_EMBED_RENDER_DRAW_INDEXED,   // count, instances
+    // Compute (gpu.h's storage buffers, compute passes and indirect draws), after the ops above, whose packets are
+    // as they were. Right after the PIPELINE it's of, for a pipeline that binds storage or computes: id, compute (0
+    // or 1: its kernel's entry point is `compute`, and nothing about vertices, blending or targets is read),
+    // storage_count, and its storage_writes, bit i for storage buffer i (binding 33 + i) that it writes
+    TIDE_EMBED_RENDER_PIPELINE_STORAGE,
+    TIDE_EMBED_RENDER_STORAGE,        // slot, buffer: storage buffer `slot`, all of it, for what follows
+    TIDE_EMBED_RENDER_COMPUTE_BEGIN,  // A compute pass: what came before is done before it, what follows sees it
+    TIDE_EMBED_RENDER_COMPUTE_END,
+    TIDE_EMBED_RENDER_DISPATCH,       // x, y, z: workgroups
+    TIDE_EMBED_RENDER_DISPATCH_INDIRECT,      // buffer, offset: three uint32s there, as the GPU has them
+    TIDE_EMBED_RENDER_DRAW_INDIRECT,          // buffer, offset: four uint32s (count, instances, first, 0)
+    TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT,  // buffer, offset: five uint32s (count, instances, first, base, 0)
+    TIDE_EMBED_RENDER_BUFFER_COPY,    // from, from_offset, to, to_offset, size: outside passes, in order
+    // token, buffer, offset, size: outside passes, those bytes of a storage buffer read back as they are once
+    // everything before is done, which the other program hands over with tide_embed_render_read
+    TIDE_EMBED_RENDER_BUFFER_READ,
+    // buffer, offset, most, counts, count_offset: in a pass, DRAW_INDEXED_INDIRECT of each of `most` records from
+    // `offset`, 20 bytes apart, in order, those past the uint32 at `count_offset` of `counts` drawing nothing (their
+    // instances 0); each record's first instance is 0. A program can draw them all, a call each (gpu.h,
+    // draw_indexed_indirect_count)
+    TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT,
+    TIDE_EMBED_RENDER_SAMPLER, // slot, filter (tide_gpu_filter), wrap (tide_gpu_wrap): how the pipeline's sampler `slot` samples
+    // id, format (tide_gpu_target_format; TIDE_GPU_TARGET_COLOR for one of pixels), width, height, layers, given, its
+    // depth array's id (0 for one of pixels), then if given each layer's pixels, 4 bytes each, rows from the top: a
+    // texture array, read by a uv and a layer (TIDE_GPU_READ_ARRAY), its depth TIDE_GPU_READ_DEPTH_ARRAY
+    TIDE_EMBED_RENDER_ARRAY,
+    TIDE_EMBED_RENDER_ARRAY_LAYER, // target id, array id, layer: a target whose color and depth are that layer of the array's
+    // id, format (tide_gpu_format: 0 RGBA8, 2 R16F), width, height, layers: an array of zeros, written a part at a time
+    TIDE_EMBED_RENDER_ARRAY_OF,
+    // id, layer, x, y, width, height, then that part's pixels, its rows one after another, padded to 4 bytes
+    TIDE_EMBED_RENDER_ARRAY_WRITE,
+    // id, width, height, format (tide/texture_blocks.h's: 1 BC1, 3 BC3, 4 RGBA8), levels, bytes, then those bytes: a
+    // texture of every level, its largest first, each as the format has it (BC rows of 4 by 4 blocks), never written
+    // again. BC1 and BC3 only where tide_embed_render_formats said so.
+    TIDE_EMBED_RENDER_TEXTURE_BLOCKS,
+    // id, width, height, layers, format, levels, bytes (each layer's), then each layer's levels as TEXTURE_BLOCKS has
+    // them, one layer after another: an array read as ARRAY's, its smaller images these
+    TIDE_EMBED_RENDER_ARRAY_BLOCKS,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
+
+// The block formats the other program's GPU samples, a bit each, 1 << format (tide/texture_blocks.h's: 1 << 1 for
+// BC1, 1 << 3 for BC3): images the game's pack has compressed go to it as they are (TEXTURE_BLOCKS, ARRAY_BLOCKS),
+// where they'd otherwise go as RGBA8 chains decoded from them. Every object is made again (tide_embed_render_reset),
+// so it's said before the first render. None until it's said.
+void tide_embed_render_formats(tide_embed *e, uint32_t formats);
+
+// What a BUFFER_READ command read: its `size` bytes, or NULL (and 0) for a read
+// the other program couldn't make, which the game's read fails with. Once for
+// each token, from the frame thread, in any frame after its command's; a token
+// it doesn't know (answered already, or made old by tide_embed_render_reset)
+// is let go of, as are bytes of another size than the command's.
+void tide_embed_render_read(tide_embed *e, uint32_t token, const void *data, uint32_t size);
 
 // ...and the frame's 3D again, through another camera of the other program's
 // (its editor's scene view): only the 3D drawn on its own target, each through
@@ -225,13 +282,13 @@ const uint8_t *tide_embed_render_view(tide_embed *e, const float *transform, con
 void tide_embed_render_reset(tide_embed *e);
 
 // A command from the other program, as local code's Send: `type` its type's
-// place in the schema, sent to the entity `target_index`/`target_generation`
+// place in the schema, sent to the entity `target_birth`/`target_lineage`
 // (zeros for none: entity.Send against Send), `value` its bytes as the schema
 // lays them out; a command's text and lists follow its value, as the view
 // packet's STRINGS lays them out (tide/embed_game.h), each field holding its
 // entry's place + 1. False for a type that's no command, bytes that aren't its,
 // text that isn't UTF-8, or a command too big to send.
-bool tide_embed_command(tide_embed *e, uint32_t type, uint32_t target_index, uint32_t target_generation, const void *value,
+bool tide_embed_command(tide_embed *e, uint32_t type, uint64_t target_birth, uint64_t target_lineage, const void *value,
                         uint32_t size);
 
 // What local code's Session calls do: TIDE_REQUEST_START (`text` a scene's

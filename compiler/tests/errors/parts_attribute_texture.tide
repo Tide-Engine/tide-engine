@@ -1,0 +1,3 @@
+// expect: Parts chooses which parts of a skinned model's file its import keeps
+[Parts("Hat")] asset Texture image = "../e2e/fbx/parts/parts_ascii.fbx";
+scene Main { }

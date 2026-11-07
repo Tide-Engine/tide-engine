@@ -3,6 +3,7 @@
 #include "game.h"
 #include "tide/jobs.h"
 #include "tide_test.h"
+#include "entity_order_test.h"
 
 static tide_local local;
 static tide_draw_list draw;
@@ -59,9 +60,20 @@ TIDE_TEST(function_acts_from_methods_tasks_and_handlers)
     TIDE_CHECK(heard(&w, 11) == 7);                 // ...and its bell's method rang
     tide_world_tick(&w);
     TIDE_CHECK(w.Tally.hits == 5);                  // Volley's two, through Poke
-    static const int32_t third[] = {102, 1000, 1050, 1100, 1150, 1200, 1250, 900}; // Volley, the scouts in order, the task
+    entity_order_value scouts[6];
+    int count = 0;
+    for (uint32_t slot = 0; slot < w.entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&w.entities, slot);
+        if (!tide_has_Scout(&w, entity)) continue;
+        const Scout scout = tide_get_Scout(&w, entity);
+        if (scout.id % 50 == 0) scouts[count++] = (entity_order_value){entity, 1000 + scout.id};
+    }
+    TIDE_REQUIRE(count == 6);
+    qsort(scouts, (size_t)count, sizeof *scouts, entity_order_compare);
     TIDE_REQUIRE(tide_list_count(w.Tally.order) == 20);
-    for (int32_t i = 0; i < 8; i++) TIDE_CHECK(heard(&w, 12 + i) == third[i]);
+    TIDE_CHECK(heard(&w, 12) == 102); // Volley precedes Patrol.
+    for (int32_t i = 0; i < count; i++) TIDE_CHECK(heard(&w, 13 + i) == scouts[i].value);
+    TIDE_CHECK(heard(&w, 19) == 900); // The task follows Patrol.
     tide_world_tick(&w);
     TIDE_CHECK(w.Tally.marked == 4);                // Tag's Add, there for one tick
     tide_world_tick(&w);

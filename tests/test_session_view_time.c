@@ -89,6 +89,18 @@ static bool repair_load(void *world, const uint8_t *bytes, uint32_t size)
     return true;
 }
 
+static uint32_t repair_reloads;
+static bool repair_reload(void *world, const uint8_t *bytes, uint32_t size,
+                          const uint8_t *had, uint32_t had_size)
+{
+    TIDE_CHECK(had_size == sizeof(repair_world));
+    TIDE_CHECK(had_size == sizeof(repair_world) && memcmp(world, had, had_size) == 0);
+    repair_reloads++;
+    // Exercise the fresh-load fallback as well as reuse, without mutating on refusal.
+    if (repair_reloads % 3u == 0) return false;
+    return repair_load(world, bytes, size);
+}
+
 static uint64_t repair_client_hash(const void *world, tide_player_id player)
 {
     (void)player;
@@ -181,6 +193,8 @@ TIDE_TEST(session_view_time_survives_consecutive_visibility_repairs)
     memset(&probe, 0, sizeof probe);
     tide_game client_game = repair_game;
     client_game.write_input = repair_sample_write;
+    client_game.reload_client_state = repair_reload;
+    repair_reloads = 0;
     tide_loopback *net = tide_loopback_create(731);
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.02, .jitter = 0.005, .loss = 0.03});
     tide_server *server = tide_server_create(&(tide_server_desc){.game = &repair_game, .tick_rate = 60,
@@ -239,6 +253,7 @@ TIDE_TEST(session_view_time_survives_consecutive_visibility_repairs)
     TIDE_CHECK(expired > 20); // The render pause alone must expire actual held frames.
     TIDE_CHECK(shown >= 4 && hidden >= 4);
     TIDE_CHECK(status.resyncs == 0 && status.predicted_tick > 470 && status.verified_tick > 460);
+    TIDE_CHECK(repair_reloads > 20);
     tide_client_destroy(client);
     tide_server_destroy(server);
     tide_loopback_destroy(net);
@@ -357,7 +372,7 @@ static tide_writer repair_header(repair_peer *p, uint8_t *bytes, uint8_t type)
 {
     tide_writer w = {bytes, TIDE_NET_MTU, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 20); // PROTOCOL
+    tide_write_u8(&w, 25); // PROTOCOL
     tide_write_u8(&w, type);
     if (type != 1) {
         tide_write_u64(&w, p->cookie);

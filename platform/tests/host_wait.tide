@@ -1,0 +1,72 @@
+// The host can service a match while presentation waits, without running views.
+settings { tickRate = 64; maxRewind = 0.5; }
+
+scene Main { }
+component Hand { }
+
+input Hands
+{
+    bool held;
+    bool pressed;
+
+    Sample(Devices devices)
+    {
+        held = devices.keyboard.space.pressed;
+        pressed = devices.keyboard.space.down;
+    }
+}
+
+singleton State
+{
+    int ticks;
+    int held;
+    int pressed;
+    ViewTime shown;
+    [Position] float position;
+}
+
+event Stepped { int tick; }
+
+local singleton Observed
+{
+    int views;
+    int heard;
+    int verified;
+    int last;
+    bool outOfOrder;
+    float seconds;
+    float position;
+}
+
+event(PlayerJoined joined) Arrive()
+{
+    Spawn(Hand, Owner { player = joined.player });
+}
+
+system Count(Hands hands, mut State state, with Hand)
+{
+    state.ticks += 1;
+    if (hands.held) state.held += 1;
+    if (hands.pressed) state.pressed += 1;
+    state.shown = hands.viewTime;
+    Send(Stepped { tick = state.ticks });
+}
+
+local event(Stepped stepped) Heard(mut Observed observed)
+{
+    if (stepped.tick != observed.last + 1) observed.outOfOrder = true;
+    observed.last = stepped.tick;
+    observed.heard += 1;
+}
+
+local event(verified Stepped stepped) Confirmed(mut Observed observed)
+{
+    observed.verified += 1;
+}
+
+view Show(State state, mut Observed observed)
+{
+    observed.views += 1;
+    observed.seconds = Frame.dt;
+    observed.position = state.position;
+}

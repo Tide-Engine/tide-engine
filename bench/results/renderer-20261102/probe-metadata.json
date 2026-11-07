@@ -1,0 +1,202 @@
+{
+  "label": "renderer-restrict-probe",
+  "revision": "fb675d4eb7b60cb045059d06fb5d4284ff784486+local",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-11-02T16:47:14.0656066Z",
+  "runs": [
+    {
+      "round": 1,
+      "exitCode": 0,
+      "wallSeconds": 1.9270501,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-before-r1"
+      ],
+      "side": "before",
+      "backend": "opengl",
+      "label": "renderer-restrict-probe-before-r1",
+      "competingWork": false,
+      "name": "draw_opengl"
+    },
+    {
+      "round": 1,
+      "exitCode": 0,
+      "wallSeconds": 1.8310671,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-after-r1"
+      ],
+      "side": "after",
+      "backend": "opengl",
+      "label": "renderer-restrict-probe-after-r1",
+      "competingWork": false,
+      "name": "draw_opengl"
+    },
+    {
+      "round": 1,
+      "exitCode": 0,
+      "wallSeconds": 1.2334572,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-before-r1"
+      ],
+      "side": "before",
+      "backend": "vulkan",
+      "label": "renderer-restrict-probe-before-r1",
+      "competingWork": false,
+      "name": "draw_vulkan"
+    },
+    {
+      "round": 1,
+      "exitCode": 0,
+      "wallSeconds": 1.2143918,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-after-r1"
+      ],
+      "side": "after",
+      "backend": "vulkan",
+      "label": "renderer-restrict-probe-after-r1",
+      "competingWork": false,
+      "name": "draw_vulkan"
+    },
+    {
+      "round": 2,
+      "exitCode": 0,
+      "wallSeconds": 1.8057038,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-after-r2"
+      ],
+      "side": "after",
+      "backend": "opengl",
+      "label": "renderer-restrict-probe-after-r2",
+      "competingWork": false,
+      "name": "draw_opengl"
+    },
+    {
+      "round": 2,
+      "exitCode": 0,
+      "wallSeconds": 1.8268202,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-before-r2"
+      ],
+      "side": "before",
+      "backend": "opengl",
+      "label": "renderer-restrict-probe-before-r2",
+      "competingWork": false,
+      "name": "draw_opengl"
+    },
+    {
+      "round": 2,
+      "exitCode": 0,
+      "wallSeconds": 1.3505106,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-after-r2"
+      ],
+      "side": "after",
+      "backend": "vulkan",
+      "label": "renderer-restrict-probe-after-r2",
+      "competingWork": false,
+      "name": "draw_vulkan"
+    },
+    {
+      "round": 2,
+      "exitCode": 0,
+      "wallSeconds": 1.2268957,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-before-r2"
+      ],
+      "side": "before",
+      "backend": "vulkan",
+      "label": "renderer-restrict-probe-before-r2",
+      "competingWork": false,
+      "name": "draw_vulkan"
+    },
+    {
+      "round": 3,
+      "exitCode": 0,
+      "wallSeconds": 2.1037338,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-before-r3"
+      ],
+      "side": "before",
+      "backend": "opengl",
+      "label": "renderer-restrict-probe-before-r3",
+      "competingWork": false,
+      "name": "draw_opengl"
+    },
+    {
+      "round": 3,
+      "exitCode": 0,
+      "wallSeconds": 2.0726536,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-after-r3"
+      ],
+      "side": "after",
+      "backend": "opengl",
+      "label": "renderer-restrict-probe-after-r3",
+      "competingWork": false,
+      "name": "draw_opengl"
+    },
+    {
+      "round": 3,
+      "exitCode": 0,
+      "wallSeconds": 1.2002505,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-before-r3"
+      ],
+      "side": "before",
+      "backend": "vulkan",
+      "label": "renderer-restrict-probe-before-r3",
+      "competingWork": false,
+      "name": "draw_vulkan"
+    },
+    {
+      "round": 3,
+      "exitCode": 0,
+      "wallSeconds": 1.1920562,
+      "arguments": [
+        "--bench",
+        "--save",
+        "renderer-restrict-probe-after-r3"
+      ],
+      "side": "after",
+      "backend": "vulkan",
+      "label": "renderer-restrict-probe-after-r3",
+      "competingWork": false,
+      "name": "draw_vulkan"
+    }
+  ],
+  "binaries": [
+    {
+      "sha256": "1edb9f6157161a0ab4b7d1797ac964dc84b9ef434169d6ca2bbc589fb5b4f5b2",
+      "name": "tide_platform_draw.exe"
+    }
+  ],
+  "beforeRevision": "fb675d4eb7b60cb045059d06fb5d4284ff784486",
+  "beforeBinaries": [
+    {
+      "sha256": "6c900816f8eddf15e537155db58488344da6d0dcc6abd01b8fdd95129d649f21",
+      "name": "tide_platform_draw.exe"
+    }
+  ],
+  "finishedUtc": "2026-11-02T16:47:38.3260423Z"
+}

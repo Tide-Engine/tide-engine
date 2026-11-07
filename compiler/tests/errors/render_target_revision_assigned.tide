@@ -1,0 +1,4 @@
+// expect: a render target's contentRevision is read-only; save it in a local field to detect discarded pixels
+scene Main;
+local singleton Maps { RenderTarget scene; }
+view V(mut Maps maps) { maps.scene.contentRevision = 2; }

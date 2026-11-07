@@ -6,13 +6,15 @@
 
 #include "tide/pack.h"
 
+#include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "tide/page.h"
 #include "tide/sha256.h"
 
-#define OFFSET(at) ((at) & 0x3FFFFFFFu)
+#define OFFSET(at) tide_handle_offset(at)
 
 // How many UTF-8 characters `n` bytes are: those that don't continue one.
 static uint32_t utf8_chars(const void *data, const uint32_t n)
@@ -24,9 +26,9 @@ static uint32_t utf8_chars(const void *data, const uint32_t n)
 }
 
 // A tagged offset into the region.
-static uint32_t tagged(const uint32_t offset)
+static tide_handle tagged(const uint64_t offset)
 {
-    return TIDE_IN_SCRATCH << 30 | (TIDE_PACK_BASE + offset);
+    return tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE + offset);
 }
 
 // ---------------------------------------------------------------------------
@@ -34,27 +36,27 @@ static uint32_t tagged(const uint32_t offset)
 
 // A block with room for `bytes` after its header, 16-byte aligned, zeroed:
 // its offset. Its size class is the heap's for that size, for what reads it.
-static uint32_t block(tide_pack_builder *b, const uint32_t bytes)
+static uint64_t block(tide_pack_builder *b, const uint64_t bytes)
 {
     const uint64_t size = (uint64_t)sizeof(tide_block) + bytes;
     uint32_t c = 0;
     while (c + 1 < TIDE_HEAP_CLASSES && ((uint64_t)16 << c) < size) c++;
     const uint64_t padded = (size + 15u) & ~15ull;
-    if ((uint64_t)b->size + padded > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
     if (b->size + padded > b->room) {
-        uint32_t room = b->room ? b->room : 1u << 16;
+        uint64_t room = b->room ? b->room : 1u << 16;
         while (room < b->size + padded) room *= 2u;
-        b->region = tide_realloc(b->region, b->room, room);
+        if (room > SIZE_MAX) tide_out_of_memory(); // As memory runs out
+        b->region = tide_realloc(b->region, (size_t)b->room, (size_t)room);
         b->room = room;
     }
-    const uint32_t at = b->size;
+    const uint64_t at = b->size;
     memset(b->region + at, 0, (size_t)padded);
-    ((tide_block *)(void *)(b->region + at))->size_class = c;
-    b->size += (uint32_t)padded;
+    ((tide_block *)(void *)(b->region + at))->link = tide_block_link(c, 0);
+    b->size += padded;
     return at;
 }
 
-static tide_block *header(tide_pack_builder *b, const uint32_t offset)
+static tide_block *header(tide_pack_builder *b, const uint64_t offset)
 {
     return (tide_block *)(void *)(b->region + offset);
 }
@@ -67,8 +69,8 @@ static const tide_pack_shared *find_shared(const tide_pack_builder *b, const uin
     return NULL;
 }
 
-static void add_shared(tide_pack_builder *b, const uint8_t content[32], const uint32_t kind, const uint32_t offset,
-                       const uint32_t size, const uint32_t extra)
+static void add_shared(tide_pack_builder *b, const uint8_t content[32], const uint32_t kind, const uint64_t offset,
+                       const uint64_t size, const uint32_t extra)
 {
     if (b->shared_count == b->shared_room) {
         const uint32_t room = b->shared_room ? b->shared_room * 2u : 16u;
@@ -83,14 +85,14 @@ static void add_shared(tide_pack_builder *b, const uint8_t content[32], const ui
     s->extra = extra;
 }
 
-uint32_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size, uint32_t *chars)
+uint64_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size, uint32_t *chars)
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_BYTES);
     if (had) {
         *chars = had->extra;
         return had->offset;
     }
-    const uint32_t at = block(b, size + 1u); // The NUL after the bytes, so text reads as C text too
+    const uint64_t at = block(b, size + 1u); // The NUL after the bytes, so text reads as C text too
     tide_block *h = header(b, at);
     h->a = size; // A list's count
     h->b = size; // ...and its room
@@ -100,7 +102,21 @@ uint32_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const 
     return at;
 }
 
-uint32_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size, uint32_t *chars)
+uint64_t tide_pack_values(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t element, const uint32_t count)
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_BYTES);
+    if (had) return had->offset;
+    const uint64_t bytes = (uint64_t)element * count;
+    const uint64_t at = block(b, bytes ? bytes : 1u);
+    tide_block *h = header(b, at);
+    h->a = count; // A list's count
+    h->b = count; // ...and its room
+    if (bytes) memcpy(h + 1, data, (size_t)bytes);
+    add_shared(b, content, TIDE_PACK_BYTES, at, bytes, 0);
+    return at;
+}
+
+uint64_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size, uint32_t *chars)
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXT);
     if (had) {
@@ -112,7 +128,7 @@ uint32_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const
     if (count == size) return tide_pack_bytes(b, content, data, size, chars);
     // Otherwise a block of the text's own: a text's header says its characters (tide_text_view), which a
     // list's has no word for
-    const uint32_t at = block(b, size + 1u);
+    const uint64_t at = block(b, size + 1u);
     tide_block *h = header(b, at);
     h->a = size;
     h->b = count;
@@ -135,7 +151,7 @@ static bool chunk_has_color(const int32_t width, const int32_t height, const tid
     return false;
 }
 
-uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
+uint64_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
                         const tide_color *pixels, const tide_grid_shape *s)
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_GRID);
@@ -157,7 +173,7 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const i
         while (slots < room * 2u) slots *= 2u;
     }
     const uint32_t dir_bytes = (uint32_t)(sizeof(tide_grid_dir) + room * sizeof(tide_grid_record) + slots * sizeof(uint32_t));
-    const uint32_t at = block(b, dir_bytes);
+    const uint64_t at = block(b, dir_bytes);
     tide_block *h = header(b, at);
     // The version the draw list tells the grid by, in the header's words
     uint64_t version = 0;
@@ -172,7 +188,7 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const i
         for (int32_t cx = 0; cx < chunks_x; cx++) {
             if (!chunk_has_color(width, height, pixels, cx, cy, across, down)) continue;
             // A chunk's block is all cells, header included (see grid.c)
-            const uint32_t chunk = block(b, chunk_bytes - (uint32_t)sizeof(tide_block));
+            const uint64_t chunk = block(b, chunk_bytes - (uint32_t)sizeof(tide_block));
             tide_color *cells = (tide_color *)(void *)(b->region + chunk);
             memset(cells, 0, chunk_bytes);
             for (int32_t y = 0; y < down && cy * down + y < height; y++) {
@@ -182,7 +198,7 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const i
             }
             tide_grid_dir *d = (tide_grid_dir *)(void *)(header(b, at) + 1); // The region may have moved
             // Where the chunk is as a scratch offset, which is how a grid with no heap reads its chunks (tide_grid_chunk_at)
-            tide_grid_records(d)[r] = (tide_grid_record){{cx, cy, 0}, TIDE_PACK_BASE + chunk};
+            tide_grid_records(d)[r] = (tide_grid_record){{cx, cy, 0}, 0u, TIDE_PACK_BASE + chunk};
             uint32_t *table = tide_grid_table(d);
             if (flat) {
                 table[(uint32_t)cy * (uint32_t)chunks_x + (uint32_t)cx] = r + 1u;
@@ -198,24 +214,26 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const i
     return at;
 }
 
-uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
+uint64_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
                            const uint8_t *rgba)
 {
     return tide_pack_texture_blocks(b, content, width, height, rgba, (tide_texture_blocks){0});
 }
 
-uint32_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
+uint64_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
                                   const uint8_t *rgba, const tide_texture_blocks blocks)
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXTURE);
     if (had) return had->offset;
-    const uint64_t bytes = (uint64_t)(width > 0 ? width : 0) * (uint64_t)(height > 0 ? height : 0) * 4u;
     uint32_t levels, compressed_bytes;
     const bool compressed = blocks.pixels && tide_texture_blocks_size(width, height, blocks.format, &levels, &compressed_bytes)
                          && levels == blocks.levels && compressed_bytes == blocks.bytes;
+    // No RGBA given beside whole blocks: the image is its blocks alone, which
+    // a device without them decodes (tide_texture_blocks_decode)
+    const bool rgba_kept = rgba || !compressed;
+    const uint64_t bytes = rgba_kept ? (uint64_t)(width > 0 ? width : 0) * (uint64_t)(height > 0 ? height : 0) * 4u : 0u;
     const uint64_t payload = bytes + 2u * sizeof(int32_t) + (compressed ? 16u + blocks.bytes : 0u);
-    if (payload > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
-    const uint32_t at = block(b, (uint32_t)payload);
+    const uint64_t at = block(b, payload);
     tide_block *h = header(b, at);
     uint64_t version = 0;
     memcpy(&version, content, sizeof version);
@@ -224,24 +242,23 @@ uint32_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32
     h->b = (uint32_t)(version >> 32);
     const int32_t size[2] = {width, height};
     memcpy(h + 1, size, sizeof size);
-    if (bytes) memcpy((uint8_t *)(h + 1) + sizeof size, rgba, (size_t)bytes);
+    if (bytes && rgba) memcpy((uint8_t *)(h + 1) + sizeof size, rgba, (size_t)bytes);
     if (compressed) {
         const uint32_t metadata[4] = {TIDE_TEXTURE_BLOCK_MAGIC, blocks.format, blocks.levels, blocks.bytes};
         uint8_t *trailer = (uint8_t *)(h + 1) + sizeof size + (size_t)bytes;
         memcpy(trailer, metadata, sizeof metadata);
         memcpy(trailer + sizeof metadata, blocks.pixels, blocks.bytes);
-        h->next = (uint32_t)payload;
+        h->link = tide_block_link(tide_block_class(h), payload);
     }
-    add_shared(b, content, TIDE_PACK_TEXTURE, at, (uint32_t)bytes, 0);
+    add_shared(b, content, TIDE_PACK_TEXTURE, at, bytes, 0);
     return at;
 }
 
-uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size)
+uint64_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size)
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_CLIP);
     if (had) return had->offset;
-    if ((uint64_t)size + sizeof(uint32_t) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
-    const uint32_t at = block(b, (uint32_t)(sizeof(uint32_t) + size));
+    const uint64_t at = block(b, sizeof(uint32_t) + (uint64_t)size);
     tide_block *h = header(b, at);
     uint64_t version = 0;
     memcpy(&version, content, sizeof version);
@@ -254,42 +271,60 @@ uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const v
     return at;
 }
 
+uint64_t tide_pack_font(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size)
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_FONT);
+    if (had) return had->offset;
+    const uint64_t at = block(b, sizeof(uint32_t) + (uint64_t)size);
+    tide_block *h = header(b, at);
+    uint64_t version = 0;
+    memcpy(&version, content, sizeof version);
+    if (!version) version = 1u;
+    h->a = (uint32_t)version;
+    h->b = (uint32_t)(version >> 32);
+    memcpy(h + 1, &size, sizeof size);
+    if (size) memcpy((uint8_t *)(h + 1) + sizeof size, data, size);
+    add_shared(b, content, TIDE_PACK_FONT, at, size, 0);
+    return at;
+}
+
 // A list's block of `count` elements of `element` bytes each, with what's in it said after them (tide/pack.h).
-static uint32_t versioned_list(tide_pack_builder *b, const void *elements, const uint32_t element, const uint32_t count,
-                               uint64_t version, const uint32_t levels)
+static uint64_t versioned_list(tide_pack_builder *b, const void *elements, const uint32_t element, const uint32_t count,
+                               uint64_t version, const uint64_t levels)
 {
     const uint64_t bytes = ((uint64_t)element * count + 7u) & ~7ull;
-    if (bytes + 16u + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
-    const uint32_t at = block(b, (uint32_t)bytes + 16u);
+    const uint64_t at = block(b, bytes + 24u); // Then its version, an element's bytes and its levels, 8 bytes each
     tide_block *h = header(b, at);
     h->a = count;
     h->b = count;
-    h->next = (uint32_t)(sizeof(tide_block) + bytes);
+    h->link = tide_block_link(tide_block_class(h), sizeof(tide_block) + bytes);
     if (count) memcpy(h + 1, elements, (size_t)element * count);
     if (!version) version = 1u; // 0 is no list's
-    const uint32_t said[2] = {element, levels}; // ...and where its levels of detail are, for a mesh's indices that have them
+    // ...and where its levels of detail are, for a mesh's indices that have them: 1 + their block's offset
+    const uint64_t said[2] = {element, levels};
     memcpy((uint8_t *)(h + 1) + bytes, &version, sizeof version);
     memcpy((uint8_t *)(h + 1) + bytes + sizeof version, said, sizeof said);
     return at;
 }
 
 // A mesh's levels of detail as a block: the ball, how many levels, how many indices, each level's error, first
-// index and count, a word of nothing, then the indices (LEVELS_HEAD bytes before them, in pack_load.c too).
-static uint32_t levels_block(tide_pack_builder *b, const tide_mesh_levels *levels)
+// index and count, the asset tolerance multiplier, then the indices (LEVELS_HEAD bytes before them, in pack_load.c too).
+static uint64_t levels_block(tide_pack_builder *b, const tide_mesh_levels *levels)
 {
     uint32_t words[28] = {0};
     memcpy(&words[0], levels->center, sizeof levels->center);
     memcpy(&words[3], &levels->radius, sizeof levels->radius);
     words[4] = levels->count;
     words[5] = levels->index_count;
+    // Zero in existing/default metadata means 1; keep default packs byte-identical.
+    if (levels->multiplier != 1.0f) memcpy(&words[27], &levels->multiplier, sizeof(float));
     for (uint32_t i = 0; i < levels->count; i++) {
         memcpy(&words[6u + i * 3u], &levels->error[i], sizeof(float));
         words[7u + i * 3u] = levels->first[i];
         words[8u + i * 3u] = levels->indices[i];
     }
     const uint64_t bytes = sizeof words + (uint64_t)levels->index_count * sizeof(uint32_t);
-    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
-    const uint32_t at = block(b, (uint32_t)bytes);
+    const uint64_t at = block(b, bytes);
     uint8_t *to = (uint8_t *)(header(b, at) + 1);
     memcpy(to, words, sizeof words);
     memcpy(to + sizeof words, levels->index, (size_t)levels->index_count * sizeof(uint32_t));
@@ -298,7 +333,7 @@ static uint32_t levels_block(tide_pack_builder *b, const tide_mesh_levels *level
 
 void tide_pack_mesh_levels(tide_pack_builder *b, const uint8_t content[32], const void *vertices, const uint32_t vertex,
                            const uint32_t count, const uint32_t *indices, const uint32_t index_count,
-                           const tide_mesh_levels *levels, uint32_t offsets[2])
+                           const tide_mesh_levels *levels, uint64_t offsets[2])
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_MESH);
     if (had) {
@@ -309,21 +344,21 @@ void tide_pack_mesh_levels(tide_pack_builder *b, const uint8_t content[32], cons
     uint64_t versions[2];
     memcpy(versions, content, sizeof versions);
     // Where they are, plus 1: a block can be the region's first, at 0, which is what a mesh with none says
-    const uint32_t simpler = levels && levels->count && levels->count <= TIDE_MESH_LEVELS && levels->index ? levels_block(b, levels) + 1u : 0u;
+    const uint64_t simpler = levels && levels->count && levels->count <= TIDE_MESH_LEVELS && levels->index ? levels_block(b, levels) + 1u : 0u;
     offsets[0] = versioned_list(b, vertices, vertex, count, versions[0], 0);
     offsets[1] = versioned_list(b, indices, (uint32_t)sizeof(uint32_t), index_count, versions[1], simpler);
     add_shared(b, content, TIDE_PACK_MESH, offsets[0], offsets[1], vertex);
 }
 
 void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void *vertices, const uint32_t vertex, const uint32_t count,
-                    const uint32_t *indices, const uint32_t index_count, uint32_t offsets[2])
+                    const uint32_t *indices, const uint32_t index_count, uint64_t offsets[2])
 {
     tide_pack_mesh_levels(b, content, vertices, vertex, count, indices, index_count, NULL, offsets);
 }
 
-uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
+uint64_t tide_pack_mesh_list(tide_pack_builder *b, const uint64_t *offsets, const uint32_t count)
 {
-    const uint32_t at = block(b, count * (uint32_t)sizeof(tide_mesh_lists));
+    const uint64_t at = block(b, (uint64_t)count * sizeof(tide_mesh_lists));
     tide_block *h = header(b, at);
     h->a = count;
     h->b = count;
@@ -332,11 +367,9 @@ uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, cons
     return at;
 }
 
-uint32_t tide_pack_skinned_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
+uint64_t tide_pack_skinned_list(tide_pack_builder *b, const uint64_t *offsets, const uint32_t count)
 {
-    const uint64_t bytes = (uint64_t)count * sizeof(tide_skinned_lists);
-    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory();
-    const uint32_t at = block(b, (uint32_t)bytes);
+    const uint64_t at = block(b, (uint64_t)count * sizeof(tide_skinned_lists));
     tide_block *h = header(b, at);
     h->a = count;
     h->b = count;
@@ -347,13 +380,13 @@ uint32_t tide_pack_skinned_list(tide_pack_builder *b, const uint32_t *offsets, c
     return at;
 }
 
-uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
+uint64_t tide_pack_list(tide_pack_builder *b, const uint64_t *offsets, const uint32_t count)
 {
-    const uint32_t at = block(b, count * (uint32_t)sizeof(uint32_t));
+    const uint64_t at = block(b, (uint64_t)count * sizeof(tide_handle));
     tide_block *h = header(b, at);
     h->a = count;
     h->b = count;
-    uint32_t *handles = (uint32_t *)(void *)(h + 1);
+    tide_handle *handles = (tide_handle *)(void *)(h + 1);
     for (uint32_t i = 0; i < count; i++) handles[i] = tagged(offsets[i]);
     return at;
 }
@@ -361,17 +394,17 @@ uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uin
 // An entry of a map from text, as generated code lays it out: order, the key, the value.
 typedef struct text_entry {
     int64_t live;
-    uint32_t key;
-    uint32_t value;
+    tide_handle key;
+    tide_handle value;
 } text_entry;
 
 // A map's index for `count` entries whose keys are the text blocks at `keys`: its block's offset.
-static uint32_t text_index(tide_pack_builder *b, const uint32_t *keys, const uint32_t count)
+static uint64_t text_index(tide_pack_builder *b, const uint64_t *keys, const uint32_t count)
 {
     // A power of two of slots, under half full, as map.c keeps it
     uint32_t slots = 8u;
     while (count * 2u > slots) slots *= 2u;
-    const uint32_t ix = block(b, slots * (uint32_t)sizeof(uint32_t));
+    const uint64_t ix = block(b, (uint64_t)slots * sizeof(uint32_t));
     tide_block *ih = header(b, ix);
     ih->a = slots;
     ih->b = slots;
@@ -385,9 +418,9 @@ static uint32_t text_index(tide_pack_builder *b, const uint32_t *keys, const uin
     return ix;
 }
 
-uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *values, const uint32_t count, uint32_t *index)
+uint64_t tide_pack_map(tide_pack_builder *b, const uint64_t *keys, const uint64_t *values, const uint32_t count, uint64_t *index)
 {
-    const uint32_t at = block(b, count * (uint32_t)sizeof(text_entry));
+    const uint64_t at = block(b, (uint64_t)count * sizeof(text_entry));
     tide_block *h = header(b, at);
     h->a = count;
     h->b = count;
@@ -400,13 +433,13 @@ uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_
 // An entry of a map from text to meshes, as generated code lays it out: order, the key, the mesh.
 typedef struct mesh_entry {
     int64_t live;
-    uint32_t key;
+    tide_handle key;
     tide_mesh_lists value;
 } mesh_entry;
 
-uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, const uint32_t count, uint32_t *index)
+uint64_t tide_pack_mesh_map(tide_pack_builder *b, const uint64_t *keys, const uint64_t *offsets, const uint32_t count, uint64_t *index)
 {
-    const uint32_t at = block(b, count * (uint32_t)sizeof(mesh_entry));
+    const uint64_t at = block(b, (uint64_t)count * sizeof(mesh_entry));
     tide_block *h = header(b, at);
     h->a = count;
     h->b = count;
@@ -422,19 +455,17 @@ uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const ui
 
 typedef struct skinned_entry {
     int64_t live;
-    uint32_t key;
+    tide_handle key;
     tide_skinned_lists value;
 } skinned_entry;
 
-_Static_assert(sizeof(skinned_entry) == 24u && offsetof(skinned_entry, key) == 8u && offsetof(skinned_entry, value) == 12u,
+_Static_assert(sizeof(skinned_entry) == 40u && offsetof(skinned_entry, key) == 8u && offsetof(skinned_entry, value) == 16u,
                "packed skinned map entries must match the generated map layout");
 
-uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, const uint32_t count,
-                              uint32_t *index)
+uint64_t tide_pack_skinned_map(tide_pack_builder *b, const uint64_t *keys, const uint64_t *offsets, const uint32_t count,
+                              uint64_t *index)
 {
-    const uint64_t bytes = (uint64_t)count * sizeof(skinned_entry);
-    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory();
-    const uint32_t at = block(b, (uint32_t)bytes);
+    const uint64_t at = block(b, (uint64_t)count * sizeof(skinned_entry));
     tide_block *h = header(b, at);
     h->a = count;
     h->b = count;
@@ -447,7 +478,7 @@ uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const
     return at;
 }
 
-void tide_pack_name(tide_pack_builder *b, const char *qualified, const uint32_t kind, const uint32_t offset, const uint32_t size,
+void tide_pack_name(tide_pack_builder *b, const char *qualified, const uint32_t kind, const uint64_t offset, const uint64_t size,
                     const uint32_t extra)
 {
     if (b->entry_count == b->entry_room) {
@@ -465,17 +496,21 @@ void tide_pack_name(tide_pack_builder *b, const char *qualified, const uint32_t 
 
 uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
 {
-    const uint32_t table = (uint32_t)sizeof(tide_pack_header);
-    const uint32_t region_at = (table + b->entry_count * (uint32_t)sizeof(tide_pack_entry) + 15u) & ~15u;
-    *size = (size_t)region_at + b->size;
+    const uint64_t table = sizeof(tide_pack_header);
+    const uint64_t region_at = (table + (uint64_t)b->entry_count * sizeof(tide_pack_entry) + 15u) & ~(uint64_t)15u;
+    if (region_at + b->size > SIZE_MAX) tide_out_of_memory();
+    *size = (size_t)(region_at + b->size);
     uint8_t *out = tide_alloc(*size ? *size : 1u);
     memset(out, 0, *size);
-    tide_pack_header h = {{0}, TIDE_PACK_VERSION, b->entry_count, region_at, b->size, {0, 0}};
+    tide_pack_header h = {.version = TIDE_PACK_VERSION, .entries = b->entry_count, .region_at = region_at, .region_size = b->size};
     memcpy(h.magic, TIDE_PACK_MAGIC, 8);
     memcpy(out, &h, sizeof h);
     // A pack of nothing has no entries and no region to copy from
     if (b->entry_count) memcpy(out + table, b->entries, (size_t)b->entry_count * sizeof(tide_pack_entry));
-    if (b->size) memcpy(out + region_at, b->region, b->size);
+    if (b->size) memcpy(out + region_at, b->region, (size_t)b->size);
+    // Its identity, of the file as it is with the digest's bytes zero, so loading needn't hash it
+    tide_sha256_of(out, *size, h.digest);
+    memcpy(out + offsetof(tide_pack_header, digest), h.digest, sizeof h.digest);
     free(b->region);
     free(b->shared);
     free(b->entries);

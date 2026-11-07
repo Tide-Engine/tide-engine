@@ -1,0 +1,4 @@
+// expect: a humanoid bone assignment is a value, not a writable reference
+scene Main { }
+void Clear(mut Bone bone) { bone = default; }
+void Change(mut HumanoidRig rig) { Clear(rig[HumanoidBone.LeftHand]); }

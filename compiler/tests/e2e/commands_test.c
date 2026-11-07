@@ -10,12 +10,14 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
-static const tide_entity first = {1u, 1u};
-static const tide_entity second = {2u, 1u};
+static tide_entity first;
+static tide_entity second;
 
 static void start(void)
 {
     tide_world_init(&world, 1.0f / 60.0f);
+    second = tide_entity_in_slot(&world.entities, 2);
+    first = tide_entity_in_slot(&world.entities, 1);
     tide_local_init(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(0), 0, false, false, "");
     local.UI.target = first;
@@ -126,9 +128,9 @@ TIDE_TEST(commands_wire_rejects_truncation_unknown_types_trailing_bytes_and_bad_
     TIDE_CHECK(!tide_game_api.check_command(altered, size, NULL));
     memcpy(altered, bytes, size); altered[size] = 0;
     TIDE_CHECK(!tide_game_api.check_command(altered, size + 1, NULL));
-    memcpy(altered, bytes, size); altered[12] = 0xC0;
+    memcpy(altered, bytes, size); altered[2 + sizeof(tide_entity) + 2] = 0xC0;
     TIDE_CHECK(!tide_game_api.check_command(altered, size, NULL));
-    memcpy(altered, bytes, size); altered[10] = 255; altered[11] = 255;
+    memcpy(altered, bytes, size); altered[2 + sizeof(tide_entity)] = 255; altered[3 + sizeof(tide_entity)] = 255;
     TIDE_CHECK(!tide_game_api.check_command(altered, size, NULL));
     TIDE_CHECK(tide_game_api.command_sequence(&world, tide_player_from_index(0), 0) == 0);
 }
@@ -183,7 +185,7 @@ TIDE_TEST(commands_floats_enums_and_nested_bounds_repaired_before_handler)
     frame();
     uint8_t bytes[TIDE_COMMAND_BYTES];
     (void)pending(bytes);
-    tide_bits b = {bytes, sizeof bytes, 80, false};
+    tide_bits b = {bytes, sizeof bytes, 16u + (uint32_t)sizeof(tide_entity) * 8u, false};
     tide_bits_put(&b, 5, 16);
     for (const char *s = "Alice"; *s; s++) tide_bits_put(&b, (uint8_t)*s, 8);
     tide_bits_put_f32(&b, NAN);
@@ -194,8 +196,8 @@ TIDE_TEST(commands_floats_enums_and_nested_bounds_repaired_before_handler)
     for (const char *s = "new"; *s; s++) tide_bits_put(&b, (uint8_t)*s, 8);
     tide_bits_put_varint(&b, tide_zigzag(99));
     tide_bits_put_varint(&b, 8); // Claimed PlayerID is data; permission checks use the injected sender.
-    tide_bits_put_varint(&b, second.index);
-    tide_bits_put_varint(&b, second.generation);
+    tide_bits_put_varint64(&b, second.birth);
+    tide_bits_put_varint64(&b, second.lineage);
     const uint32_t size = tide_bits_end(&b);
     TIDE_REQUIRE(tide_game_api.check_command(bytes, size, NULL));
     TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));

@@ -1,0 +1,5 @@
+// expect: Retarget already has 'rootScale'
+asset HumanoidRig source = "../e2e/retargeting/source.humanoid.json";
+[Retarget(source, source, rootScale: 1, rootScale: 2)]
+asset Animation result = "../e2e/retargeting/source.gltf";
+scene Main { }

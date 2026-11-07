@@ -73,7 +73,7 @@ TIDE_TEST(attached_finds_rows_by_entity)
     TIDE_CHECK(!value(&a, (tide_entity){9000, 1})); // Past every index it has
     TIDE_CHECK(!value(&a, (tide_entity){0, 0}));
     tide_attached_free(&a, &columns);
-    TIDE_CHECK(a.rows.count == 0 && !a.by_index && !a.others);
+    TIDE_CHECK(a.rows.count == 0 && !a.index);
 }
 
 TIDE_TEST(attached_remove_moves_the_last_row_in)
@@ -103,7 +103,7 @@ TIDE_TEST(attached_remove_moves_the_last_row_in)
 
 // The world views draw and the last one the server confirmed can each have
 // another entity in one slot: both keep their rows.
-TIDE_TEST(attached_keeps_two_generations_of_an_index)
+TIDE_TEST(attached_keeps_distinct_logical_keys_with_common_birth)
 {
     tide_attached a = {0};
     keep(&a, (tide_entity){4, 1}, 10);
@@ -121,11 +121,11 @@ TIDE_TEST(attached_keeps_two_generations_of_an_index)
     TIDE_CHECK(value(&a, (tide_entity){4, 3})->baked == 30);
     TIDE_CHECK(value(&a, (tide_entity){4, 5})->baked == 50);
     TIDE_CHECK(value(&a, (tide_entity){9, 1})->baked == 90);
-    TIDE_CHECK(a.other_count == 1);
+
 
     // One of the others goes, then a row before them, which moves them
     tide_attached_remove(&a, &columns, tide_attached_find(&a, &columns, (tide_entity){4, 3}));
-    TIDE_CHECK(!value(&a, (tide_entity){4, 3}) && a.other_count == 0);
+    TIDE_CHECK(!value(&a, (tide_entity){4, 3}));
     keep(&a, (tide_entity){4, 7}, 70);
     tide_attached_remove(&a, &columns, tide_attached_find(&a, &columns, (tide_entity){9, 1}));
     TIDE_CHECK(value(&a, (tide_entity){4, 5})->baked == 50);
@@ -162,4 +162,23 @@ TIDE_TEST(attached_packs_and_unpacks)
     free(bytes);
     tide_attached_free(&a, &columns);
     tide_attached_free(&b, &columns);
+}
+
+TIDE_TEST(attached_full_keys_do_not_size_the_index)
+{
+    tide_attached a = {0};
+    const tide_entity x = {UINT64_MAX, UINT64_MAX};
+    const tide_entity y = {UINT64_MAX, UINT64_MAX - 1u};
+    const tide_entity z = {UINT64_MAX - 1u, UINT64_MAX};
+    keep(&a, x, 11);
+    keep(&a, y, 22);
+    keep(&a, z, 33);
+    TIDE_CHECK(a.indexed == 16u);
+    TIDE_CHECK(value(&a, x)->baked == 11);
+    TIDE_CHECK(value(&a, y)->baked == 22);
+    TIDE_CHECK(value(&a, z)->baked == 33);
+    tide_attached_remove(&a, &columns, tide_attached_find(&a, &columns, y));
+    TIDE_CHECK(!value(&a, y));
+    TIDE_CHECK(value(&a, x)->baked == 11 && value(&a, z)->baked == 33);
+    tide_attached_free(&a, &columns);
 }

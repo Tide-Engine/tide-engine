@@ -9,6 +9,19 @@
 
 #include "tide/page.h"
 
+_Static_assert(TIDE_PACKET_ENTITY == sizeof(tide_entity) + 16u, "entity packet row layout");
+_Static_assert(TIDE_PACKET_EVENT == sizeof(tide_entity) + 24u, "event packet header layout");
+
+struct tide_packet_entity_entry { tide_entity key; uint32_t place; };
+static uint32_t packet_entity_bucket(tide_entity key, uint32_t capacity)
+{ return (uint32_t)tide_hash_end(tide_entity_hash(TIDE_HASH_START, key)) & (capacity - 1u); }
+static void packet_entity_put(struct tide_packet_entity_entry *entries, uint32_t capacity, tide_entity key, uint32_t place)
+{
+    uint32_t at = packet_entity_bucket(key, capacity);
+    while (!tide_entity_is_null(entries[at].key) && !tide_entity_equal(entries[at].key, key)) at = (at + 1u) & (capacity - 1u);
+    entries[at].key = key; entries[at].place = place;
+}
+
 // Room for `more` bytes past `*size` in a buffer of `*capacity`, which grows by doubling; false past 4 GiB.
 static bool room(uint8_t **bytes, uint32_t *capacity, const uint32_t size, const uint32_t more)
 {
@@ -33,6 +46,8 @@ void tide_packet_begin(tide_packet *p)
     p->sections = 0;
     p->text_size = 0;
     p->entry_count = 0;
+    p->entity_place_count = 0;
+    if (p->entity_places) memset(p->entity_places, 0, (size_t)p->entity_place_capacity * sizeof *p->entity_places);
     tide_packet_grow(p, TIDE_PACKET_HEADER, false);
 }
 
@@ -117,14 +132,30 @@ uint32_t tide_packet_list(tide_packet *p, const tide_list list, const uint32_t e
     return add_entry(p, offset, size);
 }
 
-uint32_t *tide_packet_places(tide_packet *p, const uint32_t count)
+uint32_t tide_packet_find_entity(const tide_packet *p, const tide_entity entity)
 {
-    if (count > p->place_capacity) {
-        p->place = tide_realloc(p->place, (size_t)p->place_capacity * sizeof *p->place, (size_t)count * sizeof *p->place);
-        p->place_capacity = count;
+    if (tide_entity_is_null(entity) || !p->entity_place_capacity) return TIDE_PACKET_NONE;
+    uint32_t at = packet_entity_bucket(entity, p->entity_place_capacity);
+    while (!tide_entity_is_null(p->entity_places[at].key)) {
+        if (tide_entity_equal(p->entity_places[at].key, entity)) return p->entity_places[at].place;
+        at = (at + 1u) & (p->entity_place_capacity - 1u);
     }
-    memset(p->place, 0xFF, (size_t)count * sizeof *p->place);
-    return p->place;
+    return TIDE_PACKET_NONE;
+}
+void tide_packet_entity_place(tide_packet *p, const tide_entity entity, const uint32_t place)
+{
+    if (tide_entity_is_null(entity) || place == TIDE_PACKET_NONE) return;
+    const bool found = tide_packet_find_entity(p, entity) != TIDE_PACKET_NONE;
+    if (!found && (uint64_t)(p->entity_place_count + 1u) * 2u >= p->entity_place_capacity) {
+        const uint64_t grown = p->entity_place_capacity ? (uint64_t)p->entity_place_capacity * 2u : 64u;
+        if (grown > UINT32_MAX || grown > SIZE_MAX / sizeof *p->entity_places) tide_out_of_memory();
+        struct tide_packet_entity_entry *next = tide_alloc_zeroed((size_t)grown, sizeof *next);
+        for (uint32_t i = 0; i < p->entity_place_capacity; i++)
+            if (!tide_entity_is_null(p->entity_places[i].key)) packet_entity_put(next, (uint32_t)grown, p->entity_places[i].key, p->entity_places[i].place);
+        free(p->entity_places); p->entity_places = next; p->entity_place_capacity = (uint32_t)grown;
+    }
+    packet_entity_put(p->entity_places, p->entity_place_capacity, entity, place);
+    if (!found) p->entity_place_count++;
 }
 
 void tide_packet_end(tide_packet *p, const uint64_t hash, const bool in_match, const uint32_t tick, const uint32_t verified_tick,
@@ -161,7 +192,7 @@ void tide_packet_free(tide_packet *p)
     free(p->bytes);
     free(p->text);
     free(p->entries);
-    free(p->place);
+    free(p->entity_places);
     *p = (tide_packet){0};
 }
 

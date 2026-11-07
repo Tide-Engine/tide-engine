@@ -21,9 +21,9 @@ TIDE_TEST(shaded_helpers_forward_explicit_inputs_and_attached_local_fields)
         const tide_draw_run *run = &draw.runs[i];
         TIDE_CHECK(run->shader == first->shader && run->count == 1);
         TIDE_CHECK(memcmp(draw.uniforms + first->uniforms, draw.uniforms + run->uniforms, 16) == 0);
-        if (i < 4) TIDE_CHECK(memcmp(draw.instances + first->first, draw.instances + run->first,
+        if (i < 4) TIDE_CHECK(memcmp(tide_draw_run_instance(&draw, first, 0), tide_draw_run_instance(&draw, run, 0),
                                    tide_shader_instance_size(first->shader)) == 0);
-        else TIDE_CHECK(memcmp(draw.instances + first->first, draw.instances + run->first,
+        else TIDE_CHECK(memcmp(tide_draw_run_instance(&draw, first, 0), tide_draw_run_instance(&draw, run, 0),
                               tide_shader_instance_size(first->shader)) != 0);
     }
     TIDE_CHECK(tide_world_hash(&world) == hash);
@@ -31,7 +31,7 @@ TIDE_TEST(shaded_helpers_forward_explicit_inputs_and_attached_local_fields)
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_REQUIRE(draw.run_count == 5);
-    TIDE_CHECK(memcmp(draw.instances + draw.runs[0].first, draw.instances + draw.runs[4].first,
+    TIDE_CHECK(memcmp(tide_draw_run_instance(&draw, &draw.runs[0], 0), tide_draw_run_instance(&draw, &draw.runs[4], 0),
                       tide_shader_instance_size(draw.runs[0].shader)) == 0);
     TIDE_CHECK(tide_world_hash(&world) == hash);
     tide_draw_free(&draw);

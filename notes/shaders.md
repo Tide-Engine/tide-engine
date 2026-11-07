@@ -1,5 +1,330 @@
 # Code the GPU runs: frags and verts
 
+## Invariant positions (2026-11-06)
+
+Every game shader's vertex position is `@builtin(position) @invariant` (`write_wgsl`, `tide_corner`), as is the
+renderer's `mesh_3d_wgsl`: `Depth.Equal` after `Depth.Only` needs a mesh drawn through two shaders on the same depth
+bits. The WGSL reader keeps `@invariant` (`attrs.invariant`); SPIR-V decorates the vertex stage's output `Invariant`,
+HLSL declares the varyings' position `precise`. The `shaders/*.txt` expectations changed by that word alone. Why and
+what relies on it: drawing.md, A depth pre-pass.
+
+## GPU lists in pools (2026-11-05)
+
+A shader's GPU lists are ranges of two pools, `tide_words` (binding 33, `SHADER_STORAGE_BINDING`) and `tide_ints`
+(34: `GPUList<int>`s, `array<atomic<i32>>` in a kernel that uses atomics on any of them), each slot's first word and
+capacity two words of the uniforms' ints from `shader.storage_at` (`put_table_word`); a kernel's run record is at 35.
+(The pools' branch had them at 25..27; merged after Sixteen textures, below, they follow its 16 textures' bindings,
+and after One image a texture they still do: `put_textures` ends at sampler 15's binding, 32.) Per slot,
+`tide_base<s>` reads the table, `tide_word<s>(k)` is `pool[tide_base<s>() + k]`, the count is min(header, table
+capacity) and the capacity min(header, table), so a write's guard still reads storage (FXC's X3694, Kernels on Dawn's
+Direct3D 11, below, keeps holding: every golden's HLSL compiles with fxc). An atomic's function is named by its slot
+(`tide_atomic<s>_<op>`) and names `&tide_ints[tide_at]` through a `let`, as the translators take it. An indirect
+draw's instance index is held to its capacity. Adds: four lists a scan (`tide_scan`, `tide_scan1`...), each scratch in
+its list's pool at the table's word for it. Limits: 64 lists a shader (`SHADER_STORAGE_MOST`), where it was 7 storage
+buffers. Goldens `kernels_add`, `kernels_helpers`, `kernels_shared`, `kernels_shared_races`, `gpu_meshes` changed in
+their pools and tables alone; `kernels_many` is new (20 lists, 6 Adds). Contracts: notes/compute.md, GPU lists in pools.
+
+## Texture arrays (2026-11-05)
+
+`READ_ARRAY`, `READ_DEPTH_ARRAY`, `READ_COMPARE_ARRAY`; `base_read`, `arrayed_read`, `put_layer`; the translators'
+`arrayed` image types. Details: notes/textures.md, Texture arrays: built.
+
+## One image a texture, its samplers apart (2026-11-05)
+
+`shader.textures` are images now, one for each texture the code reads however it's read; `shader.ways` are each way
+it's read (a `Sample`'s filter and wrap, a depth read or compared, a cube's filter, with whether the Texture carries
+them) and `shader.samplers` the samplers those ways go through (`plan_samplers`: shared by ways read alike in every
+draw, a carried one its texture's alone). `sample_slot` gives a way, which `way_texture`/`way_sampler` turn into
+`pixels<i>`/`sampler<j>`; `put_textures` declares texture i at 1 + 2i and sampler j at 2 + 2j in binding order; a
+depth's two reads are one `texture_depth_2d`. `shader_put_texture_reads` writes `.sampler_count`, `.sampler_reads` and
+`.texture_samplers` only where the samplers aren't each sampled texture's own (`samplers_own`). Two limits, 16 each.
+`hlsl.c` reads a sampler's bits by its slot, through `tidehl_mode(bits, texture)` for a module texture, which reads
+`_TideUnmipped` (a texture whose smaller images aren't made yet is read blended). Why and the backends:
+notes/rendering.md, One image a texture.
+
+## Sixteen textures, shared samplers (2026-11-05)
+
+A draw or a kernel samples 16 textures (`SHADER_TEXTURES`), and its storage starts at binding 33
+(`SHADER_STORAGE_BINDING`). After a draw's textures are planned, `share_samplers` gives each texture that every draw
+samples the same way the first earlier one sampled as it is (`shader_texture.sampler`, 1 + that one): `put_texture`
+then declares no sampler for it, every sample of it names that one's (`sampler_of`), and `shader_put_texture_reads`
+writes `.texture_samplers` into its `tide_shader` (with `.texture_reads`, both only where needed, so most games' C
+is as it was). Why and the backends: notes/rendering.md, Sixteen textures a draw. `hlsl.c` takes bindings to 32 and
+storage at 33..39, and samples a module texture by its own slot's bits. Goldens in `compiler/tests/shaders` were
+written again: their storage bindings, and samplers shared where textures are sampled alike.
+
+## Kernels on Dawn's Direct3D 11 (2026-11-05)
+
+Chrome's WebGPU on Dawn's D3D11 adapter turns WGSL into HLSL (Tint) and compiles it with FXC (`d3dcompiler_47`,
+cs_5_0; Dawn's flags `D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | IEEE_STRICTNESS | OPTIMIZATION_LEVEL0`, no `/WX`). Of every
+shader tidec and the renderer write (382 modules: notes/testing.md, The hardware web lane on Direct3D 11), FXC refused
+seven kernels, for two reasons. Found with `--enable-dawn-features=dump_shaders,disable_symbol_renaming`, which puts
+Tint's HLSL and FXC's messages in the browser's log; each was then reproduced with the Windows SDK's `fxc.exe`
+10.0.22621 on the dumped HLSL (`/T cs_5_0 /Zpr /Gis /O0`) and every fix checked again through Chrome. Claude's,
+Provisional:
+
+- **X4000 on workgroup atomics.** `error X4000: variable 't_kept' used without having been completely initialized`
+  (CullListed's `kept`, `tested`, `hidden`; `kernels.tide`'s `Prefix` `inside`; the golden `kernels_shared_races`'
+  `counted`; `compute.c`'s `odd_here`; `atomics.wgsl`'s four). WGSL zeroes workgroup memory, and Tint does it in HLSL
+  with an `InterlockedExchange` for an atomic, as it does every atomic access: FXC refuses any `groupshared` variable
+  whose first use is an Interlocked call, when no plain store has written it before. What FXC took, measured: a struct
+  whose atomic array comes first and a plain word after it, the word written before the array's first Interlocked
+  call; not the word first in the struct, not a separate variable, and not when the array's zeroing is one element an
+  invocation of the whole group (FXC knows the `if` is always true then, and refuses again: lengths equal to the
+  group's invocations fail, one more or less pass). Tint zeroes a workgroup variable's parts in buckets by how many
+  there are, ascending, each bucket's in the struct's order: the word (one) goes before the array where it has 2 or
+  more elements.
+  - **So tidec writes a shared array that atomics are used on** (`shared int[N]`, `shared_atomic`) as
+    `struct tide_atomics_<name> { tide_cells: array<atomic<i32>, n>, tide_plain: u32 }` and
+    `var<workgroup> <name>: tide_atomics_<name>`, with n = max(N, 2), one more where that's the group's invocations
+    (`shared_atomic_length`, shader_kernel.inc); every access is `&<name>.tide_cells[i]` (`need_atomic`,
+    `need_shared_access`), bounds still checked against N, so the elements past it are never touched. The plain word
+    and the padding count against the group's 16 KiB (`plan_kernel`). Same results on every backend: only the layout of
+    workgroup memory changes.
+  - **The translators take it:** SPIR-V already did (a pointer is any place); `hlsl.c` takes an atomic's place as
+    `&name`, `&name[i]`, `&name.member` or `&name.member[i]` of a workgroup variable (`workgroup_place`), its helper
+    `tidehl_<op>_<name>_<member>`, and zeroes the struct with one plain store as before (so Unity's FXC never had this
+    problem: its HLSL never zeroed atomics through Interlocked). `compiler/tests/wgsl/shared.wgsl` (a copy of
+    `compute.c`'s kernel) now has its `odd_here` in such a struct, so `wgsl_spirv_shared` and `wgsl_hlsl_shared` test
+    the member form; `atomics.wgsl` keeps the bare forms.
+  - Goldens: `kernels_shared` and `kernels_shared_races` (only the declaration and the three accesses); every other
+    golden is the same bytes.
+- **X3663 in the depth pyramid** (`hiz_wgsl`, shaders.h, both variants): `thread sync operation found in varying flow
+  control`, at the barrier inside the `for (k = 1; k < 5; k++)` loop over levels 1 to 4, `this variable dependent on
+  potentially varying data: k`. Nothing there varies: FXC, inlining `put` and `most` (which take `k` and loop over it
+  in `level_at`) inside the branch on the invocation's index, takes the loop's counter for varying. `[unroll]` on the
+  HLSL loop fixes it, which WGSL can't say, so the WGSL is unrolled by hand: `down(k, t, g)` (one level's texel, as the
+  loop's body was) called for k 1 to 4 with constants, its barriers and the copy into `tile` between, as before. The
+  same arithmetic in the same order; its SPIR-V and Unity HLSL (`tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid`)
+  pass, and `tide_platform_occlusion` gives the same pixels and counts on Vulkan, SwiftShader, D3D12 and D3D11.
+- **Not changed:** the renderer's other kernels (`run_size`, `add_offsets`, `add_scatter`, CullOffsets, CullScatter,
+  CullDraws), every other golden's kernel and every frag and vert already compiled. Unity's own FXC route (hlsl.c) was
+  never affected. DXC (Dawn's D3D12 with SM6) isn't FXC; untouched.
+- **What a kernel game code writes still risks on D3D11:** FXC's X3663 can come of a game kernel's own loops in the same
+  way (a uniform counter passed into a helper inside a branch on the invocation, a barrier after), and tidec has no
+  check for it; X3695/X3694 races are already guarded (Closing the gaps, notes/compute.md). A kernel FXC refuses is a
+  pipeline that fails: notes/drawing.md, A culling kernel that can't be made, for what the renderer does then.
+
+## GLSL removed: tidec writes WGSL alone (2026-11-05)
+
+The owner's decision that compute is guaranteed on every backend removed OpenGL
+3.3, OpenGL ES 3 and WebGL 2 (`notes/rendering.md`), so games' shaders no longer
+carry GLSL. What follows is Claude's, Provisional. Everything below this section
+that describes GLSL output (two languages, `glsl_*` fields, rows for arrays of
+arrays, GLSL-only workarounds) is history.
+
+- **The emitter is WGSL-only.** `write_glsl`, the `lang` enum and `emit.l` are
+  gone, every `wgsl ? a : b` keeps its WGSL side, and GLSL-only machinery went
+  with them: array rows (`in_rows`, `need_row`, `put_row`, `tide_row<n>`
+  structs), `H_INT4_LANE`, `on_a_line` and the `while (true)` for-loop shape,
+  inout parameters and copies through `in_array` (WGSL copies what isn't a whole
+  variable), constant-index clamps, `tide_gpu_height`'s Ddy sign, the GLSL
+  storage stubs ("zeros in GLSL") in `shader_compute.inc`. `put_varyings`,
+  `put_uniforms`, `put_listed_loads`, `put_vertex_main`, `put_fragment_main`,
+  `output_name` and `is_pointer` lost their language parameters.
+- **The checking pass runs in WGSL** (`check_shader`), where frags and verts
+  checked in GLSL before; kernels already did. Its output is thrown away, and
+  the GLSL-only early returns it took in `shader_compute.inc` (shared atomics,
+  `this.index`) are for kernel-only code. No diagnostic changed: every
+  `compiler/tests/errors` test passes unchanged.
+- **Helper texts stay in their C-like notation** (`helper_text`, the families),
+  which `put_helper` spells as WGSL; converting them to WGSL text would only
+  move the same spelling into the strings. The notation is described where they
+  are.
+- **`tide_shader`** (`tide/draw.h`) lost `glsl_vertex`, `glsl_fragment` and
+  `glsl_listed_vertex`; `bool listed` says a shader has a listed vertex stage
+  (`wgsl_listed` on the web, `spirv_listed` elsewhere), which `mesh.c` and
+  `platform.c` read where they tested `glsl_listed_vertex`. The shader `id` is
+  FNV-1a of the WGSL and the numbers (it was of GLSL, GLSL and WGSL), so every
+  id changes, and with it each listed draw's layout (`id ^ id >> 32`).
+- **`tide shaders` / `tidec --shaders`** print `// <name>: WGSL` sections only;
+  `shader_minify_names` runs over WGSL only. Goldens in `compiler/tests/shaders`
+  were regenerated with their package inputs; `shader_names.mjs` splits on WGSL
+  sections.
+- **Identity:** with old and new tidec, every fixture's `--shaders` WGSL section
+  is the same bytes, all 116 `--spirv` modules and all 116 `--hlsl` programs
+  (before the HLSL change below) are the same bytes, and the generated C of all
+  477 live `.sources` lists (`--no-line`) differs only by the GLSL arrays and
+  fields, ids, listed layouts and the compiler-source simulation id.
+- **Tests that read shader text** (`compiler/tests/e2e/*_test.c`,
+  `render3d/test/skinning_test.c`, `wind_test.c`, `platform/tests/shaders.c`'s
+  `roll_site`) read the WGSL, which only web builds keep, under `__wasm__`;
+  natively they check what doesn't need text (skinning by its atlas texture, the
+  roll site from the frag's name). CI's web jobs run them.
+- **HLSL for Unity:** `TIDEHL_TEXTURE_BUFFERS` is gone with its branches;
+  `tide_hlsl_unity_shader` writes one SubShader (target 4.5,
+  `exclude_renderers gles3`) where it wrote a second, target 3.5 for `gles3`
+  alone. `TIDEHL_OWN_SAMPLERS` stays, for `SHADER_API_GLCORE` alone: Unity's
+  OpenGL Core 4.5 computes, so Tide's drawing still replays there
+  (`notes/unity.md`, Unity's OpenGL: Core stays, ES 3 and WebGL go). Otherwise
+  the HLSL is unchanged. `TideRender.Supported` refuses OpenGL ES 3 (WebGL 2),
+  as `docs/spec.md` lists Unity's WebGL export among the losses.
+  `expect_hlsl.cmake` and `expect_wgsl.cmake` compile for `SHADER_API_D3D11`
+  alone. The Sample's checked-in `Assets/Tests/Resources/TideShaders` files
+  were written again by `tide_wgsl_translate --hlsl` after the merge.
+
+## Kernels and GPU lists (2026-11-05)
+
+`compute` declarations write WGSL alone (`shader_compute.inc`: GPU lists as
+storage slots, atomics, shared memory, barriers, `this` as `tide_inv_*`;
+`shader_kernel.inc`: `plan_kernel` and `write_kernel`, with ordered Add's
+compaction after the body). Frags and verts read GPU lists through the same
+per-slot functions (zeros in GLSL, which the renderer never runs for them), and
+an indirect draw's shader (`gpu_instances`) reads its instances from storage
+slot 0 into the instance packs. Kernels check in WGSL; `shader_word` says
+"kernel". The goldens `kernels_add` and `kernels_shared` pin both; every other
+golden is unchanged. `expect_hlsl.cmake` compiles a kernel's HLSL as cs_5_0.
+Contracts, layout and tests: `notes/compute.md`, Built. `tidec --kernels <file.h>` (`write_kernels`) writes a
+program's kernels as a C header for the renderer's own (`platform/src/cull.tide`): drawing.md, Listed runs culled on
+the GPU.
+
+## Pulled vertices and indices, Draw.Transform's matrix, shared races (2026-11-05)
+
+A shader whose vertices are a GPU list's (`shader.gpu_vertices`) reads its vertex from storage by
+`tide_vertex_index` (no `@location` vertex inputs; instance attributes start at 0); one whose indices are too reads
+each corner's index first (`tide_corner_at` is the built-in then). A 3D `gpu_instances` shader multiplies its loaded
+transform by Draw.Transform's matrix, four uniform float4s after its values (`through_at`). Kernels' shared-memory
+writes fxc refuses (X3695) were a tidec warning (`shared_races`, since guarded: below), and X3584 (one value for all) is off in
+`TideWarnings.hlsl`. Contracts, measurements and tests: notes/compute.md, Meshes over GPU lists. Goldens:
+`gpu_meshes` (new), `kernels_add` (its indirect draw's matrix); every other golden is unchanged.
+
+## GPU lists passed alone, mirrored GPU instances, guarded shared writes (2026-11-05)
+
+A function's `GPUList<T>` parameter is written for the storage slot its call names (`given.slot`, `gpu_list_slot`
+through `em->spec`), as a `List<T>`'s is for its texture. A 3D `gpu_instances` shader whose instances have transforms
+reads `tide_keep` (`sides_at`, 4 uniform floats after the through matrix) and returns a zeroed `tide_corner` for an
+instance of the other side, by its own determinant. Every non-atomic write to a kernel's shared memory is under `if
+(tide_zero == 0u)`, a workgroup word nothing writes, which fxc can't see through (`writes_shared`); a kernel's Adds
+share one `tide_scan`, a lane a list. Goldens: `kernels_helpers` and `kernels_shared_races` (new), `kernels_shared`,
+`kernels_add`, `gpu_meshes`; every other golden is unchanged. Contracts, measurements and tests: notes/compute.md,
+Closing the gaps.
+
+## Camera-relative 3D projection (2026-11-02)
+
+Generated 3D shaders add tide_origin after the existing camera/screen/tint
+uniforms. The private tide_project helper subtracts origin times each model
+column's w before multiplying the current local vertex and relative camera.
+Both default placement and this.clip use that helper; a user vert's edits are
+read at the existing point, after skinning. Explicit out-float4 placement bypasses
+it, while frag this.world and Instance.transform keep world-space values. The
+same writer supplies ordinary, listed and skinned vertex variants, GLSL/WGSL
+and translated SPIR-V/HLSL. Unused world-position products are omitted when no
+frag reads them. 2D source and uniform headers are unchanged.
+
+Owner-approved capacity: reserve 16 additional engine bytes for 3D, reducing
+its game payload from 3984 to 3968 bytes while retaining the 255-float4 total
+required by existing Android portability coverage. 2D stays 3984. The renderer
+checks the same dimension-specific bound. uniform_limits pins accepted 249-vec4
+2D and 248-vec4 3D payloads; gpu_limit_uniforms_3d_origin refuses the next 3D
+vec4, and the earlier limit diagnostic now names 3968. All affected 3D shader
+goldens were regenerated with their sibling package inputs. GPU regression and
+integration validation are recorded in rendering.md.
+
+The accepted-capacity fixture exposed an older translator mismatch: the shared
+WGSL reader allowed only 128 struct members and 64 constructor arguments, despite
+the existing 2D payload requiring 252 members and 249 array arguments. Bounded
+member/argument scratch now holds 256, with matching checked SPIR-V member/whole
+uniform-array buffers and HLSL argument buffers. Function parameter and GPU
+interface limits are unchanged. Both maximum-capacity programs pass spirv-val
+and HLSL vertex/fragment compilation with /WX on all three configured API
+defines. All 51 shader golden/limit diagnostics pass; place/skinned and renderer
+SPIR-V/HLSL checks also pass.
+
+
+## Explicit Texture gradients (2026-11-02)
+
+The scoped foliage API completion adds
+`Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's,
+Wrap wrap = the texture's) -> Color`. UV derivatives are per destination pixel
+right/down. Frags and their GPU helper functions/methods accept it; CPU code,
+verts and helpers reached from verts refuse it. Other texture kinds do not
+expose it. There is no new syntax, runtime function, sampler or backend feature.
+
+- `check_grid_sample` shares ordinary source-name and Raw checks, with three
+  required float2 operands and the existing fixed-member Filter/Wrap rules.
+  All operands stay in `expr.args`, including named-argument source order.
+  `CALL_GRID`'s method name distinguishes the new operation.
+- `ex_sample` emits existing GLSL `textureGrad`/WGSL `textureSampleGrad` directly,
+  without implicit UV reconstruction. `function_sample.gradients` propagates
+  through helper chains and distinguishes explicit reads from ordinary Sample
+  diagnostics; it is absent from sampler-binding identity. Source specialization
+  retains Raw classification, defaults and binding deduplication with Sample.
+- Statements containing SampleGrad use the shader writer's existing operand
+  capture and lazy-branch lowering, also used by switch expressions. This keeps
+  its three numeric operands in written evaluation order even on GLSL. Filter
+  and wrap remain compile-time sampler metadata. Existing Sample paths and
+  shader goldens remain unchanged.
+- `shaders/sample_grad` pins both languages for direct/helper reads, changing
+  loop UVs, discard, named/shorthand arguments, Raw fields/assets, carried and
+  explicit sampling, binding deduplication and mutable operand order. Eight
+  `sample_grad_*` error fixtures cover argument types, fixed filter/wrap,
+  direct/helper/shared vert use, a CPU helper call and preservation of ordinary
+  Sample diagnostics. `platform/tests/shaders`'s
+  existing Mipmaps pass adds carried Trilinear through two helpers and a varying
+  branch, carried Bilinear, an explicit Trilinear override, and a Raw field's
+  RGB at mip 2 with carried Repeat. The Raw source has alpha 1/4 and is rendered
+  with alpha 1 so accidental unpremultiplication is visible.
+
+The compiler-only native sanitizer build succeeds without warnings. All 63
+focused CTests pass (1.14 s): every shader golden, all eight new errors, the
+updated Texture-method diagnostic, existing helper Trilinear errors/warning,
+and SampleGrad's SPIR-V validation and HLSL `/WX` checks. Existing shader goldens
+are unchanged. Inline derivative coverage exposed operand capture trying to
+store the built-in `this` receiver; captures now skip built-in record receivers
+and derivative reconstruction uses its original root expression, while helper
+bodies retain their own captures.
+
+Combined renderer/GPU validation passes in the foliage integration: 36 native
+and 47 web CTests, including the explicit-gradient mip witnesses on Vulkan,
+OpenGL, WebGL, ANGLE D3D11 and WebGPU. Public API and semantics are in `docs/game/shaders.md` and
+the spec's Mipmaps paragraph. The existing backend translators already accept
+explicit gradients; no runtime boundary changes are needed.
+
+## Structs that hold lists, passed on whole (2026-10-31)
+
+The owner, of a game passing each list of its crowd's poses by name through
+every helper because a struct holding them was refused there: "ideally we
+lift that limit instead of working around it". A struct, singleton or
+component holding a list, grid, map or set now goes to a GPU function, and
+its methods are called, where it is the frag's/vert's own bound parameter or a
+function parameter standing for one. Rules are Provisional in the spec (Lists
+and arrays on the GPU); users' docs are `docs/game/shaders.md`, Passing on
+what holds a list.
+
+- **Nothing is passed for it** (`compiler/src/shader.c`, Structs that hold
+  lists). `holds_data` marks the types; `is_given` now includes them, so the
+  function's head and every call leave the parameter out, and a method of such
+  a type (`given_self`) has no `tide_self`. Its reads resolve by type and
+  field, as the frag's own: a plain field through `put_bound(type decl,
+  field)` (uniform words and instance attributes are module-scope in both GLSL
+  and WGSL: the vertex inputs are copied into `var<private>` globals), a data
+  field through `data_of`, whose texture lookup is by `source` decl and field
+  (no longer by the bound parameter), and an implicit field in such a method
+  (`BIND_FIELD`) through the method's owner. No suffix is added: a shader has
+  one source of each type, so one body serves every call.
+- **What a function reads of one is noted on it,** as its body is checked
+  once: `param.given_reads`/`given_local_reads` for a parameter,
+  `decl.self_reads`/`self_local_reads` for a method's receiver
+  (`note_given_field`). Each call, after `need_function`, hands those to what
+  it passed (`pass_given_reads`): the root's bound parameter's `reads`, a
+  grid's `READ_DATA` sample, or the calling function's own record. So a
+  function reached first from one frag still makes another frag send what it
+  reads, and unread fields are never sent.
+- **Refusals:** an argument or receiver that isn't such a name
+  (`refuse_given`), a `mut` method or parameter, and the struct as a value
+  (a local, a literal, a result: `type_fits`'s message for `holds_data`, and
+  `ex_name` for a function's parameter named whole).
+- Not built: one that's a field of another (`keep.poses.rows` read in a frag:
+  `data_of` resolves one level), and a `Texture` field of one sampled in a
+  function (`texture_of` still wants the frag's own parameter).
+- Tests: `compiler/tests/shaders/given_structs` (a method calling a method, a
+  singleton through two functions reading its list, map and grid, a foreach,
+  a field nothing reads unsent; GLSL/WGSL pins, SPIR-V and HLSL), errors
+  `gpu_given_struct_local` and `gpu_given_struct_made`, and the pixels of
+  `tide_platform_baked` (a socket read through a function given the poses, a
+  frag passing a singleton's list to a function) on Vulkan, OpenGL, WebGL and
+  WebGPU. Every existing shader golden is unchanged.
+
 ## Shipping shader identifiers (2026-10-27)
 
 Owner-requested follow-up to release metadata removal. shader_names.c performs
@@ -255,9 +580,7 @@ translation` of their own whose first fields the reader uses.
   slot, offset, tide_gpu_attribute_format; `_TideSlots[3]`: stride, per instance)
   and the draw's offsets and first vertex. Unity draws are `DrawProcedural` with no
   vertex buffers, an indexed one through Unity's index buffer (SV_VertexID is the
-  index). Under `TIDEHL_TEXTURE_BUFFERS` (OpenGL ES 3 and WebGL 2, which have no
-  buffers a vertex shader reads), each is an RGBA8 `Texture2D<float4>` of 4,096
-  pixels a row, a word each pixel's bytes (`round(texel * 255)`).
+  index).
 - **Uniforms:** the block is `cbuffer TideUniforms`, flattened into
   `tidehl_u_<member>`. Float pads go where HLSL would pack a member sooner than
   WGSL's layout does, and matrices are `row_major`. A struct, or a matrix of
@@ -267,15 +590,14 @@ translation` of their own whose first fields the reader uses.
   is not an HLSL object. It is the 4 bits of `_TideSampling` at 4i (filter, then
   wrap), which pick one of nine Unity inline sampler states
   (`tidehl_<point|linear|trilinear>_<clamp|repeat|mirror>_sampler`). Under
-  `TIDEHL_OWN_SAMPLERS` (OpenGL, GL ES, WebGL: Unity there has no samplers apart
+  `TIDEHL_OWN_SAMPLERS` (OpenGL Core: Unity there has no samplers apart
   from textures) each texture samples with its own, `sampler_TideTexture<i>`, which
   TideRender sets. Every helper takes the texture's own sampler (`own`); the D3D
   path ignores it. Nearest and linear read level 0 (`SampleLevel`), as Vulkan's
   samplers with maxLod 0 do.
   Mipmaps use `SampleGrad` with derivatives taken before the branch, so fxc keeps
   the branch. Bias scales those derivatives. Depth textures read the nearest
-  texel. A comparison is a 2x2 `GatherRed` blended bilinearly (four `Load`s on GL ES 3,
-  which gathers nothing). Both turn depth
+  texel. A comparison is a 2x2 `GatherRed` blended bilinearly. Both turn depth
   back to 0 near, 1 far where Unity reverses it (`TIDEHL_REVERSED_Z`, from the
   platform defines Unity's HLSLSupport uses).
 - **Matrices are WGSL's transposed:** an HLSL row is a WGSL column, so `m[i]` and
@@ -325,6 +647,15 @@ translation` of their own whose first fields the reader uses.
 - **`tidec --hlsl <dir>`** writes `<n>.hlsl` in `--shaders`' order. `tide_spirv_shaders --hlsl <dir>`
   does the same for the renderer's shaders, through `TIDE_RENDERER_WGSL` (`platform/src/shaders.h`:
   each pipeline's WGSL pieces by name), which the SPIR-V tool and `tide unity` use too.
+- **Compute and storage (2026-11-05, `notes/compute.md` has the replay's contract):**
+  - Storage buffer i (binding 33 + i since 2026-11-05) is `_TideStorage<i>`, a `ByteAddressBuffer` (`read`) or `RWByteAddressBuffer` (`read_write`), in any stage. Raw rather than structured so one Unity `GraphicsBuffer` is storage, vertices, indices and indirect arguments (D3D11 has no buffer both structured and raw) and its stride never matters. Element i is at `tidehl_at<i>(i)`, `min(i, tidehl_length<i>() - 1) * stride`, the length `GetDimensions` over WGSL's stride (`arrayLength`); a value is `Load`/`Load2`/`Load4` through `asfloat`/`asint`, a write `Store*(at, asuint((T)(v)))`, a component's write the scalar at 4 bytes a component on, a compound assignment one statement whose byte is worked out once. Helpers are made on first use.
+  - `var<workgroup>` is `groupshared`, zeroed by `tidehl_compute` before it calls the WGSL's `compute` (as SPIR-V's is), and written at any index directly: `unrolled` (fxc's local-array writes) leaves workgroup and storage places alone.
+  - Atomics are helpers, made on first use, around `Interlocked*`, which give the old value through an out argument: `tidehl_<atomicOp><i>(at, ...)` on storage, `tidehl_<atomicOp>_<variable>([i, ]...)` on workgroup memory. `atomicLoad` is `InterlockedOr(..., 0)` and `atomicStore` `InterlockedExchange`, as Tint has them; `atomicSub` adds `0 - v`; i32's min and max are signed (`imm_atomic_imax/imin` in fxc's output, checked). `atomicCompareExchangeWeak` gives the struct `__atomic_compare_exchange_result_<u32|i32>`.
+  - `workgroupBarrier()` is `GroupMemoryBarrierWithGroupSync()`, `storageBarrier()` `DeviceMemoryBarrierWithGroupSync()`.
+  - The kernel: `[numthreads(x, y, z)] tidehl_compute(SV_DispatchThreadID, SV_GroupThreadID, SV_GroupIndex, SV_GroupID)`; `num_workgroups` is `_TideGroups` in `cbuffer TideGroups`, which the replay sets. `tide_hlsl_unity_compute` writes the `.compute` file (`#pragma kernel tidehl_compute`, `TideWarnings.hlsl`). `tide_hlsl_unity_shader` leaves out the OpenGL ES 3.0/WebGL 2 subshader of a draw that reads storage.
+  - A uniform block that isn't a struct is `tidehl_u`, alone in `TideUniforms`.
+  - fxc refuses a write every invocation makes to one place with values that differ (X3694 storage, X3695 workgroup, errors); X3583, the same value, is disabled in `TideWarnings.hlsl` (`notes/compute.md`).
+  - Tests: `wgsl_hlsl_<name>` (`expect_wgsl.cmake`, `MODE=hlsl`) compile each `compiler/tests/wgsl/*.wgsl` with fxc `/WX` through `TideWarnings.hlsl`, the kernel as `cs_5_0`, a draw's stages as `vs_5_0`/`ps_5_0`, for `SHADER_API_D3D11`, `SHADER_API_GLCORE` and `SHADER_API_GLES3`, and check the `.compute` has its kernel. Unity itself hasn't compiled or run them (the replay isn't built).
 - **Tests:** `tidec_hlsl_<name>` (`compiler/tests/expect_hlsl.cmake`) compile every golden
   shader's vertex and fragment stage with fxc (`vs_5_0`/`ps_5_0`, `/WX`) for
   `SHADER_API_D3D11`, `SHADER_API_GLCORE` and `SHADER_API_GLES3`, as Unity compiles each
@@ -566,12 +897,15 @@ tidec writes SPIR-V by translating the WGSL it already writes, rather than with 
     - every built-in tidec and the renderer call, and more of GLSL.std.450's;
     - `textureSample`, `...Level`, `...Grad`, `...Bias`, `...Compare(Level)`, `textureLoad`, `textureDimensions`, levels and samples;
     - `if`, `for`, `while`, `loop`/`continuing`/`break if`, `switch` with several selectors and `default` among them, `break`, `continue`, `discard` (`OpKill`) and `return`.
-  - It doesn't take storage buffers, atomics, workgroups or compute, `alias`, `override`, or f16.
+  - Compute and storage (2026-11-05, `notes/compute.md`): a `@compute @workgroup_size(x, y, z) fn compute` is a GLCompute entry point with LocalSize, its built-ins (`global_invocation_id`, `local_invocation_id`, `local_invocation_index`, `workgroup_id`, `num_workgroups`) Input variables in any order or struct; `var<storage, read|read_write> name: array<T>` is a runtime array (ArrayStride WGSL's: 4, 8 or 16) in a Block struct of its own (Offset 0) in StorageBuffer, NonWritable when `read`, and any stage reads it; `var<workgroup>` is a Workgroup variable of the plain type (no layout decorations), arrays of structs and atomics too; `arrayLength(&name)` is OpArrayLength; `workgroupBarrier()` and `storageBarrier()` are `OpControlBarrier Workgroup Workgroup` with AcquireRelease and WorkgroupMemory (264) or UniformMemory (72), as Tint writes them; atomics are `OpAtomic*` with Device scope on storage and Workgroup scope on workgroup memory, relaxed, `atomicCompareExchangeWeak` an `OpAtomicCompareExchange` and an `OpIEqual` into `__atomic_compare_exchange_result_<u32|i32>` (`old_value`, `exchanged`). An `atomic<T>` is T in SPIR-V (`plain`), so pointers and arrays of atomics share the number's types. A uniform block that is a number, vector or matrix is wrapped in a Block struct and read as its member 0, as a storage buffer is.
+  - The kernel zeroes its workgroup memory as it starts, as Tint's polyfill does (the elements of each array from `local_invocation_index` by the workgroup's size, the first invocation everything else, then a workgroup barrier), so the device needs no `shaderZeroInitializeWorkgroupMemory`. A `local_invocation_index` input is added where the kernel doesn't take one.
+  - It doesn't take `alias`, `override`, f16, storage structs or fixed-size storage arrays, `ptr<storage>`/`ptr<workgroup>` parameters, or atomics inside structs.
 - **What's out of range is made safe the way WebGPU (Tint) makes it, so a shader reads the same on both:**
   - integer `/` and `%` by zero, or the least i32 by -1, go by 1;
   - shift counts are masked to 5 bits;
   - float to int saturates (`FClamp` before `OpConvertFToS`/`U`);
-  - an index into a vector, matrix or array that isn't a constant is clamped to the last element (`UMin`), and a constant one is clamped as it's written.
+  - an index into a vector, matrix or array that isn't a constant is clamped to the last element (`UMin`), and a constant one is clamped as it's written;
+  - an index into a storage buffer's runtime array, constant or not, is `UMin(i, OpArrayLength - 1)`, for reads, writes and atomics, as Tint's robustness does.
   - Reads past a buffer's or image's end are the device's robustness features' job (`robustImageAccess`, `robustBufferAccess`, enabled where present).
 - **Structured control flow:** the patterns are glslang's.
   - A loop is its header (`OpLoopMerge`), a block for its condition (`OpBranchConditional` to the body or the merge), the body, and its continue block, which does a `for`'s step or a `continuing` and branches back.
@@ -584,6 +918,7 @@ tidec writes SPIR-V by translating the WGSL it already writes, rather than with 
   - A translation that fails is tidec's bug. It's an error naming the shader, and the build stops: codegen returns false after `gen_shaders`.
   - `tide_shader` grew two fields, so hosts, libraries and generated games rebuild together.
 - **`tidec --spirv <dir>`** writes each shader's module as `<n>.spv`, in `--shaders`' order. `tidec_spirv_<name>` (`compiler/tests/expect_spirv.cmake`) runs it on every `compiler/tests/shaders/*.tide` and has the SDK's `spirv-val --target-env vulkan1.1` check each module. `tide_spirv_shaders_valid` (`platform/tests/spirv_shaders.cmake`) does the same for the renderer's seven. Both exist where CMake finds `spirv-val` (`cmake/VulkanTests.cmake`).
+- **Compute tests (2026-11-05):** `wgsl_spirv_<name>` (`compiler/tests/expect_wgsl.cmake`, `MODE=spv`) translate each `compiler/tests/wgsl/*.wgsl` with `tide_wgsl_translate` (`compiler/tests/wgsl_translate.c`, the translators alone) and have `spirv-val --target-env vulkan1.3` check it: `platform/tests/compute.c`'s six shaders, a 3D workgroup of structs with arrays and matrices written through a helper and by indices worked out as it runs, every atomic on storage and workgroup memory (u32 and i32, scalars and arrays, constant and worked-out indices, `atomicCompareExchangeWeak` in a let and inline), every storage element type with `arrayLength`, component writes, compound assignments and `++`/`--`, storage read in both stages of a draw beside a texture, and built-ins in a struct and any order. `wgsl_refused_<name>` check both translators refuse `wgsl/refused/*.wgsl`, saying what the file's first comment says. Every existing golden and the renderer's shaders came out byte-identical (compared before and after). Semantics on a GPU wait for `gpu_vk.c`'s compute (`tide_platform_compute`).
 - **Tested:** all 81 golden shaders and the 7 built-ins pass `spirv-val`. Every game in the repo builds, so tidec translated every shader it has. The validation layer checks each module again as the GPU tests make their pipelines. `tide_platform_shaders` compares the CPU's and the GPU's results through the SPIR-V on this machine's NVIDIA driver.
 - **Not done:** `OpName`s for debuggers (RenderDoc shows ids); `OpDemoteToHelperInvocation` for `discard`. That would matter only for derivatives taken after a discard in the same quad, which tidec's frags don't do: they ask for theirs as they start.
 

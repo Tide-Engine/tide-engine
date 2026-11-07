@@ -1,0 +1,6 @@
+// Generated from actual source mesh bounds by impostor-bake.mjs.
+Render3D.ImpostorSettings ForestImpostorSettings()
+{
+    return Render3D.ImpostorSettings { enabled = true, center = float3(-0.124361, 5.675873, 0.0346865),
+        span = 13.59696121, depth = 6.798480603, parallax = 1 };
+}

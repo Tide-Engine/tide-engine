@@ -12,6 +12,8 @@ For how a game starts, hosts and joins matches, see [Matches](./matches.md). Thi
 
 Single-player is a match too: the machine runs a server itself, and connects to it through a loopback transport. There's no separate offline path, so what works alone works online.
 
+The player on the server's machine joins like any other, with a `PlayerID`, its own entities, input and commands, but it keeps no world of its own: it sees the server's, so the match is ticked once on that machine, and it never predicts or rolls back. It sees all of the match, including what [visibility](../game/visibility.md) hides from the other players.
+
 A minimized desktop window or a browser tab in the background keeps running without drawing, so the match goes on for the other players. Browsers slow a hidden page's timers and stop its animation frames, so a hidden page's frames come from a worker's timers instead. Meanwhile it runs a frame when its match is due a tick, at the game's `tickRate`, and none in between.
 
 A machine that stops simulating can't keep hosting: a program paused in a debugger, a browser that freezes its page, or a phone whose app is suspended can stop answering the other players. With [host migration](./matches.md#host-migration), another player's machine takes over a room's match. Without it, the other players eventually time out; the suspended host's own match resumes from where it stopped if its program comes back. Putting a phone's game in the background does not keep its match running there indefinitely.
@@ -113,7 +115,7 @@ Everything is sent again until it's acknowledged. Nothing waits on a reliable st
 
 [Commands](../game/commands.md) have a pending queue separate from tick inputs. The server schedules each received command into its next ticks and records its order. A command stays pending until a verified world confirms its sequence; duplicates are ignored. Per-player sequence state is part of the world and follows snapshots and host migration: a sequence for each [channel](../game/commands.md#ordering-channels) a game's commands are in, and a window of the unordered ids applied. Command handlers use ordinary guard clauses to check the sender's permissions and the payload against match state.
 
-A command too big for a datagram (one with a `List<byte>`, up to 4 MiB) uploads in 1000-byte chunks, 16 an update, acknowledged and resent under the inputs. In full-world games the server then distributes it before scheduling its tick, whose frame names the transfer. Visibility-enabled games keep command execution server-only and send permitted state consequences instead; a command transfer is not a public broadcast channel.
+A command too big for a datagram (one with a list, up to 4 MiB) uploads in 1000-byte chunks, 16 an update, acknowledged and resent under the inputs. In full-world games the server then distributes it before scheduling its tick, whose frame names the transfer. Visibility-enabled games keep command execution server-only and send permitted state consequences instead; a command transfer is not a public broadcast channel.
 
 ## Transports
 

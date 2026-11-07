@@ -1,0 +1,225 @@
+{
+  "date": "2026-10-30",
+  "baseline_commit": "e7b32f297d03a0ae08082d8e49d94437381f1f65",
+  "baseline": [
+    {
+      "path": "build/retarget-perf/retarget_perf_before_sampler.exe",
+      "bytes": 19552768,
+      "sha256": "dcc5129d7f9c864a376dbec9536390e369dafa38c2484cd58741bc71e478b79c"
+    },
+    {
+      "path": "build/retarget-perf/perf_before_sampler.c",
+      "bytes": 8112,
+      "sha256": "99016169fdb41ba68a759cb336581ca6dfd09d3d97e9848631cc6ac6ab087fcb"
+    },
+    {
+      "path": "build/retarget-perf/perf_before_sampler.tide",
+      "bytes": 2058,
+      "sha256": "b2d6a3d812fe9f15c481795a77779a7425478ffea81081a0b9952436cde3fd24"
+    }
+  ],
+  "baseline_not_preserved": [
+    "generated C",
+    "runtime library",
+    "compiler executable"
+  ],
+  "raw": [
+    {
+      "path": "raw/sampler-before-1.txt",
+      "bytes": 3097,
+      "sha256": "1cb127a4579b2b9d4c71fba07dfe5a83fa23115780bc951da62fb530cb81e7a5"
+    },
+    {
+      "path": "raw/sampler-before-2.txt",
+      "bytes": 3097,
+      "sha256": "1491704a2fccd7ebee63ceef4d6d1132fe7ad38de31581a7448f44c5cb80ff4d"
+    },
+    {
+      "path": "raw/sampler-before-3.txt",
+      "bytes": 3097,
+      "sha256": "2d94f4b912630c392a9da95e130bc2f774f78222ed3cf366e557ff066ef492ee"
+    },
+    {
+      "path": "raw/sampler-cold-helper.txt",
+      "bytes": 3096,
+      "sha256": "ca3fa66d5ae3c354b65443afd4a9283123d2f08787dd07a53c140300bd3bf008"
+    },
+    {
+      "path": "raw/sampler-control.txt",
+      "bytes": 3097,
+      "sha256": "24b9199f25e7b3f7e7beb8f162f7e574c012a77f35a37d722699325f8a2b6f38"
+    },
+    {
+      "path": "raw/sampler-final-after-1.txt",
+      "bytes": 3096,
+      "sha256": "d67aee412291be27dbc14d4b3bb4fd2daa3747b0b7101a9e75664ac7a9ad8720"
+    },
+    {
+      "path": "raw/sampler-final-after-2.txt",
+      "bytes": 3096,
+      "sha256": "8f9c445eaa06fb3522f01b3a6f526cff6ab704952b5808804e84f35f769608bd"
+    },
+    {
+      "path": "raw/sampler-final-after-3.txt",
+      "bytes": 3096,
+      "sha256": "3dddecfd741919183619b32a008b19789f378b28b02a0032643baefb2fa82d0e"
+    },
+    {
+      "path": "raw/sampler-final-before-1.txt",
+      "bytes": 3099,
+      "sha256": "e7a61c71c92a85cb980c56cd9d4cb4c4fe745c5111af9a9bdf0b5849acba4958"
+    },
+    {
+      "path": "raw/sampler-final-before-2.txt",
+      "bytes": 3099,
+      "sha256": "b3b965395e64fb804942cf79ee5ee6f82ed061e622c7753425678162ef964ac4"
+    },
+    {
+      "path": "raw/sampler-final-before-3.txt",
+      "bytes": 3097,
+      "sha256": "35c317c08093eea85ea9ea9954d1c829172ef02a48497a13746068ebf5201891"
+    },
+    {
+      "path": "raw/sampler-final-order.json",
+      "bytes": 972,
+      "sha256": "4bb3cc15843d029c1f2be373737f440543d8636acef075a37fdcf597ffd7f3f5"
+    },
+    {
+      "path": "raw/sampler-first.txt",
+      "bytes": 3096,
+      "sha256": "61c10399fb41cb214f2d5bc6a1a80950f2a3f54794a79f83f36123c0286e6979"
+    },
+    {
+      "path": "raw/sampler-inline.txt",
+      "bytes": 3096,
+      "sha256": "a315e9d11082c9d6a21136443152a88b973f77d68da4db571c8c44b0839a99b0"
+    },
+    {
+      "path": "raw/sampler-stack256.txt",
+      "bytes": 3096,
+      "sha256": "8880390b806ab02055df81301866fff2a11aaa0ccf7d800d514c17e4c90fe49b"
+    }
+  ],
+  "candidate": {
+    "frozen_at_utc": "2026-10-30T18:15:48.4857955Z",
+    "basis_commit": "e7b32f297d03a0ae08082d8e49d94437381f1f65",
+    "production_diff": {
+      "path": "candidate.patch",
+      "bytes": 7180,
+      "sha256": "4594dd4ea11877b7f50a3dbeec6cee4f0bad4940d447afcd95d91fa8a55f6cb7"
+    },
+    "files": [
+      {
+        "path": "compiler/src/codegen.c",
+        "bytes": 1295253,
+        "sha256": "45c9c791b5ec7091182c4568a2498da901bf83856932865bedddd4e9871699d3"
+      },
+      {
+        "path": "compiler/src/skinned_adapters.inc",
+        "bytes": 28122,
+        "sha256": "2327a142f07854e6de468fe00066c534e245fab8c3ec77f098ad3c36b32fae78"
+      },
+      {
+        "path": "engine/src/skinned.c",
+        "bytes": 108639,
+        "sha256": "9be5a7419ee0e91c701499b54da2a505a5cec3fca48dd7ff23e638b8b7144512"
+      },
+      {
+        "path": "build/retarget-perf/retarget_perf_after_sampler.exe",
+        "bytes": 19553792,
+        "sha256": "d8c990d115ec91bdc077c1a3a2f2fa61486cef116c76f36185048c77c5e3b273"
+      },
+      {
+        "path": "build/release/bin/tidec.exe",
+        "bytes": 4267008,
+        "sha256": "bdcc4dbebf9e26675e9aecf2dbaad42378c8fa06c35b447f612b4ba9c1a82cf4"
+      },
+      {
+        "path": "build/release/engine/tide.lib",
+        "bytes": 5444104,
+        "sha256": "e7572ae098cad635a22674515cce0814bdc3dba0a9925aedc9d2b4751ecc45cb"
+      },
+      {
+        "path": "build/release/external/retarget-perf/tide/retarget_perf/perf.c",
+        "bytes": 157919,
+        "sha256": "4f229804dfb20996186c3051fbf53d246da14aa5297e6e0ba0c53459e3f0a6a3"
+      },
+      {
+        "path": "build/release/external/retarget-perf/tide/retarget_perf/perf.h",
+        "bytes": 28036,
+        "sha256": "a4eb7a5d7ba3a736cc01c7ec186bf24b64d9a4f0d97cfa90d2323d7c77b52741"
+      },
+      {
+        "path": "build/release/external/retarget-perf/tide/retarget_perf/perf.pack",
+        "bytes": 18883264,
+        "sha256": "d56e6c8839ff3dc15e7ea5b2692297c8477cabf55eb18d78c9f9a266ef9baab0"
+      },
+      {
+        "path": "build/release/external/retarget-perf/tide/retarget_perf/perf_pack.c",
+        "bytes": 55029411,
+        "sha256": "e2d8b007b40437717ecf3aa6e972b36ff58685d40d96078020e22ada566b5e9c"
+      }
+    ]
+  },
+  "final_pairs": [
+    {
+      "round": 1,
+      "before": "raw/sampler-final-before-1.txt",
+      "after": "raw/sampler-final-after-1.txt"
+    },
+    {
+      "round": 2,
+      "before": "raw/sampler-final-before-2.txt",
+      "after": "raw/sampler-final-after-2.txt"
+    },
+    {
+      "round": 3,
+      "before": "raw/sampler-final-before-3.txt",
+      "after": "raw/sampler-final-after-3.txt"
+    }
+  ],
+  "status": "complete; final candidate and baseline hashes frozen before paired runs",
+  "final_launch_order": [
+    {
+      "label": "before-1",
+      "started_utc": "2026-10-30T18:27:50.2440866Z",
+      "finished_utc": "2026-10-30T18:27:51.8222074Z",
+      "exit_code": 0
+    },
+    {
+      "label": "after-1",
+      "started_utc": "2026-10-30T18:27:51.8741197Z",
+      "finished_utc": "2026-10-30T18:27:53.0629681Z",
+      "exit_code": 0
+    },
+    {
+      "label": "after-2",
+      "started_utc": "2026-10-30T18:27:53.0688294Z",
+      "finished_utc": "2026-10-30T18:27:54.2388522Z",
+      "exit_code": 0
+    },
+    {
+      "label": "before-2",
+      "started_utc": "2026-10-30T18:27:54.2417894Z",
+      "finished_utc": "2026-10-30T18:27:55.7725429Z",
+      "exit_code": 0
+    },
+    {
+      "label": "before-3",
+      "started_utc": "2026-10-30T18:27:55.7751677Z",
+      "finished_utc": "2026-10-30T18:27:57.3228850Z",
+      "exit_code": 0
+    },
+    {
+      "label": "after-3",
+      "started_utc": "2026-10-30T18:27:57.3253839Z",
+      "finished_utc": "2026-10-30T18:27:58.5244887Z",
+      "exit_code": 0
+    }
+  ],
+  "summary": {
+    "path": "summary.json",
+    "sha256": "8dab0c1f48e22c5dd8bc91047741ccbd1ff8660cb731e7b1a34d401aedef2c9e"
+  },
+  "timing_conditions": "All task builds/tests completed before the final six processes. No CPU quiet guard, detailed contention monitor or clock monitoring was used; other desktop activity was uncontrolled."
+}

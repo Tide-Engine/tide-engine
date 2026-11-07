@@ -6,7 +6,7 @@
 // Every one is basic operations in a fixed order (+ - * / sqrt, floor, and
 // the integer hash), so a point gives the same bits on every platform. The
 // GPU runs the same formulas, line for line (compiler/src/shader.c, which
-// spells them in GLSL and WGSL): a frag that shades by noise draws what the
+// spells them in WGSL): a frag that shades by noise draws what the
 // match computed, up to how its GPU rounds. A change here goes there too.
 //
 // A cell's gradient, or its feature point, comes from Math.Hash of the cell

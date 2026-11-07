@@ -1,6 +1,9 @@
 #include "tide/draw.h"
+#include "tide/draw_profile.h"
 
 #include <stddef.h>
+#include <float.h>
+#include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,11 +13,61 @@
 #include "tide/pack.h"
 #include "tide/page.h"
 #include "skinned_cache.h"
+#include "list_data_cache.h"
+#include "frustum_cull.h"
+#include "mesh_levels.h"
 
 static void reindex_meshes(tide_draw_list *d);
+static uint32_t mesh_hash(uint32_t space, uint64_t id, uint64_t other, uint64_t version);
 static void reindex_textures(tide_draw_list *d);
 
 static tide_render_target_state *render_targets;
+static uint64_t render_revision;
+static _Thread_local tide_target_content_scope target_content_scope;
+
+static int64_t next_render_revision(void)
+{
+    if (render_revision == INT64_MAX) abort();
+    return (int64_t)++render_revision;
+}
+
+uint64_t tide_render_target_revision_highwater(void) { return render_revision; }
+
+int64_t tide_render_revision_next(void) { return next_render_revision(); }
+
+void tide_render_target_revision_resume(const uint64_t previous)
+{
+    if (previous > INT64_MAX) abort();
+    if (previous > render_revision) render_revision = previous;
+}
+
+tide_target_content_scope tide_render_target_content_resolver(const tide_target_content_scope scope)
+{
+    const tide_target_content_scope previous = target_content_scope;
+    target_content_scope = scope;
+    return previous;
+}
+
+void tide_render_target_content_observe(const uint64_t id, const tide_target_content now, const uint32_t epoch)
+{
+    tide_render_target_state *s = tide_render_target_state_of(id);
+    if (!s || !s->alive) return;
+    if (s->content_seen && (now.device != s->content.device || s->content_epoch != epoch
+        || now.pixels.x != s->content.pixels.x || now.pixels.y != s->content.pixels.y))
+        s->content_revision = next_render_revision();
+    s->content = now;
+    s->content_seen = true;
+    s->content_epoch = epoch;
+}
+
+int64_t tide_render_target_content_revision(const tide_render_target target)
+{
+    tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (!s || !s->alive) return 0;
+    if (target_content_scope.resolve)
+        tide_render_target_content_observe(target.id, target_content_scope.resolve(s->size), target_content_scope.epoch);
+    return s->content_revision;
+}
 
 _Static_assert(TIDE_TARGET_COLORS * 3 == TIDE_RENDER_IMAGE_SHIFT && TIDE_TARGET_RGBA16F + 1 <= 7
                && TIDE_TARGET_COLORS - 1 <= (int)(TIDE_RENDER_IMAGE >> TIDE_RENDER_IMAGE_SHIFT),
@@ -26,7 +79,8 @@ _Static_assert(TIDE_RENDER_SAMPLES_SHIFT == TIDE_RENDER_IMAGE_SHIFT + 2 && (1 <<
 // A managed target's id: its state's address, and what it holds.
 static uint64_t managed_id(const tide_render_target_state *s)
 {
-    return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->holds | (s->cube ? TIDE_RENDER_CUBE : 0u);
+    return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->holds | (s->cube ? TIDE_RENDER_CUBE : 0u)
+         | (s->layers ? TIDE_RENDER_ARRAY : 0u);
 }
 
 // What a target of these color images holds, as its id's bits say it: for
@@ -101,6 +155,7 @@ static tide_render_target make_target_sampled(const tide_target_size size, const
     tide_render_target_state *s = (tide_render_target_state *)(((uintptr_t)memory + (uintptr_t)TIDE_RENDER_BITS)
                                                                & ~(uintptr_t)TIDE_RENDER_BITS);
     *s = (tide_render_target_state){.next = render_targets, .owner = &render_targets, .size = size, .version = 1,
+                                    .content_revision = next_render_revision(),
                                     .memory = memory, .alive = tide_target_size_valid(size),
                                     .holds = (uint16_t)(holds_of(formats) | sampled)};
     render_targets = s;
@@ -237,6 +292,11 @@ void tide_render_target_resize(const tide_render_target target, const float widt
         fprintf(stderr, "RenderTarget.Resize: a cube's face has its cube's size: 'cube.Resize(size)' resizes all six\n");
         return;
     }
+    if (s && s->layers) {
+        fprintf(stderr, "RenderTarget.Resize: an array's layer has its array's size: 'array.Resize(width, height)' resizes "
+                        "them all\n");
+        return;
+    }
     if (s && s->alive && s->size.window > 0.0f) {
         fprintf(stderr, "RenderTarget.Resize: a target made with RenderTarget.Window follows the window's size, and "
                         "keeps it\n");
@@ -249,12 +309,15 @@ void tide_render_target_resize(const tide_render_target target, const float widt
     }
     s->size = size;
     s->version++;
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
 }
 
 void tide_render_target_dispose(const tide_render_target target)
 {
     tide_render_target_state *s = tide_render_target_state_of(target.id);
     if (s && s->cube) fprintf(stderr, "RenderTarget.Dispose: a cube's face goes with its cube: 'cube.Dispose()' lets all six go\n");
+    else if (s && s->layers) fprintf(stderr, "RenderTarget.Dispose: an array's layer goes with its array: 'array.Dispose()'\n");
     else if (s) s->alive = false;
     else if (target.id) fprintf(stderr, "RenderTarget.Dispose requires an owned target\n");
 }
@@ -288,6 +351,8 @@ void tide_cubemap_resize(const tide_cubemap_ref cube, const float size)
     }
     s->size = sized;
     s->version++;
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
 }
 
 void tide_cubemap_dispose(const tide_cubemap_ref cube)
@@ -295,6 +360,99 @@ void tide_cubemap_dispose(const tide_cubemap_ref cube)
     tide_render_target_state *s = tide_render_target_state_of(cube.target.id);
     if (s && s->cube) s->alive = false;
     else fprintf(stderr, "Cubemap.Dispose requires a cube made with Cubemap(size): an asset's is the pack's\n");
+}
+
+tide_texture_array_ref tide_texture_array_make(const tide_target_size size, const uint32_t layers, const tide_target_format format)
+{
+    const bool counted = layers >= 1u && layers <= TIDE_TEXTURE_ARRAY_LAYERS;
+    if (!counted) {
+        fprintf(stderr, "TextureArray(width, height, layers) requires 1 to %d layers, and this asked for %u\n",
+                TIDE_TEXTURE_ARRAY_LAYERS, (unsigned)layers);
+    }
+    const tide_render_target made = make_target(counted ? size : (tide_target_size){0}, one_format(format),
+                                                counted ? "TextureArray(width, height, layers) requires positive dimensions"
+                                                        : "TextureArray: no array of that many layers");
+    tide_render_target_state *s = tide_render_target_state_of(made.id);
+    if ((uint64_t)(uintptr_t)s & (TIDE_RENDER_ARRAY | TIDE_RENDER_LAYER)) { // Its id says which layer there
+        fprintf(stderr, "tide: an array's state is at an address past what its id has room for\n");
+        abort();
+    }
+    s->layers = (uint16_t)(counted ? layers : 1u);
+    return (tide_texture_array_ref){.target = {.id = managed_id(s), .size = s->size}, .layers = s->layers};
+}
+
+tide_render_target tide_texture_array_layer(const tide_texture_array_ref array, const int32_t layer)
+{
+    const tide_render_target resolved = tide_render_target_resolve(array.target);
+    const tide_render_target_state *s = tide_render_target_state_of(resolved.id);
+    if (!tide_render_target_arrayed(resolved.id) || !s || layer < 0 || layer >= (int32_t)s->layers)
+        return (tide_render_target){.id = TIDE_RENDER_INVALID};
+    return (tide_render_target){.id = tide_render_target_array_of(resolved.id) | (uint64_t)(layer + 1) << TIDE_RENDER_LAYER_SHIFT,
+                                .size = resolved.size};
+}
+
+tide_depth_ref tide_texture_array_depth(const tide_texture_array_ref array)
+{
+    const tide_render_target resolved = tide_render_target_resolve(array.target);
+    const uint64_t id = tide_render_target_arrayed(resolved.id) ? tide_render_target_array_of(resolved.id)
+                      : array.target.id ? TIDE_RENDER_INVALID : 0u;
+    return (tide_depth_ref){.target = {.id = id, .size = resolved.size}};
+}
+
+void tide_texture_array_resize(const tide_texture_array_ref array, const float width, const float height)
+{
+    tide_render_target_state *s = tide_render_target_state_of(array.target.id);
+    const tide_target_size sized = {.width = width, .height = height, .scale = s ? s->size.scale : 0.0f};
+    if (!s || !s->layers || !s->alive || !tide_target_size_valid(sized)) {
+        fprintf(stderr, "TextureArray.Resize requires a live array made with TextureArray(width, height, layers) and "
+                        "positive dimensions\n");
+        return;
+    }
+    s->size = sized;
+    s->version++;
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
+}
+
+void tide_texture_array_dispose(const tide_texture_array_ref array)
+{
+    tide_render_target_state *s = tide_render_target_state_of(array.target.id);
+    if (s && s->layers) s->alive = false;
+    else fprintf(stderr, "TextureArray.Dispose requires an array made with TextureArray(width, height, layers): an asset's "
+                         "is the pack's\n");
+}
+
+tide_texture_array_ref tide_texture_array_recreate(const tide_texture_array_ref previous)
+{
+    if (!previous.target.id) return previous; // The pack's: its name is the same in every build
+    tide_texture_array_ref next = {.target = tide_render_target_recreate(previous.target), .layers = previous.layers};
+    tide_render_target_state *s = tide_render_target_state_of(next.target.id);
+    if (s && previous.layers && previous.layers <= TIDE_TEXTURE_ARRAY_LAYERS) s->layers = (uint16_t)previous.layers;
+    if (s) next.layers = s->layers;
+    return next;
+}
+
+int32_t tide_depth_array_count(const tide_depth_ref depths)
+{
+    const tide_render_target_state *s = tide_render_target_state_of(depths.target.id);
+    return s && s->alive && tide_render_target_arrayed(depths.target.id) ? (int32_t)s->layers : 0;
+}
+
+int32_t tide_texture_array_count(const tide_texture_array_ref array)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_array_grid(array, &grid, &shape)) return tide_grid_array_extent(grid, &shape).z;
+    if (!array.target.id) {
+        int32_t width, height;
+        uint32_t layers;
+        uint64_t version;
+        const uint8_t *const *pixels;
+        return array.named && tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)
+            ? (int32_t)layers : 0;
+    }
+    const tide_render_target_state *s = tide_render_target_state_of(array.target.id);
+    return s && s->alive && tide_render_target_arrayed(array.target.id) ? (int32_t)s->layers : 0;
 }
 
 tide_cubemap_ref tide_cubemap_recreate(const tide_cubemap_ref previous)
@@ -307,6 +465,9 @@ void tide_render_target_adopt(const tide_render_target target)
 {
     tide_render_target_state *s = tide_render_target_state_of(target.id);
     if (!s || s->owner == &render_targets) return;
+    tide_render_target_revision_resume((uint64_t)s->content_revision);
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
     tide_render_target_state **at = s->owner;
     while (*at && *at != s) at = &(*at)->next;
     if (*at) *at = s->next;
@@ -321,7 +482,7 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
         return (tide_render_target){0};
     // A texture's reference names one of its target's color images, and its new one names the same; a
     // cube's face is that face of the new cube
-    const uint64_t image = previous.id & (TIDE_RENDER_IMAGE | TIDE_RENDER_FACE), whole = previous.id & ~image;
+    const uint64_t image = previous.id & (TIDE_RENDER_IMAGE | TIDE_RENDER_FACE | TIDE_RENDER_LAYER), whole = previous.id & ~image;
     for (const tide_render_target_state *s = render_targets; s; s = s->next) {
         if (s->reload_id == whole) return (tide_render_target){.id = managed_id(s) | image, .size = s->size};
     }
@@ -332,6 +493,11 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
     tide_render_target_state *s = tide_render_target_state_of(next.id);
     s->reload_id = whole;
     s->cube = (whole & TIDE_RENDER_CUBE) != 0;
+    // An array's: as many layers as its value says (tide_texture_array_recreate), or as the layer a target names
+    if (whole & TIDE_RENDER_ARRAY) {
+        const uint32_t layer = (uint32_t)((image & TIDE_RENDER_LAYER) >> TIDE_RENDER_LAYER_SHIFT);
+        s->layers = (uint16_t)(layer > 1u ? layer : 1u);
+    }
     next.id = managed_id(s) | image;
     return next;
 }
@@ -361,9 +527,331 @@ static void free_pixels(const tide_draw_texture *t)
     }
 }
 
+// Copies of meshes that went, for meshes made later to take (tide_draw_list.spare_copies): freeing hundreds of
+// them as a frame ends (a turn leaves them all behind) took a frame of its own, and a new copy's memory is
+// touched for the first time as it's written. At most COPIES_MOST bytes are kept, and what's past that is freed
+// COPIES_FREED_A_FRAME at a time.
+typedef struct tide_draw_copy {
+    void *at;
+    uint64_t bytes;
+} tide_draw_copy;
+struct tide_draw_copies {
+    tide_draw_copy *copies;
+    uint32_t count, capacity;
+    uint64_t bytes;
+};
+#define COPIES_MOST (UINT64_C(64) * 1024u * 1024u)
+#define COPIES_FREED_A_FRAME (UINT64_C(8) * 1024u * 1024u)
+
+static void copy_put(tide_draw_list *d, void *at, const uint64_t bytes)
+{
+    if (!at) return;
+    if (!bytes) {
+        free(at);
+        return;
+    }
+    if (!d->spare_copies) d->spare_copies = tide_alloc_zeroed(1, sizeof *d->spare_copies);
+    struct tide_draw_copies *c = d->spare_copies;
+    if (c->count == c->capacity) {
+        const uint32_t room = c->capacity ? c->capacity * 2u : 64u;
+        c->copies = tide_realloc(c->copies, (size_t)c->capacity * sizeof *c->copies, (size_t)room * sizeof *c->copies);
+        c->capacity = room;
+    }
+    c->copies[c->count++] = (tide_draw_copy){at, bytes};
+    c->bytes += bytes;
+}
+
+// A kept copy of at least `bytes`, and not much more (twice, and 64 KiB), with how big it is: NULL for none.
+static void *copy_take(tide_draw_list *d, const uint64_t bytes, uint64_t *got)
+{
+    struct tide_draw_copies *c = d->spare_copies;
+    if (!c || !bytes) return NULL;
+    uint32_t best = UINT32_MAX;
+    for (uint32_t i = 0; i < c->count; i++) {
+        const uint64_t size = c->copies[i].bytes;
+        if (size < bytes || size > bytes * 2u + 65536u) continue;
+        if (best == UINT32_MAX || size < c->copies[best].bytes) best = i;
+    }
+    if (best == UINT32_MAX) return NULL;
+    void *at = c->copies[best].at;
+    *got = c->copies[best].bytes;
+    c->bytes -= *got;
+    c->copies[best] = c->copies[--c->count];
+    return at;
+}
+
+// As a frame ends: what's past the budget goes, a frame's share of it.
+static void copies_trim(tide_draw_list *d)
+{
+    struct tide_draw_copies *c = d->spare_copies;
+    if (!c) return;
+    uint64_t freed = 0;
+    while (c->count && c->bytes > COPIES_MOST && freed < COPIES_FREED_A_FRAME) {
+        const tide_draw_copy last = c->copies[--c->count];
+        free(last.at);
+        c->bytes -= last.bytes;
+        freed += last.bytes;
+    }
+}
+
+static void copies_free(tide_draw_list *d)
+{
+    struct tide_draw_copies *c = d->spare_copies;
+    if (!c) return;
+    for (uint32_t i = 0; i < c->count; i++) free(c->copies[i].at);
+    free(c->copies);
+    free(c);
+    d->spare_copies = NULL;
+}
+
+// A mesh's place goes free, its copy kept for another.
+static void free_mesh_place(tide_draw_list *d, const uint32_t place)
+{
+    tide_draw_mesh_data *m = &d->meshes[place];
+    copy_put(d, m->vertices, m->vertex_capacity);
+    copy_put(d, m->indices, (uint64_t)m->index_capacity * sizeof(uint32_t));
+    free(m->level_indices);
+    *m = (tide_draw_mesh_data){.next_free = d->mesh_free};
+    d->mesh_free = place + 1u;
+    if (d->mesh_gpu) d->mesh_gpu[place] = TIDE_MESH_GPU_NONE;
+}
+
+// An idle mesh the renderer has, of lists that have it: its copy goes, and its counts stay (tide/draw.h).
+static void hollow_mesh(tide_draw_list *d, tide_draw_mesh_data *m)
+{
+    copy_put(d, m->bytes, m->vertex_capacity);
+    copy_put(d, m->indices, (uint64_t)m->index_capacity * sizeof(uint32_t));
+    m->bytes = NULL;
+    m->indices = NULL;
+    m->vertex_capacity = m->index_capacity = 0;
+    m->hollow = true;
+}
+
+// The bytes a mesh's copy takes, for the idle budget.
+static uint64_t mesh_bytes(const tide_draw_mesh_data *m)
+{
+    return m->vertex_capacity + ((uint64_t)m->index_capacity + m->level_index_capacity) * sizeof(uint32_t);
+}
+
+// Lists made along the way, and a pack's, are all one place's (mesh3_slot), as made meshes are (tide_draw_mesh_key's
+// UINT64_MAX, no handle's): which one was drawn at another version since can't be told, so only the budget lets
+// theirs go.
+static bool mesh_of_scratch(const tide_draw_mesh_data *m)
+{
+    const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
+    return m->space != TIDE_MESH_MEMORY && (m->id == scratch || m->other == scratch || m->id == UINT64_MAX);
+}
+
+static bool same_lists(const tide_draw_mesh_data *a, const tide_draw_mesh_data *b)
+{
+    return a->space == b->space && a->id == b->id && a->other == b->other;
+}
+
+typedef struct idle_mesh {
+    uint64_t bytes;
+    float far; // Squared, from where the camera was (tide_draw_list.idle_eye): FLT_MAX where it isn't known
+    uint32_t age, place;
+    bool once; // Only one frame drew it: TIDE_MESH_ONCE_*'s
+} idle_mesh;
+
+static int idle_mesh_order(const void *left, const void *right)
+{
+    const idle_mesh *a = left, *b = right;
+    if (a->far != b->far) return a->far < b->far ? -1 : 1;
+    if (a->age != b->age) return a->age < b->age ? -1 : 1;
+    return a->place < b->place ? -1 : a->place != b->place;
+}
+
+// How far a mesh was drawn from where the frame's camera was, squared, for the idle budget: 0 for every mesh
+// where the frame had no camera, so they go by age alone.
+static float idle_far(const tide_draw_list *d, const tide_draw_mesh_data *m)
+{
+    if (!d->idle_eye_set) return 0.0f;
+    if (!m->placed) return FLT_MAX;
+    const float x = m->where[0] - d->idle_eye[0], y = m->where[1] - d->idle_eye[1], z = m->where[2] - d->idle_eye[2];
+    const float far = x * x + y * y + z * z;
+    return far == far && far < FLT_MAX ? far : FLT_MAX;
+}
+
+// After places went: a level whose mesh went goes too, its corners having been that mesh's, and the table of
+// places is made again.
+static void forget_unplaced_levels(tide_draw_list *d)
+{
+    for (uint32_t i = 0; i < d->mesh_count; i++) {
+        const tide_draw_mesh_data *m = &d->meshes[i];
+        if (m->space == TIDE_MESH_NONE || !m->base) continue;
+        const tide_draw_mesh_data *base = m->base <= d->mesh_count ? &d->meshes[m->base - 1u] : NULL;
+        if (!base || base->space == TIDE_MESH_NONE || base->base || !same_lists(base, m)) free_mesh_place(d, i);
+    }
+    reindex_meshes(d);
+}
+
+// The meshes the frame didn't draw: kept, within the idle budget (TIDE_MESH_IDLE_FRAMES, tide/draw.h), or one frame
+// alone drew them within TIDE_MESH_ONCE_FRAMES', where their lists weren't drawn at another version this frame.
+// Each level of detail goes with the mesh it's of. Which go is the list's alone, so it's the same each run.
+static void forget_idle_meshes(tide_draw_list *d)
+{
+    // What the frame didn't draw, and that the renderer has, of lists that have it, gives its copy up first, so
+    // that what's weighed below is what's kept
+    if (d->mesh_gpu) {
+        for (uint32_t i = 0; i < d->mesh_count; i++) {
+            tide_draw_mesh_data *m = &d->meshes[i];
+            if (m->space == TIDE_MESH_NONE || m->frame == d->frame || m->base || !m->relisted || m->hollow
+                || d->mesh_gpu[i] != TIDE_MESH_GPU_HAS) continue;
+            hollow_mesh(d, m);
+        }
+    }
+    // What's past its frames goes first, with nothing to make: the rest are weighed below
+    uint32_t idle = 0, drawn = 0, held = 0;
+    bool freed = false;
+    for (uint32_t i = 0; i < d->mesh_count; i++) {
+        const tide_draw_mesh_data *m = &d->meshes[i];
+        if (m->space == TIDE_MESH_NONE) continue;
+        const bool dropped = d->mesh_gpu && d->mesh_gpu[i] == TIDE_MESH_GPU_DROPPED;
+        if (dropped && !m->hollow) d->mesh_gpu[i] = TIDE_MESH_GPU_NONE; // Its copy is sent again when it's drawn
+        if (dropped && m->hollow) { // The renderer let it go, and nothing else has it: a draw copies it again
+            free_mesh_place(d, i);
+            freed = true;
+        } else if (m->frame == d->frame) {
+            if (!m->base && !mesh_of_scratch(m)) drawn++;
+        } else if (m->hollow) { // No budget but the renderer's: kept till its lists are drawn at another version
+            if (d->frame - m->frame > (uint32_t)TIDE_MESH_IDLE_FRAMES) {
+                free_mesh_place(d, i);
+                freed = true;
+            } else {
+                held++;
+            }
+        } else if (d->frame - m->frame > (m->made == m->frame ? (uint32_t)TIDE_MESH_ONCE_FRAMES : (uint32_t)TIDE_MESH_IDLE_FRAMES)) {
+            free_mesh_place(d, i);
+            freed = true;
+        } else {
+            idle++;
+        }
+    }
+    if (!idle && !held) {
+        if (freed) forget_unplaced_levels(d);
+        return;
+    }
+    // The lists the frame drew, by whose they are
+    uint32_t *seen = NULL, mask = 0;
+    if (drawn) {
+        uint32_t capacity = 16u;
+        while (capacity / 2u < drawn) capacity *= 2u;
+        seen = tide_alloc_zeroed(capacity, sizeof(uint32_t));
+        mask = capacity - 1u;
+        for (uint32_t i = 0; i < d->mesh_count; i++) {
+            const tide_draw_mesh_data *m = &d->meshes[i];
+            if (m->space == TIDE_MESH_NONE || m->frame != d->frame || m->base || mesh_of_scratch(m)) continue;
+            uint32_t at = mesh_hash(m->space, m->id, m->other, 0) & mask;
+            while (seen[at]) at = (at + 1u) & mask;
+            seen[at] = i + 1u;
+        }
+    }
+    idle_mesh *kept = tide_alloc((idle ? idle : 1u) * sizeof(idle_mesh));
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < d->mesh_count; i++) {
+        tide_draw_mesh_data *m = &d->meshes[i];
+        if (m->space == TIDE_MESH_NONE || m->frame == d->frame) continue;
+        bool keep = true;
+        if (seen && !m->base && !mesh_of_scratch(m)) {
+            for (uint32_t at = mesh_hash(m->space, m->id, m->other, 0) & mask; seen[at]; at = (at + 1u) & mask) {
+                if (same_lists(&d->meshes[seen[at] - 1u], m)) {
+                    keep = false; // Its lists are at another version now
+                    break;
+                }
+            }
+        }
+        if (keep && m->hollow) continue; // Outside the budget
+        if (keep) {
+            kept[count++] = (idle_mesh){.bytes = mesh_bytes(m), .far = idle_far(d, m), .age = d->frame - m->frame,
+                                        .place = i, .once = m->made == m->frame};
+        } else {
+            free_mesh_place(d, i);
+            freed = true;
+        }
+    }
+    free(seen);
+    // The budgets: sorted, the most recently drawn first, only where they're past one
+    uint64_t total[2] = {0, 0};
+    uint32_t counted[2] = {0, 0};
+    for (uint32_t i = 0; i < count; i++) {
+        total[kept[i].once] += kept[i].bytes;
+        counted[kept[i].once]++;
+    }
+    if (counted[0] > TIDE_MESH_IDLE_COUNT || total[0] > TIDE_MESH_IDLE_BYTES || counted[1] > TIDE_MESH_ONCE_COUNT
+        || total[1] > TIDE_MESH_ONCE_BYTES) {
+        qsort(kept, count, sizeof *kept, idle_mesh_order);
+        uint64_t remaining[2] = {TIDE_MESH_IDLE_BYTES, TIDE_MESH_ONCE_BYTES};
+        uint32_t room[2] = {TIDE_MESH_IDLE_COUNT, TIDE_MESH_ONCE_COUNT};
+        for (uint32_t i = 0; i < count; i++) {
+            const bool once = kept[i].once;
+            if (room[once] && kept[i].bytes <= remaining[once]) {
+                remaining[once] -= kept[i].bytes;
+                room[once]--;
+                continue;
+            }
+            free_mesh_place(d, kept[i].place);
+            freed = true;
+        }
+    }
+    free(kept);
+    if (freed) forget_unplaced_levels(d);
+}
+
+// As a frame ends, before the idle meshes are weighed: where its camera was (the window's, or where the window
+// has none, the first that sees in perspective: a game drawing its scene into a target), and where each mesh it
+// drew was put (its first instance's place).
+static void note_mesh_places(tide_draw_list *d)
+{
+    const tide_draw_place *window = d->target ? &d->window : &d->place;
+    uint32_t camera = window->camera_3d <= d->camera_3d_count ? window->camera_3d : 0u;
+    for (uint32_t i = 0; !camera && i < d->camera_3d_count; i++) {
+        const tide_float4x4 *p = &d->cameras_3d[i].projection;
+        if (p->c3.w == 0.0f && p->c2.w != 0.0f) camera = i + 1u;
+    }
+    if (camera) {
+        const tide_float4 eye = d->cameras_3d[camera - 1u].transform.c3;
+        if (tide_is_finite_f(eye.x) && tide_is_finite_f(eye.y) && tide_is_finite_f(eye.z)) {
+            d->idle_eye[0] = eye.x;
+            d->idle_eye[1] = eye.y;
+            d->idle_eye[2] = eye.z;
+            d->idle_eye_set = true;
+        }
+    }
+    for (uint32_t i = 0; i < d->count; i++) {
+        const tide_draw_command *c = &d->commands[i];
+        uint32_t mesh = 0;
+        float at[16];
+        if (c->kind == TIDE_DRAW_MESH_3D && c->mesh3.count && c->mesh3.first < d->matrix_count) {
+            mesh = c->mesh3.mesh;
+            memcpy(at, &d->matrices[c->mesh3.first], sizeof at);
+        } else if (c->kind == TIDE_DRAW_SHADED && c->shaded.run < d->run_count) {
+            const tide_draw_run *run = &d->runs[c->shaded.run];
+            const void *first = run->shader && run->shader->dims == 3 && run->shader->instance_floats >= 4u && run->count
+                ? tide_draw_run_instance(d, run, 0) : NULL; // Its transform starts it
+            if (first) {
+                mesh = run->mesh;
+                memcpy(at, first, sizeof at);
+            }
+        }
+        if (!mesh || mesh > d->mesh_count) continue;
+        if (d->meshes[mesh - 1u].base && d->meshes[mesh - 1u].base <= d->mesh_count) mesh = d->meshes[mesh - 1u].base;
+        tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+        m->placed = tide_is_finite_f(at[12]) && tide_is_finite_f(at[13]) && tide_is_finite_f(at[14]);
+        m->where[0] = at[12];
+        m->where[1] = at[13];
+        m->where[2] = at[14];
+    }
+}
+
 void tide_draw_reset(tide_draw_list *d)
 {
+    d->profile_mesh_name = NULL;
+    d->profile_link_count = 0;
+    d->profile_source = NULL;
+    d->profile_active = NULL;
     tide_skinned_draw_cache_reset(d);
+    if (d->list_data) memset(d->list_data, 0, sizeof *d->list_data);
     d->count = 0;
     d->text_used = 0;
     d->vertex_count = 0;
@@ -374,20 +862,27 @@ void tide_draw_reset(tide_draw_list *d)
     d->run_count = 0;
     d->instance_used = 0;
     d->uniform_used = 0;
+    d->compute_count = d->storage_count = d->gpu_op_count = d->gpu_word_count = 0;
+    d->cull_count = d->cull_camera_count = d->cull_groups = 0;
+    d->storage_next = 0;
+    d->indirect_next = 0;
     d->shape_count = 0;
     d->target_count = d->target = 0;
     // Every setting is back where a frame starts
     d->place = d->window = (tide_draw_place){0};
     d->frustum_ready = false;
+    d->mesh_key = d->mesh_key_vertices = d->mesh_key_indices = 0;
     d->unsettled = d->altered = 0;
+    note_mesh_places(d); // Before the cameras and settings go
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
-    d->bold = NULL;
+    d->font_count = 0;
     // The textures the frame drew with stay, for the next to find its pixels
-    // here already
+    // here already, and the pages of listed regions kept for frames to come
+    if (d->listed) tide_draw_listed_hold(d);
     uint32_t kept = 0;
     for (uint32_t i = 0; i < d->texture_count; i++) {
         tide_draw_texture *t = &d->textures[i];
-        if (t->frame != d->frame) {
+        if (t->frame != d->frame && !t->held) {
             free_pixels(t);
             continue;
         }
@@ -397,20 +892,13 @@ void tide_draw_reset(tide_draw_list *d)
         d->texture_count = kept;
         reindex_textures(d);
     }
-    // ...and so do its 3D meshes, each in its place
-    bool freed = false;
-    for (uint32_t i = 0; i < d->mesh_count; i++) {
-        tide_draw_mesh_data *m = &d->meshes[i];
-        if (m->space == TIDE_MESH_NONE || m->frame == d->frame) continue;
-        free(m->vertices);
-        free(m->indices);
-        free(m->level_indices);
-        *m = (tide_draw_mesh_data){.next_free = d->mesh_free};
-        d->mesh_free = i + 1u;
-        freed = true;
-    }
-    if (freed) reindex_meshes(d);
+    // ...and so do its 3D meshes, each in its place, and for a while those it didn't draw
+    forget_idle_meshes(d);
+    copies_trim(d);
     d->leveled = 0;
+    d->lod_want = 0.0f;
+    d->lod_model = 0;
+    tide_draw_lod_collect(d); // Levels made in the background since, for the meshes that are still here
     d->frame++;
 }
 
@@ -423,6 +911,8 @@ static void free_meshes(tide_draw_list *d)
     }
     free(d->meshes);
     free(d->mesh_index);
+    free(d->mesh_gpu);
+    d->mesh_gpu = NULL;
     d->meshes = NULL;
     d->mesh_count = d->mesh_capacity = d->mesh_free = 0;
     d->mesh_index = NULL;
@@ -431,9 +921,16 @@ static void free_meshes(tide_draw_list *d)
 
 void tide_draw_free(tide_draw_list *d)
 {
+    tide_draw_lod_free(d); // First: what its jobs make is stopped and waited for
     tide_skinned_draw_cache_free(d);
+    free(d->list_data);
+    if (d->listed) tide_draw_listed_clear(d, true);
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     free_meshes(d);
+    copies_free(d);
+    free(d->profile_links);
+    free(d->culls);
+    free(d->cull_cameras);
     free(d->commands);
     free(d->text);
     free(d->vertices);
@@ -453,7 +950,12 @@ void tide_draw_free(tide_draw_list *d)
     free(d->runs);
     free(d->instances);
     free(d->uniforms);
+    free(d->computes);
+    free(d->storage);
+    free(d->gpu_ops);
+    free(d->gpu_words);
     free(d->shapes);
+    free(d->fonts);
     free(d->level_room);
     *d = (tide_draw_list){0};
 }
@@ -625,6 +1127,7 @@ static __attribute__((noinline)) void settle(tide_draw_list *d)
         c->camera.matrix = matrix;
         c->camera.fit = fit;
         c->camera.mirrored = mirrored;
+        c->camera.data = p->camera_3d;
         p->played_3d = p->camera_3d;
     }
     if (p->clip != p->played_clip) {
@@ -722,8 +1225,10 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
             case TIDE_DRAW_SAVED_STENCIL: p->stencil = s->value; break;
             case TIDE_DRAW_SAVED_LOD: p->lod = s->value; break;
             case TIDE_DRAW_SAVED_LOD_CAMERA: p->lod_camera = s->value; break;
+            case TIDE_DRAW_SAVED_LOD_PIXELS: p->lod_pixels = s->pixels; break;
             case TIDE_DRAW_SAVED_FRUSTUM_CULLING: p->no_frustum_culling = s->value; break;
             case TIDE_DRAW_SAVED_BOUNDS: p->bounds = s->bounds; break;
+            case TIDE_DRAW_SAVED_OCCLUSION: p->occlusion = s->value; break;
             case TIDE_DRAW_SAVED_CAMERA_2D: p->camera_2d = s->value; break;
             default: p->camera_3d = s->value; break;
             }
@@ -866,7 +1371,7 @@ uint32_t tide_draw_push_blend(tide_draw_list *d, const tide_blend blend)
 // What the selected destination's 3D meshes do with its depth: its own, as its cameras are.
 void tide_draw_set_depth(tide_draw_list *d, const tide_depth depth)
 {
-    d->place.depth = (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
+    d->place.depth = (uint32_t)depth <= TIDE_DEPTH_EQUAL ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
 }
 
 void tide_draw_unset_depth(tide_draw_list *d)
@@ -916,6 +1421,24 @@ uint32_t tide_draw_push_frustum_culling(tide_draw_list *d, const bool enabled)
     const uint32_t mark = d->saved_count;
     save(d, TIDE_DRAW_SAVED_FRUSTUM_CULLING)->value = d->place.no_frustum_culling;
     tide_draw_set_frustum_culling(d, enabled);
+    return mark;
+}
+
+void tide_draw_set_occlusion(tide_draw_list *d, const bool enabled)
+{
+    d->place.occlusion = enabled ? 1u : 0u;
+}
+
+void tide_draw_unset_occlusion(tide_draw_list *d)
+{
+    d->place.occlusion = 0;
+}
+
+uint32_t tide_draw_push_occlusion(tide_draw_list *d, const bool enabled)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_OCCLUSION)->value = d->place.occlusion;
+    tide_draw_set_occlusion(d, enabled);
     return mark;
 }
 
@@ -995,9 +1518,27 @@ void tide_draw_screen_size(tide_draw_list *d, const tide_float2 size)
     d->screen = size.x > 0.0f && size.y > 0.0f && size.x <= 3.0e38f && size.y <= 3.0e38f ? size : tide_f2(0.0f, 0.0f);
 }
 
-void tide_draw_lod_pixels(tide_draw_list *d, const float pixels)
+void tide_draw_set_lod_pixels(tide_draw_list *d, const float pixels)
 {
-    d->lod_pixels = pixels > 0.0f && pixels <= 3.0e38f ? pixels : 0.0f;
+    d->place.lod_pixels = pixels > 0.0f && pixels <= FLT_MAX ? pixels : 0.0f;
+}
+
+void tide_draw_unset_lod_pixels(tide_draw_list *d)
+{
+    d->place.lod_pixels = 0.0f;
+}
+
+uint32_t tide_draw_push_lod_pixels(tide_draw_list *d, const float pixels)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_LOD_PIXELS)->pixels = d->place.lod_pixels;
+    tide_draw_set_lod_pixels(d, pixels);
+    return mark;
+}
+
+uint32_t tide_draw_push_no_lod_pixels(tide_draw_list *d)
+{
+    return tide_draw_push_lod_pixels(d, 0.0f);
 }
 
 // What the selected destination's commands do with its stencil: its own, as the stencil is. It
@@ -1284,7 +1825,9 @@ void tide_draw_defaults(tide_draw_list *d)
         tide_draw_place *p = i ? &d->targets[i - 1u].place : &d->place;
         p->camera_2d = p->camera_3d = p->clip = p->moved = p->stencil = p->tinted = 0;
         p->lod = p->lod_camera = 0;
+        p->lod_pixels = 0.0f;
         p->no_frustum_culling = 0;
+        p->occlusion = 0;
         p->bounds = (tide_draw_bounds){0};
         p->blend = TIDE_BLEND_ALPHA;
         p->depth = TIDE_DEPTH_READ_WRITE;
@@ -1295,7 +1838,10 @@ void tide_draw_defaults(tide_draw_list *d)
 
 void tide_draw_forget(tide_draw_list *d)
 {
+    d->profile_mesh_name = NULL;
     tide_skinned_draw_cache_reset(d);
+    if (d->list_data) memset(d->list_data, 0, sizeof *d->list_data);
+    if (d->listed) tide_draw_listed_clear(d, false); // Its lists are drawn as if never seen
     const bool had_targets = d->target_count != 0;
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     d->texture_count = 0;
@@ -1318,6 +1864,8 @@ void tide_draw_forget(tide_draw_list *d)
         if (c->kind == TIDE_DRAW_TARGET) c->target = UINT32_MAX;
     }
     for (uint32_t i = 0; i < d->run_count; i++) d->runs[i] = (tide_draw_run){0};
+    for (uint32_t i = 0; i < d->compute_count; i++) d->computes[i] = (tide_draw_compute){0};
+    d->cull_count = d->cull_camera_count = d->cull_groups = 0;
     // The forgotten selectors now sink their old commands. End on a valid
     // window selector so direct C draws recorded afterward have a destination.
     if (had_targets) push_state(d, TIDE_DRAW_TARGET)->target = 0;
@@ -1747,9 +2295,24 @@ void tide_draw_arc(tide_draw_list *d, const tide_float2 center, const float radi
                                       .sweep = half, .form = TIDE_SHAPE_ARC, .color2 = color});
 }
 
+// 1 + `font`'s place in the list's fonts, which it's added to the first time
+// a frame draws in it; 0 for the regular weight, and for a font past the
+// most a command can name, which is drawn in it.
+static uint16_t font_slot(tide_draw_list *d, const tide_font *font)
+{
+    if (!font) return 0;
+    for (uint32_t i = d->font_count; i > 0; i--) {
+        if (d->fonts[i - 1u] == font) return (uint16_t)i;
+    }
+    if (d->font_count == UINT16_MAX) return 0;
+    d->fonts = grow(d->fonts, d->font_count, &d->font_capacity, 1, sizeof *d->fonts, 8u);
+    d->fonts[d->font_count++] = font;
+    return (uint16_t)d->font_count;
+}
+
 // Text as it's given, through `turn` when a transform turned or stretched it.
 static void push_text(tide_draw_list *d, const char *text, const tide_float2 position, const float size,
-                      const tide_color color, const tide_anchor anchor, const unsigned char *font,
+                      const tide_color color, const tide_anchor anchor, const tide_font *font,
                       const tide_float2x2 *turn)
 {
     uint32_t turned = 0;
@@ -1764,15 +2327,14 @@ static void push_text(tide_draw_list *d, const char *text, const tide_float2 pos
     c->text = d->text_used;
     // An anchor that's none of the nine is the first, as the GUI's areas take one
     c->words.anchor = (uint16_t)((uint32_t)anchor <= TIDE_ANCHOR_LOWER_RIGHT ? anchor : TIDE_ANCHOR_UPPER_LEFT);
-    c->words.bold = font != NULL;
+    c->words.font = font_slot(d, font);
     c->words.turned = turned;
-    if (font) d->bold = font;
     memcpy(d->text + d->text_used, text, bytes);
     d->text_used += (uint32_t)bytes;
 }
 
 void tide_draw_text_at(tide_draw_list *d, const char *text, tide_float2 position, const float size, tide_color color,
-                       const tide_anchor anchor, const unsigned char *font)
+                       const tide_anchor anchor, const tide_font *font)
 {
     const tide_draw_place *p = &d->place;
     if (!d->altered) {
@@ -2078,6 +2640,47 @@ static uint32_t pack_cube(tide_draw_list *d, const uint64_t version, const int32
     return (uint32_t)(t - d->textures) + 1u;
 }
 
+// The list's texture for an array of the pack's, whose layers' pixels are where the pack has them.
+static uint32_t pack_array(tide_draw_list *d, const uint64_t version, const int32_t width, const int32_t height,
+                           const uint32_t layers, const uint8_t *const *pixels, const tide_texture_blocks *blocks)
+{
+    tide_draw_texture *t = find_texture(d, TIDE_PIXELS_PACK_ARRAY, version);
+    if (!t) t = add_texture(d, (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK_ARRAY, .epoch = d->epoch});
+    t->version = version;
+    t->format = TIDE_TEXELS_BYTES;
+    t->width = width;
+    t->height = height;
+    t->layers = layers;
+    t->frame = d->frame;
+    t->pixels = (uint8_t *)(uintptr_t)pixels; // The pack's pointers: `capacity` stays 0, and nothing here frees them
+    t->layer_blocks = blocks;
+    return (uint32_t)(t - d->textures) + 1u;
+}
+
+uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref array)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_array_grid(array, &grid, &shape)) {
+        return tide_draw_grid_array_texture(d, grid, &shape, tide_texture_array_grid_raw(array));
+    }
+    if (!array.target.id) {
+        int32_t width, height;
+        uint32_t layers;
+        uint64_t version;
+        const uint8_t *const *pixels;
+        if (!tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)) return 0;
+        return pack_array(d, version, width, height, layers, pixels, tide_pack_texture_array_blocks(array.named));
+    }
+    const tide_render_target target = tide_render_target_resolve(array.target);
+    const tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (!tide_render_target_arrayed(target.id) || !s) return 0;
+    const uint64_t id = tide_render_target_array_of(target.id);
+    const uint32_t at = target_texture_version(d, TIDE_PIXELS_TARGET_ARRAY, id, target.size, tide_render_target_version(id));
+    if (at) d->textures[at - 1u].layers = s->layers;
+    return at;
+}
+
 uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
 {
     if (!cube.target.id) {
@@ -2275,7 +2878,9 @@ static void camera_3d(tide_draw_list *d, const tide_draw_camera_3d_data camera)
     for (int i = 0; i < 2; i++) {
         if (!known[i]) continue;
         const tide_draw_camera_3d_data *c = &d->cameras_3d[known[i] - 1u];
-        if (c->fit == (uint32_t)fit && c->mirrored == (uint32_t)mirrored && same_matrix(&c->matrix, &world_to_clip)) {
+        if (c->fit == (uint32_t)fit && c->mirrored == (uint32_t)mirrored && same_matrix(&c->matrix, &world_to_clip) &&
+            same_matrix(&c->transform, &camera.transform) && same_matrix(&c->projection, &camera.projection) &&
+            same_matrix(&c->relative, &camera.relative) && memcmp(&c->origin, &camera.origin, sizeof c->origin) == 0) {
             p->camera_3d = known[i];
             refresh(d);
             return;
@@ -2293,7 +2898,7 @@ static tide_draw_camera_3d_data camera_of_matrix(const tide_float4x4 world_to_cl
 {
     tide_float4x4 projection = world_to_clip;
     projection.c2 = tide_neg_f4(projection.c2);
-    return (tide_draw_camera_3d_data){.matrix = world_to_clip, .transform = tide_identity_f4x4(),
+    return (tide_draw_camera_3d_data){.matrix = world_to_clip, .relative = world_to_clip, .transform = tide_identity_f4x4(),
                                       .projection = projection, .fit = fit, .mirrored = mirrored};
 }
 
@@ -2311,8 +2916,12 @@ static tide_draw_camera_3d_data perspective_camera(const tide_float3 position, c
                                       {0.0f, f, 0.0f, 0.0f},
                                       {0.0f, 0.0f, -1.0f, -1.0f},
                                       {0.0f, 0.0f, -2.0f * near_z, 0.0f}};
+    tide_float4x4 untranslated = view;
+    untranslated.c3 = tide_f4(0, 0, 0, 1);
     return (tide_draw_camera_3d_data){
         .matrix = tide_mul_f4x4(projection, turn_z(view)),
+        .relative = tide_mul_f4x4(projection, turn_z(untranslated)),
+        .origin = tide_f4(position.x, position.y, position.z, 0),
         .transform = tide_trs_f4x4(position, tide_normalize_q(rotation), tide_f3(1.0f, 1.0f, 1.0f)),
         .projection = projection,
         .fit = 1,
@@ -2357,8 +2966,23 @@ void tide_draw_set_camera_matrices(tide_draw_list *d, const tide_float4x4 transf
     // (a camera placed by a matrix that mirrors, a projection upside down, or the identity's, which
     // looks back along z), and a triangle's front is still its front there
     const bool mirrored = mirrors(&transform) != (tide_determinant_f4x4(projection) > 0.0f);
-    camera_3d(d, (tide_draw_camera_3d_data){.matrix = tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))),
-                                            .transform = transform, .projection = projection, .mirrored = mirrored});
+    tide_draw_camera_3d_data camera = {.matrix = tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))),
+                                     .transform = transform, .projection = projection, .mirrored = mirrored};
+    camera.relative = camera.matrix;
+    // Projective camera transforms keep the original homogeneous mapping. For an affine
+    // transform, removing translation before inversion preserves its small coefficients.
+    if (transform.c0.w == 0 && transform.c1.w == 0 && transform.c2.w == 0 && transform.c3.w == 1) {
+        tide_float4x4 untranslated = transform;
+        untranslated.c3 = tide_f4(0, 0, 0, 1);
+        const tide_float4x4 inverse = tide_inverse_f4x4(untranslated);
+        const float determinant = tide_determinant_f4x4(untranslated);
+        if (determinant != 0 && tide_is_finite_f(determinant) &&
+            tide_is_finite_f(transform.c3.x) && tide_is_finite_f(transform.c3.y) && tide_is_finite_f(transform.c3.z)) {
+            camera.relative = tide_mul_f4x4(projection, turn_z(inverse));
+            camera.origin = tide_f4(transform.c3.x, transform.c3.y, transform.c3.z, 0);
+        }
+    }
+    camera_3d(d, camera);
 }
 
 uint32_t tide_draw_push_camera_3d(tide_draw_list *d, const tide_float3 position, const tide_quaternion rotation,
@@ -2476,11 +3100,17 @@ static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, con
         place = d->mesh_free - 1u;
         d->mesh_free = d->meshes[place].next_free;
     } else {
+        const uint32_t had = d->mesh_capacity;
         d->meshes = grow(d->meshes, d->mesh_count, &d->mesh_capacity, 1, sizeof(tide_draw_mesh_data), 16u);
+        if (d->mesh_capacity != had) {
+            d->mesh_gpu = tide_realloc(d->mesh_gpu, had, d->mesh_capacity);
+            memset(d->mesh_gpu + had, 0, d->mesh_capacity - had);
+        }
         place = d->mesh_count++;
     }
-    d->meshes[place] = (tide_draw_mesh_data){
-        .id = id, .other = other, .version = version, .space = space, .frame = d->frame, .epoch = d->epoch};
+    d->mesh_gpu[place] = TIDE_MESH_GPU_NONE;
+    d->meshes[place] = (tide_draw_mesh_data){.id = id, .other = other, .version = version, .space = space,
+                                             .frame = d->frame, .made = d->frame, .epoch = d->epoch};
     if (d->mesh_count >= d->mesh_index_capacity / 2u) reindex_meshes(d);
     else index_mesh(d, place);
     *fill = true;
@@ -2513,11 +3143,20 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, const uint32_t mesh, const voi
     m->vertex_size = vertex_size;
     m->bounds = (tide_draw_bounds){0};
     m->bounds_position = 0;
+    m->hollow = m->relisted = false; // The caller says where it's from (mesh.c)
     if (vertex_count == 0 || vertex_size == 0 || index_count < 3u) return;
-    m->bytes = grow(m->bytes, 0, &m->vertex_capacity, (uint64_t)vertex_count * vertex_size, 1, 64u * vertex_size);
+    uint64_t got;
+    const uint64_t vertex_bytes = (uint64_t)vertex_count * vertex_size;
+    if (!m->bytes && vertex_bytes <= UINT32_MAX && (m->bytes = copy_take(d, vertex_bytes, &got))) {
+        m->vertex_capacity = got < UINT32_MAX ? (uint32_t)got : UINT32_MAX;
+    }
+    m->bytes = grow(m->bytes, 0, &m->vertex_capacity, vertex_bytes, 1, 64u * vertex_size);
     memcpy(m->bytes, vertices, (size_t)vertex_count * vertex_size);
     m->vertex_count = vertex_count;
     // A triangle with an index past the vertices is left out
+    if (!m->indices && (m->indices = copy_take(d, (uint64_t)index_count * sizeof(uint32_t), &got))) {
+        m->index_capacity = got / sizeof(uint32_t) < UINT32_MAX ? (uint32_t)(got / sizeof(uint32_t)) : UINT32_MAX;
+    }
     m->indices = grow(m->indices, 0, &m->index_capacity, index_count, sizeof(uint32_t), 192u);
     for (uint32_t i = 0; i + 3u <= index_count; i += 3u) {
         const uint32_t a = indices[i], b = indices[i + 1u], c = indices[i + 2u];
@@ -2528,6 +3167,25 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, const uint32_t mesh, const voi
         out[2] = c;
         m->index_count += 3u;
     }
+}
+
+void tide_draw_mesh_fill_pulled(tide_draw_list *d, const uint32_t mesh, const uint32_t vertex_size,
+                                const uint32_t *indices, const uint32_t index_count)
+{
+    if (mesh == 0 || mesh > d->mesh_count || d->meshes[mesh - 1u].space == TIDE_MESH_NONE) return;
+    tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+    m->vertex_count = m->index_count = 0;
+    m->vertex_size = vertex_size;
+    m->bounds = (tide_draw_bounds){0};
+    m->bounds_position = 0;
+    const uint32_t whole = index_count - index_count % 3u;
+    if (vertex_size == 0 || whole == 0) return;
+    m->bytes = grow(m->bytes, 0, &m->vertex_capacity, vertex_size, 1, vertex_size);
+    memset(m->bytes, 0, vertex_size);
+    m->vertex_count = 1;
+    m->indices = grow(m->indices, 0, &m->index_capacity, whole, sizeof(uint32_t), 192u);
+    memcpy(m->indices, indices, (size_t)whole * sizeof(uint32_t));
+    m->index_count = whole;
 }
 
 void tide_draw_mesh_fill(tide_draw_list *d, const uint32_t mesh, const tide_vertex3 *vertices,
@@ -2545,6 +3203,7 @@ void tide_draw_mesh_levels(tide_draw_list *d, const uint32_t mesh, const tide_me
     m->level_indices = grow(m->level_indices, 0, &m->level_index_capacity, levels->index_count, sizeof(uint32_t), 192u);
     memcpy(m->center, levels->center, sizeof m->center);
     m->radius = levels->radius >= 0.0f ? levels->radius : 0.0f;
+    m->lod_multiplier = levels->multiplier > 0.0f && levels->multiplier <= FLT_MAX ? levels->multiplier : 1.0f;
     float before = 0.0f;
     for (uint32_t level = 0; level < levels->count && level < TIDE_MESH_LEVELS; level++) {
         const uint32_t first = levels->first[level], count = levels->indices[level];
@@ -2613,9 +3272,28 @@ typedef struct lod_view {
     float scale;     // How many times the pixels a level may be off by a unit of the world is, a unit from the camera
     float w[4];      // What gives how far along the camera's view a place in the world is, which sizes shrink by...
     float w_length;  // ...and how much of it a unit of the world is, at the most
+    float x[4], y[4];          // The camera's clip x and y, which say how far out to the side a place is...
+    float x_length, y_length;  // ...and how much of each a unit of the world is, at the most
 } lod_view;
 
 static lod_view lod_view_of(const tide_draw_list *d);
+
+// The pixels a pick counts: the destination's own, or the window's for a camera that isn't the destination's.
+static tide_float2 lod_screen(const tide_draw_list *d)
+{
+    const tide_draw_place *p = &d->place;
+    tide_float2 screen = d->screen;
+    if (d->target && !p->lod_camera) {
+        const tide_target_size size = d->targets[d->target - 1u].size;
+        if (!(size.window > 0.0f)) {
+            const float scale = size.scale > 0.0f ? size.scale : 1.0f;
+            screen = tide_f2(size.width * scale, size.height * scale);
+        } else {
+            screen = tide_f2(screen.x * size.window, screen.y * size.window);
+        }
+    }
+    return screen;
+}
 
 // The same for a draw of one instance, which a view that runs for each entity records a frame's worth of: the
 // camera's part is kept while the camera, the frame and the pixels are the ones it was worked out for.
@@ -2624,25 +3302,29 @@ static lod_view lod_view_kept(tide_draw_list *d)
     const tide_draw_place *p = &d->place;
     lod_view view = {.level = p->lod};
     if (view.level) return view;
-    float height = d->screen.y;
-    if (d->target && !p->lod_camera) {
-        const tide_target_size size = d->targets[d->target - 1u].size;
-        if (!(size.window > 0.0f)) height = size.height * (size.scale > 0.0f ? size.scale : 1.0f);
-        else height *= size.window;
-    }
-    uint32_t seen[4] = {d->frame + 1u, p->lod_camera ? p->lod_camera : p->camera_3d};
-    memcpy(&seen[2], &height, sizeof height);
-    memcpy(&seen[3], &d->lod_pixels, sizeof d->lod_pixels);
+    const tide_float2 screen = lod_screen(d);
+    uint32_t seen[5] = {d->frame + 1u, p->lod_camera ? p->lod_camera : p->camera_3d};
+    memcpy(&seen[2], &screen.x, sizeof screen.x);
+    memcpy(&seen[3], &screen.y, sizeof screen.y);
+    memcpy(&seen[4], &p->lod_pixels, sizeof p->lod_pixels);
     if (memcmp(seen, d->lod_seen, sizeof seen) != 0) {
         const lod_view fresh = lod_view_of(d);
         memcpy(d->lod_seen, seen, sizeof seen);
         d->lod_view[0] = fresh.picks ? fresh.scale : 0.0f;
         memcpy(&d->lod_view[1], fresh.w, sizeof fresh.w);
         d->lod_view[5] = fresh.w_length;
+        memcpy(&d->lod_view[6], fresh.x, sizeof fresh.x);
+        memcpy(&d->lod_view[10], fresh.y, sizeof fresh.y);
+        d->lod_view[14] = fresh.x_length;
+        d->lod_view[15] = fresh.y_length;
     }
     view.scale = d->lod_view[0];
     memcpy(view.w, &d->lod_view[1], sizeof view.w);
     view.w_length = d->lod_view[5];
+    memcpy(view.x, &d->lod_view[6], sizeof view.x);
+    memcpy(view.y, &d->lod_view[10], sizeof view.y);
+    view.x_length = d->lod_view[14];
+    view.y_length = d->lod_view[15];
     view.picks = view.scale > 0.0f;
     return view;
 }
@@ -2652,13 +3334,8 @@ static lod_view lod_view_of(const tide_draw_list *d)
     const tide_draw_place *p = &d->place;
     lod_view view = {.level = p->lod};
     if (view.level) return view;
-    // The pixels counted are the destination's own, or the window's for a camera that isn't the destination's
-    float height = d->screen.y;
-    if (d->target && !p->lod_camera) {
-        const tide_target_size size = d->targets[d->target - 1u].size;
-        if (!(size.window > 0.0f)) height = size.height * (size.scale > 0.0f ? size.scale : 1.0f);
-        else height *= size.window;
-    }
+    const tide_float2 screen = lod_screen(d);
+    const float height = screen.y;
     if (!(height > 0.0f)) return view;
     const uint32_t through = p->lod_camera ? p->lod_camera : p->camera_3d;
     const tide_draw_camera_3d_data camera = through && through <= d->camera_3d_count ? d->cameras_3d[through - 1u]
@@ -2666,16 +3343,29 @@ static lod_view lod_view_of(const tide_draw_list *d)
     const tide_float4x4 *c = &camera.matrix;
     // Up the screen, clip space is 2 for the destination's height, whatever its shape is
     const float up = tide_sqrt_f(c->c0.y * c->c0.y + c->c1.y * c->c1.y + c->c2.y * c->c2.y);
-    const float pixels = d->lod_pixels > 0.0f ? d->lod_pixels : 1.0f;
+    const float pixels = p->lod_pixels > 0.0f ? p->lod_pixels : 1.0f;
     view.scale = up * height * 0.5f / pixels;
     view.w[0] = c->c0.w, view.w[1] = c->c1.w, view.w[2] = c->c2.w, view.w[3] = c->c3.w;
     view.w_length = tide_sqrt_f(c->c0.w * c->c0.w + c->c1.w * c->c1.w + c->c2.w * c->c2.w);
+    // Across, as the camera is drawn: one for a square screen is narrowed to the destination's shape
+    const float across = camera.fit && screen.x > 0.0f ? height / screen.x : 1.0f;
+    view.x[0] = c->c0.x * across, view.x[1] = c->c1.x * across, view.x[2] = c->c2.x * across, view.x[3] = c->c3.x * across;
+    view.x_length = tide_sqrt_f(view.x[0] * view.x[0] + view.x[1] * view.x[1] + view.x[2] * view.x[2]);
+    view.y[0] = c->c0.y, view.y[1] = c->c1.y, view.y[2] = c->c2.y, view.y[3] = c->c3.y;
+    view.y_length = up;
     view.picks = view.scale > 0.0f && view.scale <= 3.0e38f;
     return view;
 }
 
 // The level an instance of `m` at `world` draws at: 0 for the full mesh. The simplest whose error, as big as
 // it is at the nearest the mesh's ball comes to the camera, is within what the view allows.
+//
+// How far a place is goes by the camera's clip coordinates: the most of w, -w, |x| and |y|. Anywhere the
+// camera sees, that's w (|x| and |y| are within w there), the depth sizes shrink by. Out to the side or behind,
+// where w says nothing of how big a thing is (beside the camera it's 0), it's how far out the thing is in the
+// view's own measure, so a destination picking through another camera (a shadow map told the viewer's) gives
+// what it draws there coarser levels as the tolerance grows instead of the full mesh. Each of the others is
+// lessened by enough of the ball's radius that a ball reaching into the view always goes by w, as it did.
 static inline uint32_t pick_level(const tide_draw_mesh_data *m, const lod_view *view, const tide_float4x4 *world)
 {
     if (view->level) return view->level - 1u < m->levels ? view->level - 1u : m->levels;
@@ -2689,9 +3379,22 @@ static inline uint32_t pick_level(const tide_draw_mesh_data *m, const lod_view *
     const float sy = world->c1.x * world->c1.x + world->c1.y * world->c1.y + world->c1.z * world->c1.z;
     const float sz = world->c2.x * world->c2.x + world->c2.y * world->c2.y + world->c2.z * world->c2.z;
     const float big = tide_sqrt_f(sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz));
-    const float away = view->w[0] * cx + view->w[1] * cy + view->w[2] * cz + view->w[3] - m->radius * big * view->w_length;
-    if (!(away > 0.0f)) return 0; // Around the camera, or behind it, or nowhere a number says
-    const float allowed = away / (big * view->scale);
+    const float r = m->radius * big;
+    const float w = view->w[0] * cx + view->w[1] * cy + view->w[2] * cz + view->w[3];
+    float away = w - r * view->w_length;
+    // A ball touching the planes x = w, x = -w (and so for y) has x - w at most r * (x_length + w_length); behind,
+    // it reaches w >= 0. Taken off, the others are never more than w's for a ball the view could hold
+    const float side = view->x[0] * cx + view->x[1] * cy + view->x[2] * cz + view->x[3];
+    const float rise = view->y[0] * cx + view->y[1] * cy + view->y[2] * cz + view->y[3];
+    const float out_x = (side < 0.0f ? -side : side) - r * (view->x_length + 2.0f * view->w_length);
+    const float out_y = (rise < 0.0f ? -rise : rise) - r * (view->y_length + 2.0f * view->w_length);
+    const float behind = -w - 3.0f * r * view->w_length;
+    if (out_x > away) away = out_x;
+    if (out_y > away) away = out_y;
+    if (behind > away) away = behind;
+    if (!(away > 0.0f)) return 0; // Around the camera, or nowhere a number says
+    // Widen only the asset multiplication: default assets retain the original float threshold.
+    const double allowed = (double)(away / (big * view->scale)) * (double)m->lod_multiplier;
     uint32_t level = 0;
     while (level < m->levels && m->level_error[level] <= allowed) level++;
     return level;
@@ -2747,17 +3450,64 @@ void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, const uint32
     tide_draw_shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, sampling);
 }
 
+// Where a shaded draw's instances are, where they aren't simply one after the other from the pointer it has:
+// `order` places them in `base` (a level of detail's picking sorts them so), and for a listed draw `base` is the
+// list's numbers, texture `listed` - 1 (tide_draw_mesh_shaded_list), whose runs record places in it. NULL for
+// instances one after the other whose bytes are copied, as ever.
+typedef struct shaded_from {
+    const uint32_t *order;
+    const uint8_t *base;
+    uint32_t listed;
+} shaded_from;
+
+// Instance `i` of those at `instances`, `size` bytes each.
+static inline const uint8_t *shaded_item(const uint8_t *instances, const shaded_from *from, const uint32_t i,
+                                         const uint32_t size)
+{
+    return from && from->order ? from->base + (size_t)from->order[i] * size : instances + (size_t)i * size;
+}
+
+// Their place in `from->base`: where an instance's bytes are, over `size`.
+static inline uint32_t shaded_place(const uint8_t *instances, const shaded_from *from, const uint32_t i,
+                                    const uint32_t size)
+{
+    return from->order ? from->order[i] : (uint32_t)((size_t)(instances - from->base) / size) + i;
+}
+
+// The instances from the `first` of them on.
+static inline const uint8_t *shaded_after(const uint8_t *instances, const shaded_from *from, shaded_from *after,
+                                          const uint32_t first, const uint32_t size)
+{
+    if (!from) return instances ? instances + (size_t)first * size : NULL;
+    *after = *from;
+    if (from->order) {
+        after->order += first;
+        return instances;
+    }
+    return instances + (size_t)first * size;
+}
+
 // A run of instances through a shader. `with` says what tints it and, for a
 // 2D one, what it goes through before the camera: the rest of it is made here.
 // `through` is what a 3D one's instances go through on their way to the
 // world, or NULL, `depth` what a 3D one does with depth, and `cull` its
 // command's (a tide_cull, with TIDE_DRAW_MIRRORED where the instances are):
-// a 2D one, and a blit, have neither.
+// a 2D one, and a blit, have neither. `from` (shaded_from) says where the
+// instances are, where it isn't NULL: a listed run's are recorded as their
+// places, and its list's texture is its textures[texture_count].
+// Whether two runs read the same GPU lists: the same ids, where they're recorded (tide_draw_storage).
+static bool same_storage(const tide_draw_list *d, const uint32_t a, const uint32_t b, const uint32_t count)
+{
+    if (a == b || count == 0) return true;
+    if (!a || !b) return false;
+    return memcmp(d->storage + a - 1u, d->storage + b - 1u, count * sizeof(uint64_t)) == 0;
+}
+
 static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                              const uint32_t count, const void *uniforms, const uint32_t *textures,
                              const uint64_t sampling, const tide_draw_kind kind, const tide_blend blend,
                              const tide_depth depth, const uint32_t cull, const tide_draw_run *with,
-                             const tide_float4x4 *through)
+                             const tide_float4x4 *through, const shaded_from *from)
 {
     if (count == 0 || !shader || mesh == 0 || mesh > d->mesh_count) return;
     const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
@@ -2765,19 +3515,38 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     const uint32_t instance_size = tide_shader_instance_size(shader);
     const uint32_t uniform_size = tide_shader_uniform_size(shader);
     if ((instance_size && !instances) || (uniform_size && !uniforms)) return; // Nothing to draw it with
+    const uint32_t listed = from && instance_size && from->listed && from->listed <= d->texture_count
+                          && shader->texture_count < TIDE_SHADER_TEXTURES && !through ? from->listed : 0u;
+    if (d->profile_active) d->profile_active->submitted += count;
     const uint32_t texture_count = shader->texture_count < TIDE_SHADER_TEXTURES ? shader->texture_count : TIDE_SHADER_TEXTURES;
     tide_draw_run run = {.shader = shader, .mesh = mesh, .first = d->instance_used, .count = count, .sampling = sampling,
-                         .tint = with->tint, .moved = with->moved, .transform = with->transform};
+                         .tint = with->tint, .moved = with->moved, .transform = with->transform, .listed = listed != 0,
+                         .storage = d->storage_next, .indirect = d->indirect_next};
     for (uint32_t i = 0; i < texture_count; i++) {
         if (textures && textures[i] <= d->texture_count) run.textures[i] = textures[i];
     }
-    const uint64_t bytes = (uint64_t)instance_size * count;
+    if (listed) run.textures[texture_count] = listed; // Its list's numbers: what its places are places in
+    const uint32_t stride = tide_draw_run_stride(&run), compared = texture_count + (listed ? 1u : 0u);
+    const uint64_t bytes = (uint64_t)stride * count;
+    if (bytes > UINT32_MAX - (uint64_t)d->instance_used) tide_out_of_memory();
     d->instances = grow(d->instances, d->instance_used, &d->instance_capacity, bytes, 1, 4096u);
-    if (bytes) memcpy(d->instances + d->instance_used, instances, (size_t)bytes);
-    if (through && shader->dims == 3 && shader->instance_floats >= 4u) { // Each one's transform starts it
+    uint8_t *to = d->instances + d->instance_used;
+    if (listed) { // Places in the list
+        for (uint32_t i = 0; i < count; i++) {
+            const uint32_t place = shaded_place(instances, from, i, instance_size);
+            memcpy(to + (size_t)i * sizeof place, &place, sizeof place);
+        }
+    } else if (from && from->order) { // Bytes, as their order has them
+        for (uint32_t i = 0; i < count; i++) {
+            memcpy(to + (size_t)i * instance_size, shaded_item(instances, from, i, instance_size), instance_size);
+        }
+    } else if (bytes) {
+        memcpy(to, instances, (size_t)bytes);
+    }
+    if (!listed && through && shader->dims == 3 && shader->instance_floats >= 4u) { // Each one's transform starts it
         for (uint32_t i = 0; i < count; i++) {
             tide_float4x4 own;
-            uint8_t *at = d->instances + d->instance_used + (size_t)i * instance_size;
+            uint8_t *at = to + (size_t)i * instance_size;
             memcpy(&own, at, sizeof own);
             own = tide_mul_f4x4(*through, own);
             memcpy(at, &own, sizeof own);
@@ -2787,22 +3556,64 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     // More instances of the run before it, when nothing came between them and they draw with the same
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
     // What has no depth says 0 whatever is set, so the setting never comes between two 2D runs
-    const uint8_t deep = kind == TIDE_DRAW_SHADED && shader->dims == 3 && (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint8_t)depth : 0;
+    const uint8_t deep = kind == TIDE_DRAW_SHADED && shader->dims == 3 && (uint32_t)depth <= TIDE_DEPTH_EQUAL ? (uint8_t)depth : 0;
     // ...and what has no sides, so neither does that one
     const uint8_t sided = kind == TIDE_DRAW_SHADED && shader->dims == 3 ? sides(cull) : 0;
     if (kind == TIDE_DRAW_SHADED && last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)blend
-        && last->depth == deep && last->cull == sided) {
+        && last->depth == deep && last->cull == sided && !run.indirect && !d->runs[last->shaded.run].indirect
+        && !d->runs[last->shaded.run].culled
+        && same_storage(d, d->runs[last->shaded.run].storage, run.storage, shader->storage_count)) {
         tide_draw_run *r = &d->runs[last->shaded.run];
         if ((r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
-            && r->mesh == mesh && r->sampling == sampling
-            && r->first + (uint64_t)r->count * instance_size == run.first
-            && memcmp(r->textures, run.textures, texture_count * sizeof *run.textures) == 0
+            && r->mesh == mesh && r->sampling == sampling && r->listed == run.listed
+            && r->first + (uint64_t)r->count * stride == run.first
+            && memcmp(r->textures, run.textures, compared * sizeof *run.textures) == 0
             && same_color(r->tint, run.tint) && r->moved == run.moved
             && (!run.moved || memcmp(&r->transform, &run.transform, sizeof run.transform) == 0)
             && (uniform_size == 0 || memcmp(d->uniforms + r->uniforms, uniforms, uniform_size) == 0)) {
             if (r->count > UINT32_MAX - count) tide_out_of_memory();
             r->count += count;
+            if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
             return;
+        }
+        // A listed run and one of bytes that would be one run otherwise (a list's instances and a mesh drawn
+        // alone through one shader) are one still: the bytes go into the frame's own room of the page, as places
+        if (r->listed != run.listed && r->shader && shader->dims == 3 && instance_size && r->count <= UINT32_MAX - count
+            && (r->shader == shader || (shader->id && r->shader->id == shader->id)) && r->mesh == mesh
+            && r->sampling == sampling && memcmp(r->textures, run.textures, texture_count * sizeof *run.textures) == 0
+            && same_color(r->tint, run.tint) && r->moved == run.moved
+            && (!run.moved || memcmp(&r->transform, &run.transform, sizeof run.transform) == 0)
+            && (uniform_size == 0 || memcmp(d->uniforms + r->uniforms, uniforms, uniform_size) == 0)) {
+            const uint32_t packs = instance_size / 16u;
+            if (r->listed && r->first + (uint64_t)r->count * sizeof(uint32_t) == run.first) {
+                const uint32_t start = tide_draw_listed_put(d, r->textures[texture_count], to, count, packs);
+                if (start != UINT32_MAX) { // Its bytes are the page's now, and the run's are their places
+                    for (uint32_t i = 0; i < count; i++) {
+                        const uint32_t place = start / packs + i;
+                        memcpy(to + (size_t)i * sizeof place, &place, sizeof place);
+                    }
+                    d->instance_used = run.first + count * (uint32_t)sizeof(uint32_t);
+                    r->count += count;
+                    if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
+                    return;
+                }
+            } else if (run.listed && r->first + (uint64_t)r->count * instance_size == run.first) {
+                uint8_t *before = d->instances + r->first;
+                const uint32_t start = tide_draw_listed_put(d, listed, before, r->count, packs);
+                if (start != UINT32_MAX) { // The run before's bytes are the page's now: places, then these
+                    for (uint32_t i = 0; i < r->count; i++) {
+                        const uint32_t place = start / packs + i;
+                        memcpy(before + (size_t)i * sizeof place, &place, sizeof place);
+                    }
+                    memmove(before + (size_t)r->count * sizeof(uint32_t), to, (size_t)count * sizeof(uint32_t));
+                    r->listed = 1;
+                    r->textures[texture_count] = listed;
+                    r->count += count;
+                    d->instance_used = r->first + r->count * (uint32_t)sizeof(uint32_t);
+                    if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
+                    return;
+                }
+            }
         }
     }
     run.uniforms = d->uniform_used;
@@ -2816,6 +3627,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     c->depth = deep;
     c->cull = sided;
     c->shaded.run = d->run_count++;
+    if (d->diagnostics) tide_draw_geometry_record(d, c, mesh, count);
 }
 
 // Whether the transform that starts a 3D shader's instance mirrors its mesh.
@@ -2829,7 +3641,8 @@ static bool instance_mirrors(const uint8_t *instance)
 // Instances through a shader as the selected destination's settings have them, of the mesh as it's named: a
 // level of detail is named by whoever picked it.
 static void shaded_visible(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
-                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling,
+                          const shaded_from *from)
 {
     const tide_draw_place *p = &d->place;
     tide_draw_run with = {.tint = tide_draw_tint(d)};
@@ -2843,20 +3656,25 @@ static void shaded_visible(tide_draw_list *d, const tide_shader *shader, const u
     // their own. An instance with no transform has none that could
     if (!shader || shader->dims != 3 || p->cull == TIDE_CULL_NONE || shader->instance_floats < 4u || !instances
         || count == 0) {
+        // Instances the GPU reads go through a mirroring Draw.Transform there, wound the other way
+        const bool turned = shader && shader->instance_through && through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
         shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling, TIDE_DRAW_SHADED,
-                         (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull, &with, through);
+                         (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull | (turned ? TIDE_DRAW_MIRRORED : 0u),
+                         &with, through, from);
         return;
     }
     const bool turned = through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
     const uint8_t *bytes = instances;
     uint32_t first = 0;
-    bool mirrored = instance_mirrors(bytes) != turned;
+    bool mirrored = instance_mirrors(shaded_item(bytes, from, 0, size)) != turned;
     for (uint32_t i = 1; i <= count; i++) {
-        const bool next = i < count ? instance_mirrors(bytes + (size_t)i * size) != turned : !mirrored;
+        const bool next = i < count ? instance_mirrors(shaded_item(bytes, from, i, size)) != turned : !mirrored;
         if (next == mirrored) continue;
-        shaded_instances(d, shader, mesh, bytes + (size_t)first * size, i - first, uniforms, textures, sampling,
+        shaded_from after;
+        const uint8_t *theirs = shaded_after(bytes, from, &after, first, size);
+        shaded_instances(d, shader, mesh, theirs, i - first, uniforms, textures, sampling,
                          TIDE_DRAW_SHADED, (tide_blend)d->place.blend, (tide_depth)p->depth,
-                         p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through);
+                         p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through, from ? &after : NULL);
         first = i;
         mirrored = next;
     }
@@ -2875,7 +3693,11 @@ static const tide_draw_bounds *mesh_bounds(tide_draw_list *d, uint32_t mesh, con
     if (d->meshes[mesh - 1u].base) mesh = d->meshes[mesh - 1u].base;
     if (!mesh || mesh > d->mesh_count) return &no_bounds;
     tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
-    if (m->bounds_position == position && m->bounds.set) return &m->bounds;
+    if (m->bounds_position == position && m->bounds.set) {
+        if (d->profile_active) d->profile_active->bounds_cache_hits++;
+        return &m->bounds;
+    }
+    if (d->profile_active) d->profile_active->bounds_builds++;
     m->bounds_position = position;
     m->bounds = (tide_draw_bounds){.set = 2};
     if (!position || m->vertex_size < sizeof(tide_float3) || position - 1u > m->vertex_size - sizeof(tide_float3)
@@ -2904,25 +3726,13 @@ static const tide_draw_frustum *frustum_camera(tide_draw_list *d)
     // the stores that made the array (see color_read)
     if (!d->frustum_ready || d->frustum_seen[0] != d->place.camera_3d || d->frustum_seen[1] != d->target
         || d->frustum_seen[2] != d->epoch || d->frustum_screen.x != d->screen.x || d->frustum_screen.y != d->screen.y) {
+        if (d->profile_active) d->profile_active->frustum_builds++;
         const uint32_t seen[3] = {d->place.camera_3d, d->target, d->epoch};
         const tide_float4x4 matrix = tide_draw_world_to_clip(d, d->screen);
         float c[16];
         memcpy(c, &matrix, sizeof c);
-        d->frustum.count = 0;
-        bool valid = true;
-        for (uint32_t i = 0; i < 16; i++) valid &= tide_is_finite_f(c[i]);
-        for (uint32_t plane = 0; valid && plane < 6; plane++) {
-            const uint32_t row = plane / 2u;
-            const double sign = plane & 1u ? -1.0 : 1.0;
-            double *p = d->frustum.plane[d->frustum.count], *error = d->frustum.magnitude[d->frustum.count];
-            for (uint32_t axis = 0; axis < 4; axis++) {
-                const double a = c[axis * 4 + 3], b = c[axis * 4 + row];
-                p[axis] = a + sign * b;
-                error[axis] = (a < 0.0 ? -a : a) + (b < 0.0 ? -b : b);
-            }
-            // Infinite far projections (and an unknown size's zero matrix) have no far rejection plane.
-            if (p[0] != 0.0 || p[1] != 0.0 || p[2] != 0.0 || p[3] < 0.0) d->frustum.count++;
-        }
+        cull_frustum_build(&d->frustum, c);
+        d->frustum_matrix = matrix;
         memcpy(d->frustum_seen, seen, sizeof seen);
         d->frustum_screen = d->screen;
         d->frustum_ready = true;
@@ -2930,104 +3740,100 @@ static const tide_draw_frustum *frustum_camera(tide_draw_list *d)
     return &d->frustum;
 }
 
-// Conservative support test of the transformed box against all six clip
-// planes. Double intermediates avoid overflow for arbitrary finite game values.
-// The error allowance also keeps boxes touching a plane despite GPU rounding.
+// One instance's frustum test (frustum_cull.h), counted where a profile is collected.
 static bool bounds_visible(const tide_draw_bounds *bounds, const tide_draw_frustum *camera,
-                           const tide_float4x4 *own, const tide_float4x4 *through)
+                           const tide_float4x4 *own, const tide_float4x4 *through, tide_draw_diagnostic *profile)
 {
-    if (bounds->set != 1 || !camera->count) return true;
+    const cull_box box = cull_box_of(bounds, camera);
     float w[16];
-    if (through) {
-        const tide_float4x4 world = tide_mul_f4x4(*through, *own);
-        memcpy(w, &world, sizeof w);
-    } else {
-        matrix_read(w, own); // The caller's, just made (see color_read)
+    matrix_read(w, own); // The caller's, just made (see color_read)
+    const int result = cull_instance(camera, &box, w, through);
+    if (profile) {
+        profile->untestable += result == CULL_UNTESTABLE;
+        profile->tested += result != CULL_UNTESTABLE;
+        profile->rejected += result == CULL_REJECTED;
     }
-    for (uint32_t i = 0; i < 16; i++) {
-        if (!tide_is_finite_f(w[i])) return true;
-    }
-    if (w[3] != 0.0f || w[7] != 0.0f || w[11] != 0.0f || w[15] != 1.0f) return true;
-    const double center[3] = {bounds->center.x, bounds->center.y, bounds->center.z};
-    const double extent[3] = {bounds->extents.x, bounds->extents.y, bounds->extents.z};
-    double at[3], radius[3];
-    for (uint32_t row = 0; row < 3; row++) {
-        at[row] = w[12 + row];
-        radius[row] = 0.0;
-        for (uint32_t axis = 0; axis < 3; axis++) {
-            const double scale = w[axis * 4 + row];
-            at[row] += scale * center[axis];
-            radius[row] += (scale < 0.0 ? -scale : scale) * extent[axis];
-        }
-    }
-    // The rounding allowance is never less than 0, so a box on a plane's inner side, or on it, is in front of
-    // it whatever the allowance is: it's worked out only for one past a plane, once (a frame of visible
-    // instances needs none, and the answer is the same)
-    double magnitude[3];
-    bool measured = false;
-    for (uint32_t plane = 0; plane < camera->count; plane++) {
-        const double *p = camera->plane[plane], *rounding = camera->magnitude[plane];
-        double distance = p[3];
-        for (uint32_t axis = 0; axis < 3; axis++) {
-            const double n = p[axis];
-            distance += n * at[axis] + (n < 0.0 ? -n : n) * radius[axis];
-        }
-        if (!(distance < 0.0)) continue;
-        if (!measured) {
-            for (uint32_t row = 0; row < 3; row++) {
-                magnitude[row] = tide_abs_f(w[12 + row]);
-                for (uint32_t axis = 0; axis < 3; axis++) {
-                    const double scale = w[axis * 4 + row];
-                    const double part = scale * center[axis];
-                    magnitude[row] += (part < 0.0 ? -part : part) + (scale < 0.0 ? -scale : scale) * extent[axis];
-                }
-            }
-            measured = true;
-        }
-        double error = rounding[3];
-        for (uint32_t axis = 0; axis < 3; axis++) error += rounding[axis] * magnitude[axis];
-        if (distance < -1e-5 * (error + 1.0)) return false;
-    }
-    return true;
+    return result != CULL_REJECTED;
 }
 
-static const tide_draw_bounds *draw_bounds(tide_draw_list *d, const uint32_t mesh, const uint32_t position)
+// The counts of a call's instances, added to a profile once
+typedef struct cull_counts {
+    uint32_t tested, rejected, untestable;
+} cull_counts;
+
+static inline bool cull_counted(cull_counts *counts, const int result)
 {
-    if (d->place.no_frustum_culling) return &no_bounds;
-    return d->place.bounds.set ? &d->place.bounds : position ? mesh_bounds(d, mesh, position) : &no_bounds;
+    counts->untestable += result == CULL_UNTESTABLE;
+    counts->tested += result != CULL_UNTESTABLE;
+    counts->rejected += result == CULL_REJECTED;
+    return result != CULL_REJECTED;
+}
+
+static void cull_add(tide_draw_diagnostic *profile, const cull_counts *counts)
+{
+    if (!profile) return;
+    profile->tested += counts->tested;
+    profile->rejected += counts->rejected;
+    profile->untestable += counts->untestable;
+}
+
+static const tide_draw_bounds *draw_bounds(tide_draw_list *d, const uint32_t mesh, const uint32_t position,
+                                           const uint32_t count)
+{
+    if (d->place.no_frustum_culling) {
+        if (d->profile_active) d->profile_active->bypassed += count;
+        return &no_bounds;
+    }
+    const tide_draw_bounds *bounds = d->place.bounds.set ? &d->place.bounds : position ? mesh_bounds(d, mesh, position) : &no_bounds;
+    if (d->profile_active && bounds->set != 1) d->profile_active->untestable += count;
+    return bounds;
 }
 
 static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
-                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling,
+                          const shaded_from *from)
 {
     const uint32_t size = shader ? tide_shader_instance_size(shader) : 0;
-    const tide_draw_bounds bounds = shader && shader->dims == 3 ? *draw_bounds(d, mesh, shader->bounds_position)
+    const tide_draw_bounds bounds = shader && shader->dims == 3 ? *draw_bounds(d, mesh, shader->bounds_position, count)
                                                                : no_bounds;
     if (bounds.set != 1 || !count || !instances || size < sizeof(tide_float4x4) || shader->instance_floats < 4u) {
-        shaded_visible(d, shader, mesh, instances, count, uniforms, textures, sampling);
+        if (d->profile_active && bounds.set == 1) d->profile_active->untestable += count;
+        shaded_visible(d, shader, mesh, instances, count, uniforms, textures, sampling, from);
         return;
     }
     const tide_draw_frustum *camera = frustum_camera(d);
+    const cull_box box = cull_box_of(&bounds, camera);
     const tide_float4x4 *through = d->place.moved & TIDE_DRAW_MOVED_3D ? &d->place.transform_3d : NULL;
+    cull_counts counts = {0};
     uint32_t first = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        tide_float4x4 own;
-        memcpy(&own, (const uint8_t *)instances + (size_t)i * size, sizeof own);
-        if (bounds_visible(&bounds, camera, &own, through)) continue;
-        if (i > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
-                                      i - first, uniforms, textures, sampling);
-        first = i + 1u;
+    shaded_from after;
+    for (uint32_t i = 0; i < count; i += 4u) {
+        // Four at a time (the last again where fewer are left)
+        const uint32_t n = count - i < 4u ? count - i : 4u;
+        const float *four[4];
+        for (uint32_t k = 0; k < 4; k++) {
+            four[k] = (const float *)(const void *)shaded_item(instances, from, i + (k < n ? k : n - 1u), size);
+        }
+        int result[4];
+        cull_four(camera, &box, four, through, n, result);
+        for (uint32_t k = 0; k < n; k++) {
+            if (cull_counted(&counts, result[k])) continue;
+            if (i + k > first) shaded_visible(d, shader, mesh, shaded_after(instances, from, &after, first, size),
+                                              i + k - first, uniforms, textures, sampling, from ? &after : NULL);
+            first = i + k + 1u;
+        }
     }
-    if (count > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
-                                      count - first, uniforms, textures, sampling);
+    cull_add(d->profile_active, &counts);
+    if (count > first) shaded_visible(d, shader, mesh, shaded_after(instances, from, &after, first, size),
+                                      count - first, uniforms, textures, sampling, from ? &after : NULL);
 }
 
-void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
+static void shaded_at(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                                 const uint32_t count, const void *uniforms, const uint32_t *textures,
-                                const uint64_t sampling)
+                                const uint64_t sampling, const shaded_from *from)
 {
     if (!shader || shader->dims != 3 || count == 0 || mesh == 0 || mesh > d->mesh_count || d->meshes[mesh - 1u].levels == 0) {
-        shaded_placed(d, shader, mesh, instances, count, uniforms, textures, sampling);
+        shaded_placed(d, shader, mesh, instances, count, uniforms, textures, sampling, from);
         return;
     }
     // A mesh with levels of detail: each instance's own, by the transform that starts it (none is the identity).
@@ -3037,25 +3843,27 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
     const uint32_t size = tide_shader_instance_size(shader);
     const bool placed = shader->instance_floats >= 4u && instances && size >= sizeof(tide_float4x4);
-    const uint64_t bytes = (uint64_t)size * count;
-    uint8_t *sorted = level_room(d, bytes, count);
-    uint8_t *levels = sorted + bytes;
+    // Sorted, they're places: in `from`'s base, or in the instances as they were given
+    const uint64_t bytes = (uint64_t)sizeof(uint32_t) * count;
+    uint32_t *sorted = (uint32_t *)(void *)level_room(d, bytes, count);
+    uint8_t *levels = (uint8_t *)sorted + bytes;
     uint32_t counts[TIDE_MESH_LEVELS + 1] = {0};
     for (uint32_t i = 0; i < count; i++) {
         tide_float4x4 world = tide_identity_f4x4();
-        if (placed) memcpy(&world, (const uint8_t *)instances + (size_t)i * size, sizeof world);
+        if (placed) memcpy(&world, shaded_item(instances, from, i, size), sizeof world);
         if (through) world = tide_mul_f4x4(*through, world);
         levels[i] = (uint8_t)pick_level(&d->meshes[mesh - 1u], &view, &world);
         counts[levels[i]]++;
     }
     d->leveled = 1;
+    shaded_from after;
     if (ordered_levels(p->depth, p->blend)) {
         for (uint32_t first = 0; first < count;) {
             uint32_t end = first + 1u;
             while (end < count && levels[end] == levels[first]) end++;
             const uint32_t drawn = levels[first] ? level_mesh(d, mesh, levels[first]) : mesh;
-            const void *theirs = instances ? (const uint8_t *)instances + (size_t)first * size : NULL;
-            shaded_placed(d, shader, drawn, theirs, end - first, uniforms, textures, sampling);
+            const void *theirs = shaded_after(instances, from, &after, first, size);
+            shaded_placed(d, shader, drawn, theirs, end - first, uniforms, textures, sampling, from ? &after : NULL);
             first = end;
         }
         return;
@@ -3067,19 +3875,508 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
         at += counts[level];
     }
     const bool one = counts[levels[0]] == count; // All at one level: as they are
+    shaded_from order = {.order = sorted, .base = from ? from->base : instances, .listed = from ? from->listed : 0u};
     if (!one && size && instances) {
         uint32_t next[TIDE_MESH_LEVELS + 1];
         memcpy(next, starts, sizeof next);
         for (uint32_t i = 0; i < count; i++) {
-            memcpy(sorted + (size_t)next[levels[i]]++ * size, (const uint8_t *)instances + (size_t)i * size, size);
+            sorted[next[levels[i]]++] = from ? shaded_place(instances, from, i, size) : i;
         }
     }
     for (uint32_t level = 0; level <= TIDE_MESH_LEVELS; level++) {
         if (counts[level] == 0) continue;
         const uint32_t drawn = level ? level_mesh(d, mesh, level) : mesh;
-        const void *theirs = !instances ? NULL : one ? instances : (const void *)(sorted + (size_t)starts[level] * size);
-        shaded_placed(d, shader, drawn, theirs, counts[level], uniforms, textures, sampling);
+        if (!instances || one) {
+            shaded_placed(d, shader, drawn, instances, counts[level], uniforms, textures, sampling, from);
+            continue;
+        }
+        shaded_from theirs = order;
+        theirs.order = sorted + starts[level];
+        shaded_placed(d, shader, drawn, order.base, counts[level], uniforms, textures, sampling, &theirs);
     }
+}
+
+// The instances of a list the list keeps (tide_draw_mesh_shaded_list), as tide_draw_shaded_instances's: `slot` is
+// the texture of numbers they're in, from instance `first` on (tide_shader_instance_size bytes each), `count` of them.
+static void shaded_listed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const uint32_t slot,
+                          const uint32_t first, const uint32_t count, const void *uniforms, const uint32_t *textures,
+                          const uint64_t sampling)
+{
+    const uint8_t *numbers = d->textures[slot - 1u].pixels;
+    const uint8_t *theirs = numbers + (size_t)first * tide_shader_instance_size(shader);
+    const shaded_from from = {.base = numbers, .listed = slot};
+    if (!d->diagnostics || !count || !mesh || mesh > d->mesh_count || d->meshes[mesh - 1u].space != TIDE_MESH_BYTES
+        || !d->meshes[mesh - 1u].index_count || d->meshes[mesh - 1u].vertex_size != shader->vertex_size
+        || (tide_shader_uniform_size(shader) && !uniforms)) {
+        shaded_at(d, shader, mesh, theirs, count, uniforms, textures, sampling, &from);
+        return;
+    }
+    const tide_draw_diagnostic_scope scope = tide_draw_diagnostics_begin(d, count);
+    shaded_at(d, shader, mesh, theirs, count, uniforms, textures, sampling, &from);
+    tide_draw_diagnostics_end(d, scope);
+}
+
+void tide_draw_shaded_listed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const uint32_t slot,
+                             const uint32_t first, const uint32_t count, const void *uniforms, const uint32_t *textures,
+                             const uint64_t sampling)
+{
+    if (!shader || shader->dims != 3 || !count || !slot || slot > d->texture_count) return;
+    const tide_draw_texture *t = &d->textures[slot - 1u];
+    const uint32_t size = tide_shader_instance_size(shader);
+    // Its numbers have to hold them all, a pack a pixel
+    if (!size || t->space != TIDE_PIXELS_LIST || t->format != TIDE_TEXELS_INTS || !t->pixels || t->width <= 0
+        || t->height <= 0 || ((uint64_t)first + count) * (size / 16u) > (uint64_t)t->width * (uint64_t)t->height) return;
+    d->textures[slot - 1u].frame = d->frame;
+    shaded_listed(d, shader, mesh, slot, first, count, uniforms, textures, sampling);
+}
+
+// ---------------------------------------------------------------------------
+// Listed draws the GPU culls (tide_draw_list.gpu_culling; notes/drawing.md, Listed runs culled on the GPU)
+
+// What a pick goes by, as a culled draw's camera keeps it (tide_draw_cull_camera.lod, lod_view_kept's packing).
+static lod_view cull_view(const tide_draw_cull_camera *camera)
+{
+    lod_view view = {.level = camera->lod_level};
+    view.scale = camera->lod[0];
+    memcpy(view.w, &camera->lod[1], sizeof view.w);
+    view.w_length = camera->lod[5];
+    memcpy(view.x, &camera->lod[6], sizeof view.x);
+    memcpy(view.y, &camera->lod[10], sizeof view.y);
+    view.x_length = camera->lod[14];
+    view.y_length = camera->lod[15];
+    view.picks = view.scale > 0.0f;
+    return view;
+}
+
+static uint32_t level_by(const tide_draw_mesh_data *m, const double allowed)
+{
+    uint32_t level = 0;
+    while (level < m->levels && m->level_error[level] <= allowed) level++;
+    return level;
+}
+
+// The least and the most of a row's x, y, z and w over places in the box from `low` to `high`.
+static void row_range(const float row[4], const double low[3], const double high[3], double *least, double *most)
+{
+    *least = *most = row[3];
+    for (uint32_t axis = 0; axis < 3; axis++) {
+        const double a = row[axis] * low[axis], b = row[axis] * high[axis];
+        *least += a < b ? a : b;
+        *most += a < b ? b : a;
+    }
+}
+
+// The levels a list's instances could be picked at through `view` (pick_level), from what its numbers are: every
+// pick, the CPU's or the GPU's in its floats, is from `low` to `high`. The ball's center is in the translations'
+// box widened by how far a transform can move it (sqrt 3 times its biggest column's length times the center's
+// distance), and its radius between the least and the most the transforms scale it by; each of pick_level's terms
+// is then between its least and most over those, `away` between the most of the leasts and the most of the mosts,
+// widened by far more than float rounding could move it.
+static void cull_levels(const tide_draw_mesh_data *m, const lod_view *view, const tide_draw_listed_stats *s,
+                        uint32_t *low, uint32_t *high)
+{
+    if (view->level) {
+        *low = *high = view->level - 1u < m->levels ? view->level - 1u : m->levels;
+        return;
+    }
+    *low = *high = 0;
+    if (!m->levels || !view->picks) return;
+    *high = m->levels; // Unless the numbers say less
+    if (!s->ok || !(s->least > 0.0f)) return;
+    const double center = sqrt((double)m->center[0] * m->center[0] + (double)m->center[1] * m->center[1]
+                               + (double)m->center[2] * m->center[2]);
+    const double reach = 1.7320508075688772 * s->most * center * (1.0 + 0x1p-20);
+    double box_low[3], box_high[3], far = 0.0;
+    for (uint32_t axis = 0; axis < 3; axis++) {
+        box_low[axis] = s->low[axis] - reach;
+        box_high[axis] = s->high[axis] + reach;
+        const double out = fabs(box_low[axis]) > fabs(box_high[axis]) ? fabs(box_low[axis]) : fabs(box_high[axis]);
+        if (out > far) far = out;
+    }
+    const double r_least = (double)m->radius * s->least, r_most = (double)m->radius * s->most;
+    double w_least, w_most, x_least, x_most, y_least, y_most;
+    row_range(view->w, box_low, box_high, &w_least, &w_most);
+    row_range(view->x, box_low, box_high, &x_least, &x_most);
+    row_range(view->y, box_low, box_high, &y_least, &y_most);
+    const double side_most = fabs(x_least) > fabs(x_most) ? fabs(x_least) : fabs(x_most);
+    const double side_least = x_least <= 0.0 && x_most >= 0.0 ? 0.0 : (fabs(x_least) < fabs(x_most) ? fabs(x_least) : fabs(x_most));
+    const double rise_most = fabs(y_least) > fabs(y_most) ? fabs(y_least) : fabs(y_most);
+    const double rise_least = y_least <= 0.0 && y_most >= 0.0 ? 0.0 : (fabs(y_least) < fabs(y_most) ? fabs(y_least) : fabs(y_most));
+    const double wl = view->w_length, kx = view->x_length + 2.0 * wl, ky = view->y_length + 2.0 * wl;
+    const double terms_least[4] = {w_least - r_most * wl, side_least - r_most * kx, rise_least - r_most * ky,
+                                   -w_most - 3.0 * r_most * wl};
+    const double terms_most[4] = {w_most - r_least * wl, side_most - r_least * kx, rise_most - r_least * ky,
+                                  -w_least - 3.0 * r_least * wl};
+    double away_least = terms_least[0], away_most = terms_most[0];
+    for (uint32_t i = 1; i < 4; i++) {
+        if (terms_least[i] > away_least) away_least = terms_least[i];
+        if (terms_most[i] > away_most) away_most = terms_most[i];
+    }
+    // What float rounding of a pick's sums could move `away` by is far under this share of what they sum
+    double magnitude = 0.0;
+    const float *rows[3] = {view->w, view->x, view->y};
+    for (uint32_t r = 0; r < 3; r++) {
+        magnitude += fabs(rows[r][3]);
+        for (uint32_t axis = 0; axis < 3; axis++) magnitude += fabs(rows[r][axis]) * far;
+    }
+    magnitude += r_most * (3.0 * wl + kx + ky);
+    const double margin = 0x1p-12 * magnitude + 1e-30;
+    away_least -= margin;
+    away_most += margin;
+    if (!isfinite(away_least) || !isfinite(away_most)) return;
+    const double scale = view->scale, multiplier = m->lod_multiplier;
+    if (!(away_most > 0.0)) {
+        *high = 0;
+        return;
+    }
+    const double most = away_most / ((double)s->least * scale) * multiplier * (1.0 + 0x1p-12);
+    *high = isfinite(most) ? level_by(m, most) : m->levels;
+    if (away_least > 0.0) {
+        const double least = away_least / ((double)s->most * scale) * multiplier * (1.0 - 0x1p-12);
+        *low = level_by(m, least) < *high ? level_by(m, least) : *high;
+    }
+}
+
+// Whether every one of a list's instances' boxes is surely past one plane of `f`, as cull_exact says with its
+// allowance: each box is in a ball around its translation as far as the transform's biggest column's length times
+// sqrt 3 times the box's center's distance and its extents' length, and its magnitudes (cull_exact's) at most its
+// translation's and that column's length times the box's. Instances that aren't affine are drawn by the CPU,
+// untested, so a list with one isn't.
+static bool cull_list_outside(const tide_draw_frustum *f, const tide_draw_bounds *b, const tide_draw_listed_stats *s)
+{
+    if (!s->ok || !s->affine || b->set != 1 || !f->count) return false;
+    const double c[3] = {b->center.x, b->center.y, b->center.z}, e[3] = {b->extents.x, b->extents.y, b->extents.z};
+    const double reach = 1.7320508075688772 * s->most * (sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2])
+                                                         + sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2])) * (1.0 + 0x1p-20);
+    double magnitude[3];
+    const double spread = s->most * (fabs(c[0]) + fabs(c[1]) + fabs(c[2]) + fabs(e[0]) + fabs(e[1]) + fabs(e[2]));
+    for (uint32_t axis = 0; axis < 3; axis++) {
+        magnitude[axis] = (fabs(s->low[axis]) > fabs(s->high[axis]) ? fabs(s->low[axis]) : fabs(s->high[axis])) + spread;
+    }
+    for (uint32_t plane = 0; plane < f->count; plane++) {
+        const double *p = f->plane[plane], *rounding = f->magnitude[plane];
+        double distance = p[3], length = 0.0, sum = fabs(p[3]), error = rounding[3];
+        for (uint32_t axis = 0; axis < 3; axis++) {
+            distance += p[axis] * (p[axis] > 0.0 ? s->high[axis] : s->low[axis]);
+            length += p[axis] * p[axis];
+            sum += fabs(p[axis]) * magnitude[axis];
+            error += rounding[axis] * magnitude[axis];
+        }
+        distance += reach * sqrt(length) + 0x1p-30 * sum;
+        if (isfinite(distance) && isfinite(error) && distance < -1e-5 * (error + 1.0)) return true;
+    }
+    return false;
+}
+
+// The frame's camera for a culled draw through the selected destination, kept once: its index.
+static uint32_t cull_camera(tide_draw_list *d, const tide_float4x4 *world_to_clip, const lod_view *view)
+{
+    tide_draw_cull_camera camera = {.lod_level = view->level};
+    memcpy(camera.world_to_clip, world_to_clip, sizeof camera.world_to_clip);
+    if (!view->level) {
+        camera.lod[0] = view->picks ? view->scale : 0.0f;
+        memcpy(&camera.lod[1], view->w, sizeof view->w);
+        camera.lod[5] = view->w_length;
+        memcpy(&camera.lod[6], view->x, sizeof view->x);
+        memcpy(&camera.lod[10], view->y, sizeof view->y);
+        camera.lod[14] = view->x_length;
+        camera.lod[15] = view->y_length;
+    }
+    for (uint32_t i = d->cull_camera_count; i-- > 0;) {
+        if (memcmp(&d->cull_cameras[i], &camera, sizeof camera) == 0) return i;
+    }
+    d->cull_cameras = grow(d->cull_cameras, d->cull_camera_count, &d->cull_camera_capacity, 1, sizeof camera, 8u);
+    d->cull_cameras[d->cull_camera_count] = camera;
+    return d->cull_camera_count++;
+}
+
+// One of a culled set's runs, a level's: a command of its own, as a listed run's, with no instances of its own.
+static void culled_run(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const uint32_t slot,
+                       const uint32_t set, const uint32_t jobs, const uint32_t count, const uint32_t uniforms,
+                       const uint32_t *textures, const uint64_t sampling, const uint8_t depth, const uint8_t cull)
+{
+    const uint32_t texture_count = shader->texture_count;
+    tide_draw_run run = {.shader = shader, .mesh = mesh, .first = d->instance_used, .count = count,
+                         .uniforms = uniforms, .sampling = sampling, .tint = tide_draw_tint(d), .listed = 1,
+                         .culled = set + 1u, .culled_count = jobs};
+    for (uint32_t i = 0; i < texture_count; i++) {
+        if (textures && textures[i] <= d->texture_count) run.textures[i] = textures[i];
+    }
+    run.textures[texture_count] = slot;
+    d->runs = grow(d->runs, d->run_count, &d->run_capacity, 1, sizeof(tide_draw_run), 64u);
+    d->runs[d->run_count] = run;
+    tide_draw_command *c = push(d, TIDE_DRAW_SHADED, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
+    c->blend = (uint8_t)d->place.blend;
+    c->depth = depth;
+    c->cull = cull;
+    c->shaded.run = d->run_count++;
+}
+
+// The most groups of 64 candidates the GPU culls in a frame: what one dispatch has along an axis.
+enum { CULL_GROUPS_MOST = 65535, CULL_CAMERAS_MOST = 1024 };
+
+static uint32_t cull_groups_of(const uint32_t count)
+{
+    return (count + 63u) / 64u;
+}
+
+bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const uint32_t slot,
+                             const uint32_t first, const uint32_t count, const tide_draw_listed_stats *stats,
+                             const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+{
+    const tide_draw_place *p = &d->place;
+    if (!d->gpu_culling || !shader || shader->dims != 3 || !count || !slot || slot > d->texture_count || !mesh
+        || mesh > d->mesh_count || shader->instance_floats < 4u || shader->texture_count >= TIDE_SHADER_TEXTURES
+        || shader->storage_count || (p->moved & TIDE_DRAW_MOVED_3D)) return false;
+    // Blended draws that read depth draw their levels in the order they're given, which runs a level can't
+    if (ordered_levels(p->depth, p->blend)) return false;
+    // Mirrored instances are runs of their own, as the CPU's are, only where all or none of them are
+    if (p->cull != TIDE_CULL_NONE && stats->mirrored && stats->mirrored != count) return false;
+    const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+    const uint32_t size = tide_shader_instance_size(shader);
+    if (m->space != TIDE_MESH_BYTES || !m->index_count || m->vertex_size != shader->vertex_size || m->base
+        || size < sizeof(tide_float4x4) || (tide_shader_uniform_size(shader) && !uniforms)) return false;
+    const tide_draw_texture *t = &d->textures[slot - 1u];
+    if (t->space != TIDE_PIXELS_LIST || t->format != TIDE_TEXELS_INTS || !t->pixels
+        || ((uint64_t)first + count) * (size / 16u) > (uint64_t)t->width * (uint64_t)t->height) return false;
+    const tide_draw_frustum *frustum = frustum_camera(d);
+    const lod_view view = lod_view_of(d);
+    uint32_t low, high;
+    cull_levels(m, &view, stats, &low, &high);
+    // The frame's GPU work has room for it, and for another camera where it's another
+    const uint32_t groups = (high - low + 1u) * cull_groups_of(count);
+    if (d->cull_groups + (uint64_t)groups > CULL_GROUPS_MOST || d->cull_camera_count >= CULL_CAMERAS_MOST) return false;
+    d->textures[slot - 1u].frame = d->frame;
+    const tide_draw_diagnostic_scope scope = d->diagnostics ? tide_draw_diagnostics_begin(d, count)
+                                                            : (tide_draw_diagnostic_scope){0};
+    const tide_draw_bounds bounds = *draw_bounds(d, mesh, shader->bounds_position, count);
+    if (bounds.set == 1 && cull_list_outside(frustum, &bounds, stats)) { // Every one of them culled, as the CPU's are
+        if (d->profile_active) d->profile_active->tested += count, d->profile_active->rejected += count;
+        if (d->diagnostics) tide_draw_diagnostics_end(d, scope);
+        return true;
+    }
+    if (d->profile_active) d->profile_active->gpu_culled += count;
+    d->cull_groups += groups;
+    // The levels' meshes, made now: what the renderer draws them with is the list's as it records
+    uint32_t meshes[TIDE_MESH_LEVELS + 1];
+    for (uint32_t level = low; level <= high; level++) meshes[level] = level ? level_mesh(d, mesh, level) : mesh;
+    d->meshes[mesh - 1u].frame = d->frame;
+    const uint32_t job = d->cull_count;
+    d->culls = grow(d->culls, d->cull_count, &d->cull_capacity, 1, sizeof(tide_draw_cull), 64u);
+    d->culls[job] = (tide_draw_cull){.camera = cull_camera(d, &d->frustum_matrix, &view), .mesh = mesh, .page = slot,
+                                     .first = first, .count = count, .packs = size / 16u, .low = (uint8_t)low,
+                                     .high = (uint8_t)high, .occlusion = p->occlusion ? 1u : 0u, .bounds = bounds};
+    d->cull_count++;
+    if (d->diagnostics) { // The geometry rows what the GPU draws of each of its levels counts in, once it says
+        tide_draw_cull *made = &d->culls[job];
+        made->rows_revision = d->diagnostics->revision;
+        for (uint32_t level = low; level <= high; level++) made->rows[level] = tide_draw_geometry_row_of(d, meshes[level]);
+    }
+    const uint8_t depth = (uint32_t)p->depth <= TIDE_DEPTH_EQUAL ? (uint8_t)p->depth : 0;
+    const uint8_t cull = sides(p->cull | (p->cull != TIDE_CULL_NONE && stats->mirrored ? TIDE_DRAW_MIRRORED : 0u));
+    const uint32_t uniform_size = tide_shader_uniform_size(shader);
+    // After the set of draws recorded just before it, of the same mesh through the same shader with the same
+    // settings and values, as the CPU's runs of a level gather (tide_draw_gather_levels): from its first level on
+    tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
+    if (last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)p->blend && last->depth == depth
+        && last->cull == cull && last->shaded.run < d->run_count) {
+        tide_draw_run *r = &d->runs[last->shaded.run];
+        const uint32_t top = r->mesh && r->mesh <= d->mesh_count ? d->meshes[r->mesh - 1u].level : 0u;
+        const uint32_t family = r->mesh && r->mesh <= d->mesh_count && d->meshes[r->mesh - 1u].base
+                              ? d->meshes[r->mesh - 1u].base : r->mesh;
+        const tide_draw_cull *head = r->culled ? &d->culls[r->culled - 1u] : NULL;
+        // Its set's runs are the list's last commands, a level each from its first draw's lowest on. A draw whose
+        // lowest level is past the set's top plus one would leave levels between with no mesh made: a set of its own
+        const uint32_t set_low = head ? head->low : 0u;
+        bool same = head && r->culled - 1u + r->culled_count == job && family == mesh && head->page == slot
+                 && head->occlusion == d->culls[job].occlusion
+                 && (r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
+                 && r->sampling == sampling && same_color(r->tint, tide_draw_tint(d)) && low >= set_low
+                 && top >= set_low && top <= TIDE_MESH_LEVELS && low <= top + 1u && d->count >= top - set_low + 1u
+                 && (uniform_size == 0 || memcmp(d->uniforms + r->uniforms, uniforms, uniform_size) == 0);
+        for (uint32_t i = 0; same && i < shader->texture_count; i++) {
+            same = r->textures[i] == (textures && textures[i] <= d->texture_count ? textures[i] : 0u);
+        }
+        for (uint32_t level = set_low; same && level <= top; level++) {
+            const tide_draw_command *c = &d->commands[d->count - 1u - (top - level)];
+            same = c->kind == TIDE_DRAW_SHADED && c->shaded.run < d->run_count && d->runs[c->shaded.run].culled == r->culled
+                && d->runs[c->shaded.run].mesh && d->runs[c->shaded.run].mesh <= d->mesh_count
+                && d->meshes[d->runs[c->shaded.run].mesh - 1u].level == level && c->blend == last->blend
+                && c->depth == depth && c->cull == cull;
+        }
+        if (same) {
+            const uint32_t uniforms_at = r->uniforms, set = r->culled - 1u, jobs = r->culled_count + 1u;
+            for (uint32_t level = set_low; level <= top; level++) {
+                tide_draw_run *each = &d->runs[d->commands[d->count - 1u - (top - level)].shaded.run];
+                each->culled_count = jobs;
+                if (level >= low && level <= high) {
+                    if (each->count > UINT32_MAX - count) tide_out_of_memory();
+                    each->count += count;
+                }
+            }
+            for (uint32_t level = top + 1u; level <= high; level++) {
+                culled_run(d, shader, meshes[level], slot, set, jobs, count, uniforms_at, textures, sampling, depth, cull);
+            }
+            if (d->diagnostics) tide_draw_diagnostics_end(d, scope);
+            return true;
+        }
+    }
+    const uint32_t uniforms_at = d->uniform_used;
+    d->uniforms = grow(d->uniforms, d->uniform_used, &d->uniform_capacity, uniform_size, 1, 1024u);
+    if (uniform_size) memcpy(d->uniforms + d->uniform_used, uniforms, uniform_size);
+    d->uniform_used += uniform_size;
+    for (uint32_t level = low; level <= high; level++) {
+        culled_run(d, shader, meshes[level], slot, job, 1u, count, uniforms_at, textures, sampling, depth, cull);
+    }
+    if (d->diagnostics) tide_draw_diagnostics_end(d, scope);
+    return true;
+}
+
+uint32_t tide_draw_culled_places(const tide_draw_list *d, const tide_draw_run *run, uint32_t *out)
+{
+    if (!run || !run->culled || !run->shader || !run->mesh || run->mesh > d->mesh_count
+        || run->culled - 1u + (uint64_t)run->culled_count > d->cull_count) return 0;
+    const uint32_t level = d->meshes[run->mesh - 1u].level;
+    uint32_t n = 0, framed = UINT32_MAX;
+    tide_draw_frustum *frustum = tide_alloc(sizeof *frustum);
+    lod_view view = {0};
+    for (uint32_t j = run->culled - 1u; j < run->culled - 1u + run->culled_count; j++) {
+        const tide_draw_cull *job = &d->culls[j];
+        if (!tide_draw_cull_in(job, level) || job->camera >= d->cull_camera_count || !job->mesh || job->mesh > d->mesh_count
+            || !job->page || job->page > d->texture_count || !d->textures[job->page - 1u].pixels) continue;
+        const tide_draw_texture *t = &d->textures[job->page - 1u];
+        if (((uint64_t)job->first + job->count) * job->packs > (uint64_t)t->width * (uint64_t)t->height) continue;
+        if (job->camera != framed) {
+            cull_frustum_build(frustum, d->cull_cameras[job->camera].world_to_clip);
+            view = cull_view(&d->cull_cameras[job->camera]);
+            framed = job->camera;
+        }
+        const tide_draw_mesh_data *m = &d->meshes[job->mesh - 1u];
+        const cull_box box = cull_box_of(&job->bounds, frustum);
+        for (uint32_t i = 0; i < job->count && n < run->count; i++) {
+            const uint8_t *item = t->pixels + ((size_t)job->first + i) * job->packs * 16u;
+            tide_float4x4 world;
+            memcpy(&world, item, sizeof world);
+            const uint32_t picked = m->levels ? pick_level(m, &view, &world) : 0u;
+            if (picked != level) continue;
+            if (cull_instance(frustum, &box, (const float *)(const void *)item, NULL) == CULL_REJECTED) continue;
+            out[n++] = job->first + i;
+        }
+    }
+    free(frustum);
+    return n;
+}
+
+void tide_draw_run_uncull(tide_draw_list *d, const uint32_t place)
+{
+    if (place >= d->run_count || !d->runs[place].culled) return;
+    tide_draw_run run = d->runs[place];
+    const uint64_t bytes = (uint64_t)run.count * sizeof(uint32_t);
+    if (bytes > UINT32_MAX - (uint64_t)d->instance_used) tide_out_of_memory();
+    d->instances = grow(d->instances, d->instance_used, &d->instance_capacity, bytes, 1, 4096u);
+    const uint32_t at = d->instance_used;
+    const uint32_t n = tide_draw_culled_places(d, &run, (uint32_t *)(void *)(d->instances + at));
+    d->instance_used += n * (uint32_t)sizeof(uint32_t);
+    tide_draw_run *r = &d->runs[place];
+    r->first = at;
+    r->count = n;
+    r->culled = r->culled_count = 0;
+}
+
+void tide_draw_uncull(tide_draw_list *d)
+{
+    if (!d || !d->cull_count) return;
+    for (uint32_t i = 0; i < d->count; i++) {
+        const tide_draw_command *c = &d->commands[i];
+        if (c->kind == TIDE_DRAW_SHADED && c->shaded.run < d->run_count && d->runs[c->shaded.run].culled)
+            tide_draw_run_uncull(d, c->shaded.run);
+    }
+}
+
+// The GPU's own slack on the quick test's (frustum_cull.h): its rounding is the same 2^-20 of the sums at most,
+// whatever order and fusing the GPU's compiler gives its sums, and this is on top of the quick test's 2^-16.
+#define CULL_GPU_SLACK 0x1p-14
+
+bool tide_draw_cull_planes(const tide_draw_cull_camera *camera, float planes[72])
+{
+    for (uint32_t plane = 0; plane < 6; plane++) { // Planes past the frustum's: 1 + 0 is never under -1
+        float *each = planes + plane * 12u;
+        for (uint32_t i = 0; i < 12; i++) each[i] = 0.0f;
+        each[3] = 1.0f;
+        each[8] = -1.0f;
+    }
+    tide_draw_frustum *f = tide_alloc(sizeof *f);
+    cull_frustum_build(f, camera->world_to_clip);
+    const bool culls = f->quick_ready && f->count;
+    for (uint32_t plane = 0; culls && plane < f->count; plane++) {
+        float *each = planes + plane * 12u;
+        each[0] = f->lanes[CULL_NX][plane], each[1] = f->lanes[CULL_NY][plane], each[2] = f->lanes[CULL_NZ][plane];
+        each[3] = f->lanes[CULL_W][plane];
+        each[4] = f->lanes[CULL_AX][plane], each[5] = f->lanes[CULL_AY][plane], each[6] = f->lanes[CULL_AZ][plane];
+        const double normal = fmax(fmax(each[4], each[5]), each[6]);
+        each[7] = (float)((double)f->lanes[CULL_REJECT_K][plane] + CULL_GPU_SLACK * normal);
+        each[8] = (float)((double)f->lanes[CULL_REJECT][plane] - CULL_GPU_SLACK * fabs((double)each[3]));
+    }
+    free(f);
+    return culls;
+}
+
+void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
+                                const uint32_t count, const void *uniforms, const uint32_t *textures,
+                                const uint64_t sampling)
+{
+    if (!d->diagnostics || !shader || shader->dims != 3 || !count || !mesh || mesh > d->mesh_count
+        || d->meshes[mesh - 1u].space != TIDE_MESH_BYTES || !d->meshes[mesh - 1u].index_count
+        || d->meshes[mesh - 1u].vertex_size != shader->vertex_size
+        || (tide_shader_instance_size(shader) && !instances) || (tide_shader_uniform_size(shader) && !uniforms)) {
+        shaded_at(d, shader, mesh, instances, count, uniforms, textures, sampling, NULL);
+        return;
+    }
+    const tide_draw_diagnostic_scope scope = tide_draw_diagnostics_begin(d, count);
+    shaded_at(d, shader, mesh, instances, count, uniforms, textures, sampling, NULL);
+    tide_draw_diagnostics_end(d, scope);
+}
+
+const void *tide_draw_run_instance(const tide_draw_list *d, const tide_draw_run *run, const uint32_t i)
+{
+    if (!run || !run->shader || i >= run->count || run->culled) return NULL; // A culled one's are the GPU's to find
+    const uint32_t size = tide_shader_instance_size(run->shader);
+    if (!size) return NULL;
+    const uint64_t at = (uint64_t)run->first + (uint64_t)i * tide_draw_run_stride(run);
+    if (at + tide_draw_run_stride(run) > d->instance_used) return NULL;
+    if (!run->listed) return d->instances + at;
+    const uint32_t texture_count = run->shader->texture_count;
+    const uint32_t slot = texture_count < TIDE_SHADER_TEXTURES ? run->textures[texture_count] : 0u;
+    if (!slot || slot > d->texture_count || !d->textures[slot - 1u].pixels) return NULL;
+    const tide_draw_texture *t = &d->textures[slot - 1u];
+    uint32_t place;
+    memcpy(&place, d->instances + at, sizeof place);
+    if (t->width <= 0 || t->height <= 0 || (uint64_t)place * size + size > (uint64_t)t->width * (uint64_t)t->height * 16u)
+        return NULL;
+    return t->pixels + (size_t)place * size;
+}
+
+void tide_draw_run_unlist(tide_draw_list *d, const uint32_t place)
+{
+    if (place >= d->run_count || !d->runs[place].listed || !d->runs[place].shader) return;
+    tide_draw_run_uncull(d, place);
+    const tide_draw_run run = d->runs[place];
+    const uint32_t size = tide_shader_instance_size(run.shader);
+    const uint64_t bytes = (uint64_t)size * run.count;
+    if (bytes > UINT32_MAX - (uint64_t)d->instance_used) tide_out_of_memory();
+    d->instances = grow(d->instances, d->instance_used, &d->instance_capacity, bytes, 1, 4096u);
+    const uint32_t first = d->instance_used;
+    for (uint32_t i = 0; i < run.count; i++) {
+        const void *bytes_of = tide_draw_run_instance(d, &run, i);
+        uint8_t *to = d->instances + first + (size_t)i * size;
+        if (bytes_of) memcpy(to, bytes_of, size);
+        else memset(to, 0, size);
+    }
+    d->instance_used += (uint32_t)bytes;
+    tide_draw_run *r = &d->runs[place];
+    r->first = first;
+    r->listed = 0;
+    if (run.shader->texture_count < TIDE_SHADER_TEXTURES) r->textures[run.shader->texture_count] = 0;
 }
 
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_blend blend, const void *instance,
@@ -3092,7 +4389,9 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
         const tide_draw_texture *t = &d->textures[slot - 1u];
         if (((t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH)
              && tide_render_target_whole(t->id) == d->targets[d->target - 1u].id) // Any of its color images, or its depth
-            || (t->space == TIDE_PIXELS_TARGET_CUBE && t->id == tide_render_target_cube_of(d->targets[d->target - 1u].id))) {
+            || (t->space == TIDE_PIXELS_TARGET_CUBE && t->id == tide_render_target_cube_of(d->targets[d->target - 1u].id))
+            || ((t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_TARGET_DEPTH) && tide_render_target_arrayed(t->id)
+                && t->id == tide_render_target_array_of(d->targets[d->target - 1u].id))) { // An array a layer of which it draws into
             fprintf(stderr, "Draw.Blit cannot sample its destination\n");
             return;
         }
@@ -3110,7 +4409,125 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
     const tide_draw_run with = {.tint = TIDE_COLOR_WHITE};
     shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, sampling, TIDE_DRAW_BLIT,
                      (uint32_t)blend <= TIDE_BLEND_REPLACE ? blend : TIDE_BLEND_REPLACE, TIDE_DEPTH_READ_WRITE, 0, &with,
-                     NULL);
+                     NULL, NULL);
+}
+
+uint32_t tide_draw_storage(tide_draw_list *d, const tide_gpu_list *lists, const uint32_t count)
+{
+    if (count == 0 || !lists) return 0;
+    d->storage = grow(d->storage, d->storage_count, &d->storage_capacity, count, sizeof(uint64_t), 32u);
+    const uint32_t at = d->storage_count;
+    for (uint32_t i = 0; i < count; i++) d->storage[at + i] = lists[i].id;
+    d->storage_count += count;
+    return at + 1u;
+}
+
+void tide_draw_compute_run(tide_draw_list *d, const tide_shader *shader, const uint32_t size[3], const tide_gpu_list over,
+                           const tide_gpu_list *storage, const void *uniforms, const uint32_t *textures,
+                           const uint64_t sampling)
+{
+    if (!shader || !shader->compute) return;
+    if (!over.id && (!size || size[0] == 0 || size[1] == 0 || size[2] == 0)) return; // No invocations
+    if (over.id && !tide_gpu_list_live(over.id)) return; // A list that isn't there is empty
+    const uint32_t uniform_size = tide_shader_uniform_size(shader);
+    if (uniform_size && !uniforms) return;
+    tide_draw_compute run = {.shader = shader, .uniforms = d->uniform_used, .sampling = sampling, .over = over.id};
+    if (!over.id) memcpy(run.size, size, sizeof run.size);
+    const uint32_t texture_count = shader->texture_count < TIDE_SHADER_TEXTURES ? shader->texture_count : TIDE_SHADER_TEXTURES;
+    for (uint32_t i = 0; i < texture_count; i++) {
+        if (textures && textures[i] <= d->texture_count) run.textures[i] = textures[i];
+    }
+    run.storage = tide_draw_storage(d, storage, shader->storage_count < TIDE_SHADER_STORAGE ? shader->storage_count
+                                                                                            : TIDE_SHADER_STORAGE);
+    d->uniforms = grow(d->uniforms, d->uniform_used, &d->uniform_capacity, uniform_size, 1, 1024u);
+    if (uniform_size) memcpy(d->uniforms + d->uniform_used, uniforms, uniform_size);
+    d->uniform_used += uniform_size;
+    d->computes = grow(d->computes, d->compute_count, &d->compute_capacity, 1, sizeof(tide_draw_compute), 16u);
+    d->computes[d->compute_count] = run;
+    push(d, TIDE_DRAW_COMPUTE, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_WHITE)->compute.run = d->compute_count++;
+}
+
+static void gpu_op(tide_draw_list *d, const tide_gpu_list list, const uint32_t kind, const uint32_t count,
+                   const uint32_t words)
+{
+    d->gpu_ops = grow(d->gpu_ops, d->gpu_op_count, &d->gpu_op_capacity, 1, sizeof(tide_draw_gpu_op), 16u);
+    d->gpu_ops[d->gpu_op_count] = (tide_draw_gpu_op){.list = list.id, .kind = kind, .count = count, .words = words};
+    push(d, TIDE_DRAW_GPU_LIST, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_WHITE)->gpu_list.op = d->gpu_op_count++;
+}
+
+void tide_draw_gpu_list_set(tide_draw_list *d, const tide_gpu_list list, const uint32_t *words, uint32_t count)
+{
+    const tide_gpu_list_state *s = tide_gpu_list_state_of(list.id);
+    if (!s || !s->alive) return;
+    if (count > s->capacity) count = s->capacity;
+    const uint64_t length = (uint64_t)count * s->stride;
+    if (length && !words) return;
+    if (length > UINT32_MAX - (uint64_t)d->gpu_word_count) tide_out_of_memory();
+    d->gpu_words = grow(d->gpu_words, d->gpu_word_count, &d->gpu_word_capacity, length, sizeof(uint32_t), 1024u);
+    const uint32_t at = d->gpu_word_count;
+    if (length) memcpy(d->gpu_words + at, words, (size_t)length * sizeof(uint32_t));
+    d->gpu_word_count += (uint32_t)length;
+    gpu_op(d, list, TIDE_GPU_LIST_SET, count, at);
+}
+
+void tide_draw_gpu_list_clear(tide_draw_list *d, const tide_gpu_list list)
+{
+    if (tide_gpu_list_live(list.id)) gpu_op(d, list, TIDE_GPU_LIST_CLEAR, 0, 0);
+}
+
+void tide_draw_gpu_list_count(tide_draw_list *d, const tide_gpu_list list, const int32_t count)
+{
+    const tide_gpu_list_state *s = tide_gpu_list_state_of(list.id);
+    if (!s || !s->alive) return;
+    const uint32_t clamped = count <= 0 ? 0u : (uint32_t)count > s->capacity ? s->capacity : (uint32_t)count;
+    gpu_op(d, list, TIDE_GPU_LIST_COUNT, clamped, 0);
+}
+
+void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const tide_gpu_list list,
+                               const tide_gpu_list *storage, const void *uniforms, const uint32_t *textures,
+                               const uint64_t sampling)
+{
+    if (!shader || !shader->instance_storage || !tide_gpu_list_live(list.id)) return;
+    d->storage_next = tide_draw_storage(d, storage, shader->storage_count < TIDE_SHADER_STORAGE ? shader->storage_count
+                                                                                                : TIDE_SHADER_STORAGE);
+    d->indirect_next = list.id;
+    // Moved as a CPU list's instances are: Draw.Transform's matrix, which the GPU puts each one's transform through
+    _Alignas(16) uint8_t moved[TIDE_SHADER_UNIFORM_BYTES];
+    const uint32_t size = tide_shader_uniform_size(shader);
+    const uint64_t at = (uint64_t)(shader->instance_through - 1u) * sizeof(float);
+    if (shader->instance_through && uniforms && size <= sizeof moved && at + sizeof(tide_float4x4) <= size) {
+        const tide_float4x4 through = d->place.moved & TIDE_DRAW_MOVED_3D ? d->place.transform_3d : tide_identity_f4x4();
+        memcpy(moved, uniforms, size);
+        memcpy(moved + at, &through, sizeof through);
+        uniforms = moved;
+    }
+    // Instances whose own transforms mirror the mesh are wound the other way, which a draw that culls tells apart
+    // as the CPU splits a list's (shaded_visible), with nothing to read back: two runs, each of the instances of one
+    // side, wound each way (tide_shader.instance_sides). Their corners the other run's are one point on the GPU.
+    const tide_draw_place *p = &d->place;
+    const uint64_t side_at = (uint64_t)(shader->instance_sides - 1u) * sizeof(float);
+    if (shader->instance_sides && uniforms == moved && side_at + sizeof(float) <= size && p->cull != TIDE_CULL_NONE) {
+        const tide_draw_run with = {.tint = tide_draw_tint(d)};
+        const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
+        const bool turned = through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
+        for (int side = 1; side <= 2; side++) {
+            const float keep = (float)side;
+            memcpy(moved + side_at, &keep, sizeof keep);
+            const bool mirrored = (side == 2) != turned;
+            shaded_instances(d, shader, mesh, NULL, 1, moved, textures, sampling, TIDE_DRAW_SHADED, (tide_blend)p->blend,
+                             (tide_depth)p->depth, p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through, NULL);
+        }
+    } else {
+        // As the GPU has them: no culling or level picking, which is the kernel's that filled the list
+        shaded_visible(d, shader, mesh, NULL, 1, uniforms, textures, sampling, NULL);
+    }
+    d->storage_next = 0;
+    d->indirect_next = 0;
+}
+
+void tide_draw_set_storage(tide_draw_list *d, const tide_gpu_list *storage, const uint32_t count)
+{
+    d->storage_next = tide_draw_storage(d, storage, count);
 }
 
 // Instances of a 3D mesh whose transforms are the list's from `at`, all
@@ -3122,12 +4539,14 @@ static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, co
                                                            const tide_blend blend, const tide_depth depth,
                                                            const uint8_t cull, const tide_color tint)
 {
+    if (d->profile_active) d->profile_active->submitted += count;
     tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
     if (last && last->kind == TIDE_DRAW_MESH_3D && last->blend == (uint8_t)blend && last->depth == (uint8_t)depth
         && last->cull == cull && last->mesh3.mesh == mesh && last->mesh3.texture == texture
         && last->mesh3.filter == (uint16_t)filter && last->mesh3.wrap == (uint16_t)wrap
         && last->mesh3.first + last->mesh3.count == at && same_color(last->color, tint)) {
         last->mesh3.count += count;
+        if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
         return;
     }
     tide_draw_command *c = push(d, TIDE_DRAW_MESH_3D, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), tint);
@@ -3140,6 +4559,7 @@ static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, co
     c->mesh3.texture = texture;
     c->mesh3.filter = (uint16_t)filter;
     c->mesh3.wrap = (uint16_t)wrap;
+    if (d->diagnostics) tide_draw_geometry_record(d, c, mesh, count);
 }
 
 // A run of instances of a 3D mesh, tinted by `tint`: `through` is what they
@@ -3198,7 +4618,7 @@ static uint32_t one_level(tide_draw_list *d, const uint32_t mesh, const tide_flo
 static __attribute__((noinline)) void instance_placed(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform,
                                                       const uint32_t texture, const tide_filter filter, const tide_wrap wrap);
 
-static void instance_at(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
+static void instance_record(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
                         const tide_filter filter, const tide_wrap wrap)
 {
     const tide_draw_place *p = &d->place;
@@ -3212,8 +4632,8 @@ static void instance_at(tide_draw_list *d, const uint32_t mesh, const tide_float
             d->matrices = grow(d->matrices, d->matrix_count, &d->matrix_capacity, 1, sizeof(tide_float4x4), 256u);
             tide_float4x4 *own = &d->matrices[d->matrix_count];
             matrix_read((float *)own, transform); // The caller's, just made (see color_read)
-            const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
-            if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), own, NULL)) return;
+            const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position), 1);
+            if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), own, NULL, d->profile_active)) return;
             const uint32_t at = d->matrix_count++;
             const uint32_t cull = p->cull;
             const uint8_t side = cull == TIDE_CULL_NONE ? sides(cull) : sides(cull | (mirrors(own) ? TIDE_DRAW_MIRRORED : 0u));
@@ -3224,18 +4644,36 @@ static void instance_at(tide_draw_list *d, const uint32_t mesh, const tide_float
     instance_placed(d, mesh, transform, texture, filter, wrap);
 }
 
+static bool diagnostic_mesh(const tide_draw_list *d, const uint32_t mesh, const uint32_t texture)
+{
+    return mesh && mesh <= d->mesh_count && texture <= d->texture_count
+        && d->meshes[mesh - 1u].index_count && d->meshes[mesh - 1u].space != TIDE_MESH_BYTES;
+}
+
+static void instance_at(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
+                        const tide_filter filter, const tide_wrap wrap)
+{
+    if (!d->diagnostics || !diagnostic_mesh(d, mesh, texture)) {
+        instance_record(d, mesh, transform, texture, filter, wrap);
+        return;
+    }
+    const tide_draw_diagnostic_scope scope = tide_draw_diagnostics_begin(d, 1);
+    instance_record(d, mesh, transform, texture, filter, wrap);
+    tide_draw_diagnostics_end(d, scope);
+}
+
 // One whose transform the caller stored already, as the next of the list's matrices (tide_draw_mesh_3d_wrapped):
 // instance_at's own case, without reading it from the caller, and with no texture; anything else is instance_placed,
 // from a copy, as growing the matrices could move them.
-void tide_draw_instance_stored(tide_draw_list *d, const uint32_t mesh, const tide_filter filter, const tide_wrap wrap)
+static void instance_stored(tide_draw_list *d, const uint32_t mesh, const tide_filter filter, const tide_wrap wrap)
 {
     const tide_draw_place *p = &d->place;
     if (!d->unsettled && !(p->moved & TIDE_DRAW_MOVED_3D) && mesh && mesh <= d->mesh_count) {
         const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
         if (!m->levels && m->index_count && m->space != TIDE_MESH_BYTES) {
             tide_float4x4 *own = &d->matrices[d->matrix_count];
-            const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
-            if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), own, NULL)) return;
+            const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position), 1);
+            if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), own, NULL, d->profile_active)) return;
             const uint32_t at = d->matrix_count++;
             const uint32_t cull = p->cull;
             const uint8_t side = cull == TIDE_CULL_NONE ? sides(cull) : sides(cull | (mirrors(own) ? TIDE_DRAW_MIRRORED : 0u));
@@ -3247,14 +4685,25 @@ void tide_draw_instance_stored(tide_draw_list *d, const uint32_t mesh, const tid
     instance_placed(d, mesh, &transform, 0, filter, wrap);
 }
 
+void tide_draw_instance_stored(tide_draw_list *d, const uint32_t mesh, const tide_filter filter, const tide_wrap wrap)
+{
+    if (!d->diagnostics || !diagnostic_mesh(d, mesh, 0)) {
+        instance_stored(d, mesh, filter, wrap);
+        return;
+    }
+    const tide_draw_diagnostic_scope scope = tide_draw_diagnostics_begin(d, 1);
+    instance_stored(d, mesh, filter, wrap);
+    tide_draw_diagnostics_end(d, scope);
+}
+
 // ...and any other: apart, so the one above keeps few registers.
 static void instance_placed(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
                             const tide_filter filter, const tide_wrap wrap)
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
-    if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), transform, through)) return;
+    const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position), 1);
+    if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), transform, through, d->profile_active)) return;
     uint32_t drawn = mesh;
     if (mesh && mesh <= d->mesh_count && d->meshes[mesh - 1u].levels) drawn = one_level(d, mesh, transform, through);
     mesh_instances(d, drawn, transform, 1, texture, filter, wrap, (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull,
@@ -3273,21 +4722,33 @@ static void instances_placed(tide_draw_list *d, const uint32_t mesh, const tide_
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    const tide_draw_bounds bounds = *draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+    const tide_draw_bounds bounds = *draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position), count);
     uint32_t first = 0;
-    for (uint32_t i = 0; bounds.set == 1 && transforms && i < count; i++) {
-        if (bounds_visible(&bounds, frustum_camera(d), &transforms[i], through)) continue;
-        if (i > first) mesh_instances(d, mesh, transforms + first, i - first, texture, filter, wrap,
-                                      (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d), through,
-                                      through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
-        first = i + 1u;
+    const tide_draw_frustum *camera = bounds.set == 1 && transforms && count ? frustum_camera(d) : NULL;
+    const cull_box box = camera ? cull_box_of(&bounds, camera) : (cull_box){0};
+    cull_counts counts = {0};
+    for (uint32_t i = 0; camera && i < count; i += 4u) {
+        // Four at a time (the last again where fewer are left)
+        const uint32_t n = count - i < 4u ? count - i : 4u;
+        const float *four[4];
+        for (uint32_t k = 0; k < 4; k++) four[k] = (const float *)&transforms[i + (k < n ? k : n - 1u)];
+        int result[4];
+        cull_four(camera, &box, four, through, n, result);
+        for (uint32_t k = 0; k < n; k++) {
+            if (cull_counted(&counts, result[k])) continue;
+            if (i + k > first) mesh_instances(d, mesh, transforms + first, i + k - first, texture, filter, wrap,
+                                              (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d),
+                                              through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
+            first = i + k + 1u;
+        }
     }
+    cull_add(d->profile_active, &counts);
     if (count > first) mesh_instances(d, mesh, transforms ? transforms + first : NULL, count - first, texture, filter,
                                      wrap, (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d), through,
                                      through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
 }
 
-void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transforms, const uint32_t count,
+static void instances_at(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transforms, const uint32_t count,
                          const uint32_t texture, const tide_filter filter, const tide_wrap wrap)
 {
     if (count == 0 || !transforms || mesh == 0 || mesh > d->mesh_count || d->meshes[mesh - 1u].levels == 0) {
@@ -3340,6 +4801,18 @@ void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_floa
     }
 }
 
+void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transforms, const uint32_t count,
+                         const uint32_t texture, const tide_filter filter, const tide_wrap wrap)
+{
+    if (!d->diagnostics || !count || !transforms || !diagnostic_mesh(d, mesh, texture)) {
+        instances_at(d, mesh, transforms, count, texture, filter, wrap);
+        return;
+    }
+    const tide_draw_diagnostic_scope scope = tide_draw_diagnostics_begin(d, count);
+    instances_at(d, mesh, transforms, count, texture, filter, wrap);
+    tide_draw_diagnostics_end(d, scope);
+}
+
 uint64_t tide_mesh_version(const tide_mesh *mesh)
 {
     if (!mesh || !mesh->vertices || !mesh->indices) return 0;
@@ -3371,8 +4844,14 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
 {
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
-    if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH || t->space == TIDE_PIXELS_TARGET_CUBE) {
-        return target_texture_version(d, t->space, t->id, t->target, t->version);
+    if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH || t->space == TIDE_PIXELS_TARGET_CUBE
+        || t->space == TIDE_PIXELS_TARGET_ARRAY) {
+        const uint32_t slot = target_texture_version(d, t->space, t->id, t->target, t->version);
+        if (slot) d->textures[slot - 1u].layers = t->layers;
+        return slot;
+    }
+    if (t->space == TIDE_PIXELS_PACK_ARRAY) {
+        return pack_array(d, t->id, t->width, t->height, t->layers, (const uint8_t *const *)(uintptr_t)t->pixels, t->layer_blocks);
     }
     if (t->space == TIDE_PIXELS_PACK) {
         const uint32_t slot = pack_texture(d, t->id, t->width, t->height, t->pixels);
@@ -3397,6 +4876,7 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     const uint32_t slot = kind ? tide_draw_texture_edit(d, t->space, id, t->version, t->width, t->height, t->format, kind,
                                                         &pixels, &kept)
                                : texture_place(d, t->space, id, t->version, t->width, t->height, t->format, 0, &pixels, &kept);
+    if (slot) d->textures[slot - 1u].layers = t->layers; // A grid's array's
     if (!pixels) return slot;
     const size_t pixel = tide_texels_bytes(t->format), row = (size_t)t->width * pixel;
     const tide_draw_area *areas;
@@ -3469,7 +4949,8 @@ static uint32_t append_mesh(tide_draw_list *d, const tide_draw_list *from, const
     bool fill;
     const uint32_t slot = tide_draw_mesh_slot(d, m->space, m->id, m->other, m->version, &fill);
     if (!base) {
-        if (fill) tide_draw_mesh_fill_bytes(d, slot, m->bytes, m->vertex_size, m->vertex_count, m->indices, m->index_count);
+        if (fill && m->hollow) tide_draw_mesh_relist(d, slot, m); // Read from its lists again
+        else if (fill) tide_draw_mesh_fill_bytes(d, slot, m->bytes, m->vertex_size, m->vertex_count, m->indices, m->index_count);
         return slot;
     }
     tide_draw_mesh_data *level = &d->meshes[slot - 1u];
@@ -3501,17 +4982,72 @@ static bool level_follows(const tide_draw_list *d, const tide_draw_command *c, c
     }
     if (c->shaded.run >= d->run_count || next->shaded.run >= d->run_count) return false;
     const tide_draw_run *a = &d->runs[c->shaded.run], *b = &d->runs[next->shaded.run];
-    if (!b->shader || b->mesh == 0 || b->mesh > d->mesh_count || b->count == 0) return false;
+    if (!b->shader || b->mesh == 0 || b->mesh > d->mesh_count || b->count == 0 || a->culled || b->culled) return false;
     const tide_draw_mesh_data *m = &d->meshes[b->mesh - 1u];
     const uint32_t uniform_size = tide_shader_uniform_size(a->shader);
     const uint32_t texture_count = a->shader->texture_count < TIDE_SHADER_TEXTURES ? a->shader->texture_count : TIDE_SHADER_TEXTURES;
+    // Listed runs and runs of bytes may follow each other (tide_draw_gather_levels makes them all listed); two
+    // listed ones are of one page
+    const uint32_t compared = texture_count + (a->listed && b->listed && texture_count < TIDE_SHADER_TEXTURES ? 1u : 0u);
     return (m->base ? m->base : b->mesh) == family
         && (a->shader == b->shader || (a->shader->id && a->shader->id == b->shader->id)) && a->sampling == b->sampling
-        && a->first + (uint64_t)a->count * tide_shader_instance_size(a->shader) == b->first
-        && memcmp(a->textures, b->textures, texture_count * sizeof *a->textures) == 0 && same_color(a->tint, b->tint) && a->moved == b->moved
+        && a->first + (uint64_t)a->count * tide_draw_run_stride(a) == b->first
+        && memcmp(a->textures, b->textures, compared * sizeof *a->textures) == 0 && same_color(a->tint, b->tint) && a->moved == b->moved
         && (!a->moved || memcmp(&a->transform, &b->transform, sizeof a->transform) == 0)
         && (uniform_size == 0 || a->uniforms == b->uniforms
             || memcmp(d->uniforms + a->uniforms, d->uniforms + b->uniforms, uniform_size) == 0);
+}
+
+// The shaded commands from `i` to `end` (runs one after another: level_follows) all as their runs were where
+// none or all are listed; else all listed, in one page, each run's instances places from the first run's on.
+// False where they can't be (two pages, no room in the page): they're left as they are.
+static bool gather_listed(const tide_draw_list *list, const uint32_t i, const uint32_t end)
+{
+    tide_draw_list *d = (tide_draw_list *)(uintptr_t)list; // What the renderer prepares is the list it has
+    uint32_t page = 0, bytes = 0;
+    for (uint32_t k = i; k < end; k++) {
+        const tide_draw_run *r = &d->runs[d->commands[k].shaded.run];
+        const uint32_t t = r->shader->texture_count;
+        if (!r->listed) {
+            bytes++;
+            continue;
+        }
+        if (page && r->textures[t] != page) return false;
+        page = r->textures[t];
+    }
+    if (!page || !bytes) return true;
+    const tide_draw_run *head = &d->runs[d->commands[i].shaded.run];
+    const uint32_t size = tide_shader_instance_size(head->shader), packs = size / 16u, first = head->first;
+    // Each run's places, in order: those of bytes put in the page first, before any is moved
+    uint32_t total = 0;
+    for (uint32_t k = i; k < end; k++) total += d->runs[d->commands[k].shaded.run].count;
+    uint32_t *places = tide_alloc((size_t)total * sizeof *places);
+    uint32_t n = 0;
+    for (uint32_t k = i; k < end; k++) {
+        const tide_draw_run *r = &d->runs[d->commands[k].shaded.run];
+        if (r->listed) {
+            memcpy(places + n, d->instances + r->first, (size_t)r->count * sizeof *places);
+        } else {
+            const uint32_t start = tide_draw_listed_put(d, page, d->instances + r->first, r->count, packs);
+            if (start == UINT32_MAX) {
+                free(places);
+                return false;
+            }
+            for (uint32_t m = 0; m < r->count; m++) places[n + m] = start / packs + m;
+        }
+        n += r->count;
+    }
+    memcpy(d->instances + first, places, (size_t)total * sizeof *places);
+    free(places);
+    uint32_t at = first;
+    for (uint32_t k = i; k < end; k++) {
+        tide_draw_run *r = &d->runs[d->commands[k].shaded.run];
+        r->first = at;
+        r->listed = 1;
+        r->textures[r->shader->texture_count] = page;
+        at += r->count * (uint32_t)sizeof(uint32_t);
+    }
+    return true;
 }
 
 void tide_draw_gather_levels(const tide_draw_list *d)
@@ -3532,7 +5068,9 @@ void tide_draw_gather_levels(const tide_draw_list *d)
             continue;
         }
         const tide_draw_run *run = shaded && c->shaded.run < d->run_count ? &d->runs[c->shaded.run] : NULL;
-        const uint32_t mesh = shaded ? (run && run->shader && run->count ? run->mesh : 0u) : (c->mesh3.count ? c->mesh3.mesh : 0u);
+        // A culled run's levels are its set's runs already (tide_draw_shaded_culled)
+        const uint32_t mesh = shaded ? (run && run->shader && run->count && !run->culled ? run->mesh : 0u)
+                                     : (c->mesh3.count ? c->mesh3.mesh : 0u);
         if (mesh == 0 || mesh > d->mesh_count) {
             i = end;
             continue;
@@ -3563,7 +5101,12 @@ void tide_draw_gather_levels(const tide_draw_list *d)
             i = end;
             continue;
         }
-        const size_t size = shaded ? tide_shader_instance_size(run->shader) : sizeof(tide_float4x4);
+        // Listed runs among runs of bytes: all of them listed, the bytes in the frame's own room of their page
+        if (shaded && !gather_listed(d, i, end)) {
+            i = end;
+            continue;
+        }
+        const size_t size = shaded ? tide_draw_run_stride(run) : sizeof(tide_float4x4);
         const uint32_t first = shaded ? run->first : c->mesh3.first;
         uint8_t *instances = shaded ? d->instances + first : (uint8_t *)(void *)(d->matrices + first);
         uint32_t starts[TIDE_MESH_LEVELS + 1], next[TIDE_MESH_LEVELS + 1];
@@ -3587,11 +5130,20 @@ void tide_draw_gather_levels(const tide_draw_list *d)
             memcpy(instances, sorting, (size_t)total * size);
             free(sorting);
         }
+        uint32_t profile[TIDE_MESH_LEVELS + 1] = {0};
+        if (d->diagnostics) for (uint32_t j = i; j < end; j++) {
+            tide_draw_command *each = &d->commands[j];
+            const uint32_t named = shaded ? d->runs[each->shaded.run].mesh : each->mesh3.mesh;
+            const uint32_t level = d->meshes[named - 1u].level <= TIDE_MESH_LEVELS ? d->meshes[named - 1u].level : 0u;
+            profile[level] = tide_draw_geometry_join(d, each->profile_geometry, profile[level]);
+            each->profile_geometry = 0;
+        }
         // A run a level in the first commands, and the rest draw nothing
         uint32_t k = i;
         for (uint32_t level = 0; level <= TIDE_MESH_LEVELS; level++) {
             if (counts[level] == 0) continue;
             tide_draw_command *each = &d->commands[k++];
+            each->profile_geometry = profile[level];
             if (shaded) {
                 tide_draw_run *r = &d->runs[each->shaded.run];
                 r->mesh = meshes[level];
@@ -3635,6 +5187,8 @@ uint32_t tide_draw_expand(const tide_draw_list *d, tide_draw_command *out, const
 
 void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
 {
+    // The runs the GPU would cull, as the CPU decides them: `d` keeps what's drawn, not what's to be decided
+    tide_draw_uncull((tide_draw_list *)(uintptr_t)from);
     tide_draw_prepare(from, NULL);
     tide_draw_defaults(d);
     reserve(d, from->count);
@@ -3643,6 +5197,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
     const uint32_t base = tide_draw_vertices(d, from->vertices, from->vertex_count);
     for (uint32_t i = 0; i < from->count; i++) {
         const tide_draw_command *c = &from->commands[i];
+        d->profile_copying = (c->kind == TIDE_DRAW_MESH_3D || c->kind == TIDE_DRAW_SHADED || c->kind == TIDE_DRAW_BLIT)
+            && c->profile_geometry && from->diagnostics;
         if (d->plain_open && c->blend != d->place.blend) close_plain(d); // Its run is another blend's
         d->place.blend = c->blend;
         if (c->kind == TIDE_DRAW_TARGET) {
@@ -3659,6 +5215,9 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             refresh(d);
         } else if (c->kind == TIDE_DRAW_CAMERA_3D) {
             if (c->camera.matrix == TIDE_DRAW_FIRST_CAMERA) tide_draw_unset_camera_3d(d);
+            else if (c->camera.data && c->camera.data <= from->camera_3d_count) {
+                camera_3d(d, from->cameras_3d[c->camera.data - 1u]);
+            }
             else if (c->camera.matrix < from->matrix_count) {
                 camera_3d(d, camera_of_matrix(from->matrices[c->camera.matrix], c->camera.fit != 0, c->camera.mirrored != 0));
             }
@@ -3671,7 +5230,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
         } else if (c->kind == TIDE_DRAW_TEXT) {
             const uint32_t turned = c->words.turned;
             push_text(d, from->text + c->text, c->a, c->b.x, c->color, (tide_anchor)c->words.anchor,
-                      c->words.bold ? from->bold : TIDE_FONT_REGULAR,
+                      c->words.font && c->words.font <= from->font_count ? from->fonts[c->words.font - 1u]
+                                                                          : TIDE_FONT_REGULAR,
                       turned && turned <= from->turn_count ? &from->turns[turned - 1u] : NULL);
         } else if (c->kind == TIDE_DRAW_MESH) {
             // Its indices are places in `from`'s vertices, which are `d`'s from `base`
@@ -3690,7 +5250,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             const uint32_t texture = append_texture(d, from, c->mesh3.texture);
             mesh_instances(d, slot, from->matrices + c->mesh3.first, c->mesh3.count, texture,
                            (tide_filter)c->mesh3.filter, (tide_wrap)c->mesh3.wrap, (tide_blend)c->blend,
-                           c->depth <= TIDE_DEPTH_NONE ? (tide_depth)c->depth : TIDE_DEPTH_READ_WRITE,
+                           c->depth <= TIDE_DEPTH_EQUAL ? (tide_depth)c->depth : TIDE_DEPTH_READ_WRITE,
                            c->cull | SIDES_KNOWN, c->color, NULL, false);
         } else if (c->kind == TIDE_DRAW_SHADED || c->kind == TIDE_DRAW_BLIT) {
             const tide_draw_run *r = &from->runs[c->shaded.run];
@@ -3701,10 +5261,25 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             for (uint32_t t = 0; t < r->shader->texture_count && t < TIDE_SHADER_TEXTURES; t++)
                 textures[t] = append_texture(d, from, r->textures[t]);
             const uint32_t size = tide_shader_instance_size(r->shader);
-            shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count,
-                             tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL, textures,
+            const void *uniforms = tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL;
+            if (r->listed) { // Its instances' bytes, as they're the list's: `d` has its own of them
+                if (!size || (uint64_t)r->first + (uint64_t)r->count * sizeof(uint32_t) > from->instance_used) continue;
+                uint8_t *gathered = tide_alloc((size_t)r->count * size);
+                for (uint32_t k = 0; k < r->count; k++) {
+                    const void *bytes = tide_draw_run_instance(from, r, k);
+                    if (bytes) memcpy(gathered + (size_t)k * size, bytes, size);
+                    else memset(gathered + (size_t)k * size, 0, size);
+                }
+                shaded_instances(d, r->shader, slot, gathered, r->count, uniforms, textures, r->sampling,
+                                 (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, c->cull, r, NULL,
+                                 NULL);
+                free(gathered);
+                if (d->profile_copying && d->count) tide_draw_geometry_copy(d, &d->commands[d->count - 1u], from, c->profile_geometry);
+                continue;
+            }
+            shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count, uniforms, textures,
                              r->sampling, (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, c->cull,
-                             r, NULL);
+                             r, NULL, NULL);
         } else if (c->kind == TIDE_DRAW_SHAPE) {
             if (c->shape < from->shape_count) push_shape(d, c->a, c->b, c->color, from->shapes[c->shape]);
         } else if (c->kind == TIDE_DRAW_PLAIN) {
@@ -3715,7 +5290,9 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
         } else {
             push(d, (tide_draw_kind)c->kind, c->a, c->b, c->color);
         }
+        if (d->profile_copying && d->count) tide_draw_geometry_copy(d, &d->commands[d->count - 1u], from, c->profile_geometry);
     }
+    d->profile_copying = false;
     for (uint32_t i = 0; i <= d->target_count; i++) place_of(d, i)->blend = TIDE_BLEND_ALPHA;
     refresh(d);
     // What `from` set after the last command that drew isn't in its commands: its destinations' places have it

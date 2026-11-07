@@ -1,0 +1,9 @@
+// expect: build code made a sample of 'tone' that isn't a number (NaN or infinite)
+build ClipData Tone()
+{
+    mut ClipData tone = ClipData { rate = 8000, channels = 1 };
+    tone.samples.Add(1.0 / 0.0);
+    return tone;
+}
+asset Clip tone = Tone();
+scene Main { }

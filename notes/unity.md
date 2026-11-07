@@ -1,5 +1,398 @@
 # Unity as a front end
 
+## Logical Entity keys: packet 5 and embed ABI 18 (2026-11-06)
+
+Owner-approved Entity128 changes the C/native command boundary to two uint64
+words (`birth`, `lineage`), and the generated embed callback matches it. The web
+export/jslib/PInvoke path passes four uint32 halves unchanged; no JavaScript
+Number combines a 64-bit identity. The C wrapper reconstructs each word with
+uint64 shifts. `TideEntityId` is 16 bytes, two ulongs with full-key equality/hash;
+view/scene dictionaries retain that value directly. Packet entity rows are 32 bytes
+(key 16, flags/prefab/parent/presentation-born 16); event headers are 40 bytes,
+including the complete target key. Both-zero is null; a zero birth alone is not.
+
+The packet builder's former global-index lookup is an exact logical-key hash
+map reused between frames. This matters for sharded views: separate worlds can
+put distinct keys in private slot 0. Null and NONE registrations are ignored;
+registering an existing full key replaces only its place, retaining the existing
+selected authoritative/ghost view behavior. Allocation arithmetic widens before
+growth; begin clears retained entries and free releases the map. Generated
+component/parent/event references use it instead of physical indices.
+
+The checked-in Sample and physics schema fixtures were relaid out for 16-byte
+Entity fields, moving later fields/default bytes without changing their values.
+Their old schema hash is retained until the next real game build, which writes
+its actual new hash. Sample C# was regenerated with this checkout's writer.
+Native ASan CLI unity_code 6/6 and packet-map 1/1 pass; generated embed game C
+compiles strictly. The checked-in JS fakeinterop test forwards all four high-bit
+halves exactly and passes. In build/unity-identity-check, this checkout's Sample
+and package compile under Unity 6000.6.0f1, hidden batchmode/nographics/noAudio,
+with automatic Tide builds disabled. New EntityPacketTests 2/2 pass: layout/offset,
+complete key dictionary identity, null behavior, packet 5/event targets and all
+packet truncations. Native/web platform embed validation is recorded with the
+coordinated identity change. Historical index/generation packet entries below
+are superseded.
+
+
+## One Unity entity component (2026-11-06)
+
+Owner decision: combine `TideEntityView` into `TideEntity`. `TideEntity` retains
+its script GUID and serialized `components`/`references`, and now also exposes
+`Runner`, `Entity`, `Mine`, `Showing`, `Has<T>`, `TryGet<T>`, `Get<T>`, `Text`,
+and entity event subscriptions. There is no separate view component or `View`
+property. Scripts can find an authored entity and subscribe before binding;
+`Showing` is false until it represents an entity in the current view packet.
+The runner reuses the component on authored objects and ensures it on visual
+prefab instances. Runtime-added components do not modify source assets, so
+view rules still accept ordinary visual prefabs without authoring entities.
+Binding, release, pooling, source identity and event dispatch retain their
+existing behavior. The type-binding attribute has its own `TideTypeAttribute.cs`.
+Editor gizmos, sample scripts/tests, generated sample documentation and public
+CLI/package docs use the combined component. Historical mentions below describe
+the earlier split.
+
+Validation: Unity 6000.6.0f1 in a scratch Sample (automatic builds disabled,
+TIDE_HIDDEN, batchmode/nographics/noAudio) compiles the package and Sample
+without C# warnings and passes EntityBindingTests 2/2 and EntityEditorTests 3/3.
+The Sample's checked-in schema was staged into Library/Tide for the inspector
+fixtures. The new tests cover pre-binding reads, authored serialization, release
+retaining the same component, and subscriptions made before binding. The docs
+production build passes. Native/web game execution and player builds were not
+run; no native embed, wire, simulation, generated-C or web bridge code changed.
+
+## GPU lists in pools: Unity's replay (2026-11-05)
+
+No packet changed and the embed ABI stays 12 (`notes/compute.md`, GPU lists in pools): the recorder records the same
+calls, with fewer storage buffers a pipeline (the two pools and a kernel's run record). `TideRender.cs`'s `MaxStorage`
+is 4 (gpu.h's `TIDE_GPU_MAX_STORAGE`), and `Supported` asks for 4 storage buffers in compute and fragment stages and 7
+in vertex stages, where it asked for 7 and 10. The recorder has no `storage_most`, so its pools grow to 128 MiB each.
+Gap: a kernel writing a pool after a kept draw read it renames the whole pool (`Written`), where it renamed one list's
+buffer; the Sample's `ComputeReplayTests` weren't run (their commands are hand-made and unchanged).
+
+## Occlusion culling in Unity (2026-11-05)
+
+`Draw.Occlusion` (drawing.md, Occlusion culling from a depth pyramid) culls only on the GPU, and the recorder never
+does (`cull_plan`): a game's draws with it on are recorded and replayed whole, as with it off, the same pixels.
+`gpu.h depth_far` (since `depth_now`) is NULL in the recorder; nothing new is recorded and the embed ABI is unchanged.
+The renderer's pyramid kernel (`hiz_one`, `hiz_samples`, shaders.h) is in the renderer's shaders `tide unity` writes as
+HLSL, though the replay never runs it.
+
+## Unity's OpenGL: Core stays, ES 3 and WebGL go (2026-11-05)
+
+With the GL backends removed (compute is guaranteed on every backend), Tide's
+drawing replays in Unity only on graphics APIs that compute. Tide's shaders for
+Unity have one SubShader (target 4.5, `exclude_renderers gles3`): the OpenGL ES
+3.0/WebGL 2 one, which read vertices from textures (`TIDEHL_TEXTURE_BUFFERS`),
+is gone, and so are TideRender's `textureBuffers` path (word textures,
+`VertexWords`, the shadow arrays). `TideRender.Supported` keeps the replay's
+requirements (compute, indirect arguments, level 4.5, the buffer slots below)
+and refuses `OpenGLES3`, so those players and Unity's WebGL export get the
+OnGUI path (`TideDraw.cs`) only.
+
+**Unity's OpenGL Core stays supported** (Claude's pick, Provisional). The
+owner's rule is about backends that can't compute; Unity's OpenGL Core is 4.5,
+which computes, and the replay's `ComputeReplayTests` passed on it (below).
+The GL removal had dropped it with the rest of GL, together with the
+per-texture samplers it needs (Unity's OpenGL has no samplers apart from
+textures); the merge brought those back for Core alone: `TIDEHL_OWN_SAMPLERS`
+under `SHADER_API_GLCORE`, `sampler_TideTexture<i>` beside each module
+texture, the `own` parameter of the prelude's sampling helpers, and
+TideRender's `ownSamplers` (set for `OpenGLCore` only), which sets each
+texture's filter and wrap as the draw asks. The Sample's checked-in
+`Assets/Tests/Resources/TideShaders` files were written again with
+`tide_wgsl_translate --hlsl` (the shader's name set back to its key). Not run
+in Unity after the merge: the sampler path is the one the replay was checked
+with on OpenGL Core, now under one define instead of four.
+
+## Texture arrays: embed ABI 15 (2026-11-05)
+
+`TIDE_EMBED_RENDER_ARRAY` (id, format, width, height, layers, given, its depth array's id, then each layer's pixels)
+and `TIDE_EMBED_RENDER_ARRAY_LAYER` (target, array, layer), after SAMPLER. TideRender's `MakeArray` makes a
+`Texture2DArray` (mips made by `Apply(true)`) for an array of pixels, or a `RenderTexture` of `Tex2DArray` with
+`volumeDepth` and a depth one beside it (or as it, for depth alone), and `MakeArrayLayer` a target that draws into that
+layer of both (`RenderTargetIdentifier(rt, 0, CubemapFace.Unknown, layer)`); freeing the array frees its depth. The HLSL
+reads `Texture2DArray<float4>`/`<float>` with `float3(uv, layer)` (notes/shaders.md). `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 15. Not run in Unity.
+
+ABI 16 (the same day, a `Grid3` as an array): `TIDE_EMBED_RENDER_ARRAY_OF` (id, format, width, height, layers: zeros)
+and `TIDE_EMBED_RENDER_ARRAY_WRITE` (id, layer, x, y, width, height, then that part's rows packed, padded to 4 bytes).
+TideRender's `MakeArrayOf` makes a `Texture2DArray` of the format (RGBA32 or RHalf, `TextureFormat`) with a mip chain
+and keeps its pixels (`Image.layers`); `WriteArray` copies the part into them and sets that layer's
+(`SetPixelData(pixels, 0, layer, offset)`), or makes a new array when a draw of this frame already reads it, as
+`WriteTexture` does; `Mipmaps` applies a `Texture2DArray`'s. Compressed pack layers reach Unity decoded, through
+`ARRAY`. Compiled, not run in Unity.
+
+ABI 17 (the same day, the owner's "why are we stopping with things still open?"):
+- **Compressed images.** `tide_embed_render_formats(e, formats)` says which block formats the other program samples
+  (1 << 1 BC1, 1 << 3 BC3) and remakes everything (`tide_embed_render_reset`); the recorder
+  (`tide_gpu_record_block_formats`) then implements `texture_blocks` and `array_blocks`: `TIDE_EMBED_RENDER_TEXTURE_BLOCKS`
+  (id, width, height, format, levels, bytes, the chain) and `_ARRAY_BLOCKS` (id, width, height, layers, format,
+  levels, bytes a layer, the chains), for BC where said and for RGBA8 chains always, so a device without BC gets the
+  build's mips decoded rather than ones Unity makes. TideRunner says `TideRender.BlockFormats`
+  (`SystemInfo.SupportsTextureFormat` DXT1/DXT5) when it starts the renderer; WebGL through `TideWebRenderFormats`
+  and the page's `tide_unity_render_formats` (`compiler/cli/build.c`). TideRender's `MakeBlocks` makes a `Texture2D`
+  or `Texture2DArray` of `RGBA_DXT1_UNorm`/`RGBA_DXT5_UNorm`/`R8G8B8A8_UNorm` with those levels (`SetPixelData` per
+  level, `Apply(false, true)`: no CPU copy). Test: `embed_render_blocks_where_the_other_program_samples_them`.
+- **OpenGL Core reading a texture two ways.** Unity's GL keeps sampling on the texture and applies it when the frame
+  runs, so the last state set won for every draw. Now TideRender's `Own` sets a texture's filter and wrap at its
+  frame's first read only (`Image.own`, kept while `used` is this frame) and passes each texture's own mode in
+  `_TideOwn`/`_TideOwnHigh` (4 bits a texture, 15 unknown: white, depth); under `TIDEHL_OWN_SAMPLERS`, `tidehl_mode`
+  adds it (bits 4 to 7, bit 8), and `tidehl_sample_grad`/`_level` emulate a read whose mode differs
+  (`tidehl_emulates`; a cube compares filters only): texels fetched at their centers with the texture's own sampler,
+  which any filter gives exactly, wrapped (`tidehl_wrapped`, clamp/repeat/mirror without integer `%`, which fxc warns
+  about) and filtered (1, 4 or 8 taps; trilinear's level from the derivatives, `tidehl_lod_of`). A cube's taps stay on
+  the face the direction points at (`tidehl_cube_uv`/`_direction`), so its edges differ from a seamless cube's.
+  Reads of a texture a function was given carry no own mode and sample as before. `expect_hlsl.cmake` compiles every
+  shader for `SHADER_API_GLCORE` again (dropped with GL's removal), so fxc checks this path.
+- Compiled, not run in Unity.
+
+## One image a texture: embed ABI 14 (2026-11-05)
+
+Textures and samplers are counted apart (notes/rendering.md, One image a texture). The recording's PIPELINE packet
+carries, after its texture reads, `sampler_count`, each sampler's read and each texture's sampler bits; SAMPLE became
+IMAGE (slot, texture: the same op number) and SAMPLER (slot, filter, wrap: a new op after
+DRAW_INDEXED_INDIRECT_COUNT). TideRender keeps `sampled` by texture and `sampling` by sampler, packs
+`_TideSampling`/`_TideSamplingHigh` by sampler (`Modes`), and sets `_TideUnmipped`, bit i for texture i without its
+smaller images, which `tidehl_mode` reads (the blended fallback was TideRender's per slot). OpenGL Core, whose
+textures carry their sampling, samples a texture as its first sampler says (`OwnMode`). `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 14; `ComputeReplayTests`' hand-made pipeline gained its sampler count. Not run in Unity (no
+Unity run was made; the Sample's checked-in shaders weren't written again).
+
+## Sixteen textures: embed ABI 13 (2026-11-05)
+
+A pipeline samples 16 textures (notes/rendering.md, Sixteen textures a draw), so TideRender's `MaxTextures` is 16,
+with `_TideTexture12` to `_TideTexture15`; textures 8 to 15 take `_TideSamplingHigh`'s bits as 8 to 11 did. Storage
+buffer i is at WGSL's binding 33 + i (`hlsl.c`'s `storage_slot`). The packets are as they were (a pipeline's reads
+are counted), but a library with 16 slots and a package with 12 would drop four, so `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 13. A texture the shader reads through another's sampler is still sampled by its own slot's
+bits (`texture_call`): the two say the same but for TideRender's blended fallback for a texture without mips, which
+stays the texture's. The Sample's `ComputeReplayTests` WGSL moved its storage to 33. Not run in Unity: the Sample's
+checked-in shaders weren't written again, and no Unity run was made for this change.
+
+## Counted indirect draws: embed ABI 12 (2026-11-05)
+
+`TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT` (buffer, offset, most, counts, count_offset), appended after
+`BUFFER_READ`: gpu.h's `draw_indexed_indirect_count` (notes/drawing.md, Culled runs drawn by a count, joined).
+`TIDE_EMBED_ABI` and `TideLibrary.Abi` are 12. TideRender replays it as `most` (at most 65,536) DrawIndexedIndirect
+ops at 20-byte steps: records past the count are of no instances, so they draw nothing. The recorder's `indirect()`
+is 0: Unity's instance ids count from 0 whatever a record's first instance, so the renderer gives it none but 0 (and
+doesn't cull on the GPU under the recorder anyway). Test: the Sample's `ComputeReplayTests.CountedDrawsDrawTheirRecords`
+(a record of three corners drawn, records of none not), `embed_render_compute` (the op's words).
+
+## Meshes over GPU lists in Unity (2026-11-05)
+
+Nothing new crosses the embed (ABI stays 11): a pulled-vertex shader is a pipeline with a vertex slot of stride 0 and
+no vertex attributes, reading storage in its vertex stage (as `ComputeReplayTests`' draws do), drawn with the CPU's
+indices (`DrawProcedural` with an index view) or, for GPU indices, `DRAW_INDIRECT` without indices
+(`DrawProceduralIndirect`). Their HLSL compiles with fxc (`tidec_hlsl_gpu_meshes`). `TideWarnings.hlsl` now also turns
+off X3584 (one value every invocation writes to shared memory, as X3583 for storage); X3695 (differing values) can't
+be turned off, so tidec warns (notes/compute.md). Not run in Unity: the Sample has no game with these draws, and no
+Unity run was made for this change.
+
+## Compute in Unity: embed ABI 11 (2026-11-05)
+
+The recorder (`gpu_record.c`) writes gpu.h's compute calls as
+`tide_embed_render` ops after the existing ones, whose packets are unchanged:
+`PIPELINE_STORAGE` (id, compute, storage_count, storage_writes bits), right
+after the `PIPELINE` it's of; `STORAGE` (slot, buffer); `COMPUTE_BEGIN`,
+`COMPUTE_END`; `DISPATCH` (x, y, z); `DISPATCH_INDIRECT`, `DRAW_INDIRECT`,
+`DRAW_INDEXED_INDIRECT` (buffer, offset); `BUFFER_COPY` (from, from_offset, to,
+to_offset, size); and, new with the replay, `BUFFER_READ` (token, buffer,
+offset, size). A `BUFFER` of kind 2 is a storage buffer, zeroed when given
+nothing. `tide unity` writes each kernel's `.compute` (`tide_hlsl_unity_compute`,
+by the same key as shaders; `notes/compute.md` has the HLSL contract).
+
+**Reads back (embed ABI 11).** `buffer_read` gives a token (a table of 128 in
+`gpu_record.c`) and writes `BUFFER_READ`; the other program hands the bytes over
+with the new `tide_embed_render_read(e, token, data, size)`, NULL for a read it
+couldn't make, and `buffer_read_done` gives them once (1), 0 till then, -1 for a
+failed, unknown, answered or wrongly sized one. `tide_embed_render_reset` and
+the embed's end drop every waiting read (the renderer fails them itself, its
+device epoch moving). `gpu.h` has `tide_gpu_record_read`. `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 11; `tide_embed_render_read` is in the embed's exports
+(`build.c`), and on the web `tide_unity_render_read` (the generated program) and
+`TideWebRenderRead` (Tide.jslib, which copies the bytes in through
+`tide_unity_buffer`). `TideRunner.RenderRead` passes TideRender's answers on.
+
+**The replay (`TideRender.cs`).** Compute runs once a frame, however many cameras
+draw it: as `Prepare` reads the commands, into a CommandBuffer of its own
+(`work`) that `Flush` runs with `Graphics.ExecuteCommandBuffer` before anything
+done at once (a buffer or texture written, mipmaps) and at the commands' end,
+the recording's uniform buffer written first so kernels have their values. Draws
+stay deferred to the camera, so:
+
+- A storage buffer is a raw `GraphicsBuffer` (Raw, CopySource, CopyDestination),
+  as vertex buffers are. Unity ignores Raw beside IndirectArguments ("Invalid
+  combination ... Ignoring Raw"), and its CopyBuffer copies whole buffers of one
+  size alone, so indirect calls' numbers go through `Resources/TideCompute.compute`
+  (`TideCopy`, words between raw buffers, bounds-checked): copied where the call
+  is in the frame into a pooled raw buffer, then with CopyBuffer into a pooled
+  IndirectArguments buffer (and, for a dispatch, a pooled `Constant |
+  CopyDestination` buffer bound as `TideGroups`). A direct dispatch's TideGroups
+  is its own pooled buffer, written at once. Pools are taken in turn and reset
+  at each frame's `Replay`. `BUFFER_COPY` is the same kernel (through a buffer
+  between when both are one).
+- A buffer a kernel or copy writes after a kept draw of the frame read it is
+  renamed (`Written`): a new buffer, the old one's bytes copied first in the
+  work's order, the draw keeping the old one, as CPU writes already were.
+- Draws bind storage with `SetGlobalBuffer(_TideStorage<i>)`; indirect ones are
+  `DrawProceduralIndirect` (with the bound index buffer for an indexed one),
+  their first vertex or index in the numbers, `_TideFirst` 0.
+- Kernels: the pipeline's `.compute` (`Loaded<ComputeShader>`, looked for again
+  each frame till imported, one Console error two seconds on as for shaders),
+  kernel `tidehl_compute`; `SetComputeBufferParam` for its storage,
+  `SetComputeConstantBufferParam` for `TideUniforms` and `TideGroups`,
+  `SetComputeTextureParam` and `_TideSampling(High)` for its textures.
+- Reads are `RequestAsyncReadback` in the work's order; the answer goes to
+  `TideRunner.RenderRead` (or `ReadsTo`, a test's). One begun before
+  `ForgetAll` (a reset) is dropped: the embed forgot it. A read of nothing, or on
+  a GPU without async readback, fails at once.
+- `Replay` with no camera still prepares, so compute and reads go on.
+- `Supported` now asks for compute shaders, indirect arguments, shader level 4.5,
+  seven storage buffers in compute and fragment stages and ten (three vertex
+  buffers more) in vertex stages (four and seven since GPU lists in pools, above), and not OpenGL ES 3: **Unity's OpenGL ES 3.0
+  and WebGL 2 targets don't take Tide's renderer any more** (owner's rule:
+  compute is on every render backend), and draw the views' 2D with the OnGUI
+  path (`TideDraw.cs`) as GPUs without constant buffers did. WebGPU, Metal,
+  Vulkan, Direct3D 11/12 and desktop OpenGL do. The GL ES path itself went with
+  the GL backends' removal (above).
+
+**Picks (mine, Provisional):** compute in a CommandBuffer of its own run as the
+commands are read, rather than in the camera's (a camera can draw a frame twice,
+or not at all, where compute must run once); a kernel samples a render target as
+the camera's commands left it (the last frame's passes), not as this frame's
+passes before it, which run later; copies through a kernel of the package's.
+
+**Tests:** `tide_platform_embed`'s `embed_render_compute` (every compute op's
+words, a read answered once, another size or NULL failing, a reset dropping
+waiting reads); `tide_cli_tests`, `tide_cli_unity_physics`,
+`tidec_unity_folder_names`, `tide_platform_embed_shards`, `tide_editor_embed`
+pass (sanitize). The Sample's PlayMode `ComputeReplayTests` replays commands it
+makes itself through a kernel and a draw shader tidec's translator wrote
+(`Assets/Tests/Resources/TideShaders/00000000c0de000{1,2}.*`, from the WGSL in
+the test's comment), with `ReadsTo` taking the reads: a direct and an indirect
+dispatch (their storage, values and TideGroups), a copy, a write after the work
+landing after it, a read of nothing failing; storage starting as zeros and
+staying from frame to frame; and two indirect draws reading storage in both
+stages, the first's colors kept as they were though a kernel between them wrote
+them. Run in Unity 6000.6.0f1 in batch mode on a GPU (TIDE_HIDDEN, no window,
+`-noAudio`, automatic builds off) in a scratch copy of the Sample with this
+checkout's package by `file:`: ComputeReplayTests 3/3 on Direct3D 11 and 12,
+Vulkan and OpenGL Core, and EditMode `ShaderTests` (the fixture shader too) with
+nothing said; without the rename the indirect-draw test fails (checked). The
+package and test assemblies compile with no C# warnings. The web debug build of
+the embed compiles; the docs build passes. Not run: the Sample's other suites
+with a tide built from this checkout (ABI 11 needs one; no Sample game runs a
+kernel), a real game's kernels in Unity, Metal, WebGPU (a Unity web player),
+URP's pass with compute, and the `tide unity --web` program's new export.
+
+## Embed ABI 10: the game asks to quit (2026-11-04)
+
+`tide_embed_status.quit` (a former pad byte; size 376 unchanged) is set once
+the game calls `Application.Quit`, until the embed ends. `TideNative.cs` has
+`quit` and `pad[2]`, `TideLibrary.Abi` is 10. `TideRunner.FollowQuit` acts
+once per embed: a `QuitAsked` handler decides; without one, the editor leaves
+play mode (`EditorApplication.isPlaying = false`) and a player calls
+`UnityEngine.Application.Quit()`. The sample's generated `DisconnectReason`
+gains `Banned = 7`. Not run in Unity locally (no Unity tests here); the
+native embed still builds and its tests pass (`tide_platform_embed`).
+Correction the same day: `TideGame.cs` had been edited alone, and CI's
+`tide_cli_tests` (`unity_code_writes_the_samples_package`) regenerates it from
+the Sample's `schema.json`; that and `components.json` gained `Banned` (7) too,
+so the three agree.
+
+## Protect cached compilers from expiry (2026-11-03)
+
+The CLI now removes exact cached versions after 30 days without use
+(notes/cli-and-packages.md, Moving project channels and cache expiry). Executable
+selection takes its shared `.VERSION.use` lock outside the installation and
+refreshes `.VERSION.last-used`. File sharing on Windows and flock on POSIX match
+the CLI protocol. The editor retains selected compilers until assembly reload or
+quit; process termination releases the locks after a crash. Selection rechecks
+the complete installation under the lock. Package/commit selection remains exact;
+standalone release channels do not replace Unity's package-selected compiler.
+VersionTests covers lock exclusion/release and stamps as well as existing selection
+and download behavior. Unity 6000.6.0f1 in a scratch Sample passes 12/12 enabled
+VersionTests (one existing ABI-5-host check ignored without its separate fixture),
+under TIDE_HIDDEN/batchmode/nographics/noAudio with automatic game builds disabled.
+It checks selection prevents exclusive access, release permits it, and ending a
+session refreshes last use. Native Windows ASan CLI/version tests also pass;
+Linux/macOS flock interop and interactive editor UI remain untested here.
+No embed ABI, generated C# or runtime behavior changed.
+
+
+## Embed ABI 9: a pipeline's alpha to coverage (2026-10-31)
+
+`TIDE_EMBED_RENDER_PIPELINE` has one word more, `alpha_to_coverage`, after
+`outputs` (a cut-out frag into a target with samples: notes/render-targets.md,
+Cut-outs), so `TIDE_EMBED_ABI` and `TideLibrary.Abi` are 9. `TideRender.cs`
+reads it into `Pipeline.alphaToCoverage` and sets `_TideAlphaToMask` on the
+material, which the ShaderLab tide unity writes takes as
+`AlphaToMask [_TideAlphaToMask]` (0 by default). Not run in Unity here.
+
+## Versions window and unpublished dev packages (2026-10-31)
+
+The owner's TideUnity project downloaded 0.6.0-nightly.6 (embed ABI 7) for
+its dev package (ABI 8). The compiler selection and download were working;
+calling an ancestor release the package's matching version was wrong. Owner
+requested an editor window for updating and switching versions.
+
+Window > Tide > Versions, also Manage Tide versions in Project Settings >
+Tide, shows the package revision/commit, required ABI, selected compiler
+version/path, stable/nightly releases, and Check for updates. Use version
+installs that release's compiler with the existing checksum/version checks
+before asking UPM to switch the package to the same tag. A download failure
+leaves the project pin unchanged; a UPM failure is shown and restores building
+with the previous selection. The build service stops during a switch and its
+IDE cache is cleared. UPM owns manifest/lock changes and script reloads.
+Automatic building resumes when enabled. Update / switch to dev re-adds its
+Git URL to refresh the branch. No local package or launch override is replaced.
+Switching is disabled during Play, compilation and another switch. Choosing
+an old release also restores that release's UI (which may predate this window).
+
+Git commit resolution now requires the site's exact flag; an ancestor is only
+a suggestion for choosing a release in this window. Untagged dev ahead of a
+published compiler cannot build with that older compiler. The old unversioned
+ancestor cache is ignored; successful format-2 lookups expire after ten minutes,
+failed lookups retry after one minute, and Check for updates clears both.
+Release tags still select their own version directly; local and -tide-command
+development selections retain their existing behavior. The endpoint addition
+and deployment boundary are recorded in releases-and-ci.md. No engine ABI,
+runtime, compiler semantics or generated game code changes.
+
+Validation: Unity 6000.6.0f1 EditMode VersionTests 12/12, including an actual
+checkout-built ABI-5 host, legacy ancestor cache invalidation, refusing ancestor
+and missing-proof responses, refreshing after publication/expiration, release
+listing/availability, URL preservation, version ordering and the menu. Existing
+download/checksum/version/launch/cache checks remain; a failed compiler download
+through the window leaves the manifest unchanged and clears the switching guard.
+Node 24.22.1 release tests
+11/11 and docs production build pass (the existing unstaged game-page 404s).
+The window's actual Change action also passes in a scratch editor: a local Git
+fixture tagged v9.9.9-test.1 and a file-based release site exercise checksum
+installation, UPM Client.Add, package registration/script reload, both manifest
+and lock pins and the final pinned compiler selection. Its compiler fixture is
+discovery-only, never executed; automatic builds are disabled. All Unity runs
+use TIDE_HIDDEN, batchmode, nographics and noAudio. No owner project is changed.
+The window's pixels, other operating systems and native/web game execution are
+not exercised; this changes editor/version selection only.
+
+
+## Embed ABI 8: 8-byte handle slots (2026-10-30)
+
+Text, list and grid fields are 8 bytes in the game's C and a map or a set 32
+(notes/ecs.md, 64-bit handles), so the view packet's component bytes, which
+follow the game's layout, changed: `TIDE_EMBED_ABI` and `TideLibrary.Abi` are
+8. `TideText`, `TideList` and `TideGrid` keep their `uint handle` (the
+packet's place) in the first 4 of 8 bytes, the rest an unused zero word, and
+`TideMap` is 32 bytes; `unity_code.c` sizes them 8 and 32. A command's text or
+list field from C# is refused when its high word isn't zero
+(`tide_embed_command_text`, `_list`). The Sample's `com.tide.game/schema.json`
+and `compiler/cli/tests/unity_rules_physics/schema.json` were laid out again for
+the new sizes by a script (notes/ecs.md, 64-bit handles: built), keeping their
+old `hash`, and the Sample's `TideGame.cs` written again from it; its first
+real `tide unity` build writes both as the build has them.
+
 ## Development overrides belong to the editor launch (2026-10-26)
 
 Owner decision, replacing the persistent override introduced below: normal use
@@ -928,7 +1321,8 @@ a GameObject as a command's target): "yeah I think that makes sense yes".
   (Room live, a non-ASCII `Say` comes back in `Extras`, `Paint` sent to the ball's GameObject colors that ball).
 
 Gaps then, bridged the same day (below): events' and singletons' map, grid and heap-holding list fields left out
-of the classes; a component's struct fields Tide literals in Play. (Commands hold lists of bytes alone: Tide's rule.)
+of the classes; a component's struct fields Tide literals in Play. (Commands held lists of bytes alone then: Tide's rule. Since 2026-11-04 they hold lists of any plain value,
+`notes/netcode.md`, Commands holding lists of values; `tide_embed_command_list` takes them, untested from C#.)
 
 ### Every type in C# (2026-10-22)
 
@@ -1296,6 +1690,8 @@ pipeline and URP; on Direct3D 11 and 12, Vulkan, OpenGL and WebGL 2; in Gamma
 and Linear projects; and the editor's scene views show the frame's 3D. The
 OnGUI path (`TideDraw.cs`) remains only for a GPU `TideRender.Supported` refuses
 (no constant buffers, or neither compute-class buffers nor OpenGL ES 3).
+Correction 2026-11-05 (Compute in Unity, above): OpenGL ES 3 and WebGL 2 are
+refused too now, compute being on every render backend.
 
 - **Shaders:** `tide unity` (`compiler/cli/unity_shaders.c`, with `--assets`)
   writes a Unity shader per pipeline WGSL: the renderer's 10 (`TIDE_RENDERER_WGSL`)

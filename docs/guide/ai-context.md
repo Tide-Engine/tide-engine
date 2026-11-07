@@ -126,7 +126,7 @@ POSIX:
 TIDE_HIDDEN=1 tide run --frames 120 --capture smoke.png --stats
 ```
 
-This finishes after 120 frames and captures the final picture. Add `--size 640 360` to test a particular logical window size; use `Screen.width` and `Screen.height` for responsive layout. For dynamic play in the same session, use `tide run --interactive play.txt`: send `capture menu.png`, inspect it, queue future-frame input lines, then send `step 30` and wait for `tide: interactive ready <frame>` ([protocol](../tools/cli.md#interactive-play)). Open the PNG and inspect it; a successful build alone does not establish that the game draws or behaves correctly. If inspection is inconclusive, take a later capture or check simulation values with `Debug.Log`/`Debug.Assert` before concluding the game is blank or broken. For input, use `tide run --script smoke.txt --frames 180 --capture smoke.png --stats`, with a script such as:
+This finishes after 120 frames and captures the final picture. Add `--size 640 360` to test a particular logical window size; use `Screen.width` and `Screen.height` for responsive layout. For dynamic play in the same session, use `tide run --interactive play.txt`: send `capture menu.png`, inspect it, queue future-frame input lines, then send `step 30` and wait for `tide: interactive ready <frame>` ([protocol](../tools/cli.md#interactive-play)). To press a GUI widget, send `controls` to list the widgets with their labels and positions, then `click "Play"` or `click <number>`, rather than estimating pixels from the picture. Open the PNG and inspect it; a successful build alone does not establish that the game draws or behaves correctly. If inspection is inconclusive, take a later capture or check simulation values with `Debug.Log`/`Debug.Assert` before concluding the game is blank or broken. For input, use `tide run --script smoke.txt --frames 180 --capture smoke.png --stats`, with a script such as:
 
 ```text
 1 key d down
@@ -135,9 +135,33 @@ This finishes after 120 frames and captures the final picture. Add `--size 640 3
 150 quit
 ```
 
-Script times are frames, and lines go in frame order; key actions use `down`/`up`, or neither for a one-frame tap. A `capture` path in a script is relative to the script's folder. `--players 2` runs two game processes in one match over a simulated network on this machine, with `player 2` after a frame number to target the second player; each capture name gains the player's number, `after-move-1.png` and `after-move-2.png`. `300 player 2 leave`, `drop` and `rejoin` test what happens when a player goes and comes back. `--latency 80`, `--jitter 10` and `--loss 5` put every joining player that far from the match's server (`--latency 2:120` for one player), and the run still repeats exactly. It does not exercise real network transports. Read [CLI capture and scripts](../tools/cli.md#without-a-window) for the supported actions, output naming and exit codes. A web build still needs a browser test; native captures do not verify WebGL/WebGPU. Launch automated Chrome/Edge with `--mute-audio` and a bounded test, not an unbounded `tide run --web`.
+Script times are frames, and lines go in frame order; key actions use `down`/`up`, or neither for a one-frame tap. A `capture` path in a script is relative to the script's folder. `--players 2` runs two game processes in one match over a simulated network on this machine, with `player 2` after a frame number to target the second player; each capture name gains the player's number, `after-move-1.png` and `after-move-2.png`. `300 player 2 leave`, `drop`, `sleep` and `rejoin` test what happens when a player goes and comes back. `--latency 80`, `--jitter 10` and `--loss 5` put every joining player that far from the match's server (`--latency 2:120` for one player), and the run still repeats exactly. It does not exercise real network transports. Read [CLI capture and scripts](../tools/cli.md#without-a-window) for the supported actions, output naming and exit codes. A web build still needs a browser test; native captures do not verify WebGPU. Launch automated Chrome/Edge with `--mute-audio` and a bounded test, not an unbounded `tide run --web`.
 
 For numerical behavior, supplement pictures with `Debug.Log` of state changes or `Debug.Assert` of invariants. A multiplayer money transfer can assert that balances never go negative and that the pool plus all balances stays constant; a collector can log cell and score after each move. With several players, a client runs a tick again after a wrong guess about another player's input, and logs in it print again: include `time.tick` in the line. Check the actual log as well as the captures. A failed or unclear image inspection is not evidence of a replication bug.
+
+For performance work, capture a representative scripted run in an optimized
+build:
+
+```sh
+tide run --release --script play.txt --frames 360 --profile profile.json --profile-warmup 60
+```
+
+For GPU bottlenecks, inspect `gpu_passes.rows`: target, pass order, shader
+membership and mean/p95/max GPU time. Check missing-sample counters; a mixed
+pass's time cannot be assigned to one shader. See the
+[GPU pass reference](../tools/debug-views.md#finding-expensive-gpu-passes).
+
+This native desktop report is written when the run ends, independently of the
+panels; it measures frames after warmup and
+includes source locations and engine draw counters. Read actual CPU work and
+GPU availability, not the hidden run's fixed-step FPS. Follow expensive views
+into their draw diagnostics: many frustum tests with few rejections are a
+candidate for investigation, not proof that culling is redundant. Compare one
+change at a time using the same script, seed, resolution, saves and build mode,
+and inspect captures and relevant simulation checks before claiming an
+improvement. CPU, concurrent worker and asynchronous GPU intervals overlap.
+See [Profile captures](../tools/debug-views.md#profile-captures) for the report's
+measurement meanings and limits.
 
 Fix diagnostics using the current compiler and relevant reference rather than guessing APIs. Report the builds, behavior checks and platforms actually tested. If a tool or backend is unavailable, say which check remains unverified.
 

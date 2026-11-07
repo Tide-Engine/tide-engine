@@ -4,6 +4,16 @@
 
 #include "tide/time.h"
 
+// A complete diagnostic identity. Generated declarations supply their Tide
+// location; code without a location leaves file NULL and line/column zero.
+// Strings are borrowed unless the containing API says it copies them.
+typedef struct tide_profile_source {
+    const char *name;
+    const char *file;
+    uint32_t line;
+    uint32_t column;
+} tide_profile_source;
+
 // Profiling: how long a tick's systems and a frame's views take, for a host
 // that shows it (the standard host's profiler, tide/profiler.h). The host
 // gives one to what ticks run on (tide_jobs.profile) and to the GUI its views
@@ -23,12 +33,15 @@ typedef struct tide_profile_time {
     double total; // ...and every time since the profile was cleared, in milliseconds
     double measured_ms;    // Every measurement of this name, independent of clears
     uint64_t measurements; // ...and how many, including ones below the clock's resolution
+    tide_profile_source source; // Owned, untruncated identity and source location
+    uint64_t revision; // Changes when this row's identity/counters are replaced
 } tide_profile_time;
 
 typedef struct tide_profile_times {
     tide_profile_time *items;
     uint32_t count;
     uint32_t room;
+    uint64_t revision; // Changes when a new declaration table replaces the rows
 } tide_profile_times;
 
 // A zeroed one is ready to use.
@@ -67,6 +80,10 @@ static inline uint64_t tide_profile_now(const tide_profile *p)
 // `times` has `count` of them from now on. Another count than it had is
 // another build of the game: what it had goes.
 void tide_profile_count(tide_profile_times *times, uint32_t count);
+
+// Registers the declarations in execution order, copying their identities and
+// locations. Changed identities/locations start their measurements over.
+void tide_profile_sources(tide_profile_times *times, uint32_t count, const tide_profile_source *sources);
 
 // The one at `index`, named `name`, ran from `from_ns` to `to_ns`. Under
 // another name than it had, it starts over.

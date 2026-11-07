@@ -10,7 +10,7 @@ typedef struct joint_component
     int64_t id;
     tide_float3 force, torque;
 } joint_component;
-_Static_assert(sizeof(joint_component) == 120 && offsetof(joint_component, id) == 88,
+_Static_assert(sizeof(joint_component) == 136 && offsetof(joint_component, id) == 104,
                "Joint must match its generated layout");
 
 static b3JointId joint_of(int64_t id)

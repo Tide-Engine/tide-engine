@@ -4,8 +4,8 @@
 #include "tide_test.h"
 
 // The Main scene is slot 0; its Setup spawns these in order.
-static const tide_entity SMALL = {1, 1};
-static const tide_entity WIDE = {2, 1};
+static tide_entity SMALL;
+static tide_entity WIDE;
 
 static bool is(const tide_str s, const char *expected)
 {
@@ -18,6 +18,8 @@ TIDE_TEST(wide_lanes_written_apart_beside_a_snapshot)
 {
     tide_world world = {0}, kept = {0};
     tide_world_init(&world, 1.0f / 60.0f);
+    SMALL = tide_entity_in_slot(&world.entities, 1);
+    WIDE = tide_entity_in_slot(&world.entities, 2);
     for (int tick = 1; tick <= 6; tick++) {
         tide_world_free(&kept);
         tide_world_copy(&kept, &world);

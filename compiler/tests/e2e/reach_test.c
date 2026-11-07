@@ -8,13 +8,16 @@
 static tide_world world;
 
 // Main is slot 0; Setup spawns the rock, the ship and the tree next.
-static const tide_entity ROCK = {1, 1};
-static const tide_entity SHIP = {2, 1};
-static const tide_entity TREE = {3, 1};
+static tide_entity ROCK;
+static tide_entity SHIP;
+static tide_entity TREE;
 
 TIDE_TEST(reach_toggles_come_and_go_as_their_systems_say)
 {
     tide_world_init(&world, 1.0f);
+    ROCK = tide_entity_in_slot(&world.entities, 1);
+    SHIP = tide_entity_in_slot(&world.entities, 2);
+    TREE = tide_entity_in_slot(&world.entities, 3);
     TIDE_CHECK(tide_world_entity_count(&world) == 4);
     TIDE_CHECK(tide_has_Leafy(&world, TREE) && !tide_has_Fruiting(&world, TREE));
 

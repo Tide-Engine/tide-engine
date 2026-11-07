@@ -17,8 +17,8 @@ TIDE_TEST(json_all_checks_pass)
 {
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
-    TIDE_REQUIRE(tide_has_Results(&world, (tide_entity){1, 1}));
-    const Results r = tide_get_Results(&world, (tide_entity){1, 1});
+    TIDE_REQUIRE(tide_has_Results(&world, tide_entity_in_slot(&world.entities, 1)));
+    const Results r = tide_get_Results(&world, tide_entity_in_slot(&world.entities, 1));
     if (r.firstFailure) printf("    check %d failed\n", (int)r.firstFailure);
     TIDE_CHECK(r.checks == 90);
     TIDE_CHECK(r.passed == r.checks);
@@ -33,7 +33,7 @@ TIDE_TEST(json_reads_the_same_bits_everywhere)
 {
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
-    const Kept kept = tide_get_Kept(&world, (tide_entity){1, 1});
+    const Kept kept = tide_get_Kept(&world, tide_entity_in_slot(&world.entities, 1));
     static const uint32_t floats[] = {
         0x00000000u, 0x80000000u, 0x3F800000u, 0x3DCCCCCDu, 0x40490FDBu, 0x4B800000u, 0x00000001u,
         0x00000000u, 0x00000001u, 0x7F7FFFFFu, 0x00800000u, 0x007FFFFFu, 0x7F7FFFFFu, 0x42C80000u,

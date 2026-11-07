@@ -1076,7 +1076,16 @@ system Simulate(Time time, mut Physics physics)
 // Where the step left each body that it moved, into the fields that say so.
 [Stage(PhysicsStages.Step, 21)]
 [NativeName("b3t_leave")]
-extern system Leave(mut Body body, Physics physics);
+extern system Leave(mut Body body, Physics physics, without Far);
+
+// What's far from this client's player, in its predicted ticks under
+// predictionRange, is held where it is for the step (b3World_HoldBodies): a
+// near body meets it as a static one, and Leave writes nothing of it, so its
+// component stays as last confirmed. A server's tick and a confirmed one have
+// nothing Far.
+[Stage(PhysicsStages.Step, 19)]
+[NativeName("b3t_hold_far")]
+extern system HoldFar(Body body, mut Physics physics, with Far);
 
 // Whose a body is: its entity's, or for a copy of another shard's body (in a
 // sharded world), the entity it copies

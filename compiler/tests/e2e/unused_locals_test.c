@@ -4,13 +4,14 @@
 static tide_world world;
 
 // The Main scene is slot 0, and its Setup spawns the counter into slot 1.
-static const tide_entity COUNTER = {1, 1};
+static tide_entity COUNTER;
 
 // A local nothing reads is a warning, not a change to the program: its value
 // is still worked out, with what that does.
 TIDE_TEST(unused_locals_values_still_run)
 {
     tide_world_init(&world, 0.5f);
+    COUNTER = tide_entity_in_slot(&world.entities, 1);
     TIDE_REQUIRE(tide_has_Counter(&world, COUNTER));
     TIDE_CHECK(tide_world_entity_count(&world) == 2);
     for (int i = 0; i < 3; i++) tide_world_tick(&world);
