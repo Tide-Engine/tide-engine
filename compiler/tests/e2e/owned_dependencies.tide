@@ -1,0 +1,68 @@
+settings { prediction = Prediction.Owned; }
+component Controlled { int value; }
+component Other { int value; }
+component NewOwned { }
+singleton Source { int value; }
+singleton Middle { int value; }
+singleton EventValue { int value; }
+singleton Unrelated { int calls; }
+singleton QueryValue { int calls; }
+singleton Factory { PlayerID player; bool made; }
+singleton SpawnPrerequisite { int value; }
+singleton SpawnEffect { int value; }
+singleton TaskValue { bool started; int done; }
+singleton WorldValue { int calls; }
+input Controls { int move; }
+event Produced { int value; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Other { }); }
+event(PlayerJoined joined) Join(mut Factory factory)
+{
+    factory.player = joined.player;
+    Spawn(Controlled { }, Owner { player = joined.player });
+}
+system Advance(mut Source source) { source.value++; }
+[After(Advance)]
+system Derive(Source source, mut Middle middle) { middle.value = source.value * 2; }
+void Emit(int value) { Send(Produced { value = value }); }
+[After(Derive)]
+system Produce(Middle middle) { Emit(middle.value); }
+event(Produced produced) Receive(mut EventValue value) { value.value = produced.value; }
+system Control(Controls input, Middle middle, EventValue eventValue, QueryValue queryValue, TaskValue task, mut Controlled controlled)
+{
+    controlled.value = middle.value + eventValue.value + queryValue.calls + task.done + input.move;
+}
+[Before(Control)]
+system ReadOthers(mut QueryValue value, query (Other other) others)
+{
+    foreach (var row in others) value.calls += row.other.value + 1;
+}
+system AdvancePrerequisite(mut SpawnPrerequisite value) { value.value++; }
+[After(AdvancePrerequisite)]
+system CreateOwned(mut Factory factory, Time time)
+{
+    if (!factory.made && time.tick == 120)
+    {
+        factory.made = true;
+        Spawn(NewOwned { }, Owner { player = factory.player });
+    }
+}
+event(Spawned) Created(SpawnPrerequisite value, mut SpawnEffect effect, with NewOwned) { effect.value = value.value; }
+async void FinishLater(mut TaskValue value) { await Wait.Ticks(2); value.done = 1; }
+system StartTask(mut TaskValue value, Time time)
+{
+    if (!value.started && time.tick == 150) { value.started = true; FinishLater(value); }
+}
+void WriteControlled(mut World world, Entity entity) { world.Set<Controlled>(entity, Controlled { value = 2 }); }
+[Before(Control)]
+system WriteThroughWorld(mut World world, mut WorldValue value, query (with Controlled) rows)
+{
+    foreach (var row in rows) WriteControlled(world, row.entity);
+    value.calls++;
+}
+// Ordering alone is not a dependency. This global query must stay confirmed.
+[After(Control)]
+system Waste(mut Unrelated unrelated, query (Other other) others)
+{
+    foreach (var row in others) unrelated.calls += row.other.value + 1;
+}

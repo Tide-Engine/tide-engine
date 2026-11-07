@@ -1,5 +1,18 @@
 # Netcode: sessions, prediction, commands
 
+## Owned predicts its singleton dependencies (2026-11-07)
+
+Owner-approved change replaces the earlier all-singletons behavior. Generated
+Owned ticks select live owned entity work and conservative transitive singleton
+producers. Unrelated singleton state remains at the prediction baseline until
+confirmation; views can explicitly bind verified state. near_same excludes
+unused singleton differences, while remote input changes and whole-heap/task/
+structural differences can still force replay. The session protocol and existing
+predict_far/near_same callbacks are unchanged; the compiler uses private derived
+selection fields. Bounds, side-effect fallbacks and focused native/WASI
+validation are in language.md, Owned singleton dependency selection. No game
+file/default changed, and no Mount & Rifle frame-time improvement is claimed.
+
 ## Full-world Owned replay diagnosis (2026-11-07)
 
 Read-only Mount & Rifle dev 241d92d supplies a true FULL_WORLD control on nightly

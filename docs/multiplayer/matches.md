@@ -326,12 +326,24 @@ To predict only this player's entities and their descendants, use
 `settings { prediction = Prediction.Owned; }`. Ownership follows the nearest
 ancestor with `Owner`, including the entity itself. Other entities stay at their
 confirmed state, including nearby entities and entities without positions.
-Every confirmed tick still simulates the whole permitted world. Singleton
-systems keep running during prediction; their queries can read other entities
-as they stand, or explicitly use `without Far` to exclude them. `Far` names
+Every confirmed tick still simulates the whole permitted world. During Owned
+prediction, the compiler runs singleton systems only when they contribute to
+owned simulation, following component/singleton dependencies through helpers,
+queries and event handlers. An ordering attribute alone does not include a
+system. Their queries can read other entities as they stand, or explicitly use
+`without Far` to exclude them. `Far` names
 entities excluded from prediction in this mode too. Ownership and parent changes
 are checked before each predicted tick. With nothing owned, entity systems
 predict nothing. This mode does not take `predictionRange`.
+
+Selection is conservative: writes through `mut` count as reads too, possible
+owned spawners are retained while anything is owned, and dynamic structural
+changes and shared match tasks can retain additional work. Declared C access
+is trusted as usual. Excluded singleton values remain at the prediction
+baseline; take a `verified` parameter in a view for the current confirmed value.
+Unrelated singleton differences do not invalidate retained predictions, but
+input changes, structural state and whole-heap differences still can. This
+setting does not promise that every owned controller has a small dependency set.
 
 A big world can predict only what's near each player:
 

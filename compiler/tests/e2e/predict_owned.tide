@@ -20,7 +20,9 @@ event(PlayerJoined joined) Join()
     child.SetParent(root, false);
 }
 system Count(mut Body body) { body.ran += 1; }
-system Drive(Controls controls, mut Body body, with Owner) { body.ran += controls.move; }
+// Keep Observe in this fixture's dependency set, even though this conservative
+// declared read contributes zero. Dependency pruning has a separate fixture.
+system Drive(Controls controls, mut Body body, Observed seen, with Owner) { body.ran += controls.move + seen.own * 0; }
 [After(Count), After(Drive)]
 system Observe(mut Observed seen, query (Body body) bodies)
 {

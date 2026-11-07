@@ -1,5 +1,16 @@
 # The schedule and the tick on threads
 
+## Owned prediction's selected execution (2026-11-07)
+
+The owner's revised Owned contract selects only owned work and conservative
+data/effect dependencies during predicted ticks. Generated per-world selection
+is computed serially before dispatch and read-only until systems join. Existing
+waits, phase order, task recording/settlement and system profile indices remain;
+excluded count/run/own/done wrappers perform no work. Confirmed/server ticks use
+the full original table. No jobs runtime or exported ABI changed. Algorithm,
+side-effect fallbacks, snapshot handling and native/WASI tests are in
+language.md, Owned singleton dependency selection.
+
 ## Final logical spawn keys and canonical row ranges (2026-11-06)
 
 Owner-approved Entity128 migration supersedes temporary handles and their

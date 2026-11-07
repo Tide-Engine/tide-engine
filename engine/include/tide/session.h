@@ -240,13 +240,16 @@ typedef struct tide_game {
     // from the rest. True if anything is tagged: the ticks run from that
     // world are never as the server's (play), and run again as each tick is
     // confirmed. Only ever on a predicted world, before its tick. NULL: a
-    // client predicts everything.
+    // client predicts everything. Owned uses the same callback to mark
+    // unowned entities and select its dependency closure. It returns true
+    // even without a tagged entity when singleton work may be excluded.
     bool (*predict_far)(void *world, tide_player_id player);
     // Whether a confirmed world is the predicted one of the same tick but for
     // what that left out as far: its singletons, entities, rows that aren't
     // far in `predicted`, commands, tasks, inputs and heap, leaving out
     // packages' [Native] fields, which are C's own. Then the predicted ticks
-    // after it can stand (play). NULL with predict_far.
+    // after it can stand (play). Owned also ignores singleton values unused
+    // by its selected code. NULL with predict_far.
     bool (*near_same)(const void *predicted, const void *confirmed);
     // Commands are bounded, copied wire values. Checking only decodes them,
     // and says which channel the command's type is in: 0, the default, one

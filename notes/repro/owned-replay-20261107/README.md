@@ -1,5 +1,12 @@
 # Owned replay diagnosis
 
+These measurements precede Owned's dependency-selected singleton execution.
+With the newer compiler, the unrelated Observe system is intentionally skipped.
+To retain that historical singleton comparison control, declare Observed as a
+Drive dependency, as the current predict_owned fixture does. The original
+sources below remain historical evidence; their old counter table is not an
+expectation for the revised mode.
+
 Windows Clang 23 / ASan, 720 updates, 60 Hz, loopback seed 42, latency 40 ms.
 All four cases verify endpoint 717 with zero repairs and zero resyncs.
 Counters below describe the first client only. They are deterministic work

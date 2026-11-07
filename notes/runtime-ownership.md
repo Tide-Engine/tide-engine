@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Owned dependency selection's private world data (2026-11-07)
+
+The revised owner-approved Owned mode adds a generated private tick flag and
+system-selection array. Prediction snapshots copy them; logical codecs/hashes
+and migration metadata omit them, and raw packed headers/loading clear them.
+Generated wrappers retain the existing tide_system_tasks ABI and session's
+predict_far/near_same callbacks. No new runtime function or session field is
+introduced. Threading/state contracts and native/WASI validation are in
+language.md and schedule-and-threads.md.
+
 ## Owned prediction and repair comparisons (2026-11-07)
 
 The owner's approved owned-and-children prediction extends the existing

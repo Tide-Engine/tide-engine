@@ -560,6 +560,11 @@ target_include_directories(tidec_e2e_predict_near_split PRIVATE "${PROJECT_SOURC
 add_test(NAME tidec_e2e_predict_near_split COMMAND tidec_e2e_predict_near_split)
 tide_e2e_test(predict_kept) # ...and a confirmed tick that leaves what's near as predicted keeps the predicted ticks after it
 tide_e2e_test(predict_owned)
+tide_e2e_test(owned_dependencies)
+tide_add_game(tidec_e2e_owned_dependencies_split SPLIT_CODE SOURCES e2e/owned_dependencies.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/owned_dependencies_test.c)
+target_include_directories(tidec_e2e_owned_dependencies_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_owned_dependencies_split COMMAND tidec_e2e_owned_dependencies_split)
 tide_add_game(tidec_e2e_predict_owned_split SPLIT_CODE SOURCES e2e/predict_owned.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/predict_owned_test.c)
 target_include_directories(tidec_e2e_predict_owned_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")

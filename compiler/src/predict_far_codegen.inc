@@ -113,10 +113,12 @@ static void gen_near_same(gen *g)
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
         if (d->is_local) continue;
+        if (prog->owned_prediction) gen_owned_singleton_guard(g, d);
         char a[256], b[256];
         snprintf(a, sizeof a, "p->%s", type_cname(d));
         snprintf(b, sizeof b, "q->%s", type_cname(d));
         gen_near_same_value(g, d, a, b, "    ");
+        if (prog->owned_prediction) sb_put(o, "    }\n");
     }
     sb_put(o, "    if (tide_entities_hash(TIDE_HASH_START, &p->entities) != tide_entities_hash(TIDE_HASH_START, &q->entities)) return false;\n"
               "    if (tide_queue_hash(TIDE_HASH_START, &p->commands) != tide_queue_hash(TIDE_HASH_START, &q->commands)) return false;\n");
@@ -237,7 +239,7 @@ static void gen_predict_far(gen *g)
                          "            }\n        }\n    }\n",
                       arch_name(g, a), arch_columns(g, a), arch_shift(g, a), arch_presence(g, a, far), arch_presence(g, a, far));
         }
-        sb_put(o, "    return any;\n}\n\n");
+        sb_put(o, "    w->tide_owned_predicting = true;\n    (void)any;\n    return true; // Singleton work can be excluded even without a Far entity.\n}\n\n");
         gen_near_same(g);
         return;
     }

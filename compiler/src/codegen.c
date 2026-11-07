@@ -192,6 +192,7 @@ typedef struct gen {
     // code's file, so the plumbing's stays as it was
     VEC(size_t) code_at;
     bool reserved_send;   // A pure one-Send system fills a queue item reserved by its entity loop.
+    struct owned_plan *owned_plan;
     const decl *blending;  // The view whose run function is being generated: its blended parameters are copies
     bool lanes_in;         // In a loop over a chunk's rows: the lanes it changes are read as tide_in_<Component> (gen_chunk)
     const char *row_born;  // What the entity a row's local fields are made for was born as, as C; NULL: the view's world says
@@ -9692,6 +9693,7 @@ static void gen_header(gen *g)
         sb_printf(o, "    tide_table %s;\n", arch_name(g, a));
     }
     if (extern_system_count(prog)) sb_put(o, "    struct tide_tick_completion *tide_completions; // Tick-local, never saved\n");
+    if (prog->owned_prediction) sb_printf(o, "    bool tide_owned_predicting; // Private execution selection, not simulation state\n    bool tide_owned_selected[%d];\n", prog->systems.count ? prog->systems.count : 1);
     if (prog->shard_state) sb_put(o, "    struct tide_shard_tick *tide_shard_now; // What its tick's run noted (tide/shard.h): tick-local, never saved\n");
     sb_put(o, "    tide_queue commands; // Of tide_command\n");
     sb_put(o, "    uint32_t tide_chain; // While changes apply: how far down a chain of events what's recorded now is\n");
@@ -11664,7 +11666,7 @@ static void gen_blend_helpers(gen *g)
     g->indent = 1;
     if (predicts_near(g)) {
         sb_put(o, "// The confirmed worlds a frame presents, for far entities' views (tide_far_blend_*): set as views run\n"
-                  "static const tide_world *tide_far_verified, *tide_far_vprev;\nstatic float tide_far_valpha;\n\n");
+                  "static const tide_world *tide_far_verified __attribute__((unused)), *tide_far_vprev __attribute__((unused));\nstatic float tide_far_valpha __attribute__((unused));\n\n");
     }
     if (prog->grids.count) {
         sb_put(o, "TIDE_HELPER tide_grid tide_blend_grid_snapshot(tide_grid value, const tide_grid_shape *shape)\n{\n"
@@ -13603,6 +13605,8 @@ static void gen_scratch_decl(sb *o, const decl *d, const char *value, const char
 #include "shard_codegen.inc"
 #include "shard_messages_codegen.inc"
 #include "shard_world_codegen.inc"
+static bool runs_on(const gen *g, const decl *sys, int a);
+#include "owned_prediction_codegen.inc"
 #include "predict_far_codegen.inc"
 #include "heard_reads_codegen.inc"
 #include "heard_heap_codegen.inc"
@@ -22696,6 +22700,25 @@ static void gen_api(gen *g)
     if (prog->uses_prepared) sb_put(o, "    if (!tide_defer_preparation) tide_world_prepare(w, NULL);\n");
     sb_put(o, "}\n\n");
 
+    gen_owned_selection(g);
+    if (prog->owned_prediction) {
+        for (int i = 0; i < prog->systems.count; i++) {
+            const decl *sys = prog->systems.items[i];
+            const char *name = decl_cname(sys);
+            sb_printf(o, "static uint32_t tide_owned_count_%s(const void *world, uint64_t *work)\n{\n"
+                         "    const tide_world *w = world;\n    if (w->tide_owned_predicting && !w->tide_owned_selected[%d]) { *work = 0; return 1; }\n"
+                         "    return tide_tasks_%s(world, work);\n}\n"
+                         "static void tide_owned_run_%s(void *world, uint32_t task, uint32_t pieces)\n{\n"
+                         "    tide_world *w = world;\n    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_task_%s(world, task, pieces);\n}\n",
+                      name, i, name, name, i, name);
+            if (system_splits(sys) && system_owns(g, sys)) {
+                sb_printf(o, "static void tide_owned_own_%s(void *world)\n{\n    tide_world *w = world;\n"
+                             "    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_own_%s(world);\n}\n", name, i, name);
+                if (!sys->extern_system) sb_printf(o, "static void tide_owned_done_%s(void *world)\n{\n    tide_world *w = world;\n"
+                             "    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_done_%s(world);\n}\n", name, i, name);
+            }
+        }
+    }
     // The systems, as tide_run_systems takes them (tide/jobs.h): in the tick's
     // order, each with the systems it waits for (the schedule). Only the
     // waits that are its own: one that goes through another system is done
@@ -22718,11 +22741,12 @@ static void gen_api(gen *g)
         for (int i = 0; i < prog->systems.count; i++) {
             const decl *sys = prog->systems.items[i];
             const char *name = decl_cname(sys);
-            sb_printf(o, "    {tide_tasks_%s, tide_task_%s, ", name, name);
+            if (prog->owned_prediction) sb_printf(o, "    {tide_owned_count_%s, tide_owned_run_%s, ", name, name);
+            else sb_printf(o, "    {tide_tasks_%s, tide_task_%s, ", name, name);
             const bool owns = system_splits(sys) && system_owns(g, sys);
-            if (owns) sb_printf(o, "tide_own_%s, ", name);
+            if (owns) sb_printf(o, "tide_%sown_%s, ", prog->owned_prediction ? "owned_" : "", name);
             else sb_put(o, "NULL, ");
-            if (owns && !sys->extern_system) sb_printf(o, "tide_done_%s, ", name); // One written in C made them the world's own
+            if (owns && !sys->extern_system) sb_printf(o, "tide_%sdone_%s, ", prog->owned_prediction ? "owned_" : "", name); // One written in C made them the world's own
             else sb_put(o, "NULL, ");
             int own_waits = 0;
             for (int k = 0; k < sys->waits.count; k++) own_waits += !sys->waits.items[k].through;
@@ -22754,6 +22778,7 @@ static void gen_api(gen *g)
     sb_printf(o, "%s tide_world_tick_%s(tide_world *w, const tide_jobs *jobs)\n{\n%s", sharded(g) ? "static void" : "void",
               sharded(g) ? "once" : "on", use_match);
     const int completions = extern_system_count(prog);
+    if (prog->owned_prediction && prog->systems.count) sb_put(o, "    if (w->tide_owned_predicting) tide_owned_select(w);\n");
     if (completions) sb_printf(o, "    tide_tick_completion tide_completions[%d] = {0};\n    w->tide_completions = tide_completions;\n", completions);
     // A host that shows where ticks' time goes gave its jobs a profile
     // (tide/profile.h): the systems' part of the tick, and what follows them
@@ -22774,6 +22799,7 @@ static void gen_api(gen *g)
         sb_put(o, "    (void)tide_prepare;\n    if (tide_p) tide_profile_count(&tide_p->systems, 0u);\n");
     }
     sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
+    if (prog->owned_prediction) sb_put(o, "    w->tide_owned_predicting = false;\n");
     sb_put(o, "    tide_apply_commands(w);\n");
     if (prog->task_slots[0]) sb_put(o, "    tide_task_match_collect(w);\n");
     if (completions) sb_printf(o, "    tide_rows_finish_tick(tide_completions, %du, &w->entities);\n    w->tide_completions = NULL;\n", completions);
@@ -23581,6 +23607,7 @@ static void gen_world_bytes(gen *g, const bool local)
     sb_put(o, "    if (!out || size > capacity) return (uint32_t)size;\n");
     sb_printf(o, "    %s *header = malloc(sizeof *header); // Storage pointers are cleared before serialization\n    if (!header) tide_out_of_memory();\n    memcpy(header, w, sizeof *header);\n", world);
     if (!local && rows_cache_count(g)) sb_put(o, "    header->tide_rows_cache = NULL;\n");
+    if (!local && prog->owned_prediction) sb_put(o, "    header->tide_owned_predicting = false;\n    memset(header->tide_owned_selected, 0, sizeof header->tide_owned_selected);\n");
     if (g->ix_any) sb_put(o, "    header->tide_index_cache = NULL;\n");
     if (local) sb_put(o, "    header->tide_io = NULL;\n    header->tide_workers = NULL;\n    header->tide_worker_jobs = NULL;\n");
     if (local && prog->command_types.count) sb_put(o, "    memset(header->tide_outgoing, 0, sizeof header->tide_outgoing);\n    header->tide_outgoing_count = 0;\n");
@@ -23670,6 +23697,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
     sb_put(o, "    memcpy(w, data, sizeof *w);\n");
     if (!local && rows_cache_count(g)) sb_put(o, "    w->tide_rows_cache = NULL; // Never trust a pointer from a raw header, including rejected input\n");
+    if (!local && prog->owned_prediction) sb_put(o, "    w->tide_owned_predicting = false;\n    memset(w->tide_owned_selected, 0, sizeof w->tide_owned_selected);\n");
     if (g->ix_any) sb_put(o, "    w->tide_index_cache = NULL; // ...nor this one\n");
     if (local) sb_put(o, "    w->tide_io = io;\n    w->tide_workers = NULL;\n    w->tide_worker_jobs = NULL;\n");
     if (local && program_hears(prog)) sb_put(o, "    memset(&w->tide_heard, 0, sizeof w->tide_heard);\n");
@@ -23916,6 +23944,7 @@ static void gen_world_copy(gen *g)
         sb_printf(o, "    to->%s = from->%s;\n", name, name);
     }
     sb_put(o, "    to->tide_identity_clock = from->tide_identity_clock;\n    memcpy(to->tide_lifecycle_occurrences, from->tide_lifecycle_occurrences, sizeof to->tide_lifecycle_occurrences);\n    to->tide_main_occurrence = from->tide_main_occurrence;\n    tide_entities_copy(&to->entities, &from->entities);\n");
+    if (prog->owned_prediction) sb_put(o, "    to->tide_owned_predicting = from->tide_owned_predicting;\n    memcpy(to->tide_owned_selected, from->tide_owned_selected, sizeof to->tide_owned_selected);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!arch_local(g, a)) sb_printf(o, "    tide_table_copy(&to->%s, &from->%s, %s);\n", arch_name(g, a), arch_name(g, a), arch_columns(g, a));
     }

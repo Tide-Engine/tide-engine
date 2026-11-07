@@ -1,3 +1,46 @@
+## Owned singleton dependency selection (2026-11-07)
+
+The owner changed Owned's contract: predict singleton work needed by owned
+entities, leaving unrelated singleton work to confirmed ticks. This supersedes
+the earlier all-singletons policy below. owned_prediction_codegen.inc derives
+a conservative directed data/effect graph from component/singleton parameters,
+World/query summaries, synchronous helper/accessor/operator/callable bodies and
+event handlers. Mutable access also reads. Per-tick eligibility scans each
+match archetype once for near/far live rows; ordinary owned entity systems seed
+the set, then producer closure includes required global systems and intentional
+with-Far dependencies. Ordering attributes alone never seed or add a producer.
+Existing schedule/waits still order selected work; excluded runners are no-ops
+with zero estimated work and no writable preparation.
+
+Potential Owner-bearing spawners remain roots while any entity is owned.
+Dynamically targeted Add/Remove/Destroy/SetParent/scene operations conservatively
+write all data; lifecycle handler dependencies are retained. Shared task
+continuations remain roots because Task identity/registries are not partitioned
+by ownership. C's declared access stays trusted. These conservative boundaries
+can retain work that more precise entity/field/effect analysis could exclude;
+this is not a guarantee of a minimal controller program or a measured battle gain.
+
+Generated worlds carry a private prediction flag and system-selection array.
+They are read-only during worker dispatch, copied with prediction snapshots,
+excluded from logical hashes/codecs/migration metadata and cleared in raw packed
+headers and after raw loading. The flag is set by the existing predict_far
+callback and reset after system execution. Owned always reports partial
+prediction, even if no entity is Far, because singleton work can be excluded.
+near_same compares singleton state only if selected code uses it. Heap, input,
+task and structural comparisons remain conservative. Spatial range selection
+and full confirmed/server execution keep their original policy.
+
+owned_dependencies and its split-C variant check transitive singleton chains,
+query reads, a helper's World.Set, helper-sent events, a future owned spawn and
+its Spawned prerequisites, delayed task completion, unrelated ordered global
+work, no-owned execution, snapshot copies and raw state restoration. Both have
+zero repairs/resyncs through 720 fixed-seed updates. Existing predict_owned
+retains its observation dependency explicitly. Nine scoped CTests pass on
+Windows ASan and WASI, including existing spatial/kept/network/canonical tests.
+The docs production build passes. Integer-only Owned code also exposed unused
+far-blend statics; they now carry unused attributes like other optional helpers.
+No new runtime function/callback or session ABI field was added.
+
 ## Excluded canonical chunks avoid writable preparation (2026-11-07)
 
 gen_canonical_lanes previously began/copied and finalized writable lanes for
