@@ -33,4 +33,9 @@ if(TARGET tide_platform)
 endif()
 add_test(NAME sumo_tests COMMAND sumo_tests)
 # A step in 3D is several of Box2D's
-set_tests_properties(sumo_tests PROPERTIES TIMEOUT 300)
+if(TIDE_SANITIZE)
+    # The full physics/network suite takes about five minutes on hosted ASan/UBSan.
+    set_tests_properties(sumo_tests PROPERTIES TIMEOUT 600)
+else()
+    set_tests_properties(sumo_tests PROPERTIES TIMEOUT 300)
+endif()
