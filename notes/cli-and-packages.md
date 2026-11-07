@@ -1,5 +1,19 @@
 # `tide`, packages and the package
 
+## Stable-version package fixture (2026-11-07)
+
+Release run 42378464688 failed `tide_cli_packages` on Linux and MinGW:
+the fixture pinned 0.6.0 and expected a missing installation, but the invoking
+stable compiler was itself 0.6.0 and correctly continued. The fixture now uses
+0.6.1 when the invoking version equals 0.6.0, retaining the missing-installation
+diagnostic and subsequent matching-version success checks. Product behavior,
+pin syntax and version selection are unchanged.
+
+Validation: built this checkout's Windows Clang 23.1.2 ASan CLI with
+`TIDE_VERSION=0.6.0`; `tide_cli_packages` passes (1/1, 5.51 s).
+Platform and external games were disabled for this host-tool-only build.
+Linux/macOS/MinGW execution remains CI coverage; no web runtime changed.
+
 ## Hide stages shorter than half a second (2026-11-06)
 
 Owner: show progress only if a stage lasts at least 0.5 seconds. The terminal
