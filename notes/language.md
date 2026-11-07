@@ -1,3 +1,16 @@
+## Owned prediction (2026-11-07)
+
+The built-in Prediction enum appends Owned, accepted by the prediction setting.
+It creates the existing hidden sparse Far tag for all match archetypes, rather
+than only positioned ones. Generated marking follows the nearest explicit
+Owner on an entity/ancestor chain; unowned entities are excluded irrespective
+of position. Singleton systems continue to run. Range plus Owned is diagnosed.
+No new runtime callback or world field is introduced beyond the reused Far tag.
+Contracts, deterministic controls, native/WASI/split validation and remaining
+coverage are recorded in netcode.md, Owned prediction. Spec and user matches
+page distinguish approved inclusion/singleton behavior from provisional spelling
+and ancestor precedence. Existing prediction modes retain their lowering.
+
 ## Narrow transient match-query reads (2026-11-07)
 
 Plain canonical match `foreach` lowering now finds the component bytes consumed

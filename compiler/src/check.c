@@ -15448,9 +15448,10 @@ static void check_settings(checker *c)
             } else if (str_eq_c(f->name, "prediction")) {
                 int64_t member;
                 if (!fold_int(value, &member)) {
-                    diag_error(value->at, "prediction is 'Prediction.Rollback' or 'Prediction.Delay', or a constant that is");
+                    diag_error(value->at, "prediction is 'Prediction.Rollback', 'Prediction.Delay' or 'Prediction.Owned', or a constant that is");
                 } else {
                     prog->delay_prediction = member == 1;
+                    prog->owned_prediction = member == 2;
                 }
             } else if (str_eq_c(f->name, "title")) {
                 prog->title = text_literal(value);
@@ -15514,10 +15515,14 @@ static void check_settings(checker *c)
         diag_error(prog->shard_range_at, "reach only means something with 'shards = true;'");
     }
     if (prog->shards && prog->shard_range > 0.0) ensure_shards(prog);
+    if (prog->predict_range > 0.0 && prog->owned_prediction) {
+        diag_error(prog->predict_range_at, "predictionRange only means something with 'prediction = Prediction.Rollback;': "
+                   "Prediction.Owned selects entities by ownership");
+    }
     if (prog->predict_range > 0.0 && prog->delay_prediction) {
         diag_error(prog->predict_range_at, "predictionRange only means something with 'prediction = Prediction.Rollback;': "
                    "with Prediction.Delay a client predicts nothing");
-    } else if (prog->predict_range > 0.0) {
+    } else if (prog->predict_range > 0.0 || prog->owned_prediction) {
         // An entity a client's predicted ticks leave out: a hidden sparse tag
         // only its predicted worlds ever have (tide_game.predict_far)
         decl *far = NEW(decl);
@@ -19775,6 +19780,8 @@ static void add_builtins(program *prog)
     const enum_member delay_member = {str_from("Delay"), {0, 0, 0}, NULL, 1};
     vec_push(prediction->members, rollback_member);
     vec_push(prediction->members, delay_member);
+    const enum_member owned_member = {str_from("Owned"), {0, 0, 0}, NULL, 2};
+    vec_push(prediction->members, owned_member);
     prog->prediction = prediction;
 
     static const char *const io_errors[] = {"None", "NotFound", "AlreadyExists", "AccessDenied", "InvalidPath", "NotDirectory",
@@ -20924,7 +20931,7 @@ static bool derive_archetypes_once(const checker *c)
     // Any of the match's entities with a position can be far from this player
     // in a client's predicted ticks (predictionRange)
     for (int i = 0; prog->predict_far && i < prog->archetypes.count; i++) {
-        if (!prog->archetype_local.items[i] && positioned(prog, mask_or(prog->archetypes.items[i], prog->possible.items[i]))) {
+        if (!prog->archetype_local.items[i] && (prog->owned_prediction || positioned(prog, mask_or(prog->archetypes.items[i], prog->possible.items[i])))) {
             allow_sparse(prog, i, bit(prog->predict_far));
         }
     }

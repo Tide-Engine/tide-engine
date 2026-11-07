@@ -205,6 +205,42 @@ static void gen_predict_far(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     if (!predicts_near(g)) return;
+    if (prog->owned_prediction) {
+        sb_put(o, "TIDE_HELPER bool tide_predict_owned(const tide_world *w, tide_entity e, tide_player_id player)\n{\n"
+                  "    (void)w; (void)e; (void)player;\n");
+        if (prog->owner) {
+            const decl *owner = prog->owner;
+            sb_put(o, "    for (uint32_t depth = 0; depth < 4096u; depth++) {\n");
+            sb_printf(o, "        if (tide_has_%s(w, e)) return tide_player_equal(tide_get_%s(w, e).%s, player);\n",
+                      type_cname(owner), type_cname(owner), field_cname(&owner->fields.items[0]));
+            if (prog->hierarchy[0]) {
+                sb_put(o, "        e = tide_parent_of(w, e);\n        if (tide_entity_is_null(e)) break;\n");
+            } else sb_put(o, "        break;\n");
+            sb_put(o, "    }\n");
+        }
+        sb_put(o, "    return false;\n}\n\nstatic bool tide_game_predict_far(void *world, const tide_player_id player)\n{\n"
+                  "    tide_world *w = world;\n    bool any = false;\n    (void)w; (void)player;\n");
+        const int far = prog->predict_far->index;
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (arch_local(g, a) || !arch_stores(g, a, far)) continue;
+            sb_printf(o, "    {\n        tide_table *t = &w->%s;\n        const tide_columns *cols = %s;\n"
+                         "        for (uint32_t c = 0; c < t->chunks; c++) {\n"
+                         "            const uint32_t n = tide_table_rows(t, %d, c);\n"
+                         "            const tide_entity *ent = tide_table_column(t, cols, c, 0);\n"
+                         "            for (uint32_t i = 0; i < n; i++) {\n"
+                         "                if (tide_row_gone(&ent[i])) continue;\n"
+                         "                const bool is_far = !tide_predict_owned(w, ent[i], player);\n"
+                         "                any |= is_far;\n"
+                         "                const uint8_t *tags = tide_table_column(t, cols, c, %d);\n"
+                         "                if ((tags[i] != 0) == is_far) continue;\n"
+                         "                ((uint8_t *)tide_table_column_mut(t, cols, c, %d))[i] = is_far ? 1u : 0u;\n"
+                         "            }\n        }\n    }\n",
+                      arch_name(g, a), arch_columns(g, a), arch_shift(g, a), arch_presence(g, a, far), arch_presence(g, a, far));
+        }
+        sb_put(o, "    return any;\n}\n\n");
+        gen_near_same(g);
+        return;
+    }
     if (!sharded(g)) gen_position_where(g);
     const int far = prog->predict_far->index;
     sb_put(o, "// Where an entity's root is: what a child of it is near or far by\n"

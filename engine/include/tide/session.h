@@ -78,6 +78,8 @@ typedef enum tide_prediction {
     // them, as many ticks behind as that takes. Nothing is ever run again, so
     // the simulation runs once on every machine, at the cost of input delay.
     TIDE_PREDICTION_DELAY,
+    // Predict this player's owned entities and descendants; others stay confirmed.
+    TIDE_PREDICTION_OWNED,
 } tide_prediction;
 
 typedef struct tide_view_time {

@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Owned prediction and repair comparisons (2026-11-07)
+
+The owner's approved owned-and-children prediction extends the existing
+predict_far/near_same callbacks and appends TIDE_PREDICTION_OWNED to
+tide_prediction. Generated C calls no new runtime function; no callback or
+session field is added. Far tagging includes unpositioned archetypes in this
+mode. Repair compression reconstructs full authenticated endpoints when partial
+predictions intentionally hold stale far state. Contracts, negative-first
+regression, work/byte counts and native/WASI validation are in netcode.md.
+
 ## Stable logical Entity boundary (2026-11-06)
 
 Owner-approved implementation: Entity is opaque 16-byte `{uint64_t birth,
