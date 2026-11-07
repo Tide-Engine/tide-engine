@@ -41,6 +41,13 @@ prewarm (3), and the two docs example rendering/camera checks pass. Standard-hos
 readiness correction discovered in the same trace is in standard-host.md and
 web.md. No shader source or deterministic expected hash changed.
 
+Integration through 2a634e928 brings Owned prediction and session-repair changes.
+The affected host/game targets rebuild warning-free; native ASan prewarm, web
+host-wait/first-tick/prewarm (3), and both docs example checks pass after the
+merge. The timing cohort remains tied to its recorded source hashes, before
+this unrelated prediction feature and the final terminal-connection UI guard;
+no post-merge timing improvement is claimed.
+
 ## A pass's draws made on several threads: tried, not kept (2026-11-06)
 
 After the second round (below), the owner asked to explore making one big pass's draws on several threads. What was
