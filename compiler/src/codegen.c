@@ -25180,6 +25180,7 @@ static void gen_game_api(gen *g)
     if (prog->max_rewind > 0.0f) sb_printf(o, "    .max_rewind = %.9ef,\n", (double)prog->max_rewind);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
     if (prog->delay_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_DELAY,\n");
+    if (prog->owned_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_OWNED,\n");
     if (prog->stats) sb_put(o, "    .stats = true,\n");
     if (prog->debug_views) sb_put(o, "    .debug_views = true,\n");
     if (prog->title) {

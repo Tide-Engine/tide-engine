@@ -3914,7 +3914,7 @@ struct tide_client {
     uint32_t excess_updates; // Timed replies in a row proving a smaller excess (clock_back)
     uint32_t delay;         // Ticks short of `sampled` it runs
     uint32_t delay_cap;     // The most delay it takes, so its inputs fit their ring
-    bool predicts;          // It runs ticks the server hasn't confirmed (TIDE_PREDICTION_ROLLBACK)
+    bool predicts;          // It runs ticks the server hasn't confirmed (Rollback or Owned)
     // The server on the same machine, of the same session, whose player this
     // is: its worlds are the server's, shared after each of its ticks
     // (mirror_tick). It never runs a tick, predicts or checks one, and sees
@@ -5171,7 +5171,8 @@ static bool apply_frame(tide_client *c, void *world, const pending_frame *f)
 static void catch_up_room(tide_client *c);
 
 // An unverified comparison endpoint used only to reduce a repair's bytes. Delay
-// clients have no predicted endpoint at the offered tick, so replay authenticated
+// clients have no predicted endpoint at the offered tick; partial predictions
+// deliberately hold excluded entities at older ticks. In both cases replay authenticated
 // complete frames into a private world without recording or delivering events.
 // A hash mismatch is expected here; malformed frames and preparation are not.
 static bool copy_repair_candidate(tide_client *c, const uint32_t target)
@@ -5184,7 +5185,7 @@ static bool copy_repair_candidate(tide_client *c, const uint32_t target)
     // allowance here; play's later call is idempotent at the same timestamp.
     catch_up_room(c);
     const void *world = NULL;
-    if (target <= c->ahead) world = world_at(c, target);
+    if (target <= c->ahead && (!g->predict_far || target == c->verified)) world = world_at(c, target);
     else {
         if (!c->repair_candidate_world) {
             if (g->prepare_pending && g->prepare_pending(world_at(c, c->verified))) return false;
@@ -5305,7 +5306,7 @@ static void run_predicted(tide_client *c, const uint32_t tick)
     // confirmed it, from the verified world each run of predictions starts
     // from, which has none tagged. While nothing is far, each tick looks again.
     if (c->far_from < c->verified || c->far_from >= tick + 1u) c->far_from = UINT32_MAX; // No tick before this one was
-    if (g->predict_far && (tick == c->verified || c->far_from == UINT32_MAX)
+    if (g->predict_far && (tick == c->verified || c->far_from == UINT32_MAX || g->prediction == TIDE_PREDICTION_OWNED)
         && g->predict_far(world, tide_player_from_index(c->player)) && c->far_from == UINT32_MAX) {
         c->far_from = tick;
         c->far_since = c->verified;

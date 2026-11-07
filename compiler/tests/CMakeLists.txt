@@ -559,6 +559,16 @@ tide_add_game(tidec_e2e_predict_near_split SPLIT_CODE SOURCES e2e/predict_near.t
 target_include_directories(tidec_e2e_predict_near_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tidec_e2e_predict_near_split COMMAND tidec_e2e_predict_near_split)
 tide_e2e_test(predict_kept) # ...and a confirmed tick that leaves what's near as predicted keeps the predicted ticks after it
+tide_e2e_test(predict_owned)
+tide_add_game(tidec_e2e_predict_owned_split SPLIT_CODE SOURCES e2e/predict_owned.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/predict_owned_test.c)
+target_include_directories(tidec_e2e_predict_owned_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_predict_owned_split COMMAND tidec_e2e_predict_owned_split)
+tide_add_game(tidec_e2e_predict_range_control SOURCES e2e/predict_owned.tide NAME game DEFINES RANGE
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/predict_owned_test.c)
+target_include_directories(tidec_e2e_predict_range_control PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_predict_range_control PRIVATE TIDE_TEST_RANGE=1)
+add_test(NAME tidec_e2e_predict_range_control COMMAND tidec_e2e_predict_range_control)
 tide_e2e_test(predict_fields) # Attribute-only input: no custom method or repair path
 tide_e2e_test(predict_method) # Method-only input: no attribute defaults
 tide_e2e_test(seen) # How late other players see what one does: from a key read to another's view
