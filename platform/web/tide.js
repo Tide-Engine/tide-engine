@@ -679,7 +679,7 @@
                 if (pending) progress('shaders', total - pending, total);
                 else {
                     if (stage === 'shaders') progress('start');
-                    if (drew) {
+                    if (drew && (!exports.tide_web_startup_ready || exports.tide_web_startup_ready())) {
                         shown();
                         shown = null;
                     }
@@ -1365,6 +1365,7 @@
     // gives will do, its software one too (slower, but the game runs).
 
     const gpuTables = { buffer: [null], texture: [null], pipeline: [null], target: [null] };
+    const shaderModules = new Map(); // Exact WGSL, shared by live pipelines on this device
     // Whether pipelines are made in the background (tide_gpu.background): one is drawn with once it's made
     let backgroundPipelines = false;
     const gpuFree = { buffer: [], texture: [], pipeline: [], target: [] };
@@ -1466,6 +1467,7 @@
         printErr('tide: the GPU went away (' + (info.message || info.reason) + '): asking for it again');
         gpuTimeReset();
         device = null;
+        shaderModules.clear();
         for (const kind in gpuTables) {
             gpuTables[kind] = [null];
             gpuFree[kind] = [];
@@ -1875,6 +1877,26 @@
         }
     }
 
+    // Changing a target or render state needs another pipeline, but not another copy of its shader module.
+    // Keep a module only while live pipelines reference it, so hot reload doesn't retain old shader sources.
+    function shaderModule(b) {
+        const code = b.failing ? `// fail-pipeline: ${b.name}\n` : b.code;
+        let shader = shaderModules.get(code);
+        if (!shader) {
+            const module = device.createShaderModule({ label: b.name, code });
+            checkShader(module, b.name);
+            shader = { code, module, references: 0 };
+            shaderModules.set(code, shader);
+        }
+        shader.references++;
+        return shader;
+    }
+    function freePipeline(id) {
+        const shader = gpuTables.pipeline[id]?.shader;
+        if (shader && !--shader.references) shaderModules.delete(shader.code);
+        gpuRemove('pipeline', id);
+    }
+
     // A pipeline described (`b`, from gpu_pipeline_begin on), made now or, while background pipelines are on,
     // in the background: the draws and dispatches that use it are left out till it's made (gpu_pipeline_ready),
     // where the frame that first used it would otherwise wait for the browser to compile it
@@ -1887,7 +1909,7 @@
     // (`optional`) are always made in the background, so they're never used before they're known to be made.
     function addPipeline(b, layout, described, compute) {
         const entry = { pipeline: null, textures: b.textures, reads: b.reads, samplers: b.samplers, storage: b.storage.length, compute,
-            layout, optional: b.optional };
+            layout, optional: b.optional, shader: b.shader };
         const made = device;
         const id = gpuAdd('pipeline', entry);
         const failed = error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
@@ -2292,8 +2314,8 @@
             // A test of a pipeline the browser can't make (`fail-pipeline=` in the address, a comma's list of parts of
             // pipelines' names): its code has no entry point, so making it fails as a driver's refusal would
             b.failing = failPipelines.some(part => b.name.includes(part));
-            const module = device.createShaderModule({ label: b.name, code: b.failing ? `// fail-pipeline: ${b.name}\n` : b.code });
-            checkShader(module, b.name);
+            b.shader = shaderModule(b);
+            const module = b.shader.module;
             if (b.compute) return computePipeline(b, module);
             const buffers = b.slots.map((slot, index) => ({
                 arrayStride: slot.stride,
@@ -2322,7 +2344,7 @@
             };
             return addPipeline(b, layout, described, false);
         },
-        gpu_pipeline_free: id => gpuRemove('pipeline', id),
+        gpu_pipeline_free: freePipeline,
         gpu_background: on => { backgroundPipelines = !!on && config.backgroundPipelines !== false; },
         gpu_pipeline_ready: id => gpuTables.pipeline[id]?.pipeline ? 1 : 0,
         gpu_pipeline_failed: id => gpuTables.pipeline[id]?.failed ? 1 : 0,

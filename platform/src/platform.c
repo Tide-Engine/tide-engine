@@ -580,6 +580,18 @@ static int step(void)
 }
 
 #ifdef __wasm__
+static bool startup_ready = true; // Custom hosts need no match; the standard host reports its initial view readiness
+
+void tide_platform_startup_ready(const bool ready)
+{
+    startup_ready = ready;
+}
+
+__attribute__((export_name("tide_web_startup_ready"))) bool tide_web_startup_ready(void)
+{
+    return startup_ready;
+}
+
 // The page calls it for every frame, once tide_platform_run starts the loop:
 // seconds until the next one, which the page waits while it's hidden.
 __attribute__((export_name("tide_web_frame"))) double tide_web_frame(void)
@@ -3961,30 +3973,24 @@ static bool key_for(const used_key *key, const tide_shader *shader, const uint64
            && key->outputs == tide_shader_outputs(shader);
 }
 
-enum { KIND_KEYS_MOST = 8 }; // Kinds of target a kind of shader is guessed into, at most
+enum { KIND_KEYS_MOST = 1 }; // One likely configuration for a shader never drawn, rather than every possible target
 
-// For each kind of target the shaders of a kind (2D or 3D, a blit, their outputs) were drawn into, the way most of
-// them were drawn into it, in `keys`: how many, KIND_KEYS_MOST at most. A shader is compiled for what it draws into
-// (the measured drivers compile it again for another format, or for a target of depth alone), so a shader of the
-// kind that hasn't drawn yet is made for each: a shadow's frag drawn into a depth map, and a model's into the scene.
+// The most common configuration of shaders of this kind (2D or 3D, a blit, their outputs). Guessing every target
+// compiled unused material shaders into both depth and HDR targets. Exact per-shader history still warms every
+// configuration actually used; a shader never drawn gets only this one guess. Ties keep first-use order.
 static uint32_t kind_keys(const tide_shader *shader, used_key *keys)
 {
     const used_key kind = key_of(shader, shader->blit, 0, 0, 0, 0, 0);
-    uint32_t count = 0, most[KIND_KEYS_MOST] = {0};
+    uint32_t count = 0, most = 0;
     for (uint32_t i = 0; i < used_key_count; i++) {
         const used_key *a = &used_keys[i];
         if (a->dims != kind.dims || a->blit != kind.blit || a->outputs != kind.outputs) continue;
         uint32_t shaders = 0; // The shaders drawn so: one key each, as a shader's are another's
         for (uint32_t k = 0; k < used_key_count; k++) shaders += keys_alike(a, &used_keys[k], false);
-        uint32_t into = 0;
-        while (into < count && keys[into].into != a->into) into++;
-        if (into == count) {
-            if (count == KIND_KEYS_MOST) continue;
-            count++;
-        }
-        if (shaders > most[into]) {
-            most[into] = shaders;
-            keys[into] = *a;
+        if (shaders > most) {
+            most = shaders;
+            keys[0] = *a;
+            count = 1;
         }
     }
     return count;

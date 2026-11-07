@@ -4750,6 +4750,8 @@ static int prewarm_frame(void)
     static uint32_t warmed; // The pipelines the table's prewarming made
     static tide_shader drawn_blit, warm_blit; // Blits through the flat shader: the instance's color over the window
     static tide_shader lit_again; // The lit shader's name, with other code
+    static tide_shader guessed;
+    static const tide_shader *guess_table[1];
     static const tide_shader *table[10];
     const tide_float2 orange_at = tide_f2(32, 32), lit_at = seen(0, 2, 0);
     uint32_t got = 0;
@@ -4773,7 +4775,20 @@ static int prewarm_frame(void)
         tide_draw_blit(&list, &drawn_blit, TIDE_BLEND_REPLACE, &background, NULL, NULL, 0);
         flat_quad(9, at(16, 192), at(48, 224), blue);
         lit_square(&lit_shader);
+        const tide_render_target hdr = tide_render_target_make_as(16, 16, TIDE_TARGET_RGBA16F);
+        tide_draw_to(&list, hdr.id, 16, 16);
+        lit_square(&lit_shader); // A second target format known for this kind, before guessing an unseen shader
+        tide_draw_to(&list, 0, 0, 0);
         tide_platform_draw(&list); // Through one shader of each kind: the others' pipelines go
+        tide_render_target_dispose(hdr);
+        guessed = lit_shader;
+        guessed.id = 0x7E57A6A2;
+        guessed.name = "one speculative configuration";
+        guess_table[0] = &guessed;
+        const uint32_t before_guess = tide_platform_shader_pipelines();
+        tide_platform_prewarm(guess_table, 1);
+        expect(tide_platform_shader_pipelines() == before_guess + 1u,
+               "an unseen shader gets one likely configuration, not every target of its kind");
         const uint32_t before = tide_platform_shader_pipelines();
         tide_platform_background_pipelines(true);
         tide_platform_prewarm(table, 10);
