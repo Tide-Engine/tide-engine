@@ -1,0 +1,98 @@
+[
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 15.8252314,
+    "thread_cpu_seconds": 15.765625,
+    "thread_cycles": 74132311810,
+    "variant": "baseline"
+  },
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 5.6176536,
+    "thread_cpu_seconds": 5.609375,
+    "thread_cycles": 26309821680,
+    "variant": "candidate"
+  },
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 5.444947,
+    "thread_cpu_seconds": 5.40625,
+    "thread_cycles": 25463375650,
+    "variant": "candidate"
+  },
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 16.9586125,
+    "thread_cpu_seconds": 16.90625,
+    "thread_cycles": 79443512970,
+    "variant": "baseline"
+  },
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 6.020041,
+    "thread_cpu_seconds": 6.015625,
+    "thread_cycles": 28168349730,
+    "variant": "candidate"
+  },
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 16.0830504,
+    "thread_cpu_seconds": 16.03125,
+    "thread_cycles": 75384195820,
+    "variant": "baseline"
+  },
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 16.0710624,
+    "thread_cpu_seconds": 16.03125,
+    "thread_cycles": 75339040100,
+    "variant": "baseline"
+  },
+  {
+    "ticks": 2000,
+    "warmup": 20,
+    "initial_hash": "1858d9984fb1f724",
+    "final_hash": "80e7babbe6f79e65",
+    "sequence_hash": "a0dab198ab6d7539",
+    "sum": 755088,
+    "wall_seconds": 5.7666872,
+    "thread_cpu_seconds": 5.765625,
+    "thread_cycles": 26997357420,
+    "variant": "candidate"
+  }
+]

@@ -1,3 +1,76 @@
+## Narrow transient match-query reads (2026-11-07)
+
+Plain canonical match `foreach` lowering now finds the component bytes consumed
+by its body and copies only their lanes. Ordinary stored fields and direct
+vector swizzles can narrow; properties, composed swizzles and uncertain places
+read their receiver conservatively. Whole rows/components, whole-value helper
+arguments, extern consumers, async/task code, shards and materialized parallel
+rows retain full copies. Partially gathered transient rows are zero-initialized,
+including unused vector lanes that C helpers may receive by value. No partially
+filled row is persisted, hashed, packed or passed to a whole-value consumer.
+
+Within one canonical query invocation, eligible code retains read-only column
+pointers for each admitted archetype's most recently visited physical chunk.
+Only selected lane pointers are materialized. Entity location and live row/sparse
+filters still run in canonical key order; sparse presence is read anew. A
+component writable through `World.Set` is read from its current published pages
+for every row. Other component columns can be reused: immediate Set replaces
+component pages without moving entities; Add/Remove/Spawn/Destroy remain deferred.
+Code reaching game C, async/tasks or shards keeps per-row metadata refresh.
+The cache is bounded stack metadata, ends with the loop and adds no world/local
+fields, runtime API, snapshot ownership or reload state. Ordinary lists and
+presentation traversal do not change.
+
+`query_narrow` covers 3,000 wide (352-byte/88-lane) rows across two archetypes and
+multiple chunks: xz through a float2 helper, a zero-demand entity-only binding,
+all lanes observed by trusted C, canonical later-row Set with shared snapshots,
+other-component Set while entity/Marker columns are reused, raw-world resume and
+unchanged snapshot hashes. Its deliberately unused binding warning is pinned.
+`query_read_paths` covers a reordered vector property whose 12-byte receiver
+coincides with the returned vector's size, and a composed yx.x swizzle.
+Windows ASan and WASI pass both fixtures, `queries`, `world_set_read`,
+`canonical_rows`, indexed/plain loops and their tick-by-tick differential (eight
+CTests per platform). The complete native ASan suite passes all 3,237 CTests;
+the UDP server smoke required a retry after an unrelated process released port
+7777 (the exact CTest then passed). The complete WASI/web suite passes all
+3,053 CTests. Both full native/web builds are warning-free with the platform
+enabled.
+Indexed candidate lowering is unchanged; its plain path
+uses these reads and remains bit-identical. Broader validation and release CPU
+measurements are recorded with delivery; generated lane counts alone do not
+establish a speedup (LLVM can remove unused copies in small unsplit callers).
+
+Release measurement isolates the production split-code/ThinLTO path using the
+same frozen fixture and runtime library: eight alternating blocks, each with
+20 warmup ticks and 2,000 measured ticks, hashing every measured tick. Initial,
+final and folded per-tick hashes, results and work counts agree. Mean current-
+thread CPU falls from 16.18359375 to 5.69921875 seconds (2.8396x, 64.78% less);
+mean wall time is 16.234489175 to 5.7123322 seconds and cycles are 76,074,765,175
+to 26,734,726,120. This is a split canonical-query kernel result, not a general
+whole-game speedup. Post-ThinLTO machine code retains the baseline full-gather
+call; the unsplit control instead lets LLVM eliminate unused copies already.
+The retained [reproducer](repro/canonical-query-cpu/README.md) includes the
+PowerShell driver, C host, flags and fixed-work checks. Its compact
+[summary](repro/canonical-query-cpu/summary-20261107.json), per-run results and
+source/binary manifest retain the evidence. The actual mount-and-rifle 349c35a candidate's
+BuildKitBodies inner Trooper query also uses exactly two lane pointers/copies
+(x/z offsets 0/8) in both admitted archetypes; its outer Place copies remain
+whole because the body passes that value to whole-place consumers.
+
+The matched 1,000-bot game runs use the exported **player 2** profile, confirmed
+by its player/players metadata. Both run 2,100 frames and 15,977 ticks/system
+calls; final t=34 counts agree (389 ours, 366 theirs, 3,024 shots). Profiled
+system time per tick falls from 14.16188 to 11.99609 ms; BuildKitBodies per call
+falls from 4.38333 to 1.88990 ms. Match work per frame, including reruns, is
+111.88273 to 95.75445 ms. This is a scoped CPU reduction, not a reduction in
+prediction work or a display-FPS claim: BotSense is 3.33345 to 3.56047 ms/call
+and FallOnField is 0.31870 to 0.32635 ms/call in these runs. Inputs, prediction,
+visibility and gameplay code are unchanged. Exact commands, source/compiler
+identities, profile scope and all measured fields are in the compact
+[game/kernel comparison](repro/canonical-query-cpu-20261107.json) and the
+[reproducer README](repro/canonical-query-cpu/README.md). Raw profiles/captures
+remain ignored build artifacts.
+
 ## Defined task deadline and tick boundary arithmetic (2026-11-07)
 
 Linux UBSan found that `tide_task_after` evaluated `INT32_MAX - now` in signed

@@ -1,0 +1,66 @@
+// Wide match rows consumed through a narrow swizzle, with live World.Set
+// and whole-value consumers checked separately by the C harness.
+component Wide { float3 position; int index; float[84] payload; }
+component Marker { int value; }
+component Auxiliary { int value; }
+component Alternate { }
+[Sparse] component Selected { }
+singleton Probe
+{
+    int repeats = 24;
+    float sum;
+    int zeroDemand;
+    bool live;
+    bool whole;
+    Entity target;
+    float observed;
+    int markerSum;
+    int wholeSum;
+}
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 3000; i++)
+    {
+        mut Entity e;
+        if (i % 2 == 0) e = Spawn(Wide { index = i, position = float3(i % 16, -1000 - i, i % 7) }, Marker { value = i }, Auxiliary);
+        else e = Spawn(Wide { index = i, position = float3(i % 16, -1000 - i, i % 7) }, Marker { value = i }, Auxiliary, Alternate);
+        if (i % 3 == 0) e.Add(Selected);
+    }
+}
+float Project(float2 position) { return position.x + position.y; }
+system Measure(mut Probe probe, query (Wide value) values)
+{
+    probe.sum = 0;
+    for (var pass = 0; pass < probe.repeats; pass++)
+        foreach (var row in values) probe.sum += Project(row.value.position.xz);
+}
+// Binding has zero demanded lanes: only its entity is consumed.
+system EntitiesOnly(mut Probe probe, query (Wide value, with Selected) values)
+{
+    probe.zeroDemand = 0;
+    foreach (var row in values) if (row.entity != default) probe.zeroDemand++;
+}
+system Live(mut Probe probe, mut World world, query (Wide value, Marker marker) values)
+{
+    if (!probe.live) return;
+    probe.markerSum = 0;
+    foreach (var row in values)
+    {
+        if (row.entity == probe.target) probe.observed = Project(row.value.position.xz);
+        // Another component changes while the entity and Marker columns are cached.
+        world.Set<Auxiliary>(row.entity, Auxiliary { value = row.marker.value + 1 });
+        mut var target = world.Get<Wide>(probe.target);
+        target.position.x = 999;
+        target.position.z = 777;
+        world.Set<Wide>(probe.target, target);
+        probe.markerSum += row.marker.value;
+    }
+}
+extern int CheckWhole(Wide value);
+system Whole(mut Probe probe, query (Wide value) values)
+{
+    if (!probe.whole) return;
+    probe.wholeSum = 0;
+    foreach (var row in values) probe.wholeSum += CheckWhole(row.value);
+}

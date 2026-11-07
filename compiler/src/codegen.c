@@ -11426,6 +11426,7 @@ static bool spawn_has_text(const gen *g, const int a)
 static bool field_blends(const field *f);
 static bool decl_blends(const decl *d);
 static bool reads_some_used(const gen *g, const decl *d);
+static bool match_query_lanes(const gen *g, const stmt *s, const param *p, const field *binding, uint64_t *words);
 
 // Sets `v` between `before` and itself: `t` of the way from `before`.
 static void gen_blend_value(gen *g, const char *v, const char *before, const type t)
@@ -15660,6 +15661,17 @@ static void gen_query_foreach(gen *g, const stmt *s)
     gen_query_walk(g, s, NULL);
 }
 
+typedef struct query_lane_read {
+    uint64_t words[LANE_MASK_WORDS];
+    bool some;
+    int columns;
+} query_lane_read;
+
+static bool query_reads_lane(const query_lane_read *r, const int k)
+{
+    return !r->some || (r->words[k >> 6] >> (k & 63) & 1u);
+}
+
 // A foreach's rows, each through its body, or with `gather` (a parallel loop
 // over a system's or match handler's query: the row type), each copied onto
 // the end of tide_rows instead, as tide_rown of tide_rowcap.
@@ -15743,6 +15755,21 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         g->indent--; line(g, o, "}");
         return;
     }
+    query_lane_read *reads = arena_alloc((size_t)q->query.count * sizeof *reads);
+    memset(reads, 0, (size_t)q->query.count * sizeof *reads);
+    bool narrowed = false;
+    for (int i = 0, f = 1; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        if (!param_binding(p)) continue;
+        const field *binding = &row->fields.items[f++];
+        query_lane_read *r = &reads[i];
+        r->some = canonical && !gather && match_query_lanes(g, s, p, binding, r->words);
+        narrowed |= r->some;
+        for (int k = 0; k < comp_lanes(p->type.decl); k++) if (query_reads_lane(r, k)) r->columns++;
+    }
+    const decl *query_code = own_routine(g) ? own_routine(g) : g->code;
+    const bool cache_columns = canonical && !gather && query_code && !query_code->is_local
+        && !query_code->is_async && !query_code->starts_tasks && !query_code->reaches_extern && !sharded(g);
     line(g, o, "{");
     g->indent++;
     if (canonical) {
@@ -15753,6 +15780,16 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         sb_put(o, "};\n");
         line(g, o, "uint32_t tide_key_count = 0;");
         line(g, o, "const tide_entity *tide_keys = tide_entities_ordered_archetypes(&%s->entities, tide_query_arches, %du, &tide_key_count);", world, admitted);
+        if (cache_columns) for (int a = 0; a < g->prog->archetypes.count; a++) {
+            if (!query_admits(g, selection, a)) continue;
+            line(g, o, "uint32_t tide_query_chunk%d = UINT32_MAX;", a);
+            line(g, o, "const tide_entity *tide_query_entities%d = NULL;", a);
+            for (int i = 0; i < q->query.count; i++) {
+                const param *p = &q->query.items[i];
+                if (!param_binding(p) || query_changes_binding(g, p) || !reads[i].columns) continue;
+                line(g, o, "const uint8_t *tide_query_columns%d_%d[%d] = {0};", a, i, reads[i].columns);
+            }
+        }
         line(g, o, "for (uint32_t tide_key_at = 0; tide_key_at < tide_key_count; tide_key_at++) {");
         g->indent++;
         line(g, o, "const tide_location tide_qloc = tide_entity_location(&%s->entities, tide_keys[tide_key_at]);", world);
@@ -15769,15 +15806,34 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         g->indent++;
         if (canonical) line(g, o, "const uint32_t tide_qn = (tide_qloc.row & %du) + 1u;", (1u << arch_shift(g, a)) - 1u);
         else line(g, o, "const uint32_t tide_qn = tide_table_rows(tide_qt, %d, tide_qc);", arch_shift(g, a));
-        line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
+        if (cache_columns) {
+            line(g, o, "if (tide_query_chunk%d != tide_qc) {", a); g->indent++;
+            line(g, o, "tide_query_chunk%d = tide_qc;", a);
+            line(g, o, "tide_query_entities%d = tide_table_column(tide_qt, %s, tide_qc, 0);", a, arch_columns(g, a));
+            for (int i = 0; i < q->query.count; i++) {
+                const param *p = &q->query.items[i];
+                if (!param_binding(p) || query_changes_binding(g, p)) continue;
+                for (int k = 0, n = 0; k < comp_lanes(p->type.decl); k++) if (query_reads_lane(&reads[i], k)) {
+                    line(g, o, "tide_query_columns%d_%d[%d] = tide_table_column(tide_qt, %s, tide_qc, %d);",
+                         a, i, n++, arch_columns(g, a), arch_column(g, a, p->type.decl->index) + k);
+                }
+            }
+            g->indent--; line(g, o, "}");
+            line(g, o, "const tide_entity *tide_qe = tide_query_entities%d;", a);
+        } else line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
         for (int i = 0; i < q->query.count; i++) {
             const param *p = &q->query.items[i];
-            if (!param_binding(p) || query_changes_binding(g, p)) continue;
+            if (!param_binding(p) || query_changes_binding(g, p) || !reads[i].columns) continue;
             const decl *comp = p->type.decl;
+            if (cache_columns) {
+                line(g, o, "const uint8_t *const *tide_qcol%d = tide_query_columns%d_%d;", i, a, i);
+                continue;
+            }
             indent(g, o);
-            sb_printf(o, "const uint8_t *const tide_qcol%d[%d] = {", i, comp_lanes(comp));
-            for (int k = 0; k < comp_lanes(comp); k++) {
-                sb_printf(o, "%s(const uint8_t *)tide_table_column(tide_qt, %s, tide_qc, %d)", k ? ", " : "",
+            sb_printf(o, "const uint8_t *const tide_qcol%d[%d] = {", i, reads[i].columns);
+            for (int k = 0, n = 0; k < comp_lanes(comp); k++) {
+                if (!query_reads_lane(&reads[i], k)) continue;
+                sb_printf(o, "%s(const uint8_t *)tide_table_column(tide_qt, %s, tide_qc, %d)", n++ ? ", " : "",
                           arch_columns(g, a), arch_column(g, a, comp->index) + k);
             }
             sb_put(o, "};\n");
@@ -15808,7 +15864,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             }
             if (q->local_use) line(g, o, "uint32_t tide_born;");
             g->indent--;
-            line(g, o, "} %s;", name);
+            line(g, o, "} %s%s;", name, narrowed ? " = {0}" : "");
         }
         line(g, o, "%s.%s = tide_qe[tide_qi];", name, field_cname(&row->fields.items[0]));
         if (q->local_use) line(g, o, "%s.tide_born = tide_entity_born(&%s->entities, tide_qe[tide_qi]);", name, world);
@@ -15816,7 +15872,20 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             const param *p = &q->query.items[i];
             if (!param_binding(p)) continue;
             const field *value = &row->fields.items[f++];
-            if (query_changes_binding(g, p)) {
+            if (reads[i].some) {
+                const decl *comp = p->type.decl;
+                const int width = comp_width(comp);
+                for (int k = 0, n = 0; k < comp_lanes(comp); k++) {
+                    if (!query_reads_lane(&reads[i], k)) continue;
+                    if (query_changes_binding(g, p)) {
+                        line(g, o, "memcpy((uint8_t *)&%s.%s + %d, tide_table_get(tide_qt, %s, (tide_qc << %d) + tide_qi, %d), %d);",
+                             name, field_cname(value), k * width, arch_columns(g, a), arch_shift(g, a), arch_column(g, a, comp->index) + k, width);
+                    } else {
+                        line(g, o, "memcpy((uint8_t *)&%s.%s + %d, tide_qcol%d[%d] + (size_t)tide_qi * %d, %d);",
+                             name, field_cname(value), k * width, i, n++, width, width);
+                    }
+                }
+            } else if (query_changes_binding(g, p)) {
                 line(g, o, "tide_table_gather(tide_qt, %s, (tide_qc << %d) + tide_qi, %d, %du, %du, &%s.%s);",
                      arch_columns(g, a), arch_shift(g, a), arch_column(g, a, p->type.decl->index),
                      comp_lanes(p->type.decl), comp_width(p->type.decl), name, field_cname(value));

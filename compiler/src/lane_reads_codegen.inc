@@ -25,6 +25,7 @@ typedef struct reads_root {
     const param *param;
     const stmt *row;
     const field *binding;
+    bool transient_match; // No whole-value helper narrowing; preserve opaque/captured values in full.
 } reads_root;
 
 // Whether a name's parameter is `p`. A view's frags and verts get what they
@@ -100,6 +101,14 @@ static void index_reads(const expr *e, const reads_root *root, byte_writes *r)
     }
 }
 
+static bool reads_direct_data_path(const expr *e)
+{
+    for (; e && e->kind == E_MEMBER; e = e->object) {
+        if (!e->field || e->property || e->local_field || e->swizzle_len) return false;
+    }
+    return e && e->kind == E_NAME;
+}
+
 static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
 {
     if (!e || r->all) return;
@@ -115,6 +124,22 @@ static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
         index_reads(e, root, r);
         return;
     }
+    if (root->transient_match && e->kind == E_MEMBER && e->swizzle_len > 0) {
+        const writes_place p = reads_place_of(e->object, root);
+        const int dims = type_dim(e->object->type);
+        if (p.rooted && !p.element && dims > 0 && p.size == type_layout(e->object->type).size
+            && p.size % dims == 0 && reads_direct_data_path(e->object)) {
+            const int each = p.size / dims;
+            for (int k = 0; k < e->swizzle_len; k++) writes_mark(r, p.off + e->swizzle[k] * each, each);
+            index_reads(e, root, r);
+            return;
+        }
+        // A property or an earlier swizzle can reorder the receiver's lanes.
+        // Read that receiver conservatively rather than interpreting its bytes
+        // as the returned vector's layout.
+        expr_reads(e->object, root, r);
+        return;
+    }
     if (e->kind == E_NAME || e->kind == E_MEMBER || e->kind == E_INDEX) {
         const writes_place p = reads_place_of(e, root);
         if (p.rooted) {
@@ -125,7 +150,7 @@ static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
     }
     // A place of it handed to a Tide function: what that function's code reads of its parameter
     const decl *callee = e->method;
-    const bool routine = callee && !callee->is_extern && callee->body && !callee->is_async && !callee->is_virtual && !callee->is_override
+    const bool routine = !root->transient_match && callee && !callee->is_extern && callee->body && !callee->is_async && !callee->is_virtual && !callee->is_override
         && !callee->replaced_by && (e->call == CALL_FUNCTION || e->call == CALL_METHOD);
     for (int i = 0; i < e->args.count; i++) {
         const expr *arg = e->args.items[i];
@@ -209,7 +234,7 @@ static const byte_writes *code_reads(const decl *code, const int index)
     vec_push(read_memo, m);
     const int at = read_memo.count - 1;
     byte_writes r = m.w;
-    const reads_root root = {p, NULL, NULL};
+    const reads_root root = {p, NULL, NULL, false};
     if (!r.all) stmt_reads(code->body, &root, &r);
     read_memo.items[at].w = r;
     read_memo.items[at].state = 2;
@@ -374,7 +399,7 @@ static void stmt_row_reads(const stmt *s, const param *q, const field *binding, 
 {
     if (!s || r->all) return;
     if (s->kind == S_FOREACH && same_param(s->query, q)) {
-        const reads_root root = {NULL, s, binding};
+        const reads_root root = {NULL, s, binding, false};
         stmt_reads(s->then_stmt, &root, r);
         (*reached)++;
     }
@@ -410,6 +435,27 @@ static bool view_query_lanes(const gen *g, const decl *sys, const int qi, const 
     stmt_row_reads(sys->body, q, binding, &r, &reached);
     if (reached != u.looped) return false; // One in a block it didn't look in
     return reads_lane_mask(p->type.decl, &r, mask);
+}
+
+// A transient match foreach row: never shorten a value that can escape into
+// a task, a shard, a materialized parallel row or a whole-value consumer.
+static bool match_query_lanes(const gen *g, const stmt *s, const param *p, const field *binding, uint64_t *words)
+{
+    const decl *code = own_routine(g) ? own_routine(g) : g->code;
+    const decl *d = p->type.decl;
+    if (!code || code->is_view || code->is_local || code->is_async || code->starts_tasks || sharded(g)
+        || p->mode != PARAM_READ || p->type.kind != TY_COMPONENT || d->is_local
+        || comp_lanes(d) <= 1 || comp_lanes(d) > LANE_MASK_MOST || decl_layout(d).size > LANE_WRITES_MOST) return false;
+    const int size = type_layout(binding->type).size;
+    if (size <= 0 || size != decl_layout(d).size) return false;
+    byte_writes r = {size, false, arena_alloc((size_t)size)};
+    memset(r.bytes, 0, (size_t)size);
+    const reads_root root = {NULL, s, binding, true};
+    stmt_reads(s->then_stmt, &root, &r);
+    lane_mask mask;
+    if (!reads_lane_mask(d, &r, &mask)) return false;
+    memcpy(words, mask.w, sizeof mask.w);
+    return true;
 }
 
 // Whether any view copies only some of component `d`'s lanes: then it has

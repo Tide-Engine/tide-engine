@@ -1,3 +1,15 @@
+## Narrow plain-query reads (2026-11-07)
+
+The canonical plain traversal now narrows transient component copies to consumed
+lanes and reuses eligible read-only chunk column pointers within one loop call.
+Indexed candidate collection/gathering and index page proofs are unchanged.
+`NO_LOOP_INDEXES` therefore exercises the new plain lowering against the existing
+indexed path. Both native ASan and WASI pass `indexed_loops`,
+`indexed_loops_plain` and `tidec_indexed_loops_same`, preserving exact tick hashes,
+view output and ordinary list order. Escape fallbacks, live Set/COW handling and
+focused regressions are documented in language.md, Narrow transient match-query
+reads. This does not change which loops may be indexed or their guards/order.
+
 # Indexed loops
 
 ## Canonical logical entity order (2026-11-06)

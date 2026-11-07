@@ -1,0 +1,20 @@
+component Computed
+{
+    float a = 1;
+    float b = 2;
+    float c = 3;
+    float3 reordered { get { return float3(c, a, b); } }
+}
+component Vector { float3 stored = float3(4, 5, 6); float unused = 123; }
+singleton Seen { float property; float swizzle; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Computed, Vector); }
+float Project(float2 value) { return value.x + value.y; }
+system Read(mut Seen seen, query (Computed value, Vector vector) values)
+{
+    foreach (var row in values)
+    {
+        seen.property = Project(row.value.reordered.xz);
+        seen.swizzle = row.vector.stored.yx.x;
+    }
+}
