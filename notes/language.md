@@ -1,3 +1,39 @@
+## Dense Owned dependency graphs compile in the embedded compiler (2026-11-07)
+
+0.7.0-nightly.2's Owned dependency closure emitted one separate conditional per
+producer edge. Mount & Rifle's FULL_WORLD/PREDICT_OWNED release generated 123
+systems and 5,431 edges: the fixed-point loop alone was 717,821 C bytes. Embedded
+Clang exited with 0xC0000005 and no diagnostic under the reported -O2/CodeView
+flags. The copied original game_part2.c reproduces this without building or
+writing the game checkout. A standalone selector containing only those branches
+also reproduces it. System Clang succeeds; changing only a scratch copy of the
+embedded executable's PE stack reserve from 1 MiB to 64 MiB makes the isolated
+selector compile. This establishes compiler-stack sensitivity of the expanded
+control flow; no debugger crash backtrace or general LLVM fix is claimed.
+
+The generator now emits the same consumer/producer pairs, in the same order,
+as constant uint32 data and iterates them with one small fixed-point loop.
+Eligibility checks, roots, closure, scheduling and singleton semantics are
+unchanged. Empty edge sets emit neither an array nor a loop. No runtime API,
+world state, ABI, compiler flags or installed executable was changed. Replacing
+only that loop in the copied failing translation unit reduces it to 98,783 C
+bytes and compiles with the original embedded compiler and exact reported
+flags (exit 0, nonempty object). Original copied input still exits 0xC0000005.
+
+The generated owned_dense fixture has 80 mutually dependent global producers,
+an owned reader and unrelated global work: 6,400 edges. Its generated-C guard
+requires the compact table and exact edge count. Execution checks the cyclic
+closure, no-owned roots, omission of unrelated work and full confirmed ticks.
+All nine scoped CTests pass on Windows ASan and WASI: dense execution/codegen,
+owned_dependencies and its split variant, predict_owned and its split variant,
+predict_near, predict_kept and predict_range_control. The dense selector's actual
+generated translation unit also compiles with embedded Clang and the reported
+release flags. Scratch originals/logs/objects are in
+build/owned-compile-regression (ignored); no game files were changed or game
+builds/runs performed. Full battle performance and a packaged-nightly gameplay
+retest remain unmeasured here. This fixes a compilation regression, not evidence
+that Owned has closed its CPU gap with Delay.
+
 ## Owned singleton dependency selection (2026-11-07)
 
 The owner changed Owned's contract: predict singleton work needed by owned

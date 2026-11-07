@@ -147,12 +147,24 @@ static void gen_owned_selection(gen *g)
         }
         if (!wants_far) sb_printf(o, "    w->tide_owned_selected[%d] = eligible[%d];\n", i, i);
     }
-    sb_put(o, "    bool changed;\n    do {\n        changed = false;\n");
+    // Keep large dependency graphs as data. Unrolling every edge makes a huge
+    // control-flow graph and can exhaust embedded Clang's compilation stack.
+    bool edges = false;
     for (int consumer = 0; consumer < p->systems.count; consumer++) for (int producer = 0; producer < p->systems.count; producer++) {
         if (consumer == producer || !owned_produces(&plan->uses[producer], &plan->uses[consumer])) continue;
-        sb_printf(o, "        if (w->tide_owned_selected[%d] && eligible[%d] && !w->tide_owned_selected[%d]) w->tide_owned_selected[%d] = changed = true;\n", consumer, producer, producer, producer);
+        if (!edges) sb_put(o, "    static const uint32_t edges[][2] = {\n");
+        edges = true;
+        sb_printf(o, "        {%d, %d},\n", consumer, producer);
     }
-    sb_put(o, "    } while (changed);\n}\n\n");
+    if (edges) {
+        sb_put(o, "    };\n    bool changed;\n    do {\n        changed = false;\n"
+                  "        for (size_t edge = 0; edge < sizeof edges / sizeof edges[0]; edge++) {\n"
+                  "            const uint32_t consumer = edges[edge][0], producer = edges[edge][1];\n"
+                  "            if (w->tide_owned_selected[consumer] && eligible[producer] && !w->tide_owned_selected[producer])\n"
+                  "                w->tide_owned_selected[producer] = changed = true;\n"
+                  "        }\n    } while (changed);\n");
+    }
+    sb_put(o, "}\n\n");
 }
 static void gen_owned_singleton_guard(gen *g, const decl *d)
 {

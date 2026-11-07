@@ -1,0 +1,10 @@
+file(READ "${GAME_C}" generated)
+if(NOT generated MATCHES "static const uint32_t edges\\[\\]\\[2\\]")
+    message(FATAL_ERROR "Owned dependency graph must be emitted as constant data")
+endif()
+string(REGEX MATCHALL "\n        \\{[0-9]+, [0-9]+\\}," edges "${generated}")
+list(LENGTH edges edge_count)
+# 80 mutually dependent writers plus each writer feeding the owned reader.
+if(NOT edge_count EQUAL 6400)
+    message(FATAL_ERROR "Expected 6400 dependency edges, got ${edge_count}")
+endif()

@@ -561,6 +561,21 @@ add_test(NAME tidec_e2e_predict_near_split COMMAND tidec_e2e_predict_near_split)
 tide_e2e_test(predict_kept) # ...and a confirmed tick that leaves what's near as predicted keeps the predicted ticks after it
 tide_e2e_test(predict_owned)
 tide_e2e_test(owned_dependencies)
+# A dense cyclic producer graph must stay data, rather than thousands of C
+# branches that exhaust embedded Clang's stack under release optimization.
+set(owned_dense_source "settings { prediction = Prediction.Owned; }\ncomponent Controlled { int value; }\nsingleton Shared { int value; }\nsingleton Unrelated { int calls; }\nscene Main;\nevent(PlayerJoined joined) Join() { Spawn(Controlled { }, Owner { player = joined.player }); }\n")
+foreach(index RANGE 1 80)
+    string(APPEND owned_dense_source "system Producer${index}(mut Shared value) { value.value++; }\n")
+endforeach()
+string(APPEND owned_dense_source "system Control(Shared shared, mut Controlled controlled) { controlled.value = shared.value; }\nsystem Waste(mut Unrelated value) { value.calls++; }\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/owned_dense.tide" "${owned_dense_source}")
+tide_add_game(tidec_e2e_owned_dense SPLIT_CODE SOURCES "${CMAKE_CURRENT_BINARY_DIR}/owned_dense.tide" NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/owned_dense_test.c)
+target_include_directories(tidec_e2e_owned_dense PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_owned_dense COMMAND tidec_e2e_owned_dense)
+add_test(NAME tidec_owned_dense_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_owned_dense/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/owned_dense_codegen.cmake")
 tide_add_game(tidec_e2e_owned_dependencies_split SPLIT_CODE SOURCES e2e/owned_dependencies.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/owned_dependencies_test.c)
 target_include_directories(tidec_e2e_owned_dependencies_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
