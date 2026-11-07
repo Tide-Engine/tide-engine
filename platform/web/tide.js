@@ -158,14 +158,19 @@
     // { stage, loaded, total } with each change, and the shell's #tide-loading, where there is one, shows
     // it. Stages: 'download' (bytes of the program and its pack, of total), 'compile' (the program made
     // ready to run), 'waiting' (ready, for Tide.start()), 'start' (the game running until it draws),
-    // 'done' (it drew: the shell's loader goes) and 'error' (with `error`, what went wrong).
+    // 'shaders' (required pipelines compiled, of total), 'done' (it drew: the shell's loader goes)
+    // and 'error' (with `error`, what went wrong).
     const loader = document.getElementById('tide-loading');
     const loaderBar = loader && loader.querySelector('#tide-loading-bar');
     const loaderText = loader && loader.querySelector('#tide-loading-text');
     let stage = '';
+    let progressLoaded = -1, progressTotal = -1;
     function progress(next, loaded = 0, total = 0, error = undefined) {
         if (stage === 'done' || stage === 'error') return;
+        if (stage === next && loaded === progressLoaded && total === progressTotal) return;
         stage = next;
+        progressLoaded = loaded;
+        progressTotal = total;
         if (config.onProgress) {
             try { config.onProgress({ stage, loaded, total, error }); }
             catch (thrown) { printErr('tide: onProgress: ' + (thrown && thrown.stack || thrown)); }
@@ -174,12 +179,14 @@
         const megabytes = n => (n / 1048576).toFixed(n < 10485760 ? 1 : 0);
         if (loaderText) {
             loaderText.textContent = stage === 'download' ? `Loading ${megabytes(loaded)} / ${megabytes(total)} MB`
-                : stage === 'compile' ? 'Preparing' : stage === 'waiting' ? 'Ready'
+                : stage === 'shaders' ? `Compiling shaders ${loaded} / ${total}`
+                : stage === 'compile' ? 'Preparing game' : stage === 'waiting' ? 'Ready'
                 : stage === 'error' ? 'The game couldn\'t start: ' + (error && error.message || error) : 'Starting';
         }
         if (loaderBar) {
-            loaderBar.classList.toggle('known', stage === 'download');
-            if (loaderBar.firstElementChild) loaderBar.firstElementChild.style.width = stage === 'download' ? `${total ? 100 * loaded / total : 0}%` : '';
+            const known = stage === 'download' || stage === 'shaders';
+            loaderBar.classList.toggle('known', known);
+            if (loaderBar.firstElementChild) loaderBar.firstElementChild.style.width = known ? `${total ? 100 * loaded / total : 0}%` : '';
         }
         if (stage === 'error') loader.classList.add('failed');
         if (stage === 'done') {
@@ -662,9 +669,21 @@
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
             // A GUI draw can land before the scene's shaders compile. Reveal only a fresh
             // drawn frame after required pipelines settle; optional acceleration can follow.
-            if (shown && drew && !gpuTables.pipeline.some(p => p && !p.optional && !p.pipeline && !p.failed)) {
-                shown();
-                shown = null;
+            if (shown) {
+                let total = 0, pending = 0;
+                for (const p of gpuTables.pipeline) {
+                    if (!p || p.optional) continue;
+                    total++;
+                    if (!p.pipeline && !p.failed) pending++;
+                }
+                if (pending) progress('shaders', total - pending, total);
+                else {
+                    if (stage === 'shaders') progress('start');
+                    if (drew) {
+                        shown();
+                        shown = null;
+                    }
+                }
             }
         } catch (error) {
             looping = false;

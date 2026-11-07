@@ -1,3 +1,19 @@
+## Shader compilation progress on the web (2026-11-07)
+
+Initial pipeline readiness now reports `Tide.onProgress` stage `shaders`, with
+settled/live required pipeline counts in `loaded`/`total`. Optional acceleration
+pipelines are excluded; failed required pipelines count as settled. The standard
+shell says “Compiling shaders X / Y” with a determinate bar. Identical progress
+events are suppressed, and a finished shader wait returns to `start` until a
+frame actually draws. The game frame loop keeps running without awaiting pipeline
+promises. This does not move synchronous WASM setup or driver work off-thread.
+The docs embed relays this status outside its still-hidden iframe. Runtime tests
+cover counts, continued frame execution, deduplication, terminal progress and the
+embed's callback restoration/abort handling. The release runtime is regenerated.
+Validation: all 12 Node 24.22.1 runtime tests, the docs type check (zero errors
+or warnings), and the production docs build pass. Actual browser/GPU timing is
+not measured; the continued-frame guarantee is checked with delayed promises.
+
 ## First-frame readiness waits for scene pipelines (2026-11-07)
 
 The docs' Render3D examples could reveal their controls over a black scene:
