@@ -345,6 +345,12 @@ void tide_platform_log_note(const char *text);
 // given; the standard host turns it on for games.
 void tide_platform_background_pipelines(bool on);
 
+#ifdef __wasm__
+// The web loader must not reveal a controls-only frame before the standard host's initial match view exists.
+// This gates only initial presentation, never the frame loop. Custom hosts default to ready.
+void tide_platform_startup_ready(bool ready);
+#endif
+
 // Makes the pipelines of `shaders` before anything draws with them, so the
 // frame that first does doesn't wait for one: a game's shaders (the standard
 // host's are tidec's tide_game_shaders, given as the game starts and every
@@ -354,8 +360,8 @@ void tide_platform_background_pipelines(bool on);
 // that: so each of a shader's is made the ways it drew, by its name, in this
 // run and the runs before, which the renderer keeps in the game's temporary
 // cache folder (pipelines.keys, beside Vulkan's pipelines.vulkan; a page
-// keeps its own run's). A shader that never drew is made the way its kind of
-// shader (2D or 3D, a blit, its colors) drew most into each kind of target,
+// keeps its own run's). A shader that never drew is made in the single configuration its kind of
+// shader (2D or 3D, a blit, its colors) drew most,
 // once one of its kind drew: given again, it makes what's newly known. With
 // background pipelines on, they're made while frames go on
 // (tide_platform_prewarm_waiting); off, this waits for them. `shaders` is

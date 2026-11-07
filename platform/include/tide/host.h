@@ -1112,6 +1112,9 @@ static inline void tide_run_prewarm(void)
 static inline void tide_run_begin(void)
 {
     const tide_host_game *game = tide_run_game;
+#ifdef __wasm__
+    tide_platform_startup_ready(game->main_is_local);
+#endif
     tide_run_local = calloc(1, game->local_size);
     tide_run_start = calloc(1, game->game->start_size);
     if (!tide_run_local || !tide_run_start) abort();
@@ -1205,6 +1208,9 @@ static inline bool tide_run_load_shown(const char *path)
 // frames wait for them in a window, as they do once a pack is read (tide_run_loading_frame).
 static inline void tide_run_begin_loaded(void)
 {
+#ifdef __wasm__
+    tide_platform_startup_ready(false);
+#endif
     tide_run_loader *l = &tide_run_loading;
     if (l->on) return;
     if (tide_run_headless || tide_run_embedded || !tide_run_game->shaders) {
@@ -1593,6 +1599,11 @@ static inline int tide_run_frame(void *user, const float seconds)
         view.alpha = view.verified_alpha = 1.0f;
     }
     const void *match = view.current;
+#ifdef __wasm__
+    // A failed initial connection must still show local error/retry UI without a match view.
+    const bool failed_start = status.client.state == TIDE_SESSION_OFFLINE && status.client.reason != TIDE_DISCONNECT_LEFT;
+    tide_platform_startup_ready(game->main_is_local || match != NULL || failed_start);
+#endif
     tide_draw_reset(&tide_run_draw);
     tide_run_draw.diagnostics = tide_run_reporting ? &tide_run_report.draw : NULL;
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by

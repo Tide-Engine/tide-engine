@@ -34,13 +34,14 @@ test('startup waits for background scene pipelines and a fresh drawn frame', asy
         shown() { reveals++; },
         stage: 'start',
         progress(stage, loaded, total) { sandbox.stage = stage; progressEvents.push({ stage, loaded, total }); },
-        tick() { frames++; },
+        tick() { frames++; }, hostReady: false,
     });
     vm.runInContext(`
         let drew = false, drawThisFrame = true;
         const gpuTables = { pipeline: [null] };
         const gpuAdd = (kind, entry) => gpuTables[kind].push(entry) - 1;
-        const exports = { tide_web_frame() { tick(); if (drawThisFrame) drew = true; return 0; } };
+        const exports = { tide_web_frame() { tick(); if (drawThisFrame) drew = true; return 0; },
+            tide_web_startup_ready() { return hostReady; } };
         ${source.slice(pipelineBegin, pipelineEnd)}
         ${source.slice(frameBegin, frameEnd)}
     `, sandbox);
@@ -61,6 +62,9 @@ test('startup waits for background scene pipelines and a fresh drawn frame', asy
     assert.deepEqual(progressEvents.at(-1), { stage: 'shaders', loaded: 1, total: 2 });
     pending[1].resolve({});
     await Promise.resolve();
+    step('frame();');
+    assert.equal(reveals, 0, 'controls cannot reveal a host still waiting for its initial match view');
+    sandbox.hostReady = true;
     step('drawThisFrame = false; frame();');
     assert.equal(reveals, 0, 'an earlier draw is not proof the now-ready scene rendered');
     step('drawThisFrame = true; frame(); frame();');
@@ -86,6 +90,42 @@ test('startup waits for background scene pipelines and a fresh drawn frame', asy
             createRenderPipelineAsync: make, createComputePipelineAsync: make,
         };
     }
+});
+
+test('WebGPU shares exact shader sources across live pipelines and releases them on free or device loss', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('    function shaderModule(');
+    const end = source.indexOf('\n    // A pipeline described', begin);
+    assert.ok(begin >= 0 && end > begin);
+    let made = 0, checked = 0;
+    const sandbox = vm.createContext({
+        device: { createShaderModule: descriptor => ({ ...descriptor, id: ++made }) },
+        checkShader() { checked++; },
+    });
+    vm.runInContext(`
+        const shaderModules = new Map(), gpuTables = { pipeline: [null] };
+        function gpuRemove(kind, id) { gpuTables[kind][id] = null; }
+        ${source.slice(begin, end)}
+        function make(code, name = 'shader', failing = false) {
+            const shader = shaderModule({ code, name, failing });
+            return gpuTables.pipeline.push({ shader }) - 1;
+        }
+    `, sandbox);
+    const step = code => vm.runInContext(code, sandbox);
+    step("make('same WGSL', 'depth'); make('same WGSL', 'HDR');");
+    assert.equal(made, 1, 'target/state variants share one module');
+    assert.equal(checked, 1, 'diagnostics are checked once for the shared source');
+    step("freePipeline(1); make('same WGSL');");
+    assert.equal(made, 1, 'freeing one variant retains the others module');
+    step("make('changed WGSL');");
+    assert.equal(made, 2, 'hot reload cannot reuse a different source');
+    step('freePipeline(2); freePipeline(3);');
+    assert.equal(step('shaderModules.size'), 1, 'unused source is released');
+    step("make('same WGSL'); make('same WGSL', 'injected failure', true);");
+    assert.equal(made, 4, 'freed sources are remade and injected failures stay separate');
+    step('shaderModules.clear();'); // deviceLost clears this device-owned cache
+    step("make('same WGSL');");
+    assert.equal(made, 5, 'a replacement device gets its own module');
 });
 
 test('web loader reports shader counts without repeating unchanged progress', async () => {

@@ -1,0 +1,552 @@
+{
+  "date": "2026-11-07",
+  "baseline": "e902b70ba",
+  "adapter": {
+    "vendor": "nvidia",
+    "architecture": "lovelace",
+    "device": "0x2702",
+    "description": "NVIDIA GeForce RTX 4080 SUPER",
+    "isFallbackAdapter": false,
+    "backend": "D3D12"
+  },
+  "build": "web-release, Clang 23.1.2, Node 24.22.1, headless muted Chrome",
+  "method": "Three alternating baseline/candidate pairs per example; fresh browser profiles; same local generated game sources; runtime GPU API instrumentation. Time from runtime start progress to first use of the last material pipeline used by the initial scene. Includes setup and compilation after start, excludes download/WASM compile. Large used material pipelines identified by WGSL source >30000 characters in these two fixtures.",
+  "limits": "Driver cache not cleared, GPU clocks and other desktop activity uncontrolled; local warm-cache observations, not a cold-load guarantee. Candidate ready promise also fixes premature reveal, so readyMs is deliberately not used for the before/after comparison. Used/unused means only this initial scene, not all possible controls or future gameplay.",
+  "runs": [
+    {
+      "example": "render3d",
+      "round": 1,
+      "version": "before",
+      "firstMaterialDrawMs": 1383.5999999642372,
+      "shaderModules": 42,
+      "uniqueSources": 30,
+      "pipelines": 42,
+      "usedPipelines": 9,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 1013.9000000357628,
+          "sourceBytes": 34279,
+          "firstDrawMs": 1383.5999999642372
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1265.300000011921,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 13",
+          "compileMs": 1265,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1228.300000011921,
+          "used": false,
+          "sourceBytes": 44374
+        }
+      ]
+    },
+    {
+      "example": "render3d",
+      "round": 1,
+      "version": "after",
+      "firstMaterialDrawMs": 1202.1000000238419,
+      "shaderModules": 30,
+      "uniqueSources": 30,
+      "pipelines": 33,
+      "usedPipelines": 9,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 831.8000000119209,
+          "sourceBytes": 34279,
+          "firstDrawMs": 1202.1000000238419
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1052.699999988079,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 993,
+          "used": false,
+          "sourceBytes": 44374
+        },
+        {
+          "name": "shader 14",
+          "compileMs": 927.8999999761581,
+          "used": false,
+          "sourceBytes": 37192
+        }
+      ]
+    },
+    {
+      "example": "render3d",
+      "round": 2,
+      "version": "before",
+      "firstMaterialDrawMs": 1429.5999999642372,
+      "shaderModules": 42,
+      "uniqueSources": 30,
+      "pipelines": 42,
+      "usedPipelines": 9,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 1048,
+          "sourceBytes": 34279,
+          "firstDrawMs": 1429.5999999642372
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1290.699999988079,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 13",
+          "compileMs": 1240.9000000357628,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1218.199999988079,
+          "used": false,
+          "sourceBytes": 44374
+        }
+      ]
+    },
+    {
+      "example": "render3d",
+      "round": 2,
+      "version": "after",
+      "firstMaterialDrawMs": 1257.0999999642372,
+      "shaderModules": 30,
+      "uniqueSources": 30,
+      "pipelines": 33,
+      "usedPipelines": 9,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 857.9000000357628,
+          "sourceBytes": 34279,
+          "firstDrawMs": 1257.0999999642372
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1064.199999988079,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1025.699999988079,
+          "used": false,
+          "sourceBytes": 44374
+        },
+        {
+          "name": "shader 14",
+          "compileMs": 899.7000000476837,
+          "used": false,
+          "sourceBytes": 37192
+        }
+      ]
+    },
+    {
+      "example": "render3d",
+      "round": 3,
+      "version": "before",
+      "firstMaterialDrawMs": 1397.5999999642372,
+      "shaderModules": 42,
+      "uniqueSources": 30,
+      "pipelines": 42,
+      "usedPipelines": 9,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 1018,
+          "sourceBytes": 34279,
+          "firstDrawMs": 1397.5999999642372
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1284.800000011921,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 13",
+          "compileMs": 1258.199999988079,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1218.9000000357628,
+          "used": false,
+          "sourceBytes": 44374
+        }
+      ]
+    },
+    {
+      "example": "render3d",
+      "round": 3,
+      "version": "after",
+      "firstMaterialDrawMs": 1233,
+      "shaderModules": 30,
+      "uniqueSources": 30,
+      "pipelines": 33,
+      "usedPipelines": 9,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 852.9000000357628,
+          "sourceBytes": 34279,
+          "firstDrawMs": 1233
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1051.1000000238419,
+          "used": false,
+          "sourceBytes": 46988
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1007.7999999523163,
+          "used": false,
+          "sourceBytes": 44374
+        },
+        {
+          "name": "shader 11",
+          "compileMs": 907.1999999880791,
+          "used": false,
+          "sourceBytes": 34578
+        }
+      ]
+    },
+    {
+      "example": "render3d-materials",
+      "round": 1,
+      "version": "before",
+      "firstMaterialDrawMs": 1540.300000011921,
+      "shaderModules": 43,
+      "uniqueSources": 30,
+      "pipelines": 43,
+      "usedPipelines": 12,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 1174.5,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1540.300000011921
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 1146.3999999761581,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1512.6000000238419
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 1146.300000011921,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1512.800000011921
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1402.5,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 13",
+          "compileMs": 1370.5,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1340.5999999642372,
+          "used": false,
+          "sourceBytes": 45943
+        }
+      ]
+    },
+    {
+      "example": "render3d-materials",
+      "round": 1,
+      "version": "after",
+      "firstMaterialDrawMs": 1348.8999999761581,
+      "shaderModules": 30,
+      "uniqueSources": 30,
+      "pipelines": 35,
+      "usedPipelines": 12,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 969.3000000119209,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1348.8999999761581
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 937.5999999642372,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1314.199999988079
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 937.8000000119209,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1314.3999999761581
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1149.4000000357628,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1104.0999999642372,
+          "used": false,
+          "sourceBytes": 45943
+        },
+        {
+          "name": "shader 14",
+          "compileMs": 991.5,
+          "used": false,
+          "sourceBytes": 38458
+        }
+      ]
+    },
+    {
+      "example": "render3d-materials",
+      "round": 2,
+      "version": "before",
+      "firstMaterialDrawMs": 1554.8999999761581,
+      "shaderModules": 43,
+      "uniqueSources": 30,
+      "pipelines": 43,
+      "usedPipelines": 12,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 1188,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1554.8999999761581
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 1163.199999988079,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1534.0999999642372
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 1149.800000011921,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1520.199999988079
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 10",
+          "compileMs": 1432.800000011921,
+          "used": false,
+          "sourceBytes": 45943
+        },
+        {
+          "name": "shader 13",
+          "compileMs": 1416.3999999761581,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 13",
+          "compileMs": 1403.800000011921,
+          "used": false,
+          "sourceBytes": 48537
+        }
+      ]
+    },
+    {
+      "example": "render3d-materials",
+      "round": 2,
+      "version": "after",
+      "firstMaterialDrawMs": 1294.5,
+      "shaderModules": 30,
+      "uniqueSources": 30,
+      "pipelines": 35,
+      "usedPipelines": 12,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 911,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1294.5
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 906,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1287.699999988079
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 889.7999999523163,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1273.8999999761581
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1128.8999999761581,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1108.699999988079,
+          "used": false,
+          "sourceBytes": 45943
+        },
+        {
+          "name": "shader 14",
+          "compileMs": 979.6000000238419,
+          "used": false,
+          "sourceBytes": 38458
+        }
+      ]
+    },
+    {
+      "example": "render3d-materials",
+      "round": 3,
+      "version": "before",
+      "firstMaterialDrawMs": 1543.5,
+      "shaderModules": 43,
+      "uniqueSources": 30,
+      "pipelines": 43,
+      "usedPipelines": 12,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 1169.699999988079,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1522.8999999761581
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 1143,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1495.2999999523163
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 1192.7000000476837,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1543.5
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1411.199999988079,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 13",
+          "compileMs": 1370.4000000357628,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1358.699999988079,
+          "used": false,
+          "sourceBytes": 45943
+        }
+      ]
+    },
+    {
+      "example": "render3d-materials",
+      "round": 3,
+      "version": "after",
+      "firstMaterialDrawMs": 1336.4000000357628,
+      "shaderModules": 30,
+      "uniqueSources": 30,
+      "pipelines": 35,
+      "usedPipelines": 12,
+      "materialPipelines": [
+        {
+          "name": "shader 12",
+          "compileMs": 911.1999999880791,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1273.9000000357628
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 969.3999999761581,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1336.4000000357628
+        },
+        {
+          "name": "shader 12",
+          "compileMs": 929.1999999880791,
+          "sourceBytes": 35556,
+          "firstDrawMs": 1294.7000000476837
+        }
+      ],
+      "slowest": [
+        {
+          "name": "shader 13",
+          "compileMs": 1172,
+          "used": false,
+          "sourceBytes": 48537
+        },
+        {
+          "name": "shader 10",
+          "compileMs": 1124.199999988079,
+          "used": false,
+          "sourceBytes": 45943
+        },
+        {
+          "name": "shader 14",
+          "compileMs": 1017.3000000119209,
+          "used": false,
+          "sourceBytes": 38458
+        }
+      ]
+    }
+  ],
+  "measuredCandidateSourceHashes": {
+    "platform/src/platform.c": "86ba660f8aa0d7901502988f60d9ccf9928c4a20aea23153f082bb76b18fc073",
+    "platform/include/tide/host.h": "2bbd16d041d6dcbeea8b3575e7019b3dfe1f1c910fd3d14ad7fa8c5e356f29bb",
+    "platform/include/tide/platform.h": "fc3af9c0195331aadb2920d859b3056b8dfeb9128872ff2b3f68233e9830ca4d",
+    "platform/web/tide.js": "e9e62237dd6e4dbd2182743de6be79a9c864582b0d84ed891029a5546f3f5aee"
+  },
+  "postMeasurementChange": "The final host readiness condition also releases loading for a terminal initial connection failure, allowing local error/retry UI. The measured successful startup behavior is unchanged."
+}

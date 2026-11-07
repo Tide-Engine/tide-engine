@@ -1,5 +1,21 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Web first-frame readiness (2026-11-07)
+
+The standard host's own loader could satisfy the page's first-draw promise
+before `tide_run_begin` had even requested a game's scene shaders. Web builds
+now set `tide_platform_startup_ready(false)` in `tide_run_begin_loaded`, retain
+the wait in `tide_run_begin` for match Main, and report ready once the frame
+has a match view (or Main is local). This only gates initial page presentation;
+the host's loop, local controls, session updates and async compilation continue.
+The page combines this with actual drawing and required-pipeline readiness.
+Custom hosts keep the platform's ready default. No native host policy, language
+contract or generated game function changes. A terminal initial connection
+failure also releases the wait so local error/retry UI can appear without a
+match view. The WebGPU host-wait/first-tick,
+draw/shader/prewarm tests and the Render3D startup trace pass; detailed contracts
+and validation are in web.md and rendering.md (2026-11-07 entries).
+
 ## Views while scenes prepare (2026-11-05)
 
 Sessions expose observational scene-preparation progress endpoints through their existing view API, including initial

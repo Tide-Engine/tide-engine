@@ -1,3 +1,27 @@
+## Shared modules and host readiness (2026-11-07)
+
+`tide.js` now shares a `GPUShaderModule` by exact WGSL source among live
+pipelines, with reference-counted release and clearing on device loss. Source
+changes and fail-pipeline injections cannot alias. Runtime tests pin reuse,
+release, changed sources and replacement-device creation. The shipping runtime
+is regenerated. Renderer warmup heuristics and local timing evidence are in
+rendering.md, Smaller speculative shader warmup.
+
+Correction to the first-frame fix below: a draw with all currently known
+required pipelines ready can still be the standard host's own loading screen.
+The game had not begun, so it had not requested the scene's shaders yet.
+The standard host now reports startup readiness via the platform's web-only
+`tide_platform_startup_ready` and exported `tide_web_startup_ready`: false during
+host loading, then true for local Main or once the first match view exists.
+Terminal initial connection failures release it too, for local error/retry UI.
+The page additionally requires this signal before resolving `Tide.start()`.
+Custom hosts default to ready; pages lacking the export keep their previous
+draw-based behavior. Frames and progress continue while waiting. No generated
+game ABI or simulation code changes. The local real-GPU startup probe verifies
+the ready promise comes after the examples' actual material draws; the Node
+regression independently rejects a controls-only frame while the host waits.
+Focused native/software/hardware/docs checks are recorded in rendering.md.
+
 ## Shader compilation progress on the web (2026-11-07)
 
 Initial pipeline readiness now reports `Tide.onProgress` stage `shaders`, with
