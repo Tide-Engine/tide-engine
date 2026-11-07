@@ -1,5 +1,18 @@
 # The docs site
 
+## Shader progress for embedded examples (2026-11-07)
+
+While `Tide.start()` waits for required pipelines, `examples.ts` subscribes to
+the frame's `Tide.onProgress` and shows “Compiling shaders X / Y” in the parent
+status. Two-player examples identify the player. A `start` event returns to
+“Starting example”; the usual successful reveal clears the status. Existing
+callbacks are forwarded and restored when startup settles, and aborted examples
+cannot overwrite their replacement's status. Stop remains available during
+compilation; the game frame loop continues asynchronously (web.md). Node runtime
+tests exercise the production embed handler without needing staged game pages.
+All 12 runtime tests, the docs type check and production build pass on Node
+24.22.1. No staged-game browser run or new GPU timing measurement is claimed.
+
 ## Camera smoke waits for rendered updates (2026-11-06)
 
 Docs run 42263895626 failed only the material example's exact Reset-image
