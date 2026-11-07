@@ -13,6 +13,72 @@ const release = await readFile(resolve(root, 'platform/web/tide.release.js'), 'u
 const context = vm.createContext({ location: { hash: '#download' } });
 await vm.runInContext(release, context);
 
+test('startup waits for background scene pipelines and a fresh drawn frame', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const pipelineBegin = source.indexOf('    function addPipeline(');
+    const pipelineEnd = source.indexOf('\n    // A compute pipeline', pipelineBegin);
+    const frameBegin = source.indexOf('    function frame()');
+    const frameEnd = source.indexOf('\n    // The audio device:', frameBegin);
+    assert.ok(pipelineBegin >= 0 && pipelineEnd > pipelineBegin && frameBegin >= 0 && frameEnd > frameBegin);
+    const pending = [];
+    let reveals = 0;
+    const make = () => new Promise((resolve, reject) => pending.push({ resolve, reject }));
+    const sandbox = vm.createContext({
+        device: { createRenderPipelineAsync: make, createComputePipelineAsync: make },
+        backgroundPipelines: true, config: {}, printErr() {},
+        stopped: false, heartbeat: null, looping: true, nextFrame: 0,
+        fit() {}, audioPump() {}, scheduleFrame() {}, beat() {},
+        fail(error) { throw error; }, Exit: class Exit {},
+        shown() { reveals++; },
+    });
+    vm.runInContext(`
+        let drew = false, drawThisFrame = true;
+        const gpuTables = { pipeline: [null] };
+        const gpuAdd = (kind, entry) => gpuTables[kind].push(entry) - 1;
+        const exports = { tide_web_frame() { if (drawThisFrame) drew = true; return 0; } };
+        ${source.slice(pipelineBegin, pipelineEnd)}
+        ${source.slice(frameBegin, frameEnd)}
+    `, sandbox);
+    const step = code => vm.runInContext(code, sandbox);
+    // The controls draw immediately while the scene's render and compute pipelines lag.
+    step(`addPipeline({ name: 'scene', storage: [] }, {}, {}, false);
+        addPipeline({ name: 'scene compute', storage: [] }, {}, {}, true);
+        addPipeline({ name: 'optional culling', storage: [], optional: true }, {}, {}, true);
+        frame();`);
+    assert.equal(reveals, 0, 'a controls-only draw must not reveal a black scene');
+    pending[0].resolve({});
+    await Promise.resolve();
+    step('frame();');
+    assert.equal(reveals, 0, 'all required pipelines must settle');
+    pending[1].resolve({});
+    await Promise.resolve();
+    step('drawThisFrame = false; frame();');
+    assert.equal(reveals, 0, 'an earlier draw is not proof the now-ready scene rendered');
+    step('drawThisFrame = true; frame(); frame();');
+    assert.equal(reveals, 1, 'a fresh draw reveals once, without waiting for optional culling');
+
+    // Freed pipelines and old-device callbacks must not hold startup forever.
+    for (const outcome of ['reject', 'free', 'device loss']) {
+        step(`shown = () => { revealedAgain++; };`);
+        sandbox.revealedAgain = 0;
+        step(`const id${pending.length} = addPipeline({ name: 'later', storage: [] }, {}, {}, false);`);
+        const id = step('gpuTables.pipeline.length - 1');
+        const promise = pending.at(-1);
+        if (outcome === 'reject') promise.reject(new Error('driver refused shader'));
+        else {
+            step(`gpuTables.pipeline[${id}] = null;`);
+            if (outcome === 'device loss') step('device = {};');
+            promise.resolve({});
+        }
+        await Promise.resolve();
+        step('frame();');
+        assert.equal(sandbox.revealedAgain, 1, outcome);
+        if (outcome === 'device loss') sandbox.device = {
+            createRenderPipelineAsync: make, createComputePipelineAsync: make,
+        };
+    }
+});
+
 test('page stats query reaches WASI argv once and preserves other launch options', async () => {
     const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
     const begin = source.indexOf('    const words = [...(config.arguments || [])];');

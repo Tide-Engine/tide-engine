@@ -144,7 +144,7 @@
     // a game before it shows it, like one further down that starts once it's
     // scrolled to. With `wait` or without, `Tide.start()` gives a promise of
     // the program's first frame that drew something, from which the canvas
-    // has something to show; a program that stopped before one breaks it. A
+    // has something to show, with its required pipelines made; a program that stopped before one breaks it. A
     // game's first frames may draw nothing: views that read the match don't
     // run until this machine is in it, a few frames after it started.
     let drew = false; // The program made a draw call
@@ -654,12 +654,18 @@
         }
         fit();
         try {
+            drew = false;
             // Timers take whole milliseconds, dropping the rest: one rounded
             // down would come before the tick, for nothing
             const seconds = exports.tide_web_frame();
             audioPump(); // What the program's mixer has for the worklet, as the queue runs low
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
-            if (drew) shown();
+            // A GUI draw can land before the scene's shaders compile. Reveal only a fresh
+            // drawn frame after required pipelines settle; optional acceleration can follow.
+            if (shown && drew && !gpuTables.pipeline.some(p => p && !p.optional && !p.pipeline && !p.failed)) {
+                shown();
+                shown = null;
+            }
         } catch (error) {
             looping = false;
             if (!(error instanceof Exit)) fail(error);
@@ -1862,7 +1868,7 @@
     // (`optional`) are always made in the background, so they're never used before they're known to be made.
     function addPipeline(b, layout, described, compute) {
         const entry = { pipeline: null, textures: b.textures, reads: b.reads, samplers: b.samplers, storage: b.storage.length, compute,
-            layout };
+            layout, optional: b.optional };
         const made = device;
         const id = gpuAdd('pipeline', entry);
         const failed = error => { // A lost device makes it again on the next; anything else is a pipeline that can't be

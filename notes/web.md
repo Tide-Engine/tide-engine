@@ -1,3 +1,23 @@
+## First-frame readiness waits for scene pipelines (2026-11-07)
+
+The docs' Render3D examples could reveal their controls over a black scene:
+`Tide.start()` resolved on any draw, while required scene pipelines were still
+compiling asynchronously. `tide.js` now waits until every live required pipeline
+has either compiled or failed, and a fresh frame has drawn. The draw flag resets
+each frame so a controls-only draw from an earlier frame cannot satisfy readiness.
+Optional acceleration pipelines do not delay startup; freed pipelines and entries
+discarded on device loss do not hold it. This changes only initial reveal/loader
+readiness, not compilation speed, rendering order or simulation. The shipping
+runtime and source manifest are regenerated, and the CLI page documents readiness.
+
+The Node regression executes production frame and pipeline functions with delayed
+render/compute promises, optional pipelines, rejection, freeing and device loss.
+It fails against the previous runtime on the premature controls-only reveal;
+all ten web-runtime tests and the production docs build pass with the fix on
+Node 24.22.1 (the usual allowed unstaged-game 404s). No actual browser/GPU
+startup timing or reproduction of the owner's exact delay is claimed. This fresh
+checkout has no compiled game pages; native code is unchanged.
+
 ## Bounded generated view lookups (2026-11-07)
 
 Foldline exposed a V8 module-compilation failure: a large partial-field view
