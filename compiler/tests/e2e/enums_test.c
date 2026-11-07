@@ -94,7 +94,7 @@ TIDE_TEST(enums_count_members_and_wrap)
     ticks(1);
     TIDE_CHECK(world.Picks.direction == Direction_East);
     TIDE_CHECK(world.Picks.counts.at[3] == 5);
-    TIDE_CHECK(world.Picks.countedCase == 1 && world.Picks.builtinCount == 2);
+    TIDE_CHECK(world.Picks.countedCase == 1 && world.Picks.builtinCount == 3); // Rollback, Delay, Owned
     ticks(3);
     TIDE_CHECK(world.Picks.direction == Direction_North);
 }

@@ -1,5 +1,10 @@
 ## Owned prediction (2026-11-07)
 
+Release CI caught the enums fixture still expecting Prediction.Count() to be
+two after Owned was added. Its expected count is now three; enum counting and
+runtime behavior are unchanged. The focused enums target passes on native ASan
+and WASI after correcting that stale expectation.
+
 The built-in Prediction enum appends Owned, accepted by the prediction setting.
 It creates the existing hidden sparse Far tag for all match archetypes, rather
 than only positioned ones. Generated marking follows the nearest explicit
