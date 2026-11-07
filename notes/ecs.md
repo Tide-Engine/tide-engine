@@ -1,5 +1,25 @@
 # ECS and simulation state
 
+## Sparse cache CI fixture capacities (2026-11-07)
+
+The private sparse-cache differential fixture now derives chunk and task counts
+from generated column metadata instead of assuming 2,048-row chunks. Entity128
+makes the same 2,081/2,082-row tables span three 1,024-row chunks each. Retained
+page storage grows with actual chunks; every fast/slow task still compares page
+reference/hash/was metadata, used bytes, whole-world hashes and packed output,
+including mixed-reference snapshots, short tails and zero-match selections.
+The stale-presence test explicitly verifies a cache reference before forcing COW.
+Its apparent COW failure was downstream of the old capacity assertion returning
+before cache publication, not a failure to retain the published presence page.
+Validation: fresh checkout-generated native optimized ASan private cases 7/7,
+public cases 3/3 and the codegen ownership check pass. WASI's public/private/
+codegen CTest targets pass 3/3 with the existing external-project configuration.
+The raw Entity hostile-input fixture also avoids typed casts into its packed
+28-byte-header payload: native slots require eight-byte alignment, so malformed
+slot edits use aligned locals plus memcpy. The duplicate/free-list rejection
+assertions are retained; the runtime already byte-copies into aligned pages.
+Fresh Windows ASan entity tests pass 19/19; Linux CI supplies alignment UBSan.
+
 ## Logical entity identities and private slots (2026-11-06)
 
 Owner-approved in response to mount-and-rifle's projected client divergence:

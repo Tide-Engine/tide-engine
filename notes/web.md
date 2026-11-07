@@ -1,3 +1,15 @@
+## Bounded generated view lookups (2026-11-07)
+
+Foldline exposed a V8 module-compilation failure: a large partial-field view
+query forced an all-archetype previous-state lookup into each query branch,
+exceeding the function-local limit before instantiation. Codegen now outlines
+large previous-field lookups while retaining the small inline path. No WASM
+imports, runtime JavaScript, browser flags or view ordering change. The
+`view_lookup_size` regression reproduces the old failure without prototype
+assets; interpolation and unchanged-match checks run on native/WASI. Exact
+heuristic, negative proof and focused validation: language.md, Bounded view
+interpolation lookup expansion.
+
 # Web builds
 
 ## Deterministic scene preparation (2026-11-05)

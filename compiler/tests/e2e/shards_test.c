@@ -571,42 +571,47 @@ TIDE_TEST(shards_reject_malformed_tagged_dependency_words)
 
 TIDE_TEST(shards_retry_held_unknown_dependencies_across_tick_wrap_and_drop_unused_requests)
 {
-    tide_world world = {0};
-    tide_world_start(&world, 1.0f / 60.0f, NULL);
-    const tide_entity unknown = {UINT64_C(0x100000001), UINT64_C(0xfedcba9876543210)};
-    tide_entity courier = {0};
-    for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
-        const tide_entity e = tide_entity_in_slot(&world.entities, slot);
-        if (!tide_entity_is_null(e) && tide_has_Courier(&world, e)) { courier = e; break; }
+    for (int boundary = 0; boundary < 2; boundary++) {
+        tide_world world = {0};
+        tide_world_start(&world, 1.0f / 60.0f, NULL);
+        const tide_entity unknown = {UINT64_C(0x100000001), UINT64_C(0xfedcba9876543210)};
+        tide_entity courier = {0};
+        for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+            const tide_entity e = tide_entity_in_slot(&world.entities, slot);
+            if (!tide_entity_is_null(e) && tide_has_Courier(&world, e)) { courier = e; break; }
+        }
+        TIDE_REQUIRE(!tide_entity_is_null(courier));
+        Courier value = tide_get_Courier(&world, courier);
+        value.bank = unknown;
+        value.until = INT32_MIN;
+        TIDE_REQUIRE(tide_set_Courier(&world, courier, value));
+        world.tide_shard_state.shard = 1;
+        world.tide_shard_state.role = TIDE_SHARD_ROOT_ROLE;
+        world.tide_shard_state.singletons = INT64_MAX;
+        // Exercise both UINT32_MAX -> zero and INT32_MAX -> INT32_MIN.
+        const int32_t first_tick = boundary ? INT32_MAX - 15 : -15;
+        world.Time.tick = first_tick;
+        world.tide_identity_clock = UINT64_C(1) << 40;
+        for (uint32_t i = 0; i < 65; i++) tide_world_tick(&world);
+        TIDE_CHECK(world.Time.tick == (int32_t)((uint32_t)first_tick + 65u));
+        TIDE_CHECK(tide_entity_alive(&world.entities, courier));
+        TIDE_CHECK(tide_has_tide_dying(&world, courier));
+        uint32_t size = 0, requests = 0;
+        uint8_t *outbox = tide_game_api.shards->outbox(&world, &size);
+        tide_reader r = {outbox, size, 0, false};
+        tide_shard_outgoing message;
+        while (tide_shard_next_outgoing(&r, &message)) {
+            if (message.data[0] == TIDE_SHARD_BORROW && tide_entity_equal(message.entity, unknown)) requests++;
+        }
+        TIDE_CHECK(requests >= 2 && requests <= 3);
+        free(outbox);
+        tide_text_use(&world.heap, NULL);
+        TIDE_CHECK(tide_list_count(world.tide_shard_state.asked) == 2);
+        // Cancelling the parked work removes its last held dependency next tick.
+        tide_list_clear(&world.tide_shard_state.waits, 1u);
+        tide_world_tick(&world);
+        tide_text_use(&world.heap, NULL);
+        TIDE_CHECK(tide_list_count(world.tide_shard_state.asked) == 0);
+        tide_world_free(&world);
     }
-    TIDE_REQUIRE(!tide_entity_is_null(courier));
-    Courier value = tide_get_Courier(&world, courier);
-    value.bank = unknown;
-    value.until = INT32_MIN;
-    TIDE_REQUIRE(tide_set_Courier(&world, courier, value));
-    world.tide_shard_state.shard = 1;
-    world.tide_shard_state.role = TIDE_SHARD_ROOT_ROLE;
-    world.tide_shard_state.singletons = INT64_MAX;
-    world.Time.tick = -15; // uint32 tick arithmetic crosses UINT32_MAX -> zero.
-    world.tide_identity_clock = UINT64_C(1) << 40;
-    for (uint32_t i = 0; i < 65; i++) tide_world_tick(&world);
-    TIDE_CHECK(tide_entity_alive(&world.entities, courier));
-    TIDE_CHECK(tide_has_tide_dying(&world, courier));
-    uint32_t size = 0, requests = 0;
-    uint8_t *outbox = tide_game_api.shards->outbox(&world, &size);
-    tide_reader r = {outbox, size, 0, false};
-    tide_shard_outgoing message;
-    while (tide_shard_next_outgoing(&r, &message)) {
-        if (message.data[0] == TIDE_SHARD_BORROW && tide_entity_equal(message.entity, unknown)) requests++;
-    }
-    TIDE_CHECK(requests >= 2 && requests <= 3);
-    free(outbox);
-    tide_text_use(&world.heap, NULL);
-    TIDE_CHECK(tide_list_count(world.tide_shard_state.asked) == 2);
-    // Cancelling the parked work removes its last held dependency next tick.
-    tide_list_clear(&world.tide_shard_state.waits, 1u);
-    tide_world_tick(&world);
-    tide_text_use(&world.heap, NULL);
-    TIDE_CHECK(tide_list_count(world.tide_shard_state.asked) == 0);
-    tide_world_free(&world);
 }

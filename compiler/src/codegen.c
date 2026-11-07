@@ -11735,8 +11735,16 @@ static void gen_blend_helpers(gen *g)
             if (d->snapped) sb_put(o, "    if (before->tide_snaps != v->tide_snaps) return; // It jumped\n");
             gen_blend_fields_some(g, d);
             sb_put(o, "}\n\n");
-            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) const %s *tide_prev_some_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out, "
-                         "const uint64_t *some)\n{\n", name, name, name);
+            // Each view-query archetype calls this lookup, which itself visits every
+            // archetype holding the component. Keep large lookups out of line so
+            // that their lanes do not expand quadratically into one WASM function.
+            int lookup_arches = 0;
+            for (int a = 0; a < g->prog->archetypes.count; a++)
+                if (arch_stores(g, a, d->index)) lookup_arches++;
+            const bool outline = lookup_arches > 8
+                || (lookup_arches > 1 && comp_lanes(d) > 128 / lookup_arches);
+            sb_printf(o, "TIDE_HELPER __attribute__((%s)) const %s *tide_prev_some_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out, "
+                         "const uint64_t *some)\n{\n", outline ? "noinline" : "always_inline", name, name, name);
             sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
             if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
             sb_printf(o, "    return tide_load_some_%s(w, e, out, some) ? out : NULL;\n}\n\n", name);
@@ -17973,7 +17981,7 @@ static void gen_tasks(gen *g)
     sb_put(o, "_Static_assert(sizeof(tide_task) == 48, \"tide_task has padding tidec didn't write out\");\n\n");
     sb_put(o, "// n ticks or frames after `now`, and never past the last one there is.\n");
     sb_put(o, "TIDE_HELPER int32_t tide_task_after(const int32_t now, const int32_t n)\n{\n"
-              "    if (n <= 0) return now;\n    return n > INT32_MAX - now ? INT32_MAX : now + n;\n}\n\n");
+              "    if (n <= 0) return now;\n    const int64_t after = (int64_t)now + n;\n    return after > INT32_MAX ? INT32_MAX : (int32_t)after;\n}\n\n");
     sb_put(o, "// Seconds in the match: the nearest whole number of ticks of `dt` seconds, at least\n");
     sb_put(o, "// one for any wait at all.\n");
     sb_put(o, "TIDE_HELPER int32_t tide_ticks_for(const float seconds, const float dt)\n{\n"
@@ -22692,7 +22700,7 @@ static void gen_api(gen *g)
     if (program_watches(prog)) sb_put(o, "    if (tide_watching) tide_changes_end(w); // ...and what changed of it\n");
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
     // Time.t is worked out from the tick each time, never added to, so it doesn't drift
-    sb_put(o, "    if (++w->tide_identity_clock == 0u) { fputs(\"tide: entity identity clock exhausted\\n\", stderr); abort(); }\n    memset(w->tide_lifecycle_occurrences, 0, sizeof w->tide_lifecycle_occurrences);\n    w->tide_main_occurrence = 0;\n    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n");
+    sb_put(o, "    if (++w->tide_identity_clock == 0u) { fputs(\"tide: entity identity clock exhausted\\n\", stderr); abort(); }\n    memset(w->tide_lifecycle_occurrences, 0, sizeof w->tide_lifecycle_occurrences);\n    w->tide_main_occurrence = 0;\n    w->Time.tick = (int32_t)((uint32_t)w->Time.tick + 1u);\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n");
     if (prog->uses_prepared) sb_put(o, "    if (!tide_defer_preparation) tide_world_prepare(w, jobs);\n");
     sb_put(o, "    if (tide_p) tide_profile_tick(tide_p, tide_began, tide_ran);\n}\n\n");
 

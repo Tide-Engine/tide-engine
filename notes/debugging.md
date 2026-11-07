@@ -1,5 +1,15 @@
 # Debugging Tide code in native debuggers
 
+## CI append-order oracle correction (2026-11-07)
+
+Linux release LLDB exposed an outdated first-Pair value after the finalized
+causal identity order. The script now asserts exactly two Pair elements in
+append order: `(2, 0.5)`, `(11, 0.5)`. Natvis checks the same exact count and both
+entries, matching its captured Windows output; the real Windows ASan dbgeng
+CTest passes. The ordinary local/parameter lists still assert insertion order.
+No formatter or simulation code changed. LLDB's native TLS-dependent session
+remains Linux CI validation; Windows' LLDB cannot provide that coverage.
+
 ## Logical Entity keys (2026-11-06)
 
 Entity's owner-approved 128-bit identity is shown from its `birth` and `lineage`
@@ -11,8 +21,10 @@ zero-birth nonnull identity and null, with assertions in the native natvis and
 Linux LLDB scripts. This supersedes historical `Entity(index:generation)`
 examples below. The source line/stepping and ordinary typed-container assertions
 remain in the same fixture; Windows ASan natvis passes the complete real dbgeng fixture, including the three
-new full-key assertions. Canonical iteration intentionally changes the first Pair
-from 2 to 11, reflected in both scripts. LLDB source passes Python syntax compilation locally;
+new full-key assertions. The fixture now checks both appended Pair elements in canonical order
+(`2, 11`) and the exact list count in both scripts; the former first-element-only
+`11` expectation became stale when the causal Entity ordering was finalized.
+Ordinary local and parameter list insertion-order checks remain unchanged. LLDB source passes Python syntax compilation locally;
 actual LLDB sessions remain Linux CI coverage on this Windows machine.
 
 

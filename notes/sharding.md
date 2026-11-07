@@ -39,6 +39,15 @@ second at 60 Hz after a late ownership advertisement, without a forwarding loop
 or false GONE response. The request pass includes already parked commands, so
 an expired request is retried even when no new system run touched the key.
 
+The retry regression covers both unsigned zero wrap and the signed
+`INT32_MAX` to `INT32_MIN` boundary (2026-11-07). Resumed handler delay uses
+Tide's wrapping integer subtraction instead of C signed subtraction. The
+negative-clock case also exposed a generic async deadline helper overflow;
+its widened, saturating arithmetic and the tick increment are compiler fixes
+recorded with the corresponding language validation.
+The updated shard fixture and dedicated task-clock fixture pass on Windows
+ASan and WASI, including both signed boundaries; Linux UBSan remains CI coverage.
+
 Singleton dependencies use explicit `tide_shard_ref` tags, with zero Entity words
 for a singleton. No Entity bits are reserved for internal markers. Internal mixed
 records use 24-byte hidden words (full key plus tag, or a number and zero tail),

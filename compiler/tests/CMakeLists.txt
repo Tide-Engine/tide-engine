@@ -417,6 +417,8 @@ tide_e2e_test(local_events_plain) # ...which is the same without them
 tide_e2e_test(verified_views) # `verified` parameters: what views read of the world the server confirmed
 tide_e2e_test(verified_heap) # ...its text, lists, maps, sets and grids, from its own heap
 tide_e2e_test(view_queries) # Queries in views and local handlers: blended, `verified`, or as an event's tick left them
+tide_e2e_test(view_lookup_size) # Partial-field interpolation across many archetypes stays within WASM function limits
+tide_e2e_test(task_clock_bounds) # Negative deadlines, saturating waits and signed tick wrap have defined C arithmetic
 tide_e2e_test(view_bound_query) # ...and a view whose frag reads what it doesn't take, its parameters grown after its query was bound
 tide_e2e_test(enums)
 tide_e2e_test(scenes)

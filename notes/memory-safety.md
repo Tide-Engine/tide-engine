@@ -1,5 +1,17 @@
 # No Tide code can corrupt memory
 
+## Packed Entity test alignment (2026-11-07)
+
+Linux ASan/UBSan found an alignment violation in the hostile raw-entity tests:
+the 28-byte header leaves packed slot records only four-byte aligned, whereas
+Entity128's native slot requires eight-byte alignment. Both the corrupt free-list
+row and duplicate-storage mutations now copy bytes through aligned local slots
+with memcpy; the same malformed payloads and transactional rejection checks
+remain. The runtime decoder already copies raw payload bytes into aligned page
+storage before typed slot access, and the slot-cast audit found no other raw-byte
+casts. Fresh Windows optimized ASan entity cases pass 19/19; alignment UBSan
+coverage remains Linux CI validation.
+
 ## Logical Entity lookup and decoding (2026-11-06)
 
 Entity's two 64-bit words are values, never offsets. Every lookup hashes and

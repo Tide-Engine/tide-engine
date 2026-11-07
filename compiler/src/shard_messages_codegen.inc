@@ -620,7 +620,7 @@ static void gen_shard_events(gen *g)
               "        const uint32_t needs = tide_read_u32(&r);\n"
               "        for (uint32_t k = 0; k < needs; k++) (void)tide_shard_read_ref(&r);\n"
               "        if (r.failed) continue;\n"
-              "        tide_shard_since = since;\n        tide_shard_delay_now = w->Time.tick - since;\n"
+              "        tide_shard_since = since;\n        tide_shard_delay_now = tide_sub_i(w->Time.tick, since);\n"
               "        uint64_t budget = SIZE_MAX;\n        (void)budget;\n"
               "        switch (code) {\n");
     for (int i = 0; i < prog->events.count; i++) {

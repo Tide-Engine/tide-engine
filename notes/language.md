@@ -1,3 +1,67 @@
+## Defined task deadline and tick boundary arithmetic (2026-11-07)
+
+Linux UBSan found that `tide_task_after` evaluated `INT32_MAX - now` in signed
+32-bit arithmetic; a negative restored/shard clock overflowed before the
+saturation check. The helper now adds in int64 and clamps the result to INTMAX.
+Positive waits from negative clocks keep their intended deadline; nonpositive
+waits still return the current clock. The generated tick increment also uses
+unsigned addition followed by the existing Tide int conversion, preserving
+wrap at INTMAX without signed C overflow. Scheduling semantics do not change.
+
+`task_clock_bounds` checks a wait from -15 to 85, saturation of a wait begun at
+INTMAX-1, and tick progression through INTMAX, INTMIN and INTMIN+1. The negative
+clock case also detects the old incorrect saturation without relying on UBSan.
+Windows ASan and WASI `task_clock_bounds` and the shard retry fixture pass
+after the fixes.
+
+## Bounded view interpolation lookup expansion (2026-11-07)
+
+Foldline's partial-field view query admitted 32 archetypes. Each query branch
+forced its previous-world lookup inline, and that lookup contained all 32
+component storage shapes and their field lanes. The resulting quadratic
+expansion exceeded V8's function-local limit before the WASM module could
+instantiate. Large previous-field lookups are now explicitly outlined: more
+than eight storage shapes, or more than 128 shape/lane combinations across
+multiple shapes. Small and single-shape lookups retain their existing forced
+inline path. This changes neither view traversal order nor interpolation,
+match state, generated layouts or the runtime API.
+
+`view_lookup_size` exercises 32 shapes and 20 float lanes, reading a subset
+through a blended view query. It checks halfway/latest values and unchanged
+match hash. Restoring only the previous forced-inline attribute in its generated
+C reproduces V8's local-count failure (`tide_query_Read_1`); the outlined module
+instantiates. Windows ASan and WASI `view_lookup_size` and `view_queries` pass,
+as does the
+same new fixture compiled with `-O2` and the existing strict float flags.
+Foldline's WASI game/test/render targets build; all four web CTests pass,
+including the browser render checks, layout export and map tools. Recompiling Foldline's generated game C with `-O2`
+and the same strict float flags also passes V8 compilation, exports all 14 built
+maps, and passes its simulation checks. Foldline's four native CTests pass;
+native replay/campaign hashes match the optimized WASI run exactly
+(15199560312636401323 / 10564020633757747729). Native/WASI layout exports are
+byte-identical (215,447 bytes, 14 maps).
+
+## Event-order fixture oracles after logical identities (2026-11-07)
+
+CI found two remaining fixtures that expected numeric initializer order after
+structural Send systems correctly switched to canonical source order.
+`events_batch` now derives an independent lexicographic full-key sender oracle
+from the initial world. It checks each phase and sparse filter in that order,
+then checks handler-generated Echo events behind the entire recorded tick in
+their enqueue order. The actual trace list is never sorted. Existing C-call,
+unfinished-record, snapshot, raw-world and threaded-schedule checks remain;
+each target additionally must receive all seven applicable health events.
+
+`events_runs` uses the same independent source-key oracle for its C model's
+Hit, Ping, Roll and Graze phases. Handler-generated echoes and local hearing
+records follow their original enqueue order. `Log.targets` remains the authored
+list, with each surviving target's payload ID checked against its list index;
+ordinary list semantics do not change. This corrects test expectations, with no
+production event behavior or hash-pin changes.
+
+Validation: Windows ASan and WASI each pass `events`, `events_lookup`,
+`events_batch` and `events_runs` (four CTests per platform).
+
 ## Stable causal entity identities and canonical match iteration (2026-11-06)
 
 Owner-approved implementation replaces physical slot/generation handles with an

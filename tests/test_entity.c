@@ -232,8 +232,11 @@ TIDE_TEST(entity_table_packs_and_unpacks)
     TIDE_CHECK(tide_entity_slot_index(&back, tide_entity_create(&back)) == 7);
 
     tide_entities broken = {0};
-    tide_entity_slot *slot = (tide_entity_slot *)(bytes + 28u + 7u * sizeof(tide_entity_slot));
-    slot->row = 1201;
+    const size_t slot_offset = 28u + 7u * sizeof(tide_entity_slot);
+    tide_entity_slot slot;
+    memcpy(&slot, bytes + slot_offset, sizeof slot);
+    slot.row = 1201;
+    memcpy(bytes + slot_offset, &slot, sizeof slot);
     tide_reader again = {bytes, size, 0, false};
     TIDE_CHECK(!tide_entities_unpack(&broken, &again));
     tide_entities_free(&broken);
@@ -290,8 +293,10 @@ TIDE_TEST(entity_key_registry_survives_destroy_snapshot_and_wire)
         tide_entities_free(&bad);
     }
     // A repeated logical key in physical storage is rejected transactionally.
-    tide_entity_slot *slots = (tide_entity_slot *)(bytes + 28u + 2u * sizeof(tide_entity));
-    slots[0] = slots[1];
+    const size_t slots_offset = 28u + 2u * sizeof(tide_entity);
+    tide_entity_slot duplicate_slot;
+    memcpy(&duplicate_slot, bytes + slots_offset + sizeof duplicate_slot, sizeof duplicate_slot);
+    memcpy(bytes + slots_offset, &duplicate_slot, sizeof duplicate_slot);
     tide_reader duplicate = {bytes, size, 0, false};
     const uint64_t before = tide_entities_hash(3, &loaded);
     TIDE_CHECK(!tide_entities_unpack(&loaded, &duplicate));
