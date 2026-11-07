@@ -1,0 +1,10 @@
+settings { prediction = Prediction.Owned; }
+component Wide { float[88] values; }
+singleton Counter { int calls; }
+scene Main { }
+event(Spawned) Setup(with Main) { for (var i = 0; i < 1000; i++) Spawn(Wide { }); }
+system Work(mut Wide row, mut Counter counter)
+{
+    for (var i = 0; i < 88; i++) row.values[i] += 1;
+    counter.calls++;
+}

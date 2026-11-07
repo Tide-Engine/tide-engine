@@ -20192,6 +20192,17 @@ static void gen_canonical_lanes(gen *g, const decl *sys, const bool done)
     for (int a = 0; a < g->prog->archetypes.count; a++) {
         if (!runs_on(g, sys, a) || !rows_part(g, sys, a) || rows_batched(g, sys, a)) continue;
         sb_printf(o, "    { tide_table *t = &tide_w->%s;\n        for (uint32_t chunk = 0; chunk < t->chunks; chunk++) {\n", arch_name(g, a));
+        // Far tags are fixed for this predicted tick. A fully excluded chunk
+        // needs no writable lane preparation or finalization.
+        const decl *far = g->prog->predict_far;
+        if (far && arch_stores(g, a, far->index) && mask_has(sys->without_mask, far->index)) {
+            sb_printf(o, "            { const uint8_t *far = tide_table_column(t, %s, chunk, %d);\n"
+                         "                const uint32_t n = tide_table_rows(t, %d, chunk);\n"
+                         "                bool all_far = true;\n"
+                         "                for (uint32_t i = 0; i < n; i++) if (!far[i]) { all_far = false; break; }\n"
+                         "                if (all_far) continue;\n            }\n",
+                      arch_columns(g, a), arch_presence(g, a, far->index), arch_shift(g, a));
+        }
         for (int c = 0; c < g->prog->components.count; c++) {
             if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
             lane_run runs[LANE_MASK_MOST]; const int n = written_runs(g, sys, c, runs);

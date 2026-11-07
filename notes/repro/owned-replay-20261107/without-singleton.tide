@@ -1,0 +1,23 @@
+#if RANGE
+settings { predictionRange = 5; }
+#else
+settings { prediction = Prediction.Owned; }
+#endif
+component Body { int id; int ran; }
+input Controls { int move; }
+singleton Observed { int other; int own; int child; int bare; int distant; }
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { id = 1 }, Transform { localPosition = float3(1000, 0, 0) });
+    Spawn(Body { id = 4 });
+    Spawn(Body { id = 5 }, Transform { localPosition = float3(2000, 0, 0) });
+}
+event(PlayerJoined joined) Join()
+{
+    var root = Spawn(Body { id = 2 }, Owner { player = joined.player }, Transform { localPosition = float3(1000, 0, 0) });
+    var child = Spawn(Body { id = 3 }, Transform { });
+    child.SetParent(root, false);
+}
+system Count(mut Body body) { body.ran += 1; }
+system Drive(Controls controls, mut Body body, with Owner) { body.ran += controls.move; }

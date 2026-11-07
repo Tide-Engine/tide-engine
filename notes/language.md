@@ -1,3 +1,22 @@
+## Excluded canonical chunks avoid writable preparation (2026-11-07)
+
+gen_canonical_lanes previously began/copied and finalized writable lanes for
+every admitted physical chunk before row-level Far filtering, even when all
+rows were excluded. Canonical preparation/finalization now skip chunks whose
+Far presence bytes are all nonzero when that system excludes Far. Tags are
+fixed for a predicted tick; mixed chunks, holes with zero tags, ordinary sparse
+filters and all confirmed/server execution retain their existing paths.
+No runtime API, system ordering, query semantics or stored state changes.
+
+The retained [Owned replay diagnosis](repro/owned-replay-20261107/README.md)
+includes a 1000-row/88-lane negative control. Across 200 partial ticks the old
+generated path calls writable begin 200 times; the new path zero times, with
+Counter.calls zero and identical final world hash 1444539242358288980. This
+counts unnecessary preparation calls, not allocation bytes or battle speedup.
+Native ASan and WASI pass predict_owned, its split variant, predict_near,
+predict_kept and canonical_rows (five CTests per platform), covering mixed
+near/far chunks and existing canonical snapshot/COW behavior.
+
 ## Owned prediction (2026-11-07)
 
 Release CI caught the enums fixture still expecting Prediction.Count() to be

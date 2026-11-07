@@ -1,5 +1,43 @@
 # Netcode: sessions, prediction, commands
 
+## Full-world Owned replay diagnosis (2026-11-07)
+
+Read-only Mount & Rifle dev 241d92d supplies a true FULL_WORLD control on nightly
+134. Its generated build omits recipient projection/group APIs. Supplied
+profiles show Delay client/server match work both 32.6 ms/frame, about one tick
+per frame; zero repairs and stable initial world bytes. Earlier no-TROOPER_SIGHT
+runs retained campaign visibility and were not all-visible controls.
+
+Owned still predicts singleton systems and their queries. The supplied Owned
+profiles show BuildKitBodies host/client 1.919/19.051 ms/frame, while Roam is
+19.452/18.515. Roam's expensive per-entity work therefore is not multiplied
+across every partial tick. Row filtering does not exclude the singleton query
+work. System intervals may overlap and must not be summed as CPU work.
+
+Fixed-seed miniature experiments separately establish two replay gates:
+as_predicted rejects changed foreign input before near_same; near_same rejects
+singleton state derived from held far rows. Constant actions plus presented
+engine viewTime reproduce 4858 replays in 720 updates without singleton work,
+versus 301 with constant input and no presented timestamps. An all-row singleton
+alone reproduces 4907 replays with constant input. All reach verified endpoint
+717 with zero repairs/resyncs. Probe controls and limitations are in
+[the retained diagnosis](repro/owned-replay-20261107/README.md).
+
+These are existing semantics, not unconditional partial replay: the constant
+control keeps 658 confirmations. Removing changing remote metadata blindly
+would be unsafe when singleton/helpers consume it; suppressing singleton work
+would change the approved Owned contract. A controller-only prediction execution
+set requires a decision about singleton dependencies and side effects. The
+current game samples animated muzzle/barrel and unconditionally stores stamped
+viewTime in Orders.seen, but no actual-game field-by-field packet trace was
+collected, so individual contributions to its replay count remain unmeasured.
+
+A separate engine inefficiency was established and fixed: canonical systems
+prepared writable pages for all-Far chunks before filtering out every row.
+Contracts, equivalent-work probe and native/WASI validation are in language.md.
+This scoped fix does not remove singleton work or promise a battle speedup.
+No game file/default was changed; the other game process was left alone.
+
 ## Partial prediction repair comparison amplification (2026-11-07)
 
 Established engine defect: copy_repair_candidate selected a predicted ring
