@@ -313,7 +313,25 @@ settings
 
 Then clients never predict. Their inputs are delayed so that every player's reach the server before its tick, and ticks run once each, as the server confirms them: nothing is ever rolled back, at the cost of input delay of about a round trip and a half. A game whose ticks are expensive, or whose views can't show a rollback well, picks it; the server runs the match the same either way.
 
+During a state repair the client may also simulate authenticated ticks privately
+to compare against the server's repair payload and reduce its download. That
+comparison consumes CPU in Delay and partial-prediction modes too; it publishes
+no speculative state or events. Adopting a repair can skip simulation across
+the replaced interval, so compare CPU alongside confirmed progress and repair
+traffic when measuring prediction modes.
+
 ### Predicting what's near
+
+To predict only this player's entities and their descendants, use
+`settings { prediction = Prediction.Owned; }`. Ownership follows the nearest
+ancestor with `Owner`, including the entity itself. Other entities stay at their
+confirmed state, including nearby entities and entities without positions.
+Every confirmed tick still simulates the whole permitted world. Singleton
+systems keep running during prediction; their queries can read other entities
+as they stand, or explicitly use `without Far` to exclude them. `Far` names
+entities excluded from prediction in this mode too. Ownership and parent changes
+are checked before each predicted tick. With nothing owned, entity systems
+predict nothing. This mode does not take `predictionRange`.
 
 A big world can predict only what's near each player:
 

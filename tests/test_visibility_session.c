@@ -21,6 +21,7 @@ typedef struct visibility_world {
     uint32_t partial;
     uint32_t recipient;
     uint32_t token_alive;
+    uint32_t held; // Private predicted-world Far marker, excluded from projections.
     uint32_t padding[8192]; // Sparse corrections should compress, even across page regions.
 } visibility_world;
 
@@ -34,6 +35,8 @@ static uint32_t visibility_bulk_filters;
 static uint32_t visibility_slot_filters;
 static bool visibility_continuous;
 static bool visibility_large_spread;
+static bool visibility_large_far;
+static uint32_t visibility_far_full_ticks, visibility_far_held_ticks;
 
 static void visibility_start(void *world, float dt, const void *start, uint32_t seed)
 {
@@ -83,6 +86,7 @@ static uint8_t *visibility_state(const void *world, tide_player_id player, uint3
     visibility_world *out = malloc(sizeof *out);
     if (!out) return NULL;
     *out = *(const visibility_world *)world;
+    out->held = 0;
     const uint32_t p = (uint32_t)tide_player_index(player);
     out->partial = 1;
     out->recipient = p;
@@ -125,7 +129,7 @@ static uint8_t *visibility_large_state(const void *world, tide_player_id player,
     free(small);
     memset(out + small_size, 0, prefix);
     uint8_t *records = out + small_size + prefix;
-    uint32_t x = 0x72ac5319u;
+    uint32_t x = 0x72ac5319u ^ (visibility_large_far ? w->padding[1] : 0u);
     for (uint32_t i = 0; i < 1000u * 512u; i++) {
         x ^= x << 13; x ^= x >> 17; x ^= x << 5;
         records[i] = (uint8_t)x;
@@ -712,15 +716,45 @@ TIDE_TEST(visibility_host_migration_never_promotes_a_partial_world)
     tide_loopback_destroy(net);
 }
 
+static bool visibility_mark_far(void *world, tide_player_id player)
+{
+    (void)player;
+    ((visibility_world *)world)->held = 1;
+    return true;
+}
+
+static void visibility_far_tick(void *world, const tide_jobs *jobs)
+{
+    visibility_world *w = world;
+    visibility_tick(world, jobs);
+    if (w->held) visibility_far_held_ticks++;
+    else visibility_far_full_ticks++;
+    if (!w->held) w->padding[1] = w->tick;
+}
+
+static void visibility_far_tick_journal(void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *all)
+{
+    visibility_tick_journal(world, jobs, per_player, all);
+    visibility_world *w = world;
+    visibility_far_full_ticks++;
+    if (!w->held) w->padding[1] = w->tick;
+}
+
 static void visibility_large_repairs(uint8_t prediction, bool recover)
 {
     visibility_continuous = true;
     visibility_loads = 0;
+    visibility_far_full_ticks = visibility_far_held_ticks = 0;
     tide_game game = visibility_game;
     game.client_state = visibility_large_state;
     game.load_client_state = visibility_large_load;
     game.prediction = prediction;
     game.max_rewind = 0.5f;
+    if (visibility_large_far) {
+        game.predict_far = visibility_mark_far;
+        game.tick = visibility_far_tick;
+        game.tick_client_events = visibility_far_tick_journal;
+    }
     tide_loopback *net = tide_loopback_create(652311);
     TIDE_REQUIRE(net);
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.04, .jitter = 0.01, .loss = 0.03});
@@ -743,6 +777,8 @@ static void visibility_large_repairs(uint8_t prediction, bool recover)
     const tide_client_status status = tide_client_status_of(client);
     const visibility_world *w = tide_client_verified_world(client);
     TIDE_REQUIRE(w);
+    if (visibility_large_far && getenv("TIDE_VISIBILITY_METRICS")) printf("far work mode %u: client full ticks %u, held ticks %u\n",
+        prediction, visibility_far_full_ticks - ((const visibility_world *)tide_server_world(server))->tick, visibility_far_held_ticks);
     if (getenv("TIDE_VISIBILITY_METRICS")) printf("large recipient mode %u: verified %u, repairs %u, resyncs %u, bytes %llu, max lag %u\n",
         prediction, status.verified_tick, status.repairs, status.resyncs, (unsigned long long)status.world_bytes, max_lag);
     TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == (recover ? 1u : 0u));
@@ -760,6 +796,27 @@ static void visibility_large_repairs(uint8_t prediction, bool recover)
 TIDE_TEST(visibility_large_predicted_endpoint_repairs_reuse_matching_blocks)
 {
     visibility_large_repairs(TIDE_PREDICTION_ROLLBACK, false);
+}
+
+TIDE_TEST(visibility_far_predictions_reconstruct_full_repair_comparisons)
+{
+    visibility_large_far = true;
+    visibility_large_repairs(TIDE_PREDICTION_ROLLBACK, false);
+    visibility_large_far = false;
+}
+
+TIDE_TEST(visibility_owned_predictions_reconstruct_full_repair_comparisons)
+{
+    visibility_large_far = true;
+    visibility_large_repairs(TIDE_PREDICTION_OWNED, false);
+    visibility_large_far = false;
+}
+
+TIDE_TEST(visibility_delay_reconstructs_same_changing_far_repair_payload)
+{
+    visibility_large_far = true;
+    visibility_large_repairs(TIDE_PREDICTION_DELAY, false);
+    visibility_large_far = false;
 }
 
 TIDE_TEST(visibility_large_delayed_endpoint_repairs_reuse_matching_blocks)

@@ -1,3 +1,63 @@
+## Shared modules and host readiness (2026-11-07)
+
+`tide.js` now shares a `GPUShaderModule` by exact WGSL source among live
+pipelines, with reference-counted release and clearing on device loss. Source
+changes and fail-pipeline injections cannot alias. Runtime tests pin reuse,
+release, changed sources and replacement-device creation. The shipping runtime
+is regenerated. Renderer warmup heuristics and local timing evidence are in
+rendering.md, Smaller speculative shader warmup.
+
+Correction to the first-frame fix below: a draw with all currently known
+required pipelines ready can still be the standard host's own loading screen.
+The game had not begun, so it had not requested the scene's shaders yet.
+The standard host now reports startup readiness via the platform's web-only
+`tide_platform_startup_ready` and exported `tide_web_startup_ready`: false during
+host loading, then true for local Main or once the first match view exists.
+Terminal initial connection failures release it too, for local error/retry UI.
+The page additionally requires this signal before resolving `Tide.start()`.
+Custom hosts default to ready; pages lacking the export keep their previous
+draw-based behavior. Frames and progress continue while waiting. No generated
+game ABI or simulation code changes. The local real-GPU startup probe verifies
+the ready promise comes after the examples' actual material draws; the Node
+regression independently rejects a controls-only frame while the host waits.
+Focused native/software/hardware/docs checks are recorded in rendering.md.
+
+## Shader compilation progress on the web (2026-11-07)
+
+Initial pipeline readiness now reports `Tide.onProgress` stage `shaders`, with
+settled/live required pipeline counts in `loaded`/`total`. Optional acceleration
+pipelines are excluded; failed required pipelines count as settled. The standard
+shell says “Compiling shaders X / Y” with a determinate bar. Identical progress
+events are suppressed, and a finished shader wait returns to `start` until a
+frame actually draws. The game frame loop keeps running without awaiting pipeline
+promises. This does not move synchronous WASM setup or driver work off-thread.
+The docs embed relays this status outside its still-hidden iframe. Runtime tests
+cover counts, continued frame execution, deduplication, terminal progress and the
+embed's callback restoration/abort handling. The release runtime is regenerated.
+Validation: all 12 Node 24.22.1 runtime tests, the docs type check (zero errors
+or warnings), and the production docs build pass. Actual browser/GPU timing is
+not measured; the continued-frame guarantee is checked with delayed promises.
+
+## First-frame readiness waits for scene pipelines (2026-11-07)
+
+The docs' Render3D examples could reveal their controls over a black scene:
+`Tide.start()` resolved on any draw, while required scene pipelines were still
+compiling asynchronously. `tide.js` now waits until every live required pipeline
+has either compiled or failed, and a fresh frame has drawn. The draw flag resets
+each frame so a controls-only draw from an earlier frame cannot satisfy readiness.
+Optional acceleration pipelines do not delay startup; freed pipelines and entries
+discarded on device loss do not hold it. This changes only initial reveal/loader
+readiness, not compilation speed, rendering order or simulation. The shipping
+runtime and source manifest are regenerated, and the CLI page documents readiness.
+
+The Node regression executes production frame and pipeline functions with delayed
+render/compute promises, optional pipelines, rejection, freeing and device loss.
+It fails against the previous runtime on the premature controls-only reveal;
+all ten web-runtime tests and the production docs build pass with the fix on
+Node 24.22.1 (the usual allowed unstaged-game 404s). No actual browser/GPU
+startup timing or reproduction of the owner's exact delay is claimed. This fresh
+checkout has no compiled game pages; native code is unchanged.
+
 ## Bounded generated view lookups (2026-11-07)
 
 Foldline exposed a V8 module-compilation failure: a large partial-field view

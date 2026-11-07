@@ -144,7 +144,7 @@
     // a game before it shows it, like one further down that starts once it's
     // scrolled to. With `wait` or without, `Tide.start()` gives a promise of
     // the program's first frame that drew something, from which the canvas
-    // has something to show; a program that stopped before one breaks it. A
+    // has something to show, with its required pipelines made; a program that stopped before one breaks it. A
     // game's first frames may draw nothing: views that read the match don't
     // run until this machine is in it, a few frames after it started.
     let drew = false; // The program made a draw call
@@ -158,14 +158,19 @@
     // { stage, loaded, total } with each change, and the shell's #tide-loading, where there is one, shows
     // it. Stages: 'download' (bytes of the program and its pack, of total), 'compile' (the program made
     // ready to run), 'waiting' (ready, for Tide.start()), 'start' (the game running until it draws),
-    // 'done' (it drew: the shell's loader goes) and 'error' (with `error`, what went wrong).
+    // 'shaders' (required pipelines compiled, of total), 'done' (it drew: the shell's loader goes)
+    // and 'error' (with `error`, what went wrong).
     const loader = document.getElementById('tide-loading');
     const loaderBar = loader && loader.querySelector('#tide-loading-bar');
     const loaderText = loader && loader.querySelector('#tide-loading-text');
     let stage = '';
+    let progressLoaded = -1, progressTotal = -1;
     function progress(next, loaded = 0, total = 0, error = undefined) {
         if (stage === 'done' || stage === 'error') return;
+        if (stage === next && loaded === progressLoaded && total === progressTotal) return;
         stage = next;
+        progressLoaded = loaded;
+        progressTotal = total;
         if (config.onProgress) {
             try { config.onProgress({ stage, loaded, total, error }); }
             catch (thrown) { printErr('tide: onProgress: ' + (thrown && thrown.stack || thrown)); }
@@ -174,12 +179,14 @@
         const megabytes = n => (n / 1048576).toFixed(n < 10485760 ? 1 : 0);
         if (loaderText) {
             loaderText.textContent = stage === 'download' ? `Loading ${megabytes(loaded)} / ${megabytes(total)} MB`
-                : stage === 'compile' ? 'Preparing' : stage === 'waiting' ? 'Ready'
+                : stage === 'shaders' ? `Compiling shaders ${loaded} / ${total}`
+                : stage === 'compile' ? 'Preparing game' : stage === 'waiting' ? 'Ready'
                 : stage === 'error' ? 'The game couldn\'t start: ' + (error && error.message || error) : 'Starting';
         }
         if (loaderBar) {
-            loaderBar.classList.toggle('known', stage === 'download');
-            if (loaderBar.firstElementChild) loaderBar.firstElementChild.style.width = stage === 'download' ? `${total ? 100 * loaded / total : 0}%` : '';
+            const known = stage === 'download' || stage === 'shaders';
+            loaderBar.classList.toggle('known', known);
+            if (loaderBar.firstElementChild) loaderBar.firstElementChild.style.width = known ? `${total ? 100 * loaded / total : 0}%` : '';
         }
         if (stage === 'error') loader.classList.add('failed');
         if (stage === 'done') {
@@ -654,12 +661,30 @@
         }
         fit();
         try {
+            drew = false;
             // Timers take whole milliseconds, dropping the rest: one rounded
             // down would come before the tick, for nothing
             const seconds = exports.tide_web_frame();
             audioPump(); // What the program's mixer has for the worklet, as the queue runs low
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
-            if (drew) shown();
+            // A GUI draw can land before the scene's shaders compile. Reveal only a fresh
+            // drawn frame after required pipelines settle; optional acceleration can follow.
+            if (shown) {
+                let total = 0, pending = 0;
+                for (const p of gpuTables.pipeline) {
+                    if (!p || p.optional) continue;
+                    total++;
+                    if (!p.pipeline && !p.failed) pending++;
+                }
+                if (pending) progress('shaders', total - pending, total);
+                else {
+                    if (stage === 'shaders') progress('start');
+                    if (drew && (!exports.tide_web_startup_ready || exports.tide_web_startup_ready())) {
+                        shown();
+                        shown = null;
+                    }
+                }
+            }
         } catch (error) {
             looping = false;
             if (!(error instanceof Exit)) fail(error);
@@ -1340,6 +1365,7 @@
     // gives will do, its software one too (slower, but the game runs).
 
     const gpuTables = { buffer: [null], texture: [null], pipeline: [null], target: [null] };
+    const shaderModules = new Map(); // Exact WGSL, shared by live pipelines on this device
     // Whether pipelines are made in the background (tide_gpu.background): one is drawn with once it's made
     let backgroundPipelines = false;
     const gpuFree = { buffer: [], texture: [], pipeline: [], target: [] };
@@ -1441,6 +1467,7 @@
         printErr('tide: the GPU went away (' + (info.message || info.reason) + '): asking for it again');
         gpuTimeReset();
         device = null;
+        shaderModules.clear();
         for (const kind in gpuTables) {
             gpuTables[kind] = [null];
             gpuFree[kind] = [];
@@ -1850,6 +1877,26 @@
         }
     }
 
+    // Changing a target or render state needs another pipeline, but not another copy of its shader module.
+    // Keep a module only while live pipelines reference it, so hot reload doesn't retain old shader sources.
+    function shaderModule(b) {
+        const code = b.failing ? `// fail-pipeline: ${b.name}\n` : b.code;
+        let shader = shaderModules.get(code);
+        if (!shader) {
+            const module = device.createShaderModule({ label: b.name, code });
+            checkShader(module, b.name);
+            shader = { code, module, references: 0 };
+            shaderModules.set(code, shader);
+        }
+        shader.references++;
+        return shader;
+    }
+    function freePipeline(id) {
+        const shader = gpuTables.pipeline[id]?.shader;
+        if (shader && !--shader.references) shaderModules.delete(shader.code);
+        gpuRemove('pipeline', id);
+    }
+
     // A pipeline described (`b`, from gpu_pipeline_begin on), made now or, while background pipelines are on,
     // in the background: the draws and dispatches that use it are left out till it's made (gpu_pipeline_ready),
     // where the frame that first used it would otherwise wait for the browser to compile it
@@ -1862,7 +1909,7 @@
     // (`optional`) are always made in the background, so they're never used before they're known to be made.
     function addPipeline(b, layout, described, compute) {
         const entry = { pipeline: null, textures: b.textures, reads: b.reads, samplers: b.samplers, storage: b.storage.length, compute,
-            layout };
+            layout, optional: b.optional, shader: b.shader };
         const made = device;
         const id = gpuAdd('pipeline', entry);
         const failed = error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
@@ -2267,8 +2314,8 @@
             // A test of a pipeline the browser can't make (`fail-pipeline=` in the address, a comma's list of parts of
             // pipelines' names): its code has no entry point, so making it fails as a driver's refusal would
             b.failing = failPipelines.some(part => b.name.includes(part));
-            const module = device.createShaderModule({ label: b.name, code: b.failing ? `// fail-pipeline: ${b.name}\n` : b.code });
-            checkShader(module, b.name);
+            b.shader = shaderModule(b);
+            const module = b.shader.module;
             if (b.compute) return computePipeline(b, module);
             const buffers = b.slots.map((slot, index) => ({
                 arrayStride: slot.stride,
@@ -2297,7 +2344,7 @@
             };
             return addPipeline(b, layout, described, false);
         },
-        gpu_pipeline_free: id => gpuRemove('pipeline', id),
+        gpu_pipeline_free: freePipeline,
         gpu_background: on => { backgroundPipelines = !!on && config.backgroundPipelines !== false; },
         gpu_pipeline_ready: id => gpuTables.pipeline[id]?.pipeline ? 1 : 0,
         gpu_pipeline_failed: id => gpuTables.pipeline[id]?.failed ? 1 : 0,

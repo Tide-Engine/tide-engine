@@ -1,5 +1,53 @@
 # The platform layer and the renderer
 
+## Smaller speculative shader warmup (2026-11-07)
+
+The Render3D docs startup trace found 42/43 requested pipelines from only 30
+unique WGSL sources; 9/12 pipelines were used by the initial scenes. These are
+initial-scene counts, not proof the other shaders can never be used. A large
+part of the unused work came from guessing every observed target format for
+each never-drawn shader (including material shaders into both depth and HDR).
+
+`kind_keys` now guesses the single most frequently used configuration for a
+shader's kind, retaining first-use ordering on ties. Exact per-shader history
+still prewarms every observed configuration, including persisted native keys.
+A later first use in another configuration can compile then, as with any
+prewarm guess that misses. This changes the heuristic, not shader code, draw
+order, simulation or deterministic results. The public C comment is updated.
+
+The web backend shares exact-source shader modules among live pipelines,
+releasing each source when its last pipeline goes and clearing on device loss.
+Different source and deliberately failing source remain distinct. Diagnostics
+are checked once per shared module, labelled with its first pipeline's name.
+No browser persistence or binary shader cache is added.
+
+The examples now request 33/35 pipelines and create 30 modules apiece. In three
+alternating local baseline/candidate pairs, median time from runtime start to
+first use of the initial scene's last material pipeline fell from 1397.6 to
+1233.0 ms (simple) and 1543.5 to 1336.4 ms (materials). This excludes download
+and WASM compile; it is not the old, prematurely resolved ready promise. RTX
+4080 SUPER, Chrome WebGPU/D3D12, fresh browser profiles, web-release; driver
+cache not cleared, clocks and other desktop activity uncontrolled. No cold-load
+or cross-device speedup is promised. The raw per-run observations, candidate
+source hashes and limitations are in `repro/shader_startup_results.json`;
+`repro/shader_startup.mjs` reproduces the trace against locally built examples.
+
+Regression coverage: the native/web draw fixture draws a shader into window and
+HDR targets and requires one guess for an unseen shader. Existing exact-key,
+first-use pixel, reload, lifetime and device-loss tests remain. All 13 runtime
+tests pass; native ASan draw/shaders/prewarm (3), software WebGPU equivalents
+(3), D3D12 draw/shaders/prewarm/host-wait/first-tick (5), D3D11 draw/shaders/
+prewarm (3), and the two docs example rendering/camera checks pass. Standard-host
+readiness correction discovered in the same trace is in standard-host.md and
+web.md. No shader source or deterministic expected hash changed.
+
+Integration through 2a634e928 brings Owned prediction and session-repair changes.
+The affected host/game targets rebuild warning-free; native ASan prewarm, web
+host-wait/first-tick/prewarm (3), and both docs example checks pass after the
+merge. The timing cohort remains tied to its recorded source hashes, before
+this unrelated prediction feature and the final terminal-connection UI guard;
+no post-merge timing improvement is claimed.
+
 ## A pass's draws made on several threads: tried, not kept (2026-11-06)
 
 After the second round (below), the owner asked to explore making one big pass's draws on several threads. What was

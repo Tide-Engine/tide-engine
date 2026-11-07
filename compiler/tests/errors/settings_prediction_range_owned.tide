@@ -1,0 +1,3 @@
+// expect: predictionRange only means something with 'prediction = Prediction.Rollback;'
+settings { prediction = Prediction.Owned; predictionRange = 40; }
+scene Main { }

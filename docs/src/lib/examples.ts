@@ -8,6 +8,8 @@ interface GamePage {
     minLag?: number;
     /** Starts a program that waited for it. Done once it has drawn something. */
     start?: () => Promise<void>;
+    /** Loading progress reported by the game's runtime. */
+    onProgress?: (progress: { stage: string; loaded: number; total: number }) => void;
 }
 
 export function game(frame: HTMLIFrameElement): GamePage | undefined {
@@ -154,8 +156,21 @@ export function liveExamples(article: HTMLElement) {
 
         // Starts a frame's program, and shows the frame once it has drawn.
         async function show(player: number, page: GamePage, current: AbortController) {
-            await page.start!();
-            if (!current.signal.aborted) frames[player].classList.add('shown');
+            const previous = page.onProgress;
+            page.onProgress = (progress) => {
+                if (!current.signal.aborted) {
+                    const who = pair ? `Player ${player + 1}: ` : '';
+                    if (progress.stage === 'shaders') say(`${who}Compiling shaders ${progress.loaded} / ${progress.total}…`, true);
+                    else if (progress.stage === 'start') say(`${who}Starting example…`, true);
+                }
+                previous?.(progress);
+            };
+            try {
+                await page.start!();
+                if (!current.signal.aborted) frames[player].classList.add('shown');
+            } finally {
+                page.onProgress = previous;
+            }
         }
 
         // The code of the room the first player's game hosts, once it has one.

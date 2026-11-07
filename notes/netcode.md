@@ -1,5 +1,89 @@
 # Netcode: sessions, prediction, commands
 
+## Partial prediction repair comparison amplification (2026-11-07)
+
+Established engine defect: copy_repair_candidate selected a predicted ring
+endpoint whenever the offered target tick was <= ahead. Under range/Owned
+prediction its excluded entities are intentionally stale. Delay, lacking that
+endpoint, reconstructed the full tick from authenticated frames. Identical
+permitted evolution could therefore be reused by Delay but transferred again
+under partial prediction. Partial-prediction repairs now reconstruct privately
+from verified state too; the verified endpoint itself remains directly usable.
+Existing complete-frame validation, four-tick/catch-up work allowance, timeout,
+event suppression, snapshot binding and exact final hashes remain in force.
+No private state is sent and no comparison endpoint is adopted as verified.
+
+A fixed-seed 12-second, 40 ms/way + jitter/3% loss regression freezes a changing
+far payload only in predicted worlds, with a small legitimate hidden-state
+correction. Before this fix it transfers 11,305,522 world bytes with 21 repairs;
+afterward 1,046,157 bytes with 31 repairs (10.8x less). Both verify endpoint 717,
+with zero resyncs. Owned gives the same post-fix result. Delay transfers 1,029,779
+bytes, 31 repairs, endpoint 712. Exact stream equality is not expected because
+the timelines/repair endpoints differ.
+
+The same probe explains a CPU comparison trap: before the fix the range client
+runs 185 full ticks and 2520 held/partial ticks, adopting repairs across the
+remaining intervals. Afterward it runs 716 full and 2710 partial ticks. Delay
+runs 711 full ticks. Thus high repair traffic can replace full simulation work;
+a lower per-frame CPU figure can reflect skipped work instead of a cheaper
+simulation. Quiet comparison work also consumes CPU. These are deterministic
+work counts, not timing claims. The supplied battle's exact CPU/traffic
+attribution still requires its own endpoint trace; it was not rerun here.
+
+Negative-first native regression fails its 4 MiB bound with the old selection,
+then passes after the fix. Native ASan and WASI visibility tests each pass 19/19.
+Seven focused compiler/network/split/diagnostic CTests pass on each platform.
+The earlier partial
+v126 investigation report remains historical; this follow-up establishes an
+engine defect that report had not found.
+
+## Owned prediction (2026-11-07)
+
+Owner-approved: predict this player's owned entities and their children, with
+singleton systems still running. `settings { prediction = Prediction.Owned; }`
+selects it. The compiler reuses predict_far/near_same and the sparse Far filter,
+allowing the tag on every match archetype, including unpositioned entities.
+Generated ownership lookup walks from the entity toward its ancestors, using
+the nearest explicit Owner; no owner means excluded. The walk is bounded at
+4096 ancestors like the spatial root lookup. Parent/Owner changes and entities
+spawned during prediction are reclassified before the next predicted tick.
+Session calls the existing marker every Owned predicted tick. Confirmed worlds
+remain untagged and execute all permitted simulation. Singleton queries can
+still read/write excluded entities unless authored with Far filters. Spatial
+range and Owned are mutually exclusive. This does not create hidden inputs,
+independent singleton predictions or a separate controller timeline.
+
+The existing callback/layout/wire contracts are unchanged; tide_prediction
+appends TIDE_PREDICTION_OWNED. No new generated runtime call. Rendering and
+near_same retention use existing spatial machinery, including the 0.25-second
+stale-state bound and conservative singleton/heap comparisons.
+
+Native ASan and WASI pass the owned fixture, its split-C variant, and a range-5
+control of the same source. They cover an owned root, inherited child, nearby
+unowned entity, unpositioned unowned entity and a distant entity. Twelve-second
+fixed-seed loopback comparisons with 100 ms latency have zero repairs/resyncs.
+Owned and its Delay control each transfer 455 world bytes; range 5 and its Delay
+control each transfer 439. Initial layouts differ between builds. Each predictive
+case executes 9897 client ticks versus 690 for Delay. These are tick counts,
+not CPU measurements; predicted ticks are partial while Delay ticks are whole.
+Existing net, predict_near and predict_kept CTests pass on native/WASI. The new
+Owned/range conflict diagnostic passes natively; docs production build passes
+(unstaged example URL 404s remain expected).
+
+This supports the expected absence of extra recurring world traffic in a fully
+reproducible simulation. It does not explain the supplied nonseeded battle's
+14.5 versus 6.5 ms frame snapshots or 466 versus 46 KB/s. Those need matched
+work and same-tick mismatch/repair-transfer traces. Total packet bytes can also
+differ with input lead, acknowledgement timing and retransmissions; world-byte
+equality is not an assertion of byte-identical datagram streams. No Mount &
+Rifle files/defaults were changed and no battle timing improvement is claimed.
+
+Remaining feature coverage: explicit conflicting descendant Owner, ownership
+changes/reparenting during prediction, sharded integration and physics package
+integration are not isolated by this fixture. Owned marking currently scans all
+match entities each predicted tick; no performance improvement is claimed for
+that pass. Existing privacy/physics/Task boundaries below remain.
+
 ## Logical spawn identity and canonical execution, protocol 25 (2026-11-06)
 
 The owner selected stable logical Entity IDs separate from storage, and ascending

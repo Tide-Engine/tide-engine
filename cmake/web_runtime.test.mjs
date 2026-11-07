@@ -13,6 +13,180 @@ const release = await readFile(resolve(root, 'platform/web/tide.release.js'), 'u
 const context = vm.createContext({ location: { hash: '#download' } });
 await vm.runInContext(release, context);
 
+test('startup waits for background scene pipelines and a fresh drawn frame', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const pipelineBegin = source.indexOf('    function addPipeline(');
+    const pipelineEnd = source.indexOf('\n    // A compute pipeline', pipelineBegin);
+    const frameBegin = source.indexOf('    function frame()');
+    const frameEnd = source.indexOf('\n    // The audio device:', frameBegin);
+    assert.ok(pipelineBegin >= 0 && pipelineEnd > pipelineBegin && frameBegin >= 0 && frameEnd > frameBegin);
+    const pending = [];
+    const progressEvents = [];
+    let reveals = 0;
+    let frames = 0;
+    const make = () => new Promise((resolve, reject) => pending.push({ resolve, reject }));
+    const sandbox = vm.createContext({
+        device: { createRenderPipelineAsync: make, createComputePipelineAsync: make },
+        backgroundPipelines: true, config: {}, printErr() {},
+        stopped: false, heartbeat: null, looping: true, nextFrame: 0,
+        fit() {}, audioPump() {}, scheduleFrame() {}, beat() {},
+        fail(error) { throw error; }, Exit: class Exit {},
+        shown() { reveals++; },
+        stage: 'start',
+        progress(stage, loaded, total) { sandbox.stage = stage; progressEvents.push({ stage, loaded, total }); },
+        tick() { frames++; }, hostReady: false,
+    });
+    vm.runInContext(`
+        let drew = false, drawThisFrame = true;
+        const gpuTables = { pipeline: [null] };
+        const gpuAdd = (kind, entry) => gpuTables[kind].push(entry) - 1;
+        const exports = { tide_web_frame() { tick(); if (drawThisFrame) drew = true; return 0; },
+            tide_web_startup_ready() { return hostReady; } };
+        ${source.slice(pipelineBegin, pipelineEnd)}
+        ${source.slice(frameBegin, frameEnd)}
+    `, sandbox);
+    const step = code => vm.runInContext(code, sandbox);
+    // The controls draw immediately while the scene's render and compute pipelines lag.
+    step(`addPipeline({ name: 'scene', storage: [] }, {}, {}, false);
+        addPipeline({ name: 'scene compute', storage: [] }, {}, {}, true);
+        addPipeline({ name: 'optional culling', storage: [], optional: true }, {}, {}, true);
+        frame();`);
+    assert.equal(reveals, 0, 'a controls-only draw must not reveal a black scene');
+    assert.deepEqual(progressEvents.at(-1), { stage: 'shaders', loaded: 0, total: 2 });
+    step('frame(); frame();');
+    assert.equal(frames, 3, 'game frames keep running while compilation is pending');
+    pending[0].resolve({});
+    await Promise.resolve();
+    step('frame();');
+    assert.equal(reveals, 0, 'all required pipelines must settle');
+    assert.deepEqual(progressEvents.at(-1), { stage: 'shaders', loaded: 1, total: 2 });
+    pending[1].resolve({});
+    await Promise.resolve();
+    step('frame();');
+    assert.equal(reveals, 0, 'controls cannot reveal a host still waiting for its initial match view');
+    sandbox.hostReady = true;
+    step('drawThisFrame = false; frame();');
+    assert.equal(reveals, 0, 'an earlier draw is not proof the now-ready scene rendered');
+    step('drawThisFrame = true; frame(); frame();');
+    assert.equal(reveals, 1, 'a fresh draw reveals once, without waiting for optional culling');
+
+    // Freed pipelines and old-device callbacks must not hold startup forever.
+    for (const outcome of ['reject', 'free', 'device loss']) {
+        step(`shown = () => { revealedAgain++; };`);
+        sandbox.revealedAgain = 0;
+        step(`const id${pending.length} = addPipeline({ name: 'later', storage: [] }, {}, {}, false);`);
+        const id = step('gpuTables.pipeline.length - 1');
+        const promise = pending.at(-1);
+        if (outcome === 'reject') promise.reject(new Error('driver refused shader'));
+        else {
+            step(`gpuTables.pipeline[${id}] = null;`);
+            if (outcome === 'device loss') step('device = {};');
+            promise.resolve({});
+        }
+        await Promise.resolve();
+        step('frame();');
+        assert.equal(sandbox.revealedAgain, 1, outcome);
+        if (outcome === 'device loss') sandbox.device = {
+            createRenderPipelineAsync: make, createComputePipelineAsync: make,
+        };
+    }
+});
+
+test('WebGPU shares exact shader sources across live pipelines and releases them on free or device loss', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('    function shaderModule(');
+    const end = source.indexOf('\n    // A pipeline described', begin);
+    assert.ok(begin >= 0 && end > begin);
+    let made = 0, checked = 0;
+    const sandbox = vm.createContext({
+        device: { createShaderModule: descriptor => ({ ...descriptor, id: ++made }) },
+        checkShader() { checked++; },
+    });
+    vm.runInContext(`
+        const shaderModules = new Map(), gpuTables = { pipeline: [null] };
+        function gpuRemove(kind, id) { gpuTables[kind][id] = null; }
+        ${source.slice(begin, end)}
+        function make(code, name = 'shader', failing = false) {
+            const shader = shaderModule({ code, name, failing });
+            return gpuTables.pipeline.push({ shader }) - 1;
+        }
+    `, sandbox);
+    const step = code => vm.runInContext(code, sandbox);
+    step("make('same WGSL', 'depth'); make('same WGSL', 'HDR');");
+    assert.equal(made, 1, 'target/state variants share one module');
+    assert.equal(checked, 1, 'diagnostics are checked once for the shared source');
+    step("freePipeline(1); make('same WGSL');");
+    assert.equal(made, 1, 'freeing one variant retains the others module');
+    step("make('changed WGSL');");
+    assert.equal(made, 2, 'hot reload cannot reuse a different source');
+    step('freePipeline(2); freePipeline(3);');
+    assert.equal(step('shaderModules.size'), 1, 'unused source is released');
+    step("make('same WGSL'); make('same WGSL', 'injected failure', true);");
+    assert.equal(made, 4, 'freed sources are remade and injected failures stay separate');
+    step('shaderModules.clear();'); // deviceLost clears this device-owned cache
+    step("make('same WGSL');");
+    assert.equal(made, 5, 'a replacement device gets its own module');
+});
+
+test('web loader reports shader counts without repeating unchanged progress', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf("    const loader = document.getElementById('tide-loading');");
+    const end = source.indexOf('\n    // A program that ended', begin);
+    assert.ok(begin >= 0 && end > begin);
+    const text = {}, bar = { classList: { toggle() {} }, firstElementChild: { style: {} } };
+    const events = [];
+    const progress = vm.runInNewContext(`(() => { ${source.slice(begin, end)}; return progress; })()`, {
+        document: { getElementById: () => ({
+            querySelector: id => id === '#tide-loading-text' ? text : bar,
+            classList: { add() {} }, remove() {},
+        }) },
+        config: { onProgress: event => events.push(event) }, printErr() {}, setTimeout() {},
+    });
+    progress('shaders', 2, 8);
+    assert.equal(text.textContent, 'Compiling shaders 2 / 8');
+    assert.equal(bar.firstElementChild.style.width, '25%');
+    progress('shaders', 2, 8);
+    assert.equal(events.length, 1, 'unchanged counts do not keep announcing a status');
+    progress('shaders', 5, 8);
+    assert.equal(text.textContent, 'Compiling shaders 5 / 8');
+    progress('start');
+    assert.equal(text.textContent, 'Starting');
+    progress('done');
+    progress('shaders', 0, 3);
+    assert.equal(events.at(-1).stage, 'done', 'later pipelines do not reopen initial loading');
+});
+
+test('docs embeds relay shader progress and restore the page callback', async () => {
+    const source = await readFile(resolve(root, 'docs/src/lib/examples.ts'), 'utf8');
+    const begin = source.indexOf('        async function show(');
+    const end = source.indexOf('\n        // The code of the room', begin);
+    assert.ok(begin >= 0 && end > begin);
+    const messages = [], shown = [];
+    const show = vm.runInNewContext(`(() => {
+        ${source.slice(begin, end).replace('player: number, page: GamePage, current: AbortController', 'player, page, current')
+            .replace('page.start!()', 'page.start()')}
+        return show;
+    })()`, { pair: false, say: message => messages.push(message),
+        frames: [{ classList: { add: value => shown.push(value) } }] });
+    let finish;
+    const previousEvents = [];
+    const previous = event => previousEvents.push(event);
+    const page = { onProgress: previous, start: () => new Promise(resolve => { finish = resolve; }) };
+    const current = new AbortController();
+    const running = show(0, page, current);
+    page.onProgress({ stage: 'shaders', loaded: 3, total: 9 });
+    assert.equal(messages.at(-1), 'Compiling shaders 3 / 9…');
+    assert.equal(previousEvents.length, 1);
+    assert.equal(shown.length, 0);
+    current.abort();
+    page.onProgress({ stage: 'shaders', loaded: 6, total: 9 });
+    assert.equal(messages.length, 1, 'a stopped example cannot overwrite its replacement status');
+    finish();
+    await running;
+    assert.equal(page.onProgress, previous);
+    assert.equal(shown.length, 0, 'a stopped frame stays hidden');
+});
+
 test('page stats query reaches WASI argv once and preserves other launch options', async () => {
     const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
     const begin = source.indexOf('    const words = [...(config.arguments || [])];');
