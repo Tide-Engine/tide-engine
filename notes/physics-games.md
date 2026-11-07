@@ -9,6 +9,9 @@ retaining 300 seconds elsewhere. All cases, simulated ticks and assertions stay.
 Windows Clang 23.1.2 ASan Sumo passes (54.23 s); WASI debug Sumo passes
 (76.60 s). Both builds here omit the platform layer; hosted Linux's pool-enabled
 ASan/UBSan run remains CI coverage. CTest JSON confirms limits of 600/300.
+After merging incoming dev prediction/session changes, rebuilt Sumo on both
+targets and passed again: native ASan 64.86 s, WASI debug 88.94 s. The release
+receives the isolated timeout repair; unrelated incoming dev features stay on dev.
 
 Entity128 fixture migration (2026-11-06): manually encoded global commands in
 Towers and Sumo now carry all four zero target words after the command ID,
