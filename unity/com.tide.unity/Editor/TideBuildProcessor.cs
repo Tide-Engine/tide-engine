@@ -141,8 +141,7 @@ namespace Tide.Editor
                     "Tide: the game's C# in Packages/com.tide.game was written for another build of the game than this player's, " +
                     "so the player's scripts couldn't read the match. tide writes it as it builds the game in the editor: wait for " +
                     "the Tide task in the status bar (or press Build now in Project Settings > Tide), let Unity compile, and build " +
-                    "the player again. On a build server, commit Packages/com.tide.game as the editor last wrote it. If the game's " +
-                    "data differs between debug and release (a field inside #if DEBUG), it can't: the editor's C# is the debug game's.");
+                    "the player again. On a build server, commit Packages/com.tide.game as the editor last wrote it.");
             }
             // A player loads only the scenes it was built with, and the match may load any of these
             var built = new HashSet<string>(EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path));
@@ -237,7 +236,9 @@ namespace Tide.Editor
         {
             if (!File.Exists(path)) return null;
             var text = File.ReadAllText(path);
-            var at = before.Length > 0 ? text.IndexOf(before, StringComparison.Ordinal) : 0;
+            // The last of them: where the game's C# is written for two games, the editor's and a player's, the
+            // player's comes second
+            var at = before.Length > 0 ? text.LastIndexOf(before, StringComparison.Ordinal) : 0;
             if (at < 0 || at + before.Length + 16 > text.Length) return null;
             var hash = text.Substring(at + before.Length, 16).ToUpperInvariant();
             foreach (var c in hash)

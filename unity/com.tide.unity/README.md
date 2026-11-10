@@ -376,6 +376,15 @@ app's own files (`Application.persistentDataPath`). It needs a device with
 Vulkan and compute shaders for Tide's drawing, as every renderer of Tide's
 does. An Android player has been built and packaged, not yet run on a phone.
 
+The editor's game is a debug build (`DEBUG` is defined) and a player's isn't.
+Where the game's data differs between the two, a field inside `#if DEBUG`
+say, `Packages/com.tide.game` holds the game's C# for both, the editor's inside
+`#if UNITY_EDITOR`, and Unity compiles the one that's its own; a script that
+reads a debug-only field compiles in the editor alone, as with a C# field of
+your own inside `#if UNITY_EDITOR`. A player build checks that the C# in the
+project is of the game it builds, and says to let the editor's build finish
+where it isn't.
+
 Not built yet: players for another desktop system than the editor's, for iOS
 and for consoles. A
 dedicated server needs none of them: it's a Tide build of the same game

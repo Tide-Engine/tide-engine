@@ -3469,6 +3469,10 @@ typedef struct run {
     bool watch_folder; // dir is a watch-<n> folder, which runs one after another use (open_run)
     bool kept_folder;  // ...or a once-<n> one, which keeps what a run with no window built there
     const char *host; // Initial native run only: compile its host in the game's batch
+    // tide unity: the game as a player has it, built for its schema where that's another than the editor's
+    // (find_player_schema), and that schema and its outline, NULL where the two are one game
+    struct run *player;
+    char *player_schema, *player_outline;
 } run;
 
 static bool queue_host(run *r, compiles *list, file_list *objects);
@@ -4136,6 +4140,232 @@ static bool write_if_changed(const char *path, const char *text, const size_t si
     return same || sys_write_file(path, text, size);
 }
 
+// ---------------------------------------------------------------------------
+// The game as a player has it, where that's another game than the editor's
+//
+// The editor's game is built with DEBUG and a player's without, so a game whose data differs between the two (a
+// field inside #if DEBUG) is laid out otherwise in a player. Its C# in the project goes into the player too, and
+// has to read that layout there. So where the two differ, tide also builds the game as a player has it, for its
+// schema alone, and writes the game's C# for both: each file's text for the editor inside #if UNITY_EDITOR and
+// the player's after its #else, which Unity compiles one of.
+
+// Whether a file of the game's says DEBUG anywhere: without it, the two are one game, and nothing more is asked.
+static bool mentions_debug(const char *path)
+{
+    size_t size = 0;
+    char *text = sys_read_file(path, &size);
+    const bool found = text && strstr(text, "DEBUG") != NULL;
+    free(text);
+    return found;
+}
+
+// The schema of the build's newest library, as it gives it (tide_unity_schema): malloc'd, NULL where it has none.
+static char *read_unity_schema(const run *r, uint32_t *size)
+{
+    char *library_path = build_path(r, r->builds, LIBRARY_SUFFIX);
+    void *library = sys_library_open(library_path);
+    typedef uint32_t (*schema_fn)(char *, uint32_t);
+    schema_fn schema = NULL;
+    void (*found)(void) = sys_library_find(library, "tide_unity_schema");
+    if (found) memcpy(&schema, &found, sizeof schema);
+    char *text = NULL;
+    if (schema) {
+        *size = schema(NULL, 0);
+        text = malloc((size_t)*size + 1u);
+        if (!text) abort();
+        schema(text, *size + 1u);
+    }
+    sys_library_close(library);
+    free(library_path);
+    return text;
+}
+
+// A generated game's hash, as 16 hex digits: false where its game.c has none.
+static bool game_hash_in(const char *gen, char hash[17])
+{
+    char *game_c = path_join(gen, "game.c");
+    size_t size = 0;
+    char *text = sys_read_file(game_c, &size);
+    static const char field[] = "\n    .hash = 0x";
+    const char *at = text ? strstr(text, field) : NULL;
+    int n = 0;
+    if (at) {
+        at += sizeof field - 1;
+        for (; n < 16 && ((at[n] >= '0' && at[n] <= '9') || (at[n] >= 'A' && at[n] <= 'F') || (at[n] >= 'a' && at[n] <= 'f')); n++) {
+            hash[n] = at[n] >= 'a' ? (char)(at[n] - 'a' + 'A') : at[n];
+        }
+    }
+    hash[n == 16 ? 16 : 0] = '\0';
+    free(text);
+    free(game_c);
+    return n == 16;
+}
+
+// Sets r->player_schema (and its outline) to the schema of the game as a player has it, or to NULL where that's the
+// editor's game: after the editor's build, which r->gen holds. A game that doesn't build without DEBUG gets a
+// warning and none: its player build says the errors.
+static void find_player_schema(run *r)
+{
+    free(r->player_schema);
+    free(r->player_outline);
+    r->player_schema = r->player_outline = NULL;
+    if (!r->b.opts->unity_assets || r->b.opts->release || r->b.opts->declarations) return; // Already a player's game
+    bool mentioned = false;
+    for (int i = 0; !mentioned && i < r->b.sources.count; i++) mentioned = mentions_debug(r->b.sources.items[i]);
+    char *packages = path_join(r->b.folder, "tide.packages");
+    mentioned = mentioned || mentions_debug(packages);
+    free(packages);
+    if (!mentioned) return;
+    if (!r->player) {
+        // The same build, but for DEBUG, into a folder of its own beside the editor's
+        r->player = calloc(1, sizeof *r->player);
+        build_options *opts = malloc(sizeof *opts);
+        const char **defines = malloc(sizeof *defines * (size_t)(r->b.opts->define_count + 1));
+        if (!r->player || !opts || !defines) abort();
+        *opts = *r->b.opts;
+        opts->define_count = 0;
+        for (int i = 0; i < r->b.opts->define_count; i++) {
+            if (strcmp(r->b.opts->defines[i], "DEBUG") != 0) defines[opts->define_count++] = r->b.opts->defines[i];
+        }
+        opts->defines = defines;
+        opts->output = path_join(r->dir, "player");
+        opts->watch = false;
+        if (!build_setup(&r->player->b, r->b.root, opts, true)) {
+            free(r->player);
+            r->player = NULL;
+            return;
+        }
+        r->player->dir = path_absolute(opts->output);
+        r->player->gen = path_join(r->player->dir, "gen");
+    }
+    run *p = r->player;
+    char ours[17], theirs[17];
+    if (!sys_mkdirs(p->gen) || !generate(&p->b, p->gen, true, NULL) || !game_hash_in(r->gen, ours) || !game_hash_in(p->gen, theirs)) {
+        fprintf(stderr, "tide: warning: the game doesn't build as a player has it (without DEBUG), so its C# is the "
+                        "editor's game's alone: a player's build says what's wrong\n");
+        return;
+    }
+    if (strcmp(ours, theirs) == 0) return; // Laid out alike: one game's C# reads both
+    p->builds = 0; // game-1 again each time: nothing runs it
+    if (!write_unity_library(p) || !build_library(p)) {
+        fprintf(stderr, "tide: warning: the game doesn't build as a player has it (without DEBUG), so its C# is the "
+                        "editor's game's alone: a player's build says what's wrong\n");
+        return;
+    }
+    uint32_t size = 0;
+    r->player_schema = read_unity_schema(p, &size);
+    if (r->player_schema && p->b.outline) {
+        const size_t n = strlen(p->b.outline) + 1;
+        r->player_outline = malloc(n);
+        if (!r->player_outline) abort();
+        memcpy(r->player_outline, p->b.outline, n);
+    }
+}
+
+// Two folders of the game's C#, the editor's game's and a player's, into the package's: a file that's the same in
+// both as it is, and one that differs as both, each inside the #if Unity compiles it by. What isn't C# (the
+// scripts' metas, components.json, which the editor's game's assets are read by) is the editor's.
+typedef struct code_merge {
+    const char *editor, *player, *into, *under; // The three folders, and the folder inside them being gone through
+    bool from_player;                           // Going through the player's, for what the editor's hasn't
+    bool failed;
+} code_merge;
+
+static bool ends_with(const char *name, const char *suffix)
+{
+    const size_t n = strlen(name), s = strlen(suffix);
+    return n >= s && strcmp(name + n - s, suffix) == 0;
+}
+
+static void merge_code_entry(void *user, const char *name, const bool is_dir)
+{
+    code_merge *m = user;
+    char *relative = m->under[0] ? path_join(m->under, name) : path_join("", name);
+    if (is_dir) {
+        code_merge inner = *m;
+        inner.under = relative;
+        char *from = path_join(m->from_player ? m->player : m->editor, relative);
+        char *to = path_join(m->into, relative);
+        sys_mkdirs(to);
+        sys_list(from, merge_code_entry, &inner);
+        m->failed = m->failed || inner.failed;
+        free(from);
+        free(to);
+        free(relative);
+        return;
+    }
+    char *editor = path_join(m->editor, relative), *player = path_join(m->player, relative), *into = path_join(m->into, relative);
+    size_t editor_size = 0, player_size = 0;
+    char *a = sys_read_file(editor, &editor_size), *b = sys_read_file(player, &player_size);
+    if (m->from_player && a) {
+        // Done with the editor's
+    } else if (!ends_with(name, ".cs")) {
+        const char *text = a ? a : b;
+        if (text && !write_if_changed(into, text, a ? editor_size : player_size)) m->failed = true;
+    } else if (a && b && editor_size == player_size && memcmp(a, b, editor_size) == 0) {
+        if (!write_if_changed(into, a, editor_size)) m->failed = true;
+    } else {
+        sb both = {0};
+        sb_put(&both, "// Written by tide unity. Do not edit. The game is laid out otherwise in a player than in the editor (its\n"
+                      "// data differs with DEBUG), so this is its C# for each, of which Unity compiles one.\n");
+        if (a && b) {
+            sb_put(&both, "#if UNITY_EDITOR\n");
+            sb_putn(&both, a, editor_size);
+            sb_put(&both, "#else\n");
+            sb_putn(&both, b, player_size);
+            sb_put(&both, "#endif\n");
+        } else {
+            sb_put(&both, a ? "#if UNITY_EDITOR\n" : "#if !UNITY_EDITOR\n");
+            sb_putn(&both, a ? a : b, a ? editor_size : player_size);
+            sb_put(&both, "#endif\n");
+        }
+        if (!write_if_changed(into, both.data, both.len)) m->failed = true; // The builder's text is the arena's
+    }
+    free(a);
+    free(b);
+    free(editor);
+    free(player);
+    free(into);
+    free(relative);
+}
+
+// A component's script in the package that neither game has any more goes, with its meta
+typedef struct code_sweep {
+    const code_merge *m;
+    const char *under;
+} code_sweep;
+
+static void sweep_code_entry(void *user, const char *name, const bool is_dir)
+{
+    const code_sweep *s = user;
+    char *relative = path_join(s->under, name);
+    char *into = path_join(s->m->into, relative);
+    if (is_dir) {
+        const code_sweep inner = {s->m, relative};
+        sys_list(into, sweep_code_entry, (void *)&inner);
+    } else {
+        char *editor = path_join(s->m->editor, relative), *player = path_join(s->m->player, relative);
+        if (!sys_exists(editor) && !sys_exists(player)) sys_remove(into);
+        free(editor);
+        free(player);
+    }
+    free(into);
+    free(relative);
+}
+
+static bool merge_code(const char *editor, const char *player, const char *into)
+{
+    code_merge m = {editor, player, into, "", false, false};
+    sys_list(editor, merge_code_entry, &m);
+    m.from_player = true;
+    sys_list(player, merge_code_entry, &m);
+    const code_sweep s = {&m, "Components"};
+    char *components = path_join(into, "Components");
+    sys_list(components, sweep_code_entry, (void *)&s);
+    free(components);
+    return !m.failed;
+}
+
 // The project's Packages/com.tide.game, an embedded package of the assembly Tide.Game: the schema, and the game's
 // C# made of it (unity_code.h: its components as TideComponents, its other types, and components.json), each file
 // written only where it changed, so Unity compiles only then. Made from the project of opts->unity_assets, as each
@@ -4144,6 +4374,9 @@ static bool write_if_changed(const char *path, const char *text, const size_t si
 static bool write_unity_package(const run *r, const char *schema, const uint32_t size)
 {
     if (!r->b.opts->unity_assets) return true;
+    // A player's build (--release) leaves the project's C# as the editor's build wrote it, for both games: what
+    // Unity compiles into the player is what it had as the build began, which the package checks against game-hash
+    if (r->b.opts->release) return true;
     char *assets = path_absolute(r->b.opts->unity_assets);
     char *project = path_dir(assets);
     char *dir = path_join(project, "Packages/com.tide.game");
@@ -4179,7 +4412,22 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
     if (!packages) abort();
     for (int i = 0; i < r->b.packages.count; i++) packages[i] = (unity_package){r->b.packages.items[i].folder, r->b.packages.items[i].name};
     // ...and from the declarations alone, taking none away: components only the game's code gives entities aren't in them
-    ok = ok && (r->b.opts->declarations ? unity_code_add : unity_code_write)(dir, schema, r->b.outline, packages, r->b.packages.count);
+    if (r->player_schema && !r->b.opts->declarations) {
+        // The C# of each game into a folder of its own (as deep in the project as the package's, which is how the
+        // writer finds the project), then both into the package's
+        char *library = path_join(project, "Library");
+        char *editor_code = path_join(library, "Tide.editor-code"), *player_code = path_join(library, "Tide.player-code");
+        ok = ok && sys_mkdirs(editor_code) && sys_mkdirs(player_code)
+            && unity_code_write(editor_code, schema, r->b.outline, packages, r->b.packages.count)
+            && unity_code_write(player_code, r->player_schema, r->player_outline ? r->player_outline : r->b.outline, packages,
+                                r->b.packages.count)
+            && merge_code(editor_code, player_code, dir);
+        free(editor_code);
+        free(player_code);
+        free(library);
+    } else {
+        ok = ok && (r->b.opts->declarations ? unity_code_add : unity_code_write)(dir, schema, r->b.outline, packages, r->b.packages.count);
+    }
     // ...and what became of the names the C# had, in Library/Tide, for com.tide.unity to explain a script's error on one
     if (ok) {
         char *record = path_join(r->dir, "renamed.json");
@@ -4265,31 +4513,16 @@ static bool write_unity_outline(const run *r)
 // in the project, which goes into the player, was made from this game and not from an earlier build of it.
 static void write_game_hash(const char *gen, const char *dir)
 {
-    char *game_c = path_join(gen, "game.c");
     char *out = path_join(dir, "game-hash");
-    size_t size = 0;
-    char *text = sys_read_file(game_c, &size);
-    static const char field[] = "\n    .hash = 0x";
-    const char *at = text ? strstr(text, field) : NULL;
-    char hash[17] = "";
-    if (at) {
-        at += sizeof field - 1;
-        int n = 0;
-        for (; n < 16 && ((at[n] >= '0' && at[n] <= '9') || (at[n] >= 'A' && at[n] <= 'F') || (at[n] >= 'a' && at[n] <= 'f')); n++) {
-            hash[n] = at[n] >= 'a' ? (char)(at[n] - 'a' + 'A') : at[n];
-        }
-        hash[n == 16 ? 16 : 0] = '\0';
-    }
-    if (hash[0]) sys_write_file(out, hash, 16);
+    char hash[17];
+    if (game_hash_in(gen, hash)) sys_write_file(out, hash, 16);
     else sys_remove(out); // None is better than another build's
-    free(text);
     free(out);
-    free(game_c);
 }
 
 // The newest build's schema, from the build itself, as schema.json beside it: what the package's C# bindings are
 // generated from before anything runs. False after saying what's wrong.
-static bool write_unity_schema(const run *r)
+static bool write_unity_schema(run *r)
 {
     char *library_path = build_path(r, r->builds, LIBRARY_SUFFIX);
     void *library = sys_library_open(library_path);
@@ -4307,6 +4540,8 @@ static bool write_unity_schema(const run *r)
         char *path = path_join(r->dir, "schema.json");
         ok = sys_write_file(written, text, size) && sys_rename(written, path);
         if (!ok) fprintf(stderr, "tide: can't write the schema of %s\n", library_path);
+        // The game as a player has it, where that's another: its C# is written with this one's
+        if (ok) find_player_schema(r);
         // The outline first: the package regenerates its C# when com.tide.game's schema changes, and reads it
         ok = ok && write_unity_outline(r) && write_unity_package(r, text, size);
         free(written);

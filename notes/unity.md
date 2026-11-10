@@ -1,5 +1,40 @@
 # Unity as a front end
 
+## A game laid out otherwise in a player: its C# for both (2026-11-10)
+
+The editor's game is built with DEBUG and a player's without (`--release`), so a game whose data differs with it (a
+component's field inside `#if DEBUG`) has another layout, and another hash, in a player. Its C# in
+`Packages/com.tide.game` was the editor's game's alone, so a player's scripts read nothing, silently; the hash
+check of the note below then made that a build error that nothing could fix. The owner: "can we fix that debug
+thing?" Built (mine, Provisional):
+
+- **tide writes the C# of both games** where they differ, each file's text for the editor inside
+  `#if UNITY_EDITOR` and the player's after `#else` (a file only one has, inside `#if UNITY_EDITOR` or
+  `#if !UNITY_EDITOR`), so Unity compiles the right one for each, as it does a script's own `#if UNITY_EDITOR`
+  fields. A file that's the same for both is written as before, so only the types that differ are doubled.
+  Scripts' metas and `components.json` are the editor's: authoring is the editor's game's, and the bake leaves a
+  field the player's game hasn't out, as for any field a component no longer has. A script that reads a
+  debug-only field doesn't compile for the player, as with Unity's own.
+- **How tide knows** (`find_player_schema` in `build.c`, from `write_unity_schema`, on each of the editor's
+  builds): nothing more where no file the game compiled, nor `tide.packages`, says `DEBUG`. Else the game is
+  generated again without DEBUG (tidec alone, into `<-o>/player/gen`) and the two hashes compared; only where
+  they differ is that game built (`<-o>/player/game-1`, never run) for its schema. Then `write_unity_package`
+  writes each game's C# into `Library/Tide.editor-code` and `Library/Tide.player-code` (as deep in the project as
+  the package, which is how the writer finds the project) and `merge_code` puts both into the package, taking
+  away component scripts neither has. A game that doesn't build without DEBUG gets a warning and the editor's C#
+  alone: its player build says the errors.
+- **A player's build writes no C#** (`write_unity_package` returns for `--release`): it had been writing the
+  release game's alone over the project's on desktop. The package's check (below) compares `game-hash` with the
+  last `Hash = "` in `TideGame.cs`, which is the player's where there are two.
+- **Checked** on a scratch Sample with `int debugTurns` on `Spinner` inside `#if DEBUG`: `Spinner.cs` and
+  `TideGame.cs` hold both (Value sizes 12 and 8, two hashes), `Ball.cs` is as before; the editor's BounceTests
+  and ScaleTests pass 17/17 (D3D11); a player builds and its smoke passes with "drew yes", which reads `Ball`'s
+  live color, so the player compiled its own half. tide's run of it under ASan: clean (the first version freed a
+  string builder's arena text, which the debug heap caught). Not tested: a component only one game has, and the
+  WebGL and Android players of such a game (their check is the same hash).
+- Cost: a game that mentions DEBUG pays one more tidec run an editor build; one whose layouts differ, a second
+  build of the game.
+
 ## A player build while tide isn't ready (2026-11-10)
 
 The owner asked how a player build behaves while tide is downloading, building or not installed, "making sure we
