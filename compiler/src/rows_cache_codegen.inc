@@ -55,7 +55,9 @@ static void gen_rows_cache_prefetch(gen *g, const decl *sys, const int a, const 
     for (int c = 0; c < g->prog->components.count; c++) {
         if (!rows_take(g, sys, a, c)) continue;
         const decl *d = g->prog->components.items[c];
+        const lane_mask used = system_comp_lanes(g, sys, a, c); // (row_lanes_codegen.inc)
         for (int k = 0; k < comp_lanes(d); k++) {
+            if (!lane_has(&used, k)) continue;
             sb_printf(o, "%s__builtin_prefetch(tide_col_%s[%d] + (size_t)tide_prefetch_i * %du, %d, 3);\n",
                       warm ? "        " : "            ", type_cname(d), k, comp_width(d), changes_component(sys, c, false) ? 1 : 0);
         }

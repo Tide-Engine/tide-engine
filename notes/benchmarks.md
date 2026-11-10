@@ -11,6 +11,63 @@ After the deliberate identity-pin update, all five quick cases pass on native
 ASan and WASI.
 
 
+## A wide component's rows (2026-11-10)
+
+Mount & Rifle (branch `t3/visual-overhaul-144hz`, its workarounds in: `with Owner`, the `Hauler` and `Hired` tags),
+release, native, this machine, hidden, `--host --seed 42 --frames 520 --size 960 540 --profile-warmup 300` with the
+script of its notes/gaps.md (210 frames measured, a tick each). The compiler before this work and after, the same
+runtime, in blocks of three runs alternated twice; medians of six, ms a frame. What changed is in notes/ecs.md
+(A wide component's rows).
+
+Probes added beside the game's code (`Party` is 186 lanes, 346 rows):
+
+| Probe | Before | After |
+|---|---|---|
+| `mut Party`, one field read and written | 0.034 | 0.013 |
+| `mut Party`, returns for all but one row, then `party.bonus = Reckon(party.character, book)` | 0.158 | 0.071 |
+| `mut Party`, returns on an entity field, then `party.path.Clear()` | 0.144 | 0.050 |
+| `Party` read-only, returns for all but one row | 0.093 | 0.024 |
+| ...the same over `Spot`, a small component of the same entities | 0.034 | 0.028 |
+| View walking `query (Party p)`, one field | 0.141 | 0.055 |
+| View with one `world.TryGet<Party>` | 0.0014 | 0.0012 |
+| 60 `world.Get<Party>` then `world.Set<Party>`, nothing changed | 0.114 | 0.115 |
+| ...one float changed | 0.075 | 0.079 |
+| ...44 rows with paths (13,400 points between them) | 0.114 | 0.104 |
+| 60 calls of a helper handed `mut Party`, `mut World` and `Ground` between a Get and a Set | 6.03 | 0.080 |
+| 17 times through `query (Spot s)` in a system (5,900 rows) | 0.39 | 0.43 |
+
+The last two are what the report's third cost was (the helper's copy of `Ground`'s lists, 100 µs a call, not the
+Get and Set at 2 µs a pair) and what's left of Roam (a query's rows in entity order, 70 ns each). The last row's
+function is the same C in both; its 8% is what the code around it does to the optimizer's choices.
+
+The game without the probes:
+
+| | Before | After |
+|---|---|---|
+| `cpu_phases.match` p50 | 2.48 | 1.66 |
+| `cpu_phases.views` p50 | 3.41 | 2.94 |
+| `Campaign.*` systems | 2.96 | 2.10 |
+| `Campaign.*` views | 1.41 | 1.07 |
+| Roam | 1.42 | 1.26 (1.08 to 1.45) |
+| Travel | 0.296 | 0.172 |
+| Outfit | 0.269 | 0.105 |
+| Pursue | 0.209 | 0.054 |
+| Upkeep | 0.167 | 0.127 |
+| SightParties | 0.113 | 0.030 |
+| Muster | 0.098 | 0.068 |
+| Haul (its 60 rows, by its tag) | 0.046 | 0.019 |
+| PayService | 0.036 | 0.011 |
+| Publish | 0.030 | 0.008 |
+| MarketPopups (view) | 0.162 | 0.0002 |
+| Visiting (view) | 0.048 | 0.001 |
+| DrawCampaign (view) | 0.223 | 0.132 |
+| CampaignHud (view) | 0.232 | 0.214 |
+
+Party's lanes a system's rows take, of 186: Haul 51, Outfit 50, Pursue 44, Travel 95, Roam 85, Upkeep 67,
+ReckonBonuses 39, Steer 11, CalledBack 8, Muster 6, PayService 5, SightParties 4, StaleContracts 2 (before: all
+186 for each). CampaignHud's query is handed to helpers that copy each row's Party to a local, so it still copies
+all of it.
+
 ## Logical Entity diagnostic and accounting migration (2026-11-06)
 
 Earth's divergence report now compares complete logical keys, looking up each

@@ -1,5 +1,112 @@
 # ECS and simulation state
 
+## A wide component's rows: the lanes a system reads, guards, calls' copies, views' rows when named (2026-11-10)
+
+Found profiling Mount & Rifle toward 144 Hz (its notes/gaps.md, "A fat component costs its whole width"): its
+`Campaign.Party` is 744 bytes in 186 lanes, 346 rows in six archetypes. Three costs were reported; the third's cause
+was another one than reported. All fixes are in the compiler; no runtime function or layout changed, and results,
+row order, hashes and snapshots are what they were.
+
+- **A system's row copied every lane** (`row_lanes_codegen.inc`, `gen_row_copies`). A row gathered the whole
+  component from its lanes, called the body and put the written lanes back, so a system that returned on its first
+  line for 345 of 346 rows paid 186 loads a row. Three changes:
+  - **Lanes by use.** A system's row copies the lanes its code can read (`code_reads`, the views' analysis, now for
+    systems) and the ones it can write (`written_lanes`: they're put back whether or not the code wrote them, so
+    they're copied even when never read). `system_param_lanes` is that mask, `system_param_splits` when a copy may be
+    partial: a plain per-entity system (not a view, handler, extern, async, task-starting, virtual, override, local,
+    preparation or sharded one), a component of 2 to 1,024 lanes and at most 4 KiB, not local, with no preparation
+    state, that the system doesn't Set through its World. The copies are `memcpy` lines written into the row loop
+    for the masked lanes (`gen_gather_lanes`), not a helper taking a mask: the release build's code is cut into
+    parts, and a helper in another part would test 186 bits a call. A copy that reads nothing still takes lane 0,
+    so the C value is something.
+  - **Guards.** Where a system's code starts with `if (...) return;` statements whose tests are plain
+    (`guard_plain`: fields of its component and singleton parameters, constants, enum members, `default`, a
+    field's list's `count`, and operators on those with no overload; no call, no text, nothing that allocates,
+    rolls or writes), those tests are a function of their own, `tide_guard_<System>` (`gen_system_body_variant`
+    with `BODY_GUARD`), with the system's parameters. `system_guard_terms` takes the leading statements' tests, an
+    `||`'s parts from the left, up to the first that isn't plain, so `if (!a.live || Busy(a)) return;` guards on
+    `a.live`. The loop copies the lanes the tests read (`system_guard_lanes`), calls the guard, and makes the rest
+    of the copies, runs the body and puts back only for the rows it lets through. Written apart (beside a
+    snapshot), a row the guard leaves out still carries the lanes the system changes across: those are copied
+    before the guard and put back after (`g->row_apart`). A parameter the tests read nothing of is handed to the
+    guard as NULL (clang refuses a never-written variable passed as a const pointer). Not for systems that batch
+    a Send or a Destroy.
+  - **Lanes handed over.** The row loops and their tasks take only the lanes some row copies
+    (`system_comp_lanes`): the others aren't parameters of `tide_rows_<System>_<n>`, aren't looked up in the table,
+    and are NULL in `tide_in_`/`tide_col_`/`tide_was_`/`tide_own_`. This matters most for systems that run in
+    entity order (not split across threads): their rows come in short runs, and each run looked up and passed
+    every lane. The Owner a system's input is found by keeps every lane.
+  - **Written lanes of a system that reaches the world** (`writes_own`, in `written_lanes`). A system that Set any
+    component through its World, or read there one it changes, wrote every lane of what it takes `mut`
+    (`rows_alone`, which is about `restrict`, was also the test for this). Only three things write a component's
+    lanes beside the system's own parameter: a Set of that component (`world_sets_component`, still every lane),
+    a task (still every lane) and preparation state (the same). A Set of another component, or a read of this
+    one through the World (its rows are then written in place, as before), changes nothing of what a row writes.
+    Mount & Rifle's Haul, Outfit, Pursue, Travel and StaleContracts read 2 to 95 of Party's lanes and write under
+    40, and took all 186 for this.
+- **What the read analysis learnt for systems** (`lane_reads_codegen.inc`). Views never write the match, so two
+  cases never arose there. A read-only argument holding lists that a call hands over as a copy
+  (`gen_routine_call`, where a `mut` argument could change them: `FindPathFor(ground, party, to, party.path)`)
+  is read by `tide_copy_<T>` whatever the callee reads: its text and list handles are marked read (`heap_bytes`),
+  the rest by what the callee's code reads. (Marked by the types alone, which is at least wherever the call copies.)
+  The first build without this crashed the game: garbage list handles.
+- **A view paid for a query it never walked**, and for a component with a `[Position]` or `[Rotation]` field
+  copied all of it for each row.
+  - **Rows when named** (`view_rows_lazy`, `view_rows_from`): a view that runs once a frame (not per entity) is
+    handed what its rows are made from (`tide_view_frame`: the worlds and alphas) rather than the rows, and makes
+    all its queries' rows before the first top-level statement that names one of its queries. A view that returns
+    before that makes none. Which statement that is comes from the code as written (`stmt_query_uses`); the
+    generated C of the statements before it is then searched for `tide_q<i>` (`text_names_rows`), and finding one
+    is an internal error rather than rows read before they're made. Per-entity views make their rows before the
+    first entity, as before. Nothing in a view's body resets the scratch area below the rows.
+  - **Some lanes of a corrected component** (`view_lane_mask`): `decl_corrects` no longer refuses partial copies.
+    The fields a correction changes are always among the lanes copied (`correction_bytes`), and
+    `tide_correct_view_<C>` runs on the partial copy as it did on the whole one.
+- **`world.Get` then `world.Set` wasn't the cost** (2 µs a pair for a Party with paths of 300 points). The
+  measured 0.1 ms a row was the helper the rows went through: a call to a function that takes the world to Set
+  copied every read-only argument holding lists (`call_changes_lists_of`: `takes_world_bindings` meant "copy"),
+  so `Haul(party, world, ground, clock)` copied the ground's ten map-sized lists per call. Now a Set through the
+  world counts only for the components the callee and what it calls can Set (`world_uses` with `writes`, which
+  reach callers already): a copy only when one of those and the argument's type could hold the other. And a `mut`
+  argument holding lists copies a read-only one only when the two could be the same lists: types that could hold
+  one another, as before, and not places of two different parameters or locals of the calling code
+  (`places_apart`, `owner_of_place`: a parameter of the code's own, or a local declared with its value, which
+  keeps lists of its own; a query's row, a call's result, an `out` local or a block's parameter is no such
+  place). So `FindPathFor(ground, party, to, party.path)` reads `ground` where it is and still copies `party`.
+  The spec's sentence (Lists: "unless a `mut` argument of the same call could change it") stands.
+- **Tests**: `row_lanes` (e2e, native and WASI): a component of about seventy lanes with text, lists and a
+  `[Position]` field in two archetypes with a sparse tag; systems with a guard, a two-part guard on a read-only
+  parameter, a lane written on some ticks and never read, a list's count in a guard, a helper handed the world and
+  a singleton of lists, a helper whose Set does change what it was handed, the path pattern above, and a sparse
+  filter with a guard, and one that reads its own component through its World behind a test only part of which
+  is plain. A world written in place and one written apart beside a snapshot agree tick by tick, by hash and by
+  value. Views: one that returns before its query (no rows), then goes on (the rows a whole copy gives,
+  blended), one handing its query to a helper, and a per-entity one reading beside the corrected field.
+  `row_lanes_codegen` pins the guard, the copies' order, the calls' arguments and where the views make their rows.
+- **Validation**: the native suite under ASan (3,258 of 3,260; the two that fail are private prototypes' tests,
+  `underfoot_tests` and `inside_out_tests`, whose generated C is byte for byte what the compiler before this
+  generates, the build's identity apart); on WASI, `row_lanes`, `view_reads`, `wide_lanes`, `sparse_cache` with
+  its private cases, `query_borrows`, `world_functions` and the rows' parameter test; the docs site's build.
+  `sparse_cache_codegen`'s prefetch pin moved to the first lane its rows copy.
+- **Measured**: notes/benchmarks.md, A wide component's rows. Mount & Rifle's tick 2.48 to 1.66 ms and its views
+  3.41 to 2.94 ms (p50), on the game with its workarounds still in.
+- **Remaining** (not built):
+  - A system whose analysis says "all" still copies every lane for the rows its guard lets through: one that Sets
+    its own component through the World, starts tasks, or hands the component whole to C, a method or a property.
+  - Systems that run in entity order still pay their setup once per run of rows rather than once per chunk; with
+    few lanes that's small, with all 186 it's most of what's left of a row.
+  - A view's query handed to a helper, or a row's component copied to a local (`var p = row.p;`, which also copies
+    its lists for every row), reads all of it. Reading `row.p.field` where it's used is what narrows.
+  - Going through a query in match code costs about 70 ns a row in entity order (17 times through 346 `Spot`
+    rows: 0.39 ms), which is most of what Mount & Rifle's Roam costs (1.3 ms a tick). Not a wide component's cost,
+    and not looked into here.
+- **A build for a debugger keeps whole copies and no guard** (`system_rows_plain`: not with
+  `codegen_options.split_plumbing`, which `tide`'s debug builds ask for). The debugger test caught it: a system's
+  parameter showed the fields its code doesn't read as whatever was in memory (`tidec_debugger_natvis`), and a
+  breakpoint on a guarded system's first line would stop only for the rows that get past it. So debug and release
+  builds differ here, in speed only; the suites' games are generated the release way. A view's partial copies are in
+  both, as they have been since 2026-10-30.
+
 ## Sparse cache CI fixture capacities (2026-11-07)
 
 The private sparse-cache differential fixture now derives chunk and task counts
@@ -348,7 +455,8 @@ run once per entity, both in the generated C:
   - Not partial: components a `frag` or `vert` takes (a draw sends them from
     the view's copy, which no expression in the view names; `instancing` and
     `shaders` caught it), `verified` parameters and joins, components with corrections
-    (`decl_corrects`), an `Interpolate`, blending that reads the heap
+    (`decl_corrects`; partial too since 2026-11-10, the corrected fields always
+    among the lanes: see the top section), an `Interpolate`, blending that reads the heap
     (`blend_reads_heap`), sharded games, `mut` local components (put back
     whole), views that start tasks, and components past 1,024 lanes or 4 KiB.
   - The duel's `DrawFighter` reads 183 of `Fighter`'s 308 bytes (its pose
@@ -434,7 +542,8 @@ end and handed back the unchanged ones.
   everything inside blocks, lambdas and steps. A property, an element, a local
   part or anything it can't place writes all of what it's in; a field `Snap()`
   writes the whole component (its hidden counter). Views, systems that don't
-  run alone (`rows_alone`: World writes, World reads of what they change,
+  run alone (until 2026-11-10, when `writes_own` took its place and only tasks
+  and preparation state count: see the top section; `rows_alone`: World writes, World reads of what they change,
   tasks), `World.Set` of the component, two `mut` parameters of one component
   and components of more than 64 lanes keep every lane. `written_lanes` turns
   bytes into a lane mask.

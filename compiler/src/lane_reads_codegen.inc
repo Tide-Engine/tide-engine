@@ -90,6 +90,31 @@ static bool in_local_part(const expr *e, const reads_root *root)
 }
 
 static const byte_writes *code_reads(const decl *code, int index);
+
+// The bytes of a value of type `t`, from `base`, that hold text, lists, maps or grids: what a copy with lists of
+// its own reads of it (tide_copy_<T>), whatever else is done with it. Marked in `r`.
+static void heap_bytes(const type t, const int base, byte_writes *r)
+{
+    // (type_has_text answers for a struct's fields, not a component's or a singleton's)
+    const bool fields = (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT) && t.decl;
+    if (!fields) {
+        if (type_has_text(t)) writes_mark(r, base, type_layout(t).size);
+        return;
+    }
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const field *f = &t.decl->fields.items[i];
+        const bool nested = (f->type.kind == TY_STRUCT || f->type.kind == TY_COMPONENT || f->type.kind == TY_SINGLETON) && f->type.decl;
+        if (!nested && !type_has_text(f->type)) continue;
+        if (nested && !decl_has_text(f->type.decl)) continue;
+        const int at = writes_field_offset(t.decl, f);
+        if (at < 0) {
+            r->all = true;
+            return;
+        }
+        heap_bytes(f->type, base + at, r);
+    }
+}
+
 static void expr_reads(const expr *e, const reads_root *root, byte_writes *r);
 static void stmt_reads(const stmt *s, const reads_root *root, byte_writes *r);
 
@@ -160,7 +185,15 @@ static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
             expr_reads(arg, root, r);
             continue;
         }
+        // A read-only argument holding lists the call could change is handed over as a copy with lists of its
+        // own (gen_routine_call): its text and lists are read to make one, whatever the callee's code reads.
+        // (By the types alone, which says so at least wherever the call does.)
+        const param *taken = &callee->params.items[i];
+        const bool copied = taken->mode != PARAM_MUT && type_has_list(taken->type) && !type_is_asset_collection(taken->type)
+            && call_changes_lists_of(callee, e, taken->type, NULL, NULL);
         const byte_writes *sub = code_reads(callee, i);
+        if (copied && p.size == type_layout(taken->type).size) heap_bytes(taken->type, p.off, r);
+        else if (copied) sub = NULL;
         if (!sub || sub->all || sub->size != p.size) writes_mark(r, p.off, p.size);
         else {
             for (int b = 0; b < sub->size; b++) {
@@ -292,8 +325,38 @@ static bool reads_some_allowed(const gen *g, const decl *d, const decl *code)
             if (s->params.items[k].type.decl == d && stmt_has_drawing(code->body)) return false;
         }
     }
-    return lanes > 1 && lanes <= LANE_MASK_MOST && decl_layout(d).size <= LANE_WRITES_MOST && !decl_corrects(d) && !d->interpolate
+    return lanes > 1 && lanes <= LANE_MASK_MOST && decl_layout(d).size <= LANE_WRITES_MOST && !d->interpolate
         && !blend_reads_heap(d) && !sharded(g);
+}
+
+static bool reads_lane_mask(const decl *d, const byte_writes *r, lane_mask *mask);
+
+// The bytes of `d`'s fields a view's correction changes (tide_correct_view_<C>: its [Position] and [Rotation]
+// fields, a struct's too), from `base` in the value: marked in `r`
+static void correction_bytes(const decl *d, const int base, byte_writes *r)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->hidden || correction_snap(f)) continue;
+        const int at = writes_field_offset(d, f);
+        if (at < 0) {
+            r->all = true;
+            return;
+        }
+        if (f->view_correction) writes_mark(r, base + at, type_layout(f->type).size);
+        else if (f->type.kind == TY_STRUCT && decl_corrects(f->type.decl)) correction_bytes(f->type.decl, base + at, r);
+    }
+}
+
+// Bytes a view reads as lanes (reads_lane_mask), with the fields its correction changes: a view corrects the
+// copy it reads whatever it reads of it, which reads and writes those. False when that's every lane.
+static bool view_lane_mask(const decl *d, const byte_writes *r, lane_mask *mask)
+{
+    if (!r || r->all || !decl_corrects(d)) return reads_lane_mask(d, r, mask);
+    byte_writes with = {r->size, false, arena_alloc((size_t)r->size)};
+    memcpy(with.bytes, r->bytes, (size_t)r->size);
+    correction_bytes(d, 0, &with);
+    return reads_lane_mask(d, &with, mask);
 }
 
 // Bytes read as lanes, with the hidden fields (the counts of snaps blending
@@ -331,7 +394,7 @@ static bool view_param_lanes(const gen *g, const decl *sys, const int i, lane_ma
         || p->verified || joined(sys, p) || !reads_some_allowed(g, p->type.decl, sys)) {
         return false;
     }
-    return reads_lane_mask(p->type.decl, code_reads(sys, i), mask);
+    return view_lane_mask(p->type.decl, code_reads(sys, i), mask);
 }
 
 // How many times the code names parameter `q`, and how many of those are
@@ -392,6 +455,50 @@ static void stmt_query_uses(const stmt *s, query_uses *u)
     stmt_query_uses(s->else_stmt, u);
 }
 
+// Whether a view makes its queries' rows itself, where its code first names one, rather than being handed them
+// made: one that runs once a frame. (A view that runs for each entity makes them before the first, and keeps
+// them for the rest.)
+static bool view_rows_lazy(const gen *g, const decl *sys)
+{
+    return sys->is_view && !sys->per_entity && sys->body && !sys->is_async && !sys->starts_tasks && !sharded(g) && takes_query_rows(sys);
+}
+
+// The first of a view's statements that names one of its queries over the match: its count where none does
+static int view_rows_from(const decl *sys)
+{
+    for (int i = 0; i < sys->body->stmts.count; i++) {
+        for (int k = 0; k < sys->params.count; k++) {
+            const param *q = &sys->params.items[k];
+            if (q->type.kind != TY_QUERY || !q->query_rows) continue;
+            query_uses u = {q, 0, 0};
+            stmt_query_uses(sys->body->stmts.items[i], &u);
+            if (u.named || u.looped) return i;
+        }
+    }
+    return sys->body->stmts.count;
+}
+
+static bool rows_name_char(const char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+// Whether generated C `text` names the rows of one of a view's queries, tide_q<i> or tide_q<i>n
+static bool text_names_rows(const decl *sys, const char *text, const size_t n)
+{
+    for (size_t at = 0; at + 6 < n; at++) {
+        if (memcmp(text + at, "tide_q", 6) != 0 || (at > 0 && rows_name_char(text[at - 1]))) continue;
+        size_t end = at + 6;
+        int index = 0;
+        if (end >= n || text[end] < '0' || text[end] > '9') continue;
+        while (end < n && text[end] >= '0' && text[end] <= '9' && index < 100000) index = index * 10 + (text[end++] - '0');
+        if (end < n && text[end] == 'n') end++;
+        if (end < n && rows_name_char(text[end])) continue;
+        if (index < sys->params.count && sys->params.items[index].type.kind == TY_QUERY && sys->params.items[index].query_rows) return true;
+    }
+    return false;
+}
+
 // What the foreach statements over query `q` read of its row's `binding`,
 // counting those it reaches: statements of statements, not of an expression's
 // block
@@ -434,7 +541,7 @@ static bool view_query_lanes(const gen *g, const decl *sys, const int qi, const 
     int reached = 0;
     stmt_row_reads(sys->body, q, binding, &r, &reached);
     if (reached != u.looped) return false; // One in a block it didn't look in
-    return reads_lane_mask(p->type.decl, &r, mask);
+    return view_lane_mask(p->type.decl, &r, mask);
 }
 
 // A transient match foreach row: never shorten a value that can escape into

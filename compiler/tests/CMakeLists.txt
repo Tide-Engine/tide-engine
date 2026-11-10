@@ -60,6 +60,10 @@ tide_e2e_test(wide_lanes) # Lanes a system can't write past 64; text passed whol
 add_test(NAME tidec_wide_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_wide_lanes/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/wide_lanes_codegen.cmake")
+tide_e2e_test(row_lanes) # Rows copy the lanes their system reads or writes, after its leading tests; views make their rows when named
+add_test(NAME tidec_row_lanes_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_row_lanes/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/row_lanes_codegen.cmake")
 tide_e2e_test(view_reads) # Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied
 tide_e2e_test(shared_bindings)
 tide_e2e_test(shared_bindings_fallback)

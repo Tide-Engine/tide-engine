@@ -13,8 +13,8 @@
 // a place of it, and everything the code holds inside it (blocks, lambdas,
 // steps). What it can't tell exactly it takes as written: a property, an
 // element, a swizzle across its vector, a value it can't place. A component
-// whose lanes it can't say (more than LANE_MASK_MOST, or a code that reaches it
-// another way: through its World, or in a task) is written whole.
+// whose lanes it can't say (more than LANE_MASK_MOST, or a code that writes it
+// another way: a Set of it through its World, or a task) is written whole.
 
 #define LANE_WRITES_MOST 4096 // Bytes of a parameter this follows; past that, all of it
 
@@ -266,7 +266,21 @@ static const byte_writes *code_writes(const decl *code, const int index)
     return &lane_memo.items[at].w;
 }
 
-static bool rows_alone(const decl *sys);
+static lane_mask system_comp_lanes(const gen *g, const decl *sys, int a, int c);
+
+// Whether only a system's own code, through its parameters, writes the lanes of the components it takes `mut`
+// while its loop runs. Not where it starts tasks, which get and put back their entity's components themselves,
+// nor with a component that keeps preparation state. (A Set of the component itself through the World is asked
+// of each component: world_sets_component.) What it Sets of other components, and what it reads of this one
+// through its World (rows written in place, world_reads_own_writes), changes nothing of what its rows write.
+static bool writes_own(const decl *sys)
+{
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->mode == PARAM_MUT && p->type.kind == TY_COMPONENT && p->type.decl->has_preparation_state) return false;
+    }
+    return !sys->starts_tasks;
+}
 
 // The lanes of component `c` a system's code can write, a bit each (lane k is
 // bit k): every lane of one it takes `mut` when this can't say less
@@ -275,7 +289,7 @@ static lane_mask written_lanes(const gen *g, const decl *sys, const int c)
     const decl *d = g->prog->components.items[c];
     const int lanes = comp_lanes(d), width = comp_width(d);
     const lane_mask every = lane_every(lanes);
-    if (lanes > LANE_MASK_MOST || !rows_alone(sys) || world_sets_component(sys, d) || sys->is_view || !sys->body) return every;
+    if (lanes > LANE_MASK_MOST || !writes_own(sys) || world_sets_component(sys, d) || sys->is_view || !sys->body) return every;
     int index = -1;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];

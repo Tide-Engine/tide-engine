@@ -1,0 +1,274 @@
+// A wide component, as a game's party is: a system's rows copy the lanes its
+// code can read or write and no others, tests a system starts with run before
+// the rest of a row's copies are made (tide_guard_<System>), a helper handed
+// the world reads a singleton's lists where they are, and a view that runs
+// once makes its queries' rows where its code first names one (notes/ecs.md).
+// Every result is the same with whole copies: the test compares a world that
+// writes in place with one written apart beside a snapshot.
+scene Main { }
+
+enum Kind { Bot, Human, Hauler }
+
+struct Tally
+{
+    int a;
+    List<int> seen;
+}
+
+// Half the rows have it: another archetype, so rows come in runs
+component Mark { }
+
+[Sparse]
+component Chosen { }
+
+// About seventy lanes, text and lists among them
+component Fat
+{
+    string name;
+    [Position] float2 at;
+    Kind kind;
+    bool live;
+    Entity target;
+    List<float2> path;
+    int next;
+    int[40] spare;
+    List<int> cargo;
+    Tally tally;
+    int steps;
+    int flag;
+    float speed;
+    double until;
+    int marks;
+    int picked;
+}
+
+component Other
+{
+    int n;
+    List<int> log;
+}
+
+singleton Ground
+{
+    List<int> cells;
+    List<float2> points;
+    bool ready;
+}
+
+singleton Sum
+{
+    bool made;
+    int ticks;
+    int humans;
+    int total;
+    int logged;
+    int left;
+    int routed;
+}
+
+local singleton Gate
+{
+    bool open;
+}
+
+local singleton Seen
+{
+    int early;
+    float x;
+    int rows;
+    int live;
+    int steps;
+    float eachX;
+}
+
+system Setup(mut Sum sum, mut Ground ground)
+{
+    if (sum.made) return;
+    sum.made = true;
+    for (var i = 0; i < 64; i++) ground.cells.Add(i * 2);
+    ground.points.Add(float2(1, 2));
+    ground.ready = true;
+    var other = Spawn(Other { n = 1 });
+    mut Entity first = default;
+    for (var i = 0; i < 6; i++)
+    {
+        mut var fat = Fat { name = $"fat{i}", at = float2(i, 0), live = i % 2 == 0, speed = 0.5 * (i + 1), flag = -1 };
+        fat.kind = i == 0 ? Kind.Human : i == 5 ? Kind.Hauler : Kind.Bot;
+        fat.spare[7] = 100 + i;
+        fat.cargo.Add(i);
+        fat.cargo.Add(i + 1);
+        fat.tally.seen.Add(i);
+        if (i == 3) fat.target = other;
+        if (i == 4) fat.target = first;
+        if (i == 2 || i == 4)
+        {
+            fat.path.Add(float2(1, 1));
+            fat.path.Add(float2(2, 2));
+            fat.path.Add(float2(3, 3));
+        }
+        if (i % 3 == 0)
+        {
+            var made = Spawn(fat, Mark);
+            if (i < 2) made.Add(Chosen);
+            if (i == 0) first = made;
+        }
+        else
+        {
+            var made = Spawn(fat);
+            if (i < 2) made.Add(Chosen);
+        }
+    }
+}
+
+[After(Setup)]
+system Tick(mut Sum sum)
+{
+    sum.ticks += 1;
+    sum.humans = 0;
+    sum.total = 0;
+    sum.left = -1;
+    sum.routed = 0;
+}
+
+// A test, then two lanes read and two written
+[After(Tick)]
+system Step(mut Fat f)
+{
+    if (!f.live) return;
+    f.steps += 1;
+    f.at.x += f.speed;
+}
+
+// Read-only, with a test of two parts: no lane of it is written
+[After(Step)]
+system Count(Fat f, mut Sum sum)
+{
+    if (f.kind != Kind.Human || !f.live) return;
+    sum.humans += 1;
+    sum.total += f.steps;
+}
+
+// Writes a lane it never reads, on some ticks: the lane is copied all the same, and put back as it was
+[After(Count)]
+system Flag(mut Fat f, Sum sum)
+{
+    if (sum.ticks % 2 == 1) f.flag = sum.ticks;
+}
+
+// A list's count in its test
+[After(Flag)]
+system Empty(mut Fat f)
+{
+    if (f.cargo.count == 0 || f.kind != Kind.Hauler) return;
+    f.cargo.Clear();
+}
+
+// A helper handed the world and a singleton of lists: it Sets another component, which changes no list of
+// the singleton's, so it reads them where they are
+void Visit(mut Fat f, mut World world, Ground ground)
+{
+    if (!ground.ready || !world.TryGet<Other>(f.target, out var found)) return;
+    mut var next = found;
+    next.n += ground.cells.count + ground.cells[3];
+    world.Set<Other>(f.target, next);
+    f.marks += 1;
+}
+
+[After(Empty)]
+system Reach(mut Fat f, mut World world, Ground ground)
+{
+    if (f.target == default) return;
+    Visit(f, world, ground);
+}
+
+// ...and one whose Set does change what it was handed: its own copy, as the call began
+void Append(mut World world, Other seen, Entity e, mut Sum sum)
+{
+    mut var o = world.Get<Other>(e);
+    o.log.Add(o.n);
+    world.Set<Other>(e, o);
+    sum.logged = seen.log.count;
+}
+
+[After(Reach)]
+system Log(mut World world, mut Sum sum, query (Other o) others)
+{
+    foreach (var row in others) Append(world, row.o, row.entity, sum);
+}
+
+// Handed its Fat whole beside one of its lists to change: a copy with lists of its own, read after the change
+bool Route(Ground ground, Fat f, float2 to, mut List<float2> path)
+{
+    path.Clear();
+    path.Add(f.at);
+    path.Add(to + ground.points[0]);
+    return f.live && f.cargo.count == 2;
+}
+
+[After(Log)]
+system Plan(mut Fat f, Ground ground)
+{
+    if (f.kind != Kind.Bot || f.path.count != 3) return;
+    if (Route(ground, f, float2(9, 9), f.path)) f.next = f.path.count + f.cargo.count + f.tally.seen.count;
+}
+
+// Rows a sparse component leaves out, and a test on those it's for
+[After(Plan)]
+system Pick(mut Fat f, with Chosen)
+{
+    if (!f.live) return;
+    f.picked += 10;
+}
+
+// Reads its own component through its World: its rows are written in place, where it reads them back. Only the
+// first part of its test is plain, so only that is its guard.
+[After(Pick)]
+system Lead(mut Fat f, World world)
+{
+    if (f.target == default || !world.Has<Fat>(f.target)) return;
+    f.until = world.Get<Fat>(f.target).steps + f.steps;
+}
+
+// What the lists came to, for the test to read
+[After(Pick)]
+system Left(Fat f, mut Sum sum)
+{
+    if (f.kind == Kind.Hauler) sum.left = f.cargo.count;
+    if (f.kind == Kind.Bot && f.path.count == 2) sum.routed += 1;
+}
+
+int CountLive(query (Fat f) fats)
+{
+    mut var n = 0;
+    foreach (var row in fats) if (row.f.live) n += 1;
+    return n;
+}
+
+// Returns before it names its query, while the gate's shut: no row is made
+view Early(query (Fat f) fats, mut Seen seen, Gate gate)
+{
+    seen.early += 1;
+    if (!gate.open) return;
+    seen.x = 0;
+    seen.rows = 0;
+    foreach (var row in fats)
+    {
+        seen.x += row.f.at.x;
+        seen.rows += 1;
+    }
+}
+
+// Hands its query to a helper in its first statement
+[After(Early)]
+view Hands(query (Fat f) fats, mut Seen seen)
+{
+    seen.live = CountLive(fats);
+}
+
+// For each entity, a field beside the one a correction changes
+[After(Hands)]
+view Each(Fat f, mut Seen seen, with Mark)
+{
+    if (f.kind == Kind.Human) seen.steps = f.steps;
+    if (f.kind == Kind.Human) seen.eachX = f.at.x;
+}

@@ -75,7 +75,8 @@ foreach(required IN ITEMS "tide_rows_cache_find(" "tide_rows_plan_prepare(" "ref
         "tide_warm < tide_to && tide_warm - tide_from < 4u"
         "if (tide_prefetch && tide_to - tide_pick > 4u) {"
         "const uint32_t tide_prefetch_i = tide_selected[tide_pick + 4u];"
-        "__builtin_prefetch(tide_col_Item[0] + (size_t)tide_prefetch_i * 4u, 1, 3);"
+        # (The first lane its rows copy: `ordinal`, lane 0, is none of what the system reads or writes)
+        "__builtin_prefetch(tide_col_Item[1] + (size_t)tide_prefetch_i * 4u, 1, 3);"
         "tide_cached && tide_cached->pass < (tide_cached->rows + 15u) / 16u"
         "tide_rows_cache_lower(tide_cached, tide_from)"
         "tide_rows_cache_lower(tide_cached, tide_to)")
