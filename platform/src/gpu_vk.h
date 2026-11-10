@@ -72,5 +72,8 @@ void tide_gpu_vk_swapchain(int *width, int *height, uint32_t *made);
 // file it was given (tide_gpu.pipeline_cache), 0 for none: no file, one that
 // isn't whole, or one for another device or driver.
 size_t tide_gpu_vk_pipeline_cache_read(void);
+// For tests: how many bytes of the driver's data a cache file can have and still be read (64 MiB): a bigger one
+// is left out, and written over as the run ends with what the run compiled.
+void tide_gpu_vk_pipeline_cache_outgrown(size_t bytes);
 
 extern const tide_gpu tide_gpu_vulkan;

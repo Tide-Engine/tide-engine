@@ -1,5 +1,24 @@
 # The platform layer and the renderer
 
+## A pipeline cache file that outgrew its game starts over (2026-11-10)
+
+Owner, on the 268 MB `pipelines.vulkan` noted below: "go with your recommendation". The driver's cache data only
+grows: a shader that changes leaves its old pipelines in it and nothing takes them out, so a game whose shaders are
+worked on for weeks has a file that's nearly all for shaders that are gone. It was read, hashed and handed to the
+driver at every start, and past `CACHE_MOST` (256 MiB, which the owner's file was 44 KB under) never written again.
+
+- `cache_read_work` leaves out a file with more than `cache_outgrown` bytes of the driver's data (64 MiB; a game's
+  own pipelines are megabytes). The run then compiles what it draws with into the device's empty cache, and
+  `write_pipeline_cache` writes that over the file as the backend closes, as it does for a file that was corrupt.
+- The cost is that one start: with the file gone, Mount & Rifle's shader step took 7.7 s where it takes about 5 s
+  (the driver's own cache still had them).
+- `tide_gpu_vk_pipeline_cache_outgrown(bytes)` (gpu_vk.h) sets the size for tests. `tide_platform_pipeline_cache`
+  has an `outgrown` run: a whole file a run would read, with the size set under it, is read as 0 bytes, and the
+  run after reads the file that was written over it. Passing under ASan on Windows with `tide_platform_prewarm`,
+  `_loading` and `_draw`.
+- The fallback folder's file (`%TEMP%/dev.tide.game/pipelines.vulkan`, which games with no name yet shared) is no
+  longer read by the standard host; what's there is the owner's to delete.
+
 ## The loader's frames while pipelines are made (2026-11-10)
 
 Owner: "the loading and compiling shaders initial view seems to be blocking main thread, its not smooth and window

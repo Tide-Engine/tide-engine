@@ -7,6 +7,7 @@
 //   pipeline_cache corrupt   a byte of the file changed: it's left out, and written over as the run ends
 //   pipeline_cache foreign   a whole file, for another device: left out too
 //   pipeline_cache cut       the file cut short: left out too
+//   pipeline_cache outgrown  the file bigger than one is read at: left out, and written over with the run's own
 //
 // Each draws what the renderer has pipelines for, and reads it back.
 
@@ -46,7 +47,7 @@ static bool spoil(const char *file)
         remove(file);
         return true;
     }
-    if (strcmp(mode, "warm") == 0) return true;
+    if (strcmp(mode, "warm") == 0 || strcmp(mode, "outgrown") == 0) return true;
     size_t size = 0;
     uint8_t *bytes = tide_file_read_whole(file, SIZE_MAX, &size);
     if (!bytes || size < 24u + 32u) {
@@ -90,6 +91,15 @@ static int frame(void *user, const float seconds)
     }
     const size_t read = tide_gpu_vk_pipeline_cache_read();
     const bool wants = strcmp(mode, "warm") == 0;
+    if (strcmp(mode, "outgrown") == 0) { // A whole file of this device's, which a warm run would read
+        char *file = cache_file();
+        size_t size = 0;
+        uint8_t *bytes = file ? tide_file_read_whole(file, SIZE_MAX, &size) : NULL;
+        printf("%s: the file left out is one a run would read (%zu bytes)\n", size > 24u + 32u ? "ok" : "FAIL", size);
+        free(bytes);
+        free(file);
+        if (size <= 24u + 32u) return 1;
+    }
     const bool drew = got == 0xFF0000FFu;
     printf("%s: a %s run read %zu bytes of pipelines, where it reads %s\n", read > 0 == wants ? "ok" : "FAIL", mode, read,
            wants ? "some" : "none");
@@ -109,6 +119,7 @@ int main(const int argc, char **argv)
     const bool ready = spoil(file);
     free(file);
     if (!ready) return 1;
+    if (strcmp(mode, "outgrown") == 0) tide_gpu_vk_pipeline_cache_outgrown(64u); // Any real file is bigger
     tide_platform_open(&(tide_window_desc){.title = "pipeline cache", .width = 64, .height = 64, .hidden = true});
     tide_platform_run(frame, NULL);
 }

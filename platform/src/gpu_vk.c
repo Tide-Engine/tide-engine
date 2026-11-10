@@ -3908,6 +3908,17 @@ static VkFormat pick_window_format(void)
 // written over it.
 
 enum { CACHE_HEADER = 24, CACHE_MOST = 256u << 20 };
+// A file with more of the driver's data than this isn't read: the run compiles what it draws with into an empty
+// cache, and its file is written over with that as the run ends. The driver's data only grows (a shader that
+// changed leaves its old pipelines in it, and nothing takes them out), so a game whose shaders are worked on
+// gets a file of hundreds of megabytes, nearly all of it for shaders that are gone, read and handed to the driver
+// at every start, and past CACHE_MOST never written again. A game's own pipelines are a few megabytes.
+static size_t cache_outgrown = 64u << 20;
+
+void tide_gpu_vk_pipeline_cache_outgrown(const size_t bytes)
+{
+    cache_outgrown = bytes;
+}
 static const char cache_magic[8] = {'T', 'I', 'D', 'E', 'P', 'S', 'O', '1'};
 
 static uint64_t cache_hash(const uint8_t *data, const size_t size)
@@ -3954,7 +3965,7 @@ static void cache_read_work(void *context)
     if (size >= CACHE_HEADER) memcpy(&length, file + 8, 8), memcpy(&hash, file + 16, 8);
     const uint8_t *data = file + CACHE_HEADER;
     if (size >= CACHE_HEADER && memcmp(file, cache_magic, sizeof cache_magic) == 0 && length == size - CACHE_HEADER
-        && hash == cache_hash(data, (size_t)length) && cache_for_device(data, (size_t)length)) {
+        && length <= cache_outgrown && hash == cache_hash(data, (size_t)length) && cache_for_device(data, (size_t)length)) {
         const VkPipelineCacheCreateInfo info = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, NULL, 0, (size_t)length, data};
         if (vkCreatePipelineCache(vk.device, &info, NULL, &r->read) == VK_SUCCESS) {
             r->length = (size_t)length;
