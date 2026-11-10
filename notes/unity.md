@@ -107,7 +107,7 @@ Direct3D 12 (9/9 each before the Console's log, Vulkan 8/8 after it); EditMode 4
 pass `-tide-command` (it checks a launch without one). A Windows player (Mono) built by `SampleSetup.BuildPlayer`
 and run with `-batchmode -tide-smoke`: PASS with no GPU, and "drew yes" on Direct3D 12 and 11, which is the
 renderer's native uploads in a player.
-Native debug: `tide_platform_embed` 23/23 with `embed_log_is_the_other_programs` (a Debug.Log record once, a bad
+Native debug, and again under Windows ASan (`sanitize`): `tide_platform_embed` 23/23 with `embed_log_is_the_other_programs` (a Debug.Log record once, a bad
 argument's and a missing folder's problems, asked with and without an embed), `tide_platform_reload` with a
 library of another shape published while the game runs (refused, the build running goes on),
 `tide_platform_reload_reads`, `tide_platform_travel`, `tide_platform_embed_shards`, `tide_cli_tests` (the
