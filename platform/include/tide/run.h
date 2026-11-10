@@ -69,6 +69,7 @@
 // The loop itself is in tide/host.h, which runs the game through
 // tide_host_game_api, made here from the game's header.
 
+#include "tide/debug.h"
 #include "tide/host.h"
 #include "tide/pack.h"
 
@@ -277,6 +278,7 @@ static const tide_host_game tide_host_game_api = {
     .voice = tide_voice_get,
     .screen_keyboard = tide_screen_keyboard_get,
     .gpu_reads_share = tide_gpu_reads_share,
+    .debug_log_to = tide_debug_log_to,
     .shaders = tide_game_shaders,
 #ifdef TIDE_HAS_EMBED
     .layout = &tide_game_layout,

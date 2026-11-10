@@ -175,6 +175,15 @@ static const tide_game game = {
     .player_left = player,
 };
 
+TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)
+{
+#ifdef RELOAD_OTHER_SHAPE
+    return TIDE_HOST_SHAPE + 1; // As a library another tide built says: the host doesn't load it
+#else
+    return TIDE_HOST_SHAPE;
+#endif
+}
+
 TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)
 {
     static const tide_host_game host = {

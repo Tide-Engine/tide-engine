@@ -88,6 +88,7 @@ system Rise(mut Tally tally, Time time)
 command(Bump bump, PlayerID sender) Apply(mut Tally tally)
 {
     tally.bumps += bump.by;
+    Debug.Log($"bumped by {bump.by}"); // Which the other program shows (tide_embed_log)
 }
 
 command(Rename rename, PlayerID sender) Renaming(mut Tally tally)

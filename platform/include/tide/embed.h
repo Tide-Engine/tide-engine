@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 18u
+#define TIDE_EMBED_ABI 19u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -130,6 +130,19 @@ const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
 // commands, prefabs and scenes. Valid until a new build comes in; NULL for a game
 // built without tidec's --embed.
 const char *tide_embed_schema(const tide_embed *e, uint32_t *size);
+
+// What the game and the host said since the last call, for the other program to show where its own messages go
+// (Unity's Console): the game's Debug.Log, from whichever thread said it, and what went wrong on the host's side (a
+// build that didn't load, an argument left out). Records one after another, each two uint32_t, its kind and its
+// text's length in bytes, then the text (UTF-8, no end marker), padded to 4 bytes. Valid until the next call; NULL
+// with nothing said. It's the process's, as stderr is, where all of it still goes: `e` may be NULL, which is how
+// to ask why tide_embed_create gave none. More than 256 KiB between two calls is left out, a last record saying so.
+// A web program keeps none: its page's console has it.
+enum {
+    TIDE_EMBED_LOG_GAME = 1,    // Debug.Log
+    TIDE_EMBED_LOG_PROBLEM = 2, // The host's: something went wrong
+};
+const uint8_t *tide_embed_log(tide_embed *e, uint32_t *size);
 
 // What the frame's views drew (tide/draw.h's draw list), for the other program
 // to draw in its own window, as bytes: this header, then its arrays, each from

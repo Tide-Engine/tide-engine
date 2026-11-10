@@ -6,8 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 
-const [hostArg, plainArg, libraryArg, scratchArg, nextArg] = process.argv.slice(2);
-const [host, plain, library, scratch, next] = [hostArg, plainArg, libraryArg, scratchArg, nextArg].map(path => resolve(path));
+const [hostArg, plainArg, libraryArg, scratchArg, nextArg, otherArg] = process.argv.slice(2);
+const [host, plain, library, scratch, next, other] = [hostArg, plainArg, libraryArg, scratchArg, nextArg, otherArg].map(path => resolve(path));
 rmSync(scratch, { recursive: true, force: true });
 mkdirSync(scratch, { recursive: true });
 copyFileSync(library, join(scratch, 'game-1' + extname(library)));
@@ -92,4 +92,18 @@ const builds = groups(swapped);
 assert.equal(builds.length, 2, swapped);
 assert.ok(builds.every(group => group.packed === 1), 'each build has the pack before its local state is made');
 assert.ok(builds[1].frames.length > 4, 'the new build goes on running');
+
+// A build another tide made, as its tables' sizes say (tide/host.h's TIDE_HOST_SHAPE), published while the game runs:
+// the host says so and goes on with the build it has, rather than call through tables laid out otherwise.
+rmSync(join(scratch, 'game-2' + extname(library)), { force: true });
+copyFileSync(library, join(scratch, 'game-1' + extname(library)));
+const foreign = spawnSync(host, [scratch, '--script', quiet, '--size', '64', '64'], {
+    cwd: scratch, encoding: 'utf8', timeout: 100000, env: { ...process.env, TIDE_RELOAD_PUBLISH: other },
+});
+assert.equal(foreign.status, 0, `${foreign.error || ''}\n${foreign.stdout}\n${foreign.stderr}`);
+assert.ok(foreign.stdout.includes('reload-test: next build published'), foreign.stdout);
+assert.ok(foreign.stderr.includes('was built by another tide than the one running it'), foreign.stderr);
+const kept = groups(foreign.stdout);
+assert.equal(kept.length, 1, 'the build that was running is the only one that ran');
+assert.ok(kept[0].frames.length > 20, 'and it went on to the end of the script');
 console.log('ok: Ctrl+R resets native local state, match and C statics, once per press and only in a watching host');

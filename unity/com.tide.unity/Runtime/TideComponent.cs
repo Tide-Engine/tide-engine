@@ -73,35 +73,58 @@ namespace Tide
     }
 
     // A command's bytes as tide_embed_command takes them: its value, then its text and lists, a count, each one's
-    // {offset, length}, then their bytes.
+    // {offset, length}, then their bytes. The runner keeps one, so a command sent every frame makes nothing new.
     public sealed unsafe class TideCommandWriter
     {
-        readonly List<byte[]> entries = new List<byte[]>();
         readonly TideRunner runner;
-        byte[] value = Array.Empty<byte>();
+        byte[] value = new byte[64];
+        int valueSize;
+        byte[] held = new byte[256]; // The text and lists' bytes, one after another
+        int heldSize;
+        int[] entries = new int[8];  // Each one's offset and length in `held`
+        int entryCount;
+        byte[] packed = new byte[256];
 
         internal TideCommandWriter(TideRunner runner)
         {
             this.runner = runner;
         }
 
+        internal void Reset()
+        {
+            valueSize = heldSize = entryCount = 0;
+        }
+
+        // `size` more bytes of `held`, as an entry: where they start.
+        int Entry(int size)
+        {
+            if (held.Length < heldSize + size) Array.Resize(ref held, Math.Max(heldSize + size, held.Length * 2));
+            if (entries.Length < (entryCount + 1) * 2) Array.Resize(ref entries, entries.Length * 2);
+            entries[entryCount * 2] = heldSize;
+            entries[entryCount * 2 + 1] = size;
+            entryCount++;
+            heldSize += size;
+            return heldSize - size;
+        }
+
         public TideText Text(string text)
         {
             if (string.IsNullOrEmpty(text)) return default;
-            entries.Add(Encoding.UTF8.GetBytes(text));
-            return new TideText { handle = (uint)entries.Count };
+            var size = Encoding.UTF8.GetByteCount(text);
+            var at = Entry(size);
+            Encoding.UTF8.GetBytes(text, 0, text.Length, held, at);
+            return new TideText { handle = (uint)entryCount };
         }
 
         public TideList List<T>(List<T> items) where T : unmanaged
         {
             if (items == null || items.Count == 0) return default;
-            var bytes = new byte[items.Count * sizeof(T)];
-            fixed (byte* to = bytes)
+            var at = Entry(items.Count * sizeof(T));
+            fixed (byte* to = &held[at])
             {
                 for (var i = 0; i < items.Count; i++) ((T*)to)[i] = items[i];
             }
-            entries.Add(bytes);
-            return new TideList { handle = (uint)entries.Count };
+            return new TideList { handle = (uint)entryCount };
         }
 
         // An entity field's handle: the entity a GameObject shows this frame, none for null or one that shows none
@@ -112,32 +135,109 @@ namespace Tide
 
         public void Value<T>(T v) where T : unmanaged
         {
-            value = new byte[sizeof(T)];
+            if (value.Length < sizeof(T)) value = new byte[Math.Max(sizeof(T), value.Length * 2)];
             fixed (byte* to = value) *(T*)to = v;
+            valueSize = sizeof(T);
         }
 
-        internal byte[] Bytes()
+        // The command's bytes, the first `size` of what's given: valid until the next command is written.
+        internal byte[] Bytes(out int size)
         {
-            if (entries.Count == 0) return value;
-            var tail = 4 + entries.Count * 8;
-            var total = tail;
-            foreach (var e in entries) total += e.Length;
-            var bytes = new byte[value.Length + total];
-            Buffer.BlockCopy(value, 0, bytes, 0, value.Length);
-            fixed (byte* p = bytes)
+            size = valueSize;
+            if (entryCount == 0) return value;
+            var table = 4 + entryCount * 8;
+            size = valueSize + table + heldSize;
+            if (packed.Length < size) packed = new byte[Math.Max(size, packed.Length * 2)];
+            Buffer.BlockCopy(value, 0, packed, 0, valueSize);
+            fixed (byte* p = packed)
             {
-                var head = (uint*)(p + value.Length);
-                head[0] = (uint)entries.Count;
-                var offset = 0;
-                for (var i = 0; i < entries.Count; i++)
+                var head = (uint*)(p + valueSize);
+                head[0] = (uint)entryCount;
+                for (var i = 0; i < entryCount; i++)
                 {
-                    head[1 + i * 2] = (uint)offset;
-                    head[2 + i * 2] = (uint)entries[i].Length;
-                    Buffer.BlockCopy(entries[i], 0, bytes, value.Length + tail + offset, entries[i].Length);
-                    offset += entries[i].Length;
+                    head[1 + i * 2] = (uint)entries[i * 2];
+                    head[2 + i * 2] = (uint)entries[i * 2 + 1];
                 }
             }
-            return bytes;
+            Buffer.BlockCopy(held, 0, packed, valueSize + table, heldSize);
+            return packed;
+        }
+    }
+
+    // What hears one kind of the match's events: the handlers of TideRunner.On or a TideEntity's, each called with the
+    // event as its own type, with no reflection. A handler added or taken away while they're told makes a new list, so
+    // the telling goes through the one it started with.
+    internal abstract class TideHearing
+    {
+        public abstract bool Empty { get; }
+        public abstract void Tell(TideEvent e, UnityEngine.Object context);
+
+        // Adds or takes away `heard` in `table`'s handlers of `T`
+        public static void Listen<T>(Dictionary<Type, TideHearing> table, Action<T> heard, bool on) where T : TideEvent
+        {
+            if (heard == null) return;
+            if (!table.TryGetValue(typeof(T), out var had))
+            {
+                if (!on) return;
+                table[typeof(T)] = had = new TideHearing<T>();
+            }
+            var typed = (TideHearing<T>)had;
+            if (on) typed.Add(heard);
+            else typed.Remove(heard);
+            if (typed.Empty) table.Remove(typeof(T));
+        }
+
+        // Whether anything in `table` hears events of `kind`
+        public static bool Hears(Dictionary<Type, TideHearing> table, Type kind)
+        {
+            return table.Count > 0 && table.ContainsKey(kind);
+        }
+
+        public static void Tell(Dictionary<Type, TideHearing> table, Type kind, TideEvent e, UnityEngine.Object context)
+        {
+            if (table.Count > 0 && table.TryGetValue(kind, out var hearing)) hearing.Tell(e, context);
+        }
+    }
+
+    internal sealed class TideHearing<T> : TideHearing where T : TideEvent
+    {
+        Action<T>[] handlers = Array.Empty<Action<T>>();
+
+        public override bool Empty => handlers.Length == 0;
+
+        public void Add(Action<T> heard)
+        {
+            var next = new Action<T>[handlers.Length + 1];
+            Array.Copy(handlers, next, handlers.Length);
+            next[handlers.Length] = heard;
+            handlers = next;
+        }
+
+        public void Remove(Action<T> heard)
+        {
+            var at = Array.LastIndexOf(handlers, heard); // The last one added, as taking a delegate away does
+            if (at < 0) return;
+            var next = new Action<T>[handlers.Length - 1];
+            Array.Copy(handlers, next, at);
+            Array.Copy(handlers, at + 1, next, at, next.Length - at);
+            handlers = next;
+        }
+
+        public override void Tell(TideEvent e, UnityEngine.Object context)
+        {
+            var told = handlers;
+            var typed = (T)e;
+            for (var i = 0; i < told.Length; i++)
+            {
+                try
+                {
+                    told[i](typed);
+                }
+                catch (Exception thrown)
+                {
+                    Debug.LogException(thrown, context); // One handler's mistake doesn't keep the rest from hearing
+                }
+            }
         }
     }
 
@@ -146,18 +246,33 @@ namespace Tide
     public static class TideTypes
     {
         static readonly Dictionary<string, Type> byName = new Dictionary<string, Type>();
+        static readonly Dictionary<string, Func<object>> makers = new Dictionary<string, Func<object>>();
 
         public static ulong Hash { get; private set; }
 
-        public static void Register(string hash, string name, Type type)
+        // Counts each registration: what was found by name before is looked for again once it moves
+        public static int Version { get; private set; }
+
+        // `make` makes one of a singleton or an event, which the runner makes itself: none for a component, which
+        // Unity makes.
+        public static void Register(string hash, string name, Type type, Func<object> make = null)
         {
             Hash = ulong.TryParse(hash, System.Globalization.NumberStyles.HexNumber, null, out var h) ? h : 0;
             byName[name] = type;
+            if (make != null) makers[name] = make;
+            else makers.Remove(name);
+            Version++;
         }
 
         public static Type Of(string name)
         {
             return name != null && byName.TryGetValue(name, out var type) ? type : null;
+        }
+
+        // What makes one of the singleton or event named `name`, or null for one registered without
+        internal static Func<object> Maker(string name)
+        {
+            return name != null && makers.TryGetValue(name, out var make) ? make : null;
         }
     }
 }

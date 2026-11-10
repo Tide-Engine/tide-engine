@@ -126,10 +126,13 @@ namespace Tide
         static readonly System.Collections.Generic.Dictionary<Type, System.Reflection.FieldInfo> partFields =
             new System.Collections.Generic.Dictionary<Type, System.Reflection.FieldInfo>();
 
+        static readonly List<TideComponent> beside = new List<TideComponent>();
+
         // The GameObject whose body `shape`'s entity is a part of, or null for none
         public static GameObject BodyOf(Component shape)
         {
-            foreach (var c in shape.GetComponents<TideComponent>())
+            shape.GetComponents(beside); // Into a list kept: this is asked of every shape each frame
+            foreach (var c in beside)
             {
                 var type = c.GetType();
                 if (!partFields.TryGetValue(type, out var field))
@@ -181,22 +184,23 @@ namespace Tide
 
         public static Vector2 Points(Vector2 value, Component shape) => Point(value, shape, BodyOf(shape), true);
 
+        // A list's points are changed where they are, in the list given: a component's own, read again each frame
         public static List<Vector3> Points(List<Vector3> values, Component shape)
         {
             if (values == null) return null;
             var body = BodyOf(shape);
-            var points = values.ConvertAll(v => Point(v, shape, body, false));
-            if (Mirrored(shape.transform.lossyScale, false)) points.Reverse();
-            return points;
+            for (var i = 0; i < values.Count; i++) values[i] = Point(values[i], shape, body, false);
+            if (Mirrored(shape.transform.lossyScale, false)) values.Reverse();
+            return values;
         }
 
         public static List<Vector2> Points(List<Vector2> values, Component shape)
         {
             if (values == null) return null;
             var body = BodyOf(shape);
-            var points = values.ConvertAll(v => (Vector2)Point(v, shape, body, true));
-            if (Mirrored(shape.transform.lossyScale, true)) points.Reverse();
-            return points;
+            for (var i = 0; i < values.Count; i++) values[i] = Point(values[i], shape, body, true);
+            if (Mirrored(shape.transform.lossyScale, true)) values.Reverse();
+            return values;
         }
 
         public static bool Mirrored(Vector3 scale, bool flat) => (flat ? scale.x * scale.y : scale.x * scale.y * scale.z) < 0;

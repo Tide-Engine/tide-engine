@@ -58,6 +58,7 @@ namespace Tide
         const int HeaderSize = 48;
         const int EntitySize = 32;
         const int SectionHeaderSize = 24;
+        const uint MaxTypes = 1u << 20; // A schema's types are far fewer: a packet saying more is read without its table
 
         byte* bytes;
         uint size;
@@ -80,11 +81,19 @@ namespace Tide
         uint entities; // Where the entities start
         int strings = -1;
 
+        // Which section holds each type's rows or value: byType[kind - 1][type] is its index in `sections` plus one, 0
+        // for none, for the four kinds a type has one of. Found once a packet, as every row's read asks.
+        readonly int[][] byType = { Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>() };
+
         // Reads `size` bytes at `data`, the packet tide_embed_view gave: false for one that isn't whole or isn't one.
         public bool Read(byte* data, uint length)
         {
             bytes = null;
             size = 0;
+            foreach (var had in sections)
+            {
+                if (had.Kind >= 1 && had.Kind <= 4 && had.Type < (uint)byType[had.Kind - 1].Length) byType[had.Kind - 1][had.Type] = 0;
+            }
             sections.Clear();
             heard.Clear();
             strings = -1;
@@ -117,6 +126,12 @@ namespace Tide
                 if (s.Kind == (uint)TideSectionKind.Strings) strings = sections.Count;
                 if (s.Kind == (uint)TideSectionKind.Events && !ReadHeard(data, s, entityCount)) return false;
                 sections.Add(s);
+                if (s.Kind >= 1 && s.Kind <= 4 && s.Type < MaxTypes)
+                {
+                    ref var table = ref byType[s.Kind - 1];
+                    if (s.Type >= (uint)table.Length) Array.Resize(ref table, Math.Max((int)s.Type + 1, table.Length * 2));
+                    if (table[s.Type] == 0) table[s.Type] = sections.Count; // The first of a type, as a search would find
+                }
                 at = (ulong)s.Data + s.Bytes;
             }
             bytes = data;
@@ -190,11 +205,24 @@ namespace Tide
 
         int Find(TideSectionKind kind, uint type)
         {
-            for (var i = 0; i < sections.Count; i++)
-            {
-                if (sections[i].Kind == (uint)kind && sections[i].Type == type) return i;
-            }
-            return -1;
+            var table = byType[(int)kind - 1];
+            return type < (uint)table.Length ? table[type] - 1 : -1;
+        }
+
+        // Component `type`'s rows at once, for reading every one: how many, each value's size, each row's entity (its
+        // index among the packet's entities, to be checked against EntityCount) and the first value. 0 for none.
+        public int Rows(uint type, out uint stride, out uint* rowEntities, out byte* values, bool local = false)
+        {
+            stride = 0;
+            rowEntities = null;
+            values = null;
+            var i = Find(local ? TideSectionKind.ComponentLocal : TideSectionKind.Component, type);
+            if (i < 0 || bytes == null) return 0;
+            var s = sections[i];
+            stride = s.Stride;
+            rowEntities = (uint*)(bytes + s.Data);
+            values = bytes + s.Data + (uint)(((ulong)s.Count * 4 + 7) & ~7ul);
+            return (int)s.Count;
         }
 
         // How many entities have component `type` (the schema's type index), and the stride of its values.
@@ -231,6 +259,50 @@ namespace Tide
         {
             if (!Entry(handle, out var at, out var length)) return string.Empty;
             return Encoding.UTF8.GetString(bytes + at, (int)length);
+        }
+
+        // ...or `had` itself where that's what the text is, so a value read every frame makes a string only as it
+        // changes.
+        public string Text(uint handle, string had)
+        {
+            if (!Entry(handle, out var at, out var length)) return string.Empty;
+            if (had != null && Same(bytes + at, (int)length, had)) return had;
+            return Encoding.UTF8.GetString(bytes + at, (int)length);
+        }
+
+        // Whether `text` is the UTF-8 at `utf8`.
+        static bool Same(byte* utf8, int length, string text)
+        {
+            if (text.Length > length) return false; // Each character is at least a byte
+            var i = 0;
+            for (; i < length && i < text.Length && utf8[i] < 0x80; i++)
+            {
+                if (utf8[i] != text[i]) return false;
+            }
+            if (i == length) return i == text.Length;
+            // Past plain ASCII: decoded, a part at a time
+            const int part = 256;
+            var chars = stackalloc char[part + 2];
+            var at = i;
+            while (at < length)
+            {
+                // Whole sequences only: stop before one that would run past this part
+                var end = Math.Min(length, at + part);
+                if (end < length)
+                {
+                    while (end > at && (utf8[end] & 0xC0) == 0x80) end--;
+                    if (end == at) end = Math.Min(length, at + part); // Not UTF-8: decoded as it comes
+                }
+                var n = Encoding.UTF8.GetChars(utf8 + at, end - at, chars, part + 2);
+                if (i + n > text.Length) return false;
+                for (var k = 0; k < n; k++)
+                {
+                    if (chars[k] != text[i + k]) return false;
+                }
+                i += n;
+                at = end;
+            }
+            return i == text.Length;
         }
 
         // A list field's elements: the packet's handle for it, and each element's size.

@@ -38,6 +38,7 @@ static bool carry_bytes(const tide_layout *old, const tide_layout_world *old_wor
 
 #if !defined(__wasm__)
 
+#include <stdarg.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -211,6 +212,25 @@ static bool keep_library(const char *from, const char *to)
     return ok;
 }
 
+// Where a host that shows what's said itself takes it (tide/embed.h, for the program it's inside of): the Debug.Log
+// lines of each library it loads, and what goes wrong loading one. Unset, both go to stderr alone.
+static void (*library_heard)(const char *text);
+static void (*library_problem)(const char *text);
+
+// A line about a library that didn't load: to stderr, and to the host's own listener
+static void library_say(const char *format, ...) __attribute__((format(printf, 1, 2)));
+
+static void library_say(const char *format, ...)
+{
+    char line[4608];
+    va_list values;
+    va_start(values, format);
+    vsnprintf(line, sizeof line, format, values);
+    va_end(values);
+    fprintf(stderr, "%s\n", line);
+    if (library_problem) library_problem(line);
+}
+
 // Loads a build: its game, or NULL after saying why. A new build first
 // gets its own copy; a full reload reopens that copy.
 static const tide_host_game *load(const uint32_t build, void **library, const bool fresh)
@@ -221,7 +241,7 @@ static const tide_host_game *load(const uint32_t build, void **library, const bo
         char published[4096];
         library_path(build, published, sizeof published);
         if (!keep_library(published, path)) {
-            fprintf(stderr, "tide: can't keep %s for reloading\n", published);
+            library_say("tide: can't keep %s for reloading", published);
             return NULL;
         }
     }
@@ -229,19 +249,33 @@ static const tide_host_game *load(const uint32_t build, void **library, const bo
     if (!opened) {
         char error[512];
         library_error(error, sizeof error);
-        fprintf(stderr, "tide: can't load %s (%s)\n", path, error);
+        library_say("tide: can't load %s (%s)", path, error);
         if (fresh) remove(path);
         return NULL;
     }
     const library_fn game = library_find(opened, TIDE_HOST_LIBRARY);
     if (!game) {
-        fprintf(stderr, "tide: %s isn't a game's library: it has no %s\n", path, TIDE_HOST_LIBRARY);
+        library_say("tide: %s isn't a game's library: it has no %s", path, TIDE_HOST_LIBRARY);
+        library_close(opened);
+        if (fresh) remove(path);
+        return NULL;
+    }
+    // Built by this host's tide: its tables are laid out as the host reads them
+    const library_fn found = library_find(opened, TIDE_HOST_LIBRARY_SHAPE);
+    uint64_t (*shape)(void) = NULL;
+    memcpy(&shape, &found, sizeof shape); // A function of another type, found as any of the library's
+    if (!shape || shape() != TIDE_HOST_SHAPE) {
+        library_say("tide: %s was built by another tide than the one running it, so it isn't loaded: start the game again, "
+                    "so what runs it is this tide's too",
+                    path);
         library_close(opened);
         if (fresh) remove(path);
         return NULL;
     }
     *library = opened;
     const tide_host_game *loaded = game();
+    // What it logs goes where the host's does (the program an embed is inside of): its engine copy is the one logging
+    if (loaded && loaded->debug_log_to && library_heard) loaded->debug_log_to(library_heard);
     // Its engine copy's reads of GPU lists are the host's table, which the renderer finishes, through every reload
     if (loaded && loaded->gpu_reads_share) loaded->gpu_reads_share(tide_gpu_reads_table());
     return loaded;

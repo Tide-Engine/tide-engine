@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
@@ -126,7 +127,7 @@ namespace Tide
             public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize;
             public uint first, sampling, samplingHigh, unmipped, own, ownHigh;
             public RenderTexture mipmapped; // Mipmaps
-            public GraphicsBuffer[] storage; // Draw: the storage buffers it reads, or null
+            public int storage, storageCount; // Draw: the storage buffers it reads, in its recording's `storage`
             public GraphicsBuffer arguments; // ...and an indirect one's numbers, copied where it is in the frame
         }
 
@@ -136,8 +137,11 @@ namespace Tide
             public readonly List<Command> commands = new List<Command>();
             public readonly List<Texture> textures = new List<Texture>();
             public readonly List<RenderTextureSubElement> elements = new List<RenderTextureSubElement>();
+            public readonly List<GraphicsBuffer> storage = new List<GraphicsBuffer>();
             public GraphicsBuffer uniformBuffer;
-            public byte[] uniformBytes = new byte[0];
+            // The uniform buffer's bytes, of its whole size. Native, as is everything written to the GPU each frame:
+            // Unity's SetData of a managed array makes garbage at every call
+            public NativeArray<byte> uniformBytes;
             public int uniformUsed;
             public bool linear;
         }
@@ -152,7 +156,12 @@ namespace Tide
         readonly Dictionary<uint, Target> targets = new Dictionary<uint, Target>();
         readonly Dictionary<uint, Pipeline> pipelines = new Dictionary<uint, Pipeline>();
         readonly List<(UnityEngine.Object thing, int frame)> doomed = new List<(UnityEngine.Object, int)>();
-        readonly List<(GraphicsBuffer buffer, int frame)> doomedBuffers = new List<(GraphicsBuffer, int)>();
+        readonly List<(GraphicsBuffer buffer, int frame, bool again)> doomedBuffers = new List<(GraphicsBuffer, int, bool)>();
+        // Buffers a rename let go of, once no camera's commands read them: the next rename of a buffer that size takes
+        // one, so a buffer written after a draw read it, each frame, goes round a few buffers rather than making one a
+        // frame. One nothing took for a while is released.
+        readonly List<(GraphicsBuffer buffer, int since)> spares = new List<(GraphicsBuffer, int)>();
+        const int MaxSpares = 64;
         readonly HashSet<ulong> missing = new HashSet<ulong>(); // Shaders said once not to be there
         Dictionary<ulong, ulong> webKeys; // A WGSL's key to its shader's, for a program with no SPIR-V (web-keys.txt)
         readonly Recording frame = new Recording();
@@ -161,8 +170,8 @@ namespace Tide
 
         CommandBuffer commands;
         Camera attached;
-        uint[] words = new uint[0];
-        ushort[] halves = new ushort[0];
+        NativeArray<uint> words;  // What a buffer's write hands to Unity (Words)
+        NativeArray<uint> groupWords; // A direct dispatch's TideGroups
         GraphicsBuffer none; // What an unused vertex slot reads
         Texture2D white;
         Material resolveDepth;
@@ -309,15 +318,22 @@ namespace Tide
             Release(frame);
             foreach (var view in views.Values) Release(view);
             views.Clear();
+            if (words.IsCreated) words.Dispose();
+            words = default;
+            if (groupWords.IsCreated) groupWords.Dispose();
+            groupWords = default;
         }
 
         static void Release(Recording r)
         {
             r.uniformBuffer?.Release();
             r.uniformBuffer = null;
+            if (r.uniformBytes.IsCreated) r.uniformBytes.Dispose();
+            r.uniformBytes = default;
             r.commands.Clear();
             r.textures.Clear();
             r.elements.Clear();
+            r.storage.Clear();
         }
 
         // Everything made, gone: the next frame's commands make it again.
@@ -349,19 +365,49 @@ namespace Tide
         // What was let go of up to `frame`: no camera's commands read it any more.
         void Collect(int frame)
         {
-            doomed.RemoveAll(d =>
+            // Each list is in the order things were let go of, so what's due is at its start
+            var due = 0;
+            for (; due < doomed.Count && doomed[due].frame <= frame; due++)
             {
-                if (d.frame > frame) return false;
-                if (d.thing is RenderTexture rt) rt.Release();
-                if (d.thing != null) DestroyImmediate(d.thing);
-                return true;
-            });
-            doomedBuffers.RemoveAll(d =>
+                var thing = doomed[due].thing;
+                if (thing is RenderTexture rt) rt.Release();
+                if (thing != null) DestroyImmediate(thing);
+            }
+            if (due > 0) doomed.RemoveRange(0, due);
+            due = 0;
+            var now = Time.frameCount;
+            for (; due < doomedBuffers.Count && doomedBuffers[due].frame <= frame; due++)
             {
-                if (d.frame > frame) return false;
-                d.buffer.Release();
-                return true;
-            });
+                var d = doomedBuffers[due];
+                if (d.again && frame != int.MaxValue && spares.Count < MaxSpares) spares.Add((d.buffer, now));
+                else d.buffer.Release();
+            }
+            if (due > 0) doomedBuffers.RemoveRange(0, due);
+            if (frame == int.MaxValue || (now & 255) == 0)
+            {
+                for (var i = spares.Count - 1; i >= 0; i--)
+                {
+                    if (frame != int.MaxValue && now - spares[i].since < 600) continue;
+                    spares[i].buffer.Release();
+                    spares[i] = spares[spares.Count - 1];
+                    spares.RemoveAt(spares.Count - 1);
+                }
+            }
+        }
+
+        // A buffer like `from` for a rename to copy it into: one a rename let go of, else a new one. `from` is let go.
+        GraphicsBuffer Renamed(GraphicsBuffer from)
+        {
+            doomedBuffers.Add((from, Time.frameCount, true));
+            for (var i = spares.Count - 1; i >= 0; i--)
+            {
+                var spare = spares[i].buffer;
+                if (spare.count != from.count || spare.target != from.target) continue;
+                spares[i] = spares[spares.Count - 1];
+                spares.RemoveAt(spares.Count - 1);
+                return spare;
+            }
+            return new GraphicsBuffer(from.target, from.count, 4);
         }
 
         void Doom(UnityEngine.Object thing)
@@ -371,7 +417,7 @@ namespace Tide
 
         void Doom(GraphicsBuffer buffer)
         {
-            if (buffer != null) doomedBuffers.Add((buffer, Time.frameCount));
+            if (buffer != null) doomedBuffers.Add((buffer, Time.frameCount, false));
         }
 
         static void Release(Target t)
@@ -485,6 +531,7 @@ namespace Tide
             r.commands.Clear();
             r.textures.Clear();
             r.elements.Clear();
+            r.storage.Clear();
             r.linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
             PrepareUniforms(r, stream, size);
             into = r;
@@ -502,7 +549,7 @@ namespace Tide
             if (inPass) r.commands.Add(new Command { kind = Kind.End });
             inCompute = false;
             Flush();
-            if (r.uniformBuffer != null && r.uniformBytes.Length > 0) r.uniformBuffer.SetData(r.uniformBytes);
+            if (r.uniformBuffer != null && r.uniformBytes.IsCreated) r.uniformBuffer.SetData(r.uniformBytes);
             into = null;
         }
 
@@ -521,12 +568,17 @@ namespace Tide
             }
             var bytes = (int)Math.Max(align, total);
             bytes = (bytes + 15) / 16 * 16;
-            if (r.uniformBytes.Length != bytes) r.uniformBytes = new byte[bytes];
             var had = r.uniformBuffer != null ? r.uniformBuffer.count : 0;
             if (had * 16 < bytes)
             {
                 r.uniformBuffer?.Release(); // Last frame's draws are drawn
                 r.uniformBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Constant, Math.Max(bytes / 16, Math.Max(256, had * 2)), 16);
+            }
+            // The buffer's whole size, which grows: a frame of more or fewer draws makes no new array
+            if (!r.uniformBytes.IsCreated || r.uniformBytes.Length != r.uniformBuffer.count * 16)
+            {
+                if (r.uniformBytes.IsCreated) r.uniformBytes.Dispose();
+                r.uniformBytes = new NativeArray<byte>(r.uniformBuffer.count * 16, Allocator.Persistent);
             }
             r.uniformUsed = 0;
         }
@@ -615,7 +667,10 @@ namespace Tide
                     var align = Math.Max(16, SystemInfo.constantBufferOffsetAlignment);
                     uniformAt = into.uniformUsed;
                     uniformSize = size;
-                    if (uniformAt + size <= into.uniformBytes.Length) Marshal.Copy((IntPtr)(p + 4), into.uniformBytes, uniformAt, size);
+                    if (size > 0 && uniformAt + size <= into.uniformBytes.Length)
+                    {
+                        UnsafeUtility.MemCpy((byte*)into.uniformBytes.GetUnsafePtr() + uniformAt, p + 4, size);
+                    }
                     into.uniformUsed += (size + align - 1) / align * align;
                     break;
                 }
@@ -698,23 +753,32 @@ namespace Tide
             Flush(); // After the work before it, which may read or write it
             if (b.used == Time.frameCount)
             {
-                var renamed = new GraphicsBuffer(b.raw.target, b.raw.count, 4);
+                var renamed = Renamed(b.raw);
                 Graphics.CopyBuffer(b.raw, renamed);
-                Doom(b.raw);
                 b.raw = renamed;
                 b.used = -1;
             }
             var count = (size + 3) / 4;
-            if (words.Length < count) words = new uint[Math.Max(count, words.Length * 2)];
-            fixed (uint* to = words) Buffer.MemoryCopy(data, to, (long)words.Length * 4, size);
+            var held = Words(count);
+            if (size > 0) UnsafeUtility.MemCpy(held.GetUnsafePtr(), data, size);
             if (offset / 4 + count > b.raw.count) count = b.raw.count - offset / 4;
-            if (count > 0) b.raw.SetData(words, 0, offset / 4, count);
+            if (count > 0) b.raw.SetData(held, 0, offset / 4, count);
             if (b.indices)
             {
                 var room = Math.Max(0, Math.Min(size, b.bytes.Length - offset));
                 if (room > 0) Marshal.Copy((IntPtr)data, b.bytes, offset, room);
                 b.version++;
             }
+        }
+
+        // Room for `count` words that Unity takes as they are, kept from write to write.
+        NativeArray<uint> Words(int count)
+        {
+            if (words.IsCreated && words.Length >= count) return words;
+            var room = Math.Max(Math.Max(count, 1024), words.IsCreated ? words.Length * 2 : 0);
+            if (words.IsCreated) words.Dispose();
+            words = new NativeArray<uint>(room, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            return words;
         }
 
         // An index buffer as Unity draws through it, of 16 or 32 bits each, as its bytes are now.
@@ -733,18 +797,10 @@ namespace Tide
                 Doom(view);
                 view = b.views[k] = new GraphicsBuffer(GraphicsBuffer.Target.Index, Math.Max(1, b.bytes.Length / stride), stride);
             }
-            if (wide)
-            {
-                if (words.Length < b.bytes.Length / 4) words = new uint[b.bytes.Length / 4];
-                Buffer.BlockCopy(b.bytes, 0, words, 0, b.bytes.Length / 4 * 4);
-                view.SetData(words, 0, 0, b.bytes.Length / 4);
-            }
-            else
-            {
-                if (halves.Length < b.bytes.Length / 2) halves = new ushort[b.bytes.Length / 2];
-                Buffer.BlockCopy(b.bytes, 0, halves, 0, b.bytes.Length / 2 * 2);
-                view.SetData(halves, 0, 0, b.bytes.Length / 2);
-            }
+            var held = Words((b.bytes.Length + 3) / 4);
+            fixed (byte* from = b.bytes) UnsafeUtility.MemCpy(held.GetUnsafePtr(), from, b.bytes.Length);
+            if (wide) view.SetData(held, 0, 0, b.bytes.Length / 4);
+            else view.SetData(held.Reinterpret<ushort>(4), 0, 0, b.bytes.Length / 2);
             b.viewVersions[k] = b.version;
             b.viewUsed[k] = Time.frameCount;
             return view;
@@ -1056,7 +1112,11 @@ namespace Tide
                 var ids = new List<uint>(t.imageIds) { depthId };
                 t.imageIds = ids.ToArray();
             }
-            images[depthId] = new Image { texture = t.resolved, element = RenderTextureSubElement.Depth, width = t.width, height = t.height };
+            // The image it has for it stays, each frame it's resolved again, where it's still this one
+            if (!images.TryGetValue(depthId, out var had) || had.texture != t.resolved)
+            {
+                images[depthId] = new Image { texture = t.resolved, element = RenderTextureSubElement.Depth, width = t.width, height = t.height };
+            }
             into.commands.Add(new Command { kind = Kind.ResolveDepth, target = t });
         }
 
@@ -1220,8 +1280,9 @@ namespace Tide
             };
             if (pipeline.storageCount > 0)
             {
-                c.storage = new GraphicsBuffer[pipeline.storageCount];
-                for (var i = 0; i < c.storage.Length; i++) c.storage[i] = StorageBuffer(i, false);
+                c.storage = into.storage.Count;
+                c.storageCount = pipeline.storageCount;
+                for (var i = 0; i < c.storageCount; i++) into.storage.Add(StorageBuffer(i, false));
             }
             if (indexed)
             {
@@ -1273,9 +1334,8 @@ namespace Tide
             if (b.raw == null) return none;
             if (b.used == Time.frameCount)
             {
-                var renamed = new GraphicsBuffer(b.raw.target, b.raw.count, 4);
+                var renamed = Renamed(b.raw);
                 Work().CopyBuffer(b.raw, renamed);
-                Doom(b.raw);
                 b.raw = renamed;
                 b.used = -1;
             }
@@ -1294,7 +1354,7 @@ namespace Tide
         {
             if (!working || work == null) return;
             working = false;
-            if (into != null && into.uniformBuffer != null && into.uniformUsed > 0) into.uniformBuffer.SetData(into.uniformBytes);
+            if (into != null && into.uniformBuffer != null && into.uniformUsed > 0 && into.uniformBytes.IsCreated) into.uniformBuffer.SetData(into.uniformBytes);
             Graphics.ExecuteCommandBuffer(work);
             work.Clear();
         }
@@ -1395,7 +1455,15 @@ namespace Tide
                 numbers = Arguments(buffer, offset, 3, groupsBuffer);
                 if (numbers == null) return;
             }
-            else groupsBuffer.SetData(new[] { x, y, z, 0u, 0u, 0u, 0u, 0u }); // Its own, so it's written now
+            else
+            {
+                // Its own, so it's written now
+                if (!groupWords.IsCreated) groupWords = new NativeArray<uint>(8, Allocator.Persistent);
+                groupWords[0] = x;
+                groupWords[1] = y;
+                groupWords[2] = z;
+                groupsBuffer.SetData(groupWords);
+            }
             var cb = Work();
             for (var i = 0; i < pipeline.storageCount; i++) cb.SetComputeBufferParam(cs, kernel, Storage[i], StorageBuffer(i, (pipeline.storageWrites >> i & 1) != 0));
             if (pipeline.uniformSize > 0 && into.uniformBuffer != null)
@@ -1590,10 +1658,7 @@ namespace Tide
                         cb.SetGlobalInteger(OwnLow, (int)c.own);
                         cb.SetGlobalInteger(OwnHigh, (int)c.ownHigh);
                         if (c.uniformSize > 0) cb.SetGlobalConstantBuffer(r.uniformBuffer, Uniforms, c.uniformAt, c.uniformSize);
-                        if (c.storage != null)
-                        {
-                            for (var i = 0; i < c.storage.Length; i++) cb.SetGlobalBuffer(Storage[i], c.storage[i]);
-                        }
+                        for (var i = 0; i < c.storageCount; i++) cb.SetGlobalBuffer(Storage[i], r.storage[c.storage + i]);
                         if (c.arguments != null)
                         {
                             // Its numbers on the GPU: the first vertex or index is theirs, not _TideFirst's

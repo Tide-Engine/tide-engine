@@ -70,6 +70,8 @@ namespace Tide
 #endif
 
         static Vector2 lastMouse;
+        static float joystickAsked = float.NegativeInfinity;
+        static bool joystick;
         static bool mouseSeen;
 
         // This frame's input, for a screen of `logical` pixels at `scale` device pixels to one.
@@ -163,9 +165,16 @@ namespace Tide
                           : t.phase == TouchPhase.Ended ? 2u : 3u;
                 Touch(ref input, phase, t.fingerId, t.position, scale, height);
             }
-            // The first gamepad, by the Input Manager's default joystick axes and buttons, where it has them
-            var names = Input.GetJoystickNames();
-            input.gamepad = (byte)(names.Length > 0 && !string.IsNullOrEmpty(names[0]) ? 1 : 0);
+            // The first gamepad, by the Input Manager's default joystick axes and buttons, where it has them. Unity
+            // makes a new list of the joysticks' names each time it's asked: asked once a second, as one's plugged in
+            var now = Time.unscaledTime;
+            if (now - joystickAsked >= 1f || now < joystickAsked)
+            {
+                joystickAsked = now;
+                var names = Input.GetJoystickNames();
+                joystick = names.Length > 0 && !string.IsNullOrEmpty(names[0]);
+            }
+            input.gamepad = (byte)(joystick ? 1 : 0);
             if (input.gamepad == 0) return;
             for (var b = 0; b < 10; b++)
             {
@@ -175,12 +184,6 @@ namespace Tide
 #endif
 
 #if TIDE_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
-        static readonly string[] padButtons =
-        {
-            "buttonSouth", "buttonEast", "buttonWest", "buttonNorth", "leftShoulder", "rightShoulder",
-            "leftStickButton", "rightStickButton", "start", "select",
-        };
-
         static bool ReadInputSystem(ref TideEmbedInput input, float scale, int height)
         {
             var keyboard = Keyboard.current;
@@ -196,8 +199,11 @@ namespace Tide
                     if (keys[i] != Key.None && keyboard[keys[i]].isPressed) Hold(ref input, i);
                 }
             }
-            Type(ref input, typed.ToString());
-            typed.Clear();
+            if (typed.Length > 0)
+            {
+                Type(ref input, typed.ToString());
+                typed.Clear();
+            }
             ListenForText(keyboard);
             if (mouse != null)
             {
@@ -206,11 +212,11 @@ namespace Tide
                 var scroll = mouse.scroll.ReadValue();
                 if (Mathf.Abs(scroll.y) >= 60f || Mathf.Abs(scroll.x) >= 60f) scroll /= 120f;
                 Mouse(ref input, mouse.position.ReadValue(), scroll, delta, scale, height);
-                ButtonControl[] buttons = { mouse.leftButton, mouse.rightButton, mouse.middleButton, mouse.backButton, mouse.forwardButton };
-                for (var b = 0; b < buttons.Length; b++)
-                {
-                    if (buttons[b].isPressed) input.mouseButtons |= 1u << b;
-                }
+                if (mouse.leftButton.isPressed) input.mouseButtons |= 1u << 0;
+                if (mouse.rightButton.isPressed) input.mouseButtons |= 1u << 1;
+                if (mouse.middleButton.isPressed) input.mouseButtons |= 1u << 2;
+                if (mouse.backButton.isPressed) input.mouseButtons |= 1u << 3;
+                if (mouse.forwardButton.isPressed) input.mouseButtons |= 1u << 4;
             }
             if (pad != null)
             {
@@ -223,10 +229,17 @@ namespace Tide
                 input.rightY = -right.y;
                 input.leftTrigger = pad.leftTrigger.ReadValue();
                 input.rightTrigger = pad.rightTrigger.ReadValue();
-                for (var b = 0; b < padButtons.Length; b++)
-                {
-                    if (pad[padButtons[b]] is ButtonControl button && button.isPressed) input.gamepadButtons |= 1u << b;
-                }
+                // tide/devices.h's order
+                if (pad.buttonSouth.isPressed) input.gamepadButtons |= 1u << 0;
+                if (pad.buttonEast.isPressed) input.gamepadButtons |= 1u << 1;
+                if (pad.buttonWest.isPressed) input.gamepadButtons |= 1u << 2;
+                if (pad.buttonNorth.isPressed) input.gamepadButtons |= 1u << 3;
+                if (pad.leftShoulder.isPressed) input.gamepadButtons |= 1u << 4;
+                if (pad.rightShoulder.isPressed) input.gamepadButtons |= 1u << 5;
+                if (pad.leftStickButton.isPressed) input.gamepadButtons |= 1u << 6;
+                if (pad.rightStickButton.isPressed) input.gamepadButtons |= 1u << 7;
+                if (pad.startButton.isPressed) input.gamepadButtons |= 1u << 8;
+                if (pad.selectButton.isPressed) input.gamepadButtons |= 1u << 9;
                 if (pad.dpad.up.isPressed) input.gamepadButtons |= 1u << 10;
                 if (pad.dpad.down.isPressed) input.gamepadButtons |= 1u << 11;
                 if (pad.dpad.left.isPressed) input.gamepadButtons |= 1u << 12;

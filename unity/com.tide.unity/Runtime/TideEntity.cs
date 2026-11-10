@@ -74,33 +74,101 @@ namespace Tide
             return Runner != null ? Runner.Packet.Text(handle) : string.Empty;
         }
 
-        readonly System.Collections.Generic.Dictionary<Type, Delegate> hearing = new System.Collections.Generic.Dictionary<Type, Delegate>();
-        readonly System.Collections.Generic.Dictionary<Type, Delegate> hearingVerified = new System.Collections.Generic.Dictionary<Type, Delegate>();
+        readonly Dictionary<Type, TideHearing> hearing = new Dictionary<Type, TideHearing>();
+        readonly Dictionary<Type, TideHearing> hearingVerified = new Dictionary<Type, TideHearing>();
 
         // What hears the match's event `T` sent to this entity, as TideRunner.On and OnVerified hear every one.
         public void On<T>(Action<T> heard) where T : TideEvent
         {
-            TideRunner.Listen(hearing, heard, true);
+            TideHearing.Listen(hearing, heard, true);
         }
 
         public void OnVerified<T>(Action<T> heard) where T : TideEvent
         {
-            TideRunner.Listen(hearingVerified, heard, true);
+            TideHearing.Listen(hearingVerified, heard, true);
         }
 
         public void Off<T>(Action<T> heard) where T : TideEvent
         {
-            TideRunner.Listen(hearing, heard, false);
+            TideHearing.Listen(hearing, heard, false);
         }
 
         public void OffVerified<T>(Action<T> heard) where T : TideEvent
         {
-            TideRunner.Listen(hearingVerified, heard, false);
+            TideHearing.Listen(hearingVerified, heard, false);
         }
 
-        internal void Hear(TideEvent e)
+        // Whether anything here hears events of `kind`, as predicted or once verified
+        internal bool Hears(Type kind, bool verified)
         {
-            TideRunner.Tell(e.Verified ? hearingVerified : hearing, e, this);
+            return TideHearing.Hears(verified ? hearingVerified : hearing, kind);
+        }
+
+        internal void Hear(Type kind, TideEvent e)
+        {
+            TideHearing.Tell(e.Verified ? hearingVerified : hearing, kind, e, this);
+        }
+
+        // The GameObject's Tide components, which the runner writes its entity's values into each frame: found once as
+        // it starts showing an entity, then kept, so no frame looks through the GameObject for them.
+        TideComponent[] live = Array.Empty<TideComponent>();
+        Type[] liveKinds = Array.Empty<Type>();
+        internal int LiveCount;
+        internal int LiveSeen;     // How many of them the entity had in frame LiveSeenAt
+        internal int LiveSeenAt = -1;
+        static readonly List<TideComponent> found = new List<TideComponent>();
+
+        // Finds the Tide components the GameObject has now: those authored on it, or left by the entity it showed last.
+        internal void CollectLive()
+        {
+            LiveCount = 0;
+            GetComponents(found);
+            foreach (var component in found) AddLive(component, component.GetType());
+            found.Clear();
+        }
+
+        void AddLive(TideComponent component, Type kind)
+        {
+            if (LiveCount == live.Length)
+            {
+                Array.Resize(ref live, Math.Max(4, LiveCount * 2));
+                Array.Resize(ref liveKinds, live.Length);
+            }
+            live[LiveCount] = component;
+            liveKinds[LiveCount] = kind;
+            LiveCount++;
+        }
+
+        // Its component of `kind`, added where it has none.
+        internal TideComponent Live(Type kind)
+        {
+            for (var i = 0; i < LiveCount; i++)
+            {
+                if (liveKinds[i] != kind) continue;
+                if (live[i] != null) return live[i];
+                // Something else destroyed it: forgotten, and added again
+                live[i] = live[LiveCount - 1];
+                liveKinds[i] = liveKinds[LiveCount - 1];
+                live[--LiveCount] = null;
+                break;
+            }
+            // One a script added since is taken as it is: a GameObject has one of each
+            var added = (TideComponent)(TryGetComponent(kind, out var had) ? had : gameObject.AddComponent(kind));
+            if (added != null) AddLive(added, kind);
+            return added;
+        }
+
+        // Destroys the components the entity didn't have in frame `frame`: it lost them, or never had what was authored.
+        internal void DropStale(int frame)
+        {
+            for (var i = LiveCount - 1; i >= 0; i--)
+            {
+                if (live[i] != null && live[i].LiveFrame == frame) continue;
+                if (live[i] != null) Destroy(live[i]);
+                live[i] = live[LiveCount - 1];
+                liveKinds[i] = liveKinds[LiveCount - 1];
+                live[--LiveCount] = null;
+            }
         }
     }
 }

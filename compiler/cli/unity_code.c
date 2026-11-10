@@ -516,16 +516,21 @@ static char *live_cs(const game *g, const ctype *t, const bool key)
 }
 
 // Converts `expr`, a value of `t` as laid out (`packet` and `runner` the names in scope), to Unity code's (live_cs),
-// as a C# expression. Lambdas take nothing from around them, so C# makes each once.
+// as a C# expression. Lambdas take nothing from around them, so C# makes each once. `into` is what holds the value
+// read the frame before (the field itself), or NULL: a list, map, set, grid or array is filled where it is, and a
+// text that hasn't changed stays the string it was, so reading every frame makes nothing new (TideRead).
 static void put_conv(out *o, const game *g, const ctype *t, const char *expr, const char *packet, const char *runner,
-                     const bool key, const int depth)
+                     const bool key, const int depth, const char *into)
 {
     char e[16], p[16], r[16];
     snprintf(e, sizeof e, "e%d", depth);
     snprintf(p, sizeof p, "p%d", depth);
     snprintf(r, sizeof r, "r%d", depth);
     switch (t->kind) {
-    case CK_STRING: putf(o, "%s.Read(%s)", expr, packet); return;
+    case CK_STRING:
+        if (into) putf(o, "%s.Read(%s, %s)", expr, packet, into);
+        else putf(o, "%s.Read(%s)", expr, packet);
+        return;
     case CK_ENTITY:
         if (key) puts_(o, expr);
         else putf(o, "%s.GameObjectOf(%s)", runner, expr);
@@ -537,7 +542,8 @@ static void put_conv(out *o, const game *g, const ctype *t, const char *expr, co
             return;
         }
         char *live = live_cs(g, t, false);
-        putf(o, "%s.From(%s, %s, %s)", live, expr, packet, runner);
+        if (into) putf(o, "%s.From(%s, %s, %s, %s)", live, expr, packet, runner, into);
+        else putf(o, "%s.From(%s, %s, %s)", live, expr, packet, runner);
         free(live);
         return;
     }
@@ -545,6 +551,11 @@ static void put_conv(out *o, const game *g, const ctype *t, const char *expr, co
     case CK_SET:
     case CK_GRID:
     case CK_ARRAY: {
+        if (t->kind == CK_LIST && t->elem->kind == CK_STRING && into) {
+            // Lines of text: each one that's as it was stays its string
+            putf(o, "global::Tide.TideRead.Texts(%s, %s.handle, %s)", packet, expr, into);
+            return;
+        }
         char *layout = layout_cs(g, t->elem), *live = live_cs(g, t->elem, t->kind == CK_SET);
         static const char *const names[] = {"List", "Set", "Grid", "Array"};
         const char *name = names[t->kind == CK_LIST ? 0 : t->kind == CK_SET ? 1 : t->kind == CK_GRID ? 2 : 3];
@@ -554,7 +565,8 @@ static void put_conv(out *o, const game *g, const ctype *t, const char *expr, co
                                          layout, live, packet, runner, expr, e, p, r);
         else putf(o, "global::Tide.TideRead.%s<%s, %s>(%s, %s, %s.handle, (%s, %s, %s) => ", name, layout, live, packet, runner, expr,
                   e, p, r);
-        put_conv(o, g, t->elem, e, p, r, t->kind == CK_SET, depth + 1);
+        put_conv(o, g, t->elem, e, p, r, t->kind == CK_SET, depth + 1, NULL);
+        if (into) putf(o, ", %s", into);
         puts_(o, ")");
         free(layout);
         free(live);
@@ -567,9 +579,10 @@ static void put_conv(out *o, const game *g, const ctype *t, const char *expr, co
         snprintf(k, sizeof k, "k%d", depth);
         putf(o, "global::Tide.TideRead.Map<%s, %s, %s, %s>(%s, %s, %s.handle, (%s, %s, %s) => ", lk, lv, ck, cv, packet, runner, expr,
              k, p, r);
-        put_conv(o, g, t->elem, k, p, r, true, depth + 1);
+        put_conv(o, g, t->elem, k, p, r, true, depth + 1, NULL);
         putf(o, ", (%s, %s, %s) => ", e, p, r);
-        put_conv(o, g, t->value, e, p, r, false, depth + 1);
+        put_conv(o, g, t->value, e, p, r, false, depth + 1, NULL);
+        if (into) putf(o, ", %s", into);
         puts_(o, ")");
         free(lk);
         free(lv);
@@ -1091,9 +1104,12 @@ static void put_live_field(out *o, out *live, game *g, const type *t, const fiel
     if (!cs) return;
     put_field_summary(o, g, t, f, indent);
     putf(o, "%s%spublic %s %s;\n", indent, attribute, cs, id);
-    putf(live, "%s    %s%s = ", indent, self, id);
-    put_conv(live, g, ct, from, "packet", "runner", false, 0);
+    out held = {0};
+    putf(&held, "%s%s", self, id);
+    putf(live, "%s    %s = ", indent, held.s);
+    put_conv(live, g, ct, from, "packet", "runner", false, 0, held.s);
     puts_(live, ";\n");
+    free(held.s);
     free(cs);
 }
 
@@ -1152,10 +1168,12 @@ static void write_struct(out *o, game *g, const type *t)
             put_field_summary(o, g, t, f, "        ");
             putf(o, "        %spublic %s %s;\n", authorable(g, ct) ? "" : "[global::System.NonSerialized] ", cs, id);
             putf(&from, "            s.%s = ", id);
-            out field_expr = {0};
+            out field_expr = {0}, held = {0};
             putf(&field_expr, "v.%s", id);
-            put_conv(&from, g, ct, field_expr.s, "packet", "runner", false, 0);
+            putf(&held, "s.%s", id);
+            put_conv(&from, g, ct, field_expr.s, "packet", "runner", false, 0, held.s);
             puts_(&from, ";\n");
+            free(held.s);
             if (packs(g, ct)) {
                 putf(&pack, "            v.%s = ", id);
                 out self = {0};
@@ -1169,8 +1187,9 @@ static void write_struct(out *o, game *g, const type *t)
         free(cs);
         free(id);
     }
-    putf(o, "\n        public static %s From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner)\n        {\n"
-            "            var s = new %s();\n%s            return s;\n        }\n\n", t->cs, t->cs, from.s);
+    // `had` is the value read the frame before, whose lists and text this one keeps where they're still the same
+    putf(o, "\n        public static %s From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner, %s had = default)\n        {\n"
+            "            var s = had;\n%s            return s;\n        }\n\n", t->cs, t->cs, from.s);
     putf(o, "        public Value Pack(global::Tide.TideCommandWriter writer)\n        {\n            var v = new Value();\n%s"
             "            return v;\n        }\n\n", pack.s);
     free(from.s);
@@ -1305,7 +1324,7 @@ static void write_class(out *o, game *g, const type *t, out *map)
             free(initial.s);
             puts_(o, ";\n");
             putf(&live, "            %s = ", id);
-            put_conv(&live, g, ct, from.s, "packet", "runner", false, 0);
+            put_conv(&live, g, ct, from.s, "packet", "runner", false, 0, id);
             puts_(&live, ";\n");
             // The match has it by the scale: shown as authored, divided by it. Where it places the component on its
             // body, which a part's is another's, it's shown from where that is.
@@ -1420,7 +1439,10 @@ static char *write_types(game *g, const json *schema)
         if (!t->base || strcmp(t->base, "TideCommand") == 0) continue;
         puts_(&o, "            global::Tide.TideTypes.Register(TideGameSchema.Hash, \"");
         put_escaped(&o, t->bare);
-        putf(&o, "\", typeof(global::Tide.Game.%s%s%s));\n", t->ns ? t->ns : "", t->ns ? "." : "", t->cs);
+        putf(&o, "\", typeof(global::Tide.Game.%s%s%s)", t->ns ? t->ns : "", t->ns ? "." : "", t->cs);
+        // A singleton or an event is made by the runner, with no reflection; a component is Unity's to make
+        if (!t->component) putf(&o, ", () => new global::Tide.Game.%s%s%s()", t->ns ? t->ns : "", t->ns ? "." : "", t->cs);
+        puts_(&o, ");\n");
     }
     puts_(&o, "        }\n    }\n}\n");
     for (int i = 0; i < g->enum_count; i++) {

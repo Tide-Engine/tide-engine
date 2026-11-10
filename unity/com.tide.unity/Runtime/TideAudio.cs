@@ -81,12 +81,25 @@ namespace Tide
         }
 
         // With no AudioListener nobody hears it, and Unity says so in the Console each block a source plays: the source
-        // plays while one listens, looked for each frame
+        // plays while one listens. The listener found is kept while it's there and on, and with none the scene is looked
+        // through again a few times a second: looking through a whole scene each frame costs by its size
         bool playing; // As this said: a source's isPlaying is false a while after Play
+        AudioListener listener;
+        float lookedAt = float.NegativeInfinity;
+
+        bool Listened()
+        {
+            if (listener != null && listener.isActiveAndEnabled) return true;
+            var now = Time.unscaledTime;
+            if (now - lookedAt < 0.25f) return false;
+            lookedAt = now;
+            listener = FindAnyObjectByType<AudioListener>();
+            return listener != null;
+        }
 
         void Update()
         {
-            var heard = library != null && FindAnyObjectByType<AudioListener>() != null; // And while there's a game
+            var heard = library != null && Listened(); // And while there's a game
             if (heard == playing) return;
             playing = heard;
             var source = GetComponent<AudioSource>();

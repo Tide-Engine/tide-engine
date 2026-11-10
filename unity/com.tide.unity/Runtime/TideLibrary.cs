@@ -46,10 +46,11 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> recordingFn;
         delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte> replayFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> replayEndFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> logFn;
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 18;
+        public const uint Abi = 19;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
@@ -189,12 +190,13 @@ namespace Tide
             recordingFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_recording");
             replayFn = (delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte>)Find("tide_embed_replay");
             replayEndFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_replay_end");
+            logFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_log");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
                 || cameraFn == null || renderFn == null || renderResetFn == null || renderFormatsFn == null || renderReadFn == null
                 || renderViewFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null
                 || travelFn == null || travelKeepFn == null || pauseFn == null || stepFn == null || showFn == null
-                || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null)
+                || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null || logFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
                 return false;
@@ -257,6 +259,12 @@ namespace Tide
         public byte* Recording(IntPtr embed, uint* size) => TideWebRecording(size);
         public byte Replay(IntPtr embed, byte* data, uint size) => (byte)TideWebReplay(data, size);
         public void ReplayEnd(IntPtr embed) => TideWebReplayEnd();
+        // A page's console has what Tide's program says
+        public byte* Log(IntPtr embed, uint* size)
+        {
+            *size = 0;
+            return null;
+        }
 
         [DllImport("__Internal")] static extern IntPtr TideWebCreate(TideEmbedDesc* desc);
         [DllImport("__Internal")] static extern void TideWebDestroy();
@@ -320,6 +328,8 @@ namespace Tide
         public byte* Recording(IntPtr embed, uint* size) => recordingFn(embed, size);
         public byte Replay(IntPtr embed, byte* data, uint size) => replayFn(embed, data, size);
         public void ReplayEnd(IntPtr embed) => replayEndFn(embed);
+        // tide_embed_log: what the game and its host said since the last call, with an embed or with none
+        public byte* Log(IntPtr embed, uint* size) => logFn(embed, size);
 #endif
 
         // The library stays loaded for the editor's life: a game running in it may hold memory and threads of it.

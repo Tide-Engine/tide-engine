@@ -8,6 +8,9 @@
 
 #include "tide/embed.h"
 
+#include <stdarg.h>
+#include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +18,7 @@
 #include <TargetConditionals.h>
 #endif
 
+#include "tide/debug.h"
 #include "tide/embed_game.h"
 #include "tide/host.h"
 #include "tide/migrate.h"
@@ -82,6 +86,123 @@ uint32_t tide_embed_abi(void)
     return TIDE_EMBED_ABI;
 }
 
+// What the game and the host said, for the other program to show (tide_embed_log): each thing as it's said, on
+// whichever thread says it (a system on a tick thread logs), kept until asked for. The process's, as stderr is:
+// what's said while no embed could be made is asked for with none. A web program keeps none: its page's console
+// has what it says.
+#if !defined(__wasm__)
+#define SAID_MOST (256u * 1024u) // More than that between two askings is left out, with a record saying so
+
+static struct {
+    atomic_flag busy;
+    uint8_t *records; // Since the last asking: each a kind and a length (uint32_t each), then its text, to 4 bytes
+    uint32_t size, capacity;
+    bool over;       // Something was left out
+    uint8_t *given;  // What the last asking gave, kept for the other program to read
+} said = {.busy = ATOMIC_FLAG_INIT};
+
+// Adds a record, with `said` held. False where there's no room for it.
+static bool said_add(const uint32_t kind, const char *text, const size_t length)
+{
+    const size_t need = 8u + ((length + 3u) & ~(size_t)3u);
+    if (length > SAID_MOST || said.size + need > SAID_MOST) return false;
+    if (said.size + need > said.capacity) {
+        uint32_t capacity = said.capacity ? said.capacity * 2u : 4096u;
+        while (capacity < said.size + need) capacity *= 2u;
+        uint8_t *grown = realloc(said.records, capacity);
+        if (!grown) return false;
+        said.records = grown;
+        said.capacity = capacity;
+    }
+    const uint32_t head[2] = {kind, (uint32_t)length};
+    memcpy(said.records + said.size, head, sizeof head);
+    memset(said.records + said.size + 8u, 0, need - 8u);
+    memcpy(said.records + said.size + 8u, text, length);
+    said.size += (uint32_t)need;
+    return true;
+}
+
+static void say(const uint32_t kind, const char *text)
+{
+    const size_t length = strlen(text);
+    while (atomic_flag_test_and_set_explicit(&said.busy, memory_order_acquire)) {
+    }
+    if (!said_add(kind, text, length)) said.over = true;
+    atomic_flag_clear_explicit(&said.busy, memory_order_release);
+}
+
+// The game's Debug.Log (tide_debug_log_to, of the host's engine copy and each library's)
+static void heard_log(const char *text)
+{
+    say(TIDE_EMBED_LOG_GAME, text);
+}
+
+// Something of the host's that went wrong: a library that didn't load, an argument left out
+static void heard_problem(const char *text)
+{
+    say(TIDE_EMBED_LOG_PROBLEM, text);
+}
+
+#endif
+
+static void problem(const char *format, ...) __attribute__((format(printf, 1, 2)));
+
+static void problem(const char *format, ...)
+{
+    char line[4608];
+    va_list values;
+    va_start(values, format);
+    vsnprintf(line, sizeof line, format, values);
+    va_end(values);
+    fprintf(stderr, "%s\n", line);
+#if !defined(__wasm__)
+    heard_problem(line);
+#endif
+}
+
+const uint8_t *tide_embed_log(tide_embed *e, uint32_t *size)
+{
+    (void)e; // The process's: asked with or without an embed
+    if (size) *size = 0;
+#if defined(__wasm__)
+    return NULL;
+#else
+    while (atomic_flag_test_and_set_explicit(&said.busy, memory_order_acquire)) {
+    }
+    if (said.over) {
+        // Room for this one is kept: SAID_MOST is of what's said, and the buffer's own limit is beyond it
+        static const char left_out[] = "tide: more was said than is kept between two frames: the rest was left out";
+        const uint32_t most = said.size + 8u + (uint32_t)sizeof left_out + 4u;
+        uint8_t *grown = said.capacity < most ? realloc(said.records, most) : said.records;
+        if (grown) {
+            said.records = grown;
+            if (said.capacity < most) said.capacity = most;
+            const uint32_t head[2] = {TIDE_EMBED_LOG_PROBLEM, (uint32_t)(sizeof left_out - 1)};
+            const uint32_t padded = ((uint32_t)sizeof left_out - 1u + 3u) & ~3u;
+            memcpy(said.records + said.size, head, sizeof head);
+            memset(said.records + said.size + 8u, 0, padded);
+            memcpy(said.records + said.size + 8u, left_out, sizeof left_out - 1);
+            said.size += 8u + padded;
+        }
+    }
+    uint8_t *records = said.records;
+    const uint32_t length = said.size;
+    said.records = NULL;
+    said.size = said.capacity = 0;
+    said.over = false;
+    atomic_flag_clear_explicit(&said.busy, memory_order_release);
+    free(said.given); // Only the thread that asks touches it
+    said.given = NULL;
+    if (!length) {
+        free(records);
+        return NULL;
+    }
+    said.given = records;
+    if (size) *size = length;
+    return records;
+#endif
+}
+
 // --seed <n>, --data-dir <folder>, --stats, and a sharded game's --shards <n>
 // and --shard-width <w> from `desc`'s command line, as tide/run.h and tide run
 // read them, but a bad one is left out with a line saying so: the program Tide
@@ -104,23 +225,23 @@ static void embed_options(const tide_embed_desc *desc)
                 tide_run_seed = (uint32_t)seed;
                 tide_run_seeded = true;
             } else {
-                fprintf(stderr, "tide: --seed takes a whole number from 0 to 2147483647, not '%s': left out\n", value);
+                problem("tide: --seed takes a whole number from 0 to 2147483647, not '%s': left out", value);
             }
             i++;
         } else if (strcmp(arg, "--data-dir") == 0) {
             if (value[0] && value[0] != '-') tide_run_data_directory = value;
-            else fprintf(stderr, "tide: --data-dir takes a nonempty save directory, not '%s': left out\n", value);
+            else problem("tide: --data-dir takes a nonempty save directory, not '%s': left out", value);
             i++;
         } else if (strcmp(arg, "--shards") == 0 || strcmp(arg, "--shard-width") == 0) {
             const bool count = strcmp(arg, "--shards") == 0;
             char *end = NULL;
             const double number = strtod(value, &end);
             if (!tide_run_game->game->shards) {
-                fprintf(stderr, "tide: %s is for a sharded game: one with 'settings { shards = true; }': left out\n", arg);
+                problem("tide: %s is for a sharded game: one with 'settings { shards = true; }': left out", arg);
             } else if (end == value || *end || !(count ? number >= 1.0 && number <= 256.0 && number == (double)(uint32_t)number
                                                       : number >= 1e-3 && number <= 1e12)) {
-                fprintf(stderr, count ? "tide: --shards takes a whole number from 1 to 256, not '%s': left out\n"
-                                      : "tide: --shard-width takes a width in world units, not '%s': left out\n", value);
+                if (count) problem("tide: --shards takes a whole number from 1 to 256, not '%s': left out", value);
+                else problem("tide: --shard-width takes a width in world units, not '%s': left out", value);
             } else if (count) {
                 tide_run_shards = (uint32_t)number;
             } else {
@@ -173,7 +294,7 @@ static const tide_host_game *open_library(const char *dir)
 {
     const uint32_t build = newest(dir, "game-", LIBRARY_SUFFIX);
     if (!build) {
-        fprintf(stderr, "tide: no build of the game in %s yet: tide unity makes them\n", dir);
+        problem("tide: no build of the game in %s yet: tide unity makes them", dir);
         return NULL;
     }
     const size_t size = strlen(dir) + 1;
@@ -194,6 +315,12 @@ tide_embed *tide_embed_create(const tide_embed_desc *desc)
     if (running || !desc || (!desc->game && !desc->library_dir)) return NULL;
     const tide_host_game *game = desc->game;
 #if !defined(__wasm__)
+    // What's logged from here on is the other program's to show: the host's engine copy's, and each game's. (A
+    // page's console has it already, so a web program keeps none.)
+    tide_debug_log_to(heard_log);
+    if (game && game->debug_log_to) game->debug_log_to(heard_log);
+    library_heard = heard_log;
+    library_problem = heard_problem;
     from_library = false;
     tide_run_embedded = true; // Before loading: a library that won't load leaves the program going
     if (!game) {

@@ -19,6 +19,12 @@ namespace Tide
             return packet != null ? packet.Text(handle) : string.Empty;
         }
 
+        // ...or `had`, the string read the frame before, where the text is still that: no new string till it changes.
+        public string Read(TidePacket packet, string had)
+        {
+            return packet != null ? packet.Text(handle, had) : string.Empty;
+        }
+
         public string Read()
         {
             return Read(TideRunner.Current != null ? TideRunner.Current.Packet : null);

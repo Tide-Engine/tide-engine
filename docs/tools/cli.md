@@ -619,14 +619,20 @@ fields are on their components, shown in Play. Every Tide type has its C#: a
 struct is a C# struct, and `List`, `Set`, `Map` and `Grid2`/`Grid3` are
 `List<T>`, `Tide.TideSet<T>`, `Dictionary<K, V>` and `Tide.TideGrid2<T>`. A
 component's struct, list, set, array and `char` fields are set in the
-inspector and baked; its maps and grids are filled in by game code. Tide's
+inspector and baked; its maps and grids are filled in by game code. Reading
+the match each frame makes nothing new for the garbage collector once it's as
+it'll stay: a list, set, map or grid is the one the field had the frame
+before, filled again, and text that hasn't changed is the string it was. So
+what a script reads there is this frame's, and a list it keeps changes with
+the match: copy what should stay. An event a handler hears is an object of
+its own, the handler's to keep. What the game's Tide code says with
+`Debug.Log` is in Unity's Console, and what goes wrong running a build of it
+(one that doesn't load) is there as an error. Tide's
 types keep their names where Unity has one too (Tide's `Transform`, `Time` and
 `Font`, Box3D's `Collider`): a script using both namespaces writes the one it
 means, `Tide.Game.Transform` or `UnityEngine.Transform`, as C# asks of an
 ambiguous name.
-Older projects list components on the TideEntity itself, which tide still reads:
-Tools > Tide > Convert TideEntity Lists to Components makes them components of
-their own. Everything from Unity is under the
+Everything from Unity is under the
 `UnityEngine` namespace, named by its folders under `Assets`: a prefab is
 `UnityEngine.Prefabs.Enemies.Goblin` for `Assets/Enemies/Goblin.prefab`, which
 code spawns as any prefab, and a scene `UnityEngine.Scenes.Levels.Cave`, so

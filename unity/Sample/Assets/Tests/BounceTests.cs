@@ -405,6 +405,8 @@ public sealed unsafe class BounceTests
         var room = runner.Get<Tide.Game.Room>();
         Assert.IsNotNull(room, "the match's singleton");
         Assert.AreEqual(1, room.arrivals, "as the match has it");
+        // What the game's Tide code logs (Debug.Log, in Say's handler) is in Unity's Console
+        LogAssert.Expect(LogType.Log, "said héllo, Tide");
         Assert.IsTrue(runner.Send(new Tide.Game.Say { text = "héllo, Tide" }));
         yield return Until(() => runner.Get<Tide.Game.Extras>()?.said == "héllo, Tide", 10f);
         var extras = runner.Get<Tide.Game.Extras>();

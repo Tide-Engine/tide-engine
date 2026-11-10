@@ -53,10 +53,10 @@ public class EntityBindingTests
             Assert.AreSame(entity, go.GetComponent<TideEntity>());
             Assert.AreEqual(1, go.GetComponents<TideEntity>().Length);
             var hear = typeof(TideEntity).GetMethod("Hear", Internal);
-            hear.Invoke(entity, new object[] { new Tide.Game.Bounced() });
+            hear.Invoke(entity, new object[] { typeof(Tide.Game.Bounced), new Tide.Game.Bounced() });
             Assert.AreEqual(1, heard);
             entity.Off(listener);
-            hear.Invoke(entity, new object[] { new Tide.Game.Bounced() });
+            hear.Invoke(entity, new object[] { typeof(Tide.Game.Bounced), new Tide.Game.Bounced() });
             Assert.AreEqual(1, heard);
         }
         finally

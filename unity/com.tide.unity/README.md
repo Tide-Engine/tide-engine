@@ -219,6 +219,31 @@ input of the game's own on top (an on-screen stick, a bot, a replay, a test),
 with what Tide's devices are about to say:
 `runner.EditInput += (ref TideEmbedInput input) => input.Hold("space");`.
 
+What the game's Tide code says with `Debug.Log` is in Unity's Console, as a
+log with no C# stack, from whichever system, view or handler said it; a tick
+this machine runs again after a correction logs again, as anywhere, so prefix a
+log of match state with `Time.tick`. What goes wrong on the host's side (a
+build of the game that doesn't load, an argument it leaves out) is there as an
+error. In a WebGL player, both are in the browser's console.
+
+A match waits for nobody, so the runner keeps the game running while its
+window isn't the one in front (its "Run In Background", on by default, sets
+`Application.runInBackground`): a match this machine runs would otherwise stop
+for every player in it whenever its player switched windows.
+
+What the runner does each frame is made to cost little and to make nothing
+new for the garbage collector once a match is as it'll stay, however many
+entities it shows. A GameObject whose entity stays put has its Transform left
+alone. A component's or a singleton's list, set, map or grid is the one it
+had the frame before, filled again, and text that hasn't changed is the same
+string: what a script reads there is this frame's, and a list it keeps
+changes with the match, so copy what should outlast the frame. An event a
+handler hears is an object of its own, the handler's to keep, and is made only
+when something hears its kind. In Unity's Profiler the runner's frame is
+`Tide.Frame` (the game's own frame: its ticks and views), `Tide.Render` (its
+drawing read for Unity's cameras) and `Tide.Show` (the entities shown through
+their GameObjects, their components and the singletons read, events told).
+
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen
@@ -340,6 +365,16 @@ editor does. A WebGL player runs Tide's own WebAssembly beside Unity's, with
 its threads: serve it cross-origin isolated (`Cross-Origin-Opener-Policy:
 same-origin` and `Cross-Origin-Embedder-Policy: require-corp`), as any Tide
 page.
+
+Not built yet: players for another desktop system than the editor's, for
+Android and iOS, and for consoles; and IL2CPP players haven't been run. A
+dedicated server needs none of them: it's a Tide build of the same game
+(`tide build --server --assets Assets`), which Unity's players join.
+
+The editor's host and each build of the game it loads are made by one `tide`.
+If a build comes from another (a development `tide` rebuilt while Play runs),
+the host says it "was built by another tide than the one running it" and goes
+on with the build it has: start Play again.
 
 ## Requirements
 

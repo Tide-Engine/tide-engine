@@ -1,5 +1,139 @@
 # Unity as a front end
 
+## Made for production: the frame's cost, the Console, another tide's builds (2026-11-10)
+
+The owner: "overhaul the unity integration. Make sure we can use it for production games." An audit of the package
+found what a shipped game would feel first in the runner's frame, in what a developer can't see, and in one crash.
+What was built is below; what's left is at the end, with the platforms a decision of the owner's. Every pick here is
+mine (Provisional).
+
+**A frame makes nothing new, and costs by what's shown.** Measured with the Sample's new `Crowd` command (balls
+nobody rolls) and `ScaleTests`, 1,003 entities shown, Unity 6000.6.0f1 editor (Mono), Direct3D 11, the old package
+(HEAD's, with HEAD's generator) against the new on one machine:
+
+| | old | new |
+|---|---|---|
+| Showing the packet in Unity (`Show`: GameObjects, Transforms, components, singletons, events) | 0.72 ms | 0.25 ms |
+| Objects made a frame by that | 34 | 0 |
+| Objects made a frame by the runner's whole frame | 43 (about 68 KB) | 0 |
+
+What made them, and what replaced it:
+
+- **The packet's sections** were found by walking every section for each row read (`TidePacket.Find`): a table by
+  kind and type now, made as the packet is read, and `Rows` gives a type's rows at once (count, stride, the rows'
+  entities, the first value).
+- **Names looked up each frame**: Tide's `Transform` and its three fields by name for every entity placed, each
+  component's and singleton's class by its Tide name. `TideRunner.Bind` finds them once a schema (and again when
+  `TideTypes.Version` moves): `liveComponents`, `liveSingletons`, `liveEvents`, the Transform's offsets.
+- **A GameObject's Tide components** were looked for with `GetComponent` per component and `GetComponents` per
+  entity, every frame. `TideEntity` keeps them (`CollectLive` as it starts showing an entity, `Live(kind)`,
+  `DropStale`), and only a GameObject holding more than its entity has is looked through.
+- **A Transform is written only where it isn't there already** (`GetLocalPositionAndRotation`, compared exactly):
+  an entity that stays put leaves its Transform, and what Unity keeps by it, untouched. What a script moved is still
+  put back, as before.
+- **Lists, maps, sets, grids and text were made again every frame** for every component and singleton holding one
+  (a singleton's grid copied into new arrays 60 times a second). The generated C# passes the field itself to
+  `TideRead` (`put_conv`'s `into`): `List`, `Set`, `Map`, `Grid2/3` and `Array` fill what the field has, a grid
+  keeps each chunk's array (cells laid out as C# has them are copied whole), `Texts` keeps each line of a
+  `List<string>` that's as it was, `TideText.Read(packet, had)` gives back the same string while the bytes are
+  that string's (`TidePacket.Text(handle, had)`, compared without decoding where it's ASCII), and a struct's
+  `From(v, packet, runner, had)` keeps its own. So what a script reads there is this frame's, and a list it keeps
+  changes with the match. An event is still an object of its own.
+- **Events** went through `Activator.CreateInstance` and `Delegate.DynamicInvoke`. `TideTypes.Register` takes a
+  maker (`() => new T()`, which tide writes for singletons and events), handlers are typed lists
+  (`TideHearing<T>`, copied as one's added or taken away, so a handler can do either while it's told), and an
+  event nothing hears isn't made.
+- **Commands** allocated a writer, an array a text and one for the bytes: the runner keeps one
+  `TideCommandWriter`. `Room` and `Message` are the same string until their bytes change.
+- **Input**: the Input Manager path asked Unity for the joysticks' names every frame (a new array each time; once a
+  second now), the Input System path made an array of the mouse's buttons and looked the pad's up by name.
+- **TideAudio** looked through the whole scene for an AudioListener every frame: the one found is kept while it's
+  on, and with none the scene is looked through four times a second.
+- **TideRender**: `GraphicsBuffer.SetData` of a managed array makes garbage at every call, so what's written each
+  frame is native (`NativeArray`: the uniforms' bytes, a buffer's write, an index view, a dispatch's groups); the
+  uniforms' array is its buffer's size and grows with it; `Collect` had two closures a frame; a draw's storage
+  buffers are in its recording's list; the resolved depth's image is kept; and a buffer written after a draw of the
+  frame read it took a new GPU buffer every frame, where `Renamed` now takes one a rename let go of (`spares`, at
+  most 64, released after 600 frames unused).
+- **A physics package's shapes** (`TideParts.BodyOf`, asked of every shape each frame) made an array of the
+  GameObject's components, and `Points` a new list.
+- `Tide.Frame`, `Tide.Render` and `Tide.Show` are ProfilerMarkers.
+
+**The game's Debug.Log is in Unity's Console (embed ABI 19).** It went to the process's stderr, which nobody sees
+in the editor, as did what the host said when a build didn't load ("see the Console for what tide said" pointed at
+nothing). The approved phase 1 draft had a `log` callback that was never built. Built as a call the other program
+makes, not a callback into it (no native thread calls into Mono or IL2CPP, nothing to unhook at a domain reload)
+and without taking the process's stderr (the standard host's `log.c` does that for a window's `Player.log`, which
+inside Unity would take Unity's own):
+
+- `tide_debug_log_to(heard)` (`tide/debug.h`): where `tide_debug_log` also goes. Each library has its own engine
+  copy, so `tide_host_game.debug_log_to` (filled by `tide/run.h`) lets the host set a loaded game's
+  (`reload_library.inc`'s `library_heard`, and a linked game's in `tide_embed_create`).
+- `tide_embed_log(e, &size)`: records since the last call, each a kind and a length (`uint32_t`s) and the text, to
+  4 bytes; `TIDE_EMBED_LOG_GAME` for Debug.Log, `TIDE_EMBED_LOG_PROBLEM` for the host's (a library that didn't
+  load, by `library_say`; an argument left out; no build in the folder). The process's, so `e` may be NULL: that's
+  how the runner shows why `tide_embed_create` gave none. Said on any thread (a spin lock, `atomic_flag`); more
+  than 256 KiB between two calls is left out with a record saying so. A web program keeps none (its page's console
+  has it), and `TideLibrary.Log` gives nothing there.
+- `TideRunner.Said`, after each frame and after `Create`: `Debug.LogFormat` with `LogOption.NoStacktrace`, a log
+  for the game's and an error for the host's. Assertions aren't in it: a failed one ends the program.
+- `TIDE_EMBED_ABI` and `TideLibrary.Abi` are 19; `tide_embed_log` is in `embed_exports` (whose `.def` text has
+  room for 2,048 bytes now: the names had come to within a line of 1,024).
+
+**A build another tide made isn't loaded.** The crash found on 2026-10-25 (Tide's drawing after a hot reload,
+"Found on the way") is closed: `tide/host.h`'s `TIDE_HOST_SHAPE` is the sizes of the tables a host reads a game
+through (`tide_host_game`, `tide_game`, `tide_io`, `tide_layout`), each library exports it as
+`tide_host_library_shape` (`build.c`'s two `library.c` texts), and `reload_library.inc`'s `load` refuses one that
+says another number, or has none, saying it "was built by another tide than the one running it" (an error in the
+Console, through the log above). The game goes on with the build it has. It follows the tables by itself (adding
+`debug_log_to` moved it), and doesn't see members reordered at one size. A player's game library, linked by the
+package, isn't checked: both come from one build.
+
+**Run In Background** (`TideRunner.runInBackground`, on): sets `Application.runInBackground`, as a Tide window
+keeps running behind another. Unity's default stops a desktop player that isn't in front, and a match that machine
+runs with it.
+
+**The Sample**: `Crowd { count }` and `Extras.crowd`/`lines`, `Say` logging what's said; `ScaleTests` (PlayMode:
+`TIDE_UNITY_CROWD` balls, 300 by default; frames that make nothing, for showing and for the whole frame; the same
+list, set, grid, map and string as the frame before; what changes read as it changes); `BounceTests` expects the
+Console's line; `SampleSetup.BuildPlayer` builds this machine's player, and `PlayerSmoke` reads its frame from a
+texture in batch mode (it hung there: no screen to read). Its `com.tide.game` is written again by this tide.
+
+**Tests and runs** (Windows, Unity 6000.6.0f1, batch, no window, `TIDE_HIDDEN`, a scratch copy of the Sample with
+this checkout's package and a tide installed from this checkout's mingw-release and debug trees):
+PlayMode 27/27 on Direct3D 11 (a GPU), and the drawing, compute-replay and scale tests on Vulkan, OpenGL Core and
+Direct3D 12 (9/9 each before the Console's log, Vulkan 8/8 after it); EditMode 44 of 47, 2 ignored as before and
+`VersionTests.TheActualLaunchArgumentSelectsTheDevelopmentCompilerOnlyWhenPresent` failing only because these runs
+pass `-tide-command` (it checks a launch without one). A Windows player (Mono) built by `SampleSetup.BuildPlayer`
+and run with `-batchmode -tide-smoke`: PASS with no GPU, and "drew yes" on Direct3D 12 and 11, which is the
+renderer's native uploads in a player.
+Native debug: `tide_platform_embed` 23/23 with `embed_log_is_the_other_programs` (a Debug.Log record once, a bad
+argument's and a missing folder's problems, asked with and without an embed), `tide_platform_reload` with a
+library of another shape published while the game runs (refused, the build running goes on),
+`tide_platform_reload_reads`, `tide_platform_travel`, `tide_platform_embed_shards`, `tide_cli_tests` (the
+Sample's package as tide writes it), `tide_cli_unity_physics`, `tide_tests`. Web debug: `embed.c` builds (its log
+kept out) and `tide_tests` passes. The docs build.
+
+**Not done, and why:**
+
+- **Players for other systems.** A player builds for the editor's own desktop system and WebGL alone
+  (`TideBuildProcessor`): tide builds the game's library with this machine's toolchain. Android, iOS, consoles and
+  another desktop system each need tide to build the embed and the game for that target (iOS and consoles as
+  static libraries linked with `__Internal`, IL2CPP's flags as "IL2CPP and Tide's C" below) and a device or
+  module to run them on: this machine's Unity has Windows (Mono) and WebGL modules only. It's the largest thing
+  between the package and a shipped game, and which targets come first is the owner's.
+- **IL2CPP** players weren't run (no module here). The package calls through function pointers and takes no
+  native callback, which IL2CPP has.
+- **A Unity web player**: Tide's renderer needs WebGPU there since the GL backends went, and no WebGPU player was
+  run.
+- **Not seen in a window** (agent runs open none): the Console's lines themselves (read back by `LogAssert`), the
+  Profiler's markers.
+- The view packet still carries every component of every shown entity each frame, read or not (decision 4 of
+  phase 1). At 1,000 entities the game's own frame was 1.3 ms of the runner's 1.6 in a debug build; a packet of
+  what C# asked for is a design of its own.
+- A physics shape still finds its body by reflection each frame (`TideParts.BodyOf`): no garbage now, but a
+  generated accessor would be cheaper.
+
 ## Play waits for the install and the first build (2026-11-10)
 
 The owner updated the package (`#dev`), said yes to installing its tide, and

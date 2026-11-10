@@ -1,5 +1,16 @@
 # The standard host: runs with no window, the stats, debug views
 
+## What an embedded game says (2026-11-10)
+
+`tide_embed_log(e, &size)` (embed ABI 19) gives the other program what the game and the host said since the last
+call: `Debug.Log` (`TIDE_EMBED_LOG_GAME`) and the host's own problems (`TIDE_EMBED_LOG_PROBLEM`: a library that
+didn't load, an argument left out, no build in the folder), as records of a kind, a length and the text. All of it
+still goes to stderr. `tide_debug_log_to` (`tide/debug.h`) is the engine's side, set for the host's engine copy and,
+through `tide_host_game.debug_log_to`, for each game library's; a window's host sets none, so `tide run` is as it
+was. Not a callback into the other program and not the process's stderr taken (as `log.c` does for a window): the
+reasons, the limits and Unity's side are in notes/unity.md, Made for production. Test:
+`embed_log_is_the_other_programs` (`platform/tests/embed.c`).
+
 ## Web first-frame readiness (2026-11-07)
 
 The standard host's own loader could satisfy the page's first-draw promise

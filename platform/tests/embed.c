@@ -1020,6 +1020,54 @@ TIDE_TEST(embed_containers)
     tide_embed_destroy(e);
 }
 
+// Whether what tide_embed_log gives now has a record of `kind` whose text holds `part`: its records are walked
+// as the other program walks them.
+static bool said(const uint32_t kind, const char *part)
+{
+    uint32_t size = 0;
+    const uint8_t *records = tide_embed_log(NULL, &size);
+    bool found = false;
+    for (uint32_t at = 0; records && at + 8u <= size;) {
+        uint32_t head[2];
+        memcpy(head, records + at, sizeof head);
+        TIDE_CHECK(head[1] <= size - at - 8u);
+        if (head[1] > size - at - 8u) break;
+        const char *text = (const char *)records + at + 8u;
+        const size_t length = strlen(part);
+        for (uint32_t i = 0; head[0] == kind && i + length <= head[1]; i++) found = found || memcmp(text + i, part, length) == 0;
+        at += 8u + ((head[1] + 3u) & ~3u);
+        TIDE_CHECK(at <= size);
+    }
+    return found;
+}
+
+// What the game logs and what the host can't do are the other program's to show: Debug.Log as it's said, a bad
+// argument and a folder with no build as problems, asked for with or without an embed, each once.
+TIDE_TEST(embed_log_is_the_other_programs)
+{
+    uint32_t size = 0;
+    (void)tide_embed_log(NULL, &size); // What the tests before this said
+    char seed[] = "--seed", bad[] = "many";
+    char *argv[] = {program, seed, bad};
+    tide_embed *e = start(3, argv);
+    TIDE_REQUIRE(e != NULL);
+    TIDE_CHECK(said(TIDE_EMBED_LOG_PROBLEM, "--seed takes a whole number"));
+    frames(e, 5, NULL);
+    const Bump value = {.by = 7};
+    TIDE_CHECK(tide_embed_command(e, tide_game_layout.type_count, 0, 0, &value, sizeof value));
+    frames(e, 10, NULL);
+    TIDE_CHECK(said(TIDE_EMBED_LOG_GAME, "bumped by 7"));
+    TIDE_CHECK(tide_embed_log(e, &size) == NULL && size == 0); // Said once
+    frames(e, 3, NULL);
+    TIDE_CHECK(!said(TIDE_EMBED_LOG_GAME, "bumped by 7"));
+    tide_embed_destroy(e);
+#if !defined(__wasm__)
+    // No embed, and why not: a folder tide built nothing in
+    TIDE_CHECK(tide_embed_create(&(tide_embed_desc){.library_dir = "no-such-folder-of-builds", .argc = 1, .argv = argv}) == NULL);
+    TIDE_CHECK(said(TIDE_EMBED_LOG_PROBLEM, "no build of the game in no-such-folder-of-builds yet"));
+#endif
+}
+
 // A command from the other program reaches its handler as local code's would; a scene starts by its name.
 TIDE_TEST(embed_commands_and_scenes)
 {

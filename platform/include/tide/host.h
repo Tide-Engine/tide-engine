@@ -142,10 +142,20 @@ typedef struct tide_host_game {
     // Optional: tide_gpu_reads_share, which the host calls with its own table of GPU lists' reads as it loads the
     // library, so the game's reads (in its own engine copy) are the ones the host's renderer begins and finishes.
     void (*gpu_reads_share)(tide_gpu_reads *table);
+    // Optional: tide_debug_log_to, which a host that shows the game's Debug.Log lines itself (tide/embed.h, for the
+    // program it's inside of) calls as it loads the library, whose engine copy is the one that logs.
+    void (*debug_log_to)(void (*heard)(const char *text));
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
 #define TIDE_HOST_LIBRARY "tide_host_library"
+// ...and this one, which returns TIDE_HOST_SHAPE as the library was built: how big the tables the host reads the
+// game through are. A library another tide built, whose tables are laid out otherwise, says another number (or has
+// no such function), and the host says so rather than load it and call through members that aren't where it looks.
+#define TIDE_HOST_LIBRARY_SHAPE "tide_host_library_shape"
+#define TIDE_HOST_SHAPE                                                                                               \
+    ((uint64_t)(sizeof(tide_host_game) & 0xFFFF) | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                       \
+     | (uint64_t)(sizeof(tide_io) & 0xFFFF) << 32 | (uint64_t)(sizeof(tide_layout) & 0xFFFF) << 48)
 #ifdef _WIN32
 #define TIDE_HOST_EXPORT __declspec(dllexport)
 #else

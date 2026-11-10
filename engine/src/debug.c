@@ -5,10 +5,18 @@
 
 // See tide/debug.h.
 
+static void (*log_heard)(const char *text); // Set as a host starts or loads a library, before anything logs
+
+void tide_debug_log_to(void (*heard)(const char *text))
+{
+    log_heard = heard;
+}
+
 void tide_debug_log(const char *text)
 {
     fprintf(stderr, "%s\n", text ? text : "");
     fflush(stderr);
+    if (log_heard) log_heard(text ? text : "");
 }
 
 void tide_debug_assert(const bool ok, const char *source, const char *file, const int line, const char *message)

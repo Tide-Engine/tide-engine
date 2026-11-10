@@ -90,6 +90,29 @@ public static class SampleSetup
         if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
     }
 
+    // A desktop player for this machine, into the folder after -tideOut, which checks itself when run with
+    // -batchmode -tide-smoke (PlayerSmoke):
+    // Unity.exe -batchmode -projectPath . -executeMethod SampleSetup.BuildPlayer -tideOut <folder> -quit
+    public static void BuildPlayer()
+    {
+        var args = System.Environment.GetCommandLineArgs();
+        var at = System.Array.IndexOf(args, "-tideOut");
+        var folder = at >= 0 && at + 1 < args.Length ? args[at + 1] : "Builds/Player";
+        var target = Application.platform == RuntimePlatform.WindowsEditor ? BuildTarget.StandaloneWindows64
+            : Application.platform == RuntimePlatform.OSXEditor ? BuildTarget.StandaloneOSX
+            : BuildTarget.StandaloneLinux64;
+        var name = target == BuildTarget.StandaloneWindows64 ? "Bounce.exe" : target == BuildTarget.StandaloneOSX ? "Bounce.app" : "Bounce";
+        var output = System.IO.Path.Combine(folder, name);
+        var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+        {
+            scenes = new[] { Folder + "/Bounce.unity", Folder + "/Bonus.unity" },
+            locationPathName = output,
+            target = target,
+        });
+        Debug.Log($"SampleSetup: player build {report.summary.result} in {output}");
+        if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
+    }
+
     static void Pillar(Transform parent, string name, Vector3 at, Material material, float speed)
     {
         var pillar = GameObject.CreatePrimitive(PrimitiveType.Cube);

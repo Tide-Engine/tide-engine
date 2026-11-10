@@ -30,7 +30,7 @@ namespace Tide.Game
             color = v.color;
             seat = v.seat;
             bounces = v.bounces;
-            trail = global::Tide.Game.Trail.From(v.trail, packet, runner);
+            trail = global::Tide.Game.Trail.From(v.trail, packet, runner, trail);
             if (locals != null)
             {
                 var l = *(global::Tide.Game.BallLocal*)locals;

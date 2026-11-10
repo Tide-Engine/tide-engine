@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Debug.Log's listener and the host table's shape (2026-11-10)
+
+For Unity's Console (notes/unity.md, Made for production; mine, Provisional): `tide_debug_log_to(heard)` in
+`tide/debug.h` and `engine/src/debug.c`, a listener `tide_debug_log` also calls after writing to stderr, NULL
+unless a host sets it. Generated C calls no new function: `tide/run.h` puts it in the new last member of
+`tide_host_game`, `debug_log_to`, which only `tide/embed.h`'s host calls. A game's library also exports
+`tide_host_library_shape` (`TIDE_HOST_SHAPE`, the host tables' sizes), written by the CLI's `library.c`, not by
+tidec: a host refuses a library whose number isn't its own (notes/hot-reload.md). Hosts and libraries rebuild
+together, as for any change to `tide_host_game`.
+
 ## Pack format 5 (2026-11-10)
 
 Owner-approved ("feel free to change the pack format"): `engine/src/pack.c`'s builder makes the region in place

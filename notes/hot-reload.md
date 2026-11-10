@@ -1,5 +1,21 @@
 # Hot reloading
 
+## A library another tide built isn't loaded (2026-11-10)
+
+`reload_library.inc`'s `load` (`tide run`'s host and `tide/embed.h`'s) checks each library before calling through
+its table: the library exports `tide_host_library_shape`, which returns `tide/host.h`'s `TIDE_HOST_SHAPE` as it was
+built, the sizes of `tide_host_game`, `tide_game`, `tide_io` and `tide_layout` (16 bits each). One that says
+another number, or has no such function, was built with other headers than the host's: it isn't loaded, the host
+says it "was built by another tide than the one running it", and the game goes on with the build it has, as for a
+library that won't load at all. Until now it was loaded and the host called through members that weren't where it
+looked (a crash in `tide_run_bind_io`, found inside Unity on 2026-10-25 with an embed of one tide and a build of
+another; a development tide rebuilt while a game runs does the same). tide writes the function into both
+`library.c` texts (`compiler/cli/build.c`). It doesn't see members reordered at one size. Test:
+`tide_platform_reload`'s last stage (`reload_game.c` with `RELOAD_OTHER_SHAPE`, published while the game runs:
+refused on stderr, one build ran to the script's end). The loader's messages go through `library_say`, which a host
+showing them itself listens to (`library_problem`; `library_heard` for a library's `Debug.Log`: notes/unity.md,
+Made for production).
+
 ## Logical Entity clock across migration (2026-11-06)
 
 `tide_layout_world.identity_clock` is an appended offset to the match's public

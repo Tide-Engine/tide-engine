@@ -65,6 +65,9 @@ namespace Tide
         [Tooltip("Keep the GameObject of an entity that goes, inactive, for the next entity of its prefab: reset what Unity alone keeps on it (an Animator's state, particles) in OnDisable or OnEnable")]
         public bool pool;
 
+        [Tooltip("Keep the game running while its window isn't the one in front (Application.runInBackground), as a Tide game's own window does: a match waits for nobody, and one this machine runs would stop for every player in it")]
+        public bool runInBackground = true;
+
         [Tooltip("The camera the game's views start with, which Draw.WorldToScreen and Tide's 3D draws go through: the main camera when none is set")]
         public Camera viewCamera;
 
@@ -104,13 +107,41 @@ namespace Tide
         public bool Running => embed != IntPtr.Zero;
 
         public TideSessionState State => (TideSessionState)status.state;
+
+        // The room's code, where the match is in one: the same string until it changes, so a UI can read it each frame
         public string Room
         {
             get
             {
-                fixed (byte* room = status.room) return Utf8(room, 64);
+                fixed (byte* room = status.room) return roomText.Of(room, 64);
             }
         }
+
+        // The status's text as strings, made again only as the bytes change
+        struct StatusText
+        {
+            byte[] bytes;
+            int length;
+            string text;
+
+            public string Of(byte* from, int capacity)
+            {
+                var n = 0;
+                while (n < capacity && from[n] != 0) n++;
+                if (text != null && n == length)
+                {
+                    var same = true;
+                    for (var i = 0; i < n && same; i++) same = bytes[i] == from[i];
+                    if (same) return text;
+                }
+                bytes ??= new byte[capacity];
+                for (var i = 0; i < n; i++) bytes[i] = from[i];
+                length = n;
+                return text = Encoding.UTF8.GetString(from, n);
+            }
+        }
+
+        StatusText roomText, messageText;
 
         // The game asked to quit (Application.Quit). Without a handler, play mode ends in the editor and the
         // player quits (UnityEngine.Application.Quit); with one, the handler decides, and the game runs on until
@@ -122,7 +153,7 @@ namespace Tide
         {
             get
             {
-                fixed (byte* message = status.message) return Utf8(message, 256);
+                fixed (byte* message = status.message) return messageText.Of(message, 256);
             }
         }
 
@@ -142,6 +173,7 @@ namespace Tide
         // frame rowsAt[type]
         int[][] rows = Array.Empty<int[]>();
         int[] rowsAt = Array.Empty<int>();
+        bool[] rowsLocal = Array.Empty<bool>(); // Whether each type is a component's local fields
         int frames;
 
         // Which GameObject shows an entity of the project's prefabs and scenes
@@ -196,6 +228,7 @@ namespace Tide
             }
             embed = Create();
             quitHeard = false;
+            Said(); // Why it didn't start, or what its start said
             if (embed == IntPtr.Zero)
             {
                 Debug.LogError("Tide: the game didn't start: see the Console for what tide said.", this);
@@ -204,6 +237,7 @@ namespace Tide
             }
             LoadSchema();
             KeepTicks();
+            if (runInBackground && Application.isPlaying) Application.runInBackground = true;
 #if !UNITY_WEBGL || UNITY_EDITOR
             if (audio == null)
             {
@@ -336,7 +370,97 @@ namespace Tide
             var bytes = library.Schema(embed, &size);
             Schema = bytes == null || size == 0 ? null : TideSchema.Parse(Encoding.UTF8.GetString(bytes, (int)size));
             schemaWarned = false;
+            bound = null;
+            rows = Array.Empty<int[]>(); // By the schema's types
+            rowsAt = Array.Empty<int>();
+            rowsLocal = Array.Empty<bool>();
             LoadMap();
+        }
+
+        // What each frame reads of the schema, found once for it rather than by name each frame: which of its
+        // components, singletons and events the game's C# has classes of (TideTypes), and where Tide's Transform is.
+        struct LiveComponent
+        {
+            public int type, local; // The schema's type, and its local fields' (-1 for none)
+            public uint size;
+            public Type kind;
+        }
+
+        struct LiveSingleton
+        {
+            public int type, local;
+            public uint size;
+            public Type kind;
+            public Func<object> make;
+        }
+
+        struct LiveEvent
+        {
+            public Type kind; // null for a type that's no event of the C#'s
+            public uint size;
+            public Func<object> make;
+        }
+
+        TideSchema bound;   // The schema these are of...
+        int boundTypes = -1; // ...and TideTypes.Version
+        bool live;           // The C# is this build's: its classes lay out what the packet has
+        LiveComponent[] liveComponents = Array.Empty<LiveComponent>();
+        LiveSingleton[] liveSingletons = Array.Empty<LiveSingleton>();
+        LiveEvent[] liveEvents = Array.Empty<LiveEvent>();
+        int transformType = -1, transformPosition, transformRotation, transformScale;
+
+        void Bind()
+        {
+            if (bound == Schema && boundTypes == TideTypes.Version) return;
+            bound = Schema;
+            boundTypes = TideTypes.Version;
+            live = Schema != null && TideTypes.Hash == Schema.Hash;
+            singletons.Clear();
+            transformType = -1;
+            liveComponents = Array.Empty<LiveComponent>();
+            liveSingletons = Array.Empty<LiveSingleton>();
+            liveEvents = Array.Empty<LiveEvent>();
+            if (Schema == null) return;
+            var placed = Schema.TypeIndex("Transform");
+            var t = Schema.Type(placed);
+            var position = t?.Field("localPosition");
+            var rotation = t?.Field("localRotation");
+            var scale = t?.Field("localScale");
+            if (position != null && rotation != null && scale != null && position.offset + 12 <= t.size && rotation.offset + 16 <= t.size
+                && scale.offset + 12 <= t.size)
+            {
+                transformType = placed;
+                transformPosition = (int)position.offset;
+                transformRotation = (int)rotation.offset;
+                transformScale = (int)scale.offset;
+            }
+            if (!live) return;
+            var components = new List<LiveComponent>();
+            foreach (var index in Schema.components)
+            {
+                var type = Schema.Type(index);
+                var kind = TideTypes.Of(type?.name);
+                if (kind == null || !typeof(TideComponent).IsAssignableFrom(kind)) continue;
+                components.Add(new LiveComponent { type = index, local = type.local, size = type.size, kind = kind });
+            }
+            liveComponents = components.ToArray();
+            var values = new List<LiveSingleton>();
+            foreach (var index in Schema.singletons)
+            {
+                var type = Schema.Type(index);
+                var kind = TideTypes.Of(type?.name);
+                if (kind == null || !typeof(TideSingleton).IsAssignableFrom(kind)) continue;
+                values.Add(new LiveSingleton { type = index, local = type.local, size = type.size, kind = kind, make = TideTypes.Maker(type.name) });
+            }
+            liveSingletons = values.ToArray();
+            liveEvents = new LiveEvent[Schema.types.Length];
+            for (var i = 0; i < Schema.types.Length; i++)
+            {
+                var type = Schema.types[i];
+                var kind = TideTypes.Of(type.name);
+                if (kind == null || !typeof(TideEvent).IsAssignableFrom(kind)) continue;
+                liveEvents[i] = new LiveEvent { kind = kind, size = type.size, make = TideTypes.Maker(type.name) };
+            }
         }
 
         void LoadMap()
@@ -436,6 +560,37 @@ namespace Tide
 
         void Update()
         {
+            Frame(Time.unscaledDeltaTime);
+        }
+
+        // What the game and its host said since the last frame (tide_embed_log) into Unity's Console: the game's
+        // Debug.Log lines as logs, and what went wrong on the host's side (a build that didn't load) as errors. With no
+        // C# stack, which would be the runner's own.
+        void Said()
+        {
+            if (library == null) return;
+            uint size = 0;
+            var records = library.Log(embed, &size);
+            for (uint at = 0; records != null && at + 8 <= size;)
+            {
+                var kind = *(uint*)(records + at);
+                var length = *(uint*)(records + at + 4);
+                if (length > size - at - 8) break;
+                var text = Encoding.UTF8.GetString(records + at + 8, (int)length);
+                Debug.LogFormat(kind == 2 ? LogType.Error : LogType.Log, LogOption.NoStacktrace, this, "{0}", text);
+                at += 8 + ((length + 3) & ~3u);
+            }
+        }
+
+        // The runner's part of a frame in Unity's Profiler: the game's own frame (its session, ticks and views), its
+        // drawing read for Unity's cameras, and the frame's entities shown through their GameObjects
+        static readonly Unity.Profiling.ProfilerMarker frameMarker = new Unity.Profiling.ProfilerMarker("Tide.Frame");
+        static readonly Unity.Profiling.ProfilerMarker renderMarker = new Unity.Profiling.ProfilerMarker("Tide.Render");
+        static readonly Unity.Profiling.ProfilerMarker showMarker = new Unity.Profiling.ProfilerMarker("Tide.Show");
+
+        // One frame of the game, `seconds` after the last: Unity's Update calls it.
+        internal void Frame(float seconds)
+        {
             if (embed == IntPtr.Zero) return;
             TideInputReader.Read(ref input, 1f);
             EditInput?.Invoke(ref input);
@@ -447,16 +602,21 @@ namespace Tide
                 width = seen.pixelWidth;
                 height = seen.pixelHeight;
             }
+            frameMarker.Begin();
             fixed (TideEmbedInput* p = &input)
             {
-                library.Frame(embed, Time.unscaledDeltaTime, p, width, height, 1f);
+                library.Frame(embed, seconds, p, width, height, 1f);
             }
+            frameMarker.End();
+            Said();
             if (render != null && render.enabled)
             {
+                renderMarker.Begin();
                 if (render.Fresh) library.RenderReset(embed); // Everything it draws with, made again
                 uint drawn = 0;
                 var commands = library.Render(embed, &drawn);
                 render.Replay(commands, drawn, seen);
+                renderMarker.End();
             }
             fixed (TideEmbedStatus* p = &status) library.Status(embed, p);
             fixed (TideTravel* p = &travel) library.Travel(embed, p);
@@ -480,6 +640,7 @@ namespace Tide
                 return;
             }
             if (Application.isEditor && (frames & 63) == 0 && Map.Stale(TideLibrary.BuildFolder)) LoadMap(); // The prefabs and scenes were built again
+            Bind();
             Show(true);
         }
 
@@ -511,6 +672,7 @@ namespace Tide
         // Shows the packet's entities, making and letting go of GameObjects as they come and go.
         void Show(bool read)
         {
+            using var showing = showMarker.Auto();
             foreach (var view in shown.Values)
             {
                 view.Seen = false;
@@ -542,46 +704,60 @@ namespace Tide
         }
 
         int liveFrame;
-        readonly List<TideComponent> liveScratch = new List<TideComponent>();
 
         // Each shown entity's components into its GameObject's TideComponents (Packages/com.tide.game's), one made
         // where it has none, before scripts' Update reads them; one whose component the entity no longer has goes. Only
         // with components generated from the schema of the build running, whose values they lay out.
         void Live(int count)
         {
-            if (count == 0 || Schema == null || TideTypes.Hash != Schema.Hash) return;
+            if (count == 0 || !live) return;
             liveFrame++;
-            foreach (var index in Schema.components)
+            for (var b = 0; b < liveComponents.Length; b++)
             {
-                var type = Schema.Type(index);
-                var kind = TideTypes.Of(type?.name);
-                if (kind == null || !typeof(TideComponent).IsAssignableFrom(kind)) continue;
-                var n = Packet.Count((uint)index, out _);
-                for (var r = 0; r < n; r++)
+                var binding = liveComponents[b];
+                var n = Packet.Rows((uint)binding.type, out var stride, out var entities, out var values);
+                if (n == 0 || stride != binding.size) continue;
+                // Its local fields: each entity's row of its component's local section
+                int[] localRows = null;
+                byte* localValues = null;
+                uint localStride = 0;
+                var localCount = 0;
+                if (binding.local >= 0)
                 {
-                    var values = Packet.Row((uint)index, r, out var e);
-                    if (values == null || (uint)e >= (uint)count || byRow[e] == null) continue;
-                    // Its local fields: the entity's row of its component's local section
+                    localCount = Packet.Rows((uint)binding.local, out localStride, out _, out localValues, true);
+                    if (localCount > 0) localRows = RowsOf(binding.local);
+                }
+                for (var r = 0; r < n; r++, values += stride)
+                {
+                    var e = entities[r];
+                    if (e >= (uint)count) continue;
+                    var view = byRow[e];
+                    if (view == null) continue;
+                    var component = view.Live(binding.kind);
+                    if (component == null) continue;
                     byte* locals = null;
-                    if (type.local >= 0)
+                    if (localRows != null)
                     {
-                        var localRow = RowOf(type.local, e);
-                        if (localRow >= 0) locals = Packet.Row((uint)type.local, localRow, out _, true);
+                        var row = localRows[e];
+                        if ((uint)row < (uint)localCount) locals = localValues + (long)row * localStride;
                     }
-                    var made = byRow[e].gameObject;
-                    var component = (TideComponent)(made.GetComponent(kind) ?? made.AddComponent(kind));
+                    if (view.LiveSeenAt != liveFrame)
+                    {
+                        view.LiveSeenAt = liveFrame;
+                        view.LiveSeen = 0;
+                    }
+                    view.LiveSeen++;
                     component.LiveFrame = liveFrame;
                     component.ReadLive(values, locals, Packet, this);
                 }
             }
+            // A component the entity lost: only the GameObjects holding more than the entity has are looked through
             for (var i = 0; i < count; i++)
             {
-                if (byRow[i] == null) continue;
-                byRow[i].GetComponents(liveScratch);
-                foreach (var component in liveScratch)
-                {
-                    if (component.LiveFrame != liveFrame) Destroy(component);
-                }
+                var view = byRow[i];
+                if (view == null) continue;
+                var seen = view.LiveSeenAt == liveFrame ? view.LiveSeen : 0;
+                if (seen != view.LiveCount) view.DropStale(liveFrame);
             }
         }
 
@@ -590,107 +766,87 @@ namespace Tide
         // The match's singletons into the TideSingletons the runner keeps (Get), as its components' go into theirs
         void LiveSingletons(bool read)
         {
-            if (!read || !Packet.InMatch || Schema == null || TideTypes.Hash != Schema.Hash)
+            if (!read || !Packet.InMatch || !live)
             {
-                singletons.Clear();
+                if (singletons.Count > 0) singletons.Clear();
                 return;
             }
-            foreach (var index in Schema.singletons)
+            for (var b = 0; b < liveSingletons.Length; b++)
             {
-                var type = Schema.Type(index);
-                var kind = TideTypes.Of(type?.name);
-                if (kind == null || !typeof(TideSingleton).IsAssignableFrom(kind)) continue;
-                var values = Packet.Singleton((uint)index, out var stride);
-                if (values == null || stride != type.size) continue;
-                var locals = type.local >= 0 ? Packet.Singleton((uint)type.local, out _, true) : null;
-                if (!singletons.TryGetValue(kind, out var singleton))
+                var binding = liveSingletons[b];
+                var values = Packet.Singleton((uint)binding.type, out var stride);
+                if (values == null || stride != binding.size) continue;
+                var locals = binding.local >= 0 ? Packet.Singleton((uint)binding.local, out _, true) : null;
+                if (!singletons.TryGetValue(binding.kind, out var singleton))
                 {
-                    singleton = (TideSingleton)Activator.CreateInstance(kind);
-                    singletons[kind] = singleton;
+                    singleton = (TideSingleton)(binding.make != null ? binding.make() : Activator.CreateInstance(binding.kind));
+                    singletons[binding.kind] = singleton;
                 }
                 singleton.ReadLive(values, locals, Packet, this);
             }
         }
 
-        // The match's singleton `T` this frame, as Tide's views see it: null outside a match.
+        // The match's singleton `T` this frame, as Tide's views see it: null outside a match. Its lists, maps, sets and
+        // grids are the ones it had the frame before, filled again: copy what should outlast the frame.
         public T Get<T>() where T : TideSingleton
         {
             return singletons.TryGetValue(typeof(T), out var singleton) ? (T)singleton : null;
         }
 
-        readonly Dictionary<Type, Delegate> hearing = new Dictionary<Type, Delegate>();
-        readonly Dictionary<Type, Delegate> hearingVerified = new Dictionary<Type, Delegate>();
+        readonly Dictionary<Type, TideHearing> hearing = new Dictionary<Type, TideHearing>();
+        readonly Dictionary<Type, TideHearing> hearingVerified = new Dictionary<Type, TideHearing>();
 
         // What hears the match's event `T` as this machine's local handlers would: each one, as soon as this machine
         // has it (as `local event(Hit hit)` does), which a correction can turn out not to have happened; or once the
         // server confirmed its tick (OnVerified, as `local event(verified Hit hit)`). Before scripts' Update, after the
-        // frame's components are live. An entity's TideEntity.On hears only those sent to it.
+        // frame's components are live. An entity's TideEntity.On hears only those sent to it. Each event heard is an
+        // object of its own, a handler's to keep.
         public void On<T>(Action<T> heard) where T : TideEvent
         {
-            Listen(hearing, heard, true);
+            TideHearing.Listen(hearing, heard, true);
         }
 
         public void OnVerified<T>(Action<T> heard) where T : TideEvent
         {
-            Listen(hearingVerified, heard, true);
+            TideHearing.Listen(hearingVerified, heard, true);
         }
 
         public void Off<T>(Action<T> heard) where T : TideEvent
         {
-            Listen(hearing, heard, false);
+            TideHearing.Listen(hearing, heard, false);
         }
 
         public void OffVerified<T>(Action<T> heard) where T : TideEvent
         {
-            Listen(hearingVerified, heard, false);
+            TideHearing.Listen(hearingVerified, heard, false);
         }
 
-        internal static void Listen<T>(Dictionary<Type, Delegate> table, Action<T> heard, bool on) where T : TideEvent
-        {
-            if (heard == null) return;
-            table.TryGetValue(typeof(T), out var had);
-            var now = on ? Delegate.Combine(had, heard) : Delegate.Remove(had, heard);
-            if (now == null) table.Remove(typeof(T));
-            else table[typeof(T)] = now;
-        }
-
-        internal static void Tell(Dictionary<Type, Delegate> table, TideEvent e, UnityEngine.Object context)
-        {
-            if (!table.TryGetValue(e.GetType(), out var heard)) return;
-            foreach (var one in heard.GetInvocationList())
-            {
-                try
-                {
-                    one.DynamicInvoke(e);
-                }
-                catch (System.Reflection.TargetInvocationException thrown)
-                {
-                    Debug.LogException(thrown.InnerException ?? thrown, context);
-                }
-            }
-        }
-
-        // The packet's events to what hears them: the runner's, then the entity's view's
+        // The packet's events to what hears them: the runner's, then the entity's view's. One nothing hears isn't made.
         void Hear(int count)
         {
-            if (Packet.HeardCount == 0 || Schema == null || TideTypes.Hash != Schema.Hash) return;
-            for (var i = 0; i < Packet.HeardCount; i++)
+            var heard = Packet.HeardCount;
+            if (heard == 0 || !live) return;
+            for (var i = 0; i < heard; i++)
             {
                 var record = Packet.Heard(i);
-                var type = Schema.Type((int)record.Type);
-                var kind = TideTypes.Of(type?.name);
-                if (kind == null || !typeof(TideEvent).IsAssignableFrom(kind)) continue;
-                var values = Packet.HeardValue(record, type.size);
-                if (values == null) continue;
-                var e = (TideEvent)Activator.CreateInstance(kind);
-                e.Tick = record.Tick;
-                e.Verified = record.Verified;
-                e.TargetEntity = new TideEntityId { birth = record.TargetBirth, lineage = record.TargetLineage };
+                if (record.Type >= (uint)liveEvents.Length) continue;
+                var binding = liveEvents[record.Type];
+                if (binding.kind == null) continue;
+                var verified = record.Verified;
                 var view = record.HasTarget && record.TargetPlace < (uint)count ? byRow[record.TargetPlace] : null;
+                var runners = TideHearing.Hears(verified ? hearingVerified : hearing, binding.kind);
+                var views = view != null && view.Hears(binding.kind, verified);
+                if (!runners && !views) continue;
+                var values = Packet.HeardValue(record, binding.size);
+                if (values == null) continue;
+                var e = (TideEvent)(binding.make != null ? binding.make() : Activator.CreateInstance(binding.kind));
+                e.Tick = record.Tick;
+                e.Verified = verified;
+                e.TargetEntity = new TideEntityId { birth = record.TargetBirth, lineage = record.TargetLineage };
                 e.Target = view != null ? view.gameObject : null;
                 e.ReadLive(values, Packet, this);
-                Tell(e.Verified ? hearingVerified : hearing, e, this);
-                if (view != null) view.Hear(e);
+                if (runners) TideHearing.Tell(verified ? hearingVerified : hearing, binding.kind, e, this);
+                if (views && view != null) view.Hear(binding.kind, e);
             }
         }
 
@@ -730,6 +886,7 @@ namespace Tide
                 makingRow = outer;
                 if (view == null) return null;
                 view.Runner = this;
+                view.CollectLive();
                 shown[entity.Id] = view;
             }
             view.Entity = entity;
@@ -893,19 +1050,14 @@ namespace Tide
             if (parent != null) Place(parent, (int)entity.Parent);
             var under = parent != null ? parent.transform : null;
             if (!view.Authored && view.transform.parent != under) view.transform.SetParent(under, false);
-            var type = Schema.TypeIndex("Transform");
-            if (type < 0) return;
-            var r = RowOf(type, row);
+            if (transformType < 0) return;
+            var r = RowOf(transformType, row);
             if (r < 0) return;
-            var value = Packet.Row((uint)type, r, out _);
-            var t = Schema.Type(type);
-            var position = t?.Field("localPosition");
-            var rotation = t?.Field("localRotation");
-            var scale = t?.Field("localScale");
-            if (value == null || position == null || rotation == null || scale == null) return;
-            var p = (float*)(value + position.offset);
-            var q = (float*)(value + rotation.offset);
-            var s = (float*)(value + scale.offset);
+            var value = Packet.Row((uint)transformType, r, out _);
+            if (value == null) return;
+            var p = (float*)(value + transformPosition);
+            var q = (float*)(value + transformRotation);
+            var s = (float*)(value + transformScale);
             // Tide is left-handed, y up, z forward, as Unity: the same numbers
             var at = new Vector3(p[0], p[1], p[2]);
             var turn = new Quaternion(q[0], q[1], q[2], q[3]);
@@ -913,9 +1065,16 @@ namespace Tide
             var moved = view.transform;
             if (moved.parent == under)
             {
-                moved.localPosition = at;
-                moved.localRotation = turn;
-                moved.localScale = size;
+                // Written only where it isn't there already: an entity that stays put leaves its Transform, and what
+                // Unity keeps by it (static batches, physics, children), untouched
+                moved.GetLocalPositionAndRotation(out var wasAt, out var wasTurned);
+                if (wasAt.x != at.x || wasAt.y != at.y || wasAt.z != at.z || wasTurned.x != turn.x || wasTurned.y != turn.y
+                    || wasTurned.z != turn.z || wasTurned.w != turn.w)
+                {
+                    moved.SetLocalPositionAndRotation(at, turn);
+                }
+                var wasSize = moved.localScale;
+                if (wasSize.x != size.x || wasSize.y != size.y || wasSize.z != size.z) moved.localScale = size;
                 return;
             }
             if (under != null)
@@ -1134,29 +1293,39 @@ namespace Tide
         // The row of the packet's entity `entity` in type `type`'s section this frame, or -1.
         public int RowOf(int type, int entity)
         {
-            if (Schema == null || (uint)type >= (uint)Schema.types.Length) return -1;
+            if ((uint)entity >= (uint)Packet.EntityCount) return -1;
+            var table = RowsOf(type);
+            return table != null ? table[entity] : -1;
+        }
+
+        // Each of the packet's entities' row in type `type`'s section this frame, -1 for an entity without it: made
+        // the first time a frame asks for the type, and null for a type the schema hasn't.
+        int[] RowsOf(int type)
+        {
+            if (Schema == null || (uint)type >= (uint)Schema.types.Length) return null;
             var count = Packet.EntityCount;
-            if ((uint)entity >= (uint)count) return -1;
             if (rows.Length < Schema.types.Length)
             {
                 Array.Resize(ref rows, Schema.types.Length);
                 Array.Resize(ref rowsAt, Schema.types.Length);
+                Array.Resize(ref rowsLocal, Schema.types.Length);
+                for (var i = 0; i < rowsLocal.Length; i++) rowsLocal[i] = Schema.types[i].kind == "local";
             }
             var table = rows[type];
-            if (table == null || table.Length < count) table = rows[type] = new int[Math.Max(count, 16)];
+            // Room to grow into, so entities coming one at a time don't make a table each
+            if (table == null || table.Length < count) table = rows[type] = new int[Math.Max(Math.Max(count, 16), (table?.Length ?? 0) * 2)];
             if (rowsAt[type] != frames)
             {
                 rowsAt[type] = frames;
-                var local = Schema.types[type].kind == "local";
                 for (var i = 0; i < count; i++) table[i] = -1;
-                var n = Packet.Count((uint)type, out _, local);
+                var n = Packet.Rows((uint)type, out _, out var entities, out _, rowsLocal[type]);
                 for (var k = 0; k < n; k++)
                 {
-                    Packet.Row((uint)type, k, out var e, local);
-                    if (e >= 0 && e < count) table[e] = k;
+                    var e = entities[k];
+                    if (e < (uint)count) table[e] = k;
                 }
             }
-            return table[entity];
+            return table;
         }
 
         // `T`'s component of the packet's entity `entity` (TideTypeAttribute names its type).
@@ -1312,13 +1481,16 @@ namespace Tide
             if (command == null || embed == IntPtr.Zero || Schema == null) return false;
             var type = Schema.TypeIndex(command.TideName);
             if (type < 0 || Schema.types[type].kind != "command") return false;
-            var writer = new TideCommandWriter(this);
+            writer ??= new TideCommandWriter(this);
+            writer.Reset();
             command.Pack(writer);
-            var bytes = writer.Bytes();
-            if (bytes.Length < Schema.types[type].size) return false;
+            var bytes = writer.Bytes(out var size);
+            if (size < Schema.types[type].size) return false;
             var to = EntityOf(target);
-            fixed (byte* p = bytes) return library.Command(embed, (uint)type, to.birth, to.lineage, p, (uint)bytes.Length) != 0;
+            fixed (byte* p = bytes) return library.Command(embed, (uint)type, to.birth, to.lineage, p, (uint)size) != 0;
         }
+
+        TideCommandWriter writer; // Written again by each command sent
 
         // ...to a component's GameObject's entity
         public bool Send(TideCommand command, Component target)
@@ -1345,13 +1517,6 @@ namespace Tide
             var type = TypeOf<T>.Index(Schema);
             if (type < 0) return false;
             return library.Command(embed, (uint)type, birth, lineage, &value, (uint)sizeof(T)) != 0;
-        }
-
-        static string Utf8(byte* bytes, int capacity)
-        {
-            var n = 0;
-            while (n < capacity && bytes[n] != 0) n++;
-            return Encoding.UTF8.GetString(bytes, n);
         }
 
         static class TypeOf<T> where T : unmanaged

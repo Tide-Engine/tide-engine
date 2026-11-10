@@ -57,8 +57,32 @@ public sealed class PlayerSmoke : MonoBehaviour
                  $"constant buffers {SystemInfo.supportsSetConstantBuffer})");
             yield break;
         }
-        yield return new WaitForEndOfFrame();
-        var read = ScreenCapture.CaptureScreenshotAsTexture();
+        Texture2D read;
+        if (Application.isBatchMode)
+        {
+            // No window, so no screen to read: the camera drawn into a texture of its own, once the game's frames are
+            // for that size
+            var target = RenderTexture.GetTemporary(640, 480, 24);
+            camera.targetTexture = target;
+            yield return null;
+            yield return null;
+            camera.Render();
+            RenderTexture.active = target;
+            read = new Texture2D(640, 480, TextureFormat.RGBA32, false);
+            read.ReadPixels(new Rect(0, 0, 640, 480), 0, 0);
+            read.Apply();
+            RenderTexture.active = null;
+        }
+        else
+        {
+            yield return new WaitForEndOfFrame();
+            read = ScreenCapture.CaptureScreenshotAsTexture();
+        }
+        if (read == null)
+        {
+            said("no frame to read");
+            yield break;
+        }
         Color At(Vector3 world)
         {
             var p = camera.WorldToScreenPoint(world);

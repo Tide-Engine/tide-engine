@@ -3680,6 +3680,12 @@ static bool write_library(const run *r)
                                          "    game = tide_host_game_api;\n"
                                          "    game.layout = &tide_game_layout;\n"
                                          "    return &game;\n"
+                                         "}\n"
+                                         "\n"
+                                         "// How this build lays out what the host reads the game through\n"
+                                         "TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)\n"
+                                         "{\n"
+                                         "    return TIDE_HOST_SHAPE;\n"
                                          "}\n");
     free(path);
     return ok;
@@ -3981,7 +3987,7 @@ static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create
                                             "tide_embed_audio", "tide_embed_microphone",
                                             "tide_embed_travel_of", "tide_embed_travel_keep", "tide_embed_pause",
                                             "tide_embed_step", "tide_embed_show", "tide_embed_continue", "tide_embed_recording", "tide_embed_replay",
-                                            "tide_embed_replay_end", NULL};
+                                            "tide_embed_replay_end", "tide_embed_log", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -4019,6 +4025,12 @@ static bool write_unity_library(const run *r)
                                          "TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)\n"
                                          "{\n"
                                          "    return &tide_host_game_api;\n"
+                                         "}\n"
+                                         "\n"
+                                         "// How this build lays out what the host reads the game through\n"
+                                         "TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)\n"
+                                         "{\n"
+                                         "    return TIDE_HOST_SHAPE;\n"
                                          "}\n"
                                          "\n"
                                          "// The schema, for tide to write beside the build: what Unity's package binds the game by\n"
@@ -4063,7 +4075,7 @@ static bool build_embed_host(run *r)
         arg(&a, platform_lib);
 #ifdef _WIN32
         // A MinGW DLL exports what a module definition file lists
-        char def[1024] = "EXPORTS\n";
+        char def[2048] = "EXPORTS\n";
         for (int i = 0; embed_exports[i]; i++) {
             const size_t at = strlen(def);
             snprintf(def + at, sizeof def - at, "    %s\n", embed_exports[i]);
