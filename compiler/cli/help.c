@@ -212,7 +212,9 @@ static const argument_help arguments[] = {
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
      "Saving rebuilds and restarts the app. Distribution builds also make an app\n"
-     "bundle and require the game's appId. Choose native, web or Android.", RUN | BUILD},
+     "bundle and require the game's appId. unity --android builds the game's\n"
+     "library for a Unity Android player, for each of Android's CPUs, once.\n"
+     "Choose native, web or Android.", RUN | BUILD | UNITY},
     {"--define", "--define <SYMBOL>", "Define a symbol for #if lines",
      "Repeat for as many symbols as needed, like --define FAST --define STEAM.\n"
      "Builds also define these macros as 1 in game/package C and C++ sources.\n"

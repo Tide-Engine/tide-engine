@@ -16,6 +16,19 @@ public sealed class PlayerSmoke : MonoBehaviour
     {
         // A desktop player's command line, or a web player's address (index.html?tide-smoke)
         var asked = Array.IndexOf(Environment.GetCommandLineArgs(), "-tide-smoke") >= 0 || Application.absoluteURL.Contains("tide-smoke");
+#if UNITY_ANDROID && !UNITY_EDITOR
+        // An Android player's, in the intent that started it: am start ... -e unity -tide-smoke
+        try
+        {
+            using var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+            using var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
+            using var intent = activity.Call<AndroidJavaObject>("getIntent");
+            asked |= (intent.Call<string>("getStringExtra", "unity") ?? "").Contains("-tide-smoke");
+        }
+        catch (Exception)
+        {
+        }
+#endif
         if (!asked) return;
         new GameObject("Player smoke").AddComponent<PlayerSmoke>();
     }

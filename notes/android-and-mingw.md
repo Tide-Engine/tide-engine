@@ -1,5 +1,9 @@
 # Android and MinGW builds
 
+Unity's Android players (2026-11-10): `tide unity --android` links the game with the embed's host as
+`libtide_game.so` for each CPU, through `link_android` with no activity entry and no `exit` wrap, the pack inside
+the library. Built and packaged by Unity, not yet run on a device. `notes/unity.md`, Android players.
+
 Vulkan only (2026-11-05): OpenGL ES 3 and EGL went with the other GL backends
 (`notes/rendering.md`, GL backends removed). `activity.c` links neither `EGL`
 nor `GLESv3` (nor does `tide build --android`), and the intent's `tide.backend`

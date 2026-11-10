@@ -330,7 +330,15 @@ namespace Tide
                 Debug.LogWarning($"Tide: the runner's Arguments have {unknown}, which the game doesn't take in Unity: it takes " +
                                  "--host [port], --join <code>, --connect <address>, --seed <n>, --data-dir <folder> and --stats", this);
             }
-            var strings = new List<IntPtr>();
+            // An Android app's own files are where Unity says: the game's saves go beside Unity's
+            if (Application.platform == RuntimePlatform.Android && !words.Contains("--data-dir"))
+            {
+                words.Add("--data-dir");
+                words.Add(Application.persistentDataPath);
+            }
+            // The embed keeps what it's given (its arguments, its save folder's path): they last as long as it does
+            FreeCreated();
+            var strings = created;
             IntPtr Str(string s)
             {
                 var bytes = Encoding.UTF8.GetBytes(s + "\0");
@@ -340,7 +348,7 @@ namespace Tide
                 return p;
             }
             var argv = Marshal.AllocHGlobal(IntPtr.Size * words.Count);
-            try
+            strings.Add(argv);
             {
                 for (var i = 0; i < words.Count; i++) Marshal.WriteIntPtr(argv, i * IntPtr.Size, Str(words[i]));
                 var desc = new TideEmbedDesc
@@ -357,11 +365,14 @@ namespace Tide
                 };
                 return library.Create(&desc);
             }
-            finally
-            {
-                foreach (var p in strings) Marshal.FreeHGlobal(p);
-                Marshal.FreeHGlobal(argv);
-            }
+        }
+
+        readonly List<IntPtr> created = new List<IntPtr>(); // What the last Create gave the embed, freed once it's gone
+
+        void FreeCreated()
+        {
+            foreach (var p in created) Marshal.FreeHGlobal(p);
+            created.Clear();
         }
 
         void LoadSchema()
@@ -531,6 +542,7 @@ namespace Tide
             if (audio != null) audio.Detach(); // Unity's audio thread reads the embed no more
             if (embed != IntPtr.Zero) library.Destroy(embed);
             embed = IntPtr.Zero;
+            FreeCreated();
             library = null;
             if (Current == this) Current = null;
         }

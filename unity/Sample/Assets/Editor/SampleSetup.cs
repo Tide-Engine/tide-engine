@@ -90,6 +90,29 @@ public static class SampleSetup
         if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
     }
 
+    // An Android player (IL2CPP, ARM64), as the APK after -tideOut, which checks
+    // itself when started with the intent's extra `unity` saying -tide-smoke (PlayerSmoke; its lines are in logcat):
+    // Unity.exe -batchmode -buildTarget Android -projectPath . -executeMethod SampleSetup.BuildAndroid -tideOut <apk> -quit
+    public static void BuildAndroid()
+    {
+        var args = System.Environment.GetCommandLineArgs();
+        var at = System.Array.IndexOf(args, "-tideOut");
+        var output = at >= 0 && at + 1 < args.Length ? args[at + 1] : "Builds/Bounce.apk";
+        var android = UnityEditor.Build.NamedBuildTarget.Android;
+        PlayerSettings.SetScriptingBackend(android, ScriptingImplementation.IL2CPP);
+        PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+        PlayerSettings.SetApplicationIdentifier(android, "dev.tide.unity.bounce");
+        PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
+        var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+        {
+            scenes = new[] { Folder + "/Bounce.unity", Folder + "/Bonus.unity" },
+            locationPathName = output,
+            target = BuildTarget.Android,
+        });
+        Debug.Log($"SampleSetup: Android build {report.summary.result} in {output}");
+        if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
+    }
+
     // A desktop player for this machine, into the folder after -tideOut, which checks itself when run with
     // -batchmode -tide-smoke (PlayerSmoke):
     // Unity.exe -batchmode -projectPath . -executeMethod SampleSetup.BuildPlayer -tideOut <folder> -quit
@@ -103,6 +126,9 @@ public static class SampleSetup
             : BuildTarget.StandaloneLinux64;
         var name = target == BuildTarget.StandaloneWindows64 ? "Bounce.exe" : target == BuildTarget.StandaloneOSX ? "Bounce.app" : "Bounce";
         var output = System.IO.Path.Combine(folder, name);
+        // -tideIl2cpp: compiled ahead of time, as consoles' and phones' players are, rather than with Mono
+        PlayerSettings.SetScriptingBackend(UnityEditor.Build.NamedBuildTarget.Standalone,
+            System.Array.IndexOf(args, "-tideIl2cpp") >= 0 ? ScriptingImplementation.IL2CPP : ScriptingImplementation.Mono2x);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { Folder + "/Bounce.unity", Folder + "/Bonus.unity" },

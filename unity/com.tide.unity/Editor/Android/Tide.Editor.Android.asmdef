@@ -1,0 +1,21 @@
+{
+    "name": "Tide.Editor.Android",
+    "rootNamespace": "Tide.Editor",
+    "references": [
+        "Tide.Runtime",
+        "Tide.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_ANDROID"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

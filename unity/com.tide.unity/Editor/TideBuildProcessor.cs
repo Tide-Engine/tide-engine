@@ -14,15 +14,23 @@ namespace Tide.Editor
     // A player build of the project brings the game: before it, tide builds an optimized one (tide unity --once
     // --release) into Temp/TideBuild; each scene's TideRunner gets a link to every Unity prefab the game spawns, so
     // Unity builds them in; after it, the embed, the game's library ("game"), its pack and the map go into the
-    // player's StreamingAssets/Tide, where TideLibrary looks; or for WebGL, Tide's program goes in the page. Desktop players
-    // for the editor's own platform and WebGL, for now.
+    // player's StreamingAssets/Tide, where TideLibrary looks; or for WebGL, Tide's program goes in the page; or for
+    // Android, the game's one library goes among the app's (TideAndroidBuild). Desktop players for the editor's own
+    // platform, WebGL and Android, for now.
     public sealed class TideBuildProcessor : IPreprocessBuildWithReport, IProcessSceneWithReport, IPostprocessBuildWithReport
     {
         public int callbackOrder => 0;
 
-        static string Built => Path.Combine(TideSettings.ProjectFolder, "Temp", "TideBuild");
+        internal static string Built => Path.Combine(TideSettings.ProjectFolder, "Temp", "TideBuild");
 
-        static bool Wanted()
+        // The CPUs tide builds Android games for, as Unity and Android name them. x86-64 by its number: Unity 6000.6
+        // builds no player for it any more and marks its name obsolete, and the Unity versions before it still do.
+        internal static readonly (AndroidArchitecture architecture, string abi)[] AndroidCpus =
+        {
+            (AndroidArchitecture.ARM64, "arm64-v8a"), ((AndroidArchitecture)(1 << 3), "x86_64"),
+        };
+
+        internal static bool Wanted()
         {
             return Directory.Exists(TideSettings.instance.GameFolderPath);
         }
@@ -35,9 +43,21 @@ namespace Tide.Editor
                 : Application.platform == RuntimePlatform.OSXEditor ? BuildTarget.StandaloneOSX
                 : BuildTarget.StandaloneLinux64;
             var web = target == BuildTarget.WebGL;
-            if (target != native && !web)
+            var android = target == BuildTarget.Android;
+            if (target != native && !web && !android)
             {
-                throw new BuildFailedException($"Tide: players build for {native} and WebGL on this machine, for now: the game's library is built by this machine's tide, not for {target}.");
+                throw new BuildFailedException($"Tide: players build for {native}, WebGL and Android on this machine, for now: the game's library is built by this machine's tide, not for {target}.");
+            }
+            if (android)
+            {
+                // Each CPU the player is for needs the game's library for it, or the app starts with no game there
+                var asked = PlayerSettings.Android.targetArchitectures;
+                var ours = AndroidArchitecture.None;
+                foreach (var (architecture, _) in AndroidCpus) ours |= architecture;
+                if ((asked & ~ours) != 0)
+                {
+                    throw new BuildFailedException($"Tide: the player is for {asked & ~ours}, which tide doesn't build games for: in Player Settings > Other Settings > Target Architectures, keep ARM64 alone (and x86-64, where this Unity still has it), with the IL2CPP scripting backend.");
+                }
             }
             var tide = TideToolchain.Find(out var where, true, true);
             if (tide == null) throw new BuildFailedException("Tide: " + where);
@@ -47,7 +67,7 @@ namespace Tide.Editor
             var start = new ProcessStartInfo
             {
                 FileName = tide,
-                Arguments = $"unity --once --release{(web ? " --web" : "")} -o \"{Built}\" --assets \"{Application.dataPath}\"",
+                Arguments = $"unity --once --release{(web ? " --web" : android ? " --android" : "")} -o \"{Built}\" --assets \"{Application.dataPath}\"",
                 WorkingDirectory = TideSettings.instance.GameFolderPath,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -105,6 +125,7 @@ namespace Tide.Editor
                 PlaceWeb(output);
                 return;
             }
+            if (report.summary.platform == BuildTarget.Android) return; // Placed in the Gradle project (TideAndroidBuild)
             var data = report.summary.platform == BuildTarget.StandaloneOSX
                 ? Path.Combine(output, "Contents", "Resources", "Data")
                 : Path.Combine(Path.GetDirectoryName(output) ?? ".", Path.GetFileNameWithoutExtension(output) + "_Data");

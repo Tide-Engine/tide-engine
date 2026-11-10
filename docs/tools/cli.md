@@ -503,7 +503,10 @@ the game each time its files change, which the running game takes over as
 `tide run` does, the game's schema, which the package reads the match by,
 and an outline of what each file declares and which packages the
 game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
-`--once` builds once and ends. Unity and other Tide builds of the same game
+`--once` builds once and ends. `tide unity --android -o <path>` builds the
+game once for a Unity Android player: for each of Android's CPUs, a
+`libtide_game.so` in `<path>/android/<abi>` holding the game, Tide's host and
+the game's assets, which the package's build puts in the app. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
 Debug and release libraries carry debug information: a native debugger attached to the Unity editor
 stops at breakpoints in `.tide` files, with the game's natvis in its `.pdb` and

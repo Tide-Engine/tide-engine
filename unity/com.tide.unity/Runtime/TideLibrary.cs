@@ -53,11 +53,16 @@ namespace Tide
         public const uint Abi = 19;
 
         public static string LibraryName =>
-            Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
+            Application.platform == RuntimePlatform.Android ? AndroidLibrary
+            : Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
                 ? "tide_embed.dll"
                 : Application.platform == RuntimePlatform.OSXEditor || Application.platform == RuntimePlatform.OSXPlayer
                     ? "libtide_embed.dylib"
                     : "libtide_embed.so";
+
+        // An Android player's one library: the game with the embed in it (tide unity --android), which Tide's build
+        // processor puts among the app's native libraries, so the system finds it by its name
+        public const string AndroidLibrary = "libtide_game.so";
 
         // The suffix of a library on this machine, as tide names the game's.
         public static string LibrarySuffix => Path.GetExtension(LibraryName);
@@ -81,6 +86,7 @@ namespace Tide
 #if UNITY_WEBGL && !UNITY_EDITOR
             return OpenWeb();
 #else
+            if (Application.platform == RuntimePlatform.Android) return OpenWhole(AndroidLibrary);
             var built = Path.Combine(folder, LibraryName);
             if (!File.Exists(built))
             {
@@ -121,6 +127,37 @@ namespace Tide
             }
             return library;
 #endif
+        }
+
+        // A player whose game and embed are one library, found by its name among the app's own (Android): the embed's
+        // functions, the game's table and its pack, which is inside the library, are all its.
+        static TideLibrary OpenWhole(string name)
+        {
+            var handle = NativeLoader.Load(name, out var error);
+            if (handle == IntPtr.Zero)
+            {
+                Debug.LogError($"Tide: can't load {name}: {error}. Tide's build processor puts it in the player as it builds: build the player with the Tide package in the project, for a CPU tide builds for (ARM64 or x86-64).");
+                return null;
+            }
+            var library = new TideLibrary { handle = handle };
+            if (!library.Bind())
+            {
+                library.Dispose();
+                return null;
+            }
+            var entry = (delegate* unmanaged[Cdecl]<IntPtr>)NativeLoader.Find(handle, "tide_host_library");
+            var packed = (delegate* unmanaged[Cdecl]<ulong*, IntPtr>)NativeLoader.Find(handle, "tide_host_library_pack");
+            library.Game = entry != null ? entry() : IntPtr.Zero;
+            if (library.Game == IntPtr.Zero || packed == null)
+            {
+                Debug.LogError($"Tide: {name} isn't a game's library for a player: it has no tide_host_library.");
+                library.Dispose();
+                return null;
+            }
+            ulong size = 0;
+            library.Pack = packed(&size);
+            library.PackSize = (int)Math.Min(size, int.MaxValue);
+            return library;
         }
 
         // A player's: the game's library and its pack, from `folder`.
@@ -354,6 +391,7 @@ namespace Tide
             }
             handle = Application.platform == RuntimePlatform.OSXEditor || Application.platform == RuntimePlatform.OSXPlayer
                 ? MacDlopen(path, 2) // RTLD_NOW
+                : Application.platform == RuntimePlatform.Android ? AndroidDlopen(path, 2)
                 : LinuxDlopen(path, 2);
             if (handle == IntPtr.Zero) error = DlError();
             return handle;
@@ -366,6 +404,7 @@ namespace Tide
                 return GetProcAddress(handle, name);
             return Application.platform == RuntimePlatform.OSXEditor || Application.platform == RuntimePlatform.OSXPlayer
                 ? MacDlsym(handle, name)
+                : Application.platform == RuntimePlatform.Android ? AndroidDlsym(handle, name)
                 : LinuxDlsym(handle, name);
         }
 
@@ -373,6 +412,7 @@ namespace Tide
         {
             var e = Application.platform == RuntimePlatform.OSXEditor || Application.platform == RuntimePlatform.OSXPlayer
                 ? MacDlerror()
+                : Application.platform == RuntimePlatform.Android ? AndroidDlerror()
                 : LinuxDlerror();
             return e == IntPtr.Zero ? "unknown error" : Marshal.PtrToStringAnsi(e);
         }
@@ -400,5 +440,15 @@ namespace Tide
 
         [DllImport("libdl.so.2", EntryPoint = "dlerror")]
         static extern IntPtr LinuxDlerror();
+
+        // Android's is libdl.so
+        [DllImport("dl", EntryPoint = "dlopen")]
+        static extern IntPtr AndroidDlopen(string path, int flags);
+
+        [DllImport("dl", EntryPoint = "dlsym")]
+        static extern IntPtr AndroidDlsym(IntPtr handle, string name);
+
+        [DllImport("dl", EntryPoint = "dlerror")]
+        static extern IntPtr AndroidDlerror();
     }
 }

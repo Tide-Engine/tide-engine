@@ -517,10 +517,10 @@ static int command_main(const int argc, char **argv)
     // starts as one line.
     opts.stats_open = run && opts.stats;
     // Interactive runs reload as files change. Runs with no window end once.
-    opts.watch = (run && !headless && !opts.server) || (unity && !once && !opts.web); // A web build is for a player: once
+    opts.watch = (run && !headless && !opts.server) || (unity && !once && !opts.web && !opts.android); // A web or Android build is for a player: once
     opts.unity = unity;
-    if (unity && (!opts.output || opts.android || opts.server)) {
-        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine, or a WebGL player with --web: not with --android or --server\n"
+    if (unity && (!opts.output || opts.server)) {
+        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine, a WebGL player with --web or an Android one with --android: not with --server\n"
                                     : "tide: unity takes where to build, like `tide unity -o Library/Tide`\n");
         free(defines);
         return 2;

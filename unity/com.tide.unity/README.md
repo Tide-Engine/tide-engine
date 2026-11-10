@@ -360,14 +360,24 @@ sharded one, aren't.
 ## Build
 
 A player build (File > Build Profiles) builds the game with it, optimized, for
-the editor's own desktop platform or WebGL. The player runs the match as the
+the editor's own desktop platform (Mono or IL2CPP), WebGL or Android. The player runs the match as the
 editor does. A WebGL player runs Tide's own WebAssembly beside Unity's, with
 its threads: serve it cross-origin isolated (`Cross-Origin-Opener-Policy:
 same-origin` and `Cross-Origin-Embedder-Policy: require-corp`), as any Tide
 page.
 
-Not built yet: players for another desktop system than the editor's, for
-Android and iOS, and for consoles; and IL2CPP players haven't been run. A
+An Android player is IL2CPP for ARM64 (Player Settings > Other Settings:
+Scripting Backend IL2CPP, Target Architectures ARM64; the build says so
+otherwise). tide builds the game for it with Android's NDK, which it finds
+installed or fetches, as `tide build --android` does, and the package puts it
+in the app as `libtide_game.so`, the game's assets inside it, and adds the
+permission a match needs to reach the network. The game's saves are in the
+app's own files (`Application.persistentDataPath`). It needs a device with
+Vulkan and compute shaders for Tide's drawing, as every renderer of Tide's
+does. An Android player has been built and packaged, not yet run on a phone.
+
+Not built yet: players for another desktop system than the editor's, for iOS
+and for consoles. A
 dedicated server needs none of them: it's a Tide build of the same game
 (`tide build --server --assets Assets`), which Unity's players join.
 

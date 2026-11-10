@@ -1,5 +1,49 @@
 # Unity as a front end
 
+## Android players, and IL2CPP run (2026-11-10)
+
+The owner, on which players come first: "just keep going with your recommendations" (Android, then IL2CPP on
+desktop, then iOS). Unity's Android and Windows IL2CPP modules were installed for 6000.6.0f1 on this machine for it
+(the `unity` CLI's `install-modules`). All picks mine (Provisional).
+
+- **`tide unity --android -o <path>`** (`tide_unity_android` in `compiler/cli/build.c`, once, as `--web`): for each
+  of Android's CPUs, `<path>/android/<abi>/libtide_game.so`, **one library**: the game, the engine and
+  `tide/embed.h`'s host linked together, as a page's program is (one engine copy, so no table handed between two),
+  with the libraries the game's own C links beside it, and `<path>/unity.json`. `link_android` takes `unity`: the
+  embed's functions kept (`-Wl,-u`), no `ANativeActivity_onCreate` and no `--wrap=exit` (the process, its activity
+  and its exit are Unity's). The platform layer's `activity.c` comes with its window functions and names a program's
+  `main`, so the generated `library.c` has a hidden one nothing calls.
+- **The pack is inside the library**: `library.c` has it by `.incbin` (`tide_host_library_pack(&size)`), read where
+  the system maps the library, so there's no file to find inside an APK (an Android player's StreamingAssets aren't
+  files) and no JNI. The pack's stamp is in the text, so a changed pack is compiled in again.
+- **The package**: `TideLibrary.OpenWhole` (Android: `dlopen("libtide_game.so")` by its name, the embed's functions,
+  `tide_host_library` and the pack all from it; `NativeLoader` has Android's `libdl`). The runner gives the embed
+  `--data-dir Application.persistentDataPath` there (without an activity the platform layer has no folder of its
+  own to offer). `TideBuildProcessor` takes `BuildTarget.Android` (`tide unity --android --once --release`) and
+  refuses a player for a CPU tide doesn't build for, saying which setting. `Editor/Android/TideAndroidBuild.cs`
+  (`IPostGenerateGradleAndroidProject`, in `Tide.Editor.Android`, an assembly with the define constraint
+  `UNITY_ANDROID`: Unity's Android editor code exists only with its module) copies each CPU's libraries into the
+  Gradle project's `src/main/jniLibs/<abi>` and adds `android.permission.INTERNET` to its manifest where Unity
+  didn't (it adds it for C# that uses the network; Tide's is native).
+- **A use after free, fixed**: the runner freed the embed's arguments right after `tide_embed_create`, which keeps
+  them (`tide_run_settings.argv`, and `--data-dir`'s value as the save folder's path). They're kept until the
+  embed is destroyed (`TideRunner.FreeCreated`).
+- **Unity 6000.6 builds no x86-64 Android player** ("Target architecture x86_64 is no longer supported and has been
+  removed"), so its players are ARM64 alone. The package still copies x86-64 for the Unity versions that have it
+  (by the enum's number: its name is obsolete in 6000.6, and warnings are errors).
+- **Checked:** `tide unity --android --once --release` builds the Sample's library for both CPUs (NDK r30), with
+  `tide_embed_*`, `tide_host_library`, `tide_host_library_shape` and `tide_host_library_pack` exported.
+  `SampleSetup.BuildAndroid` (IL2CPP, ARM64) builds an APK with `lib/arm64-v8a/libtide_game.so` in it, with no C#
+  warning. **Not run:** this machine's emulator is x86-64 with no ARM translation and there's no phone, so no Unity
+  Android player has started a match. What only a device shows: the library loading by name from the app, the
+  network from inside Unity's process, Tide's renderer on a phone's Vulkan.
+- **IL2CPP runs.** `SampleSetup.BuildPlayer -tideIl2cpp` builds a Windows IL2CPP player (GameAssembly.dll); with
+  `-batchmode -tide-smoke` it passes with no GPU and on Direct3D 12 ("drew yes"): function pointers, the packet's
+  unsafe reads, the generated C# and the renderer's native uploads, compiled ahead of time.
+- **Left:** iOS (a static library linked with `__Internal`, and a Mac to build on), another desktop system than
+  the editor's, consoles. An Android App Bundle whose assets are split out is untouched by this: the pack is in the
+  library, which counts against the base module's size.
+
 ## Made for production: the frame's cost, the Console, another tide's builds (2026-11-10)
 
 The owner: "overhaul the unity integration. Make sure we can use it for production games." An audit of the package
@@ -116,13 +160,13 @@ kept out) and `tide_tests` passes. The docs build.
 
 **Not done, and why:**
 
-- **Players for other systems.** A player builds for the editor's own desktop system and WebGL alone
-  (`TideBuildProcessor`): tide builds the game's library with this machine's toolchain. Android, iOS, consoles and
+- **Players for other systems** (Android came the same day: Android players, above)**.** A player builds for
+  the editor's own desktop system and WebGL alone (`TideBuildProcessor`): tide builds the game's library with this machine's toolchain. Android, iOS, consoles and
   another desktop system each need tide to build the embed and the game for that target (iOS and consoles as
   static libraries linked with `__Internal`, IL2CPP's flags as "IL2CPP and Tide's C" below) and a device or
   module to run them on: this machine's Unity has Windows (Mono) and WebGL modules only. It's the largest thing
   between the package and a shipped game, and which targets come first is the owner's.
-- **IL2CPP** players weren't run (no module here). The package calls through function pointers and takes no
+- **IL2CPP** players weren't run (no module here; run the same day, above). The package calls through function pointers and takes no
   native callback, which IL2CPP has.
 - **A Unity web player**: Tide's renderer needs WebGPU there since the GL backends went, and no WebGPU player was
   run.
