@@ -2935,12 +2935,16 @@ typedef struct used_key {
     tide_gpu_target_format into;
     uint8_t dims, blit, outputs; // Its kind
     uint8_t blend, depth, cull, state; // As shader_pipeline has them
-    uint8_t zero;
+    // How many runs with a window began since a draw last drew this way (read_keys): one that's past
+    // USED_KEYS_IDLE is forgotten. What a game drew with once (another antialiasing setting, a target it no longer
+    // has) would otherwise have its pipelines made at every start for good.
+    uint8_t idle;
     uint32_t zero2;
 } used_key;
 _Static_assert(sizeof(used_key) == 24, "a used key is its file's 24 bytes, with no padding the compiler adds");
 
 enum { USED_KEYS_MOST = 4096, USED_KEYS_HEADER = 24 }; // Keys a file holds at most; and its header: TIDEKEY1, count, 0, hash
+enum { USED_KEYS_IDLE = 3 }; // The runs with a window a key lasts with no draw drawing its way
 
 static used_key *used_keys;
 static uint32_t used_key_count, used_key_capacity;
@@ -2976,7 +2980,14 @@ static bool keys_alike(const used_key *a, const used_key *b, const bool name)
 static void use_key(const used_key key)
 {
     for (uint32_t i = 0; i < used_key_count; i++) {
-        if (keys_alike(&used_keys[i], &key, true)) return;
+        if (!keys_alike(&used_keys[i], &key, true)) continue;
+        if (used_keys[i].idle > key.idle) { // Drawn this way again: its file says so
+            used_keys[i].idle = key.idle;
+#ifndef __wasm__
+            used_dirty = true;
+#endif
+        }
+        return;
     }
     if (used_key_count == USED_KEYS_MOST) return;
     if (used_key_count == used_key_capacity) {
@@ -3029,12 +3040,19 @@ static void read_keys(const char *folder)
         memcpy(&key, bytes + USED_KEYS_HEADER + (size_t)i * sizeof(used_key), sizeof key);
         if ((key.dims != 2 && key.dims != 3) || key.blit > 1 || key.outputs < 1 || key.outputs > TIDE_TARGET_COLORS
             || key.blend >= BLENDS || key.depth >= DEPTHS || key.cull >= CULLS || (key.state & 15u) > TIDE_GPU_STENCIL_GREATER_EQUAL
-            || (key.state >> 4) > TIDE_GPU_STENCIL_INVERT || key.zero || key.zero2) {
+            || (key.state >> 4) > TIDE_GPU_STENCIL_INVERT || key.zero2) {
+            continue;
+        }
+        // Another run with a window began since it was last drawn this way: a run with none is a test's or a
+        // tool's, of a few frames, and ages nothing
+        if (!headless && key.idle < UINT8_MAX) key.idle++;
+        if (key.idle > USED_KEYS_IDLE) {
+            used_dirty = true; // Gone from the file too
             continue;
         }
         const bool dirty = used_dirty;
         use_key(key);
-        used_dirty = dirty; // Read, not drawn: nothing to write
+        used_dirty = dirty || key.idle != 0; // Read, not drawn: nothing to write, but its age
     }
     free(bytes);
 }

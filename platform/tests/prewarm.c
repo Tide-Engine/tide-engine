@@ -58,7 +58,8 @@ static bool spoil(const char *mode)
     return true;
 #else
     const bool corrupt = strcmp(mode, "corrupt") == 0, cut = strcmp(mode, "cut") == 0;
-    if (!corrupt && !cut) return true;
+    const bool rested = strcmp(mode, "rested") == 0, idle = strcmp(mode, "idle") == 0;
+    if (!corrupt && !cut && !rested && !idle) return true;
     tide_platform_name_game(GAME_ID);
     const char *folder = tide_platform_cache_folder();
     char file[1024];
@@ -70,7 +71,15 @@ static bool spoil(const char *mode)
         return false;
     }
     if (corrupt) bytes[size - 20u] ^= 0x5Au; // In the last key: a whole file, whose hash says it isn't
-    else size = 24u + (size - 24u) / 2u;
+    else if (cut) size = 24u + (size - 24u) / 2u;
+    else {
+        // Every key as one no draw drew with for two runs with a window (this run is the third, and they stay), or
+        // for three (and they're forgotten): a whole file, with its hash made again
+        for (size_t at = 24u; at + 24u <= size; at += 24u) bytes[at + 19u] = rested ? 2u : 3u;
+        uint64_t hash = UINT64_C(0xCBF29CE484222325);
+        for (size_t i = 24u; i < size; i++) hash = (hash ^ bytes[i]) * UINT64_C(0x100000001B3);
+        memcpy(bytes + 16, &hash, 8);
+    }
     const bool written = tide_file_write_whole(file, bytes, size);
     free(bytes);
     return written;
@@ -191,7 +200,7 @@ static int frame(void *user, const float seconds)
 int main(const int argc, char **argv)
 {
     const char *mode = argc > 1 ? argv[1] : "first";
-    again = strcmp(mode, "again") == 0;
+    again = strcmp(mode, "again") == 0 || strcmp(mode, "rested") == 0; // Keys that rested are still the last run's
     if (!spoil(mode)) return 1;
     tide_run_game = &tide_host_game_api;
     // The mode is the test's, not the game's command line
