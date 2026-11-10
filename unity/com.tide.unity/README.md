@@ -23,7 +23,9 @@ repository's `notes/unity.md`.
    commit requires a release built at exactly that commit. The first time, it asks to
    install that version, beside any other `tide`, in
    `%LOCALAPPDATA%\Tide\versions` or `~/.tide/versions` (or the folder
-   `TIDE_VERSIONS` names). A build server (Unity in batch mode, as GameCI runs
+   `TIDE_VERSIONS` names). Play pressed while it installs, or while `tide`
+   makes its first build, waits with a progress bar (Cancel gives Play up) and
+   starts once the game is built. A build server (Unity in batch mode, as GameCI runs
    it) installs it with no question and nothing installed beforehand: keep
    `TIDE_VERSIONS` in its cache to download it once.
 

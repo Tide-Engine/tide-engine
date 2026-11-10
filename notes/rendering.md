@@ -1,5 +1,44 @@
 # The platform layer and the renderer
 
+## Why a warm shader step still takes 5 s on Mount & Rifle, and keys that age (2026-11-10)
+
+Owner: "5s vs 7.7s for cached shaders still seems high no?" Measured with the hidden-loader setup of the entry
+below (NVIDIA, 24 threads, 11 of the pool's making pipelines), timing each `make_work` and probing each pipeline
+first with `VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT` (scratch changes, not kept):
+
+- The loader asks for **770 pipelines** for 206 shaders (338 shader versions): the 298 remembered keys, their
+  listed twins, a guess for each shader never drawn, and the renderer's own.
+- **Shader modules cost nothing** (27 ms for all of them). The time is `vkCreateGraphicsPipelines`: 20 s of driver
+  work one at a time, 13.9 s two at once, 9.1 s four at once, 5.2 s on the pool's eleven threads (47 s of thread time: the
+  driver's own locks take the rest).
+- **538 of the 770 are in the cache, 216 never are** (16 compute, not probed): the same 100 shader versions miss in
+  every run, 45 s of the 54 s of thread time, though each is a hit a moment after it's made, in the same run.
+  `vkGetPipelineCacheData` gives the same 22,707,086 bytes it read after making them. No state tells hits from
+  misses (target format, samples, cull, depth, blend, attributes, layout: about 28% miss in every group).
+- Tried, and not kept: a cache for each of the pool's threads, merged as the file is written (5.1-5.4 s, the same:
+  the cache's lock isn't what's waited on); 64 caches by a hash of the pipeline, in one file (11.6 s and a
+  191 MB file that differed each run: worse). The driver's cache is its own business; what it won't keep it makes
+  again.
+- **Stale keys**: 196 of the 770 are for two-sample targets, 9.9 s of the thread time. The game draws at four
+  samples (stage.tide); the keys are from a setting it had once, and `pipelines.keys` never forgot one.
+
+Built: a remembered key ages. `used_key.zero` is `idle`, the runs with a window that began since a draw last drew
+that way: `read_keys` adds one (not in a run with no window, which is a test's or a tool's few frames), a draw
+that draws that way sets it back to 0 (`use_key`), and a key past `USED_KEYS_IDLE` (3) is left out and gone from
+the file. Files written before have 0 there. So a setting a game no longer has costs its next three starts, not
+every one. A shader not drawn for three runs (one only a late level has) is made in the background the next time
+it draws, a frame or a few late, and remembered again.
+
+Test: `tide_platform_prewarm` has `rested` (every key idle for two runs: still prewarmed in the third) and `idle`
+(for three: forgotten, and the run is as a first one), each followed by a run that reads what it left. Passing
+under ASan with `_draw`, `_shaders`, `_compute`, `_loading` and `_pipeline_cache`. Not measured on the game: the
+hidden setup ends before the game draws, so its keys only age there; by the numbers above the stale keys are about
+a sixth of the step.
+
+What would take the rest, for the owner: the loader waiting only for the pipelines the game's first frames draw
+with (the others go on in the background as it plays, which the renderer already allows), or fewer pipelines a
+shader (every listed twin and guess is made whether or not it's ever drawn).
+
 ## A pipeline cache file that outgrew its game starts over (2026-11-10)
 
 Owner, on the 268 MB `pipelines.vulkan` noted below: "go with your recommendation". The driver's cache data only
