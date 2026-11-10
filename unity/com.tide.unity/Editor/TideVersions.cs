@@ -478,6 +478,12 @@ namespace Tide.Editor
         static string installingVersion;
         static bool asked;
 
+        // The version being installed while the editor goes on, or null; how far it is, from 0 to 1, and what's being
+        // done: Play waits for it (TideBuildService)
+        internal static string Installing => installingVersion;
+        internal static float InstallProgress { get; private set; }
+        internal static string InstallStatus { get; private set; }
+
         // The tide command of the package's version, installing it if it isn't here: null meanwhile, or if it can't
         // be, with `where` saying why
         // `wait`: installed now, with a progress bar, as a player build waits for it anyway.
@@ -530,6 +536,8 @@ namespace Tide.Editor
         {
             if (installingVersion != null) return;
             installingVersion = version;
+            InstallProgress = 0f;
+            InstallStatus = $"Finding tide {version}";
             var task = Progress.Start("Tide", $"Installing tide {version}");
             Download d = null;
             Task<string> settling = null;
@@ -540,8 +548,8 @@ namespace Tide.Editor
                 Progress.Remove(task);
                 Clean(d);
                 installingVersion = null;
-                if (exe != null) TideBuildService.Restart();
-                else Debug.LogError($"Tide: {why}");
+                if (exe == null) Debug.LogError($"Tide: {why}");
+                else if (TideSettings.instance.buildWhileEditing) TideBuildService.Restart();
             }
             void Watch()
             {
@@ -549,7 +557,9 @@ namespace Tide.Editor
                 {
                     if (!d.Done)
                     {
-                        Progress.Report(task, 0.9f * d.Got, $"Downloading tide {version}");
+                        InstallProgress = 0.9f * d.Got;
+                        InstallStatus = $"Downloading tide {version}";
+                        Progress.Report(task, InstallProgress, InstallStatus);
                         return;
                     }
                     if (!Downloaded(d, out var why))
@@ -557,7 +567,9 @@ namespace Tide.Editor
                         End(null, why);
                         return;
                     }
-                    Progress.Report(task, 0.9f, $"Unpacking tide {version}");
+                    InstallProgress = 0.9f;
+                    InstallStatus = $"Unpacking tide {version}";
+                    Progress.Report(task, InstallProgress, InstallStatus);
                     settling = Task.Run(() => Settle(d, out var error) ?? throw new IOException(error));
                     return;
                 }

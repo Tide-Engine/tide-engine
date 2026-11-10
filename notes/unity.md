@@ -1,5 +1,55 @@
 # Unity as a front end
 
+## Play waits for the install and the first build (2026-11-10)
+
+The owner updated the package (`#dev`), said yes to installing its tide, and
+pressed Play while it downloaded: the pre-Play host check loaded the old
+`tide_embed.dll` and said the ABI error (17 against 18). Owner: "i would
+expect it to maybe show a progress bar waiting for the download before
+actually entering play mode".
+
+`TideBuildService.RefusePlayWithErrors` now holds Play (`held`, cancelled and
+entered again, as `Sync` does) while `PlayWaitsFor` names something:
+
+- the package's tide being installed (`TideVersions.Installing`, with
+  `InstallProgress`/`InstallStatus`, which `Begin` keeps beside its status-bar
+  task);
+- tide's first build since the service started it (`starting`: from `Start`
+  to `tide: building the game for Unity ...`, tide ending or `Stop`), which is
+  the build that writes the embed's library; `loading` covers the moment
+  between a script reload and the service's delayed `Start`;
+- once held, Unity compiling the C# that build wrote.
+
+`Held` (each `Drain`) shows `EditorUtility.DisplayCancelableProgressBar`
+("Tide: Play starts once the game is built", the install's status and
+fraction over 0 to 0.8, then 0.9 for the build and compile); Cancel gives
+Play up and the install goes on. When nothing is left it refreshes assets; if
+that starts a compile it stays held, else it clears the bar and sets
+`isPlaying`, which goes through the hook's usual `Sync`, errors and host
+check. `held` is in `SessionState` (`Tide.PlayHeld`), so the script reload the
+new C# brings keeps Play waiting through the service's restart. An install
+that failed (Console) with no tide running gives Play up rather than checking
+the stale host. Batch runs hold nothing, as with `Sync`.
+
+Picks (mine, Provisional): a modal cancelable bar for every hold, also the
+short one of Play pressed in tide's first second after a script reload
+(rather than a bar for installs alone: one path, always cancelable); Play is
+also held for a first build when the host on disk would have loaded (it ran
+the last build and swapped before).
+
+Also: `Begin`'s end restarts the build service only with Build while editing
+on (Project Settings' Install started building with it off).
+
+Validation: Unity 6000.6.0f1, scratch Sample with this checkout's package
+(`file:`), TIDE_HIDDEN/batchmode/nographics/noAudio, automatic builds off:
+the package compiles with no C# warnings; VersionTests 13/13 enabled (the
+ABI-5 fixture ignored), with the new `PlayWaitsForAnInstallOnItsWay` (a
+`file://` release begun with `Begin`: `PlayWaitsFor` names it under 0.9,
+then nothing once it's in place), and ConsoleTests 3/3. Not run: the hold
+itself, its bar, Cancel and the resume through a script reload, which only an
+interactive editor does (batch runs skip it); UnsavedTests need a running
+tide (2 fail in that scratch for that alone).
+
 ## Logical Entity keys: packet 5 and embed ABI 18 (2026-11-06)
 
 Owner-approved Entity128 changes the C/native command boundary to two uint64

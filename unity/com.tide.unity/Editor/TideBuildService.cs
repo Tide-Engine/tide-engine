@@ -53,8 +53,10 @@ namespace Tide.Editor
                     // Another editor of the project has them open: it's that one's
                 }
             }
+            held = SessionState.GetBool(HeldKey, false);
             EditorApplication.delayCall += () =>
             {
+                loading = false;
                 if (TideSettings.instance.buildWhileEditing) Start();
             };
         }
@@ -100,6 +102,7 @@ namespace Tide.Editor
         public static void Start()
         {
             if (process != null && !process.HasExited) return;
+            starting = false;
             var settings = TideSettings.instance;
             var folder = settings.GameFolderPath;
             if (!Directory.Exists(folder))
@@ -138,6 +141,7 @@ namespace Tide.Editor
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
                 state = "building";
+                starting = true;
                 Working("Building the game");
             }
             catch (Exception e)
@@ -304,6 +308,7 @@ namespace Tide.Editor
             process.Dispose();
             process = null;
             state = "stopped";
+            starting = false;
             Idle();
         }
 
@@ -375,8 +380,10 @@ namespace Tide.Editor
                 process.Dispose();
                 process = null;
                 Synced = true; // Nothing more comes
+                starting = false;
                 Idle();
             }
+            if (held) Held();
             if (waiting && Synced)
             {
                 waiting = false;
@@ -412,6 +419,7 @@ namespace Tide.Editor
             if (first.StartsWith("tide: building the game for Unity"))
             {
                 // Its first build is over, as it went (its errors came before), and it watches the game's files
+                starting = false;
                 if (Synced) Idle();
                 return;
             }
@@ -543,11 +551,71 @@ namespace Tide.Editor
             SessionState.SetInt(CountKey, (int)consoleCount.Invoke(null, null));
         }
 
-        // Play waits for tide to build the scenes as they are, saved or not (Sync), and for tide's errors to be fixed,
-        // as for a script's. A batch run (tests) saves what it changes, and has Play as it asks.
+        // Play waits for the game to be built by the project's tide: for the package's tide to be installed, when it's
+        // on its way (TideVersions.Begin), and for the first build of the tide the service started, which builds the
+        // embed's library too; then for Unity to compile the C# that build wrote. Meanwhile a progress bar says which,
+        // and its Cancel gives Play up. In SessionState, so the script reload that C# brings keeps Play waiting.
+        const string HeldKey = "Tide.PlayHeld";
+        static bool held; // Play's on hold till the game's built
+        static bool heldInstalling; // An install was waited for: Play is given up if it fails
+        static bool loading = true; // The service hasn't started tide since the scripts loaded
+        static bool starting; // tide's first build isn't over
+
+        // What Play has to wait for, and how far that is from 0 to 1, or null
+        internal static string PlayWaitsFor(out float progress)
+        {
+            progress = 0.9f;
+            if (TideVersions.Installing != null)
+            {
+                progress = 0.8f * TideVersions.InstallProgress;
+                return TideVersions.InstallStatus;
+            }
+            if (starting || (loading && TideSettings.instance.buildWhileEditing)) return "Building the game";
+            return null;
+        }
+
+        static void Hold(bool hold)
+        {
+            if (held && !hold) EditorUtility.ClearProgressBar();
+            held = hold;
+            if (!hold) heldInstalling = false;
+            SessionState.SetBool(HeldKey, hold);
+        }
+
+        static void Held()
+        {
+            var what = PlayWaitsFor(out var progress);
+            if (what == null && EditorApplication.isCompiling) what = "Compiling the game's C#";
+            if (what != null)
+            {
+                heldInstalling |= TideVersions.Installing != null;
+                if (EditorUtility.DisplayCancelableProgressBar("Tide: Play starts once the game is built", what, progress)) Hold(false);
+                return;
+            }
+            // The install failed, which the Console says: there's no tide to build the game Play would run
+            if (heldInstalling && !Running)
+            {
+                Hold(false);
+                return;
+            }
+            AssetDatabase.Refresh(); // The C# tide wrote of the game
+            if (EditorApplication.isCompiling) return;
+            Hold(false);
+            EditorApplication.isPlaying = true;
+        }
+
+        // Play waits for the game to be built (Held), then for tide to build the scenes as they are, saved or not
+        // (Sync), and for tide's errors to be fixed, as for a script's. A batch run (tests) saves what it changes, and
+        // has Play as it asks.
         static void RefusePlayWithErrors(PlayModeStateChange change)
         {
             if (change != PlayModeStateChange.ExitingEditMode) return;
+            if (!resuming && !Application.isBatchMode && (held || PlayWaitsFor(out _) != null))
+            {
+                EditorApplication.isPlaying = false;
+                Hold(true);
+                return;
+            }
             if (!resuming && !Application.isBatchMode && Sync())
             {
                 EditorApplication.isPlaying = false;

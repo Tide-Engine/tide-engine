@@ -261,6 +261,34 @@ public class VersionTests
         Assert.IsTrue(File.Exists(made));
     }
 
+    // Play is held while the package's tide installs in the editor (TideVersions.Begin), and let go once it's there
+    [UnityEngine.TestTools.UnityTest]
+    public System.Collections.IEnumerator PlayWaitsForAnInstallOnItsWay()
+    {
+        Publish(Version);
+        var editing = TideSettings.instance.buildWhileEditing;
+        var running = TideBuildService.Running;
+        TideSettings.instance.buildWhileEditing = false; // The package here isn't tide: nothing builds with it
+        TideBuildService.Stop();
+        try
+        {
+            Assert.IsNull(TideBuildService.PlayWaitsFor(out _));
+            TideVersions.Begin(Version);
+            Assert.AreEqual(Version, TideVersions.Installing);
+            StringAssert.Contains(Version, TideBuildService.PlayWaitsFor(out var progress));
+            Assert.Less(progress, 0.9f);
+            for (var i = 0; i < 2000 && TideVersions.Installing != null; i++) yield return null;
+            Assert.IsNull(TideVersions.Installing, "the install ended");
+            Assert.IsNotNull(TideVersions.Executable(Version));
+            Assert.IsNull(TideBuildService.PlayWaitsFor(out _));
+        }
+        finally
+        {
+            TideSettings.instance.buildWhileEditing = editing;
+            if (running) TideBuildService.Start();
+        }
+    }
+
     [Test]
     public void ASelectedCompilerIsKeptWhileTheEditorUsesIt()
     {

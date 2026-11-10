@@ -521,7 +521,8 @@ installer puts `tide` (`%LOCALAPPDATA%\Tide\versions\<version>`,
 `~/.tide/versions/<version>`), or in the folder `TIDE_VERSIONS` names. A
 version that isn't there yet is downloaded from the site and checked against its
 release's checksums: in the editor once you say so (or Project Settings >
-Tide's Install), while the editor goes on, and in a batch run, as on a build
+Tide's Install), while the editor goes on (Play pressed meanwhile waits, with
+a progress bar, until it's installed and has built the game), and in a batch run, as on a build
 server like GameCI, at once, with nothing installed beforehand. Point
 `TIDE_VERSIONS` at a folder the server keeps between builds to download each
 version once. A package in a folder on this machine has no commit: it builds
