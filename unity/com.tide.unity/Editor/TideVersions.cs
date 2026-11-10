@@ -495,6 +495,28 @@ namespace Tide.Editor
                 where = $"tide {version}, which this project's Tide package is";
                 return exe;
             }
+            if (wait && installingVersion == version && following != null)
+            {
+                // It's on its way already (Begin): that install is followed here to its end, where the editor's
+                // updates, which follow it otherwise, don't come while a player build waits
+                try
+                {
+                    while (installingVersion == version && following != null)
+                    {
+                        following();
+                        if (!Application.isBatchMode) EditorUtility.DisplayProgressBar("Tide", InstallStatus, InstallProgress);
+                        Thread.Sleep(20);
+                    }
+                }
+                finally
+                {
+                    if (!Application.isBatchMode) EditorUtility.ClearProgressBar();
+                }
+                exe = Executable(version);
+                where = exe != null ? $"tide {version}, installed for this project's Tide package"
+                    : $"tide {version} couldn't be installed: the Console says why";
+                return exe;
+            }
             if (Application.isBatchMode || wait)
             {
                 try
@@ -544,6 +566,7 @@ namespace Tide.Editor
             void End(string exe, string why)
             {
                 EditorApplication.update -= Watch;
+                following = null;
                 Progress.Finish(task, exe != null ? Progress.Status.Succeeded : Progress.Status.Failed);
                 Progress.Remove(task);
                 Clean(d);
@@ -592,6 +615,9 @@ namespace Tide.Editor
                 return;
             }
             EditorApplication.update += Watch;
+            following = Watch;
         }
+
+        static Action following; // The install Begin started, a step at a time: the editor's updates call it
     }
 }

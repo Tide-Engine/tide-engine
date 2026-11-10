@@ -1,5 +1,31 @@
 # Unity as a front end
 
+## A player build while tide isn't ready (2026-11-10)
+
+The owner asked how a player build behaves while tide is downloading, building or not installed, "making sure we
+don't run into basic unity usage errors". A player build never uses the editor's background build: it finds or
+installs tide (`TideToolchain.Find(install, wait)`), runs `tide unity --once --release` itself into
+`Temp/TideBuild` and waits. Three things were wrong with that, fixed (mine, Provisional):
+
+- **Nothing showed while tide built for the player.** `TideBuildProcessor` follows tide's lines and shows its
+  step and `[n/m]` as a progress bar (not in batch mode). Its progress lines no longer fill a failure's message
+  or a warning's: what it has to say alone is kept.
+- **An install already on its way was downloaded a second time.** `TideVersions.Ensure(wait)` follows the
+  install `Begin` started (`following`, its `Watch` step, which the editor's updates can't call while a build
+  waits) to its end, with its bar.
+- **The game's C# could be of another build than the player's game.** The C# in `Packages/com.tide.game` is
+  compiled into the player and reads the match by the layout it was written for; where tide in the editor hadn't
+  built the last change yet (or source control's C# was older than the game), the player's scripts read nothing,
+  with nothing said. Every `tide unity` player build (desktop, `--web`, `--android`) now writes
+  `<-o>/game-hash` (`write_game_hash`: `tide_game.hash` from the generated `game.c`), and the build fails where
+  it isn't the hash `TideGame.cs` had as the build began, saying to let the editor's build and Unity's compile
+  finish and build again (and that a game whose data differs between debug and release can't match: the
+  editor's C# is the debug game's). On desktop tide has by then written the right C#, so the next build passes.
+- Checked in batch mode on a scratch Sample: a player builds; with `TideGame.cs`'s hash changed by hand the
+  build fails with that message; the build after it succeeds. VersionTests 12 pass (one ignored, and the
+  launch-argument one failing under `-tide-command` as before). Not seen: the two progress bars (no window), and
+  following an install in flight (needs a download under way as a build starts).
+
 ## Android players, and IL2CPP run (2026-11-10)
 
 The owner, on which players come first: "just keep going with your recommendations" (Android, then IL2CPP on

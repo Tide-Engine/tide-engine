@@ -75,13 +75,75 @@ namespace Tide.Editor
                 RedirectStandardError = true,
             };
             if (pinned) start.EnvironmentVariables["TIDE_NO_UPDATE_CHECK"] = "1"; // The package's version: no newer one to hear of
-            using var process = Process.Start(start);
-            var output = process.StandardOutput.ReadToEndAsync();
-            var errors = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            var said = (output.Result + errors).Trim();
-            if (process.ExitCode != 0) throw new BuildFailedException("Tide: the game didn't build for the player:\n" + said);
-            if (said.Contains(": warning")) Debug.LogWarning("tide: " + said);
+            // The C# of the game's types that goes into the player, as the project has it now (tide may write it again)
+            var bound = GameHash(Path.Combine(TideSettings.ProjectFolder, "Packages", "com.tide.game", "TideGame.cs"), "Hash = \"");
+            var said = new System.Text.StringBuilder();
+            var step = "Building the game";
+            var done = 0f;
+            void Heard(string line)
+            {
+                if (line == null) return;
+                lock (said)
+                {
+                    // Its progress is the bar's; what it has to say (errors, warnings, notes) is kept
+                    var progress = System.Text.RegularExpressions.Regex.Match(line, @"^tide: (compiled \[(\d+)/(\d+)\].*|compiling .*|linking.*|optimizing .*|resolving .*|built .*)$");
+                    if (!progress.Success)
+                    {
+                        said.AppendLine(line);
+                        return;
+                    }
+                    step = line.Substring(6);
+                    if (progress.Groups[2].Success && float.TryParse(progress.Groups[3].Value, out var of) && of > 0)
+                    {
+                        done = float.Parse(progress.Groups[2].Value) / of;
+                    }
+                }
+            }
+            using (var process = new Process { StartInfo = start })
+            {
+                process.OutputDataReceived += (_, e) => Heard(e.Data);
+                process.ErrorDataReceived += (_, e) => Heard(e.Data);
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                try
+                {
+                    // The editor waits for it: it shows what tide is at meanwhile, where there's someone to see it
+                    while (!process.WaitForExit(100))
+                    {
+                        if (Application.isBatchMode) continue;
+                        string at;
+                        float fraction;
+                        lock (said)
+                        {
+                            at = step;
+                            fraction = done;
+                        }
+                        EditorUtility.DisplayProgressBar("Tide: building the game for the player", at, fraction);
+                    }
+                    process.WaitForExit(); // ...and for the last of what it said
+                }
+                finally
+                {
+                    if (!Application.isBatchMode) EditorUtility.ClearProgressBar();
+                }
+                var all = said.ToString().Trim();
+                if (process.ExitCode != 0) throw new BuildFailedException("Tide: the game didn't build for the player:\n" + all);
+                if (all.Contains(": warning")) Debug.LogWarning("tide: " + all);
+            }
+            // The game's C# in the project is compiled into the player, and reads the match's values by the layout it
+            // was written for. One written for another build of the game (tide in the editor hasn't built the last
+            // change yet, or the C# in source control is older than the game) would read nothing in the player.
+            var game = GameHash(Path.Combine(Built, "game-hash"), "");
+            if (game != null && bound != null && game != bound)
+            {
+                throw new BuildFailedException(
+                    "Tide: the game's C# in Packages/com.tide.game was written for another build of the game than this player's, " +
+                    "so the player's scripts couldn't read the match. tide writes it as it builds the game in the editor: wait for " +
+                    "the Tide task in the status bar (or press Build now in Project Settings > Tide), let Unity compile, and build " +
+                    "the player again. On a build server, commit Packages/com.tide.game as the editor last wrote it. If the game's " +
+                    "data differs between debug and release (a field inside #if DEBUG), it can't: the editor's C# is the debug game's.");
+            }
             // A player loads only the scenes it was built with, and the match may load any of these
             var built = new HashSet<string>(EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path));
             foreach (var asset in TideUnityMap.Load(Built).assets)
@@ -168,6 +230,21 @@ namespace Tide.Editor
             var head = html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
             if (head < 0) throw new BuildFailedException("Tide: the WebGL build's index.html has no </head> to put Tide's program before.");
             File.WriteAllText(page, html.Insert(head, tag + "\n"));
+        }
+
+        // The 16 hex digits after `before` in the file at `path` (a game's hash), in capitals, or null without them.
+        static string GameHash(string path, string before)
+        {
+            if (!File.Exists(path)) return null;
+            var text = File.ReadAllText(path);
+            var at = before.Length > 0 ? text.IndexOf(before, StringComparison.Ordinal) : 0;
+            if (at < 0 || at + before.Length + 16 > text.Length) return null;
+            var hash = text.Substring(at + before.Length, 16).ToUpperInvariant();
+            foreach (var c in hash)
+            {
+                if (!Uri.IsHexDigit(c)) return null;
+            }
+            return hash;
         }
 
         // The highest n of `<prefix><n><suffix>` in `folder`, or -1.

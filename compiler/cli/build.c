@@ -4260,6 +4260,33 @@ static bool write_unity_outline(const run *r)
     return ok;
 }
 
+// The game's hash (tide_game.hash, as its generated C in `gen` has it: what its view packets and its schema say),
+// as 16 hex digits in <dir>/game-hash. A player's build writes it, so Unity's package can tell that the game's C#
+// in the project, which goes into the player, was made from this game and not from an earlier build of it.
+static void write_game_hash(const char *gen, const char *dir)
+{
+    char *game_c = path_join(gen, "game.c");
+    char *out = path_join(dir, "game-hash");
+    size_t size = 0;
+    char *text = sys_read_file(game_c, &size);
+    static const char field[] = "\n    .hash = 0x";
+    const char *at = text ? strstr(text, field) : NULL;
+    char hash[17] = "";
+    if (at) {
+        at += sizeof field - 1;
+        int n = 0;
+        for (; n < 16 && ((at[n] >= '0' && at[n] <= '9') || (at[n] >= 'A' && at[n] <= 'F') || (at[n] >= 'a' && at[n] <= 'f')); n++) {
+            hash[n] = at[n] >= 'a' ? (char)(at[n] - 'a' + 'A') : at[n];
+        }
+        hash[n == 16 ? 16 : 0] = '\0';
+    }
+    if (hash[0]) sys_write_file(out, hash, 16);
+    else sys_remove(out); // None is better than another build's
+    free(text);
+    free(out);
+    free(game_c);
+}
+
 // The newest build's schema, from the build itself, as schema.json beside it: what the package's C# bindings are
 // generated from before anything runs. False after saying what's wrong.
 static bool write_unity_schema(const run *r)
@@ -4545,6 +4572,7 @@ static int tide_unity_web(const char *root, const build_options *opts)
         fprintf(stderr, "tide: can't write %s\n", map);
         goto done;
     }
+    write_game_hash(gen, dir);
     printf("tide: built the game for Unity's WebGL player in %s\n", dir);
     code = 0;
 done:
@@ -4705,6 +4733,7 @@ static int tide_unity_android(const char *root, const build_options *opts)
         return 1;
     }
     free(map);
+    write_game_hash(gen, dir);
     free(out);
     free(pack);
     free(main_c);
@@ -4797,6 +4826,7 @@ int tide_unity(const char *root, const build_options *opts)
         fprintf(stderr, "tide: the game will build once its files are fixed\n");
     }
     if (!opts->watch) {
+        write_game_hash(r.gen, r.dir);
         printf("tide: built the game for Unity in %s\n", r.dir);
         return 0;
     }
