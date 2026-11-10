@@ -909,8 +909,9 @@ static void build_signatures(void)
         "in `vertices`. Each pixel is its corners' colors blended "
         "across the triangle, times `texture`'s at their uvs: a Texture, which an asset, a render target's color "
         "and a grid of colors or of floats with a size are (a grid's cell (0, 0) is at uv (0, 0)). `filter` is how "
-        "it's read between pixels, `Filter.Bilinear`, `Filter.Point` or `Filter.Trilinear` (its smaller images too, "
-        "where it's drawn smaller than it is), and `wrap`, after the filter, what a uv past "
+        "it's read between pixels, `Filter.Bilinear`, `Filter.Point`, `Filter.Trilinear` (its smaller images too, "
+        "where it's drawn smaller than it is) or `Filter.Anisotropic` (that, and along what a pixel covers where "
+        "it's seen at a shallow angle), and `wrap`, after the filter, what a uv past "
         "0 or 1 reads: the pixels at the texture's edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again "
         "the other way round each time (`Wrap.Mirror`). A call that leaves one out has the texture's own, which is "
         "what its declaration says (`[Filter]`, `[Wrap]`), and blended and clamped without one.";

@@ -1,4 +1,4 @@
-// expect: the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear'
+// expect: the filter is written here, 'Filter.Point', 'Filter.Bilinear', 'Filter.Trilinear' or 'Filter.Anisotropic'
 scene Main { }
 
 struct V

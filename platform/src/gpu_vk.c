@@ -262,7 +262,7 @@ typedef struct vk_read {
 } vk_read;
 
 // Samplers: by tide_gpu_wrap, then tide_gpu_filter; then the one that compares, and the nearest one that clamps.
-enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1, FILTERS = TIDE_GPU_FILTER_MIPMAPS + 1 };
+enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1, FILTERS = TIDE_GPU_FILTER_ANISOTROPIC + 1 };
 enum { SAMPLER_COMPARE = WRAPS * FILTERS, SAMPLER_COUNT };
 
 #define NO_PUSH UINT32_MAX // vk.pushed before a command buffer's first push
@@ -281,6 +281,7 @@ static struct {
     VkPhysicalDeviceMemoryProperties memory;
     bool compression;   // BC1 and BC3
     bool alpha_to_one;  // Coverage alpha becomes opaque after selecting samples
+    float anisotropy;   // The most reads along what a pixel covers (TIDE_GPU_FILTER_ANISOTROPIC): 1 where the device has none
     uint32_t indirect;  // What indirect draws can do (gpu.h, TIDE_GPU_INDIRECT_*)
     bool multi_draw;    // ...and vkCmdDrawIndexedIndirect draws many records at once (multiDrawIndirect)
     bool depth_linear;  // A depth is compared blended between its pixels
@@ -2030,6 +2031,11 @@ static tide_gpu_id vk_cube_face(const tide_gpu_id cube, const uint32_t face)
 static int vk_target_limit(void)
 {
     return (int)vk.properties.limits.maxImageDimension2D;
+}
+
+static uint32_t vk_anisotropy(void)
+{
+    return vk.anisotropy >= 1.0f ? (uint32_t)vk.anisotropy : 1u;
 }
 
 // A discrete GPU's own memory: its biggest heap of device-local memory. An
@@ -4293,6 +4299,18 @@ static bool create_device(const bool say)
     // A draw's first instance as the GPU's numbers have it (gpu.h has them 0), where a device takes another
     want.features.drawIndirectFirstInstance = has.features.drawIndirectFirstInstance;
     vk.alpha_to_one = has.features.alphaToOne;
+    // Reads along what a pixel covers, where the device has them: as many as it takes, up to gpu.h's. Without the
+    // feature the anisotropic samplers are the mipmapped ones. TIDE_VULKAN_ANISOTROPY says another most, for
+    // measurements and for tests of a device with none (1)
+    want.features.samplerAnisotropy = has.features.samplerAnisotropy;
+    vk.anisotropy = 1.0f;
+    if (has.features.samplerAnisotropy) {
+        float most = (float)TIDE_GPU_ANISOTROPY;
+        const char *said = getenv("TIDE_VULKAN_ANISOTROPY");
+        if (said && atoi(said) >= 1 && atoi(said) <= 16) most = (float)atoi(said);
+        const float takes = vk.properties.limits.maxSamplerAnisotropy;
+        vk.anisotropy = takes < 1.0f ? 1.0f : takes < most ? takes : most;
+    }
     const float priority = 1.0f;
     const VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, NULL, 0, vk.family, 1, &priority};
     const VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &want, 0, 1, &queue, 0, NULL, enabled_count, enabled, NULL};
@@ -4335,18 +4353,22 @@ static bool create_device(const bool say)
         return false;
     }
 
-    // Samplers: nearest, blended, and between smaller images too, each clamped, repeated or mirrored past
-    // the edges. The first two keep to a texture's own pixels whatever it has
+    // Samplers: nearest, blended, between smaller images too, and that along what a pixel covers, each clamped,
+    // repeated or mirrored past the edges. The first two keep to a texture's own pixels whatever it has; the
+    // last is the third on a device with no anisotropy
     static const VkSamplerAddressMode wraps[WRAPS] = {VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_REPEAT,
                                                       VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT};
     for (uint32_t wrap = 0; wrap < WRAPS; wrap++) {
         for (uint32_t filter = 0; filter < FILTERS; filter++) {
             const VkFilter between = filter == TIDE_GPU_FILTER_NEAREST ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+            const bool mips = filter == TIDE_GPU_FILTER_MIPMAPS || filter == TIDE_GPU_FILTER_ANISOTROPIC;
+            const bool along = filter == TIDE_GPU_FILTER_ANISOTROPIC && vk.anisotropy > 1.0f;
             const VkSamplerCreateInfo info = {
                 .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = between, .minFilter = between,
-                .mipmapMode = filter == TIDE_GPU_FILTER_MIPMAPS ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                .mipmapMode = mips ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST,
                 .addressModeU = wraps[wrap], .addressModeV = wraps[wrap], .addressModeW = wraps[wrap],
-                .maxLod = filter == TIDE_GPU_FILTER_MIPMAPS ? VK_LOD_CLAMP_NONE : 0.0f,
+                .anisotropyEnable = along ? VK_TRUE : VK_FALSE, .maxAnisotropy = along ? vk.anisotropy : 1.0f,
+                .maxLod = mips ? VK_LOD_CLAMP_NONE : 0.0f,
             };
             check(vkCreateSampler(vk.device, &info, NULL, &vk.samplers[wrap * FILTERS + filter]), "vkCreateSampler");
         }
@@ -4541,6 +4563,7 @@ const tide_gpu tide_gpu_vulkan = {
     .pipeline_cache = vk_pipeline_cache,
     .pipeline_cache_ready = vk_pipeline_cache_ready,
     .device_memory = vk_device_memory,
+    .anisotropy = vk_anisotropy,
     .pass_time_begin = vk_pass_time_begin,
     .pass_time_end = vk_pass_time_end,
     .pass_time_read = vk_pass_time_read,

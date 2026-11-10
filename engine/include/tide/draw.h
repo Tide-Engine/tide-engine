@@ -436,22 +436,34 @@ static inline __attribute__((always_inline)) bool tide_draw_quad_of(const tide_v
 }
 
 // How a mesh samples its texture between pixels. Tide's `Filter` has the same
-// values, which are Unity's FilterMode's. Trilinear also reads the texture's
-// smaller images (its mipmaps, each half the last's size, which the renderer
-// makes of its pixels and makes again when they change): where it's drawn
-// smaller than it is, a pixel is blended from the two nearest that size, so
-// it's the mean of what it covers and doesn't shimmer. A texture read so in
-// no draw has none.
+// values, the first three Unity's FilterMode's. Trilinear also reads the
+// texture's smaller images (its mipmaps, each half the last's size, which the
+// renderer makes of its pixels and makes again when they change): where it's
+// drawn smaller than it is, a pixel is blended from the two nearest that size,
+// so it's the mean of what it covers and doesn't shimmer. A texture read so in
+// no draw has none. Anisotropic is Trilinear that reads several times along
+// the longer side of what a pixel covers, so a surface seen at a shallow angle
+// (a floor, the ground) keeps its detail across the shorter side, where
+// Trilinear blurs both: as many reads as the device takes up to the
+// renderer's limit, and Trilinear where it takes none.
 typedef enum tide_filter {
-    TIDE_FILTER_POINT,     // The nearest pixel: hard edges
-    TIDE_FILTER_BILINEAR,  // Blended with its neighbors
-    TIDE_FILTER_TRILINEAR, // ...and between its smaller images, where it's drawn smaller
+    TIDE_FILTER_POINT,       // The nearest pixel: hard edges
+    TIDE_FILTER_BILINEAR,    // Blended with its neighbors
+    TIDE_FILTER_TRILINEAR,   // ...and between its smaller images, where it's drawn smaller
+    TIDE_FILTER_ANISOTROPIC, // ...and along what a pixel covers, where it's seen at an angle
 } tide_filter;
+
+// Whether a filter reads a texture's smaller images.
+static inline bool tide_filter_mips(const tide_filter filter)
+{
+    return filter == TIDE_FILTER_TRILINEAR || filter == TIDE_FILTER_ANISOTROPIC;
+}
 
 // A filter from any number, as a Tide enum's value can be: what isn't one is TIDE_FILTER_BILINEAR.
 static inline tide_filter tide_filter_of(const int32_t filter)
 {
-    return filter == TIDE_FILTER_POINT || filter == TIDE_FILTER_TRILINEAR ? (tide_filter)filter : TIDE_FILTER_BILINEAR;
+    return filter == TIDE_FILTER_POINT || filter == TIDE_FILTER_TRILINEAR || filter == TIDE_FILTER_ANISOTROPIC
+        ? (tide_filter)filter : TIDE_FILTER_BILINEAR;
 }
 
 // What a mesh samples of its texture where a uv is past 0 or 1, on both axes.
@@ -483,7 +495,9 @@ enum { TIDE_STORAGE_WORDS = 0, TIDE_STORAGE_INTS = 1, TIDE_STORAGE_RUN = 2 };
 // its neighbors, and clear for the nearest pixel, and the two bits from
 // TIDE_SAMPLING_WRAP + 2 * i are its tide_wrap. So a word with only its low
 // bits set clamps every texture. Bit TIDE_SAMPLING_MIPS + i is set, with bit
-// i, for one read between its smaller images too (TIDE_FILTER_TRILINEAR).
+// i, for one read between its smaller images too (TIDE_FILTER_TRILINEAR), and
+// without bit i for one that's also read along what a pixel covers
+// (TIDE_FILTER_ANISOTROPIC), which is blended all the same.
 // Slots 0..7 keep their original low 32 bits; slots 8..15 use the same
 // layout in the high 32 bits, with i starting at zero again.
 #define TIDE_SAMPLING_WRAP 8u
@@ -497,15 +511,18 @@ static inline uint64_t tide_sampling_wrapped(const uint32_t texture, const int32
 
 static inline bool tide_sampling_blended(const uint64_t sampling, const uint32_t texture)
 {
-    return texture < TIDE_SHADER_TEXTURES && (sampling >> (32u * (texture / 8u) + texture % 8u) & 1u) != 0;
+    if (texture >= TIDE_SHADER_TEXTURES) return false;
+    const uint32_t bank = 32u * (texture / 8u), lane = texture % 8u;
+    return ((sampling >> (bank + lane) | sampling >> (bank + TIDE_SAMPLING_MIPS + lane)) & 1u) != 0;
 }
 
 // Texture `texture`'s filter in the word, and the word's bits for a filter.
 static inline tide_filter tide_sampling_filter(const uint64_t sampling, const uint32_t texture)
 {
-    if (!tide_sampling_blended(sampling, texture)) return TIDE_FILTER_POINT;
-    return sampling >> (32u * (texture / 8u) + TIDE_SAMPLING_MIPS + texture % 8u) & 1u
-        ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_BILINEAR;
+    if (texture >= TIDE_SHADER_TEXTURES) return TIDE_FILTER_POINT;
+    const uint32_t bank = 32u * (texture / 8u), lane = texture % 8u;
+    const bool own = (sampling >> (bank + lane) & 1u) != 0, mips = (sampling >> (bank + TIDE_SAMPLING_MIPS + lane) & 1u) != 0;
+    return mips ? (own ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_ANISOTROPIC) : own ? TIDE_FILTER_BILINEAR : TIDE_FILTER_POINT;
 }
 
 static inline uint64_t tide_sampling_filtered(const uint32_t texture, const int32_t filter)
@@ -513,8 +530,8 @@ static inline uint64_t tide_sampling_filtered(const uint32_t texture, const int3
     if (texture >= TIDE_SHADER_TEXTURES) return 0;
     const tide_filter how = tide_filter_of(filter);
     const uint32_t bank = 32u * (texture / 8u), lane = texture % 8u;
-    return (how != TIDE_FILTER_POINT ? UINT64_C(1) << (bank + lane) : 0u)
-         | (how == TIDE_FILTER_TRILINEAR ? UINT64_C(1) << (bank + TIDE_SAMPLING_MIPS + lane) : 0u);
+    return (how == TIDE_FILTER_BILINEAR || how == TIDE_FILTER_TRILINEAR ? UINT64_C(1) << (bank + lane) : 0u)
+         | (tide_filter_mips(how) ? UINT64_C(1) << (bank + TIDE_SAMPLING_MIPS + lane) : 0u);
 }
 
 static inline tide_wrap tide_sampling_wrap(const uint64_t sampling, const uint32_t texture)
@@ -839,7 +856,8 @@ tide_target_pixels_fn tide_texture_target_pixels(tide_target_pixels_fn resolve);
 
 // A reference's sampling: bit 0 for the nearest pixel (none: blended, as a
 // draw that says nothing is), bit 1 for its smaller images too
-// (TIDE_FILTER_TRILINEAR), and its tide_wrap from bit 2. The rest of
+// (TIDE_FILTER_TRILINEAR), both for TIDE_FILTER_ANISOTROPIC, and its
+// tide_wrap from bit 2. The rest of
 // `image.version` is TIDE_TEXTURE_NAME: a pack image's name, or a grid's
 // place and cells.
 #define TIDE_TEXTURE_SAMPLING_SHIFT 60u
@@ -849,7 +867,8 @@ tide_target_pixels_fn tide_texture_target_pixels(tide_target_pixels_fn resolve);
 
 static inline uint32_t tide_sampling_bits(const int32_t filter, const int32_t wrap)
 {
-    return (filter == TIDE_FILTER_POINT ? 1u : filter == TIDE_FILTER_TRILINEAR ? 2u : 0u) | (uint32_t)tide_wrap_of(wrap) << 2;
+    return (filter == TIDE_FILTER_POINT ? 1u : filter == TIDE_FILTER_TRILINEAR ? 2u : filter == TIDE_FILTER_ANISOTROPIC ? 3u : 0u)
+         | (uint32_t)tide_wrap_of(wrap) << 2;
 }
 
 static inline uint32_t tide_texture_sampling(const tide_texture_ref texture)
@@ -864,7 +883,8 @@ static inline uint32_t tide_texture_sampling(const tide_texture_ref texture)
 static inline tide_filter tide_texture_filter(const tide_texture_ref texture)
 {
     const uint32_t sampling = tide_texture_sampling(texture);
-    return sampling & 1u ? TIDE_FILTER_POINT : sampling & 2u ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_BILINEAR;
+    return (sampling & 3u) == 3u ? TIDE_FILTER_ANISOTROPIC : sampling & 1u ? TIDE_FILTER_POINT
+         : sampling & 2u ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_BILINEAR;
 }
 
 static inline tide_wrap tide_texture_wrap(const tide_texture_ref texture)
@@ -1713,7 +1733,7 @@ static inline tide_filter tide_shader_texture_filter(const tide_shader *s, const
     for (uint32_t j = 0; j < TIDE_SHADER_TEXTURES; j++) {
         if (!(samplers >> j & 1u)) continue;
         const tide_filter filter = tide_sampling_filter(sampling, j);
-        if (filter == TIDE_FILTER_TRILINEAR || (filter == TIDE_FILTER_BILINEAR && most == TIDE_FILTER_POINT)) most = filter;
+        if (filter > most) most = filter; // Each reads what the one before it does, and more
     }
     return most;
 }

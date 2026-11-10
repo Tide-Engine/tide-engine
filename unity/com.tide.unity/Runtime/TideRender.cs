@@ -1484,7 +1484,7 @@ namespace Tide
             var j = 0;
             while (j < MaxTextures - 1 && (through >> j & 1) == 0) j++;
             var mode = sampling[j];
-            return (mode & 3) == 2 && !mips ? mode & ~3u | 1 : mode;
+            return (mode & 3) >= 2 && !mips ? mode & ~3u | 1 : mode;
         }
 
         // OpenGL Core's: how a texture samples itself this frame. Unity's OpenGL has no samplers apart from textures, and a
@@ -1509,6 +1509,7 @@ namespace Tide
         {
             var filter = mode & 3;
             texture.filterMode = filter == 0 ? FilterMode.Point : filter == 1 ? FilterMode.Bilinear : FilterMode.Trilinear;
+            texture.anisoLevel = filter == 3 ? 8 : 1; // Filter.Anisotropic: gpu.h's TIDE_GPU_ANISOTROPY, which the device clamps
             var wrap = mode >> 2 & 3;
             texture.wrapMode = wrap == 1 ? TextureWrapMode.Repeat : wrap == 2 ? TextureWrapMode.Mirror : TextureWrapMode.Clamp;
         }

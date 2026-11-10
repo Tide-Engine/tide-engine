@@ -4786,7 +4786,7 @@ view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
     // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals', 21 the models', 22 the places',
-    // 23 the image sizes' and 24 the cut-outs'
+    // 23 the image sizes', 24 the cut-outs', 25 the arrays', 26 the pre-passes' and 27 Anisotropics'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {
@@ -5114,4 +5114,122 @@ view Prepasses(Art art, mut Prepass pre)
     Draw.SetScreen();
     Draw.SetClip();
     Draw.Mesh(pre.sheet, art.faces, pre.scene.color, Filter.Point);
+}
+
+// Filter.Anisotropic (pass 27): the stripes of pass 14 (green in two rows of each 8), drawn an eighth of their
+// width and all of their height, so a pixel covers 8 of the texture's across and 1 down, as a floor's does at a
+// shallow angle. Read along what the pixel covers, the rows stay rows; read between the smaller images alone
+// (Filter.Trilinear) every row is their mean, a quarter. Each strip is 8 pixels of the window by 64.
+local singleton Along
+{
+    [Filter(Filter.Anisotropic)]
+    Grid2<Color> stripes = Grid2(64, 64);
+    Texture kept;                         // The stripes, as a field holds them: it says Anisotropic itself
+    List<Vertex> strip;
+    bool made;
+}
+
+// By its field, whose declaration says Anisotropic: in a branch, of a uv kept in a variable
+frag AlongLook(Vertex vertex, out Color color, Along along)
+{
+    color = Color.black;
+    if (vertex.uv.x >= 0)
+    {
+        var where = vertex.uv;
+        color = along.stripes.Sample(where);
+    }
+}
+
+// The Texture a draw gives, read as it says
+frag AlongSource(Vertex vertex, out Color color, Texture source)
+{
+    color = Color.black;
+    if (vertex.uv.y < 2) color = source.Sample(vertex.uv);
+}
+
+// ...and as the Sample says, whatever the texture does
+frag AlongSaid(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Anisotropic);
+}
+
+// The gradients a frag gives are what's read along: the pixel's own, after a uv a loop changes
+frag AlongGradient(Vertex vertex, out Color color, Texture source)
+{
+    var dx = this.Ddx(vertex.uv);
+    var dy = this.Ddy(vertex.uv);
+    mut var uv = vertex.uv;
+    for (int i = 0; i < 2; i++) uv += float2(0, 0);
+    color = source.SampleGrad(uv, dx, dy);
+}
+
+// ...the strip's, written out: an eighth of the texture across, a sixty-fourth down
+frag AlongGiven(Vertex vertex, out Color color, Texture source)
+{
+    color = source.SampleGrad(vertex.uv, float2(0.125, 0), float2(0, 0.015625), .Anisotropic);
+}
+
+// ...and as wide down as across, which nothing is read along: the smaller image 8 times smaller
+frag AlongSquare(Vertex vertex, out Color color, Texture source)
+{
+    color = source.SampleGrad(vertex.uv, float2(0.125, 0), float2(0, 0.125), .Anisotropic);
+}
+
+[After(Prepasses)]
+view Anisotropics(Art art, mut Along along)
+{
+    if (art.targetPass != 27) return;
+    if (!along.made)
+    {
+        along.made = true;
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++) along.stripes[x, y] = Color(x % 8 == 0 ? 1 : 0, y % 8 < 2 ? 1 : 0, 1);
+        }
+        along.kept = along.stripes;
+        along.strip = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(8, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+    }
+    Draw.Clear(Color.black);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Transform(float2(8, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, AlongLook);
+    }
+    // A Texture that says Anisotropic, through a frag that leaves the filter to it
+    Draw.Transform(float2(24, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.kept, AlongSource);
+    }
+    // ...and the same frag, with a draw that says Trilinear: the same shader, every row the mean
+    Draw.Transform(float2(40, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.kept, Filter.Trilinear, AlongSource);
+    }
+    Draw.Transform(float2(56, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.kept, Filter.Point, AlongSaid);
+    }
+    // With no frag: the engine's own shader
+    Draw.Transform(float2(72, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.stripes);
+    }
+    Draw.Transform(float2(88, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.stripes, Filter.Trilinear);
+    }
+    Draw.Transform(float2(104, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.kept, AlongGradient);
+    }
+    Draw.Transform(float2(120, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.kept, Filter.Point, AlongGiven);
+    }
+    Draw.Transform(float2(136, 8))
+    {
+        Draw.Mesh(along.strip, art.faces, along.kept, AlongSquare);
+    }
 }

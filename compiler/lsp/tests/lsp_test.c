@@ -1224,7 +1224,7 @@ TIDE_TEST(lsp_trilinear)
     const char *frag = request("textDocument/hover");
     TIDE_CHECK(has(frag, "`Art.tiles` (`Filter.Trilinear`)") && has(frag, "`Art.plain` (`Filter.Trilinear`) (`Wrap.Repeat`)"));
     const char *members = complete(IN_FRAG("color = art.plain.Sample(vertex.uv, Filter.$);"));
-    TIDE_CHECK(offers(members, "Point") && offers(members, "Bilinear") && offers(members, "Trilinear"));
+    TIDE_CHECK(offers(members, "Point") && offers(members, "Bilinear") && offers(members, "Trilinear") && offers(members, "Anisotropic"));
     open_document(IN_FRAG("color = art.plain.Sam$ple(vertex.uv, Filter.Trilinear);"));
     TIDE_CHECK(has(request("textDocument/hover"), "smaller images too"));
     open_document(IN_FRAG("mut var uv = vertex.uv;\n    uv.x += 1;\n    color = art.tiles.Sample(uv);"));
@@ -2488,7 +2488,7 @@ TIDE_TEST(lsp_enum_assignment_completion_and_shorthand)
     reply = complete(ENUM_SOURCE "void Add(mut List<ZombieState> states) { states.Add(.$); }\n");
     TIDE_CHECK(offers(reply, "Run") && count(reply, "\"label\"") == 3);
     reply = complete(ENUM_SOURCE "Color Sample(Texture source, float2 uv) { return source.Sample(uv, .$); }\n");
-    TIDE_CHECK(offers(reply, "Point") && offers(reply, "Trilinear") && count(reply, "\"label\"") == 3);
+    TIDE_CHECK(offers(reply, "Point") && offers(reply, "Trilinear") && offers(reply, "Anisotropic") && count(reply, "\"label\"") == 4);
     open_document(ENUM_SOURCE "view V() { var size = Draw.MeasureText(\"text\", 12, .Bold); Debug.Log($$\"{size}\"); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     reply = complete(ENUM_SOURCE "view V() { int n = $; Debug.Log(n); }\n");

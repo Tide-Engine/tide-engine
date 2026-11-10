@@ -3563,6 +3563,19 @@ void declared_sampling(const expr *texture, int *filter, int *wrap)
     }
 }
 
+// A filter that reads a texture's smaller images, by its number (Filter.Trilinear, Filter.Anisotropic), as a
+// message names it.
+static const char *filter_called(const int filter)
+{
+    return filter == 3 ? "Filter.Anisotropic" : "Filter.Trilinear";
+}
+
+// ...and which of them a Texture the game hands on may say: the ones its code names.
+static const char *filters_named(const program *prog)
+{
+    return prog->names_anisotropic ? "Filter.Trilinear or Filter.Anisotropic" : "Filter.Trilinear";
+}
+
 // How a Sample's texture is read between its pixels where that's known as
 // the game is compiled: its Filter's number, or -1 for a Texture's that's no
 // asset's by name, which is whichever texture a draw gives.
@@ -3575,14 +3588,14 @@ static int known_filter(const expr *e)
         if (e->args.count > at && e->args.items[at]->enum_member) return (int)e->args.items[at]->enum_member->number;
         int filter, wrap;
         declared_sampling(of, &filter, &wrap);
-        return filter == 0 || filter == 2 ? filter : 1;
+        return filter == 0 || filter == 2 || filter == 3 ? filter : 1;
     }
     if (e->args.count >= 2) return e->args.items[1]->enum_member ? (int)e->args.items[1]->enum_member->number : 1;
     if (of->type.kind == TY_CUBEMAP) return 1; // A cube that says none is read blended
     if (of->bind != BIND_ASSET && of->type.kind == TY_TEXTURE) return -1;
     int filter, wrap;
     declared_sampling(of, &filter, &wrap);
-    return filter == 0 || filter == 2 ? filter : 1;
+    return filter == 0 || filter == 2 || filter == 3 ? filter : 1;
 }
 
 // Whether working `e` out rolls with Random: a roll, or a call of what rolls. With `made`, a local made of one
@@ -3665,7 +3678,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
                                                                     && e->object->bind != BIND_PARAM && e->object->bind != BIND_CONST);
         if (e->call == CALL_GRID) { // A texture read at its own pixels asks nothing of the pixels around
             if (e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY) {
-                if (known_filter(e) == 2 && !str_eq_c(e->name, "SampleGrad")) return false; // It'd ask how fast its uv changes
+                if (known_filter(e) >= 2 && !str_eq_c(e->name, "SampleGrad")) return false; // It'd ask how fast its uv changes
                 for (int i = 0; i < e->args.count; i++) {
                     if (!e->args.items[i]->enum_member && !liftable(em, e->args.items[i], depth + 1)) return false;
                 }
@@ -3678,7 +3691,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
                 return true;
             }
             const int filter = known_filter(e);
-            return (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) && (filter >= -1 && filter <= 2)
+            return (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) && (filter >= -1 && filter <= 3)
                 && liftable(em, e->args.items[0], depth + 1) && (e->args.count < 2 || e->object->type.kind != TY_DEPTH_TEXTURE
                                                                  || liftable(em, e->args.items[1], depth + 1));
         }
@@ -3742,7 +3755,7 @@ static sampling sampling_of(const expr *of, const shader_read read, const int fi
         s.read = read;
         return s;
     }
-    if (read == READ_CUBE) return (sampling){read, filter == 0 ? 0 : filter == 2 ? 2 : 1, 0, true, true}; // One that says none is read blended
+    if (read == READ_CUBE) return (sampling){read, filter == 0 || filter == 2 || filter == 3 ? filter : 1, 0, true, true}; // One that says none is read blended
     // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
     // GPU blends: none of it is the draw's to say
     if (read != READ_COLOR) return (sampling){read, 0, 0, true, true};
@@ -3754,7 +3767,7 @@ static sampling sampling_of(const expr *of, const shader_read read, const int fi
     declared_sampling(of, &declared_filter, &declared_wrap);
     const bool carried = !(of->bind == BIND_ASSET && of->constant) && of->type.kind == TY_TEXTURE;
     const int said = filter >= 0 ? filter : declared_filter;
-    return (sampling){read, said == 0 ? 0 : said == 2 ? 2 : 1, wrap >= 0 ? wrap : declared_wrap > 0 ? declared_wrap : 0,
+    return (sampling){read, said == 0 || said == 2 || said == 3 ? said : 1, wrap >= 0 ? wrap : declared_wrap > 0 ? declared_wrap : 0,
                       !carried || filter >= 0, !carried || wrap >= 0};
 }
 
@@ -3966,16 +3979,16 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
         if (s.gradients || !em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE && how.read != READ_ARRAY)) continue;
         const char *where = how.read == READ_CUBE ? "direction" : "uv";
         const char *what = how.read == READ_CUBE ? "cube" : "texture";
-        if (how.filter == 2) {
+        if (how.filter >= 2) {
             em->failed = true;
             if (s.refused) continue;
             fn->gpu_samples.items[i].refused = true;
-            if (s.filter == 2) {
-                refuse(em, s.at, "a Sample in a function can't be Filter.Trilinear: only a frag's own Sample reads between a "
-                                 "%s's smaller images", what);
+            if (s.filter >= 2) {
+                refuse(em, s.at, "a Sample in a function can't be %s: only a frag's own Sample reads between a "
+                                 "%s's smaller images", filter_called(s.filter), what);
             } else {
-                refuse(em, s.at, "this Sample reads its %s as it says, and %s says Filter.Trilinear, which only a frag's own "
-                                 "Sample reads", what, texture_called(of));
+                refuse(em, s.at, "this Sample reads its %s as it says, and %s says %s, which only a frag's own "
+                                 "Sample reads", what, texture_called(of), filter_called(how.filter));
             }
             diag_note("the GPU picks between a %s's smaller images by how fast the %s changes from one pixel to the next, which "
                       "a frag asks as it starts, and a function's %s is its call's: sample in the frag itself, or with "
@@ -3983,8 +3996,8 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
         } else if (how.read == READ_COLOR && !how.filter_said && em->prog->names_trilinear && !s.warned) {
             // The texture may say Trilinear, and this read can't: said, not left to be found in a shimmer
             fn->gpu_samples.items[i].warned = true;
-            diag_warning(s.at, "%s may say Filter.Trilinear, which a function's Sample can't read: it reads the texture's own "
-                               "pixels", texture_called(of));
+            diag_warning(s.at, "%s may say %s, which a function's Sample can't read: it reads the texture's own "
+                               "pixels", texture_called(of), filters_named(em->prog));
             diag_note("write the filter here, 'Sample(uv, Filter.Bilinear)', which is what's read anyway; or sample in the frag "
                       "itself, of a uv made of its parameters, constants and variables declared with 'var' and never assigned "
                       "again");
@@ -4003,13 +4016,13 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
 static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampling how)
 {
     const int filter = how.filter;
-    const bool lifts = em->root->is_frag && em->code == em->root && !em->lifting && filter == 2;
+    const bool lifts = em->root->is_frag && em->code == em->root && !em->lifting && filter >= 2;
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && em->checking) {
         refuse(em, e->args.items[0]->at, has_roll(e->args.items[0], 0)
-               ? "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this direction is made of a roll"
-               : "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
-                 "direction is made of a variable that changes, or of one a loop counts");
+               ? "a Sample that's %s reads where the frag can work out as it starts: this direction is made of a roll"
+               : "a Sample that's %s reads where the frag can work out as it starts: this "
+                 "direction is made of a variable that changes, or of one a loop counts", filter_called(filter));
         if (has_roll(e->args.items[0], 0)) {
             diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
                       "next, and a roll is another number at every pixel: sample with Filter.Bilinear here");
@@ -4128,13 +4141,13 @@ static void ex_sample(emit *em, const expr *e)
     // A vert has no pixels to compare: it reads the texture's own. So does a function, whose uv is its
     // call's (pass_samples).
     const bool lifts = !gradients && base == READ_COLOR && em->root->is_frag && em->code == em->root && !em->lifting
-                    && (filter == 2 || (!filter_said && em->prog->names_trilinear));
+                    && (filter >= 2 || (!filter_said && em->prog->names_trilinear));
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
-    if (lifts && !grad && filter == 2 && em->checking) {
+    if (lifts && !grad && filter >= 2 && em->checking) {
         refuse(em, e->args.items[0]->at, has_roll(e->args.items[0], 0)
-               ? "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this uv is made of a roll"
-               : "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
-                 "uv is made of a variable that changes, or of one a loop counts");
+               ? "a Sample that's %s reads where the frag can work out as it starts: this uv is made of a roll"
+               : "a Sample that's %s reads where the frag can work out as it starts: this "
+                 "uv is made of a variable that changes, or of one a loop counts", filter_called(filter));
         if (has_roll(e->args.items[0], 0)) {
             diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the "
                       "next, and a roll is another number at every pixel: sample with Filter.Bilinear here");
@@ -4146,11 +4159,11 @@ static void ex_sample(emit *em, const expr *e)
     } else if (lifts && !grad && em->checking) {
         // The texture may say Trilinear, and this read can't: said, not left to be found in a shimmer
         diag_warning(e->args.items[0]->at, has_roll(e->args.items[0], 0)
-                     ? "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a roll, so it reads the "
+                     ? "%s may say %s, which this Sample can't read: its uv is made of a roll, so it reads the "
                        "texture's own pixels"
-                     : "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a "
+                     : "%s may say %s, which this Sample can't read: its uv is made of a "
                        "variable that changes, or of one a loop counts, so it reads the texture's own pixels",
-                     texture_called(of));
+                     texture_called(of), filters_named(em->prog));
         diag_note("make the uv of the frag's parameters, constants and variables declared with 'var' and never assigned "
                   "again, so the GPU can be asked how fast it changes as the frag starts; or write the filter here, "
                   "'Sample(uv, Filter.Bilinear)', which is what's read anyway");
@@ -4208,7 +4221,7 @@ static void ex_sample(emit *em, const expr *e)
         sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
         return;
     }
-    if (em->lifting && em->root->is_frag && base == READ_COLOR && (filter == 2 || (!filter_said && em->prog->names_trilinear))) {
+    if (em->lifting && em->root->is_frag && base == READ_COLOR && (filter >= 2 || (!filter_said && em->prog->names_trilinear))) {
         // Worked out as the frag starts (ex_derivative), outside any branch: the GPU picks its smaller images itself
         sb_printf(em->o, "textureSample(pixels%d, sampler%d, ", way_texture(em, slot), way_sampler(em, slot));
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});

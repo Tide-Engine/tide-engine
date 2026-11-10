@@ -17,6 +17,7 @@
 #include "game.h"
 #include "tide/platform.h"
 #include "window.h" // The backend, for whether it draws into floats
+#include "texture_residency.h" // tide_texture_anisotropy
 #if !defined(__wasm__) && !defined(__ANDROID__)
 extern bool tide_gpu_vk_alpha_to_one(void);
 #endif
@@ -1785,6 +1786,67 @@ static void run_size_checks(const char *when)
     tide_render_target_dispose(limited);
 }
 
+// Filter.Anisotropic (`Anisotropics` in shaders.tide): strips an eighth of the stripes' width and all of their
+// height, whose rows (green in 2 of each 8) stay rows where the texture is read along what a pixel covers, and are
+// their mean, a quarter, where it's read between its smaller images alone. On a device with no anisotropy the first
+// is the second.
+static void run_anisotropic_checks(const char *when)
+{
+    const uint32_t most = tide_texture_anisotropy(); // 0: the backend can't say (WebGPU, which has it wherever it's run)
+    const struct {
+        float left;
+        bool along;
+        const char *what;
+    } wanted[] = {
+        {8, true, "a grid whose declaration says Anisotropic, sampled in a frag's branch: its rows, where a pixel covers 8 across"},
+        {24, true, "a Texture that says Anisotropic, through a frag that leaves the filter to it"},
+        {40, false, "the same frag with a draw that says Trilinear: every row their mean"},
+        {56, true, "a Sample that says Anisotropic, whatever the draw says"},
+        {72, true, "a mesh with no frag, of a grid that says Anisotropic"},
+        {88, false, "and with a draw that says Trilinear"},
+        {104, true, "SampleGrad of a Texture that says Anisotropic, by the pixel's own derivatives, after a uv a loop changes"},
+        {120, true, "SampleGrad that says Anisotropic, by derivatives written out: 8 across and 1 down"},
+        {136, false, "and as far down as across, which nothing is read along: every row their mean"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    if (most > 1u && most < 8u) {
+        printf("skipped: the device reads %u along what a pixel covers, and the anisotropic checks' pixels cover 8%s\n", (unsigned)most, when);
+        return;
+    }
+    local.Art.targetPass = 27;
+    // Twice: the second frame draws with the smaller images the first made
+    for (int frame = 0; frame < 2; frame++) {
+        tide_draw_reset(&list);
+        tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+        tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+        tide_gui_end(&gui, &list);
+        tide_float2 points[2 * COUNT];
+        uint32_t got[2 * COUNT];
+        for (int i = 0; i < COUNT; i++) { // A lit row's pixel and a dark row's: the stripes' rows 0 and 1 of every 8 are lit
+            points[2 * i] = tide_f2(wanted[i].left + 3.5f, 16.5f);
+            points[2 * i + 1] = tide_f2(wanted[i].left + 3.5f, 20.5f);
+        }
+        tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 2 * COUNT, got);
+        for (int i = 0; i < COUNT; i++) {
+            const int lit = (int)(got[2 * i] >> 16 & 0xFFu), dark = (int)(got[2 * i + 1] >> 16 & 0xFFu);
+            const bool along = wanted[i].along && most != 1u;
+            const bool ok = along ? lit >= 200 && dark <= 40 : lit >= 56 && lit <= 72 && dark >= 56 && dark <= 72;
+            printf("%s: %s%s%s (green 0x%02X on a lit row and 0x%02X on a dark one, anisotropy %u)\n", ok ? "ok" : "FAIL",
+                   wanted[i].what, frame ? ", again" : "", when, (unsigned)lit, (unsigned)dark, (unsigned)most);
+            if (!ok) failures++;
+        }
+    }
+    local.Art.targetPass = 0;
+    // One frag given a texture read two ways is one shader in two runs: how it's read is no part of its text
+    int runs = 0;
+    for (uint32_t i = 0; i < list.run_count; i++) {
+        runs += list.runs[i].shader && strcmp(list.runs[i].shader->name, "AlongSource on Vertex") == 0;
+    }
+    printf("%s: a frag whose texture is read along what a pixel covers or not is the same shader in two runs%s (%d runs)\n",
+           runs == 2 ? "ok" : "FAIL", when, runs);
+    if (runs != 2) failures++;
+}
+
 // A depth pre-pass and its lit pass (`Prepasses` in shaders.tide): Depth.Only writes depth and no color, its frag's
 // discards and cut-outs included, at 4 samples; Depth.Equal then shades each sample the pre-pass left once, added, and
 // nothing the pre-pass didn't draw. The near card fills one half of the target and the far card shows in the other
@@ -1859,6 +1921,7 @@ static void run_prewarmed_checks(void)
     run_values_checks(when);
     run_height_checks(when);
     run_mipmap_checks(2, when);
+    run_anisotropic_checks(when);
     run_alpha_checks(when);
     run_cut_checks(when);
     run_raw_checks(when);
@@ -1892,6 +1955,7 @@ static void run_again(const int roll, const char *when)
     run_values_checks(when);
     run_height_checks(when);
     run_mipmap_checks(2, when);
+    run_anisotropic_checks(when);
     run_alpha_checks(when);
     run_cut_checks(when);
     run_raw_checks(when);
@@ -1954,6 +2018,7 @@ static int frame(void *user, const float seconds)
     run_mipmap_checks(2, "");
     run_mipmap_checks(2, ", again");
     run_mipmap_checks(4, ", with other pixels drawn into the target");
+    run_anisotropic_checks("");
     run_alpha_checks("");
     run_cut_checks("");
     run_cut_checks(", again");

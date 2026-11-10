@@ -4604,6 +4604,11 @@ uint64_t tide_texture_device_memory(void)
     return gpu && gpu->device_memory ? gpu->device_memory() : 0;
 }
 
+uint32_t tide_texture_anisotropy(void)
+{
+    return gpu && gpu->anisotropy ? gpu->anisotropy() : 0;
+}
+
 uint64_t tide_texture_idle_bytes(void)
 {
     return tide_texture_idle_budget(tide_texture_device_memory());
@@ -4943,7 +4948,7 @@ static bool prepare_source_targets(const tide_draw_list *list, const draw_step *
     return needed;
 }
 
-// A texture that's read between its smaller images (Filter.Trilinear) has
+// A texture that's read between its smaller images (Filter.Trilinear, Filter.Anisotropic) has
 // them made of its pixels as they are, outside a pass: an uploaded texture's
 // once for each upload, and a target's color image's once more passes have
 // drawn into the target. So one that's never read so has none, and one that
@@ -4953,7 +4958,7 @@ static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, c
 
 static bool prepare_mipmaps(const tide_draw_list *list, const uint32_t texture, const tide_filter filter, const bool check)
 {
-    if (filter != TIDE_FILTER_TRILINEAR || !texture || texture > list->texture_count) return false;
+    if (!tide_filter_mips(filter) || !texture || texture > list->texture_count) return false;
     texture_check *c = texture_check_of(texture);
     if (check && c->mipped == source_epoch + 1u) return false;
     const bool needed = mipmaps_needed(list, texture, check);
@@ -5041,10 +5046,10 @@ static bool step_settled(const tide_draw_list *list, const draw_step *s, const b
         if (shaded) {
             const tide_gpu_read read = gpu_read(run->shader, i);
             trilinear = (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || read == TIDE_GPU_READ_ARRAY)
-                     && tide_shader_texture_filter(run->shader, run->sampling, i) == TIDE_FILTER_TRILINEAR;
+                     && tide_filter_mips(tide_shader_texture_filter(run->shader, run->sampling, i));
         } else {
             trilinear = (s->kind == STEP_MESH || s->kind == STEP_MESH_3D)
-                     && tide_filter_of((int32_t)s->filter) == TIDE_FILTER_TRILINEAR;
+                     && tide_filter_mips(tide_filter_of((int32_t)s->filter));
         }
         if (!mark) {
             if (trilinear) return false;
@@ -5061,7 +5066,8 @@ static bool step_settled(const tide_draw_list *list, const draw_step *s, const b
 static tide_gpu_filter gpu_filter(const tide_filter filter)
 {
     _Static_assert(TIDE_GPU_FILTER_NEAREST == (int)TIDE_FILTER_POINT && TIDE_GPU_FILTER_LINEAR == (int)TIDE_FILTER_BILINEAR
-                   && TIDE_GPU_FILTER_MIPMAPS == (int)TIDE_FILTER_TRILINEAR, "gpu.h's filters are draw.h's");
+                   && TIDE_GPU_FILTER_MIPMAPS == (int)TIDE_FILTER_TRILINEAR
+                   && TIDE_GPU_FILTER_ANISOTROPIC == (int)TIDE_FILTER_ANISOTROPIC, "gpu.h's filters are draw.h's");
     return (tide_gpu_filter)tide_filter_of((int32_t)filter);
 }
 

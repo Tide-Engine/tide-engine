@@ -1677,10 +1677,12 @@ typedef struct program {
     bool names_bold;
     bool font_decodes;   // It says Font.Decode: generated C has its helper
     bool uses_microphone; // It says Clip.Microphone: its Android app asks to record
-    // Whether code names Filter.Trilinear: only then does generated C have the member, and only then is a
-    // Sample that leaves its filter to the Texture it's given written so that it can read between that
-    // texture's smaller images. So a game that doesn't generates the C and the shaders it did.
-    bool names_trilinear;
+    // Whether code names a filter that reads a texture's smaller images (Filter.Trilinear or
+    // Filter.Anisotropic): only then does generated C have the members, and only then is a Sample that leaves
+    // its filter to the Texture it's given written so that it can read between that texture's smaller images.
+    // So a game that doesn't generates the C and the shaders it did. `names_anisotropic`: Filter.Anisotropic
+    // itself, whose member generated C has only then.
+    bool names_trilinear, names_anisotropic;
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
     decl *shape;         // The built-in struct Shape, what Draw.Shape draws

@@ -2347,7 +2347,8 @@ static const method_form grid_calls[] = {
      "Reads the grid as the texture it is, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to "
      "(1, 1) past its last, blended between cells (`Filter.Bilinear`), the nearest cell's (`Filter.Point`), or "
      "blended between the grid's smaller images too where it's drawn smaller than it is (`Filter.Trilinear`, in a "
-     "frag, of a `uv` the frag can work out as it starts). A "
+     "frag, of a `uv` the frag can work out as it starts; `Filter.Anisotropic` is that and several reads along "
+     "what a pixel covers, for a floor or ground seen at a shallow angle). A "
      "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`), the grid again (`Wrap.Repeat`), or again "
      "the other way round each time (`Wrap.Mirror`). A Sample that leaves one out has what the grid's declaration "
      "says (`[Filter]`, `[Wrap]`), and blended and clamped without one. A `Grid2<float>` is a texture of one "
@@ -2364,13 +2365,17 @@ static const method_form texture_calls[] = {
      "its declaration says (`[Filter]`, `[Wrap]`), or what the draw that gave it says, and blended and clamped with "
      "neither. Written here, they're fixed for the draw. `Filter.Trilinear` also reads the texture's smaller "
      "images (its mipmaps) where it's drawn smaller than it is, so it doesn't shimmer: in a frag, of a `uv` made of "
-     "the frag's parameters, constants and variables that are never assigned again. A vert reads the texture's own "
+     "the frag's parameters, constants and variables that are never assigned again. `Filter.Anisotropic` is "
+     "Trilinear that also reads several times along the longer side of what a pixel covers, so a floor or ground "
+     "seen at a shallow angle keeps its detail where Trilinear blurs it; it costs more reads there, and is "
+     "Trilinear on a device without it. A vert reads the texture's own "
      "pixels, and so does a function they call, which samples a texture it takes as a parameter, the one its call "
      "names, or an asset by its name."},
     {"SampleGrad", "SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's, Wrap wrap = the texture's) -> Color",
      "Samples this texture in a frag or a helper it calls, using explicit UV changes per destination pixel: "
      "`dx` toward the right and `dy` downward. The gradients select mipmaps for `Filter.Trilinear`, including "
-     "when UVs change inside a loop. Point and Bilinear still read the base image. Omitted filter and wrap "
+     "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
+     "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
 };
 
@@ -2392,7 +2397,8 @@ static const method_form cube_calls[] = {
      "Reads this cube in a frag or vert, towards `direction` from its middle, of any length: a sky's color that "
      "way, or what a reflection sees. One face goes on in the next, so there's no edge and no wrap. "
      "`Filter.Trilinear` also reads its smaller images, where a pixel covers many of its own, in a frag, of a "
-     "direction made of the frag's parameters, constants and variables that are never assigned again. The cube "
+     "direction made of the frag's parameters, constants and variables that are never assigned again, and "
+     "`Filter.Anisotropic` along what a pixel covers too. The cube "
      "is an asset by its name, or a field of a component or singleton the frag or vert takes; in a function "
      "they call, a parameter of its own, which is the cube its call names."},
     {"Resize", "Resize(float size)",
@@ -2985,7 +2991,7 @@ static void put_samples(const decl *d, const int index, const char *prefix, sb *
         const field *f = &(s->local ? t->local_part : t)->fields.items[s->field];
         static const char *const wraps[] = {"", " (`Wrap.Repeat`)", " (`Wrap.Mirror`)"}; // By its number
         sb_printf(out, "%s`%s" STR_FMT "`%s%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
-                  s->filter == 0 ? " (`Filter.Point`)" : s->filter == 2 ? " (`Filter.Trilinear`)" : "", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
+                  s->filter == 0 ? " (`Filter.Point`)" : s->filter == 2 ? " (`Filter.Trilinear`)" : s->filter == 3 ? " (`Filter.Anisotropic`)" : "", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
     }
 }
 
@@ -4102,7 +4108,8 @@ static void describe(const occurrence *o, sb *out)
             {"Filter", "[Filter(Filter.Point)]",
              "How this texture is read between its cells wherever a draw or a `Sample` doesn't say: `Filter.Point` "
              "for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, blended, "
-             "`Filter.Trilinear` for that and between the texture's smaller images where it's drawn smaller. It goes "
+             "`Filter.Trilinear` for that and between the texture's smaller images where it's drawn smaller, "
+             "`Filter.Anisotropic` for that and along what a pixel covers where it's seen at a shallow angle. It goes "
              "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
              "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
              "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
@@ -12067,7 +12074,7 @@ static const struct {
     [MESH_TEXTURE] = {"texture",
                       {"A `Texture`, read at each corner's `uv`: an asset's, a render target's color, or a `Grid2<Color>` or "
                        "`Grid2<float>`, which is one here. A frag or vert with a Texture parameter receives it as its source."}},
-    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear`, `Filter.Point` or `Filter.Trilinear`: the texture's own "
+    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear`, `Filter.Point`, `Filter.Trilinear` or `Filter.Anisotropic`: the texture's own "
                                 "where the draw leaves it out."}},
     [MESH_WRAP] = {"wrap",
                    {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`), "

@@ -662,6 +662,8 @@ The GPU picks which copies to read by how fast the `uv` changes from one pixel t
 - Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says, and tidec warns about it: write `Filter.Bilinear` there to say that's what you want, or make the `uv` one the frag can work out as it starts.
 - A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
 
+`Filter.Anisotropic` is `Filter.Trilinear` for a surface [seen at a shallow angle](./meshes-and-textures.md#seen-at-a-shallow-angle): where a pixel covers a long strip of the texture, it reads along the strip, so ground and floors keep their detail into the distance. Everything above holds for it as it does for Trilinear (the `uv` a frag can work out as it starts, the warning, a vert's and a function's own pixels), and a texture, a `TextureArray`'s layer and a `Cubemap` all take it.
+
 When a UV changes in a loop or needs a different sampling footprint, give its
 derivatives explicitly with `Texture.SampleGrad`:
 
@@ -683,7 +685,12 @@ loops. A helper takes the derivatives as ordinary `float2` parameters.
 
 The optional filter and wrap follow `Sample`'s rules and default to the texture's
 own. `Filter.Point` and `Filter.Bilinear` still read only its base image;
-`Filter.Trilinear` uses the supplied derivatives to choose its smaller images.
+`Filter.Trilinear` uses the supplied derivatives to choose its smaller images,
+and for `Filter.Anisotropic` they are the strip the pixel covers: the GPU reads
+along the longer of the two and picks the smaller image by the shorter. So give
+them as they are (ground textured by its world position: `this.Ddx(p) * scale`
+and `this.Ddy(p) * scale`); derivatives made longer or equal on purpose, to
+blur, leave it nothing to read along.
 Ordinary colors and `[Raw] Texture` fields keep their usual channel behavior.
 `SampleGrad` is for `Texture`; verts, CPU code, grids, cubemaps and depth textures
 do not expose it.

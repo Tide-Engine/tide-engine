@@ -566,6 +566,10 @@ elseif(NOT TIDE_ANDROID)
     add_test(NAME tide_platform_draw_vulkan_sets COMMAND tide_platform_draw)
     tide_gpu_test(tide_platform_draw_vulkan_sets)
     set_property(TEST tide_platform_draw_vulkan_sets APPEND PROPERTY ENVIRONMENT TIDE_VULKAN_DESCRIPTOR_SETS=1)
+    # ...and as a device with no anisotropic filtering draws: Filter.Anisotropic is Filter.Trilinear's pixels there
+    add_test(NAME tide_platform_draw_no_anisotropy COMMAND tide_platform_draw)
+    tide_gpu_test(tide_platform_draw_no_anisotropy)
+    set_property(TEST tide_platform_draw_no_anisotropy APPEND PROPERTY ENVIRONMENT TIDE_VULKAN_ANISOTROPY=1)
 else()
     # On Android a renderer needs an app's window: the test installs
     # tide_platform_draw_app.apk, starts it, and prints what it logs.
@@ -693,7 +697,7 @@ endif()
 # warning, and give the pixels tests/shaders.c expects.
 if(NOT TIDE_ANDROID)
     tide_add_game(tide_platform_shaders SOURCES tests/shaders.tide NAME game HOST tests/shaders.c
-                  WARNINGS "'source' may say Filter.Trilinear, which this Sample can't read")
+                  WARNINGS "'source' may say Filter.Trilinear or Filter.Anisotropic, which this Sample can't read")
     target_include_directories(tide_platform_shaders PRIVATE src)
     target_link_libraries(tide_platform_shaders PRIVATE tide_platform)
     if(TIDE_WEB)
@@ -729,7 +733,7 @@ else()
     # An app there too: the device's Vulkan has to take what tidec writes as
     # the others do.
     tide_add_game(tide_platform_shaders_app SOURCES tests/shaders.tide NAME game HOST tests/shaders.c WINDOW
-                  WARNINGS "'source' may say Filter.Trilinear, which this Sample can't read")
+                  WARNINGS "'source' may say Filter.Trilinear or Filter.Anisotropic, which this Sample can't read")
     target_include_directories(tide_platform_shaders_app PRIVATE src)
     tide_android_app_test(tide_platform_shaders_app GPU)
 endif()

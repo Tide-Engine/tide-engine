@@ -225,12 +225,18 @@ typedef enum tide_gpu_wrap {
 // How a texture is read between its pixels: tide_filter's numbers. With
 // TIDE_GPU_FILTER_MIPMAPS it's also read between its smaller images
 // (tide_gpu.mipmaps), by how much smaller than itself it's drawn; one that
-// has none yet is read as TIDE_GPU_FILTER_LINEAR.
+// has none yet is read as TIDE_GPU_FILTER_LINEAR. TIDE_GPU_FILTER_ANISOTROPIC
+// is that with up to TIDE_GPU_ANISOTROPY reads along the longer side of what
+// a pixel covers (by the derivatives a shader gives, where it gives them): as
+// many as the device takes, and TIDE_GPU_FILTER_MIPMAPS on one that takes
+// none. Every backend takes the filter; none refuses it.
 typedef enum tide_gpu_filter {
-    TIDE_GPU_FILTER_NEAREST, // The nearest pixel
-    TIDE_GPU_FILTER_LINEAR,  // Blended with its neighbors
-    TIDE_GPU_FILTER_MIPMAPS, // ...and between the two of its images nearest the size it's drawn at
+    TIDE_GPU_FILTER_NEAREST,     // The nearest pixel
+    TIDE_GPU_FILTER_LINEAR,      // Blended with its neighbors
+    TIDE_GPU_FILTER_MIPMAPS,     // ...and between the two of its images nearest the size it's drawn at
+    TIDE_GPU_FILTER_ANISOTROPIC, // ...and along what a pixel covers
 } tide_gpu_filter;
+enum { TIDE_GPU_ANISOTROPY = 8 }; // tide.js's ANISOTROPY and hlsl.c's samplers say the same
 
 // The most textures a pipeline samples: what every backend takes in a stage, as many samplers too (WebGPU's
 // default maxSampledTexturesPerShaderStage and maxSamplersPerShaderStage, Vulkan's least, and Metal's samplers).
@@ -375,6 +381,10 @@ typedef struct tide_gpu {
     // (texture_residency.h). 0 where that's unknown or the memory is the
     // system's (an integrated GPU, a phone's); NULL for a backend that can't say.
     uint64_t (*device_memory)(void);
+
+    // Optional: the most reads along what a pixel covers TIDE_GPU_FILTER_ANISOTROPIC makes on this device, 1 for
+    // one with none (the filter is then TIDE_GPU_FILTER_MIPMAPS); NULL for a backend that can't say.
+    uint32_t (*anisotropy)(void);
 
     // Optional timing of a game's drawing, outside passes. Read returns a
     // newly completed sample in milliseconds, or -1 for none (including an

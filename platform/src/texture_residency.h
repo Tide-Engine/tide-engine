@@ -31,6 +31,9 @@ extern uint32_t tide_texture_idle_frames;
 // weighs unused images by there (tide_texture_idle_budget of it), which tests read.
 uint64_t tide_texture_device_memory(void);
 uint64_t tide_texture_idle_bytes(void);
+// The most reads along what a pixel covers an anisotropic filter makes on the renderer's device
+// (tide_gpu.anisotropy): 1 for a device with none, 0 where the backend can't say. Tests read it.
+uint32_t tide_texture_anisotropy(void);
 // Private fixture control: emulate a device without BC, retaining RGBA8 mip upload.
 extern bool tide_texture_force_rgba;
 

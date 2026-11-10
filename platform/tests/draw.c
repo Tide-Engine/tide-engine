@@ -1849,6 +1849,56 @@ static void mipmaps(void)
     check_pixels(changed, (int)(sizeof changed / sizeof changed[0]));
 }
 
+// All of the striped texture, an eighth of its width and all of its height, from window pixel (x, y): what a
+// pixel covers of it is 8 of its pixels across and 1 down, as a floor's is at a shallow angle.
+static void squashed_quad(const float x, const float y, const tide_filter filter)
+{
+    const tide_float2 top_left = at(x, y), bottom_right = at(x + 8, y + 64);
+    const tide_vertex vertices[4] = {
+        {top_left, {0, 0}, white},
+        {{bottom_right.x, top_left.y}, {1, 0}, white},
+        {bottom_right, {1, 1}, white},
+        {{top_left.x, bottom_right.y}, {0, 1}, white},
+    };
+    tide_draw_mesh(&list, vertices, 4, quad_indices, 6, &striped_texture, filter);
+}
+
+// Filter.Anisotropic keeps what Trilinear blurs where a pixel covers more of a texture one way than the other:
+// the texture's rows (green in 2 of every 8) stay rows where it's squashed to an eighth across, and with
+// Trilinear beside it they're their mean, 0.25, as its smaller image 8 times smaller has them. On a device with
+// no anisotropy the two are the same pixels.
+static void anisotropic(void)
+{
+    stripe(1);
+    const uint32_t most = tide_texture_anisotropy(); // 0: the backend can't say (WebGPU, which has it wherever it's run)
+    // Twice: the second frame draws with the smaller images the first made
+    for (int frame = 0; frame < 2; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        squashed_quad(16, 16, TIDE_FILTER_ANISOTROPIC);
+        squashed_quad(32, 16, TIDE_FILTER_TRILINEAR);
+        squashed_quad(48, 16, TIDE_FILTER_BILINEAR);
+        // A lit row's pixel and a dark row's, of each: the texture's rows 0 and 1 of every 8 are lit
+        const tide_float2 points[6] = {{19.5f, 24.5f}, {19.5f, 28.5f}, {35.5f, 24.5f}, {35.5f, 28.5f}, {51.5f, 24.5f}, {51.5f, 28.5f}};
+        uint32_t got[6];
+        tide_platform_read_pixels(&list, points, 6, got);
+        int green[6];
+        for (int i = 0; i < 6; i++) green[i] = (int)(got[i] >> 16 & 0xFFu);
+        printf("anisotropy %u: green 0x%02X 0x%02X anisotropic, 0x%02X 0x%02X trilinear, 0x%02X 0x%02X bilinear\n", (unsigned)most,
+               (unsigned)green[0], (unsigned)green[1], (unsigned)green[2], (unsigned)green[3], (unsigned)green[4], (unsigned)green[5]);
+        expect(green[2] >= 56 && green[2] <= 72 && green[3] >= 56 && green[3] <= 72,
+               "a texture squashed to an eighth across, read between its smaller images: every row the mean of its rows");
+        expect(green[4] >= 247 && green[5] <= 8, "and read at its own pixels beside it: its rows");
+        if (most == 1u) {
+            expect(green[0] == green[2] && green[1] == green[3], "read along what a pixel covers on a device that can't: as between its smaller images");
+        } else if (most == 0u || most >= 8u) {
+            expect(green[0] >= 200 && green[1] <= 40, "read along what a pixel covers: its rows kept, where Trilinear blurs them");
+        } else {
+            printf("skipped: the device reads %u along what a pixel covers, and the test's pixel covers 8\n", (unsigned)most);
+        }
+    }
+}
+
 // Rects side by side, a cell each as a grid's view draws them, leave no gap
 // between them at any scale: not even where their shared edge falls exactly
 // on a row or column of pixel centers, as it does every 8 cells at 3.125
@@ -4899,6 +4949,7 @@ static int frame(void *user, const float seconds)
         held_data_textures();
         wraps();
         mipmaps();
+        anisotropic();
         smooth_shapes();
         corner_rects();
         themed_gui();
@@ -4938,6 +4989,7 @@ static int frame(void *user, const float seconds)
         held_data_textures();
         wraps();
         mipmaps();
+        anisotropic();
         smooth_shapes();
         corner_rects();
         themed_gui();

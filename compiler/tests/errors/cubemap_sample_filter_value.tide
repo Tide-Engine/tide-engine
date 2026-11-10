@@ -1,4 +1,4 @@
-// expect: the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a texture is read before any pixel runs
+// expect: the filter is written here, 'Filter.Point', 'Filter.Bilinear', 'Filter.Trilinear' or 'Filter.Anisotropic': the GPU is told how a texture is read before any pixel runs
 // The filter is written there
 scene Main { }
 local singleton Room { Cubemap reflection; List<Vertex3> ball; Filter how; }

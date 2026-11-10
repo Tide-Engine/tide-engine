@@ -36,6 +36,32 @@ TIDE_TEST(draw_sampling_banks_keep_every_slot_independent)
         TIDE_CHECK(tide_sampling_filtered(slot, TIDE_FILTER_TRILINEAR) == ((UINT64_C(1) << slot) | (UINT64_C(1) << (24u + slot))));
         TIDE_CHECK(tide_sampling_wrapped(slot, TIDE_WRAP_MIRROR) == UINT64_C(2) << (8u + 2u * slot));
     }
+    // Anisotropic is the smaller images' bit without the blended one, in either bank, beside any wrap and any
+    // neighbor; it's blended and reads the smaller images for whoever asks only that, and a reference carries it
+    for (uint32_t slot = 0; slot < TIDE_SHADER_TEXTURES; slot++) {
+        const uint32_t bank = 32u * (slot / 8u), lane = slot % 8u;
+        TIDE_CHECK(tide_sampling_filtered(slot, TIDE_FILTER_ANISOTROPIC) == UINT64_C(1) << (bank + 24u + lane));
+        for (int32_t wrap = 0; wrap < 3; wrap++) {
+            const uint64_t mask = tide_sampling_filtered(slot, TIDE_FILTER_TRILINEAR);
+            const uint64_t edited = (sampling & ~mask) | tide_sampling_filtered(slot, TIDE_FILTER_ANISOTROPIC);
+            for (uint32_t other = 0; other < TIDE_SHADER_TEXTURES; other++) {
+                TIDE_CHECK(tide_sampling_filter(edited, other) == (other == slot ? TIDE_FILTER_ANISOTROPIC : (tide_filter)(other % 3u)));
+                TIDE_CHECK(tide_sampling_wrap(edited, other) == (tide_wrap)((other + 1u) % 3u));
+            }
+            TIDE_CHECK(tide_sampling_blended(edited, slot));
+            tide_texture_ref kept = {.image = {.version = 77}};
+            kept = tide_texture_wrapped(tide_texture_filtered(kept, TIDE_FILTER_ANISOTROPIC), wrap);
+            TIDE_CHECK(tide_texture_filter(kept) == TIDE_FILTER_ANISOTROPIC && tide_texture_wrap(kept) == (tide_wrap)wrap);
+            TIDE_CHECK((kept.image.version & TIDE_TEXTURE_NAME) == 77);
+            TIDE_CHECK(tide_sampling_filter(tide_sampling_filter_of(slot, kept), slot) == TIDE_FILTER_ANISOTROPIC);
+            TIDE_CHECK(tide_texture_filter(tide_texture_filtered(kept, TIDE_FILTER_POINT)) == TIDE_FILTER_POINT);
+            TIDE_CHECK(tide_texture_wrap(tide_texture_filtered(kept, TIDE_FILTER_TRILINEAR)) == (tide_wrap)wrap);
+        }
+    }
+    TIDE_CHECK(tide_filter_of(3) == TIDE_FILTER_ANISOTROPIC && tide_filter_of(4) == TIDE_FILTER_BILINEAR && tide_filter_of(-1) == TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(tide_filter_mips(TIDE_FILTER_TRILINEAR) && tide_filter_mips(TIDE_FILTER_ANISOTROPIC)
+               && !tide_filter_mips(TIDE_FILTER_BILINEAR) && !tide_filter_mips(TIDE_FILTER_POINT));
+    TIDE_CHECK(tide_sampling_bits(TIDE_FILTER_ANISOTROPIC, TIDE_WRAP_MIRROR) == (3u | 2u << 2));
     TIDE_CHECK(tide_sampling_filtered(UINT32_MAX, 2) == 0 && tide_sampling_wrapped(TIDE_SHADER_TEXTURES, 2) == 0);
     TIDE_CHECK(tide_sampling_filter(UINT64_MAX, UINT32_MAX) == TIDE_FILTER_POINT);
     TIDE_CHECK(tide_sampling_wrap(UINT64_MAX, TIDE_SHADER_TEXTURES) == TIDE_WRAP_CLAMP);

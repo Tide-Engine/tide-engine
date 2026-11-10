@@ -2289,7 +2289,7 @@ static unsigned declared_sampling_bits(const expr *texture)
 {
     int filter, wrap;
     declared_sampling(texture, &filter, &wrap);
-    return (filter == 0 ? 1u : filter == 2 ? 2u : 0u) | (wrap > 0 ? (unsigned)wrap << 2 : 0u);
+    return (filter == 0 ? 1u : filter == 2 ? 2u : filter == 3 ? 3u : 0u) | (wrap > 0 ? (unsigned)wrap << 2 : 0u);
 }
 
 // A draw's texture: `texture` as the Texture it is, with the filter and the
@@ -21830,7 +21830,9 @@ static void gen_assets(gen *g)
         }
         else sb_printf(o, "    %s = (%s){tide_pack_handle(e)};\n", asset_cname(d), asset_ctype(d->return_type));
         // A Texture is born sampled as its declaration says ([Filter], [Wrap]), each of a glob's too
-        const unsigned born = (d->sample_filter == 1 ? 1u : 0u) | (d->sample_wrap > 1 ? (unsigned)(d->sample_wrap - 1) << 2 : 0u);
+        // (tide_sampling_bits of 1 + each member's number: Point 1, Trilinear 2, Anisotropic 3)
+        const unsigned born = (d->sample_filter == 1 ? 1u : d->sample_filter == 3 ? 2u : d->sample_filter == 4 ? 3u : 0u)
+                            | (d->sample_wrap > 1 ? (unsigned)(d->sample_wrap - 1) << 2 : 0u);
         if (born && d->asset_kind == ASSET_TEXTURE) {
             if (d->return_type.kind == TY_TEXTURE)
                 sb_printf(o, "    %s = tide_texture_sampled(%s, %uu);\n", asset_cname(d), asset_cname(d), born);
@@ -26078,9 +26080,9 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
         else *blended |= (uint64_t)sampler->wrap << (32 * (j / 8) + 8 + 2 * (j % 8)); // TIDE_SAMPLING_WRAP
         if (filter_carried) {
             // Its bit comes with the texture
-        } else if (sampler->filter) {
-            *blended |= UINT64_C(1) << (32 * (j / 8) + j % 8);
-            if (sampler->filter == 2) *blended |= UINT64_C(1) << (32 * (j / 8) + 24 + j % 8); // TIDE_SAMPLING_MIPS
+        } else if (sampler->filter) { // As tide_sampling_filtered has them: Anisotropic is the mips' bit alone
+            if (sampler->filter != 3) *blended |= UINT64_C(1) << (32 * (j / 8) + j % 8);
+            if (sampler->filter >= 2) *blended |= UINT64_C(1) << (32 * (j / 8) + 24 + j % 8); // TIDE_SAMPLING_MIPS
         }
     }
     for (int t = 0; t < sh->textures.count; t++) {
@@ -26850,8 +26852,10 @@ bool codegen(program *prog, const codegen_options *opts)
     if (declared && declared_assets) memcpy(declared, prog->assets.items, sizeof *declared * (size_t)declared_assets);
     if (opts->strip_unused_assets) program_strip_unused_assets(prog);
     order_arrays(prog);
-    // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was
-    if (!prog->names_trilinear && prog->filter && prog->filter->members.count > 2) prog->filter->members.count = 2;
+    // Filter.Trilinear and Filter.Anisotropic are members of the enum only in a game that names them, so the
+    // others' C is as it was
+    const int filters = prog->names_anisotropic ? 4 : prog->names_trilinear ? 3 : 2;
+    if (prog->filter && prog->filter->members.count > filters) prog->filter->members.count = filters;
     if (opts->info) {
         setting_text(opts->info->title, sizeof opts->info->title, prog->title);
         setting_text(opts->info->app_id, sizeof opts->info->app_id, prog->app_id);

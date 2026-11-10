@@ -1548,22 +1548,27 @@
     // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
     const ownSamplers = reads => reads.map(read => read === READ_SAMPLES ? READ_DATA : read === READ_ARRAY ? 0
         : read === READ_DEPTH_ARRAY ? 1 : read);
-    // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
-    const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
+    // Samplers: the nearest pixel past no edge first, and after the twelve of colors, a depth compared
+    const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, ANISOTROPIC = 3, FILTERS = 4, COMPARED = 12;
+    const ANISOTROPY = 8; // gpu.h's TIDE_GPU_ANISOTROPY: the most reads along what a pixel covers, which a device clamps
     let layouts = null, samplers = null, mipPipelines = null, depthResolver = null;
     function gpuStart() {
         layouts = new Map();
         mipPipelines = new Map();
         depthResolver = null;
-        // By how it's read past its edges, then between pixels: 3 * tide_gpu_wrap's number + tide_gpu_filter's.
-        // Only the last filter reads a texture's smaller images (gpu_mipmaps): the others keep to its own
-        // pixels whatever it has and however a shader asks (lodMaxClamp). A change to either enum goes here.
+        // By how it's read past its edges, then between pixels: FILTERS * tide_gpu_wrap's number + tide_gpu_filter's.
+        // Only the last two filters read a texture's smaller images (gpu_mipmaps): the others keep to its own
+        // pixels whatever it has and however a shader asks (lodMaxClamp). The last also reads along what a pixel
+        // covers (maxAnisotropy, which takes all three filters linear and which a device clamps to what it has).
+        // A change to either enum goes here.
         samplers = [];
         for (const wrap of ['clamp-to-edge', 'repeat', 'mirror-repeat']) {
-            for (const filter of [NEAREST, LINEAR, MIPMAPS]) {
+            for (const filter of [NEAREST, LINEAR, MIPMAPS, ANISOTROPIC]) {
                 const between = filter === NEAREST ? 'nearest' : 'linear';
+                const mips = filter === MIPMAPS || filter === ANISOTROPIC;
                 samplers.push(device.createSampler({ magFilter: between, minFilter: between,
-                    mipmapFilter: filter === MIPMAPS ? 'linear' : 'nearest', lodMaxClamp: filter === MIPMAPS ? 32 : 0,
+                    mipmapFilter: mips ? 'linear' : 'nearest', lodMaxClamp: mips ? 32 : 0,
+                    maxAnisotropy: filter === ANISOTROPIC ? ANISOTROPY : 1,
                     addressModeU: wrap, addressModeV: wrap }));
             }
         }
@@ -1649,7 +1654,7 @@
             p.samplers.forEach((read, j) => {
                 // A cube has no edge to be read past: its sampler is the one that clamps, by its filter alone
                 if (read !== READ_DATA) entries.push({ binding: 2 + 2 * j, resource: samplers[read === READ_COMPARE
-                    ? COMPARED : read === READ_CUBE ? sampled[j] % 3 : read ? NEAREST : sampled[j]] });
+                    ? COMPARED : read === READ_CUBE ? sampled[j] % FILTERS : read ? NEAREST : sampled[j]] });
             });
             group = device.createBindGroup({ layout: p.layout.group, entries });
             bindGroups.set(key, group);
@@ -2557,7 +2562,8 @@
         },
         gpu_sampler(slot, filter, wrap) {
             // Its place in `samplers`
-            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 3 * wrap : 0) + (filter === NEAREST || filter === MIPMAPS ? filter : LINEAR);
+            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? FILTERS * wrap : 0)
+                + (filter === NEAREST || filter === MIPMAPS || filter === ANISOTROPIC ? filter : LINEAR);
             drawing.bound = false;
         },
         gpu_vertices: (slot, id, offset) => pass.setVertexBuffer(slot, gpuTables.buffer[id], offset),

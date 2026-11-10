@@ -1,0 +1,58 @@
+// Filter.Anisotropic is Filter.Trilinear that also reads along the longer
+// side of what a pixel covers. It's a sampler's, so a shader's text is what
+// Trilinear's is: a frag works the uv out as it starts, asks how fast it
+// changes there, and reads with the answer (the two derivatives are what the
+// GPU reads along), and SampleGrad gives its own. A game that names only
+// Anisotropic writes a Sample that leaves its filter to its Texture the same
+// way, as that texture may say it. A texture, an array's layer and a cube
+// are each read so; a vert reads the texture's own pixels.
+scene Main { }
+
+[Raw, Filter(Filter.Anisotropic), Wrap(Wrap.Repeat)]
+asset Texture litter = "../e2e/assets/hero.png";
+asset TextureArray scans = "../e2e/cubes/sky/sky_??.png";
+asset Cubemap sky = "../e2e/cubes/sky/sky_??.png";
+
+struct Corner
+{
+    float3 position;
+    float3 world;
+    float2 uv;
+}
+
+local singleton Land
+{
+    [Filter(Filter.Anisotropic)]
+    Grid2<Color> tiles = Grid2(4, 4);
+    List<Corner> corners;
+    List<int> faces;
+}
+
+vert Lift(mut Corner vertex, Land land)
+{
+    vertex.position.y += land.tiles.Sample(vertex.uv).r;
+}
+
+frag Ground(Corner vertex, out Color color, Land land, Texture source)
+{
+    // By the world's position, so no seam where a uv wraps: the gradients are given, and read along
+    var uv = vertex.world.xz * 0.25;
+    var dx = this.Ddx(uv);
+    var dy = this.Ddy(uv);
+    color = litter.SampleGrad(uv, dx, dy);
+    if (vertex.uv.x > 0.5)
+    {
+        // In a branch: asked as the frag starts
+        color *= litter.Sample(uv) * land.tiles.Sample(vertex.uv) * source.Sample(vertex.uv);
+        color += source.Sample(vertex.uv, Filter.Anisotropic, Wrap.Mirror);
+    }
+    color += scans.Sample(vertex.uv, 2, Filter.Anisotropic, Wrap.Repeat) + scans.SampleGrad(uv, dx, dy, 1, Filter.Anisotropic);
+    color += sky.Sample(vertex.world, Filter.Anisotropic);
+}
+
+view Show(Land land)
+{
+    Draw.Mesh(land.corners, land.faces, float4x4.identity, land.tiles, Lift, Ground);
+    // With no frag, the draw's own texture as it says
+    Draw.Mesh(land.corners, land.faces, float4x4.identity, land.tiles, Filter.Anisotropic, Lift);
+}

@@ -82,7 +82,7 @@ There's nothing to create, upload or free. The grid is ordinary state: change it
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
 
-The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art, and `Filter.Trilinear` blends them and stays smooth where the texture is drawn smaller than it is (see [Drawn smaller](#drawn-smaller)). A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
+The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art, `Filter.Trilinear` blends them and stays smooth where the texture is drawn smaller than it is (see [Drawn smaller](#drawn-smaller)), and `Filter.Anisotropic` is that for a surface seen at a shallow angle (see [Seen at a shallow angle](#seen-at-a-shallow-angle)). A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
 
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone. Neither is one past 16384 cells a side.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
@@ -218,6 +218,24 @@ Draw.Mesh(floor, faces, float4x4.identity, tiles, Filter.Trilinear, Wrap.Repeat)
 - **What it costs**: for uncompressed textures, a third more memory on the GPU and making the copies, which is quick for an image that never changes and adds up for a big grid that changes every frame. Prepared asset mips upload with the image, including the full RGBA fallback on a device without its compressed format; selecting Trilinear adds no generation work.
 - It's for what's seen at a distance or at many sizes: floors and walls in 3D, a map you zoom out of, a target shown as a thumbnail. Pixel art at its own size wants `Filter.Point`.
 - A `Grid2<float>` has them wherever the device can draw into floats, which is nearly everywhere (see [float images](./render-targets.md#what-a-target-holds)); where it can't, it's read as `Filter.Bilinear`.
+
+### Seen at a shallow angle
+
+Ground seen from a standing eye, a floor down a corridor, a road to the horizon: each pixel of the screen covers a long thin strip of the texture, a few of its pixels across and many along the line of sight. `Filter.Trilinear` picks its smaller copy by the strip's length, so the texture is blurred both ways, and a floor of leaves or planks that's crisp at your feet is a smooth smear a few metres on. `Filter.Anisotropic` picks the copy by the strip's width and reads several times along its length:
+
+```csharp
+[Filter(Filter.Anisotropic), Wrap(Wrap.Repeat)]
+asset Texture planks = "art/planks.png";
+
+Draw.Mesh(floor, faces, float4x4.identity, planks);                                       // As its declaration says
+Draw.Mesh(floor, faces, float4x4.identity, tiles, Filter.Anisotropic, Wrap.Repeat);     // ...or said at the draw
+```
+
+- **It's `Filter.Trilinear` and more**: the same smaller copies, made and kept the same way, and the same picture wherever a pixel covers about as much of the texture one way as the other (a wall faced head on, a sprite, anything in 2D).
+- **A filter like the others**: a draw's argument, a `Sample`'s and a `SampleGrad`'s in a [frag](./shaders.md#textures), a declaration's `[Filter(Filter.Anisotropic)]`, and what a `Texture` carries. In a frag it has `Filter.Trilinear`'s rule for its `uv`, and with `SampleGrad` the strip is the two derivatives you give.
+- **Up to 8 reads along the strip**, as many as the strip is longer than it's wide; the GPU does them in hardware. A device that takes fewer does fewer, and one with none reads it as `Filter.Trilinear`: nothing to check, and no error.
+- **What it costs** is those reads, only on the pixels seen at an angle: nothing on a surface faced head on, and up to 8 times the texture reads on ground running to the horizon. On a desktop GPU that's usually small beside the rest of a frame; where a frag reads many textures a pixel (ground of several blended photographs, each with its surface map), measure it, and keep it for the textures whose detail shows: the colour first, a normal map next, and `Filter.Trilinear` for what's smooth anyway (a mask, a height read many times a pixel).
+- It's for floors, ground, roads, water and long walls in 3D. A texture drawn in 2D, or always faced, gains nothing from it.
 
 ### Saying it once, on the texture
 

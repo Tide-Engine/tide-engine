@@ -1,0 +1,69 @@
+// Filter.Anisotropic: Filter.Trilinear that also reads along what a pixel
+// covers, wherever a filter is said: a draw's argument, a Sample's and a
+// SampleGrad's, a declaration's [Filter], and what a Texture carries. What
+// each draw records of it.
+scene Main { }
+
+[Filter(Filter.Anisotropic), Wrap(Wrap.Repeat)]
+asset Texture ground = "assets/hero.png";
+[Filter(Filter.Trilinear)]
+asset Texture far = "assets/hero.png";
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    [Filter(Filter.Anisotropic), Wrap(Wrap.Mirror)]
+    Grid2<Color> tiles = Grid2(4, 4);
+    Grid2<Color> plain = Grid2(4, 4);
+    [Filter(Filter.Anisotropic)]
+    RenderTarget target;
+    Texture kept;
+    Filter how = Filter.Anisotropic;
+    List<Vertex> flat;
+    List<Vertex3> solid;
+    List<Corner> corners;
+    List<int> faces;
+    string said;
+}
+
+frag Floor(Corner vertex, out Color color, Art art, Texture source)
+{
+    color = ground.Sample(vertex.uv)
+          * art.plain.Sample(vertex.uv, Filter.Anisotropic)
+          * source.SampleGrad(vertex.uv, this.Ddx(vertex.uv), this.Ddy(vertex.uv), Filter.Anisotropic, Wrap.Mirror)
+          * art.plain.Sample(vertex.uv, Filter.Trilinear)
+          * source.Sample(vertex.uv);
+}
+
+view Show(mut Art art)
+{
+    if (art.faces.count == 0)
+    {
+        art.flat = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }];
+        art.solid = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0), uv = float2(1, 0) },
+                     Vertex3 { position = float3(0, 1, 0), uv = float2(0, 1) }];
+        art.corners = [Corner { }, Corner { position = float2(1, 0), uv = float2(1, 0) }, Corner { position = float2(0, 1), uv = float2(0, 1) }];
+        art.faces = [0, 1, 2];
+    }
+    art.kept = art.tiles;
+    art.said = $"{art.how} {Filter.Trilinear} {Filter(3)}";
+    // The engine's vertices: as the draw says, as the texture says, and a filter kept in a field
+    Draw.Mesh(art.flat, art.faces, art.plain, Filter.Anisotropic);
+    Draw.Mesh(art.flat, art.faces, art.tiles);
+    Draw.Mesh(art.flat, art.faces, ground);
+    Draw.Mesh(art.flat, art.faces, art.kept, Filter.Trilinear);
+    Draw.Mesh(art.flat, art.faces, art.plain, art.how, Wrap.Repeat);
+    Draw.Mesh(art.flat, art.faces, art.target.color);
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, art.kept);
+    // Through a frag: its samples by name are known as the game is compiled, and its source's is the draw's
+    Draw.Mesh(art.corners, art.faces, art.kept, Floor);
+    Draw.Mesh(art.corners, art.faces, art.plain, Floor);
+    Draw.Mesh(art.corners, art.faces, art.plain, Filter.Anisotropic, Floor);
+    // An asset's Texture is born as its declaration says, Trilinear too
+    Draw.Mesh(art.flat, art.faces, far);
+}

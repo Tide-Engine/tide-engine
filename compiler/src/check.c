@@ -388,6 +388,14 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 static void ensure_visibility(program *prog);
 static void order_struct(program *prog, decl *d);
 
+// A member of Filter is named: whether the game's textures can be read between their smaller images
+// (Filter.Trilinear, 2, and Filter.Anisotropic, 3), and along what a pixel covers.
+static void names_filter(program *prog, const int64_t number)
+{
+    if (number == 2 || number == 3) prog->names_trilinear = true;
+    if (number == 3) prog->names_anisotropic = true;
+}
+
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
@@ -10143,7 +10151,7 @@ static type check_member(checker *c, expr *e)
         }
         if (builds(c->prog) && !c->prog->quiet_names && named_only(c->prog, e->type_decl)) e->type_decl->named = true;
         const type member = check_enum_member(e, e->type_decl);
-        if (e->type_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
+        if (e->type_decl == c->prog->filter && e->enum_member) names_filter(c->prog, e->enum_member->number);
         return member;
     }
     if (names_random(c, e->object)) {
@@ -10203,8 +10211,8 @@ static type check_member(checker *c, expr *e)
     decl *const enum_decl = named_enum(c, e->object);
     if (enum_decl) {
         const type member = check_enum_member(e, enum_decl);
-        // Filter.Trilinear: the game's textures can be read between their smaller images
-        if (enum_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
+        // Filter.Trilinear, Filter.Anisotropic: the game's textures can be read between their smaller images
+        if (enum_decl == c->prog->filter && e->enum_member) names_filter(c->prog, e->enum_member->number);
         return member;
     }
 
@@ -11705,7 +11713,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
             return T_ERR;
         }
         if (e->args.count >= 4 && !e->args.items[3]->enum_member) {
-            diag_error(e->args.items[3]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a "
+            diag_error(e->args.items[3]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear', 'Filter.Trilinear' or 'Filter.Anisotropic': the GPU is told how a "
                                              "texture is read before any pixel runs");
             return T_ERR;
         }
@@ -11741,7 +11749,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         return T_ERR;
     }
     if (e->args.count >= 2 && !e->args.items[1]->enum_member) {
-        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a "
+        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear', 'Filter.Trilinear' or 'Filter.Anisotropic': the GPU is told how a "
                                          "texture is read before any pixel runs");
         return T_ERR;
     }
@@ -11999,7 +12007,7 @@ static type check_cube_sample(const checker *c, expr *e)
         return T_ERR;
     }
     if (e->args.count == 2 && !e->args.items[1]->enum_member) {
-        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': "
+        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear', 'Filter.Trilinear' or 'Filter.Anisotropic': "
                                          "the GPU is told how a texture is read before any pixel runs");
         return T_ERR;
     }
@@ -15827,7 +15835,7 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
             for (int i = 0; i < wanted->members.count; i++) {
                 if (!str_eq(wanted->members.items[i].name, member_name)) continue;
                 *said = 1 + (int)wanted->members.items[i].number;
-                if (filter && wanted->members.items[i].number == 2) c->prog->names_trilinear = true;
+                if (filter) names_filter(c->prog, wanted->members.items[i].number);
                 attr->args.items[0].decl = wanted; // For editors: what the name is
                 attr->args.items[0].enum_member = &wanted->members.items[i];
                 return;
@@ -15835,7 +15843,7 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
         }
     }
     diag_error(attr->at, filter ? "Filter takes how the texture is read between its cells: [Filter(Filter.Point)], "
-                                  "[Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]"
+                                  "[Filter(Filter.Bilinear)], [Filter(Filter.Trilinear)] or [Filter(Filter.Anisotropic)]"
                                 : "Wrap takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
                                   "[Wrap(Wrap.Mirror)]");
 }
@@ -16416,7 +16424,7 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
         if (t.kind == TY_ENUM && t.decl == wanted && value->enum_member) return;
     }
     diag_error(a->at, filter ? "[Filter] takes how the texture is read between its cells: [Filter(Filter.Point)], "
-                               "[Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]"
+                               "[Filter(Filter.Bilinear)], [Filter(Filter.Trilinear)] or [Filter(Filter.Anisotropic)]"
                              : "[Wrap] takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
                                "[Wrap(Wrap.Mirror)]");
 }
@@ -19823,8 +19831,8 @@ static void add_builtins(program *prog)
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
     // a corner of what Draw.Mesh draws, as tide/draw.h's tide_vertex. And
-    // enum Filter { Point, Bilinear, Trilinear }: how it reads its texture
-    // between cells, with tide_filter's values, which are Unity's FilterMode's.
+    // enum Filter { Point, Bilinear, Trilinear, Anisotropic }: how it reads its texture
+    // between cells, with tide_filter's values, the first three Unity's FilterMode's.
     decl *vertex = NEW(decl);
     vertex->kind = DECL_STRUCT;
     vertex->name = str_from("Vertex");
@@ -20089,8 +20097,9 @@ static void add_builtins(program *prog)
         vec_push(mesh_level->fields, error);
     }
     prog->mesh_level = mesh_level;
-    // Trilinear is in generated C only for a game that names it (program.names_trilinear)
-    static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
+    // Trilinear and Anisotropic are in generated C only for a game that names them (program.names_trilinear,
+    // names_anisotropic)
+    static const char *const filters[] = {"Point", "Bilinear", "Trilinear", "Anisotropic"};
     decl *filter = NEW(decl);
     filter->kind = DECL_ENUM;
     filter->name = str_from("Filter");

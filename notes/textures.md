@@ -1,5 +1,80 @@
 # Textures and how they are sampled
 
+## `Filter.Anisotropic` (2026-11-10)
+
+The owner asked for it as an engine gap from Mount & Rifle (its ground of scanned photographs, seen at 5 to 15
+degrees from a standing eye, blurred to a smooth brown by about 5 m with Trilinear): a filter that's trilinear plus
+anisotropy, wherever the others are, on every backend, at a fixed level unless there's a reason for a parameter,
+falling back to trilinear without complaint. The name, the level and the rules are Claude's, Provisional in
+`docs/spec.md` (Views and drawing, Anisotropic filtering). Users' pages: `docs/game/meshes-and-textures.md` (Seen at
+a shallow angle), `docs/game/shaders.md` (Textures).
+
+- **Numbers.** `tide_filter` has `TIDE_FILTER_ANISOTROPIC` (3), Tide's `Filter.Anisotropic`; `tide_filter_of` takes
+  3, and `tide_filter_mips` says which filters read smaller images (2 and 3). No layout moved: a texture reference's
+  four sampling bits have it as both filter bits (3; 1 was point and 2 trilinear, so 3 was free), and a run's
+  `sampling` as texture i's `TIDE_SAMPLING_MIPS` bit **without** its blended bit (the fourth of the two bits'
+  states, free until now). `tide_sampling_blended` is true of it (either bit), so code that only asks that still
+  reads it blended; `tide_sampling_filtered`/`_filter` write and read the pair. A mesh command's `filter` is the
+  number. `tide_shader_texture_filter`'s "most" is the greatest number.
+- **tidec.** The enum's fourth member (`check.c`); `program.names_trilinear` now means "names a filter that reads
+  smaller images" (2 or 3, `names_filter`), which is what the shader writer and the lifting go by, and
+  `names_anisotropic` is the member itself: generated C has 2, 3 or 4 members by what's named, so a game that names
+  neither, or Trilinear alone, generates what it did. In `shader.c` every `filter == 2` that meant "reads smaller
+  images" is `>= 2` (`known_filter`, `sampling_of`, `liftable`, `pass_samples`, `ex_sample`, `ex_cube_sample`): an
+  anisotropic Sample is written exactly as a trilinear one (the uv and its `dpdx`/`dpdy` as the frag starts,
+  `textureSampleGrad`), and the filter is a sampler's key as before, so its bindings are apart from Trilinear's. The
+  errors name the filter (`filter_called`), and the carried-filter warnings say "Filter.Trilinear or
+  Filter.Anisotropic" in a game that names the latter (`filters_named`). Codegen: `declared_sampling_bits`, the run's
+  constant bits (`gen_shader_textures`), the enum's count.
+- **An existing bug fixed on the way:** an asset `Texture` (and a glob's) declared `[Filter(Filter.Trilinear)]` was
+  born with no filter bits (`born` in `gen_assets`, `codegen.c`, only knew Point), so its value was Bilinear: a draw of it
+  with the engine's vertices, or a frag given it as its `Texture`, read its own pixels. A `Sample` by its name was
+  right (known as the game compiles), which is why Mount & Rifle never saw it. `tidec_e2e_anisotropic` pins both
+  filters.
+- **gpu.h:** `TIDE_GPU_FILTER_ANISOTROPIC` (3) and `TIDE_GPU_ANISOTROPY` (8), with optional
+  `tide_gpu.anisotropy()` (the most the device makes, 1 for none; `tide_texture_anisotropy()` in
+  `texture_residency.h` for tests, 0 where the backend can't say).
+  - **Vulkan:** `samplerAnisotropy` asked for where the device has it, `vk.anisotropy` =
+    min(`maxSamplerAnisotropy`, 8), 1 without the feature; twelve color samplers (`FILTERS` 4 by `WRAPS` 3), the
+    anisotropic ones `anisotropyEnable` with that most, and the mipmapped ones' twins where it's 1.
+    `TIDE_VULKAN_ANISOTROPY=<1..16>` says another most (measurements, and the test of a device with none).
+  - **WebGPU** (`tide.js`): twelve samplers at `FILTERS` (4) times the wrap plus the filter, `COMPARED` 12, the
+    anisotropic ones `maxAnisotropy: 8` (all three filters linear, as it requires; the device clamps). A cube's is
+    `sampled % FILTERS`. `tide.release.js` regenerated.
+  - **Unity:** the recorder sends the number; `hlsl.c`'s prelude has three more inline samplers
+    (`tidehl_trilinear_<wrap>_aniso8_sampler`, Unity reads the level off the name) for mode 3 with gradients, the
+    trilinear ones for an explicit level, and treats 3 as 2 wherever it asked "reads smaller images" (the unmipped
+    downgrade, OpenGL Core's own-sampler path and its emulation, which emulates it as trilinear).
+    `TideRender.cs`: `anisoLevel` 8 on OpenGL Core's textures, and `OwnMode`'s downgrade. fxc compiles the HLSL
+    (`tidec_hlsl_anisotropic`); none of it has run in Unity, and Unity's Quality setting "Anisotropic Textures:
+    Disabled" may turn the inline samplers' off. The Sample's checked-in `TideShaders` weren't written again (they
+    use no anisotropic read; `tide unity` rewrites them).
+- **The renderer** (`platform.c`): smaller images are prepared for either filter (`prepare_mipmaps`,
+  `step_settled`), nothing else.
+- **The level, measured** on Mount & Rifle built against this checkout (release preset with the game as an external
+  dir, the recipe of Idle images, below; `--host --seed 42 --define FOREST_REVIEW --define OWNER_WOODS`, 1920 by
+  1080, RTX 4080 SUPER, its eleven ground photographs' declarations changed in a copy; frames 461 to 1050 standing at
+  the review's spot, nine rounds alternating, medians of each round's difference from the unchanged game, on a
+  machine other sessions were using, whose baseline moved between 6.8 and 8.4 ms): `gpu.timing` +0.08 ms at 4,
+  +0.04 at 8, +0.22 at 16; the scene's pass (4.3 to 4.8 ms) +0.01 at 4, +0.10 at 8, +0.21 at 16; with the device's
+  anisotropy off (`=1`) 0.0. Edge energy of the ground in the capture: 26.3 Trilinear, 32.0 at 4, 32.65 at 8, 32.69
+  at 16. So 8: 16's picture for half its time. The game's relief march (`ResolveGroundRelief`, 22 height reads a
+  material) says `Filter.Trilinear` on its `SampleGrad`s itself, so it stayed trilinear, which is right.
+- **Tests:** `draw_sampling_banks_keep_every_slot_independent` (`tests/test_draw.c`: the bits in both banks, beside
+  every neighbor, a reference's round trip); `anisotropic` in `platform/tests/draw.c` (the stripes squashed to an
+  eighth across: rows kept anisotropic, their mean trilinear, their own bilinear; and `tide_platform_draw_no_anisotropy`,
+  the same with `TIDE_VULKAN_ANISOTROPY=1`, where anisotropic is trilinear's pixels); pass 27 of
+  `platform/tests/shaders.tide` with `run_anisotropic_checks` (from Tide: a declared grid in a branch, a carried
+  Texture, the same frag with a draw that says Trilinear in another run, a Sample that says it, no frag,
+  `SampleGrad` by the pixel's own derivatives after a loop, by derivatives written out 8 to 1, and written out
+  square, which reads the mean); `tidec_e2e_anisotropic` (what each draw and run records; an asset born Anisotropic
+  and one born Trilinear); `compiler/tests/shaders/anisotropic` (golden, through spirv-val and fxc: texture, array
+  layer, cube, SampleGrad, a vert, no frag); `errors/gpu_sample_anisotropic_changed_uv`,
+  `gpu_sample_function_anisotropic`, `_declared`; `warnings/gpu_sample_anisotropic_carried`; `lsp` (the member
+  offered, hovers). Vulkan here with the validation layer; WebGPU through the web-debug pages.
+- **Not built:** a level a game picks, a player's quality setting for it, asking the device's most from Tide;
+  Android, Linux and macOS are CI's.
+
 ## Texture arrays: built (2026-11-05)
 
 What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture arrays), the users' page is
@@ -591,7 +666,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Which Samples**: one whose filter is known to be Trilinear (said there, or its grid's or asset's declaration's), and one that leaves its filter to the Texture it's given (`!filter_said`) in a game that names `Filter.Trilinear` (`program.names_trilinear`). Every other is `textureLod(..., 0.0)` as before, and so is every Sample in a vert.
   - **What a uv can be made of is `liftable`'s to say**: the frag's parameters that aren't `mut` or `out`, the pixel's fields through `this`, constants, members and swizzles of those, operators, `?:`, struct literals, constructors, the engine's functions, a game's functions that take nothing `mut` or `out`, a texture read with a filter known not to be Trilinear, and locals that aren't `mut`, a loop's, an `out` argument's or assigned again, whose own values are so. Anything else isn't. Where the filter is known, that's an error at the uv (`compiler/tests/errors/gpu_sample_trilinear_*.tide`); where it's the texture's to say, the Sample reads level 0. **What `liftable` allows is written twice in the shader, so it has to change nothing**: an expression kind that joins it is one with no side effect.
   - **`program.names_trilinear`** is set where a `Filter.Trilinear` member is resolved (`check_member`'s enum path, and an asset's `[Filter]` in `check_sampling_attribute`), never by `Filter(2)`. `codegen` hides the enum's third member in a game that doesn't name it (its count is cut to 2 as codegen starts, so tidels still offers it), and the shader writer goes by the same flag: such a game's generated C and shaders are what they were, byte for byte (old and new tidec over every game's source list, with `--layout` and without: 209 games, none differs). A shader's `filter` (`shader_sample.filter`, `shader_texture.filter`: 0, 1 or 2, where they had a bool) is a binding's key, as it was.
-  - **Not built:** anisotropy (a sampler's setting on each backend; left until something wants it); a level or a bias a game picks; a Trilinear Sample at a uv a loop makes; mipmaps an asset brings, or made at build time; Duel's blur doesn't use it.
+  - **Not built:** anisotropy (built 2026-11-10: `Filter.Anisotropic`, above); a level or a bias a game picks; a Trilinear Sample at a uv a loop makes; mipmaps an asset brings, or made at build time; Duel's blur doesn't use it.
   - **Tests:** `mipmaps` in `platform/tests/draw.c` (a texture of stripes drawn an eighth and a quarter of its size reads as the mean of what each pixel covers, the same texture read bilinear beside it in the same frame doesn't, its own size is its own pixels, a 3D mesh's, and other pixels make them again), pass 14 of `platform/tests/shaders.tide` with `run_mipmap_checks` in `shaders.c` (from Tide: a declared grid sampled in a branch, a carried filter after a discard, one frag in runs read two ways, a Sample that says it, a uv a loop changes, meshes with no frag and with a vert alone, a grid of floats, and a target's color made again as it's drawn into), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/mipmaps` (what each draw records, natively and under Node); `compiler/tests/shaders/mipmaps`; the two error tests; `lsp_trilinear`. Not run: Android, and OpenGL on a Mac.
 - Nothing but a render target (below) holds a GPU texture: a mesh names pixels where the game keeps them, and every layer keeps a copy it can make again. An image of the game's pack (an `asset Texture`: see Assets, under Tech stack) is the one whose pixels the draw list doesn't copy: it draws them where the pack has them.
   - The draw list copies a texture's pixels when they aren't what it has (`tide_draw_texture_slot`: whose they are, and a version), and the platform uploads from that copy (`texture_for` in `platform/src/platform.c`). Each lets a texture go once a frame draws without it.
