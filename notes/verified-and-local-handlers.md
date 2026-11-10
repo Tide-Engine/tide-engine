@@ -1,5 +1,22 @@
 # `verified` and local handlers of match events
 
+## What local code reads, found by its source (2026-11-10)
+
+`collect_heard_reads` (heard_reads_codegen.inc) took 1.5-2.0 s of every build of Mount & Rifle: each expression
+of the game asked `heard_add_read`, which went through every read recorded so far comparing paths, and each
+routine's walk kept the nodes it had seen in a list it searched. No change to what's found:
+
+- `gen.heard_by` maps a source (a parameter, a query's binding, a method's receiver) to its first and last read
+  in `gen.heard_reads`, and `gen.heard_next` chains a source's reads in the order they were added. Adding, asking
+  (`heard_reads`) and forwarding (`heard_forward` and the two loops beside it) follow one source's chain; the
+  forwarding loops still stop at the reads there were when they started, as the vector's count did.
+- A read through no source (NULL) is no longer recorded: nothing could ask for it.
+- `heard_set` is the walk's seen nodes as a hash set, one for all routines: starting a routine's walk bumps
+  `walk`, which empties it, and an earlier walk's entry is a free place.
+
+0.28 s after. The generated C of every `.sources` list is as it was (notes/cli-and-packages.md, Faster `tide
+run`); `tidec_e2e_local_events*`, `verified_*` and `handler_queries` pass under ASan.
+
 ## Field changes: `Changed<Health.value>` (2026-10-25)
 
 Owner-approved: local handlers can hear a match field that changed over a

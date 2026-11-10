@@ -115,6 +115,71 @@ static bool split_ident_char(const char c)
     return split_ident_start(c) || (c >= '0' && c <= '9');
 }
 
+// A run of numbers in a variable's initializer: digits, words that start with one (0x1f, 12u), and what's between
+// numbers (commas, signs, points, blanks). Most of a big game's C is such runs, megabytes each (a shader's code
+// as an array), and nothing in one names anything or opens or closes anything: what reads the text for names and
+// braces goes past them. Those of the text being split, as offsets in it, in order.
+typedef struct split_plain {
+    size_t from, to;
+} split_plain;
+
+typedef VEC(split_plain) split_plain_list;
+
+// Shorter runs aren't listed: reading them costs less than finding them
+#define SPLIT_PLAIN_LISTED 4096
+
+static const char *split_plain_text; // The text split_plains' offsets are in, or NULL
+static size_t split_plain_text_len;
+static const split_plain *split_plains;
+static int split_plain_count;
+
+// Where the run of numbers starting at t[at] ends. A run with line ends in it ends at its last one, so whoever
+// reads on sees what follows that line's end (a directive).
+static size_t split_plain_end(const char *t, const size_t n, const size_t at)
+{
+    static const uint8_t classes[256] = {
+        [' '] = 1, ['\t'] = 1, ['\n'] = 1, ['\r'] = 1, [','] = 1, ['-'] = 1, ['+'] = 1, ['.'] = 1,
+        ['0'] = 2, ['1'] = 2, ['2'] = 2, ['3'] = 2, ['4'] = 2, ['5'] = 2, ['6'] = 2, ['7'] = 2, ['8'] = 2, ['9'] = 2,
+        ['a'] = 3, ['b'] = 3, ['c'] = 3, ['d'] = 3, ['e'] = 3, ['f'] = 3, ['g'] = 3, ['h'] = 3, ['i'] = 3, ['j'] = 3,
+        ['k'] = 3, ['l'] = 3, ['m'] = 3, ['n'] = 3, ['o'] = 3, ['p'] = 3, ['q'] = 3, ['r'] = 3, ['s'] = 3, ['t'] = 3,
+        ['u'] = 3, ['v'] = 3, ['w'] = 3, ['x'] = 3, ['y'] = 3, ['z'] = 3,
+        ['A'] = 3, ['B'] = 3, ['C'] = 3, ['D'] = 3, ['E'] = 3, ['F'] = 3, ['G'] = 3, ['H'] = 3, ['I'] = 3, ['J'] = 3,
+        ['K'] = 3, ['L'] = 3, ['M'] = 3, ['N'] = 3, ['O'] = 3, ['P'] = 3, ['Q'] = 3, ['R'] = 3, ['S'] = 3, ['T'] = 3,
+        ['U'] = 3, ['V'] = 3, ['W'] = 3, ['X'] = 3, ['Y'] = 3, ['Z'] = 3, ['_'] = 3,
+    };
+    size_t i = at;
+    bool number = false; // In a word that started with a digit
+    for (; i < n; i++) {
+        const uint8_t c = classes[(uint8_t)t[i]];
+        if (c == 1) number = false;
+        else if (c == 2) number = true;
+        else if (c != 3 || !number) break; // Something else, or a name
+    }
+    for (size_t k = i; k > at; k--) {
+        if (t[k - 1] == '\n') return k - 1;
+    }
+    return i;
+}
+
+// The first listed run that ends after `at` in the text `t`, or NULL: none, or `t` isn't the text they're listed for.
+static const split_plain *split_plain_after(const char *t, const size_t at)
+{
+    if (t != split_plain_text || !split_plain_count) return NULL;
+    int low = 0, high = split_plain_count;
+    while (low < high) {
+        const int mid = low + (high - low) / 2;
+        if (split_plains[mid].to <= at) low = mid + 1;
+        else high = mid;
+    }
+    return low < split_plain_count ? &split_plains[low] : NULL;
+}
+
+// The run after `run`, or NULL
+static const split_plain *split_plain_next(const split_plain *run)
+{
+    return run + 1 < split_plains + split_plain_count ? run + 1 : NULL;
+}
+
 // The end of the line at `at` (its \n, or the text's end), following backslashes that continue it.
 static size_t split_line_end(const char *t, const size_t n, size_t at)
 {
@@ -317,8 +382,8 @@ static bool split_fail(const char *why, const size_t where)
     return false;
 }
 
-// The items of `t`. False where it finds something it can't place.
-static bool split_items(const char *t, const size_t n, split_item_list *out)
+// The items of `t`, and with `plains` its long runs of numbers. False where it finds something it can't place.
+static bool split_items(const char *t, const size_t n, split_item_list *out, split_plain_list *plains)
 {
     bool tide = false; // The #line in force names a .tide file
     size_t i = 0;
@@ -394,6 +459,11 @@ static bool split_items(const char *t, const size_t n, split_item_list *out)
                 if (depth == 0 && !brace) brace = i;
                 depth++;
                 i++;
+                if (eq) { // An initializer's numbers, which this would go through a character at a time, changing nothing
+                    const size_t end = split_plain_end(t, n, i);
+                    if (plains && end - i >= SPLIT_PLAIN_LISTED) vec_push(*plains, ((split_plain){i, end}));
+                    i = end;
+                }
             } else if (ch == '}') {
                 depth--;
                 i++;
@@ -472,7 +542,13 @@ static bool split_after_member(const char *t, const size_t from, size_t at)
 // Marks the names of `names` that t[from, to) uses, as the code's file's (`code`) or the plumbing's.
 static void split_uses(const char *t, const size_t from, const size_t to, split_names *names, const bool code)
 {
+    const split_plain *plain = split_plain_after(t, from); // Numbers, which name nothing
     for (size_t i = from; i < to;) {
+        if (plain && i >= plain->from) {
+            if (i < plain->to) i = plain->to;
+            plain = split_plain_next(plain);
+            continue;
+        }
         const char ch = t[i];
         if (ch == '"' || ch == '\'') {
             i++;
@@ -528,8 +604,18 @@ static void split_putn(split_out *o, const char *s, const size_t n)
         split_write(o, s, n);
         return;
     }
+    // A piece of the text being split: its numbers have no name to rename
+    const bool listed = split_plain_text && (uintptr_t)s >= (uintptr_t)split_plain_text
+                     && (uintptr_t)s < (uintptr_t)split_plain_text + split_plain_text_len;
+    const size_t base = listed ? (size_t)(s - split_plain_text) : 0;
+    const split_plain *plain = listed ? split_plain_after(split_plain_text, base) : NULL;
     size_t at = 0; // Written up to here
     for (size_t i = 0; i < n;) {
+        if (plain && base + i >= plain->from) {
+            if (base + i < plain->to) i = plain->to - base < n ? plain->to - base : n;
+            plain = split_plain_next(plain);
+            continue;
+        }
         const char ch = s[i];
         if (ch == '"' || ch == '\'') {
             i++;
@@ -760,12 +846,28 @@ static void split_emit(const char *t, const size_t n, const split_item_list *ite
 // Splits `c` into `code` and `plumbing`, with the variables starting at the `code_count` offsets `code_at` the
 // code's (`partition` -1); or by bit `partition` of each name's hash (0 and up), or with only the large constants
 // in `plumbing` (SPLIT_DATA). False, writing neither, where it can't.
+static bool split_plumbing_text(const sb *c, const size_t *code_at, const int code_count, sb *code, sb *plumbing, const int partition);
+
 static bool split_plumbing(const sb *c, const size_t *code_at, const int code_count, sb *code, sb *plumbing, const int partition)
+{
+    const bool ok = split_plumbing_text(c, code_at, code_count, code, plumbing, partition);
+    split_plain_text = NULL; // The runs listed were this text's
+    split_plains = NULL;
+    split_plain_count = 0;
+    return ok;
+}
+
+static bool split_plumbing_text(const sb *c, const size_t *code_at, const int code_count, sb *code, sb *plumbing, const int partition)
 {
     const char *t = c->data ? c->data : "";
     split_item_list items = {0};
+    split_plain_list plains = {0};
     split_why = NULL;
-    if (!split_items(t, c->len, &items)) return false;
+    if (!split_items(t, c->len, &items, &plains)) return false;
+    split_plain_text = t;
+    split_plain_text_len = c->len;
+    split_plains = plains.items;
+    split_plain_count = plains.count;
     if (partition != -1) {
         for (int i = 0; i < items.count; i++) {
             split_item *it = &items.items[i];
@@ -906,7 +1008,7 @@ static bool split_prune(const sb *c, const char *root, sb *out)
     const char *t = c->data ? c->data : "";
     split_item_list items = {0};
     split_why = NULL;
-    if (!split_items(t, c->len, &items)) return false;
+    if (!split_items(t, c->len, &items, NULL)) return false;
     // Each name's definitions: functions, variables and macros, in a list through `next`
     split_names names = {0};
     int *next = arena_alloc(sizeof(int) * (size_t)(items.count ? items.count : 1));

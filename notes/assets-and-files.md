@@ -1,5 +1,27 @@
 # Assets and local files
 
+## Files read ahead on every processor (2026-11-10)
+
+For `tide run`'s speed (notes/cli-and-packages.md, Faster `tide run`). A warm build of Mount & Rifle spent 2.0-2.4 s
+in declarations, most of it `read_at` reading and hashing 960 MB of asset files one after another, and
+`texture_cache_read` reading the cache's prepared textures (most of the 1.48 GB pack) one after another.
+`asset_files_decode_ahead` now takes every local file the assets' paths name, images or not:
+
+- `read_at` is `file_entry` (the table's entry for a path: found, made or emptied, which may move the table) and
+  `read_into` (the bytes and their SHA-256, touching nothing but the entry). The ahead pass makes the entries of
+  the files not read yet, one a file however many paths name it, then fills them with `build_threads_each`. A file
+  that can't be opened stays an empty entry, and `read_at` says so when its asset is checked, as before.
+- The images' prepared textures are then looked for at once (`prepared_one`: the same two keys `read_item` tries,
+  for the first key a file is named by), and what's left to decode is decoded as before, eight at a time.
+- Side files (a .gltf's buffers, a rig's files) aren't known here and are read as their asset is.
+
+Declarations 1.2 s after; 0.54 s of it the per-asset imports (363 meshes 0.23 s, 16 skinned 0.13 s, 336 textures
+0.08 s), each a cache entry read and checked. Reading no source file at all when its size and time are as
+recorded would need `asset_match.data` to be read on demand, which every consumer of an item's bytes would see:
+not done. `program_simulation_id` hashes each side file once a walk (asset_usage.c), as the same note says.
+Checked: `tidec_asset_files`, `tidec_asset_disk_cache`, `tidec_asset_cache`, the asset e2e fixtures and the
+all-lists comparison listed there.
+
 ## Build code beside runtime fonts (2026-11-05)
 
 Fixed mount-and-rifle's build-code link failure with Font.Bold. The build executable compiles the whole

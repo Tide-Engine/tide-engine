@@ -78,6 +78,20 @@ for 14 days.
 Tide still checks the program and assembles its asset pack; CPU-readable grid
 images still use their exact image decoder.
 
+When nothing a build is made of changed, `tide build` and `tide run` skip that
+step too and say `Tide code and assets are up to date`: the same Tide, options
+and `--define` symbols, and every source file, package file and asset file with
+the size and last-write time it had at the last build. A build whose code gave
+a warning is compiled every time, so the warning is shown every time, and so is
+a game with an asset from a URL, which each build asks the server about. Deleting
+the game's `.tide/` folder makes the next build start from nothing.
+
+A run that doesn't watch the game's files (one with no window, such as
+`--frames`, `--capture` or `--script`, or a `--server`) keeps its program and its
+copy of the asset pack in `.tide/<target>-<mode>/run/once-<n>/` for the next such
+run, which links and copies again only what changed. A watching run gives the
+running game a new pack only when a build changed it.
+
 Independent engine compilation overlaps Tide and asset processing. Native
 hot-reload hosts compile in the game's C/C++ batch. `TIDE_JOBS` limits simultaneous
 C/C++ compiler processes: it defaults to the processor count, up to 64. Set it to

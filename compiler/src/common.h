@@ -134,6 +134,10 @@ void diag_note(const char *fmt, ...); // Attaches to the previous error or warni
 // gets `at`, where diag_note gives it none.
 void diag_note_at(loc at, const char *fmt, ...);
 int diag_error_count(void);
+// How many warnings and infos were said since the program started, whatever compilations they were of: a caller
+// that takes it before and after a compilation knows whether that one said any (tide keeps a generation that said
+// none: compiler/cli/build.c).
+unsigned long diag_warnings_said(void);
 // Whether what's printed to stderr is colored: it's a terminal that takes
 // escape sequences, and NO_COLOR isn't set. For what else writes there, like
 // a C compiler tide runs.

@@ -22,6 +22,9 @@ typedef struct build_options {
     struct asset_sizes *asset_sizes;
     bool watch;         // Interactive run: rebuild as the game's files change
     const char *output; // Where the program goes; NULL for <folder>/.build/<name>
+    // Internal (tide run with no window): `output` is in a folder that keeps what this build last made there, so
+    // the program is linked again only when what it's made of changed
+    bool keep_output;
     const char *report; // tide build --report: where the build's report goes (build_report.h), or NULL for none
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner

@@ -8,8 +8,9 @@
 // processes and paths. Paths use forward slashes, which every OS accepts.
 // Strings returned are malloc'd.
 
-// The folder tide.exe is in.
+// The folder tide.exe is in, and its own path.
 char *sys_exe_dir(void);
+char *sys_exe_path(void);
 
 bool sys_exists(const char *path);
 bool sys_is_dir(const char *path);
@@ -17,6 +18,10 @@ int64_t sys_mtime(const char *path); // 0 if it doesn't exist
 // Changes whenever the file does: its modification time, finer than seconds,
 // and its size. 0 if it doesn't exist.
 uint64_t sys_file_stamp(const char *path);
+// When a file was last written, and the time now, in the same units, the system's own for files' times (0 if it
+// doesn't exist): for telling whether a file was written since a moment sys_time gave.
+uint64_t sys_file_written(const char *path);
+uint64_t sys_time(void);
 int64_t sys_file_size(const char *path); // -1 if it doesn't exist; current even while another program writes it
 bool sys_mkdirs(const char *path);   // Creates every missing folder on the way
 void sys_hide(const char *path);     // Hides a file or folder on Windows; elsewhere a leading dot does
@@ -26,6 +31,9 @@ bool sys_remove_tree(const char *path); // A file, or a folder and everything in
 char *sys_read_file(const char *path, size_t *len);
 bool sys_write_file(const char *path, const char *data, size_t len);
 bool sys_write_text(const char *path, const char *text);
+// Copies the file at `from` to `to`, replacing what's there, without holding it in memory: a big game's pack is
+// over a gigabyte. False when `from` can't be read or `to` written.
+bool sys_copy_file(const char *from, const char *to);
 bool sys_make_executable(const char *path); // Runnable by everyone, on Linux and macOS; nothing on Windows
 
 // Calls `found` with the name of every entry of `dir` (not "." or "..").

@@ -163,17 +163,16 @@ void asset_files_changed(const char *path)
     }
 }
 
-// The file at `path`, read: NULL when there's none. Its bytes stay until the
-// file changes or asset_files_forget.
-static read_file *read_at(const char *path)
+// The table's entry for the file at `path`, which is `size` bytes, last written at `modified`. `read` says whether
+// it holds the file as it is; one that doesn't is new or emptied, for read_into.
+static read_file *file_entry(const char *path, const unsigned long long size, const unsigned long long modified, bool *read)
 {
-    unsigned long long size = 0, modified = 0;
-    if (!folder_file_info(path, &size, &modified)) return NULL;
     read_file *f = NULL;
     for (int i = 0; i < files.count && !f; i++) {
         if (asset_path_same(files.items[i].path, path)) f = &files.items[i];
     }
-    if (f && !f->changed && f->size == size && f->modified == modified) return f;
+    *read = f && !f->changed && f->size == size && f->modified == modified;
+    if (*read) return f;
     if (!f) {
         if (files.count == files.cap) {
             files.cap = files.cap ? files.cap * 2 : 16;
@@ -189,8 +188,15 @@ static read_file *read_at(const char *path)
         forget_file(f);
         f->path = kept;
     }
+    return f;
+}
+
+// Reads the file at `path` into its emptied entry `f`: its bytes and their hash. False when it can't be opened. It
+// touches nothing but `f`, so several files are read at once (asset_files_decode_ahead).
+static bool read_into(read_file *f, const char *path, const unsigned long long size, const unsigned long long modified)
+{
     FILE *in = fopen(path, "rb");
-    if (!in) return NULL;
+    if (!in) return false;
     f->data = malloc(size > 0 ? (size_t)size : 1u);
     if (!f->data) abort();
     f->len = fread(f->data, 1, (size_t)size, in);
@@ -198,7 +204,18 @@ static read_file *read_at(const char *path)
     f->size = size;
     f->modified = modified;
     tide_sha256_of(f->data, f->len, f->hash);
-    return f;
+    return true;
+}
+
+// The file at `path`, read: NULL when there's none. Its bytes stay until the
+// file changes or asset_files_forget.
+static read_file *read_at(const char *path)
+{
+    unsigned long long size = 0, modified = 0;
+    if (!folder_file_info(path, &size, &modified)) return NULL;
+    bool read;
+    read_file *f = file_entry(path, size, modified, &read);
+    return read || read_into(f, path, size, modified) ? f : NULL;
 }
 
 static bool is_utf8(const uint8_t *s, const size_t n)
@@ -1447,12 +1464,48 @@ static void decode_one(void *context, const uint32_t i)
 // Each image a decode holds as floats, and what decoding takes: a 4096-square one is hundreds of megabytes
 enum { DECODES_AT_ONCE = 8 };
 
+// The files to read at once, each into its entry of the files' table, which stays where it is meanwhile
+typedef struct read_ahead {
+    const int *entries; // Each one's place in the table
+    char *const *paths;
+    const unsigned long long *sizes, *modified;
+} read_ahead;
+
+static void read_one(void *context, const uint32_t i)
+{
+    const read_ahead *r = context;
+    read_into(&files.items[r->entries[i]], r->paths[i], r->sizes[i], r->modified[i]); // One that can't be opened stays empty, for read_at to say
+}
+
+// The images whose prepared textures are looked for at once, as read_item looks for one
+typedef struct prepared_ahead {
+    read_file **files;
+    const char **keys;
+    const char *game_folder;
+} prepared_ahead;
+
+static void prepared_one(void *context, const uint32_t i)
+{
+    const prepared_ahead *p = context;
+    read_file *f = p->files[i];
+    texture_cache_view view;
+    uint8_t cache[32];
+    texture_cache_key(cache, f->hash, p->keys[i], false, true);
+    f->prepared_texture = texture_cache_read(p->game_folder, cache, &f->prepared_texture_size, &view);
+    if (!f->prepared_texture) {
+        texture_cache_key(cache, f->hash, p->keys[i], true, true);
+        f->prepared_texture = texture_cache_read(p->game_folder, cache, &f->prepared_texture_size, &view);
+        f->prepared_raw = true;
+    }
+}
+
 void asset_files_decode_ahead(const char *const *declaring, const str *paths, const int count, const char *game_folder)
 {
-    // The files the paths name, with each one's key, as asset_resolve finds them: only images, and only where they
-    // are files on this machine
+    // The files the paths name, with each one's key, as asset_resolve finds them, where they are files on this
+    // machine: every one is read ahead, and the images among them looked for in the cache or decoded
     VEC(char *) keys = {0};
     VEC(char *) found = {0};
+    VEC(bool) image = {0};
     for (int i = 0; i < count; i++) {
         const char *written = asset_written_path(paths[i]);
         if (!*written || asset_path_is_url(written, strlen(written))) continue;
@@ -1470,46 +1523,63 @@ void asset_files_decode_ahead(const char *const *declaring, const str *paths, co
             glob_walk w = {base_slash, written + prefix_len, prefix, {0}, {0}};
             folder_find_files_in(base_slash, glob_enters, glob_found, &w);
             for (int k = 0; k < w.keys.count; k++) {
-                if (!named_as_image(w.paths.items[k])) continue;
                 vec_push(keys, w.keys.items[k]);
                 vec_push(found, w.paths.items[k]);
+                vec_push(image, named_as_image(w.paths.items[k]));
             }
             free(base_slash);
             free(base);
-        } else if (named_as_image(written)) {
+        } else {
             char *abs = asset_path_join(folder, written, strlen(written));
             if (folder_file_info(abs, NULL, NULL)) {
                 vec_push(keys, str_to_cstr(str_from(written)));
                 vec_push(found, str_to_cstr(str_from(abs)));
+                vec_push(image, named_as_image(written));
             }
             free(abs);
         }
         free(folder);
     }
-    // Read (which may move the files' table), then what's to decode: what read_item would decode, and not a texture
-    // its cache has prepared, as read_item looks for one first
-    for (int i = 0; i < found.count; i++) read_at(found.items[i]);
-    decode_ahead d = {arena_alloc(sizeof(read_file *) * (size_t)(found.count ? found.count : 1)),
-                      arena_alloc(sizeof(char *) * (size_t)(found.count ? found.count : 1))};
+    // Read, on every processor: a big game's files are a gigabyte to read and hash. Each file not read yet gets its
+    // entry first, here, as that may move the files' table; then the entries are filled at once.
+    const size_t room = (size_t)(found.count ? found.count : 1);
+    int *entries = arena_alloc(sizeof *entries * room);
+    char **entry_paths = arena_alloc(sizeof *entry_paths * room);
+    unsigned long long *sizes = arena_alloc(sizeof *sizes * room), *modified = arena_alloc(sizeof *modified * room);
+    uint32_t unread = 0;
+    for (int i = 0; i < found.count; i++) {
+        bool listed = false; // A file two paths name is read once
+        for (uint32_t k = 0; k < unread && !listed; k++) listed = asset_path_same(entry_paths[k], found.items[i]);
+        if (listed || !folder_file_info(found.items[i], &sizes[unread], &modified[unread])) continue;
+        bool read;
+        const read_file *f = file_entry(found.items[i], sizes[unread], modified[unread], &read);
+        if (read) continue;
+        entries[unread] = (int)(f - files.items);
+        entry_paths[unread++] = found.items[i];
+    }
+    read_ahead r = {entries, entry_paths, sizes, modified};
+    build_threads_each(unread, 0u, read_one, &r);
+    // The images' textures as the cache has them prepared, which read_item looks for first: read at once too, each a
+    // file of the cache's
+    prepared_ahead p = {arena_alloc(sizeof(read_file *) * room), arena_alloc(sizeof(char *) * room), game_folder};
+    uint32_t prepared = 0;
+    for (int i = 0; use_build_cache && i < found.count; i++) {
+        read_file *f = image.items[i] ? read_at(found.items[i]) : NULL;
+        if (!f || f->decoded || f->prepared_tried) continue;
+        f->prepared_tried = true;
+        p.files[prepared] = f;
+        p.keys[prepared++] = keys.items[i];
+    }
+    build_threads_each(prepared, 0u, prepared_one, &p);
+    // Then what's to decode: what read_item would decode, and not a texture its cache has prepared
+    decode_ahead d = {arena_alloc(sizeof(read_file *) * room), arena_alloc(sizeof(char *) * room)};
     uint32_t n = 0;
     for (int i = 0; i < found.count; i++) {
-        read_file *f = read_at(found.items[i]);
+        read_file *f = image.items[i] ? read_at(found.items[i]) : NULL;
         if (!f || f->decoded) continue;
         bool listed = false;
         for (uint32_t k = 0; k < n && !listed; k++) listed = d.files[k] == f;
         if (listed) continue;
-        if (use_build_cache && !f->prepared_tried) {
-            texture_cache_view view;
-            f->prepared_tried = true;
-            uint8_t cache[32];
-            texture_cache_key(cache, f->hash, keys.items[i], false, true);
-            f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
-            if (!f->prepared_texture) {
-                texture_cache_key(cache, f->hash, keys.items[i], true, true);
-                f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
-                f->prepared_raw = true;
-            }
-        }
         if (f->prepared_texture) continue; // A Grid of it decodes it as it's read, as before
         d.files[n] = f;
         d.keys[n] = keys.items[i];

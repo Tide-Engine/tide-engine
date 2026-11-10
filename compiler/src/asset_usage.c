@@ -16,9 +16,14 @@ typedef struct pointer_set {
 
 typedef enum usage_kind { USAGE_DECL, USAGE_EXPR, USAGE_STMT } usage_kind;
 typedef struct usage_node { usage_kind kind; const void *value; } usage_node;
+typedef struct side_digest {
+    const char *path; // An asset's side file (asset_match.sides), which lasts as long as the assets do
+    uint8_t digest[32];
+} side_digest;
 typedef struct asset_usage {
     pointer_set seen, used;
     VEC(usage_node) pending;
+    VEC(side_digest) sides; // The side files hashed so far
     bool server;
     const program *prog;
     tide_sha256 *hash;
@@ -355,19 +360,34 @@ static void declaration(asset_usage *w, const decl *d)
             // Imported side buffers and decoded canonical models participate too.
             if (m->skinned) tide_sha256_add(w->hash, m->skinned, m->skinned_size);
             for (int k = 0; k < m->side_count; k++) {
+                // A rig's files are beside every animation made for it: each is read once for the walk
+                const side_digest *had = NULL;
+                for (int n = 0; n < w->sides.count && !had; n++) {
+                    if (strcmp(w->sides.items[n].path, m->sides[k]) == 0) had = &w->sides.items[n];
+                }
+                if (had) {
+                    tide_sha256_add(w->hash, had->digest, sizeof had->digest);
+                    continue;
+                }
                 FILE *f = fopen(m->sides[k], "rb");
                 tide_sha256 side;
                 tide_sha256_init(&side);
+                bool read = false;
                 if (f) {
-                    uint8_t bytes[4096];
+                    enum { CHUNK = 1 << 16 };
+                    uint8_t *bytes = malloc(CHUNK);
+                    if (!bytes) abort();
                     size_t n;
-                    while ((n = fread(bytes, 1, sizeof bytes, f))) tide_sha256_add(&side, bytes, n);
-                    if (ferror(f)) diag_error(d->at, "cannot fingerprint asset dependency '%s'", m->sides[k]);
+                    while ((n = fread(bytes, 1, CHUNK, f))) tide_sha256_add(&side, bytes, n);
+                    read = !ferror(f);
+                    if (!read) diag_error(d->at, "cannot fingerprint asset dependency '%s'", m->sides[k]);
+                    free(bytes);
                     fclose(f);
                 } else diag_error(d->at, "cannot read asset dependency '%s'", m->sides[k]);
-                uint8_t digest[32];
-                tide_sha256_end(&side, digest);
-                tide_sha256_add(w->hash, digest, sizeof digest);
+                side_digest made = {m->sides[k], {0}};
+                tide_sha256_end(&side, made.digest);
+                tide_sha256_add(w->hash, made.digest, sizeof made.digest);
+                if (read) vec_push(w->sides, made); // One that couldn't be read says so for each asset it's beside
             }
         }
     }

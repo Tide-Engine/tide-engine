@@ -166,6 +166,7 @@ static const source **sources; // As many as the program has files: it grows
 static int source_count;
 static int source_room;
 static int error_count;
+static unsigned long warnings_said; // Warnings and infos said by every compilation so far: diag_reset leaves it
 static diag_sink sink;
 static void *sink_user;
 static diag_suggestion_sink suggestion_sink;
@@ -448,7 +449,7 @@ void diag_warning(const loc at, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    diagnose(DIAG_WARNING, "warning", at, fmt, args);
+    if (diagnose(DIAG_WARNING, "warning", at, fmt, args)) warnings_said++;
     va_end(args);
 }
 
@@ -456,8 +457,13 @@ void diag_info(const loc at, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    diagnose(DIAG_INFO, "info", at, fmt, args);
+    if (diagnose(DIAG_INFO, "info", at, fmt, args)) warnings_said++;
     va_end(args);
+}
+
+unsigned long diag_warnings_said(void)
+{
+    return warnings_said;
 }
 
 // Not const: va_list is an array on some targets, and vfprintf takes it as is.

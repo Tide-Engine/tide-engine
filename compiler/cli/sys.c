@@ -128,7 +128,7 @@ char *path_absolute(const char *path)
     return out;
 }
 
-char *sys_exe_dir(void)
+char *sys_exe_path(void)
 {
     char buffer[4096] = "";
 #ifdef _WIN32
@@ -140,7 +140,12 @@ char *sys_exe_dir(void)
     const ssize_t n = readlink("/proc/self/exe", buffer, sizeof buffer - 1);
     if (n > 0) buffer[n] = '\0';
 #endif
-    char *absolute = path_absolute(buffer);
+    return path_absolute(buffer);
+}
+
+char *sys_exe_dir(void)
+{
+    char *absolute = sys_exe_path();
     char *dir = path_dir(absolute);
     free(absolute);
     return dir;
@@ -182,6 +187,36 @@ uint64_t sys_file_stamp(const char *path)
     const uint64_t size = (uint64_t)info.st_size;
 #endif
     return (time ^ size * 0x9E3779B97F4A7C15ull) | 1u;
+}
+
+uint64_t sys_file_written(const char *path)
+{
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &info)) return 0;
+    return (uint64_t)info.ftLastWriteTime.dwHighDateTime << 32 | info.ftLastWriteTime.dwLowDateTime;
+#else
+    struct stat info;
+    if (stat(path, &info) != 0) return 0;
+#ifdef __APPLE__
+    return (uint64_t)info.st_mtimespec.tv_sec * 1000000000u + (uint64_t)info.st_mtimespec.tv_nsec;
+#else
+    return (uint64_t)info.st_mtim.tv_sec * 1000000000u + (uint64_t)info.st_mtim.tv_nsec;
+#endif
+#endif
+}
+
+uint64_t sys_time(void)
+{
+#ifdef _WIN32
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    return (uint64_t)now.dwHighDateTime << 32 | now.dwLowDateTime;
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
+#endif
 }
 
 int64_t sys_file_size(const char *path)
@@ -315,6 +350,26 @@ bool sys_write_file(const char *path, const char *data, const size_t len)
 bool sys_write_text(const char *path, const char *text)
 {
     return sys_write_file(path, text, strlen(text));
+}
+
+bool sys_copy_file(const char *from, const char *to)
+{
+#ifdef _WIN32
+    return CopyFileA(from, to, FALSE) != 0; // The system's own copy: a third of the time of reading it and writing it
+#else
+    FILE *in = fopen(from, "rb");
+    if (!in) return false;
+    FILE *out = fopen(to, "wb");
+    enum { CHUNK = 4 << 20 };
+    char *bytes = out ? malloc(CHUNK) : NULL;
+    bool ok = bytes != NULL;
+    for (size_t n; ok && (n = fread(bytes, 1, CHUNK, in)) != 0;) ok = fwrite(bytes, 1, n, out) == n;
+    ok = ok && !ferror(in);
+    free(bytes);
+    fclose(in);
+    if (out && fclose(out) != 0) ok = false;
+    return ok;
+#endif
 }
 
 void sys_list(const char *dir, const sys_entry_fn found, void *user)

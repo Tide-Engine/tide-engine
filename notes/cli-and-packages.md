@@ -1,5 +1,107 @@
 # `tide`, packages and the package
 
+## Faster `tide run`: kept generates, kept run folders, the front end (2026-11-10)
+
+Owner: "look into optimizing `tide run`", with Mount & Rifle as the realistic case. Measured with this checkout's
+packaged tide (embedded clang/lld 23.1.2, release build) on a scratch copy of the game at 9e05690 (unpinned, debug
+mode: 766 assets, 960 MB of files, a 1.48 GB pack, 167 MB of generated C), Ryzen 9 7900X, redirected output with
+each line timed. "Before" rows were taken while other sessions loaded the machine, except the front end's, which is
+`TIDEC_TIMES` on comparable quiet runs; "after" is three quiet passes.
+
+| | before | after |
+|---|---|---|
+| `tide run game --frames 2`, nothing changed | 16.3-19.0 s | 2.4 s (0.3 s of tide, 2.1 s the game) |
+| ...after a one-function edit | 25.2-26.9 s | 10.7-11.2 s |
+| `tide build game`, nothing changed | 12.7-20.6 s | 0.5 s |
+| ...after a one-function edit | (as the run's, less its start) | 8.7-9.5 s |
+| the Tide step of an edit build (`TIDEC_TIMES`) | 12.2 s | 6.3-6.9 s |
+
+Of the after-edit run: Tide step 6.3 s, game.c at -O0 1.9 s, link 0.2 s, the game 2.2 s (its pack's load).
+
+What changed, in order of what it gave:
+
+- **A generate is kept** (`build.c`, `GENERATION_FILE`): `generate` leaves `<gen>/generation`, and the next generate
+  there is that one when all of this holds: the same key (`generation_key`: tide's version and its own file's
+  stamp, the installation and its headers' stamp, the game's and the gen folder's paths, every option a generate
+  reads, each `--define`, each package's name and folder, and `game_stamp`, the stamps a watching run looks at);
+  the files its assets name stamp as recorded (`stamp_assets` over the paths the generate listed, which the record
+  holds); and what tidec wrote stamps as recorded (`generated_stamp`: header, manifest and its parts, pack, the
+  debugger's views, the name map). The record also holds what `generate_sources` gives the build besides files
+  (`game_info`, the externs' names); `.tide` paths are listed again (`game_inputs`, which also sends telemetry's
+  sizes). Stamps are sizes and last-write times, the trust a watching run already has. Terminal and redirected
+  output say "Tide code and assets are up to date" for the step.
+  - Never kept: a generate that said a warning or an info (`diag_warnings_said`, a count `diag_reset` leaves), so
+    warnings are said by every build as before; a game with an asset from a URL (`game_info.fetched_assets`),
+    which each build asks the server about; Unity's, the editor's and `--declarations` builds, which neither take
+    nor leave a record (`records_generation`). `--report`, `--asset-sizes` and `TIDEC_TIMES` generate, and leave
+    their record (`keeps_generation`).
+  - A record is removed before a generate starts and written once it ends well (to `.new`, then renamed).
+  - An asset's file changing while a generate runs: tidec read it before or after, so the record isn't left unless
+    the files stayed (`assets_stayed`). With the record before it naming the same paths, their stamp before the
+    generate equals the one after. Otherwise (a first generate, another asset declared) no listed file may have
+    been written since the generate started (`sys_time`, `sys_file_written`, the system's own units). A file
+    deleted from a globbed folder during a first generate isn't seen by either; nor is an edit that keeps a file's
+    size on a file system whose times are coarser than the edit. The same holes a watching run has.
+  - Not a key: environment variables the C compiler reads (CPATH), which the objects' stamps cover.
+- **A run with no window keeps its folder** (`open_run`): `.tide/<configuration>/run/once-<n>/`, taken like a
+  watching run's `watch-<n>` by its lock file, with everything the last run there built. `build_options.keep_output`
+  makes its link `kept` (`link_objects`' stamp), and `place_pack` copies the pack only when it or the copy changed.
+  Before, each run linked and copied its pack into `run/<pid>/` and removed it after: 1.3 s of a big game's run.
+  A folder whose program can't be opened for writing (a game left running by a tide that ended) is passed over.
+  A run that finds no folder free still uses `run/<pid>`, removed after. The copies stay on disk: Mount & Rifle's
+  once-1 is 1.5 GB.
+- **`place_pack`'s marker is per destination** (`<from>.placed-<hash of to>`), so `tide build`'s copy in `.build/`
+  and a run's copy don't take each other's, and it copies with `sys_copy_file` (Windows' CopyFile: 0.3 s for
+  1.4 GB against 1.1 s read and written; elsewhere 4 MB at a time, without holding the file).
+- **A watching run's pack-<n> only when the pack changed** (`write_pack`, `run.pack_stamp`): tidec leaves
+  `game.pack` alone when it comes out the same, so its stamp says whether the last pack-<n> is it. A code edit no
+  longer copies the pack nor has the running game (or page) load it again. Written as `pack-<n>.tmp` and renamed,
+  so the host never reads half of one.
+- **The front end** (identical output: below):
+  - `collect_heard_reads` (heard_reads_codegen.inc) scanned every recorded read for every expression, and kept a
+    routine's seen nodes in a list: 1.5-2.0 s. Reads are now found by their source (`gen.heard_by`, chains in
+    `gen.heard_next`, in the order they were added, so the fixed point visits what it did), and the seen set is a
+    hash set one walk at a time (`heard_set`). 0.28 s.
+  - `program_simulation_id` read and hashed each animation's side files again for every animation (a rig's files
+    are beside all of them), 4 KB at a time: 0.75 s. Each is hashed once a walk (`asset_usage.sides`). 0.14 s.
+  - The splitter (plumbing_split.inc) went through shaders' arrays a character at a time in each of its passes
+    (items, uses twice, renames twice): 96 of the game's 167 MB. `split_plain_end` finds a run of numbers in an
+    initializer with a table, `split_items` jumps it and lists the long ones, and `split_uses`/`split_putn` skip
+    listed runs (they name nothing and rename nothing). Splitting plumbing from code 1.0 to 0.29 s, the data part
+    1.0 to 0.23 s; the code's levels (0.5 s) are as they were.
+  - Asset files are read and hashed on every processor before the assets are checked (`asset_files_decode_ahead`,
+    notes/assets-and-files.md), and the cache's prepared textures read at once: declarations 2.0-2.4 to 1.2 s.
+
+What an edit build still pays, for whoever goes on: building the pack in memory 1.85 s (0.3 s levels, 0.6 s the
+blocks' copies, 1.0 s `tide_pack_end`: a second copy and the SHA-256 of 1.48 GB), then comparing it with the
+file 0.3 s; asset checks 1.2 s; splitting 1.05 s; shaders 0.5 s (0.28 s WGSL to SPIR-V); game.c at -O0 1.9 s in
+one file; the game's start 2.2 s, reading and checking its pack. Skipping the pack's build needs either its digest
+to be of something cheaper than its bytes or a pass over the builder's calls that copies nothing (the builder
+takes each block's content hash already): both are the pack's format or runtime, so the owner's.
+
+Tests: `tide_cli_generation` (generation_test.mjs, the controlled compiler with the real front end): kept and not
+after edits of code (by size and by time), an asset, a symbol, the mode, a generated file changed or gone, a cut
+or foreign record, a report, a warning, an asset written during a first generate; and a run with no window's
+once-1 (linked once, pack copied when changed, `.build/` left alone). `cache_test.mjs`'s native run expects the
+kept folder and a second run that links nothing.
+
+Validation (Windows, Clang 23.1.2, Node 24.22.1):
+- Old and new tidec over all 516 `.sources` lists of the package tree, with `--no-line --layout`, `--layout
+  --split-plumbing --split-code --visualizers` and `--no-line --split-code`: 1,536 runs write the same files but for
+  the simulation identity's lines (it hashes tidec's sources), packs byte for byte; 12 fail in both (error
+  fixtures). Mount & Rifle's 26 generated files and pack likewise.
+- ASan (`sanitize`): 46 focused tests pass: the eleven CLI tests (unit, run_exit, terminal_exit, help, packages,
+  build_overlap, build_report, generation, assets, hidden, shipping_exports), tide_server_pack,
+  tidec_split_code_stable, the eight `_split` e2e fixtures (crossplatform pins among them), tidec_recompile,
+  tidec_asset_usage/cache/files/disk_cache, tidec_pack_fingerprint, tidec_debugger_natvis, and 18 e2e fixtures of
+  local handlers, verified handlers and assets.
+- The packaged tide (native half) passes `cache_test.mjs --part cache|modes|at-once --gpu`.
+- Not run: a watching run with a window (hidden runs refuse one; build_overlap's host case covers its build with
+  the inert host), web builds and `cache_test.mjs --web` (no web package tree here), Android, and Linux/macOS:
+  the six changed C files that build there compile for Linux under WSL with the project's warnings as errors
+  (`-fsyntax-only`), which is all that was checked of `sys_copy_file`, `sys_time` and `sys_file_written`'s POSIX
+  halves. CI's.
+
 ## Stable-version package fixture (2026-11-07)
 
 Release run 42378464688 failed `tide_cli_packages` on Linux and MinGW:

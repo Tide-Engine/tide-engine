@@ -734,7 +734,15 @@ async function nativeRunTest(tide, root) {
     const cache = join(game, ".tide", "native-debug");
     check(!existsSync(join(game, ".build")), "native run's executable is private to its run");
     check(readFileSync(join(cache, "gen", "main.c"), "utf8").includes("tide_run(&(tide_run_desc)"), "headless native run uses the standalone host");
-    check(readdirSync(join(cache, "run")).length === 0, "the native run cleans its private executable and pack");
+    // Its folder stays for the next run with no window, which links and copies only what changed
+    const once = join(cache, "run", "once-1");
+    const program = join(once, `native-run${process.platform === "win32" ? ".exe" : ""}`);
+    check(existsSync(program) && existsSync(join(once, "native-run.pack")), "the native run keeps its executable and pack in once-1");
+    const linked = statSync(program, { bigint: true }).mtimeNs;
+    const again = await run(tide, ["run", game, "--frames", "3", "--capture", capture, "--size", "32", "32"], root);
+    check(again.code === 0, `the second headless native run failed:\n${again.said}`);
+    check(again.said.includes("Tide code and assets are up to date"), `an unchanged native run compiles no Tide code:\n${again.said}`);
+    check(statSync(program, { bigint: true }).mtimeNs === linked, "an unchanged native run reuses its first run's link");
 }
 
 async function targetTests(tide, installation, root, target, embedded) {

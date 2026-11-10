@@ -8,6 +8,7 @@
 #include "image_files.h"
 #include "humanoid_assets.h"
 #include "asset_usage.h"
+#include "assets.h"
 #include "mesh_lod.h"
 #include "pack_fingerprint.h"
 #include "spirv.h"
@@ -158,6 +159,13 @@ typedef struct heard_read {
     const char *path;   // A selected member path; array indexes use at[*].
 } heard_read;
 
+// gen.heard_reads by their source: where each source's first and last are (heard_reads_codegen.inc)
+typedef struct heard_sources {
+    const void **keys;
+    int *first, *last;
+    uint32_t mask, count;
+} heard_sources;
+
 typedef struct gen {
     program *prog;
     const codegen_options *opts;
@@ -200,6 +208,8 @@ typedef struct gen {
     const char *view_rows;   // In a sharded game, the world a view's loop takes rows of (tide_view_hides)
     VEC(const param *) heard_rows; // The rows ticks record for local handlers' queries, one for each shape (collect_heard_rows)
     VEC(heard_read) heard_reads;
+    VEC(int) heard_next;   // The read after each that has the same source, or -1
+    heard_sources heard_by;
     client_codec value_codec;
     uint32_t value_schema;
     sb shader_names; // Private per-stage identifier maps, never emitted into game code.
@@ -22165,6 +22175,8 @@ static void build_pack(gen *g)
             for (int n = 0; n < d->asset_paths.count; n++) {
                 const expr *path = d->asset_paths.items[n];
                 asset_watched(d->unit->src->path, path->text, note_watched, opts->info);
+                const char *written = asset_written_path(path->text);
+                if (asset_path_is_url(written, strlen(written))) opts->info->fetched_assets = true;
             }
             // A .gltf's buffers in files beside it: saved, the mesh is another
             for (int k = 0; d->asset && k < d->asset->count; k++) {

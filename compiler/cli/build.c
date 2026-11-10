@@ -2581,6 +2581,303 @@ static bool debug_views(const build_options *opts)
     return !opts->web && !opts->android && !opts->managed && !opts->distribution;
 }
 
+// ---------------------------------------------------------------------------
+// A generate kept from one build to the next. Compiling a big game's Tide code
+// and assets takes seconds though nothing changed, so a generate leaves
+// <gen>/generation: what it was made of, and what tide needs of it besides the
+// files. The next generate there is that one when everything is as it was:
+// - its key: tide itself, the build's options, and the stamps of the game's
+//   and its packages' files, the same ones a watching run looks at to build
+//   again (game_stamp);
+// - the files its assets name (asset_stamp), which that generate listed;
+// - what tidec wrote.
+// Stamps are of a file's size and last-write time, as a watching run's are.
+// Not kept: a generate that said a warning (which is then said by every
+// build, as before), and one with an asset from a URL (asked about at each
+// build). A build that asks what a generate does (a report, asset sizes, the
+// compiler's phases) generates, and leaves its record; Unity's and the
+// editor's builds, whose generate gives more than its files, neither take
+// nor leave one.
+
+#define GENERATION_FILE "generation"
+#define GENERATION_FORMAT "tide generation 1"
+
+static uint64_t game_stamp(const build *b);
+static uint64_t stamp_assets(char *const *paths, int count);
+static void stamp_asset_file(void *user, const char *path, unsigned long long size);
+
+// Whether a generate of this build leaves a record: one whose files are all it gives.
+static bool records_generation(const build *b)
+{
+    const build_options *o = b->opts;
+    return !o->unity && !o->unity_assets && !o->editor_prefab && !o->editor_source && !o->editor_draft && !o->declarations;
+}
+
+// ...and whether this build takes the generate there: not one that asks what a generate does (its report, its
+// assets' sizes, the compiler's phases)
+static bool keeps_generation(const build *b)
+{
+    return records_generation(b) && !b->opts->asset_sizes && !build_report_current() && !sys_env("TIDEC_TIMES");
+}
+
+static void key_text(tide_sha256 *h, const char *text)
+{
+    tide_sha256_add(h, text ? text : "", strlen(text ? text : "") + 1u);
+}
+
+static void key_number(tide_sha256 *h, const uint64_t n)
+{
+    tide_sha256_add(h, &n, sizeof n);
+}
+
+// What a generate is made of, but its assets' files: 64 hex digits. Empty when tide can't stamp itself.
+static void generation_key(const build *b, const char *gen, const bool layout, char out[65])
+{
+    out[0] = '\0';
+    char *tide = sys_exe_path();
+    const uint64_t self = sys_file_stamp(tide);
+    free(tide);
+    if (!self) return;
+    const build_options *o = b->opts;
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    key_text(&h, GENERATION_FORMAT);
+    key_text(&h, TIDE_VERSION);
+    key_number(&h, self); // Another tide is another compiler
+    key_text(&h, b->root);
+    key_number(&h, b->headers); // Build code's program is made with the installation's files
+    key_text(&h, b->folder);
+    key_text(&h, gen);
+    const uint8_t flags[] = {layout, b->library, (uint8_t)b->abi, o->release, o->distribution, o->web, o->single_file,
+                             o->android, o->server, o->managed, o->server_strip_assets, o->strip_assets, o->watch,
+                             splits_plumbing(b), debug_views(o), strip_server_assets(b), strip_game_assets(b, layout)};
+    tide_sha256_add(&h, flags, sizeof flags);
+    key_text(&h, o->optimization);
+    key_text(&h, o->scene);
+    key_number(&h, (uint64_t)o->define_count);
+    for (int i = 0; i < o->define_count; i++) key_text(&h, o->defines[i]);
+    key_number(&h, (uint64_t)b->packages.count);
+    for (int i = 0; i < b->packages.count; i++) {
+        key_text(&h, b->packages.items[i].name);
+        key_text(&h, b->packages.items[i].folder); // One from git is in a folder named for its commit
+    }
+    key_number(&h, game_stamp(b));
+    uint8_t digest[32];
+    tide_sha256_end(&h, digest);
+    for (int i = 0; i < 32; i++) snprintf(out + i * 2, 3, "%02x", digest[i]);
+}
+
+// The stamps of what tidec writes in `gen` for tide: the header, the manifest and the parts it lists, the pack and
+// the debugger's views. A file that isn't there stamps as none.
+static uint64_t generated_stamp(const char *gen)
+{
+    static const char *const always[] = {"game.h", "game_parts.txt", "game.pack", "game.natvis", "game_lldb.py", "game.names"};
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (size_t i = 0; i < sizeof always / sizeof always[0]; i++) {
+        char *path = path_join(gen, always[i]);
+        h = hash_file(h, path);
+        free(path);
+    }
+    char *manifest_path = path_join(gen, "game_parts.txt");
+    char *manifest = sys_read_file(manifest_path, NULL);
+    free(manifest_path);
+    for (char *line = manifest; line && *line;) {
+        char *end = strchr(line, '\n');
+        if (end) *end = '\0';
+        if (strlen(line) > 4 && !strchr(line + 4, '/') && !strchr(line + 4, '\\')) {
+            char *path = path_join(gen, line + 4);
+            h = hash_file(h, path);
+            free(path);
+        }
+        line = end ? end + 1 : line + strlen(line);
+    }
+    free(manifest);
+    return h;
+}
+
+static void newest_file(void *user, const char *path, const unsigned long long size)
+{
+    (void)size;
+    uint64_t *newest = user;
+    const uint64_t written = sys_file_written(path);
+    if (written > *newest) *newest = written;
+}
+
+// When the newest of the files the game's assets name was last written, in sys_time's units.
+static uint64_t assets_newest(const build *b)
+{
+    uint64_t newest = 0;
+    for (int i = 0; i < b->info.asset_count; i++) {
+        const char *path = b->info.asset_paths[i];
+        if (path[0] && path[strlen(path) - 1] == '/') folder_find_files(path, newest_file, &newest);
+        else newest_file(&newest, path, 0);
+    }
+    return newest;
+}
+
+// A generate's record, as read: what it says its generate was made of, and what tide needs of it.
+typedef struct generation {
+    char *text;          // The file, which the other texts are in
+    const char *key;     // generation_key's, then
+    const char *assets;  // stamp_assets of its paths, as 16 hex digits
+    const char *written; // generated_stamp, likewise
+    const char *externs;
+    game_info info;
+} generation;
+
+static void generation_free(generation *g)
+{
+    free(g->text);
+    free_asset_paths(&g->info);
+    *g = (generation){0};
+}
+
+// Leaves the record of the generate just made in `gen`.
+static void generation_keep(const build *b, const char *gen, const char *key)
+{
+    char *path = path_join(gen, GENERATION_FILE);
+    char *fresh = format("%s.new", path, NULL);
+    FILE *f = fopen(fresh, "wb");
+    bool ok = f != NULL;
+    if (f) {
+        const game_info *info = &b->info;
+        const char *externs = b->externs.data ? b->externs.data : "";
+        fprintf(f, "%s\n%s\n%016llx\n%016llx\n%d%d%d\n", GENERATION_FORMAT, key,
+                (unsigned long long)stamp_assets(info->asset_paths, info->asset_count),
+                (unsigned long long)generated_stamp(gen), info->bold, info->microphone, info->assets_affect_match);
+        const char *const texts[] = {info->simulation, info->title, info->app_id, info->version, externs};
+        for (size_t i = 0; i < sizeof texts / sizeof texts[0]; i++) fprintf(f, "%zu\n%s\n", strlen(texts[i]), texts[i]);
+        fprintf(f, "%d\n", info->asset_count);
+        for (int i = 0; i < info->asset_count; i++) fprintf(f, "%zu\n%s\n", strlen(info->asset_paths[i]), info->asset_paths[i]);
+        ok = !ferror(f);
+        if (fclose(f) != 0) ok = false;
+    }
+    if (!ok || !sys_rename(fresh, path)) sys_remove(fresh); // Without one, the next build generates
+    free(fresh);
+    free(path);
+}
+
+// The record's next line, ended in place: NULL at the text's end, or for a line cut short.
+static char *record_line(char **at)
+{
+    char *line = *at;
+    char *end = strchr(line, '\n');
+    if (!end) return NULL;
+    *end = '\0';
+    *at = end + 1;
+    return line;
+}
+
+// The record's next text: a line of its length, then its bytes and a line end. NULL when it isn't there whole.
+static char *record_text(char **at, const char *limit)
+{
+    const char *line = record_line(at);
+    if (!line) return NULL;
+    char *end = NULL;
+    const unsigned long long n = strtoull(line, &end, 10);
+    if (end == line || *end || n >= (unsigned long long)(limit - *at) || (*at)[n] != '\n') return NULL;
+    char *text = *at;
+    text[n] = '\0';
+    *at += n + 1;
+    return text;
+}
+
+// Reads the record in `gen`. False, with nothing to free, when there's none or it isn't whole.
+static bool generation_read(const char *gen, generation *g)
+{
+    *g = (generation){0};
+    char *path = path_join(gen, GENERATION_FILE);
+    size_t len = 0;
+    g->text = sys_read_file(path, &len);
+    free(path);
+    if (!g->text) return false;
+    char *at = g->text;
+    const char *limit = g->text + len;
+    game_info *info = &g->info;
+    bool ok = false;
+    do {
+        const char *line = record_line(&at);
+        if (!line || strcmp(line, GENERATION_FORMAT) != 0) break;
+        g->key = record_line(&at);
+        g->assets = g->key ? record_line(&at) : NULL;
+        g->written = g->assets ? record_line(&at) : NULL;
+        const char *flags = g->written ? record_line(&at) : NULL;
+        if (!flags || strlen(flags) != 3) break;
+        info->bold = flags[0] == '1';
+        info->microphone = flags[1] == '1';
+        info->assets_affect_match = flags[2] == '1';
+        const char *simulation = record_text(&at, limit);
+        const char *title = simulation ? record_text(&at, limit) : NULL;
+        const char *app_id = title ? record_text(&at, limit) : NULL;
+        const char *version = app_id ? record_text(&at, limit) : NULL;
+        g->externs = version ? record_text(&at, limit) : NULL;
+        if (!g->externs || strlen(simulation) >= sizeof info->simulation || strlen(title) >= sizeof info->title
+            || strlen(app_id) >= sizeof info->app_id || strlen(version) >= sizeof info->version) break;
+        snprintf(info->simulation, sizeof info->simulation, "%s", simulation);
+        snprintf(info->title, sizeof info->title, "%s", title);
+        snprintf(info->app_id, sizeof info->app_id, "%s", app_id);
+        snprintf(info->version, sizeof info->version, "%s", version);
+        line = record_line(&at);
+        char *end = NULL;
+        const long count = line ? strtol(line, &end, 10) : -1;
+        if (count < 0 || end == line || *end || (unsigned long long)count > (unsigned long long)(limit - at)) break;
+        info->asset_paths = calloc((size_t)count + 1u, sizeof *info->asset_paths);
+        if (!info->asset_paths) abort();
+        ok = true;
+        for (long i = 0; i < count && ok; i++) {
+            const char *asset = record_text(&at, limit);
+            ok = asset != NULL;
+            if (ok) info->asset_paths[info->asset_count++] = copy_text(asset);
+        }
+    } while (false);
+    if (!ok) generation_free(g);
+    return ok;
+}
+
+// Whether the generate `last` records in `gen` is the one `key` asks for, its assets' files and what tidec wrote as
+// they were: then `b` has what that generate gave it (its settings, its externs' names, the paths its assets name),
+// and `last` is empty.
+static bool generation_kept(build *b, const char *gen, const char *key, generation *last)
+{
+    if (!last->text || strcmp(last->key, key) != 0) return false;
+    char stamp[32];
+    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)stamp_assets(last->info.asset_paths, last->info.asset_count));
+    if (strcmp(stamp, last->assets) != 0) return false;
+    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)generated_stamp(gen));
+    if (strcmp(stamp, last->written) != 0) return false;
+    // The .tide files it compiled, as a generate lists them
+    file_list paths = {0};
+    int count = 0;
+    compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count, NULL);
+    if (!inputs) return false; // Its error is said: the generate that follows says it again, and fails
+    free(inputs);
+    arena_reset(); // What an earlier build compiled, when a run rebuilds the game
+    b->externs = (sb){0};
+    sb_put(&b->externs, last->externs);
+    free_asset_paths(&b->info);
+    b->info = last->info;
+    last->info = (game_info){0};
+    free_files(&b->sources);
+    b->sources = paths;
+    free(b->views);
+    b->views = debug_views(b->opts) ? format("%s", gen, NULL) : NULL;
+    generation_free(last);
+    return true;
+}
+
+// Whether the files the game's assets name stayed as they were while the generate that just ended ran: tidec read
+// each at some point of it, and a record of a generate that read one before it changed would say the pack has what
+// it hasn't. `last` is the record before that generate, whose paths' stamp then was `before`: with the same paths
+// now, their stamp tells. Otherwise (a first generate, another asset declared) none may have been written since
+// the generate started, at `started`.
+static bool assets_stayed(const build *b, const generation *last, const uint64_t before, const uint64_t started)
+{
+    bool same = last->text && last->info.asset_count == b->info.asset_count;
+    for (int i = 0; same && i < b->info.asset_count; i++) same = strcmp(last->info.asset_paths[i], b->info.asset_paths[i]) == 0;
+    if (same) return before == stamp_assets(b->info.asset_paths, b->info.asset_count);
+    return assets_newest(b) < started;
+}
+
 static bool generate_sources(build *b, const char *gen, const bool layout)
 {
     file_list paths;
@@ -2797,8 +3094,26 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
         const int workers = b->jobs > 4 ? 4 : b->jobs - 1;
         start_compiles(ahead, workers, &stop);
     }
-    if (packages) build_step("compiling Tide code and assets");
-    const bool ok = packages && generate_sources(b, gen, layout);
+    // The generate there already, when nothing it was made of changed (GENERATION_FILE)
+    char key[65] = "";
+    if (packages && records_generation(b)) generation_key(b, gen, layout, key);
+    generation last = {0};
+    if (key[0]) generation_read(gen, &last);
+    const bool kept = key[0] && keeps_generation(b) && generation_kept(b, gen, key, &last);
+    if (kept) build_step("Tide code and assets are up to date");
+    else if (packages) build_step("compiling Tide code and assets");
+    if (packages && !kept) { // What's there is no generate's until this one ends well
+        char *record = path_join(gen, GENERATION_FILE);
+        sys_remove(record);
+        free(record);
+    }
+    const uint64_t before = last.text ? stamp_assets(last.info.asset_paths, last.info.asset_count) : 0;
+    const uint64_t started = sys_time();
+    const unsigned long said = diag_warnings_said();
+    const bool ok = packages && (kept || generate_sources(b, gen, layout));
+    if (ok && !kept && key[0] && said == diag_warnings_said() && !b->info.fetched_assets
+        && assets_stayed(b, &last, before, started)) generation_keep(b, gen, key);
+    generation_free(&last);
     if (!ok && ahead) free_compiles(ahead);
     if (own_feedback) end_build_feedback(ok);
     return ok;
@@ -2881,7 +3196,8 @@ static bool place_debug_views(const build *b, const char *output, const char *st
     return ok;
 }
 
-// What <from>.placed says of the last copy: where it went, and both files' stamps after it.
+// What a marker beside `from` says of its last copy to `to` (place_pack): where it went, and both files' stamps
+// after it.
 static char *placed_record(const char *from, const char *to)
 {
     char stamps[64];
@@ -2893,8 +3209,11 @@ static char *placed_record(const char *from, const char *to)
 static bool place_pack(const char *from, const char *to)
 {
     // A big game's pack is hundreds of megabytes, which tidec leaves alone when it comes out the same: copied again
-    // only when it or the copy changed since the last copy
-    char *marker = format("%s.placed", from, NULL);
+    // only when it or the copy changed since the last copy. A marker for each place it goes, so a build's copy and
+    // a run's don't take each other's
+    char place[32];
+    snprintf(place, sizeof place, "%016llx", (unsigned long long)hash_text(0xCBF29CE484222325ull, to));
+    char *marker = format("%s.placed-%s", from, place);
     char *record = placed_record(from, to);
     char *last = sys_read_file(marker, NULL);
     const bool same = last && strcmp(last, record) == 0 && sys_exists(to);
@@ -2905,16 +3224,13 @@ static bool place_pack(const char *from, const char *to)
         return true;
     }
     sys_remove(marker);
-    size_t size = 0;
-    char *bytes = sys_read_file(from, &size);
-    if (!bytes) {
+    if (!sys_exists(from)) {
         free(marker);
         sys_remove(to);
         return true;
     }
-    const bool ok = sys_write_file(to, bytes, size);
+    const bool ok = sys_copy_file(from, to);
     if (!ok) fprintf(stderr, "tide: can't write %s\n", to);
-    free(bytes);
     if (ok) {
         record = placed_record(from, to);
         sys_write_text(marker, record);
@@ -3011,7 +3327,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
         snprintf(file, sizeof file, "%s.wasm", b.name);
         program = path_join(b.cache, file);
     }
-    if (!link_objects(&b, &objects, &c, program, false, NULL, false)) return NULL;
+    if (!link_objects(&b, &objects, &c, program, false, NULL, opts->keep_output)) return NULL;
     if (!opts->web) {
         char *stem = format("%s", path_base(program), NULL);
         char *dot = strrchr(stem, '.');
@@ -3138,9 +3454,9 @@ char *tide_build(const char *root, const build_options *opts)
 // ---------------------------------------------------------------------------
 // Interactive `tide run`: the game as a library in a small host program, which swaps in
 // each new build of it (see tide/host.h), and a new build whenever one of the
-// game's files changes. Each run has a folder of its own, .tide/<configuration>/run/
-// <tide's process ID>, so two runs of one game (a server and a client) never
-// build over each other.
+// game's files changes. Each run has a folder of its own in .tide/<configuration>/run/
+// (open_run), so two runs of one game (a server and a client) never build over
+// each other.
 
 typedef struct run {
     build b;
@@ -3148,8 +3464,10 @@ typedef struct run {
     char *dir;       // This run's folder
     char *gen;       // ...and its generated files
     uint32_t builds; // Made so far, game-1 to game-<builds>
-    uint32_t packs;  // Packs of the game's assets written so far, pack-1 to pack-<packs>: with each build, and as a named file changes
+    uint32_t packs;  // Packs of the game's assets written so far, pack-1 to pack-<packs>: with a build or a named file's change that made another
+    uint64_t pack_stamp; // The generated pack's stamp when pack-<packs> was copied from it
     bool watch_folder; // dir is a watch-<n> folder, which runs one after another use (open_run)
+    bool kept_folder;  // ...or a once-<n> one, which keeps what a run with no window built there
     const char *host; // Initial native run only: compile its host in the game's batch
 } run;
 
@@ -3157,22 +3475,33 @@ static bool queue_host(run *r, compiles *list, file_list *objects);
 
 // The game's pack as the last generate left it, into the run's folder as the
 // next pack-<n>, which the host loads (platform/src/reload.c). Nothing for a
-// game with no assets.
+// game with no assets, nor when the pack is the one the last pack-<n> was made
+// of: tidec leaves its file alone when it comes out the same, and a big game's
+// is over a gigabyte to copy, and for the running game to load again.
 static bool write_pack(run *r)
 {
     char *from = pack_of(r->gen);
-    size_t size = 0;
-    char *bytes = sys_read_file(from, &size);
-    free(from);
-    if (!bytes) return true;
+    const uint64_t stamp = sys_file_stamp(from);
+    if (!stamp || (r->packs && stamp == r->pack_stamp)) {
+        free(from);
+        return true;
+    }
     char name[32];
     snprintf(name, sizeof name, "pack-%u", (unsigned)(r->packs + 1u));
     char *to = path_join(r->dir, name);
-    const bool ok = sys_write_file(to, bytes, size);
-    if (ok) r->packs++;
-    else fprintf(stderr, "tide: can't write %s\n", to);
+    // Under another name until it's whole: the host loads a pack-<n> as soon as it's there
+    char *fresh = format("%s.tmp", to, NULL);
+    const bool ok = sys_copy_file(from, fresh) && sys_rename(fresh, to);
+    if (ok) {
+        r->packs++;
+        r->pack_stamp = stamp;
+    } else {
+        fprintf(stderr, "tide: can't write %s\n", to);
+        sys_remove(fresh);
+    }
+    free(fresh);
     free(to);
-    free(bytes);
+    free(from);
     return ok;
 }
 
@@ -3188,9 +3517,15 @@ static void stamp_asset_file(void *user, const char *path, const unsigned long l
 // in a folder a glob names: the paths the last generate listed.
 static uint64_t asset_stamp(const build *b)
 {
+    return stamp_assets(b->info.asset_paths, b->info.asset_count);
+}
+
+// The same for the `count` paths a generate listed (game_info.asset_paths): a folder's ends in a slash.
+static uint64_t stamp_assets(char *const *paths, const int count)
+{
     uint64_t h = 0xCBF29CE484222325ull;
-    for (int i = 0; i < b->info.asset_count; i++) {
-        const char *path = b->info.asset_paths[i];
+    for (int i = 0; i < count; i++) {
+        const char *path = paths[i];
         if (path[0] && path[strlen(path) - 1] == '/') folder_find_files(path, stamp_asset_file, &h);
         else stamp_file(&h, path);
     }
@@ -3451,27 +3786,41 @@ static void clear_run_entry(void *user, const char *name, const bool is_dir)
 }
 
 // This run's folder, after removing those of runs that ended. A watching run
-// takes the first watch-<n> no other run has, as it was left, and the rest
-// one named for tide's process ID, made anew.
+// takes the first watch-<n> no other run has, as it was left; a run with no
+// window the first once-<n>, with everything the last run there built (its
+// program, and its pack, which a big game's run would otherwise copy each
+// time); and a run that finds none free, one named for tide's process ID, made
+// anew.
 static void open_run(run *r, const bool watching)
 {
     char *runs = path_join(r->b.cache, "run");
     sys_mkdirs(runs);
     sys_list(runs, remove_ended_run, (void *)runs);
-    // A folder is a run's while its tide has watch-<n>.lock, which the system lets go of however tide ends
-    for (unsigned n = 1; watching && !r->dir && n <= 64; n++) {
+    // A folder is a run's while its tide has <name>.lock, which the system lets go of however tide ends
+    for (unsigned n = 1; !r->dir && n <= 64; n++) {
         char name[32];
-        snprintf(name, sizeof name, "watch-%u", n);
+        snprintf(name, sizeof name, "%s-%u", watching ? "watch" : "once", n);
         char *dir = path_join(runs, name);
         char *lock = format("%s.lock", dir, NULL);
         run_folder folder = {dir, false};
-        if (sys_lock_file(lock)) sys_list(dir, clear_run_entry, &folder); // Kept until tide ends
-        else folder.busy = true;
+        if (!sys_lock_file(lock)) folder.busy = true; // Kept until tide ends
+        else if (watching) sys_list(dir, clear_run_entry, &folder);
+        else {
+            // Its program still running, of a run that ended without its tide: it can't be linked over
+            char file[512];
+            snprintf(file, sizeof file, "%s%s", r->b.name, EXE_SUFFIX);
+            char *program = path_join(dir, file);
+            FILE *written = sys_exists(program) ? fopen(program, "r+b") : NULL;
+            if (written) fclose(written);
+            else if (sys_exists(program)) folder.busy = true;
+            free(program);
+        }
         if (folder.busy) free(dir);
         else r->dir = dir;
         free(lock);
     }
-    r->watch_folder = r->dir != NULL;
+    r->watch_folder = watching && r->dir != NULL;
+    r->kept_folder = !watching && r->dir != NULL;
     if (!r->dir) {
         char pid[32];
         snprintf(pid, sizeof pid, "%u", (unsigned)sys_pid());
@@ -3501,6 +3850,7 @@ int tide_run_native(const char *root, const build_options *opts, const char *con
     char *output = path_join(r.dir, file);
     build_options standalone = *opts;
     standalone.output = output; // Another run never links over this one's executable
+    standalone.keep_output = r.kept_folder;
     char *program = tide_build(root, &standalone);
     int code = 1;
     if (program) {
@@ -3513,7 +3863,7 @@ int tide_run_native(const char *root, const build_options *opts, const char *con
         else if (code > 0) telemetry_fail(TELEMETRY_ERROR_GAME);
         free(a.items);
     }
-    sys_remove_tree(r.dir);
+    if (!r.kept_folder) sys_remove_tree(r.dir); // A once-<n> folder keeps its program and pack for the next run
     free(output);
     free(program);
     return code < 0 ? 1 : code;
