@@ -9,6 +9,8 @@
 #include "humanoid_assets.h"
 #include "asset_usage.h"
 #include "assets.h"
+#include "build_threads.h"
+#include "folders.h"
 #include "mesh_lod.h"
 #include "pack_fingerprint.h"
 #include "spirv.h"
@@ -22165,6 +22167,9 @@ static void asset_size(const gen *g, const decl *d, const uint64_t bytes, const 
     if (reported) report_asset(d, what, bytes, NULL);
 }
 
+static uint64_t pack_file_size(const char *path);
+static void pack_each(uint32_t count, void (*work)(void *context, uint32_t i), void *context);
+
 static void build_pack(gen *g)
 {
     const program *prog = g->prog;
@@ -22190,7 +22195,10 @@ static void build_pack(gen *g)
     if (!opts->build_program) diag_phase("generating C"); // ...and packing is a phase of its own (TIDEC_TIMES)
     want_textures(g);
     want_levels(g);
-    tide_pack_builder b = {0};
+    tide_pack_builder b = {.each = pack_each};
+    // About as big as the pack there already, which an edit of the code leaves as it was: a region that grows a
+    // doubling at a time copies a big game's gigabyte over again
+    if (!opts->build_program) tide_pack_reserve(&b, pack_file_size(opts->pack));
     const decl *sized = NULL; // The declaration whose bytes are being counted, from sized_from
     uint64_t sized_from = 0;
     uint32_t stored[4] = {0}; // How its first images are kept, for its size's line
@@ -22384,26 +22392,31 @@ static void build_pack(gen *g)
     if (!opts->build_program) diag_phase("packing assets");
 }
 
-// Whether the file at `path` holds `size` bytes, `bytes`: a big game's pack is hundreds of megabytes, which
-// reading takes less time than writing.
+// How many bytes the file at `path` holds, or 0 for none.
+static uint64_t pack_file_size(const char *path)
+{
+    unsigned long long size = 0;
+    return path && folder_file_info(path, &size, NULL) ? size : 0u;
+}
+
+// Whether the file at `path` is the pack `bytes`, `size` long: as many bytes with the same header, whose digest
+// is of every byte (tide_pack_digest_of). A big game's pack is over a gigabyte, which this neither reads nor writes.
+// One a write was cut short on is shorter.
 static bool pack_file_is(const char *path, const uint8_t *bytes, const size_t size)
 {
+    tide_pack_header had;
+    if (size < sizeof had || pack_file_size(path) != size) return false;
     FILE *f = fopen(path, "rb");
     if (!f) return false;
-    enum { CHUNK = 1 << 20 };
-    uint8_t *chunk = malloc(CHUNK);
-    bool same = chunk != NULL;
-    size_t at = 0;
-    while (same) {
-        const size_t got = fread(chunk, 1, CHUNK, f);
-        if (got == 0) break;
-        same = at + got <= size && memcmp(chunk, bytes + at, got) == 0;
-        at += got;
-    }
-    same = same && at == size && !ferror(f);
-    free(chunk);
+    const bool read = fread(&had, 1, sizeof had, f) == sizeof had;
     fclose(f);
-    return same;
+    return read && memcmp(&had, bytes, sizeof had) == 0;
+}
+
+// The pack's pieces hashed on every processor (tide_pack_builder.each)
+static void pack_each(const uint32_t count, void (*work)(void *context, uint32_t i), void *context)
+{
+    build_threads_each(count, 0u, work, context);
 }
 
 static bool write_pack(gen *g)

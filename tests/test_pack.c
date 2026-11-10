@@ -362,6 +362,114 @@ TIDE_TEST(pack_refuses_what_isnt_one)
     TIDE_CHECK(tide_pack_find("Game.rules", TIDE_PACK_TEXT) == NULL);
 }
 
+// The pieces last to first: what a tool's threads might do
+static void each_backwards(const uint32_t count, void (*work)(void *context, uint32_t i), void *context)
+{
+    for (uint32_t i = count; i > 0; i--) work(context, i - 1u);
+}
+
+// A pack of one block of `bytes` bytes, each `fill`, named "Game.blob", and `names` more names for it
+static uint8_t *blob_pack(const uint32_t bytes, const uint8_t fill, const uint32_t names, const tide_pack_each each,
+                          const uint64_t reserve, size_t *size)
+{
+    uint8_t *data = malloc(bytes ? bytes : 1u);
+    if (!data) abort();
+    memset(data, fill, bytes);
+    uint8_t hash[32];
+    tide_sha256_of(data, bytes, hash);
+    tide_pack_builder b = {.each = each};
+    if (reserve) tide_pack_reserve(&b, reserve);
+    uint32_t chars;
+    const uint64_t at = tide_pack_bytes(&b, hash, data, bytes, &chars);
+    tide_pack_name(&b, "Game.blob", TIDE_PACK_BYTES, at, bytes, 0);
+    for (uint32_t i = 0; i < names; i++) {
+        char name[32];
+        snprintf(name, sizeof name, "Game.blob%u", (unsigned)i);
+        tide_pack_name(&b, name, TIDE_PACK_BYTES, at, bytes, 0);
+    }
+    free(data);
+    return tide_pack_end(&b, size);
+}
+
+TIDE_TEST(pack_digest_is_of_every_byte_however_its_pieces_are_hashed)
+{
+    // More than two pieces (TIDE_PACK_DIGEST_PIECE), and big enough to stay where it was built: unused bytes
+    // between its entries and its region
+    const uint32_t big = 20u << 20;
+    size_t size, again_size, other_size;
+    uint8_t *bytes = blob_pack(big, 7, 0, NULL, 0, &size);
+    uint8_t *again = blob_pack(big, 7, 0, each_backwards, 64u << 20, &again_size);
+    uint8_t *other = blob_pack(big, 7, 0, NULL, 0, &other_size);
+    TIDE_REQUIRE(bytes && again && other && size == again_size && size == other_size);
+    TIDE_CHECK(memcmp(bytes, again, size) == 0); // Its threads and the room it reserved change nothing
+    tide_pack_header h;
+    memcpy(&h, bytes, sizeof h);
+    TIDE_CHECK(h.version == TIDE_PACK_VERSION && h.region_at > sizeof h + sizeof(tide_pack_entry) + 16u && !(h.region_at & 15u)
+               && h.region_at + h.region_size == size);
+    for (uint64_t i = sizeof h + sizeof(tide_pack_entry); i < h.region_at; i++) TIDE_CHECK(bytes[i] == 0);
+    // The digest is of the file with its own bytes zero, and any byte's change is another digest
+    uint8_t digest[32], zero[32] = {0};
+    memcpy(bytes + offsetof(tide_pack_header, digest), zero, sizeof zero);
+    tide_pack_digest_of(bytes, size, NULL, digest);
+    TIDE_CHECK(memcmp(digest, h.digest, sizeof digest) == 0 && memcmp(digest, zero, sizeof zero) != 0);
+    tide_pack_digest_of(bytes, size, each_backwards, digest);
+    TIDE_CHECK(memcmp(digest, h.digest, sizeof digest) == 0);
+    const size_t places[] = {8u, sizeof h + 3u, (size_t)h.region_at + 20u, (size_t)h.region_at + TIDE_PACK_DIGEST_PIECE + 5u, size - 2u};
+    for (size_t i = 0; i < sizeof places / sizeof places[0]; i++) {
+        bytes[places[i]] ^= 1u;
+        tide_pack_digest_of(bytes, size, NULL, digest);
+        TIDE_CHECK(memcmp(digest, h.digest, sizeof digest) != 0);
+        bytes[places[i]] ^= 1u;
+    }
+    // It loads, and what's read is what was packed
+    TIDE_REQUIRE(tide_pack_load(again, again_size));
+    uint8_t loaded[32];
+    tide_pack_digest(loaded);
+    TIDE_CHECK(memcmp(loaded, h.digest, sizeof loaded) == 0);
+    const tide_pack_entry *e = tide_pack_find("Game.blob", TIDE_PACK_BYTES);
+    TIDE_REQUIRE(e != NULL && e->size == big);
+    const uint8_t *read = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), big);
+    TIDE_REQUIRE(read != NULL);
+    TIDE_CHECK(read[0] == 7 && read[big / 2u] == 7 && read[big - 1u] == 7);
+    tide_pack_unload();
+    free(bytes);
+    free(again);
+    free(other);
+}
+
+TIDE_TEST(pack_small_regions_follow_their_entries_and_many_entries_fit)
+{
+    // A small pack has no bytes it doesn't need: its region is right after its entries
+    size_t size;
+    uint8_t *bytes = blob_pack(100, 3, 2, NULL, 0, &size);
+    tide_pack_header h;
+    memcpy(&h, bytes, sizeof h);
+    TIDE_CHECK(h.entries == 3 && h.region_at == ((sizeof h + 3u * sizeof(tide_pack_entry) + 15u) & ~(uint64_t)15u));
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(tide_pack_find("Game.blob1", TIDE_PACK_BYTES) != NULL);
+    free(bytes);
+    // More entries than the room kept before the region holds, small and big
+    for (int big = 0; big < 2; big++) {
+        const uint32_t names = 20000u, blob = big ? 17u << 20 : 64u;
+        bytes = blob_pack(blob, 5, names, NULL, 0, &size);
+        memcpy(&h, bytes, sizeof h);
+        TIDE_CHECK(h.entries == names + 1u && h.region_at >= sizeof h + (uint64_t)h.entries * sizeof(tide_pack_entry)
+                   && h.region_at + h.region_size == size);
+        TIDE_REQUIRE(tide_pack_load(bytes, size));
+        const tide_pack_entry *e = tide_pack_find("Game.blob19999", TIDE_PACK_BYTES);
+        TIDE_REQUIRE(e != NULL && e->size == blob);
+        const uint8_t *read = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), blob);
+        TIDE_CHECK(read != NULL && read[0] == 5 && read[blob - 1u] == 5);
+        free(bytes);
+    }
+    // And one with nothing in it
+    tide_pack_builder none = {0};
+    bytes = tide_pack_end(&none, &size);
+    TIDE_CHECK(size == ((sizeof h + 15u) & ~(size_t)15u) && tide_pack_load(bytes, size));
+    tide_pack_unload();
+    free(bytes);
+}
+
 TIDE_TEST(pack_refuses_the_previous_map_format_and_keeps_the_loaded_pack)
 {
     size_t size;

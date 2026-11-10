@@ -38,7 +38,7 @@
 // a stale one is found by its kind), and the region.
 
 #define TIDE_PACK_MAGIC "TIDEPACK"
-#define TIDE_PACK_VERSION 4u
+#define TIDE_PACK_VERSION 5u
 
 // What a name's entry is: the kind the declaration's type resolves to.
 enum {
@@ -107,11 +107,13 @@ typedef struct tide_pack_header {
     char magic[8];
     uint32_t version;
     uint32_t entries;
-    uint64_t region_at; // Where the region starts in the file
+    // Where the region starts in the file: after the entries, 16-byte aligned. A big pack's has unused zero bytes
+    // before it, as its builder made the region in place (tide_pack_end)
+    uint64_t region_at;
     uint64_t region_size;
-    // SHA-256 of the whole file with these 32 bytes zero: the pack's identity
-    // (tide_pack_digest), worked out once by the build that wrote it
-    // (tide_pack_end), so a game that loads it doesn't hash it again.
+    // The pack's identity (tide_pack_digest): of the whole file with these 32 bytes zero, as tide_pack_digest_of
+    // hashes it, worked out once by the build that wrote it (tide_pack_end), so a game that loads it doesn't hash
+    // it again. Two packs with the same digest and size are the same bytes: tidec leaves a file that has them alone.
     uint8_t digest[32];
     uint32_t reserved[2];
 } tide_pack_header;
@@ -125,9 +127,15 @@ typedef struct tide_pack_shared {
     uint64_t offset, size;
 } tide_pack_shared;
 
+// Runs work(context, i) for each i below `count`, on as many threads as it likes: a tool's own (tidec's)
+typedef void (*tide_pack_each)(uint32_t count, void (*work)(void *context, uint32_t i), void *context);
+
 typedef struct tide_pack_builder {
-    uint8_t *region;
+    uint8_t *region; // The blocks so far, `size` bytes of `room`: inside `base`, after `front` bytes kept for the file's header and entries
     uint64_t size, room;
+    uint8_t *base;
+    uint64_t front;
+    tide_pack_each each; // What hashes the file's pieces at once (tide_pack_end), or NULL: one after another
     // Blocks by their content's hash and their kind: a file in the pack once for each kind of block it's read
     // as, however many name it
     tide_pack_shared *shared;
@@ -236,6 +244,16 @@ void tide_pack_name(tide_pack_builder *b, const char *qualified, uint32_t kind, 
 
 // The pack as a file's bytes (to free()), and its size. The builder is freed.
 uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size);
+
+// Room for a region of `bytes` before the first block, for a builder that knows about how big its pack will be
+// (the one it made last time): a region that grows is copied as it does.
+void tide_pack_reserve(tide_pack_builder *b, uint64_t bytes);
+
+// A pack file's digest: the SHA-256 of the SHA-256s of its pieces, TIDE_PACK_DIGEST_PIECE bytes each (the last
+// one what's left), with the header's digest zero in `bytes`. Pieces, so a gigabyte's are hashed at once (`each`,
+// or NULL for one after another), which the file's own SHA-256 can't be.
+#define TIDE_PACK_DIGEST_PIECE (4u << 20)
+void tide_pack_digest_of(const uint8_t *bytes, uint64_t size, tide_pack_each each, uint8_t digest[32]);
 
 // ---------------------------------------------------------------------------
 // Loading one

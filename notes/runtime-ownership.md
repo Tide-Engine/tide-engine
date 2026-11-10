@@ -1,5 +1,12 @@
 # Runtime written by Claude for now
 
+## Pack format 5 (2026-11-10)
+
+Owner-approved ("feel free to change the pack format"): `engine/src/pack.c`'s builder makes the region in place
+and its digest is of the file's pieces (notes/assets-and-files.md, Pack format 5). New in `tide/pack.h`, for tools
+that build packs: `tide_pack_reserve`, `tide_pack_digest_of`, `tide_pack_each` and the builder's `base`, `front`
+and `each`. Generated C calls no new runtime function; `pack_load.c` is as it was but for the version it takes.
+
 ## Owned dependency selection's private world data (2026-11-07)
 
 The revised owner-approved Owned mode adds a generated private tick flag and

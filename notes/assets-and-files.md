@@ -1,5 +1,44 @@
 # Assets and local files
 
+## Pack format 5: built in place, a digest of pieces (2026-11-10)
+
+Owner, after the `tide run` work (notes/cli-and-packages.md): "feel free to change the pack format". An edit build of
+Mount & Rifle spent 1.85 s making its 1.48 GB pack in memory and 0.3 s reading the file to find it unchanged:
+`tide_pack_end` allocated the file's size, zeroed it, copied the region into it and took the SHA-256 of all of it
+(1.05 s), the region had grown by doubling (copied over on the way), and tidec compared every byte with the file.
+
+- `TIDE_PACK_VERSION` is 5. The layout is as it was (header, entries, region), and a pack of version 4 is refused
+  as any other version is.
+- **The digest** (`tide_pack_header.digest`) is `tide_pack_digest_of`: the SHA-256 of the SHA-256s of the file's
+  pieces, `TIDE_PACK_DIGEST_PIECE` (4 MiB) each, the last one what's left, with the digest's own bytes zero. Still
+  of every byte, and a function of the bytes alone, but pieces hash at once: `tide_pack_builder.each` (a tool's
+  threads; NULL hashes them one after another, to the same digest). tidec gives `build_threads_each`. Loading
+  copies it as before and hashes nothing.
+- **The region is built where the file has it**: the builder's one allocation is `base`, with `front` bytes (1 MiB,
+  room for 18,700 entries) before `region`, and `tide_pack_end` writes the header and entries there and returns
+  `base`. A region under 16 MiB is moved next to its entries, so a small pack is the bytes it was; a bigger one
+  stays, with zero bytes between its entries and `region_at` (which the loader already took from the header). More
+  entries than the front holds, or a builder with no block, takes one new allocation.
+- `tide_pack_reserve(b, bytes)` is room before the first block; tidec reserves the size of the pack file there
+  already, which a code edit leaves the same.
+- **tidec's `write_pack` leaves the file alone** when it's as long as the new pack and starts with the same header
+  (`pack_file_is`): the digest in it is of every byte. A write cut short leaves a shorter file. The file isn't read
+  beyond its header.
+
+No function generated code calls changed, and the loader changed only by its version number.
+
+Measured (the scratch copy of Mount & Rifle, packaged tide, quiet machine): packing 1.85 s to 0.58-0.61 s (0.29 s of
+it levels of detail, the rest the blocks' one copy and the digest), and the 0.3 s compare gone; an edit build
+8.7-9.5 s to 7.7-8.5 s. The pack isn't what the game's 2.2 s start is: reading the file takes 0.22 s and
+`tide_pack_load` 0.17 s (a scratch program over engine/tide.lib, three passes), so loading it in place, without
+`tide_pack_load`'s copy of the region, would save under 0.2 s and wasn't done.
+
+Tests (tests/test_pack.c): `pack_digest_is_of_every_byte_however_its_pieces_are_hashed` (a 20 MiB region stays in
+place with zeros before it, the same bytes whatever hashes the pieces and whatever was reserved, the digest is
+`tide_pack_digest_of` of the file and changes with a byte of the header, an entry, the first piece, a later one
+and the last) and `pack_small_regions_follow_their_entries_and_many_entries_fit` (a small pack's region is right
+after its entries, 20,001 entries with a small and a 17 MiB region, an empty pack).
+
 ## Files read ahead on every processor (2026-11-10)
 
 For `tide run`'s speed (notes/cli-and-packages.md, Faster `tide run`). A warm build of Mount & Rifle spent 2.0-2.4 s

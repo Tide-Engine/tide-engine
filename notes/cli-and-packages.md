@@ -79,6 +79,13 @@ one file; the game's start 2.2 s, reading and checking its pack. Skipping the pa
 to be of something cheaper than its bytes or a pass over the builder's calls that copies nothing (the builder
 takes each block's content hash already): both are the pack's format or runtime, so the owner's.
 
+Follow-up the same day, the owner: "feel free to change the pack format". Pack format 5 (notes/assets-and-files.md)
+builds the pack in place with a digest of pieces hashed at once, and tidec leaves the file alone by its header:
+packing 1.85 s to 0.6 s and the compare gone, an edit build 7.7-8.1 s. The game's start isn't the pack (0.22 s to
+read it, 0.17 s to load it of 2.2 s). Checked with the engine's 700 tests and 39 focused ones under ASan
+(tide_platform_draw, the pack fingerprint and asset fixtures, the eleven CLI tests) and `cache_test.mjs --part
+cache|modes --gpu`; web and the other systems are CI's.
+
 Tests: `tide_cli_generation` (generation_test.mjs, the controlled compiler with the real front end): kept and not
 after edits of code (by size and by time), an asset, a symbol, the mode, a generated file changed or gone, a cut
 or foreign record, a report, a warning, an asset written during a first generate; and a run with no window's

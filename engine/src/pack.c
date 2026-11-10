@@ -34,6 +34,27 @@ static tide_handle tagged(const uint64_t offset)
 // ---------------------------------------------------------------------------
 // Building
 
+// The region is built where the file will have it: in one allocation, after room for the header and the entries
+// (FRONT bytes, which tide_pack_end makes more of for a pack with more entries than that holds), so the file's
+// bytes are made with no second copy of a region that can be gigabytes.
+#define FRONT (1u << 20)
+
+// Room for `room` bytes of region.
+static void make_room(tide_pack_builder *b, const uint64_t room)
+{
+    const uint64_t front = b->base ? b->front : FRONT;
+    if (room > SIZE_MAX - front) tide_out_of_memory(); // As memory runs out
+    b->base = tide_realloc(b->base, b->base ? (size_t)(front + b->room) : 0u, (size_t)(front + room));
+    b->front = front;
+    b->room = room;
+    b->region = b->base + front;
+}
+
+void tide_pack_reserve(tide_pack_builder *b, const uint64_t bytes)
+{
+    if (bytes > b->room) make_room(b, bytes);
+}
+
 // A block with room for `bytes` after its header, 16-byte aligned, zeroed:
 // its offset. Its size class is the heap's for that size, for what reads it.
 static uint64_t block(tide_pack_builder *b, const uint64_t bytes)
@@ -42,12 +63,10 @@ static uint64_t block(tide_pack_builder *b, const uint64_t bytes)
     uint32_t c = 0;
     while (c + 1 < TIDE_HEAP_CLASSES && ((uint64_t)16 << c) < size) c++;
     const uint64_t padded = (size + 15u) & ~15ull;
-    if (b->size + padded > b->room) {
+    if (!b->base || b->size + padded > b->room) {
         uint64_t room = b->room ? b->room : 1u << 16;
         while (room < b->size + padded) room *= 2u;
-        if (room > SIZE_MAX) tide_out_of_memory(); // As memory runs out
-        b->region = tide_realloc(b->region, (size_t)b->room, (size_t)room);
-        b->room = room;
+        make_room(b, room);
     }
     const uint64_t at = b->size;
     memset(b->region + at, 0, (size_t)padded);
@@ -494,24 +513,62 @@ void tide_pack_name(tide_pack_builder *b, const char *qualified, const uint32_t 
     e->extra = extra;
 }
 
+// A file's bytes hashed a piece at a time (TIDE_PACK_DIGEST_PIECE each, the last one what's left), which
+// tide_pack_builder.each does at once
+typedef struct pieces {
+    const uint8_t *bytes;
+    uint64_t size;
+    uint8_t (*digests)[32];
+} pieces;
+
+static void hash_piece(void *context, const uint32_t i)
+{
+    const pieces *p = context;
+    const uint64_t at = (uint64_t)i * TIDE_PACK_DIGEST_PIECE;
+    const uint64_t n = p->size - at < TIDE_PACK_DIGEST_PIECE ? p->size - at : TIDE_PACK_DIGEST_PIECE;
+    tide_sha256_of(p->bytes + at, (size_t)n, p->digests[i]);
+}
+
+void tide_pack_digest_of(const uint8_t *bytes, const uint64_t size, const tide_pack_each each, uint8_t digest[32])
+{
+    const uint64_t count = (size + TIDE_PACK_DIGEST_PIECE - 1u) / TIDE_PACK_DIGEST_PIECE;
+    if (count > UINT32_MAX) tide_out_of_memory(); // More than memory holds
+    pieces p = {bytes, size, tide_alloc(count ? (size_t)count * 32u : 32u)};
+    if (each) each((uint32_t)count, hash_piece, &p);
+    else for (uint32_t i = 0; i < count; i++) hash_piece(&p, i);
+    tide_sha256_of(p.digests, (size_t)count * 32u, digest);
+    free(p.digests);
+}
+
+// Regions this big stay where they were built, with unused bytes between the entries and them, where a smaller
+// one is moved next to its entries: a small game's pack has no bytes it doesn't need.
+#define GAP_FROM (16u << 20)
+
 uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
 {
     const uint64_t table = sizeof(tide_pack_header);
-    const uint64_t region_at = (table + (uint64_t)b->entry_count * sizeof(tide_pack_entry) + 15u) & ~(uint64_t)15u;
-    if (region_at + b->size > SIZE_MAX) tide_out_of_memory();
+    const uint64_t least = (table + (uint64_t)b->entry_count * sizeof(tide_pack_entry) + 15u) & ~(uint64_t)15u;
+    uint64_t region_at = b->front;
+    if (!b->base || least > b->front || b->size < GAP_FROM) {
+        region_at = least;
+        if (region_at > SIZE_MAX - b->size) tide_out_of_memory();
+        if (!b->base || least > b->front) { // More entries than the front has room for, or no block at all
+            uint8_t *base = tide_alloc((size_t)(region_at + b->size) ? (size_t)(region_at + b->size) : 1u);
+            if (b->size) memcpy(base + region_at, b->region, (size_t)b->size);
+            free(b->base);
+            b->base = base;
+        } else if (b->size) memmove(b->base + region_at, b->region, (size_t)b->size);
+    }
     *size = (size_t)(region_at + b->size);
-    uint8_t *out = tide_alloc(*size ? *size : 1u);
-    memset(out, 0, *size);
+    uint8_t *out = b->base;
+    memset(out, 0, (size_t)region_at);
     tide_pack_header h = {.version = TIDE_PACK_VERSION, .entries = b->entry_count, .region_at = region_at, .region_size = b->size};
     memcpy(h.magic, TIDE_PACK_MAGIC, 8);
     memcpy(out, &h, sizeof h);
-    // A pack of nothing has no entries and no region to copy from
     if (b->entry_count) memcpy(out + table, b->entries, (size_t)b->entry_count * sizeof(tide_pack_entry));
-    if (b->size) memcpy(out + region_at, b->region, (size_t)b->size);
     // Its identity, of the file as it is with the digest's bytes zero, so loading needn't hash it
-    tide_sha256_of(out, *size, h.digest);
+    tide_pack_digest_of(out, *size, b->each, h.digest);
     memcpy(out + offsetof(tide_pack_header, digest), h.digest, sizeof h.digest);
-    free(b->region);
     free(b->shared);
     free(b->entries);
     *b = (tide_pack_builder){0};
