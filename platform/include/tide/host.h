@@ -1162,6 +1162,7 @@ typedef struct tide_run_loader {
     bool loaded;
     bool read;      // A pack is read on the pool: none, where the game has no pack or it was read in place
     bool on;        // Frames show where it is, until it's in and the game has begun
+    bool named;     // The platform knows the game by its ID (tide_run_name_game), from the loader's first frame
     bool warming;   // It's in, and the game's pipelines are being made (tide_run_prewarm)...
     uint32_t warm_total; // ...this many, the most that were left at once
     double seconds; // How long they've shown it, for the bar that moves while nothing can say how far
@@ -1236,6 +1237,13 @@ static inline int tide_run_loading_frame(void *user, const float seconds)
     // What's pressed meanwhile isn't the game's: it starts from what's held
     tide_platform_poll(&tide_run_devices);
     tide_devices_consume(&tide_run_devices);
+    if (!l->named) {
+        // Before the first frame draws: the renderer then reads this game's file of compiled pipelines, in the
+        // background, where it would read the one of the folder a game with no name yet has, and then this one
+        char fallback[512];
+        (void)tide_run_name_game(tide_run_game, fallback, sizeof fallback);
+        l->named = true;
+    }
     if (!l->warming && __atomic_load_n(&l->job.done, __ATOMIC_ACQUIRE)) {
         if (l->read && !l->bytes && !l->path) {
             fprintf(stderr, "tide: the game's pack of assets isn't with the program (<program>.pack beside it): they read as empty\n");
@@ -1248,6 +1256,9 @@ static inline int tide_run_loading_frame(void *user, const float seconds)
         tide_run_prewarm();
         l->warming = true;
     }
+    // A big game's pipelines are asked for a few milliseconds' worth a frame (tide_platform_prewarm): each frame
+    // goes on from the last, and nothing is waited for once all are asked for and made
+    if (l->warming) tide_run_prewarm();
     const uint32_t waiting = l->warming ? tide_platform_prewarm_waiting() : 0u;
     if (l->warming && !waiting) {
         l->on = false;

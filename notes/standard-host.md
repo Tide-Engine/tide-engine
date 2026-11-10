@@ -216,6 +216,11 @@ All of it ran on the main thread after the window opened.
 - 2026-11-05: after the pack, the loader stays up while the game's pipelines
   are prewarmed (`Compiling shaders n / total`), and also shows for games with
   no pack; see notes/rendering.md, Vulkan pipelines on the pool's threads.
+- 2026-11-10: the loader names the game on its first frame (`tide_run_loader.named`) and calls
+  `tide_run_prewarm` every frame while it waits, so the renderer reads one pipeline cache file, in the background,
+  and asks for pipelines a few milliseconds' worth a frame; with the renderer's own changes no loader frame after
+  the first takes over 34 ms on Mount & Rifle, where one took 4 s (notes/rendering.md, The loader's frames while
+  pipelines are made).
 - Not built: an icon on the loader, a game's own loader, async loading of a pack
   that changes during a run. The SHA-256 that was most of a big pack's load is
   gone from it: the build writes the digest (pack format 4, the owner's pick,

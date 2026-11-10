@@ -361,9 +361,14 @@ typedef struct tide_gpu {
 
     // Optional, for a backend that compiles pipelines itself (Vulkan): the
     // file it keeps them in across runs, so a game's next run makes them from
-    // what this one compiled. Read now, as far as it's whole and for this
-    // device, and written as the backend closes. NULL for none.
+    // what this one compiled. Read as far as it's whole and for this device,
+    // and written as the backend closes. NULL for none. While pipelines are
+    // made in the background (`background`) the file is read there too: a big
+    // game's is hundreds of megabytes. pipeline_cache_ready (optional) says
+    // whether it's read and taken: what's made before that is compiled from
+    // nothing, so a prewarm waits for it.
     void (*pipeline_cache)(const char *file);
+    bool (*pipeline_cache_ready)(void);
 
     // Optional: the bytes of memory the device has of its own (a discrete
     // GPU's), which the renderer keeps a share of for images not being drawn

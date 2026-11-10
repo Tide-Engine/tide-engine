@@ -1,5 +1,61 @@
 # The platform layer and the renderer
 
+## The loader's frames while pipelines are made (2026-11-10)
+
+Owner: "the loading and compiling shaders initial view seems to be blocking main thread, its not smooth and window
+can get unresponsive". Reproduced without a window showing: Mount & Rifle's debug build with the owner's
+`pipelines.keys` and 268 MB `pipelines.vulkan` copied under another app ID, its window opened `hidden` by a
+scratch copy of host.h that also timed the loader's frames (a hidden window isn't unseen, so it prewarms and
+draws). NVIDIA, driver cache warm. Before: one frame of 4.0-4.7 s as "Compiling shaders" began, of which 0.45-0.73 s
+in `tide_platform_prewarm`, and 0.2-0.5 s in the first frame. After: no frame over 34 ms after the first (0.19 s,
+before anything shows), over three runs; the shaders are done at about 5 s as before (4.6-5.3 s).
+
+What held the frame's thread, found by attaching LLDB during the stall and by timing steps:
+
+- **A frame's passes waited behind the pipelines** (4 s). Vulkan records each pass on the pool
+  (`send_pass`, a `tide_background` job), in the queue the pipelines being made are in, behind hundreds of them;
+  `settle_passes`, at present, waited for its pass by `help(false)`, which ran whatever was first in the queue: a
+  pipeline's `vkCreateGraphicsPipelines`, on the frame's thread, one after another. Passes are now helpers
+  (`tide_background.helper`: ahead of ordinary jobs) and `settle_passes` helps with helpers only. This held any
+  frame while pipelines were made in the background, a hot reload's too, not only the loader's.
+- **Shader modules** were made on the frame's thread as each pipeline was asked for (`vk_pipeline_make`), tens of
+  milliseconds each for a big shader on this driver. `vk_making` keeps the SPIR-V (the shader's own, which
+  outlasts its pipeline, or what `tide_gpu_spirv_of` made, which the record owns) and `make_work` makes the module
+  where it makes the pipeline.
+- **The pipeline cache's file was read on the frame's thread**: read, FNV-hashed and handed to the driver, 0.35-0.55 s
+  for 268 MB. With pipelines made in the background it's read there (`cache_reading`, a helper job:
+  `cache_read_work` makes a cache of the file on any thread, `cache_take` merges the device's little one into it
+  and makes it the device's, on the frame's thread once nothing is being made). `tide_gpu.pipeline_cache_ready`
+  says when; `tide_platform_prewarm` asks for nothing until then (pipelines asked for earlier would compile from
+  nothing) and `tide_platform_prewarm_waiting` is 1 meanwhile, so the loader waits. Whatever writes, switches or
+  lets go of the cache takes the read first (`finish_cache_read`). Without background (headless, custom hosts) it's
+  read in place as before.
+- **Two files were read.** The platform followed the cache folder of a game with no name yet (`dev.tide.game`,
+  another 268 MB here: every unnamed `game.exe` shares it), then at `tide_run_name_game`, after the pack, switched:
+  a `vkGetPipelineCacheData` and hash of the first (0.37 s) and a read of the second. The loader now names the game
+  on its first frame (`tide_run_loader.named`), before anything draws, and `gpu_ready` tells the backend about
+  background pipelines before it follows the folder, so the one file is read in the background.
+- **Asking** for hundreds of pipelines in one call: `tide_platform_prewarm` asks for 4 ms' worth a call where
+  pipelines are made in the background (`WARM_SECONDS`; `warm_known`, `warm_at`, `warm_unfinished`), and the
+  loader calls it every frame while it waits; `tide_platform_prewarm_waiting` counts 1 for what isn't asked for
+  yet. With modules off the frame's thread a call is short anyway; the slices bound it. A run with no window asks
+  for all at once, as before.
+
+- **Waiting for one pipeline** (`finish_making`: `vk_use` of one not made yet, `pipeline_free`, and
+  `finish_all_making` before the cache changes or the device goes) helped with whatever was first in the queue,
+  another pipeline or a game's own long job. It helps with helpers only now, and the pool's threads get to the
+  pipeline. Taking the cache's read waits this way for the few pipelines in flight, which the test below caught.
+
+Not changed: the cache file is 44 KB under `CACHE_MOST` (256 MiB) on the owner's machine: past it nothing is written, as noted
+2026-11-05. The game's own first frame couldn't be timed this way (the hidden program ends as the game begins).
+
+Test: `tide_platform_prewarm` queues 80 jobs that take as long as they're let (as a pipeline does) from the
+loader's first frame, lets them go eight frames on, and checks none ran on the frame's thread, in the loader's
+frames or the one that begins the game. It failed while `finish_making` still helped with anything (the run that
+reads the last run's cache file). All 70 `tide_platform_*` tests pass under ASan on Windows (Vulkan, hidden
+windows), `tide_platform_rooms` and the reload tests among them. Not run: web (WebGPU has no such queue: the
+browser makes pipelines), Linux/macOS/Android, and the game in a window that shows.
+
 ## Smaller speculative shader warmup (2026-11-07)
 
 The Render3D docs startup trace found 42/43 requested pipelines from only 30

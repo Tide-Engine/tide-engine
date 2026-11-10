@@ -2913,6 +2913,13 @@ static uint32_t warm_asked_count, warm_asked_capacity;
 static bool *warm_done;          // By the table's shader: how it draws is known, as it drew, this run or one before
 static uint64_t *warm_names;     // ...and its name (name_key)
 static uint32_t warm_guessed;    // used_changes as the others were last made the ways their kind drew (kind_keys)
+// A prewarm asked for a few milliseconds' worth at a time (tide_platform_prewarm): whether some isn't asked for yet,
+// the first shader whose remembered keys aren't, and the first not guessed for in the pass that's going on (0 for
+// none going on), with used_changes as that pass began
+static bool warm_unfinished;
+static bool warm_reading; // The last prewarm asked for nothing: the backend's pipeline cache was still being read
+static uint32_t warm_known, warm_at, warm_at_changes;
+#define WARM_SECONDS 0.004
 
 // How the game's shaders were drawn (a used_key: a shader's name and kind,
 // and the rest of its pipeline's key), this run and the runs before: what's
@@ -3118,8 +3125,9 @@ static void cull_warm(void);
 
 static bool gpu_ready(void)
 {
-    follow_cache_folder();
+    // Whether pipelines are made in the background first: the game's file of them is then read there too
     if (gpu->background) gpu->background(background_pipelines);
+    follow_cache_folder();
     const uint32_t epoch = gpu->epoch();
     if (epoch == 0 || epoch == gpu_epoch) return epoch != 0;
     if (gpu->time_reset) gpu->time_reset();
@@ -4021,8 +4029,17 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
 {
     if (!shaders) count = 0;
     if (!gpu || gpu == &tide_gpu_record || (!headless && tide_window_unseen()) || !gpu_ready()) return;
+    // The file of what the driver compiled in the game's last runs is read first, where it's read in the
+    // background (tide_gpu.pipeline_cache_ready): pipelines asked for before it's in are compiled from nothing
+    warm_reading = gpu->pipeline_cache_ready && !gpu->pipeline_cache_ready();
+    if (warm_reading) return;
     const bool same = warm_generation && shaders == warm_shaders && count == warm_count;
-    if (same && warm_epoch == gpu_epoch && warm_guessed == used_changes) return;
+    if (same && warm_epoch == gpu_epoch && warm_guessed == used_changes && !warm_unfinished) return;
+    // Asking for a pipeline is its shader's modules and its place, a millisecond or two each on this thread, and a
+    // big game has hundreds: with pipelines made in the background, a call asks for what fits in a few
+    // milliseconds and the next goes on from there (warm_unfinished), so the frames between them show. A run with
+    // no window asks for all at once, as its frames are the same every time.
+    const double until = !headless && background_pipelines && gpu->pipeline_ready ? now() + WARM_SECONDS : 0.0;
     if (!same) {
         warm_generation++;
         if (!warm_generation) warm_generation = 1; // 0 is no table's
@@ -4036,6 +4053,9 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
     if (!same || warm_epoch != gpu_epoch) { // All of it, for another table or on another device
         warm_epoch = gpu_epoch;
         warm_asked_count = 0;
+        warm_unfinished = true;
+        warm_known = 0;
+        warm_at = 0;
         if (count) memset(warm_done, 0, count * sizeof(bool));
         // The renderer's own, as they're drawn by default into the window's kind of target: what a first frame of
         // shapes, text and meshes would make, and what one that draws the first of a kind later would wait for
@@ -4046,8 +4066,15 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
         warm_ask(clear_pipeline(into));
         warm_ask(depth_clear_pipeline(into));
         cull_warm(); // ...and the kernels listed runs are culled with, where they can be
-        // Each of the game's, every way it was drawn before
-        for (uint32_t i = 0; i < count; i++) {
+    }
+    // Each of the game's, every way it was drawn before
+    if (warm_known < count) {
+        for (uint32_t i = warm_known; i < count; i++) {
+            if (until != 0.0 && i > warm_known && now() >= until) {
+                warm_known = i;
+                warming = false;
+                return;
+            }
             const tide_shader *shader = shaders[i];
             if (shader && shader->compute) { // A kernel: its one pipeline
                 warm_ask(kernel_pipeline_for(shader));
@@ -4061,14 +4088,22 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
                 warm_done[i] = true;
             }
         }
+        warm_known = count;
     }
     // ...and those never drawn, the ways their kind were, once one of their kind was, and again as their kind is
     // drawn into another kind of target
-    warm_guessed = used_changes;
+    if (warm_at && warm_at_changes != used_changes) warm_at = 0; // Another way drawn since the pass began: over again
+    if (!warm_at) warm_at_changes = used_changes;
     used_key kinds[2][2][TIDE_TARGET_COLORS][KIND_KEYS_MOST]; // By 3D, blit and outputs less one, as kind_keys finds them
     int8_t known[2][2][TIDE_TARGET_COLORS]; // 1 + how many, once looked for
     memset(known, 0, sizeof known);
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint32_t i = warm_at; i < count; i++) {
+        if (until != 0.0 && i > warm_at && now() >= until) {
+            warm_at = i;
+            warm_unfinished = true;
+            warming = false;
+            return;
+        }
         const tide_shader *shader = shaders[i];
         if (warm_done[i] || !shader || !shader_fits(shader)) continue;
         if (drawn(shader)) {
@@ -4080,6 +4115,9 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
         if (!known[deep][blit][outputs]) known[deep][blit][outputs] = (int8_t)(1u + kind_keys(shader, keys));
         for (int k = 0; k < known[deep][blit][outputs] - 1; k++) warm_ask(warm_key(shader, &keys[k]));
     }
+    warm_guessed = warm_at_changes;
+    warm_at = 0;
+    warm_unfinished = false;
     warming = false;
 }
 
@@ -4102,8 +4140,9 @@ uint32_t tide_platform_shader_pipelines_waiting(void)
 
 uint32_t tide_platform_prewarm_waiting(void)
 {
+    if (warm_reading) return 1;
     if (!gpu || !gpu->pipeline_ready || warm_epoch != gpu_epoch) return 0;
-    uint32_t waiting = 0;
+    uint32_t waiting = warm_unfinished ? 1u : 0u; // Not all asked for yet (tide_platform_prewarm, called again)
     for (uint32_t i = 0; i < warm_asked_count; i++) { // One that can't be made is waited for no more
         const bool failed = gpu->pipeline_failed && gpu->pipeline_failed(warm_asked[i]);
         waiting += !failed && !gpu->pipeline_ready(warm_asked[i]);

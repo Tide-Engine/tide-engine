@@ -393,6 +393,7 @@ static struct {
     VkPipelineCache pipeline_cache;
     char *cache_file;   // Where: NULL for nowhere
     size_t cache_read;  // The bytes of it this device took from the file (tide_gpu_vk_pipeline_cache_read)
+    struct cache_reading *reading; // The file being read on a thread of the pool's, until it's taken (cache_take)
     uint64_t cache_hash; // ...and their hash: what's written as the backend closes, unless it's that again
     bool lose_asked;                   // For tests (tide_gpu_vk_lose): lost as the frame is shown
 
@@ -2352,6 +2353,12 @@ static uint32_t layout_for(const tide_gpu_pipeline_desc *desc)
 typedef struct vk_making {
     tide_background job;
     bool compute;
+    // Its SPIR-V, which lasts as long as its shader does (a pipeline is let go of before its game is), or `made`,
+    // translated for it (tide_gpu_spirv_of) and the record's own. The module is made of it where the pipeline is
+    // (make_work): a driver takes tens of milliseconds over a big shader's, and a big game has hundreds
+    const uint32_t *code;
+    size_t words;
+    uint32_t *made;
     VkShaderModule module;
     VkResult result;
     VkPipeline pipeline;
@@ -2377,6 +2384,15 @@ typedef struct vk_making {
 static void make_work(void *context)
 {
     vk_making *m = context;
+    const VkShaderModuleCreateInfo module_info = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, NULL, 0, m->words * 4u, m->code};
+    if (vkCreateShaderModule(vk.device, &module_info, NULL, &m->module) != VK_SUCCESS) {
+        fprintf(stderr, "tide: the SPIR-V of %s didn't make a Vulkan shader module\n", m->name);
+        abort();
+    }
+    free(m->made);
+    m->made = NULL;
+    m->compute_info.stage.module = m->module;
+    m->stages[0].module = m->stages[1].module = m->module;
     m->result = m->compute ? vkCreateComputePipelines(vk.device, vk.pipeline_cache, 1, &m->compute_info, NULL, &m->pipeline)
                            : vkCreateGraphicsPipelines(vk.device, vk.pipeline_cache, 1, &m->info, NULL, &m->pipeline);
     vkDestroyShaderModule(vk.device, m->module, NULL);
@@ -2399,15 +2415,16 @@ static void settle(const tide_gpu_id id)
     free(m);
 }
 
-// Waits for the place's pipeline, if it's being made, and settles it. Meanwhile this thread makes what's queued
-// for the pool's threads: this pipeline, if none has begun it yet.
+// Waits for the place's pipeline, if it's being made on the pool's threads, and settles it.
 static void finish_making(const tide_gpu_id id)
 {
     const vk_pipeline *p = &vk.pipelines[id - 1u];
     if (!p->making) return;
     const tide_jobs *jobs = tide_platform_jobs();
+    // Helpers only: what's first in the queue is as likely another pipeline, or a game's own long work, which
+    // this thread would then be in for as long as it takes. The pool's threads get to this one.
     while (!__atomic_load_n(&p->making->job.done, __ATOMIC_ACQUIRE)) {
-        if (jobs && jobs->help) jobs->help(jobs->self, false);
+        if (jobs && jobs->help) jobs->help(jobs->self, true);
     }
     settle(id);
 }
@@ -2492,23 +2509,17 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         fprintf(stderr, "tide: %s has no SPIR-V for Vulkan: its game was built by a tidec that wrote none\n", name);
         abort();
     }
-    const VkShaderModuleCreateInfo module_info = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, NULL, 0, words * 4u, code};
-    VkShaderModule module;
-    const VkResult module_made = vkCreateShaderModule(vk.device, &module_info, NULL, &module);
-    free(made);
-    if (module_made != VK_SUCCESS) {
-        fprintf(stderr, "tide: the SPIR-V of %s didn't make a Vulkan shader module\n", name);
-        abort();
-    }
     vk_making *m = tide_alloc_zeroed(1, sizeof *m);
-    m->module = module;
+    m->code = code;
+    m->words = words;
+    m->made = made;
     snprintf(m->name, sizeof m->name, "%s", name);
     if (desc->compute) return compute_pipeline(desc, m);
     const uint32_t layout = layout_for(desc);
     m->stages[0] = (VkPipelineShaderStageCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0,
-                                                     VK_SHADER_STAGE_VERTEX_BIT, module, "vertex", NULL};
+                                                     VK_SHADER_STAGE_VERTEX_BIT, VK_NULL_HANDLE, "vertex", NULL};
     m->stages[1] = (VkPipelineShaderStageCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0,
-                                                     VK_SHADER_STAGE_FRAGMENT_BIT, module, "fragment", NULL};
+                                                     VK_SHADER_STAGE_FRAGMENT_BIT, VK_NULL_HANDLE, "fragment", NULL};
     VkVertexInputBindingDescription *bindings = m->bindings;
     for (uint32_t i = 0; i < desc->slot_count; i++) {
         bindings[i] = (VkVertexInputBindingDescription){i, desc->slots[i].stride,
@@ -3052,7 +3063,9 @@ static void record_pass(void *context)
 static void send_pass(vk_deferred *d)
 {
     d->sent = true;
-    d->job = (tide_background){.work = record_pass, .context = d};
+    // Ahead of what else is queued (a helper): pipelines being made in the background are hundreds of jobs of
+    // tens of milliseconds each, and a frame's passes don't wait their turn behind them
+    d->job = (tide_background){.work = record_pass, .context = d, .helper = true};
     const tide_jobs *jobs = tide_platform_jobs();
     if (jobs && jobs->background) {
         jobs->background(jobs->self, &d->job);
@@ -3062,8 +3075,9 @@ static void send_pass(vk_deferred *d)
     __atomic_store_n(&d->job.done, 1u, __ATOMIC_RELEASE);
 }
 
-// Every pass sent is recorded (helping the pool meanwhile), and in its place in `pending`; then the records are
-// free for the next. A pass that couldn't be recorded loses the device, as a command that fails does.
+// Every pass sent is recorded, and in its place in `pending`; then the records are free for the next. Meanwhile
+// this thread records passes too, and only those (helpers): never a pipeline queued for the pool's threads, which
+// the driver can take seconds over, with the window not answering. A pass that couldn't be recorded loses the device, as a command that fails does.
 static void settle_passes(void)
 {
     if (!vk.deferred_count) return;
@@ -3073,7 +3087,7 @@ static void settle_passes(void)
         vk_deferred *d = vk.deferred[i];
         if (!d->sent) continue;
         while (!__atomic_load_n(&d->job.done, __ATOMIC_ACQUIRE)) {
-            if (jobs && jobs->help) jobs->help(jobs->self, false);
+            if (jobs && jobs->help) jobs->help(jobs->self, true);
         }
         if (d->result != VK_SUCCESS && failed == VK_SUCCESS) failed = d->result;
     }
@@ -3918,13 +3932,23 @@ static bool cache_for_device(const uint8_t *data, const size_t size)
         && memcmp(data + 16, vk.properties.pipelineCacheUUID, VK_UUID_SIZE) == 0;
 }
 
-static void read_pipeline_cache(void)
+// A read of the cache's file: the file checked and made a cache of the driver's (cache_read_work, on any thread:
+// it touches nothing of vk but the device, which lasts until the read is taken), which the frame's thread then
+// takes (cache_take). A big game's file is hundreds of megabytes: a second or so to read, hash and hand the
+// driver, in which a window would not answer.
+typedef struct cache_reading {
+    tide_background job;
+    char *file;
+    VkPipelineCache read; // What it gave, or none
+    size_t length;
+    uint64_t hash;
+} cache_reading;
+
+static void cache_read_work(void *context)
 {
-    vk.cache_read = 0;
-    vk.cache_hash = 0;
-    if (!vk.cache_file || !vk.pipeline_cache) return;
+    cache_reading *r = context;
     size_t size = 0;
-    uint8_t *file = tide_file_read_whole(vk.cache_file, CACHE_HEADER + CACHE_MOST, &size);
+    uint8_t *file = tide_file_read_whole(r->file, CACHE_HEADER + CACHE_MOST, &size);
     if (!file) return;
     uint64_t length = 0, hash = 0;
     if (size >= CACHE_HEADER) memcpy(&length, file + 8, 8), memcpy(&hash, file + 16, 8);
@@ -3932,21 +3956,82 @@ static void read_pipeline_cache(void)
     if (size >= CACHE_HEADER && memcmp(file, cache_magic, sizeof cache_magic) == 0 && length == size - CACHE_HEADER
         && hash == cache_hash(data, (size_t)length) && cache_for_device(data, (size_t)length)) {
         const VkPipelineCacheCreateInfo info = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, NULL, 0, (size_t)length, data};
-        VkPipelineCache read;
-        if (vkCreatePipelineCache(vk.device, &info, NULL, &read) == VK_SUCCESS) {
-            if (vkMergePipelineCaches(vk.device, vk.pipeline_cache, 1, &read) == VK_SUCCESS) {
-                vk.cache_read = (size_t)length;
-                vk.cache_hash = hash;
-            }
-            vkDestroyPipelineCache(vk.device, read, NULL);
-        }
+        if (vkCreatePipelineCache(vk.device, &info, NULL, &r->read) == VK_SUCCESS) {
+            r->length = (size_t)length;
+            r->hash = hash;
+        } else r->read = VK_NULL_HANDLE;
     }
     free(file);
+}
+
+static void finish_all_making(void);
+
+// The frame's thread takes what a read gave: the file's cache becomes the device's, with what the device compiled
+// meanwhile (the little one merged into the big one). No thread compiles through either as they change.
+static void cache_take(cache_reading *r)
+{
+    if (r->read) {
+        finish_all_making();
+        if (vk.pipeline_cache && vkMergePipelineCaches(vk.device, r->read, 1, &vk.pipeline_cache) == VK_SUCCESS) {
+            vkDestroyPipelineCache(vk.device, vk.pipeline_cache, NULL);
+            vk.pipeline_cache = r->read;
+            vk.cache_read = r->length;
+            vk.cache_hash = r->hash;
+        } else vkDestroyPipelineCache(vk.device, r->read, NULL);
+    }
+    free(r->file);
+    free(r);
+}
+
+// Waits for the file being read, if one is, and takes it: before the cache is written, switched or let go.
+static void finish_cache_read(void)
+{
+    cache_reading *r = vk.reading;
+    if (!r) return;
+    const tide_jobs *jobs = tide_platform_jobs();
+    while (!__atomic_load_n(&r->job.done, __ATOMIC_ACQUIRE)) {
+        if (jobs && jobs->help) jobs->help(jobs->self, true);
+    }
+    vk.reading = NULL;
+    cache_take(r);
+}
+
+static bool vk_pipeline_cache_ready(void)
+{
+    cache_reading *r = vk.reading;
+    if (!r) return true;
+    if (!__atomic_load_n(&r->job.done, __ATOMIC_ACQUIRE)) return false;
+    vk.reading = NULL;
+    cache_take(r);
+    return true;
+}
+
+static void read_pipeline_cache(void)
+{
+    finish_cache_read();
+    vk.cache_read = 0;
+    vk.cache_hash = 0;
+    if (!vk.cache_file || !vk.pipeline_cache) return;
+    cache_reading *r = tide_alloc_zeroed(1, sizeof *r);
+    const size_t length = strlen(vk.cache_file) + 1u;
+    r->file = memcpy(tide_alloc(length), vk.cache_file, length);
+    // Where pipelines are made in the background, so is this: ahead of them in the queue (a helper), as they wait
+    // for it (tide_gpu.pipeline_cache_ready)
+    const tide_jobs *jobs = vk.background ? tide_platform_jobs() : NULL;
+    if (jobs && jobs->background) {
+        r->job = (tide_background){.work = cache_read_work, .context = r, .helper = true};
+        vk.reading = r;
+        jobs->background(jobs->self, &r->job);
+        return;
+    }
+    cache_read_work(r);
+    cache_take(r);
 }
 
 // What the driver has now goes to the file, unless it's what was read.
 static void write_pipeline_cache(void)
 {
+    finish_cache_read(); // What the file had is in what's written
     if (!vk.cache_file || !vk.pipeline_cache || vk.lost) return;
     size_t size = 0;
     if (vkGetPipelineCacheData(vk.device, vk.pipeline_cache, &size, NULL) != VK_SUCCESS || !size || size > CACHE_MOST) return;
@@ -3984,6 +4069,7 @@ size_t tide_gpu_vk_pipeline_cache_read(void)
 static void destroy_device(void)
 {
     if (!vk.device) return;
+    finish_cache_read();
     finish_all_making();
     settle_passes(); // No job still records with what's let go below
     vkDeviceWaitIdle(vk.device);
@@ -4442,6 +4528,7 @@ const tide_gpu tide_gpu_vulkan = {
     .name = "Vulkan",
     .epoch = vk_epoch,
     .pipeline_cache = vk_pipeline_cache,
+    .pipeline_cache_ready = vk_pipeline_cache_ready,
     .device_memory = vk_device_memory,
     .pass_time_begin = vk_pass_time_begin,
     .pass_time_end = vk_pass_time_end,
