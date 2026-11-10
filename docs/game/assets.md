@@ -16,8 +16,10 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 `.tide/assets/imports`: static/skinned models and animations, generated tangents,
 audio validation/conversion, and prepared texture pixels or mip blocks. Unchanged
 draw-only textures can skip image decoding too. The cache is keyed by source
-contents, external model buffers, import options and compiler/decoder revision;
-editing code alone keeps it useful. Each build still discovers glob matches and
+contents, external model buffers, import options and importer/decoder revision;
+editing code, or updating to a Tide whose importers are unchanged, keeps it
+useful. Entries unused for 30 days, and other Tide versions' results after 14
+days, are removed. Each build still discovers glob matches and
 packs the current declarations and vertex layouts. Grid images keep their exact
 CPU-readable decoder path. Cache files are disposable: missing, incompatible or
 damaged entries fall back to the ordinary import, and an unwritable cache does

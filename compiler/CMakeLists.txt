@@ -25,23 +25,43 @@ set(TIDE_SIMULATION_RUNTIME "${TIDE_SIMULATION_RUNTIME}" PARENT_SCOPE)
 set_source_files_properties(src/version.c PROPERTIES COMPILE_DEFINITIONS
     "TIDE_VERSION=\"${TIDE_VERSION}\";TIDE_SIMULATION_RUNTIME=\"${TIDE_SIMULATION_RUNTIME}\"")
 
-# Private import caches also depend on the vendored decoders/compressor.
-file(GLOB_RECURSE tide_asset_vendors CONFIGURE_DEPENDS LIST_DIRECTORIES false RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-    "third_party/ufbx/*.c" "third_party/ufbx/*.h" "third_party/dr_libs/*.c" "third_party/dr_libs/*.h"
-    "third_party/stb_image/*.h" "third_party/stb_dxt/*.h")
-list(SORT tide_asset_vendors)
-set(tide_asset_vendor_text "Tide asset cache vendors 1\n")
-foreach(source IN LISTS tide_asset_vendors)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${source}" content)
+# The import cache (.tide/assets/imports) is keyed by the code that makes what it keeps, not the whole compiler, so
+# that a compiler or engine edit elsewhere keeps a game's imports. A file whose code changes what an import, a
+# prepared texture, converted audio or generated tangents come out as belongs in this list.
+file(GLOB_RECURSE tide_asset_importers CONFIGURE_DEPENDS LIST_DIRECTORIES false RELATIVE "${PROJECT_SOURCE_DIR}"
+    "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx/*.c" "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx/*.h"
+    "${PROJECT_SOURCE_DIR}/compiler/third_party/dr_libs/*.c" "${PROJECT_SOURCE_DIR}/compiler/third_party/dr_libs/*.h"
+    "${PROJECT_SOURCE_DIR}/compiler/third_party/stb_image/*.h" "${PROJECT_SOURCE_DIR}/compiler/third_party/stb_dxt/*.h"
+    "${PROJECT_SOURCE_DIR}/compiler/src/asset_cache.*" "${PROJECT_SOURCE_DIR}/compiler/src/asset_files.*"
+    "${PROJECT_SOURCE_DIR}/compiler/src/asset_import_cache.*" "${PROJECT_SOURCE_DIR}/compiler/src/assets.h"
+    "${PROJECT_SOURCE_DIR}/compiler/src/audio_files.*" "${PROJECT_SOURCE_DIR}/compiler/src/fbx_files.*"
+    "${PROJECT_SOURCE_DIR}/compiler/src/image_files.*" "${PROJECT_SOURCE_DIR}/compiler/src/mesh_files.*"
+    "${PROJECT_SOURCE_DIR}/compiler/src/model_metadata.*" "${PROJECT_SOURCE_DIR}/compiler/src/psd_files.*"
+    "${PROJECT_SOURCE_DIR}/compiler/src/sha256.*" "${PROJECT_SOURCE_DIR}/compiler/src/texture_cache.*"
+    "${PROJECT_SOURCE_DIR}/compiler/src/texture_compress.*"
+    "${PROJECT_SOURCE_DIR}/engine/src/mesh_decode.c" "${PROJECT_SOURCE_DIR}/engine/src/skinned_data.c"
+    "${PROJECT_SOURCE_DIR}/engine/src/skinned_decode.c" "${PROJECT_SOURCE_DIR}/engine/src/vorbis.c"
+    "${PROJECT_SOURCE_DIR}/engine/src/png_read.c" "${PROJECT_SOURCE_DIR}/engine/src/wav.c"
+    "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/engine/src/math.c"
+    "${PROJECT_SOURCE_DIR}/engine/src/math64/*"
+    "${PROJECT_SOURCE_DIR}/engine/include/tide/math*.h" "${PROJECT_SOURCE_DIR}/engine/include/tide/mesh_data.h"
+    "${PROJECT_SOURCE_DIR}/engine/include/tide/skinned_data.h" "${PROJECT_SOURCE_DIR}/engine/include/tide/vorbis.h"
+    "${PROJECT_SOURCE_DIR}/engine/include/tide/png.h" "${PROJECT_SOURCE_DIR}/engine/include/tide/wav.h"
+    "${PROJECT_SOURCE_DIR}/engine/include/tide/sha256.h" "${PROJECT_SOURCE_DIR}/engine/include/tide/texture_blocks.h"
+    "${PROJECT_SOURCE_DIR}/engine/include/tide/internal/*.h")
+list(SORT tide_asset_importers)
+set(tide_asset_importer_text "Tide asset cache importers 1\n")
+foreach(source IN LISTS tide_asset_importers)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/${source}")
+    file(READ "${PROJECT_SOURCE_DIR}/${source}" content)
     string(REPLACE "\r\n" "\n" content "${content}")
     string(SHA256 digest "${content}")
-    string(APPEND tide_asset_vendor_text "${source}:${digest}\n")
+    string(APPEND tide_asset_importer_text "${source}:${digest}\n")
 endforeach()
-string(SHA256 tide_asset_vendor_hash "${tide_asset_vendor_text}")
-set(TIDE_ASSET_CACHE_VENDORS "${tide_asset_vendor_hash}" PARENT_SCOPE)
+string(SHA256 tide_asset_importer_hash "${tide_asset_importer_text}")
+set(TIDE_ASSET_CACHE_IMPORTERS "${tide_asset_importer_hash}" PARENT_SCOPE)
 set_source_files_properties(src/asset_cache.c PROPERTIES COMPILE_DEFINITIONS
-    "TIDE_ASSET_CACHE_VENDORS=\"${tide_asset_vendor_hash}\"")
+    "TIDE_ASSET_CACHE_IMPORTERS=\"${tide_asset_importer_hash}\"")
 
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.

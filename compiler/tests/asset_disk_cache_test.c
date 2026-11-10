@@ -32,9 +32,8 @@ TIDE_TEST(asset_disk_cache_rejects_wrong_keys_damage_and_every_truncation)
     TIDE_CHECK(memcmp(got, payload, size) == 0);
     free(got);
     TIDE_CHECK(!asset_cache_read(ASSET_FILES_WORK, other, &size));
-    char path[2048], hex[65];
-    for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", key[i]);
-    snprintf(path, sizeof path, "%s/.tide/assets/imports/%s.bin", ASSET_FILES_WORK, hex);
+    char path[4096];
+    TIDE_REQUIRE(asset_cache_path(path, ASSET_FILES_WORK, key));
     uint8_t encoded[64 + sizeof payload];
     memcpy(encoded, key, 32);
     tide_sha256_of(payload, sizeof payload, encoded + 32);

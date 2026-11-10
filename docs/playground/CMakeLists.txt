@@ -47,7 +47,7 @@ target_compile_options(tide_browser_compiler PUBLIC -include "${CMAKE_CURRENT_SO
 target_compile_definitions(tide_browser_compiler PUBLIC _WASI_EMULATED_PROCESS_CLOCKS _WASI_EMULATED_GETPID)
 target_compile_definitions(tide_browser_compiler PRIVATE
     "TIDE_VERSION=\"${TIDE_VERSION}\"" "TIDE_SIMULATION_RUNTIME=\"${TIDE_SIMULATION_RUNTIME}\""
-    "TIDE_ASSET_CACHE_VENDORS=\"${TIDE_ASSET_CACHE_VENDORS}\"")
+    "TIDE_ASSET_CACHE_IMPORTERS=\"${TIDE_ASSET_CACHE_IMPORTERS}\"")
 target_link_libraries(tide_browser_compiler PUBLIC tide tide_playground_importers
     wasi-emulated-process-clocks wasi-emulated-getpid setjmp)
 add_executable(tidec_browser "${PROJECT_SOURCE_DIR}/compiler/src/main.c")

@@ -20,3 +20,15 @@ void texture_cache_write(const char *folder, const uint8_t key[32], const textur
 // Declarations whose images come out the same, such as an opaque file as a color and as [Raw], are then one
 // block in the pack and one image on the GPU.
 void texture_content(const texture_cache_view *view, uint8_t content[32]);
+
+// An image file's texture: decoded where it wasn't, a byte a channel, premultiplied but for [Raw] (`raw`), and in
+// blocks where it has authored mips or is to be compressed. False with `why` where its file isn't an image. Touches
+// nothing but its own memory, so images are made on several threads at once. What it makes is what the cache keeps,
+// so it's here, with the code the cache's key covers (compiler/CMakeLists.txt). Its view's RGBA and blocks are the
+// made's, freed by texture_made_free.
+struct asset_match;
+typedef struct texture_made {
+    texture_cache_view view;
+} texture_made;
+bool texture_make(const struct asset_match *item, bool raw, bool compress, texture_made *out, char why[256]);
+void texture_made_free(texture_made *made);

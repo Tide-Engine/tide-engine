@@ -68,12 +68,19 @@ async function build(directory=out, success=true, flags=[]) {
 }
 const digest = file=>createHash("sha256").update(readFileSync(file)).digest("hex");
 const outputs = ()=>["game.c","game.h","game.pack"].map(n=>digest(join(out,n)));
-const imports = join(game,".tide","assets","imports");
+const root = join(game,".tide","assets","imports");
+// The folder of this compiler's importers: the only one a fresh game's cache has
+function ownFolder() { const folders=readdirSync(root).filter(n=>statSync(join(root,n)).isDirectory()); assert.equal(folders.length,1,`${folders}`); return folders[0]; }
+let imports;
 const cacheFiles = ()=>readdirSync(imports).filter(n=>n.endsWith(".bin")).sort();
-const old = new Date("2000-01-01T00:00:00Z");
+// An hour ago: recent enough that a read doesn't move it (a day's apart at the most), so a write would show
+const old = new Date(Math.floor(Date.now()/1000)*1000-3600e3);
 function pinCache() { for(const n of cacheFiles()) utimesSync(join(imports,n),old,old); }
 function unchangedCache() { assert(cacheFiles().every(n=>statSync(join(imports,n)).mtimeMs===old.getTime()),"warm build rewrote an import cache"); }
 await build();
+imports=join(root,ownFolder());
+assert(/^[0-9a-f]{16}$/.test(ownFolder()),"importer folder name");
+assert(existsSync(join(imports,"used")),"tidy left no used marker");
 const cold=outputs(); assert(cacheFiles().length>=7,"missing import/texture/audio/tangent entries");
 pinCache(); await build(); assert.deepEqual(outputs(),cold,"warm output differs"); unchangedCache();
 assert(readFileSync(join(out,"game.d"),"utf8").includes("shape.bin"),"cache hit lost its external buffer dependency");
@@ -82,8 +89,8 @@ await build(); unchangedCache(); assert.equal(outputs()[2],cold[2],"code-only ed
 source=source.replace('asset Texture solo =','[Raw] asset Texture solo =');writeFileSync(input,source);
 await build();const rawVariant=outputs();
 // Force a full import and compare with the newly requested variant's lazy path.
-const savedEarly=join(game,".tide","assets","early-imports");renameSync(imports,savedEarly);writeFileSync(imports,"blocked");
-await build();assert.deepEqual(outputs(),rawVariant,"new Raw variant changed when fully decoded");remove(imports);renameSync(savedEarly,imports);
+const savedEarly=join(game,".tide","assets","early-imports");renameSync(root,savedEarly);writeFileSync(root,"blocked");
+await build();assert.deepEqual(outputs(),rawVariant,"new Raw variant changed when fully decoded");remove(root);renameSync(savedEarly,root);
 const beforeImage=outputs()[2], imageTime=statSync(join(game,"picture.png"));
 copyFileSync(join(fixtures,"assets","run","1.png"),join(game,"picture.png"));utimesSync(join(game,"picture.png"),imageTime.atime,imageTime.mtime);
 await build();assert.notEqual(outputs()[2],beforeImage,"image edit reused stale pixels");
@@ -105,14 +112,47 @@ await build();assert.deepEqual(outputs(),valid,"truncated caches changed output"
 for(const n of cacheFiles()) {const p=join(imports,n),b=readFileSync(p);b.fill(255,64,Math.min(80,b.length));createHash("sha256").update(b.subarray(64)).digest().copy(b,32);writeFileSync(p,b);}
 await build();assert.deepEqual(outputs(),valid,"malformed decoded caches changed output");
 // An unusable cache destination must never make a valid game fail to build.
-const backup=join(game,".tide","assets","saved-imports");renameSync(imports,backup);writeFileSync(imports,"not a directory");
-await build();assert.deepEqual(outputs(),valid);remove(imports);renameSync(backup,imports);
+const backup=join(game,".tide","assets","saved-imports");renameSync(root,backup);writeFileSync(root,"not a directory");
+await build();assert.deepEqual(outputs(),valid);remove(root);renameSync(backup,root);
 // Separate output folders isolate generated files while sharing import writers.
-remove(imports);
+remove(root);
 await Promise.all([build(join(scratch,"parallel1")),build(join(scratch,"parallel2"))]);
 assert.equal(digest(join(scratch,"parallel1","game.pack")),valid[2]);assert.equal(digest(join(scratch,"parallel2","game.pack")),valid[2]);
-assert(readdirSync(imports).every(n=>n.endsWith(".bin")),"temporary cache entries leaked");
+assert(readdirSync(imports).every(n=>n.endsWith(".bin")||n==="used"),"temporary cache entries leaked");
 pinCache();await build();unchangedCache();assert.deepEqual(outputs(),valid);
+// A read keeps an entry: one last read days ago is moved to now, its bytes as they were
+const entryBytes=new Map(cacheFiles().map(n=>[n,digest(join(imports,n))])),daysAgo=new Date(Date.now()-3*86400e3);
+for(const n of cacheFiles()) utimesSync(join(imports,n),daysAgo,daysAgo);
+await build();assert.deepEqual(outputs(),valid);
+const touched=cacheFiles().filter(n=>statSync(join(imports,n)).mtimeMs>Date.now()-3600e3);
+assert(touched.length>=7,`read entries weren't marked used: ${touched.length}`);
+assert(cacheFiles().every(n=>digest(join(imports,n))===entryBytes.get(n)),"marking an entry used changed it");
+// Tidying, once a day: another importer's folder unused for weeks goes, a recent one stays, as do this importer's
+// entries read lately; files of the old flat layout and entries unread for a month go
+const seconds=Math.floor(Date.now()/1000);
+const otherOld=join(root,"0000000000000000"),otherNew=join(root,"1111111111111111"),noMarker=join(root,"2222222222222222");
+for(const [f,used] of [[otherOld,seconds-20*86400],[otherNew,seconds-86400],[noMarker,null]]) {
+    mkdirSync(f);writeFileSync(join(f,"aa.bin"),"x");if(used!==null) writeFileSync(join(f,"used"),`${used}\n`);
+}
+writeFileSync(join(root,"flat.bin"),"x");
+const unread=join(imports,"f".repeat(64)+".bin"),stray=join(imports,"e".repeat(64)+".bin.1-1.new");
+writeFileSync(unread,"x");writeFileSync(stray,"x");
+const monthAgo=new Date(Date.now()-40*86400e3),twoDays=new Date(Date.now()-2*86400e3);
+utimesSync(unread,monthAgo,monthAgo);utimesSync(stray,twoDays,twoDays);
+const kept=cacheFiles().filter(n=>!n.startsWith("f".repeat(8)));
+await build();assert.deepEqual(outputs(),valid);
+assert(existsSync(otherOld)&&existsSync(unread)&&existsSync(join(root,"flat.bin")),"tidied twice in one day");
+writeFileSync(join(imports,"used"),`${seconds-2*86400}\n`);
+await build();assert.deepEqual(outputs(),valid);
+assert(!existsSync(otherOld),"a long-unused importer's folder was kept");
+assert(!existsSync(noMarker),"a folder without a used marker was kept");
+assert(existsSync(join(otherNew,"aa.bin")),"a recently used importer's folder was removed");
+assert(!existsSync(join(root,"flat.bin")),"an old-layout entry was kept");
+assert(!existsSync(unread),"an entry unread for a month was kept");
+assert(!existsSync(stray),"a stopped compiler's temporary file was kept");
+assert(kept.every(n=>existsSync(join(imports,n))),"tidying removed an entry in use");
+assert(Number(readFileSync(join(imports,"used"),"utf8"))>=seconds,"tidying didn't mark the day");
+remove(otherNew);
 copyFileSync(join(game,"suffix.tga"),join(game,"suffix.bin"));
 writeFileSync(input,source.replace('"suffix.tga"','"suffix.bin"'));
 assert((await build(out,false)).includes("unrecognized image format"),"prepared texture bypassed written-suffix validation");

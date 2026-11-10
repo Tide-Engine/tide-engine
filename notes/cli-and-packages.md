@@ -537,7 +537,7 @@ Build code): its compiler command (`tide cc` when clang is built in), and for th
 target is: on Windows the MinGW target and sysroot, with `-fuse-ld=lld -nodefaultlibs`, the native libraries and the
 builtins archive; elsewhere the native libraries (and lld when built in). The installation's `include/` and
 `src/engine/` are its headers and sources. The program and its engine objects are kept in the game's
-`.tide/build-code/`, what it made in `.tide/assets/imports/`. `game_info.assets_affect_match` is set for a game with
+`.tide/build-code/`, what it made in `.tide/assets/imports/<importers>/` (its keys keep the whole compiler's identity). `game_info.assets_affect_match` is set for a game with
 constants build code made, so a watched file a constant's code reads rebuilds the game rather than repacking.
 Checked by hand with a scratch installation (this checkout's tide.exe, the engine's files, the installed MinGW
 sysroot): `tide build` ran build code and linked.

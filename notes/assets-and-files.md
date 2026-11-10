@@ -305,15 +305,16 @@ function, pack format, asset semantics or deterministic expectation is introduce
   continue through the exact image decoder; other declarations still discover,
   lay out and assemble their current pack on each build.
 
-Keys include compiler/runtime source identity, a CMake hash of vendored importers
-and compressors, host scalar byte order, source content and import context.
+Keys include a CMake hash of the importer code and vendored importers/compressors
+(not the whole compiler since 2026-11-10, below), host scalar byte order, source
+content and import context.
 Entries include the expected key and a SHA-256 of their payload. Counts, lengths,
 stream masks, indices, texture dimensions/mips and expanded mesh allocation sizes
 are checked. Cache entries over 1 GiB are skipped, not a new import-size refusal.
 Unreadable, incompatible, malformed and unwritable entries are ordinary misses;
 only successful imports are stored. Unique PID/serial temporary names and atomic
 replacement keep concurrent compilers from publishing partial entries. The cache
-is disposable and content-addressed; total-size eviction is not implemented.
+is disposable and content-addressed; age-based tidying (below) replaced the missing eviction.
 
 Tests: `asset_disk_cache_test.c` checks exact model-stream/provenance round trips,
 every cache-file byte flip and truncation, malformed counts/indices, and direct
@@ -346,6 +347,48 @@ E2E CTests and 23 asset-related language-server checks pass; production docs
 build and Node/diff checks pass. Cold/warm pack parity includes models, selected
 parts, authored DDS mips, raw textures and MP3. No runtime/WASM implementation
 changed; actual browser/Android execution and other host OSes remain CI coverage.
+
+### Correction: keyed by importers, tidied (2026-11-10)
+
+The owner saw a launch of their big game (2.5 GB of sources, 766 assets) spend
+~10 s on "Checking Tide and importing assets", and the folder had grown to 13 GB
+(10,867 entries). Two things caused this. First, the key held `TIDE_SIMULATION_RUNTIME`, a hash of every
+compiler and engine source, so every nightly or dev build re-imported all ~900
+entries (1.3 GB a time) and nothing removed the old ones. Second, a warm launch
+measured right after the owner's (no cache writes) spent only 0.44 s in imports
+and ~2.8 s in the whole row. The rest of the owner's 10 s was not reproduced; a
+cold OS file cache for the ~4 GB read and hashed is the likely cause. Owner chose
+the recommendation: importer-scoped keys plus cleanup. Stat-based source hashing
+was not adopted (same-size/same-time edits are still caught).
+
+- `compiler/CMakeLists.txt` hashes only the code whose output the cache keeps
+  (`TIDE_ASSET_CACHE_IMPORTERS`): vendored ufbx/dr_libs/stb, the compiler's asset,
+  image, PSD, mesh, FBX, audio, model-metadata, SHA, texture-cache and compress
+  files, and the engine's mesh/skinned decoders, Vorbis, PNG, WAV, SHA, math and
+  their headers. A file whose code changes what an entry holds must be listed;
+  `texture_make` moved from codegen.c to texture_cache.c for this reason. Build-code
+  results use the same store but their own keys, which still carry the whole
+  compiler identity.
+- Entries are in `imports/<first 16 hex of that hash>/`. A read moves an entry's
+  last-write time to now when it is a day or more old, so warm builds write nothing
+  that day. `asset_cache_tidy` runs from `compile_inputs`, but not for schedules or
+  build-code programs. It runs at most once a day per game, gated by `<folder>/used`
+  (Unix seconds). It removes: files directly in `imports/` (the old flat layout, all
+  dead); other importer folders whose `used` is missing or 14+ days old (other tide
+  versions building the game refresh theirs daily); and this folder's entries
+  unread for 30 days, plus `.new` temporaries a day old. Races with other processes
+  only cause misses. The first tidy of an existing game deletes its old flat
+  entries once.
+- Tests: `asset_cache_test.mjs` now pins entries an hour back (not 2000) for its
+  no-rewrite checks. It covers marking a 3-day-old entry used without changing its
+  bytes, tidying only once a day, and removing old/marker-less folders, flat files,
+  month-unread entries and stale temporaries while keeping recent folders and live
+  entries. `asset_disk_cache_test.c` finds entries through `asset_cache_path`.
+- Validation: Windows ASan cache, asset-file, texture, pack-fingerprint and
+  recompile tests; the WASI `tidec_browser` build (`clock_gettime` is hidden there,
+  so the clock is C17 `timespec_get`). macOS/Linux `utimensat` is CI coverage.
+- Gap: the 10 s cold-start cost is unmeasured and unchanged; each warm launch still
+  reads and hashes every source and payload.
 
 ## Authored RGBA8 DDS mip imports (2026-11-02)
 

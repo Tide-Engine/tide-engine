@@ -68,9 +68,13 @@ them all. `TIDE_JOBS` also limits parallel ThinLTO work.
 Code objects and expensive asset processing are cached between launches.
 Imported models, generated tangents, checked/converted audio and prepared texture
 payloads are kept in `.tide/assets/imports`, alongside the existing download,
-LOD and retarget caches. Code-only edits reuse these results. Changed source
-bytes, external model buffers, import settings or compiler/decoder revisions
-invalidate affected entries. Missing or damaged caches are rebuilt automatically.
+LOD and retarget caches. Code-only edits reuse these results, and so does a new
+Tide version whose importers and decoders didn't change. Changed source bytes,
+external model buffers, import settings or importer/decoder revisions invalidate
+affected entries. Missing or damaged caches are rebuilt automatically. Tide tidies
+the cache at most once a day: it removes entries no build has read for 30 days,
+and the results of other Tide versions' importers that haven't built the game
+for 14 days.
 Tide still checks the program and assembles its asset pack; CPU-readable grid
 images still use their exact image decoder.
 
