@@ -72,8 +72,21 @@ a shallow angle), `docs/game/shaders.md` (Textures).
   layer, cube, SampleGrad, a vert, no frag); `errors/gpu_sample_anisotropic_changed_uv`,
   `gpu_sample_function_anisotropic`, `_declared`; `warnings/gpu_sample_anisotropic_carried`; `lsp` (the member
   offered, hovers). Vulkan here with the validation layer; WebGPU through the web-debug pages.
+- **A device may read along only its own derivatives** (found by CI's Android emulator, Mesa's lavapipe, the day it
+  merged): there `textureGrad` with an anisotropic sampler is Trilinear's pixels, and only a read whose derivatives
+  the GPU works out (the engine's own mesh shader) is read along. Every Sample tidec writes in a frag gives its
+  derivatives (Mipmaps, below: so code samples in any branch), so on such a device `Filter.Anisotropic` through a
+  frag is `Filter.Trilinear`. Hardware GPUs here (NVIDIA on Vulkan, Chrome's WebGPU) read along given derivatives,
+  which is what the feature rests on; phones' GPUs haven't been seen. `run_anisotropic_checks` tells such a device by
+  the strip whose derivatives are written out against the engine's own shader's, says so in a `note:` line, and
+  holds the given-derivative reads to Trilinear's pixels there. If a real GPU turns out the same, the way out is
+  writing `textureSample` where a Sample is outside every branch.
+- **The docs' examples test** timed out that day in a render3d example on CI's software WebGPU (`Timed out:
+  Input.dispatchMouseEvent`), as it had at 10:32 the same day before this change (`Runtime.evaluate`, in
+  render3d-materials): `docs/tests/examples.mjs` gave every DevTools command but a screenshot 20 seconds, and now
+  gives each the screenshot's 120.
 - **Not built:** a level a game picks, a player's quality setting for it, asking the device's most from Tide;
-  Android, Linux and macOS are CI's.
+  Linux and macOS are CI's.
 
 ## Texture arrays: built (2026-11-05)
 

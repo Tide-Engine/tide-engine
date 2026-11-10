@@ -116,8 +116,10 @@ try {
     function command(method, params = {}) {
         return new Promise((done, fail) => {
             const id = ++next;
-            // A screenshot waits for a frame, which software WebGPU (WARP on CI) can take long over
-            const limit = method === 'Page.captureScreenshot' ? 120000 : 20000;
+            // A screenshot waits for a frame, which software WebGPU (WARP on CI) can take long over, and so does
+            // anything the page answers between frames (an input event, an evaluate) while a 3D example draws: the
+            // render3d examples passed 20 seconds there now and then
+            const limit = 120000;
             const timeout = setTimeout(() => { pending.delete(id); fail(new Error(`Timed out: ${method}`)); }, limit);
             pending.set(id, { done, fail, timeout });
             socket.send(JSON.stringify({ id, method, params }));

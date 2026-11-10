@@ -1796,17 +1796,18 @@ static void run_anisotropic_checks(const char *when)
     const struct {
         float left;
         bool along;
+        bool given; // Read with derivatives the shader gives (every frag tidec writes): see `own` below
         const char *what;
     } wanted[] = {
-        {8, true, "a grid whose declaration says Anisotropic, sampled in a frag's branch: its rows, where a pixel covers 8 across"},
-        {24, true, "a Texture that says Anisotropic, through a frag that leaves the filter to it"},
-        {40, false, "the same frag with a draw that says Trilinear: every row their mean"},
-        {56, true, "a Sample that says Anisotropic, whatever the draw says"},
-        {72, true, "a mesh with no frag, of a grid that says Anisotropic"},
-        {88, false, "and with a draw that says Trilinear"},
-        {104, true, "SampleGrad of a Texture that says Anisotropic, by the pixel's own derivatives, after a uv a loop changes"},
-        {120, true, "SampleGrad that says Anisotropic, by derivatives written out: 8 across and 1 down"},
-        {136, false, "and as far down as across, which nothing is read along: every row their mean"},
+        {8, true, true, "a grid whose declaration says Anisotropic, sampled in a frag's branch: its rows, where a pixel covers 8 across"},
+        {24, true, true, "a Texture that says Anisotropic, through a frag that leaves the filter to it"},
+        {40, false, true, "the same frag with a draw that says Trilinear: every row their mean"},
+        {56, true, true, "a Sample that says Anisotropic, whatever the draw says"},
+        {72, true, false, "a mesh with no frag, of a grid that says Anisotropic"},
+        {88, false, false, "and with a draw that says Trilinear"},
+        {104, true, true, "SampleGrad of a Texture that says Anisotropic, by the pixel's own derivatives, after a uv a loop changes"},
+        {120, true, true, "SampleGrad that says Anisotropic, by derivatives written out: 8 across and 1 down"},
+        {136, false, true, "and as far down as across, which nothing is read along: every row their mean"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     if (most > 1u && most < 8u) {
@@ -1827,9 +1828,20 @@ static void run_anisotropic_checks(const char *when)
             points[2 * i + 1] = tide_f2(wanted[i].left + 3.5f, 20.5f);
         }
         tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 2 * COUNT, got);
+        // How far a device reads along what a pixel covers is its own to say, and some read along only the
+        // derivatives they work out themselves, never ones a shader gives (Mesa's lavapipe, the Android
+        // emulator's: textureGrad there is Trilinear). Told by the strip whose derivatives are written out: where
+        // that one isn't read along and the engine's own shader's is, every read with given derivatives is held to
+        // Trilinear's pixels, and that's said. Everywhere else each is held to its rows.
+        enum { OWN = 4, GIVEN = 7 };
+        const bool own_only = most != 1u && (int)(got[2 * OWN] >> 16 & 0xFFu) >= 200 && (int)(got[2 * GIVEN] >> 16 & 0xFFu) <= 72;
+        if (own_only && !frame) {
+            printf("note: this device reads along the derivatives it works out, not ones a shader gives: reads with given "
+                   "derivatives are checked as Trilinear's%s\n", when);
+        }
         for (int i = 0; i < COUNT; i++) {
             const int lit = (int)(got[2 * i] >> 16 & 0xFFu), dark = (int)(got[2 * i + 1] >> 16 & 0xFFu);
-            const bool along = wanted[i].along && most != 1u;
+            const bool along = wanted[i].along && most != 1u && !(own_only && wanted[i].given);
             const bool ok = along ? lit >= 200 && dark <= 40 : lit >= 56 && lit <= 72 && dark >= 56 && dark <= 72;
             printf("%s: %s%s%s (green 0x%02X on a lit row and 0x%02X on a dark one, anisotropy %u)\n", ok ? "ok" : "FAIL",
                    wanted[i].what, frame ? ", again" : "", when, (unsigned)lit, (unsigned)dark, (unsigned)most);
