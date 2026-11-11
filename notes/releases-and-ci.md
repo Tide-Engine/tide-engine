@@ -117,6 +117,26 @@ syntax and whitespace checks pass. No workflow gate or version changed and
 no manual workflow dispatch/retry occurred. Hosted recovery still needs the
 new push-triggered run; no release is claimed yet.
 
+## Ubuntu archive resolver failure in runs 43041892841 and 43048435322 (2026-11-11)
+
+Every Linux job of two dev runs, and a re-run an hour later, failed in its tool
+step: apt reported `Temporary failure resolving 'azure.archive.ubuntu.com'`
+for each host of the hosted image's mirror list (`/etc/apt/apt-mirrors.txt`:
+azure.archive.ubuntu.com, archive.ubuntu.com, security.ubuntu.com), while
+apt.llvm.org and packages.microsoft.com resolved in the same step, and all
+three hosts resolved from this machine. Windows and macOS jobs passed.
+
+Both tool steps now call `.github/ubuntu-mirror.sh` before `apt-get update`.
+If `getent ahostsv4` answers for any host in the list, or there is no list,
+it changes nothing. If it answers for none, it writes a warning annotation and
+replaces the list with `https://mirrors.edge.kernel.org/ubuntu/`, kernel.org's
+mirror of the same archive; apt still verifies every index against Ubuntu's
+keys, so packages and versions are the same. If the mirror doesn't resolve
+either, the step fails with the list untouched. `.github/ubuntu-mirror.test.mjs`
+covers the four cases with `getent` and `sudo` stubbed (run by hand:
+`node --test .github/ubuntu-mirror.test.mjs`). `.github/runner/setup-linux.sh`
+is not a hosted runner's and is unchanged.
+
 ## LLVM resolver failure in run 41654421794 (2026-11-03)
 
 The diagnostic download correction below exposes the actual hosted failure:
