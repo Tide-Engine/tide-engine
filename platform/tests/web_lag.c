@@ -165,8 +165,12 @@ static bool exchange(void)
 enum { REST, UNTOLD, TOLD, CHANGED, SLOWED, SHORT, HOSTING, DONE };
 
 // Seconds each step's pings are left to settle. A network that changed takes
-// the longest: the page goes by what pings are on the whole.
-static const double settle[DONE] = {1.0, 1.0, 2.0, 1.0, 5.0, 2.0, 2.0};
+// the longest: the page goes by what pings are on the whole. So does the first
+// ping it's told, which it takes whole for what the network takes: one a timer
+// delivered 40 ms late leaves the pings as much short, and wears off an eighth
+// a ping, of the few a second that count while what the page adds changes (a
+// macOS runner, 2026-11-11: 158 for 200 after 2 seconds).
+static const double settle[DONE] = {1.0, 1.0, 5.0, 1.0, 5.0, 2.0, 2.0};
 static const char *const names[DONE] = {"no lag", "a lag of 200, untold", "told", "a lag of 100", "a slower network",
                                         "a lag of 50", "hosting"};
 
