@@ -21,7 +21,7 @@
 // puts it), or else PATH's. With several devices, ANDROID_SERIAL picks one.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -127,7 +127,15 @@ function runApp(apk) {
     const lines = (run(['logcat', '-d', '-T', since]).stdout || '').split(/\r?\n/).map(logLine)
         .filter(line => line && line[1] === pid);
     const printed = lines.filter(line => line[3] === 'tide').map(line => `${line[4]}\n`).join('');
-    if (printed) process.stdout.write(printed);
+    // All of it, before this ends: what a pipe hasn't taken yet as the process exits is lost, past its 64 KiB
+    for (let at = 0, bytes = Buffer.from(printed); at < bytes.length;) {
+        try {
+            at += writeSync(1, bytes, at);
+        } catch (error) {
+            if (error.code !== 'EAGAIN') throw error; // A pipe that's full, and doesn't wait: once it has room
+            sleep(5);
+        }
+    }
     const fatal = lines.filter(line => line[2] === 'F');
     if (fatal.length) {
         console.error(`run_android: ${app} (pid ${pid}) crashed, and ended with ${code}:`);

@@ -97,7 +97,11 @@ What held the frame's thread, found by attaching LLDB during the stall and by ti
   pipelines are made in the background (`WARM_SECONDS`; `warm_known`, `warm_at`, `warm_unfinished`), and the
   loader calls it every frame while it waits; `tide_platform_prewarm_waiting` counts 1 for what isn't asked for
   yet. With modules off the frame's thread a call is short anyway; the slices bound it. A run with no window asks
-  for all at once, as before.
+  for all at once, as before. A test with a window (a page, an Android app) that counts what one table's prewarm
+  made calls it till all is asked for: `prewarm_frame` in `platform/tests/draw.c` called it once and counted, so on a
+  slow machine the count was of the first 4 ms only (2026-11-11: `tide_platform_draw_rgba_fallback` failed two of
+  four dev runs on CI's macOS runner, "prewarming the same table again makes nothing"). It calls it 21 times now:
+  a call goes on by a shader or more, through the table of 10 twice.
 
 - **Waiting for one pipeline** (`finish_making`: `vk_use` of one not made yet, `pipeline_free`, and
   `finish_all_making` before the cache changes or the device goes) helped with whatever was first in the queue,

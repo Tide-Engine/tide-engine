@@ -91,6 +91,12 @@ Tried on this machine's emulator (x86_64, API 36), the android-debug build:
   is the test's timeout. The
   log is read once the process ended, so a run printing more than the log's
   ring holds would lose lines (the draw app's 3,400 fit on the emulator).
+  The output is written to the descriptor, and waited for (`writeSync`): left
+  to `process.stdout`, what a pipe hadn't taken as the wrapper exited was
+  lost, so under CTest on Linux a failed app's output stopped at 64 KiB,
+  before its `FAIL` lines (2026-11-11: `tide_platform_draw_app` failed two
+  dev runs with nothing to say which check; likely the prewarm count in
+  `notes/rendering.md`, Asking, which its window has too, unconfirmed).
   `tide_android_runner` tests it with adb mocked: a clean end with its output
   and the uninstall, `--back`, the exit code, a fatal line failing a code of
   0, another pid's crash left alone, a signal's 134, the reinstall, and

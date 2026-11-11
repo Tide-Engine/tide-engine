@@ -4841,7 +4841,9 @@ static int prewarm_frame(void)
                "an unseen shader gets one likely configuration, not every target of its kind");
         const uint32_t before = tide_platform_shader_pipelines();
         tide_platform_background_pipelines(true);
-        tide_platform_prewarm(table, 10);
+        // With a window, a call asks for a few milliseconds' worth and the next goes on from there, a shader or more
+        // each time, through the table twice: as many calls as that ask for all of it on the slowest machine
+        for (int call = 0; call < 2 * 10 + 1; call++) tide_platform_prewarm(table, 10);
         warmed = tide_platform_shader_pipelines() - before;
         expect(warmed >= 10u, "prewarming makes a pipeline for each shader it's given");
 #ifdef __wasm__

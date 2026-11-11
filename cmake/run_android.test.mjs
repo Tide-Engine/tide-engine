@@ -1,7 +1,7 @@
 // The device is mocked: these checks need neither adb nor an emulator.
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -198,8 +198,18 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
     const state = { calls, messages, printed, stopped: () => stopped };
     state.invoke = async (...options) => {
         process.argv = [process.execPath, 'run_android.mjs', '--app', 'dev.tide.game', ...options, 'game.apk', '--frames', '5'];
-        // What it prints, but only while it runs: the test runner reports through stdout too
-        const write = t.mock.method(process.stdout, 'write', text => { printed.push(text); return true; });
+        // What it prints, but only while it runs: the test runner reports through stdout too. It writes to the
+        // descriptor and waits (a write left to the stream is cut at a pipe's 64 KiB as the process exits), here a
+        // piece at a time, as a full pipe takes it
+        const real = fs.writeSync;
+        const write = t.mock.method(fs, 'writeSync', (fd, bytes, at = 0, ...rest) => {
+            if (fd !== 1) return real(fd, bytes, at, ...rest);
+            const taken = Math.min(bytes.length - at, 5);
+            if (at === 0) printed.push('');
+            printed[printed.length - 1] += bytes.toString('utf8', at, at + taken);
+            return taken;
+        });
+        syncBuiltinESMExports();
         try {
             await import(`./run_android.mjs?invocation=${++invocation}`);
             assert.fail('wrapper did not exit');
@@ -208,6 +218,7 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
             return error.code;
         } finally {
             write.mock.restore();
+            syncBuiltinESMExports();
         }
     };
     return state;
