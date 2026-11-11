@@ -4,6 +4,7 @@
 
 #include "play.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,10 @@
 
 static int failures;
 #define CHECK(test) do { if (!(test)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #test); failures++; } } while (0)
+
+// A Play that is to start: one that doesn't says why, as the editor would
+#define START(p, d, options) \
+    (editor_play_start(p, d, options) || (fprintf(stderr, "Play did not start: %s (errno %d)\n", (p)->message, errno), false))
 
 static char *self;
 static uint32_t wait_pid(const char *directory, const char *name);
@@ -130,6 +135,7 @@ static bool wait_state(editor_play *p, const editor_play_state state, const int 
 
 static uint32_t wait_pid(const char *directory, const char *name)
 {
+    if (!directory) return 0; // A Play that never started has none
     char *path = path_join(directory, name);
     const int64_t until = sys_now_ms() + 3000;
     uint32_t pid = 0;
@@ -162,7 +168,7 @@ static DWORD WINAPI release_file(void *handle)
 
 static void cleanup_tests(editor_play *p, editor_document *d, const editor_play_options *options)
 {
-    CHECK(editor_play_start(p, d, options)); CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
+    CHECK(START(p, d, options)); CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
     char *directory = path_absolute(p->directory);
     HANDLE held = CreateFileA(p->executable, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     CHECK(held != INVALID_HANDLE_VALUE);
@@ -172,7 +178,7 @@ static void cleanup_tests(editor_play *p, editor_document *d, const editor_play_
     CHECK(!sys_exists(directory)); CHECK(p->state == EDITOR_PLAY_STOPPED);
     free(directory);
 
-    CHECK(editor_play_start(p, d, options)); CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
+    CHECK(START(p, d, options)); CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
     directory = path_absolute(p->directory);
     held = CreateFileA(p->executable, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     CHECK(held != INVALID_HANDLE_VALUE);
@@ -182,7 +188,7 @@ static void cleanup_tests(editor_play *p, editor_document *d, const editor_play_
     CHECK(!editor_play_start(p, d, options));
     CHECK(p->directory && !strcmp(p->directory, directory) && !p->process);
     CloseHandle(held);
-    CHECK(editor_play_start(p, d, options)); CHECK(!sys_exists(directory));
+    CHECK(START(p, d, options)); CHECK(!sys_exists(directory));
     CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
     editor_play_stop(p); CHECK(p->state == EDITOR_PLAY_STOPPED && !p->directory);
     free(directory);
@@ -204,7 +210,7 @@ static int control_tests(const char *work)
     const editor_play_options options = {.cli = self, .arguments = arguments};
     d.conflict = true; CHECK(!editor_play_start(&p, &d, &options)); CHECK(strstr(p.message, "outside changes")); d.conflict = false;
     CHECK(editor_set_field(&d, 0, str_from("Health"), str_from("value"), "9"));
-    CHECK(editor_play_start(&p, &d, &options)); CHECK(p.state == EDITOR_PLAY_BUILDING);
+    CHECK(START(&p, &d, &options)); CHECK(p.state == EDITOR_PLAY_BUILDING);
     const uint64_t revision = p.revision;
     CHECK(!editor_play_start(&p, &d, &options)); CHECK(p.state == EDITOR_PLAY_BUILDING);
     CHECK(editor_set_field(&d, 0, str_from("Health"), str_from("value"), "12"));
@@ -223,7 +229,7 @@ static int control_tests(const char *work)
     editor_play_close(&p); editor_close(&d); free(file);
 
     file = fixture(work, "finished-compiler", code, "// leave-child\nprefab Level { Health; }\n");
-    CHECK(editor_open(&d, file, NULL)); CHECK(editor_play_start(&p, &d, &options));
+    CHECK(editor_open(&d, file, NULL)); CHECK(START(&p, &d, &options));
     CHECK(wait_state(&p, EDITOR_PLAY_RUNNING, 5000));
     const uint32_t leftover = wait_pid(p.directory, "builder-child.pid"); CHECK(leftover != 0);
     CHECK(dead(leftover)); // A successful compiler exit also cleans descendants.
@@ -231,13 +237,13 @@ static int control_tests(const char *work)
     editor_play_close(&p); editor_close(&d); free(file);
 
     file = fixture(work, "failed", code, "// fail-build\nprefab Level { Health; }\n");
-    CHECK(editor_open(&d, file, NULL)); CHECK(editor_play_start(&p, &d, &options));
+    CHECK(editor_open(&d, file, NULL)); CHECK(START(&p, &d, &options));
     CHECK(wait_state(&p, EDITOR_PLAY_FAILED, 5000)); CHECK(p.exit_code == 7 && !p.process);
     CHECK(strstr(p.message, "fixture compiler rejected") != NULL);
     editor_play_close(&p); editor_close(&d); free(file);
 
     file = fixture(work, "cancel-build", code, "// slow-build\nprefab Level { Health; }\n");
-    CHECK(editor_open(&d, file, NULL)); CHECK(editor_play_start(&p, &d, &options));
+    CHECK(editor_open(&d, file, NULL)); CHECK(START(&p, &d, &options));
     const uint32_t compiler_child = wait_pid(p.directory, "builder-child.pid"); CHECK(compiler_child != 0);
     directory = path_absolute(p.directory); editor_play_stop(&p);
     CHECK(p.state == EDITOR_PLAY_STOPPED && !p.process); CHECK(dead(compiler_child)); CHECK(!sys_exists(directory)); free(directory);
@@ -247,7 +253,7 @@ static int control_tests(const char *work)
     CHECK(editor_open(&d, file, NULL));
     const char *child_args[] = {"--frames", "600", "--spawn-child", NULL};
     const editor_play_options child_options = {.cli = self, .arguments = child_args};
-    CHECK(editor_play_start(&p, &d, &child_options)); CHECK(wait_state(&p, EDITOR_PLAY_RUNNING, 5000));
+    CHECK(START(&p, &d, &child_options)); CHECK(wait_state(&p, EDITOR_PLAY_RUNNING, 5000));
     const uint32_t game_child = wait_pid(p.directory, "game-child.pid"); CHECK(game_child != 0);
     editor_play_stop(&p); CHECK(dead(game_child));
     editor_close(&d); free(file); editor_play_close(&p);
@@ -296,7 +302,7 @@ static int integration(const char *cli, const char *work)
     CHECK(sys_write_text(script, "2 key a\n8 quit\n"));
     const char *args[] = {"--script", script, "--capture", image, "--size", "320", "200", "--data-dir", data, NULL};
     const editor_play_options options = {.cli = cli, .arguments = args};
-    editor_play p = {0}; CHECK(editor_play_start(&p, &d, &options));
+    editor_play p = {0}; CHECK(START(&p, &d, &options));
     CHECK(wait_state(&p, EDITOR_PLAY_FINISHED, 120000));
     char *log = p.log ? sys_read_file(p.log, NULL) : NULL;
     CHECK(log && strstr(log, "PLAY_SPAWNED") && strstr(log, "PLAY_SYSTEM") && strstr(log, "PLAY_UNMARKED_VIEW") && strstr(log, "PLAY_DEVICE"));
@@ -305,7 +311,7 @@ static int integration(const char *cli, const char *work)
     char *disk = sys_read_file(file, NULL); CHECK(disk && !strcmp(disk, prefab)); free(disk);
     CHECK(editor_dirty(&d));
     editor_play_stop(&p);
-    CHECK(editor_play_start(&p, &d, &options)); CHECK(wait_state(&p, EDITOR_PLAY_FINISHED, 120000));
+    CHECK(START(&p, &d, &options)); CHECK(wait_state(&p, EDITOR_PLAY_FINISHED, 120000));
     char *again = p.log ? sys_read_file(p.log, NULL) : NULL;
     CHECK(log && again && !strcmp(log, again)); // Stop/restart starts fresh runtime state.
     free(log); free(again);

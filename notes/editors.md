@@ -290,6 +290,19 @@ keeps both complete sections above. Only this note conflicted. This text
 resolution changes no source and makes no new validation claim; root owns
 merge completion and the full native/web suite repeats.
 
+## A Play that didn't start on macOS, cause unknown (2026-11-11)
+
+Run `43063474847` at `2d31c7e01` failed macOS release's `tide_editor_play`
+with a segfault: `editor_play_start` returned false for the cancel-build
+fixture (`play_test.c`, after the failed-build one), and the test went on to
+read the Play's directory, which is null then. The log has no reason: `CHECK`
+prints the expression only. It passed in the day's other runs on every
+platform, and nothing in that push touched the editor. The test's starts now
+go through `START`, which prints `p->message` and `errno` when one fails, and
+`wait_pid` answers 0 for no directory. The cause is still to find; the next
+failure names which of the directory, the draft or the compiler's process it
+was.
+
 ## Editor CI cleanup and empty-edit fixes (2026-10-25)
 
 Run `40152905815` at `5d5f6172` failed Windows release's Play workspace-removal
