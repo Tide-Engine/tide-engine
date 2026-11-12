@@ -103,6 +103,24 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
   where the row starts, and a World write can change one). Otherwise the system is as it was. Not batched
   loops (`rows_batched`), which never had a guard. A chunk with holes marks whatever its dead rows' bytes say:
   the walk never comes to those.
+- **A tick's spawns laid out in their entities' order** (`tide_table_order`, table.c; the owner, the same day:
+  "we should never avoid updates due to hash changing"). An entity's key is its birth (the tick's identity clock)
+  then its lineage (a hash), and a tick's spawns were added to their table in the order the code made them, so
+  going through them in the entities' order read rows at random and made runs of one row. Now, where a tick's
+  changes are settled (after `tide_table_settle`, the match's tables only: a local entity's key counts up),
+  the rows at each table's end whose entities were born at `w->tide_identity_clock` are sorted by lineage: a
+  lane at a time into a buffer and back through `tide_table_cell` (each page made the table's own first, so a
+  snapshot, the rows cache or an index that holds one keeps what it had), then `tide_entity_set_location` for
+  each row that moved. A table whose last row wasn't born this tick costs one comparison; a tail already in
+  order (every later tick) costs a pass over it only while the clock is still that tick's. Rows born earlier
+  are before them (births ascend), so a table that only grows is wholly in order. Not in order: a spawn that
+  filled a hole in the last chunk, a row moved in from another archetype, and what `tide_table_settle` moves
+  into holes. Where a row is was never something a game can see (every loop that could tell goes by the
+  entities' order), and row moves at settle already existed; what changes is every world's bytes after a
+  tick that spawned more than one entity into a table, so world hashes: `crossplatform_text_and_lists` and
+  `random_crossplatform_match` have new pinned hashes, the same on the platforms CI runs.
+  `sparse_cache_test.c` models where each row is, and its model now orders a tick's births as the table does
+  (`model_order`).
 - **One element of a fixed array is its own lanes** (`element_place`, lane_writes_codegen.inc, for reads and
   writes): `f.cooldowns[3]` with the number written in the code and inside the array reads or writes that
   element's bytes, where any element counted as the whole array. Any other index is still all of it.
@@ -116,6 +134,9 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
   order: with `guard_reads_changing` taken out, the test fails).
   `entity_ordered_archetypes_slots_give_each_keys_place` (tide_tests): slots against lookups, a row
   that moves, a destroyed key whose slot a newer entity took, a slot that isn't the key's, `tide_entity_born_at`.
+  `table_order_puts_a_ticks_spawns_in_their_entities_order` (tide_tests): rows born before stay, a tick's forty
+  come out in key order with their values, the entity table knows where each is, a snapshot keeps its rows, and
+  a tail in order already isn't written.
   The indexed loops' differential fixture gained `Swing` (notes/indexed-loops.md). The walks themselves are what
   every game's tests run.
 - **Measured**: notes/benchmarks.md, What a row costs in entity order.
@@ -124,9 +145,8 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
     6 for a system that goes by chunks. What's left is the slot's page (a load through the table's pages for each
     row), a call of the rows function for each run, and that rows come in the order of a hash, so each lane's
     bytes are read at random within the chunk.
-  - A system in entity order with no guard, or one most rows get past, still goes to every entity in the order
-    of a hash. Laying rows out in their entities' order when a tick's spawns are applied would make those walks
-    sequential too; it changes where every row is, so every pinned world hash, and isn't done.
+  - Entities of several archetypes that one system takes are still interleaved in the order: each archetype's
+    rows are read in sequence, in runs as long as the stretch of the order that archetype has.
   - A system whose whole code is `if (test) { ... }` has no guard (a guard is leading `if (...) return;`
     statements), and a system that batches a Send or a Destroy has none either: the game's LeaveField is both.
   - A chunk with one row past the guard is begun whole: each lane the system can write copied and compared.

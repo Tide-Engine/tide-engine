@@ -12,11 +12,14 @@ typedef struct expected_item {
     Item value;
     tide_entity key;
     bool needed, blocked;
+    int batch; // The tick's births it was one of
 } expected_item;
 typedef struct model {
     expected_item items[MOST];
     int rows[MOST], seen[MOST];
     int count, next, seen_count, bias;
+    int batch;      // The last tick's births
+    bool order_due; // ...whose rows at the table's end aren't in their keys' order yet (model_order)
 } model;
 
 static tide_world world, kept;
@@ -54,6 +57,7 @@ static void model_birth(model *m, const int ordinal, const bool last)
                   .spare = {1.0f, -2.0f, 3.0f}},
         .needed = (ordinal + m->bias) % 97 == 0 || last,
         .blocked = (ordinal + m->bias) % 191 == 0,
+        .batch = m->batch,
     };
 }
 
@@ -68,16 +72,33 @@ static void remember_keys(const tide_world *w, model *m)
     }
 }
 
+// Once a tick's births are in the world: the rows at the table's end that are of them go in their keys' order
+// (tide_table_order). One that filled a hole stays there, unless it's next to them.
+static void model_order(const tide_world *w, model *m)
+{
+    if (!m->order_due) return;
+    m->order_due = false;
+    remember_keys(w, m);
+    int from = m->count;
+    while (from > 0 && m->rows[from - 1] != HOLE && m->items[m->rows[from - 1]].batch == m->batch) from--;
+    static entity_order_value tail[MOST];
+    for (int i = from; i < m->count; i++) tail[i - from] = (entity_order_value){m->items[m->rows[i]].key, m->rows[i]};
+    qsort(tail, (size_t)(m->count - from), sizeof *tail, entity_order_compare);
+    for (int i = from; i < m->count; i++) m->rows[i] = tail[i - from].value;
+}
+
 static void init(tide_world *w, model *m, const int bias)
 {
     memset(m, 0, sizeof *m);
     m->bias = bias;
     m->next = COUNT;
+    m->batch = 1;
     tide_world_init(w, 1.0f / 64.0f);
     w->Rules.bias = bias;
     tide_world_tick(w);
     for (int i = 0; i < COUNT; i++) model_birth(m, i, i == COUNT - 1);
-    remember_keys(w, m);
+    m->order_due = true;
+    model_order(w, m);
 }
 
 static void model_tick(model *m, const int mode)
@@ -127,12 +148,15 @@ static void model_tick(model *m, const int mode)
         }
     }
     if (mode == 5) {
+        m->batch++;
         for (int i = 0; i < 17; i++) model_birth(m, m->next++, i == 16);
+        m->order_due = true;
     }
 }
 
-static void check_world(const tide_world *w, const model *m)
+static void check_world(const tide_world *w, model *m)
 {
+    model_order(w, m);
     TIDE_REQUIRE(w->arch0_Item.count == (uint32_t)m->count);
     TIDE_REQUIRE(tide_list_count(w->Rules.seen) == m->seen_count);
     for (int i = 0; i < m->seen_count; i++) {

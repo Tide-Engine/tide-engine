@@ -268,6 +268,15 @@ void tide_table_remove(tide_table *t, const tide_columns *c, uint32_t row, tide_
 // each row it moved went.
 void tide_table_settle(tide_table *t, const tide_columns *c, tide_entities *entities, uint32_t archetype);
 
+// After tide_table_settle: the rows at the table's end whose entities were born
+// at `birth` (this tick's spawns: an entity's key is its birth, then a hash),
+// put in their entities' order, the entity table told where each went. Code
+// that goes through entities in their order then reads a tick's spawns one row
+// after another, not at random. Rows born earlier are before them already;
+// a spawn that filled a hole, or a row moved from another archetype, stays
+// where it is. Where a row is changes nothing a game can see.
+void tide_table_order(tide_table *t, const tide_columns *c, tide_entities *entities, uint32_t archetype, uint64_t birth);
+
 // Counts an archetype's table's holes from its rows again, for a table that
 // came as bytes (tide_table_unpack, tide_table_unpack_delta) or was carried
 // over by a reload.

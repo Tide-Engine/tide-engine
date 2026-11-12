@@ -67,7 +67,10 @@ beside it) and `tide_entity_location_at(entities, slot, key)` (inline: the
 slot when it's still that key's, else the lookup by key), and a view's blend
 calls `tide_entity_slot_index`, `tide_entity_slot_of` and
 `tide_entity_born_at(entities, slot)`. Contracts: ecs.md, What a row costs in
-entity order.
+entity order. The tick's settling also calls
+`tide_table_order(table, columns, entities, archetype, birth)` for each of the
+match's tables, after `tide_table_settle`: the rows at its end born at `birth`
+go in their keys' order.
 
 Attached local fields use a full-key hash index. Shard references carry their
 full 16-byte entity key plus an 8-byte shard location; world-clock/status/checkpoint
