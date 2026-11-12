@@ -472,7 +472,7 @@ TIDE_TEST(jobs_threads_come_back)
     tide_queue queue = {0};
     tide_entities entities = {0};
     const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities};
-    const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL, NULL, NULL};
+    const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL, NULL, NULL, false};
     int ticks = 0;
     // A worker has to have joined the tick while its first system ran to have
     // left it: a few more ticks if none had yet

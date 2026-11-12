@@ -240,7 +240,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = tide_web_threads();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help, true}; // A profile given before stays
     return p->jobs.threads > 1 ? &p->jobs : NULL;
 }
 
@@ -686,7 +686,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = cores(p);
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help, true}; // A profile given before stays
 #ifdef _WIN32
     InitializeSRWLock(&p->lock);
     for (uint32_t g = 0; g < MOST_GROUPS; g++) InitializeConditionVariable(&p->start[g]);

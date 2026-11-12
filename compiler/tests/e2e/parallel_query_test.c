@@ -72,7 +72,7 @@ TIDE_TEST(parallel_query_loop_sends_in_its_foreach_order)
     tide_world_init(&one, 1.0f);
     tide_world_init(&two, 1.0f);
     uint32_t rounds = 0;
-    const tide_jobs fake = {&rounds, 2u, second_first, NULL, NULL, NULL, NULL, NULL};
+    const tide_jobs fake = {&rounds, 2u, second_first, NULL, NULL, NULL, NULL, NULL, false};
     for (int i = 0; i < 3; i++) {
         tide_world_tick(&one);
         tide_world_tick_on(&two, &fake);

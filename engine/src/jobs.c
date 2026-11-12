@@ -42,9 +42,11 @@
 
 // A system with fewer chunks than there are threads runs each chunk in pieces
 // (tide_system_tasks.run): about two tasks a thread, each worth at least this
-// much work (a few microseconds), and up to this many pieces a chunk.
+// much work (a few microseconds), and up to this many pieces a chunk (two a
+// thread on 32 threads: with 16, a chunk of costly rows on 12 threads took a
+// round of 12 pieces and then one of 4).
 #define PIECE_WORK 250000u
-#define MOST_PIECES 16u
+#define MOST_PIECES 64u
 
 // A thread takes a system's tasks a few at a time where each is less work
 // than this, as many as come to it, so that a system of many chunks that are
@@ -58,6 +60,63 @@
 #define IDLE_LOOKS 256u
 
 #define NONE UINT32_MAX
+
+// What a nanosecond of a system's time counts as, in tidec's units of work:
+// PARALLEL_WORK is half a millisecond of them, and PIECE_WORK a few
+// microseconds.
+#define WORK_PER_NS 40u
+
+// What a system's last ticks took against what tidec reckoned them, for a
+// pool that times its ticks (tide_jobs.timed): sums that lose an eighth each
+// tick, so a clock that only tells microseconds apart still says something of
+// a system that takes less, and a system that changes is found out in a few
+// ticks. tidec counts a call as next to nothing and can't tell how long a loop
+// goes on, so a few hundred rows of costly code looked like no work at all:
+// the tick stayed on one thread, or the chunk in one piece. Only which threads
+// run what depends on this, never a result.
+typedef struct system_cost {
+    uint64_t ns;
+    uint64_t work;
+} system_cost;
+
+// Kept by the thread that runs ticks, for each table of systems it runs (a
+// server's and a client's worlds of one game share theirs).
+#define COST_TABLES 4u
+typedef struct cost_table {
+    const tide_system_tasks *systems;
+    uint32_t count;
+    system_cost *costs;
+} cost_table;
+static TIDE_THREAD_LOCAL cost_table cost_tables[COST_TABLES];
+static TIDE_THREAD_LOCAL uint32_t cost_table_next;
+
+static system_cost *costs_of(const tide_tick_systems *tick, const tide_jobs *jobs)
+{
+    if (!jobs || !jobs->timed || jobs->threads < 2u || !tick->count) return NULL;
+    for (uint32_t i = 0; i < COST_TABLES; i++) {
+        if (cost_tables[i].systems == tick->systems && cost_tables[i].count == tick->count) return cost_tables[i].costs;
+    }
+    cost_table *table = &cost_tables[cost_table_next++ % COST_TABLES]; // The one filled longest ago
+    free(table->costs);
+    *table = (cost_table){tick->systems, tick->count, tide_alloc_zeroed(tick->count, sizeof(system_cost))};
+    return table->costs;
+}
+
+// A system's work this tick: tidec's reckoning, or what its last ticks' time
+// says of as many rows where that's more.
+static uint64_t work_of(const system_cost *cost, const uint64_t work)
+{
+    if (!cost || !cost->work) return work;
+    const double timed = (double)work * (double)cost->ns * (double)WORK_PER_NS / (double)cost->work;
+    return timed <= (double)work ? work : timed < 1e18 ? (uint64_t)timed : (uint64_t)1e18;
+}
+
+static void note_cost(system_cost *cost, const uint64_t ns, const uint64_t work)
+{
+    if (!work) return; // Nothing ran (no rows, or a predicted tick that left it out)
+    cost->ns = cost->ns - cost->ns / 8u + ns;
+    cost->work = cost->work - cost->work / 8u + (work < (uint64_t)1e15 ? work : (uint64_t)1e15);
+}
 
 // A system's pages for chunks that go in pieces (system_state.owned)
 enum { OWNING = 1, OWNED };
@@ -172,6 +231,8 @@ typedef struct system_state {
     uint32_t next_settle;
     uint32_t batch;
     uint32_t batches;
+    uint64_t work;           // As tidec reckons it (tide_system_tasks.count)
+    _Atomic uint64_t spent;  // The time its tasks took in all, for a pool that times its ticks
     _Atomic uint64_t began; // Profiling: when its first task started, and its last ended
     _Atomic uint64_t ended;
 } system_state;
@@ -225,6 +286,7 @@ typedef struct tick_run {
     // looking for work starts here rather than going through them again
     atomic_uint front;
     tide_profile *profile;     // The pool's, to time each system, or NULL
+    system_cost *costs;        // What each system's last ticks took, or NULL
 } tick_run;
 
 static void relax(void)
@@ -316,12 +378,15 @@ static bool work_once(tick_run *r)
         if (first >= st->tasks) continue;
         const uint32_t end = st->tasks - first > st->batch ? first + st->batch : st->tasks;
         tide_memory_sync(); // What the systems before it made on other threads
-        if (r->profile) note_least(&st->began, tide_time_now_ns());
+        const uint64_t began = r->profile || r->costs ? tide_time_now_ns() : 0u;
+        if (r->profile) note_least(&st->began, began);
         for (uint32_t task = first; task < end; task++) { // Each with its own queue and handles, as on its own
             task_context context = {&r->queues[st->first + task], &r->spawned[st->first + task], system->settles};
             run_task(r->world, system, &context, task, st->pieces);
         }
-        if (r->profile) note_most(&st->ended, tide_time_now_ns());
+        const uint64_t ended = r->profile || r->costs ? tide_time_now_ns() : 0u;
+        if (r->profile) note_most(&st->ended, ended);
+        if (r->costs) atomic_fetch_add_explicit(&st->spent, ended - began, memory_order_relaxed);
         finish_tasks(r, s, end - first);
         return true;
     }
@@ -618,7 +683,7 @@ static tide_queue *task_queues(const uint32_t tasks)
     return kept_queues;
 }
 
-static void run_on_threads(void *world, const tide_tick_systems *tick, const tide_jobs *jobs)
+static void run_on_threads(void *world, const tide_tick_systems *tick, const tide_jobs *jobs, system_cost *costs)
 {
     const uint32_t count = tick->count;
     // The systems' states, from the first cache line that starts in their memory
@@ -627,7 +692,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
     system_state *states = (system_state *)(((uintptr_t)state_memory + line - 1u) & ~(line - 1u));
     tick_run r = {.world = world, .tick = tick, .state = states,
                   .first_dependent = zeroed(count + 1u, sizeof(uint32_t)), .profile = jobs->profile,
-                  .threads = jobs->threads, .jobs = jobs};
+                  .threads = jobs->threads, .jobs = jobs, .costs = costs};
     for (uint32_t i = 0; i < LOOP_SLOTS; i++) {
         atomic_init(&r.loops[i].job, NULL);
         atomic_init(&r.loops[i].users, 0u);
@@ -643,10 +708,15 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
         system_state *st = &r.state[s];
         uint64_t work;
         const uint32_t chunks = system->count(world, &work);
+        st->work = work;
+        work = work_of(costs ? &costs[s] : NULL, work);
         st->pieces = system->splits ? pieces_for(chunks, work, jobs->threads) : 1u;
         st->tasks = chunks * st->pieces;
-        // A few at a time where each is next to nothing, but no fewer takings than threads
-        const uint64_t each = work / st->tasks;
+        // A few at a time where each is next to nothing, but no fewer takings
+        // than threads. Whole chunks by tidec's reckoning alone: their time on
+        // threads is as much waiting for memory as work, and a million cheap
+        // rows went 5% slower taken a chunk at a time for it
+        const uint64_t each = (st->pieces > 1u ? work : st->work) / st->tasks;
         const uint64_t worth = each ? (BATCH_WORK + each - 1u) / each : st->tasks;
         const uint32_t most = st->tasks / jobs->threads;
         st->batch = worth < most ? (uint32_t)worth : most ? most : 1u;
@@ -659,6 +729,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
         atomic_init(&st->waiting, system->wait_count);
         atomic_init(&st->settle_claimed, 0u);
         atomic_init(&st->owned, 0u);
+        atomic_init(&st->spent, 0u);
         atomic_init(&st->began, 0u);
         atomic_init(&st->ended, 0u);
         // Spawns hand out IDs in the tick's order: a system that settles its
@@ -690,6 +761,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
     jobs->run(jobs->self, work, &r);
     tide_memory_sync(); // What the other threads made (see tide/page.h)
     tasks_wanted = atomic_load(&r.tasks_used) != 0u;
+    for (uint32_t s = 0; costs && s < count; s++) note_cost(&costs[s], atomic_load(&r.state[s].spent), r.state[s].work);
     if (r.profile) {
         tide_profile_count(&r.profile->systems, count);
         for (uint32_t s = 0; s < count; s++) {
@@ -714,14 +786,15 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
 {
     // C that started tasks in the last tick has work tidec can't see: on
     // threads again, until a tick starts none
+    system_cost *costs = costs_of(tick, jobs);
     uint64_t work_in_all = tasks_wanted ? PARALLEL_WORK : 0;
     for (uint32_t s = 0; s < tick->count && jobs && jobs->threads > 1 && work_in_all < PARALLEL_WORK; s++) {
         uint64_t work = 0;
         tick->systems[s].count(world, &work);
-        work_in_all += work;
+        work_in_all += work_of(costs ? &costs[s] : NULL, work);
     }
     if (jobs && jobs->threads > 1 && work_in_all >= PARALLEL_WORK) {
-        run_on_threads(world, tick, jobs);
+        run_on_threads(world, tick, jobs, costs);
         tide_entities_settle(tick->entities);
         return;
     }
@@ -736,18 +809,21 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
     if (tick->prepare) tick->prepare(world);
     tide_profile *profile = jobs ? jobs->profile : NULL;
     if (profile) tide_profile_count(&profile->systems, tick->count);
+    uint64_t ended = costs && !profile ? tide_time_now_ns() : 0u; // A system starts where the one before it ended
     for (uint32_t s = 0; s < tick->count; s++) {
         const tide_system_tasks *system = &tick->systems[s];
         uint64_t work;
         const uint32_t tasks = system->count(world, &work);
         pending_entities *spawned = system->settles ? zeroed(tasks, sizeof *spawned) : NULL;
-        const uint64_t began = profile ? tide_time_now_ns() : 0u;
+        const uint64_t began = profile ? tide_time_now_ns() : ended;
         for (uint32_t task = 0; task < tasks; task++) {
             task_context context = {NULL, spawned ? &spawned[task] : NULL, system->settles};
             run_task(world, system, &context, task, 1u);
         }
         if (spawned) settle_system(tick, tasks, spawned);
-        if (profile) tide_profile_add(&profile->systems, s, system->name, began, tide_time_now_ns());
+        if (profile || costs) ended = tide_time_now_ns();
+        if (profile) tide_profile_add(&profile->systems, s, system->name, began, ended);
+        if (costs) note_cost(&costs[s], ended - began, work);
         free(spawned);
     }
     serial_threads = 0;

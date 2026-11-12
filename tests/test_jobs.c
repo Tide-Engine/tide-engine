@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "tide/jobs.h"
+#include "tide/time.h"
 #include "tide_test.h"
 
 static void alone_run(void *self, void (*work)(void *context, uint32_t thread), void *context)
@@ -278,4 +279,49 @@ TIDE_TEST(jobs_split_spawns_return_final_full_keys)
     }
     tide_entities_free(&w.entities);
     tide_queue_free(&queue);
+}
+
+// Rows tidec reckons as next to nothing that take two milliseconds: a pool
+// that times its ticks puts the next tick on threads, the chunk in pieces.
+static uint32_t slow_count(const void *world, uint64_t *work)
+{
+    (void)world;
+    *work = 1000;
+    return 1;
+}
+
+static void run_slow(void *world, const uint32_t task, const uint32_t pieces)
+{
+    (void)world;
+    (void)task;
+    pieces_seen[0] = pieces;
+    tasks_run[0]++;
+    const uint64_t until = tide_time_now_ns() + 2000000u / pieces;
+    while (tide_time_now_ns() < until) {
+    }
+}
+
+TIDE_TEST(jobs_costly_rows_go_in_pieces_once_timed)
+{
+    static const tide_system_tasks systems[1] = {{.count = slow_count, .run = run_slow, .splits = true, .name = "slow"}};
+    tide_queue queue = {0};
+    tide_entities entities = {0};
+    const tide_tick_systems tick = {systems, 1, NULL, &queue, &entities};
+    const tide_jobs untimed = {.threads = 8, .run = alone_run};
+    const tide_jobs timed = {.threads = 8, .run = alone_run, .timed = true};
+    for (uint32_t i = 0; i < 3u; i++) { // By tidec's reckoning alone: one thread, every tick
+        memset(tasks_run, 0, sizeof tasks_run);
+        tide_run_systems(NULL, &tick, &untimed);
+        TIDE_CHECK(pieces_seen[0] == 1 && tasks_run[0] == 1);
+    }
+    memset(tasks_run, 0, sizeof tasks_run);
+    tide_run_systems(NULL, &tick, &timed); // Nothing known of it yet
+    TIDE_CHECK(pieces_seen[0] == 1 && tasks_run[0] == 1);
+    for (uint32_t i = 0; i < 3u; i++) { // And stays in pieces, timed on threads
+        memset(tasks_run, 0, sizeof tasks_run);
+        tide_run_systems(NULL, &tick, &timed);
+        TIDE_CHECK(pieces_seen[0] == 16 && tasks_run[0] == 16);
+    }
+    tide_queue_free(&queue);
+    tide_entities_free(&entities);
 }

@@ -403,7 +403,7 @@ C can't spawn, destroy, add or remove components, or send events from a system: 
 
 A system written in C splits its entities across threads by the rule every system does (see [Splitting across threads](../game/schedule.md#splitting-across-threads)): its runs go to different threads, and C is called on several at once, unless it takes a singleton as `mut`. Each run only reaches its own rows, so C that works row by row needs nothing more. C that keeps something from one run to the next, or needs its runs in order, takes a `mut` singleton, which keeps it on one thread, as it does a system written in Tide.
 
-The engine can't tell how much work C does, so it counts a row of a system written in C as a few calls' worth (256 operations) when it decides whether a tick is worth threads.
+The engine can't tell how much work C does before it runs, so it starts by counting a row of a system written in C as a few calls' worth (256 operations) when it decides whether a tick is worth threads, then goes by the time the system took in the ticks before, as it does for every system.
 
 ## Drawing from C
 

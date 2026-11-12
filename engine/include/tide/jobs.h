@@ -58,6 +58,12 @@ typedef struct tide_jobs {
     // into another whole calculation.
     void (*background)(void *self, struct tide_background *job);
     bool (*help)(void *self, bool helpers_only);
+    // Ticks time their systems and take each one's work from what its last
+    // ticks took, where that's more than tidec reckons: costly rows go to
+    // threads however few they are. A real pool says so. One a test counts
+    // rounds or tasks with leaves it false, and gets tidec's reckoning alone,
+    // the same on every run. Results are the same either way.
+    bool timed;
 } tide_jobs;
 
 // A system, as the tick runs it: generated code has a table of them, in the
