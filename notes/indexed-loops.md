@@ -23,7 +23,7 @@ the plain loop was 37 (now 11: notes/ecs.md, What a row costs in entity order). 
   `found * TIDE_IX_MOST > rows` (`IX_MOST` 6: more than one row in six), and the loop then frees its hits and
   goes through the plain loop, which was already written beside it for tables of fewer than `TIDE_IX_LEAST`
   rows. One in six is where the two cost the same on this machine: a candidate is about 50 ns (the sort, a
-  `tide_table_get` a lane) and a plain row 11; at one row in eight the index took 6.6 µs of 1,000 rows against
+  `tide_table_get` a lane) and a plain row 11; at one row in eight the index took 6.6 Âµs of 1,000 rows against
   10, at one in four 12 against 10.
 - **A site that keeps finding most stops searching for a while.** `tide_ix_site` gained `most` (searches in a
   row that found most) and `pass` (runs of the loop left to go through every row with no search). Each such

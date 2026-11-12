@@ -17,7 +17,7 @@ For notes/ecs.md (What a row costs in entity order) and notes/indexed-loops.md (
 game, not kept in the repository: 1,000 `Slim` rows (6 lanes, one archetype) and 1,000 `Fat` rows (128 lanes of
 match state, a 2.6 KB `local` struct, two archetypes interleaved one row in three), each system named for what
 it does. Release, Windows, Ryzen 9 7900X, hidden, 300 ticks after 100 of warm-up, mean ms a tick from
-`--profile`'s `systems` (three runs each, within 5%). A thousand rows, so µs a tick is ns a row.
+`--profile`'s `systems` (three runs each, within 5%). A thousand rows, so Âµs a tick is ns a row.
 
 | System | Before | After |
 |---|---|---|
@@ -35,7 +35,13 @@ Where an index still pays, 1,000 `Fat` rows, the guard `row.f.beat >= N` (the ke
 is kept): one row in eight found, 6.6 against the plain loop's 10; one in four, 12 against 10 (now plain: more
 than one in six); one in two, 10 either way (plain).
 
-Not measured here: Mount & Rifle itself, whose thread measures it on the nightly with this in.
+Mount & Rifle on nightly.24 (its thread's numbers, the 1,000-man battle, mean ms a tick, nightly.13 before):
+Measure 0.127 to 0.032, LeaveField 0.072 to 0.032, Roam 0.69 to 0.35, Muster 0.059 to 0.024; the match's p50
+8.49 to 7.62 ms and its views' 4.55 to 4.22. Still 77 to 130 ns a row there: FallOnField, Fall and Routed,
+which is what finding a chunk's lanes once for the chunk is for. In the probe, a system shaped like FallOnField
+(`mut Fat f, mut World world`, returning on its first line, 7 of 134 lanes used, runs of one or two rows):
+46 ns a row on nightly.24, 28 without the NULL stores, 22 with the lanes kept for the chunk. The game on a
+nightly with that in isn't measured yet.
 
 ## A wide component's rows (2026-11-10)
 
@@ -62,8 +68,8 @@ Probes added beside the game's code (`Party` is 186 lanes, 346 rows):
 | 60 calls of a helper handed `mut Party`, `mut World` and `Ground` between a Get and a Set | 6.03 | 0.080 |
 | 17 times through `query (Spot s)` in a system (5,900 rows) | 0.39 | 0.43 |
 
-The last two are what the report's third cost was (the helper's copy of `Ground`'s lists, 100 µs a call, not the
-Get and Set at 2 µs a pair) and what's left of Roam (a query's rows in entity order, 70 ns each). The last row's
+The last two are what the report's third cost was (the helper's copy of `Ground`'s lists, 100 Âµs a call, not the
+Get and Set at 2 Âµs a pair) and what's left of Roam (a query's rows in entity order, 70 ns each). The last row's
 function is the same C in both; its 8% is what the code around it does to the optimizer's choices.
 
 The game without the probes:
