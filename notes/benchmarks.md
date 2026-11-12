@@ -38,6 +38,17 @@ longest 4.9, 6.1 ms). GPU time isn't quoted: another program had the GPU. The ga
 two identical runs with or without this (as noted before for this game), so it says nothing of the match
 being the same: `tide_platform_alongside` does, bit for bit, for a match that repeats.
 
+The game's own figures on nightly.37 with the setting on (its thread, the same run, a quiet machine: CPU 2-5%
+busy, GPU idle otherwise; two runs each way): mean 5.72, 5.59 to 4.77, 4.66 ms; p50 4.65, 4.29 to 4.81, 4.58;
+p95 9.10, 8.83 to 6.06, 5.92; longest 12.24, 12.44 to 8.95, 7.69; a tick on its threads mean 3.7, p95 4.5,
+longest 11.6, 9.5. Two things in them aren't explained:
+- **Views cost more beside a tick**: p50 3.10, 3.02 to 3.77, 3.57 ms, which is why p50 doesn't fall. Not seen in
+  the busier runs above. A hidden run's frames come back to back, so a 3.7 ms tick overlaps most of two
+  frames where a window's frames have idle time between them; and the leader, eleven workers and the frame's
+  thread are thirteen threads on twelve cores. Untried: a led round taking one worker fewer.
+- **GPU time 0.3 ms higher** with it on (p50 6.52 to 6.86, p95 6.70 to 7.04), with the render phase 0.87 to
+  0.92 ms. Not looked into.
+
 ## The tick before, for a whole row (2026-11-12, night)
 
 For notes/ecs.md (The tick before, for a whole row; Tried and taken out). `bench_views` gained `Mixed`, a
