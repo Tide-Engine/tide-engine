@@ -1,5 +1,55 @@
 # ECS and simulation state
 
+## What a row costs in entity order: slots beside the ordered keys (2026-11-12)
+
+Found profiling Mount & Rifle's 1,000-soldier battle toward 144 Hz. Two reports, one cause, plus two more found
+on the way. A `foreach` over a query's ~1,000 rows cost 0.35 to 0.45 ms a tick, and per-entity systems cost 75 to
+250 ns a row whatever they did (`LeaveField`, which reads one field and returns: 75 ns), where a probe's
+per-entity system that writes its own component cost 6. Box3D's bookkeeping over 1,396 static bodies was 1.7 ms a
+tick for the same reason. Results, row order, hashes and snapshots are what they were.
+
+- **The cause: a key looked up for every row.** Since entities have logical identities (2026-11-06, below),
+  anything that must go in entity order walks `tide_entities_ordered_archetypes`' sorted keys and asks
+  `tide_entity_location` where each is: a hash of the 16-byte key, a probe of the map, then the slot. That is a
+  query's `foreach` in match code (`gen_query_walk`), and every per-entity system that isn't split across
+  threads (`gen_canonical_system_keys`: one that writes a singleton, takes a `World`, sends, spawns or destroys;
+  extern per-entity systems too), which looked each key up twice (once to end the run before it, once to start
+  its own). About 26 ns a row, more with the map out of cache. A per-entity system that only writes its own
+  component goes by chunks and never paid it, which is why a probe of those looked fast.
+- **Slots beside the keys** (`engine/src/entity.c`, `entity.h`): `tide_entities_ordered_archetypes_slots` gives
+  the same cached keys and, beside them, the slot each was in when the order was made (one allocation, the slots
+  after the keys; `tide_entities_ordered_archetypes` is now a call of it). `tide_entity_location_at(t, slot, key)`
+  (inline) reads the slot: alive and holding that key, its archetype and row; anything else, `tide_entity_location`
+  by the key as before. A slot is an entity's for as long as it lives in the table, and an order is retired
+  whenever the keys change, so a slot that isn't the key's own means the entity was destroyed after a loop
+  borrowed the arrays (its slot maybe a newer entity's: the key check refuses it), or went to another shard and
+  came back to another slot; both give what the lookup gives. A row that moves keeps its slot, so row moves still
+  keep the order. The walks above use it; nothing else changed in them.
+- **A loop through an index that finds most rows** (`index_codegen.inc`; notes/indexed-loops.md, When most rows
+  pass). The reported `foreach` starts with `if (row.t.down) continue;`, so it's an indexed loop, and its search
+  gave back all 1,000 rows: found, sorted by identity and copied whole, 128 lanes each. Such a loop now goes
+  through every row as the plain loop does, a candidate's copy holds only the lanes the body reads, and building
+  an index copies only the lanes holding its keys.
+- **A view's row blended from last tick's world looked its entity up five times** (`gen_prev_found`): its snaps
+  and what it was born as in each world, then its place in the old one. `tide_prev_<C>` and `tide_prev_some_<C>`
+  now find its slot once in each world (`tide_entity_slot_index`) and read the snaps, `tide_entity_born_at` and
+  the place from there; `tide_load_<C>_at` and `tide_load_some_<C>_at` load by place (`tide_load_<C>` is a call
+  of it). This is the views' own cost, not the tick's.
+- **Tests**: `entity_ordered_archetypes_slots_give_each_keys_place` (tide_tests): slots against lookups, a row
+  that moves, a destroyed key whose slot a newer entity took, a slot that isn't the key's, `tide_entity_born_at`.
+  The indexed loops' differential fixture gained `Swing` (notes/indexed-loops.md). The walks themselves are what
+  every game's tests run.
+- **Measured**: notes/benchmarks.md, What a row costs in entity order.
+- **Remaining** (not built):
+  - A row in entity order is now about 11 ns in a query's `foreach` and 12 to 18 in a per-entity system, against
+    6 for a system that goes by chunks. What's left is the slot's page (a load through the table's pages for each
+    row) and, for systems, the setup of each run of rows: entities of several archetypes interleaved in identity
+    order make runs of one or two.
+  - A per-entity view's row is still about 50 ns with nothing in its body: the blend's lookup in each world (two
+    now), the correction's lookup in the local state (`tide_attached_find`, for a component with a `[Position]`
+    or `[Rotation]` field), and the GUI seed's hash of the entity.
+  - `tide_entities_ordered` (every archetype) has no slots: nothing walks it per row.
+
 ## A wide component's rows: the lanes a system reads, guards, calls' copies, views' rows when named (2026-11-10)
 
 Found profiling Mount & Rifle toward 144 Hz (its notes/gaps.md, "A fat component costs its whole width"): its

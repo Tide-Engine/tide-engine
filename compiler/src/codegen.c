@@ -11508,6 +11508,20 @@ static bool text_names_rows(const decl *sys, const char *text, size_t n);
 static bool system_guarded(const gen *g, const decl *sys);
 static bool match_query_lanes(const gen *g, const stmt *s, const param *p, const field *binding, uint64_t *words);
 
+// In tide_prev_<Component>: the entity found in last tick's world and in this one, once each (its slot holds its
+// snaps and its place, and what it was born as is beside it), NULL when it wasn't there or it jumped since.
+static void gen_prev_found(gen *g)
+{
+    sb *o = &g->c;
+    sb_put(o, "    const uint32_t before = tide_entity_slot_index(&w->entities, e);\n"
+              "    if (before == UINT32_MAX) return NULL;\n"
+              "    const uint32_t after = tide_entity_slot_index(&now->entities, e);\n"
+              "    const tide_entity_slot *const was = tide_entity_slot_of(&w->entities, before);\n"
+              "    if (was->snaps != (after == UINT32_MAX ? 0u : tide_entity_slot_of(&now->entities, after)->snaps)) return NULL;\n");
+    if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born_at(&w->entities, before), after == UINT32_MAX ? 0u : "
+                                    "tide_entity_born_at(&now->entities, after))) return NULL;\n");
+}
+
 // Sets `v` between `before` and itself: `t` of the way from `before`.
 static void gen_blend_value(gen *g, const char *v, const char *before, const type t)
 {
@@ -11805,9 +11819,8 @@ static void gen_blend_helpers(gen *g)
             // An entity's in last tick's world, into `out`, unless it wasn't there or it jumped since
             sb_printf(o, "TIDE_HELPER const %s *tide_prev_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n",
                       name, name, name);
-            sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
-            if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
-            sb_printf(o, "    return tide_load_%s(w, e, out) ? out : NULL;\n}\n\n", name);
+            gen_prev_found(g);
+            sb_printf(o, "    return tide_load_%s_at(w, (tide_location){was->archetype, was->row}, out) ? out : NULL;\n}\n\n", name);
             gen_far_blend(g, d);
             if (!reads_some_used(g, d)) continue;
             // The same for the lanes a view reads: only the fields in them blend, and only those are found
@@ -11826,9 +11839,8 @@ static void gen_blend_helpers(gen *g)
                 || (lookup_arches > 1 && comp_lanes(d) > 128 / lookup_arches);
             sb_printf(o, "TIDE_HELPER __attribute__((%s)) const %s *tide_prev_some_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out, "
                          "const uint64_t *some)\n{\n", outline ? "noinline" : "always_inline", name, name, name);
-            sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
-            if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
-            sb_printf(o, "    return tide_load_some_%s(w, e, out, some) ? out : NULL;\n}\n\n", name);
+            gen_prev_found(g);
+            sb_printf(o, "    return tide_load_some_%s_at(w, (tide_location){was->archetype, was->row}, out, some) ? out : NULL;\n}\n\n", name);
         }
     }
     g->indent = 0;
@@ -12342,9 +12354,10 @@ static void gen_component_access(gen *g)
         }
         // By entity: false when it's gone, or has none
         for (int put = 0; put < 2; put++) {
-            sb_printf(o, "TIDE_HELPER bool tide_%s_%s(%s%s *w, tide_entity e, %s%s *v)\n{\n", put ? d->has_preparation_state ? "store_full" : "store" : "load", name,
-                      put ? "" : "const ", w, put ? "const " : "", name);
-            sb_put(o, "    (void)v;\n    const tide_location loc = tide_entity_location(&w->entities, e);\n    switch (loc.archetype) {\n");
+            // Loading is by place too (tide_load_<Component>_at), for whoever has found the entity already
+            if (put) sb_printf(o, "TIDE_HELPER bool tide_%s_%s(%s *w, tide_entity e, const %s *v)\n{\n", d->has_preparation_state ? "store_full" : "store", name, w, name);
+            else sb_printf(o, "TIDE_HELPER bool tide_load_%s_at(const %s *w, const tide_location loc, %s *v)\n{\n", name, w, name);
+            sb_printf(o, "    (void)w;\n    (void)v;\n%s    switch (loc.archetype) {\n", put ? "    const tide_location loc = tide_entity_location(&w->entities, e);\n" : "");
             for (int a = 0; a < prog->archetypes.count; a++) {
                 if (!arch_stores(g, a, c)) continue;
                 sb_printf(o, "    case %d: ", a);
@@ -12365,6 +12378,8 @@ static void gen_component_access(gen *g)
                 }
             }
             sb_put(o, "    default: return false;\n    }\n}\n\n");
+            if (!put) sb_printf(o, "TIDE_HELPER bool tide_load_%s(const %s *w, tide_entity e, %s *v)\n{\n"
+                                   "    return tide_load_%s_at(w, tide_entity_location(&w->entities, e), v);\n}\n\n", name, w, name, name);
         }
         if (d->has_preparation_state) {
             sb_printf(o, "TIDE_HELPER bool tide_store_%s(%s *w, tide_entity e, const %s *v)\n{\n"
@@ -12383,8 +12398,8 @@ static void gen_component_access(gen *g)
                           k * width, k, width, width);
             }
             sb_put(o, "}\n\n");
-            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) bool tide_load_some_%s(const %s *w, tide_entity e, %s *v, const uint64_t *some)\n{\n", name, w, name);
-            sb_put(o, "    (void)v;\n    (void)some;\n    const tide_location loc = tide_entity_location(&w->entities, e);\n    switch (loc.archetype) {\n");
+            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) bool tide_load_some_%s_at(const %s *w, const tide_location loc, %s *v, const uint64_t *some)\n{\n", name, w, name);
+            sb_put(o, "    (void)w;\n    (void)v;\n    (void)some;\n    switch (loc.archetype) {\n");
             for (int a = 0; a < prog->archetypes.count; a++) {
                 if (!arch_stores(g, a, c)) continue;
                 sb_printf(o, "    case %d: ", a);
@@ -12397,6 +12412,8 @@ static void gen_component_access(gen *g)
                 sb_put(o, "        return true;\n");
             }
             sb_put(o, "    default: return false;\n    }\n}\n\n");
+            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) bool tide_load_some_%s(const %s *w, tide_entity e, %s *v, const uint64_t *some)\n{\n"
+                         "    return tide_load_some_%s_at(w, tide_entity_location(&w->entities, e), v, some);\n}\n\n", name, w, name, name);
         }
         // For hosts (see the header)
         sb_printf(o, "bool tide_has_%s(const %s *w, tide_entity e)\n{\n    const tide_location loc = tide_entity_location(&w->entities, e);\n"
@@ -15733,16 +15750,6 @@ static void gen_query_fresh(gen *g, const param *q, const char *name)
     }
 }
 
-#include "index_codegen.inc"
-
-static void gen_query_walk(gen *g, const stmt *s, const char *gather);
-
-static void gen_query_foreach(gen *g, const stmt *s)
-{
-    if (gen_indexed_query(g, s, NULL) || gen_indexed_rows(g, s)) return;
-    gen_query_walk(g, s, NULL);
-}
-
 typedef struct query_lane_read {
     uint64_t words[LANE_MASK_WORDS];
     bool some;
@@ -15752,6 +15759,16 @@ typedef struct query_lane_read {
 static bool query_reads_lane(const query_lane_read *r, const int k)
 {
     return !r->some || (r->words[k >> 6] >> (k & 63) & 1u);
+}
+
+#include "index_codegen.inc"
+
+static void gen_query_walk(gen *g, const stmt *s, const char *gather);
+
+static void gen_query_foreach(gen *g, const stmt *s)
+{
+    if (gen_indexed_query(g, s, NULL) || gen_indexed_rows(g, s)) return;
+    gen_query_walk(g, s, NULL);
 }
 
 // A foreach's rows, each through its body, or with `gather` (a parallel loop
@@ -15861,7 +15878,8 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         }
         sb_put(o, "};\n");
         line(g, o, "uint32_t tide_key_count = 0;");
-        line(g, o, "const tide_entity *tide_keys = tide_entities_ordered_archetypes(&%s->entities, tide_query_arches, %du, &tide_key_count);", world, admitted);
+        line(g, o, "const uint32_t *tide_key_slots = NULL;");
+        line(g, o, "const tide_entity *tide_keys = tide_entities_ordered_archetypes_slots(&%s->entities, tide_query_arches, %du, &tide_key_count, &tide_key_slots);", world, admitted);
         if (cache_columns) for (int a = 0; a < g->prog->archetypes.count; a++) {
             if (!query_admits(g, selection, a)) continue;
             line(g, o, "uint32_t tide_query_chunk%d = UINT32_MAX;", a);
@@ -15874,7 +15892,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         }
         line(g, o, "for (uint32_t tide_key_at = 0; tide_key_at < tide_key_count; tide_key_at++) {");
         g->indent++;
-        line(g, o, "const tide_location tide_qloc = tide_entity_location(&%s->entities, tide_keys[tide_key_at]);", world);
+        line(g, o, "const tide_location tide_qloc = tide_entity_location_at(&%s->entities, tide_key_slots[tide_key_at], tide_keys[tide_key_at]);", world);
         line(g, o, "switch (tide_qloc.archetype) {"); g->indent++;
     }
     for (int a = 0; a < g->prog->archetypes.count; a++) {
@@ -20486,15 +20504,15 @@ static void gen_canonical_system_keys(gen *g, const decl *sys)
     int count = 0;
     for (int a = 0; a < g->prog->archetypes.count; a++) if (runs_on(g, sys, a)) count++;
     if (!count) {
-        sb_put(o, "    const uint32_t tide_key_count = 0;\n    const tide_entity *tide_keys = NULL;\n");
+        sb_put(o, "    const uint32_t tide_key_count = 0;\n    const tide_entity *tide_keys = NULL;\n    const uint32_t *tide_key_slots = NULL;\n    (void)tide_key_slots;\n");
         return;
     }
     sb_put(o, "    static const uint32_t tide_system_arches[] = {");
     for (int a = 0, n = 0; a < g->prog->archetypes.count; a++) {
         if (runs_on(g, sys, a)) sb_printf(o, "%s%du", n++ ? ", " : "", a);
     }
-    sb_put(o, "};\n    uint32_t tide_key_count = 0;\n");
-    sb_printf(o, "    const tide_entity *tide_keys = tide_entities_ordered_archetypes(&tide_w->entities, tide_system_arches, %du, &tide_key_count);\n", count);
+    sb_put(o, "};\n    uint32_t tide_key_count = 0;\n    const uint32_t *tide_key_slots = NULL;\n");
+    sb_printf(o, "    const tide_entity *tide_keys = tide_entities_ordered_archetypes_slots(&tide_w->entities, tide_system_arches, %du, &tide_key_count, &tide_key_slots);\n", count);
 }
 
 static void gen_extern_system_run(gen *g, const decl *sys)
@@ -20560,7 +20578,7 @@ static void gen_extern_system_run(gen *g, const decl *sys)
         gen_canonical_system_keys(g, sys);
         sb_put(o,
                   "    for (uint32_t tide_key_at = 0; tide_key_at < tide_key_count;) {\n"
-                  "        const tide_location tide_loc = tide_entity_location(&tide_w->entities, tide_keys[tide_key_at]);\n"
+                  "        const tide_location tide_loc = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_at], tide_keys[tide_key_at]);\n"
                   "        uint32_t tide_key_end = tide_key_at + 1u;\n        switch (tide_loc.archetype) {\n");
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (!runs_on(g, sys, a)) continue;
@@ -20569,7 +20587,7 @@ static void gen_extern_system_run(gen *g, const decl *sys)
                          "            const uint32_t tide_c = tide_loc.row >> %d;\n"
                          "            uint32_t tide_last_row = tide_loc.row + 1u;\n"
                          "            while (tide_key_end < tide_key_count) {\n"
-                         "                const tide_location next = tide_entity_location(&tide_w->entities, tide_keys[tide_key_end]);\n"
+                         "                const tide_location next = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_end], tide_keys[tide_key_end]);\n"
                          "                if (next.archetype != %du || next.row != tide_last_row || (next.row >> %d) != tide_c) break;\n"
                          "                tide_key_end++; tide_last_row++;\n            }\n"
                          "            const uint32_t tide_from = tide_loc.row & %du;\n"
@@ -20905,7 +20923,7 @@ static void gen_system_run(gen *g, const decl *sys)
             gen_canonical_system_keys(g, sys);
         sb_put(o,
                       "    for (uint32_t tide_key_at = 0; tide_key_at < tide_key_count;) {\n"
-                      "        const tide_location tide_loc = tide_entity_location(&tide_w->entities, tide_keys[tide_key_at]);\n"
+                      "        const tide_location tide_loc = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_at], tide_keys[tide_key_at]);\n"
                       "        uint32_t tide_key_end = tide_key_at + 1u;\n        switch (tide_loc.archetype) {\n");
         }
         for (int a = 0; a < prog->archetypes.count; a++) {
@@ -20917,7 +20935,7 @@ static void gen_system_run(gen *g, const decl *sys)
                              "            const uint32_t tide_c = tide_loc.row >> %d;\n"
                              "            uint32_t tide_last_row = tide_loc.row + 1u;\n"
                              "            while (tide_key_end < tide_key_count) {\n"
-                             "                const tide_location next = tide_entity_location(&tide_w->entities, tide_keys[tide_key_end]);\n"
+                             "                const tide_location next = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_end], tide_keys[tide_key_end]);\n"
                              "                if (next.archetype != %du || next.row != tide_last_row || (next.row >> %d) != tide_c) break;\n"
                              "                tide_key_end++; tide_last_row++;\n            }\n"
                              "            const uint32_t tide_canonical_from = tide_loc.row & %du;\n"

@@ -3,7 +3,7 @@
 file(READ "${GAME_C}" generated)
 foreach(component IN ITEMS LoadBytes LoadPair LoadWide LoadTag LoadOptional
         tide_local_component_LoadBytes tide_local_component_LoadPair tide_local_component_LoadWide tide_local_component_LoadTag)
-    string(FIND "${generated}" "TIDE_HELPER bool tide_load_${component}(" begin)
+    string(FIND "${generated}" "TIDE_HELPER bool tide_load_${component}_at(" begin) # The copies: tide_load_<C> finds the place and calls it
     if(begin LESS 0)
         message(FATAL_ERROR "missing ${component} load helper")
     endif()

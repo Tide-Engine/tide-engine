@@ -1357,6 +1357,7 @@ Provisional (Claude's picks, 2026-11-05):
 - A loop in async code whose body waits (`await`) isn't indexed: the search can't be kept across a wait.
 - **Which keys**: two or three components of one vector bounded both ways (a grid), else an equality, else one number bounded both ways, else one bounded one way.
 - An index of a world's rows lasts while the rows it was made from are unchanged, across ticks too: an index of walls that never move is made once.
+- **When most rows can pass** (2026-11-12): a search of a world's query that finds more than one row in six saves nothing, so the loop then goes through every row as a plain loop does, which costs less a row, and a loop whose searches keep finding that many leaves the search out for some of its runs. So does a loop over fewer than 32 rows. The results are the same either way; only the cost differs. `indexed` still means what it meant: the loop can be indexed.
 
 ## Text
 
