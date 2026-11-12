@@ -1,4 +1,5 @@
 #include "tide/entity.h"
+#include "tide/page.h"
 #include "tide/time.h"
 
 #include <stdio.h>
@@ -459,15 +460,40 @@ static bool slot_key(const tide_entity_slot *slot, tide_entity e)
            __atomic_load_n(&slot->entity.lineage, __ATOMIC_RELAXED) == e.lineage;
 }
 
+// The slot this thread last found an entity in, in whichever table, and how
+// far that was from the one before. Code that goes through a table's rows asks
+// for the same entity again (what it was born as, then its place in last
+// tick's world, whose slots are this one's), and then for the next row's,
+// which is most often as far on again: rows and slots are both handed out in
+// the order entities are made, so one kind's are a step apart. A slot that's
+// alive and holds the key is the entity's, in any table, so those two slots
+// are looked at before the key is hashed and looked up; a wrong guess costs
+// two reads.
+static TIDE_THREAD_LOCAL uint32_t slot_hint, slot_stride = 1u;
+
 uint32_t tide_entity_slot_index(const tide_entities *t, tide_entity e)
 {
     if (tide_entity_is_null(e))
         return UINT32_MAX;
+    const uint32_t hint = slot_hint, next = hint + slot_stride; // Wrapped, it's a slot like any other guess
+    const tide_entity_slot *guess = slot_of(t, hint); // One the table hasn't got reads as free
+    if (__atomic_load_n(&guess->state, __ATOMIC_ACQUIRE) == TIDE_ENTITY_ALIVE && slot_key(guess, e))
+        return hint;
+    guess = slot_of(t, next);
+    if (__atomic_load_n(&guess->state, __ATOMIC_ACQUIRE) == TIDE_ENTITY_ALIVE && slot_key(guess, e))
+    {
+        slot_hint = next;
+        return next;
+    }
     const uint32_t at = index_get(__atomic_load_n(&t->index, __ATOMIC_ACQUIRE), e);
     if (at == UINT32_MAX)
         return at;
     const tide_entity_slot *slot = slot_of(t, at);
-    return __atomic_load_n(&slot->state, __ATOMIC_ACQUIRE) == TIDE_ENTITY_ALIVE && slot_key(slot, e) ? at : UINT32_MAX;
+    if (__atomic_load_n(&slot->state, __ATOMIC_ACQUIRE) != TIDE_ENTITY_ALIVE || !slot_key(slot, e))
+        return UINT32_MAX;
+    slot_stride = at - hint;
+    slot_hint = at;
+    return at;
 }
 
 bool tide_entity_alive(const tide_entities *t, tide_entity e) { return tide_entity_slot_index(t, e) != UINT32_MAX; }

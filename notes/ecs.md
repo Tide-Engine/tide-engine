@@ -1,5 +1,35 @@
 # ECS and simulation state
 
+## A view's rows: the slot guessed, and a mut query's lanes (2026-11-12, later)
+
+The same morning's "Remaining" said a per-entity view's row still cost about 50 ns in the blend's two lookups.
+Measured with `bench_views` (20,000 rows, blended): 58 ns a row per entity, 53 for a query's row, where 2026-10-30
+measured 10 and 8 (before entities had logical identities and a lookup became a hash of 16 bytes and a probe).
+Mount & Rifle's views go through ~1,000 soldiers several times a frame.
+
+- **A lookup guesses the slot first** (`tide_entity_slot_index`, `engine/src/entity.c`): a thread remembers the
+  slot it last found an entity in and how far that was from the one before (`slot_hint`, `slot_stride`,
+  thread-local), and looks at that slot and the one a stride on before hashing the key. A slot that is alive and
+  holds the key is the entity's, in whichever table (the rule `tide_entity_location_at` rests on), so a guess
+  is checked, never trusted: results are what the lookup gives. It fits what row code asks: the same entity
+  again (what it was born as, then last tick's world, whose slots are a copy's), then the next row's entity,
+  whose slot is most often one stride on, as rows and slots are both handed out in the order entities are made
+  (men and their kit spawned in turn: a stride of 2). A table whose rows no longer follow its slots falls back
+  to the lookup at the cost of two reads. Every caller gains: `tide_entity_location`, `tide_entity_born`,
+  `tide_entity_alive`, the views' `tide_prev_<C>`.
+- **A `parallel` loop over a view's query counts as a loop for its rows' lanes** (`stmt_query_uses`,
+  `stmt_row_reads`, `lane_reads_codegen.inc`): a query named anywhere but as a foreach's value made its rows
+  whole, and a parallel loop was "anywhere else".
+- **Tests**: `entity_slot_guesses_give_only_the_keys_own_slot` (tide_tests): two tables, one a copy of the other
+  with every third entity destroyed and others in their slots, asked in six orders (forward, back, strides of 2,
+  7 and 37, alternating tables) against a scan of every slot; an unknown key, the null key, an empty table.
+- **Measured** (benchmarks.md, Views' rows and loops on threads): a blended per-entity view row 58 to 21 ns, a
+  query's row 53 to 13.
+- **Remaining**: a blended row is still about twice 2026-10-30's (two checked slot reads and the born values'
+  page, where there was one array index). A view's query with a `mut` binding looks its entity up once more a
+  row for what it was born as, which the guess now answers. The GUI seed still hashes the entity for every
+  per-entity view row.
+
 ## What a row costs in entity order: slots beside the ordered keys (2026-11-12)
 
 Found profiling Mount & Rifle's 1,000-soldier battle toward 144 Hz. Two reports, one cause, plus two more found

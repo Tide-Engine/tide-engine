@@ -1,0 +1,10 @@
+// expect: 'shown' is a local field of 'Body', which this parallel loop's steps write for their own rows: read the row's
+component Body { float x; local float shown; }
+scene Main { }
+view Look(Body own, query (mut Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        f.body.shown = own.shown + f.body.x;
+    }
+}

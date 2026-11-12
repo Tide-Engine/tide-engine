@@ -11,6 +11,53 @@ After the deliberate identity-pin update, all five quick cases pass on native
 ASan and WASI.
 
 
+## Views' rows and loops on threads (2026-11-12)
+
+For notes/ecs.md (A view's rows: the slot guessed) and notes/schedule-and-threads.md (A frame's parallel loops on
+the pool). Release, Windows, Ryzen 9 7900X (12 threads), hidden.
+
+`bench_views` (20,000 rows, frames blended halfway between two ticks, 200 frames; `bench_views <frames> <alpha>
+threads` hands the frame's loops the platform's pool). Before is `dev` 7fa88319a; both taken with the machine
+quiet. ms a frame, and ns a row:
+
+| View | Before | After |
+|---|---|---|
+| PitchWide (per entity, reads one field of 75 lanes) | 1.15 (58) | 0.42 (21) |
+| PitchSmall (per entity, small component) | 1.16 (58) | 0.42 (21) |
+| QueryWide (a query's rows, wide) | 1.06 (53) | 0.29 (14) |
+| QuerySmall (a query's rows, small) | 1.05 (53) | 0.25 (13) |
+| The same four with no blending (alpha 1) | 0.18 / 0.18 / 0.03 / 0.03 | as before |
+
+So the blend's lookups were 49 of a per-entity row's 58 ns; the benchmark spawns its two kinds in turn, so a
+kind's slots are two apart (the stride). New in the benchmark: `PlaceEach` and `PlaceAtOnce` work a matrix out
+for every row of `query (mut Wide w)` (six `Math.Sin`, a `quaternion.Euler`, a `float4x4.TRS`) into a local field,
+in a `foreach` and in a `parallel` loop: 2.3 ms in order; at once 2.9 on one thread (the cells are looked up
+twice a row, once to make them ready and once in the step) and 1.4 on twelve, of which the steps' round is 0.47
+and the rest is making the rows and readying the cells in order. Before, the parallel form was a compile error.
+
+Mount & Rifle (its `dev` 14737bb, built with each checkout through a scratch `TIDE_EXTERNAL_DIRS` folder with
+`DEFINES BATTLE_TEST ARMY`; `--host --seed 42 --frames 2400 --size 1920 1080 --profile x.json --profile-warmup
+1500`, the 1,000-man battle, frames 1501-2400). Nine runs before and eight after, alternating, on a machine other
+sessions were building on (the whole frame drifted 11 to 18 ms between runs, so only differences well past the
+views that didn't change count; those moved -2 to -10%). Medians of each view's mean, ms a frame:
+
+| View | Before | After |
+|---|---|---|
+| Campaign.DrawCampaign (`foreach` over Places, 346 `mut Party` rows, Encounters) | 0.465 | 0.322 |
+| Infantry.Traces (`foreach` over Bullets and ~1,000 Troopers) | 0.326 | 0.217 |
+| Campaign.CampaignHud | 0.229 | 0.195 |
+| Infantry.OthersOnFoot (per entity, ~1,000 `mut Trooper`) | 0.729 | 0.639 |
+| DrawFlora (its own `parallel` loops, on threads for the first time) | 0.546 | 0.523 |
+| Every view, summed | 5.73 | 5.00 |
+
+About 0.3 ms of the difference is the rows' (the two walks a third less each); the rest is within the drift.
+`DrawFlora` didn't change: its loops are short or rare in this battle. `OthersOnFoot` is its own work (posing
+near men, pushing far ones): the game can now put that in a parallel loop over its rows. All 17 runs of the
+after build finished, 2,400 frames each with the views' loops on the pool. One after-run had every tick at ~52 ms
+(the match phase; its systems' own times summed as usual) while other sessions compiled: the pool's threads
+weren't getting cores. It didn't happen in the eight others, and the before build wasn't run under the same load
+at that moment, so it's put down to the machine, unproven.
+
 ## What a row costs in entity order (2026-11-12)
 
 For notes/ecs.md (What a row costs in entity order) and notes/indexed-loops.md (When most rows pass). A probe

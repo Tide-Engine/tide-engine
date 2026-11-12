@@ -545,11 +545,57 @@ static bool round_loop(const uint32_t count, void (*work_fn)(void *context, uint
     return true;
 }
 
+// A frame's pool (tide_loops_enter): its loops' steps on the pool's threads,
+// a round each, as round_loop's are for a tick on one thread.
+static TIDE_THREAD_LOCAL const tide_jobs *frame_jobs;
+
+const tide_jobs *tide_loops_enter(const tide_jobs *jobs)
+{
+    const tide_jobs *previous = frame_jobs;
+    frame_jobs = jobs && jobs->threads > 1u ? jobs : NULL;
+    return previous;
+}
+
+void tide_loops_leave(const tide_jobs *previous) { frame_jobs = previous; }
+
+static void take_frame_loop(void *context, const uint32_t thread)
+{
+    loop_job *job = context;
+    bool synced = thread == 0u; // The caller's thread made what there is to see
+    for (;;) {
+        const uint32_t task = atomic_fetch_add(&job->next, 1u);
+        if (task >= job->count) break;
+        if (!synced) {
+            tide_memory_sync(); // What the frame made on its own thread
+            synced = true;
+        }
+        job->work(job->context, task);
+        atomic_fetch_add(&job->done, 1u);
+    }
+}
+
+static bool frame_loop(const uint32_t count, void (*work_fn)(void *context, uint32_t task), void *context,
+                       const uint64_t cost)
+{
+    const tide_jobs *jobs = frame_jobs;
+    if (!jobs || count < 2u || cost < ROUND_WORK) return false;
+    loop_job job = {work_fn, context, count, 0u, 0u};
+    atomic_init(&job.next, 0u);
+    atomic_init(&job.done, 0u);
+    frame_jobs = NULL; // A loop inside its steps runs in order (the other threads have none)
+    tide_memory_sync();
+    jobs->run(jobs->self, take_frame_loop, &job);
+    frame_jobs = jobs;
+    tide_memory_sync(); // What the other threads made (see tide/page.h)
+    return true;
+}
+
 void tide_parallel_for(const uint32_t count, void (*work_fn)(void *context, uint32_t task), void *context,
                        const uint64_t cost)
 {
     tick_run *r = current;
     if (!r && round_loop(count, work_fn, context, cost)) return;
+    if (!r && frame_loop(count, work_fn, context, cost)) return;
     if (!r && tide_worker_parallel(count, work_fn, context, cost)) return;
     loop_job job = {work_fn, context, count, 0u, 0u};
     atomic_init(&job.next, 0u);

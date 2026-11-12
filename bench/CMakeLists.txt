@@ -242,3 +242,7 @@ if(WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
 endif()
 
 tide_add_game(bench_views SOURCES views/game.tide NAME game HOST views/main.c)
+if(TIDE_PLATFORM) # The frame's parallel loops on the platform's pool
+    target_link_libraries(bench_views PRIVATE tide_platform)
+    target_compile_definitions(bench_views PRIVATE TIDE_BENCH_VIEWS_THREADS=1)
+endif()

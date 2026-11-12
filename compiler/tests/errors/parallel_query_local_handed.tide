@@ -1,0 +1,8 @@
+// expect: 'Body' has local fields that hold text or lists, which a parallel loop's steps can't change
+component Body { float x; local float shown; local List<float> trail; }
+scene Main { }
+void Show(mut Body body) { body.shown = body.x; }
+view Look(query (mut Body body) bodies)
+{
+    parallel (var f in bodies) Show(f.body);
+}

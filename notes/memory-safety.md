@@ -1,5 +1,17 @@
 # No Tide code can corrupt memory
 
+## A parallel step reading a list its code made (2026-11-12)
+
+Found building parallel loops for views: a step read a variable of the code around its loop holding a list on
+another thread and crashed, in a system on `dev` (`mut List<float> scale = [...]; parallel (var k in t.values)
+... scale[k % 64]`). What code makes is in its thread's scratch area; the step is handed the handle by value, and
+on another thread the offset names that thread's area: other memory, or none. Text, maps, sets and grids in
+variables are the same. Now such a loop's steps run on the thread that reached the loop (`par_stays`,
+`compiler/src/codegen.c`: the loop tells `tide_parallel_for` it has no work to share), in systems, handlers and
+views; a worker's captures were already made its own. Decided by the variable's type, so nothing depends on
+where a value came from. `tidec_e2e_parallel_views` runs the system on the platform's pool (the crash before)
+and checks a view's such loop takes no round. Details: schedule-and-threads.md, top section.
+
 ## Packed Entity test alignment (2026-11-07)
 
 Linux ASan/UBSan found an alignment violation in the hostile raw-entity tests:

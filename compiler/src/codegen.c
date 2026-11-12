@@ -14530,6 +14530,10 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
         capture(&out, "tide_gui *", "tide_ui");
         capture(&out, "uint32_t", "tide_seed");
         if (sys->takes_verified && sys->borrows_owner_world) capture(&out, "const tide_world *", "tide_verified");
+        // The frame's heaps, for a step on a thread the frame called in (gen_par_local_use)
+        capture(&out, "tide_heap *", "tide_heap_m");
+        capture(&out, "tide_heap *", "tide_heap_l");
+        capture(&out, "tide_heap *", "tide_heap_v");
     } else if (sys->is_handler) {
         capture(&out, ptr_type("", world_type(sys->is_local)), sys->is_local ? "tide_l" : "tide_w");
         capture(&out, ptr_type("const ", type_cname(sys->event)), trigger_cname(g, sys));
@@ -14987,7 +14991,45 @@ static int par_index(const gen *g, const stmt *loop)
 // and the queues go into the code's own, task by task, once the steps are
 // done: the order a foreach would have recorded them in, on any number of
 // threads.
-static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, const capture_list caps, const uint64_t cost)
+static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, const capture_list caps, uint64_t cost,
+                                    bool stays);
+static void gen_query_field_refs(gen *g, const param *q, const char *name);
+static void gen_query_fresh(gen *g, const param *q, const char *name);
+
+// Whether a loop's steps stay on the thread that reached the loop, whatever
+// they cost (the loop hands tide_parallel_for no work to share out):
+// - Steps that read a variable of the code around them holding text, a list,
+//   a map, a set or a grid. What code makes is in its thread's scratch area,
+//   and a handle into it means something else on another thread.
+// - Local code but a view's: only a frame's views are handed threads
+//   (tide_loops_enter), and their steps set those up (gen_par_local_use).
+// - A sharded game's views, which read which shard they draw from their thread.
+static bool par_stays(gen *g, const decl *sys, const stmt *loop)
+{
+    if (sys->is_worker) return false; // Its captures are made its own (gen_parallel_call)
+    if (sys->is_local && !sys->is_view) return true;
+    if (sys->is_view && sharded(g)) return true;
+    stmt_list locals = {0};
+    outer_locals_stmt(loop->then_stmt, loop->then_stmt, loop, &locals);
+    for (int i = 0; i < locals.count; i++) {
+        const type t = locals.items[i]->type;
+        if (t.kind == TY_GRID || worker_has_storage(t)) return true;
+    }
+    return false;
+}
+
+// In a view's step: the heaps its frame reads, as the thread that reached the
+// loop has them, and the pack. A thread the frame called in for the loop
+// (tide_loops_enter) has another world's, or none.
+static void gen_par_local_use(gen *g, const decl *sys, sb *o)
+{
+    if (!sys->is_view) return;
+    sb_put(o, "    tide_text_use(tide_heap_m, tide_heap_l);\n    tide_text_use_verified(tide_heap_v);\n");
+    if (g->prog->assets.count) sb_put(o, "    tide_pack_use();\n");
+}
+
+static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, const capture_list caps, const uint64_t cost,
+                                    const bool stays)
 {
     sb *o = &g->c;
     const decl *code = g->code;
@@ -15014,6 +15056,26 @@ static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, con
         line(g, o, "(void)tide_rowcap;");
         if (!gen_indexed_query(g, s, row)) gen_query_walk(g, s, row); // Through an index (index_codegen.inc)
     }
+    // Each row's local fields the steps reach, made ready in the rows' order as a foreach's row is at its start
+    // (gen_query_field_refs): what a step then finds is there, and nothing of this machine's is made on a thread
+    for (int i = 0, opened = 0; q->query_rows && i <= q->query.count; i++) {
+        if (i == q->query.count) {
+            if (opened) {
+                g->indent--;
+                line(g, o, "}");
+            }
+            break;
+        }
+        const param *p = &q->query.items[i];
+        if (!has_fields_ptr(p) || !param_binding(p)) continue;
+        if (p->mode != PARAM_MUT && !mask_has(code->query_mut_fields, p->type.decl->index)) continue;
+        if (!opened++) {
+            line(g, o, "for (uint32_t tide_k = 0; tide_k < tide_rown; tide_k++) {");
+            g->indent++;
+        }
+        line(g, o, "(void)tide_query_fields_mut_%s(tide_l, tide_rows[tide_k].entity, tide_rows[tide_k].tide_born);",
+             type_cname(local_part_of(p->type)));
+    }
     line(g, o, "uint32_t tide_per = (uint32_t)(((uint64_t)tide_rown + 1023u) / 1024u);");
     line(g, o, "if (tide_per < %uu) tide_per = %uu;", least, least);
     line(g, o, "const uint32_t tide_tasks = (uint32_t)(((uint64_t)tide_rown + tide_per - 1u) / tide_per);");
@@ -15025,7 +15087,7 @@ static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, con
     for (int k = 0; k < caps.count; k++) sb_printf(o, ", %s", caps.items[k].name);
     sb_put(o, "};\n");
     line(g, o, "if (tide_tasks) tide_parallel_for(tide_tasks, %s, (void *)(uintptr_t)&tide_cx, (uint64_t)tide_rown * %lluu);",
-         name, (unsigned long long)step);
+         name, (unsigned long long)(stays ? 0u : step));
     if (sends) {
         line(g, o, "if (tide_queues) {");
         g->indent++;
@@ -15048,16 +15110,19 @@ static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, con
 }
 
 // The loop where it is: set up, its steps run, and what they wrote put in.
-static void gen_parallel_call(gen *g, const stmt *s)
+static void gen_parallel_call_at(gen *g, const stmt *s)
 {
     sb *o = &g->c;
     const int index = par_index(g, s);
     const char *name = g->par_names.items[index];
     const decl *grid = s->value->type.decl;
-    const capture_list caps = par_captures(g, g->routine ? g->routine : g->code, s);
+    const decl *code = g->routine ? g->routine : g->code;
+    const capture_list caps = par_captures(g, code, s);
     const uint64_t cost = step_cost(s->then_stmt);
+    // The work tide_parallel_for is told of: none for steps that stay on this thread
+    const uint64_t shared = par_stays(g, code, s) ? 0u : cost < 1000000u ? cost : 1000000u;
     if (s->query) {
-        gen_parallel_query_call(g, s, name, caps, cost);
+        gen_parallel_query_call(g, s, name, caps, cost, par_stays(g, code, s));
         return;
     }
     if (g->routine && g->routine->is_worker) {
@@ -15116,7 +15181,7 @@ static void gen_parallel_call(gen *g, const stmt *s)
         if (marks) sb_put(o, ", tide_xm, tide_xmn");
         sb_put(o, "};\n");
         line(g, o, "tide_parallel_for(tide_pl.tasks, %s, (void *)(uintptr_t)&tide_cx, tide_pl.steps * %lluu);", name,
-             (unsigned long long)(cost < 1000000u ? cost : 1000000u));
+             (unsigned long long)shared);
         line(g, o, "tide_par_list_end(&tide_pl);");
         if (marks) line(g, o, "free((void *)(uintptr_t)tide_xm);");
         if (flat) line(g, o, "tide_list_unflatten(*tide_pl.list, (void *)(uintptr_t)tide_in, sizeof(%s), false, tide_copied);",
@@ -15162,8 +15227,26 @@ static void gen_parallel_call(gen *g, const stmt *s)
     for (int k = 0; k < caps.count; k++) sb_printf(o, ", %s", caps.items[k].name);
     sb_put(o, "};\n");
     line(g, o, "tide_parallel_for(tide_pl.tasks, %s, (void *)(uintptr_t)&tide_cx, tide_pl.steps * %lluu);", name,
-         (unsigned long long)(cost < 1000000u ? cost : 1000000u));
+         (unsigned long long)shared);
     line(g, o, "tide_par_end(&tide_pl);");
+    g->indent--;
+    line(g, o, "}");
+}
+
+static void gen_parallel_call(gen *g, const stmt *s)
+{
+    sb *o = &g->c;
+    const decl *code = g->routine ? g->routine : g->code;
+    if (!code->is_view) {
+        gen_parallel_call_at(g, s);
+        return;
+    }
+    // A view's steps take the frame's heaps with them (gen_par_local_use)
+    line(g, o, "{");
+    g->indent++;
+    line(g, o, "tide_heap *const tide_heap_m = tide_world_heaps[TIDE_IN_MATCH], *const tide_heap_l = tide_world_heaps[TIDE_IN_LOCAL];");
+    line(g, o, "tide_heap *const tide_heap_v = tide_world_heaps[TIDE_IN_VERIFIED];");
+    gen_parallel_call_at(g, s);
     g->indent--;
     line(g, o, "}");
 }
@@ -15372,6 +15455,7 @@ static void gen_par_query_steps(gen *g, const decl *sys, const stmt *s, const in
         sb_printf(o, "    %s%s%s = tide_cx->%s;\n    (void)%s;\n", c->ctype, c->ctype[strlen(c->ctype) - 1] == '*' ? "" : " ",
                   c->name, c->name, c->name);
     }
+    gen_par_local_use(g, sys, o);
     if (g->prog->grids.count) sb_printf(o, "    tide_grid_cache tide_gc[%d] = {{0}};\n    (void)tide_gc;\n", g->prog->grids.count);
     if (g->prog->lists.count || g->prog->maps.count) {
         const int outer_indent = g->indent;
@@ -15389,6 +15473,12 @@ static void gen_par_query_steps(gen *g, const decl *sys, const stmt *s, const in
     const char *row = local_cname(g, s->name);
     line(g, o, "%s %s = tide_cx->rows[tide_k0];", par_row_type(g, sys, s, index), row);
     line(g, o, "(void)%s;", row);
+    g->code = sys;
+    g->routine = NULL;
+    if (par_query(sys, s)->query_rows) { // Its local fields, as a foreach's row has them; made ready before the steps
+        gen_query_fresh(g, par_query(sys, s), row);
+        gen_query_field_refs(g, par_query(sys, s), row);
+    }
     if (sends) {
         line(g, o, "const uint64_t tide_row_cause = tide_causal_entity(tide_parallel_cause, %s.entity);", row);
         gen_causal_local(g, sys, "tide_row_cause");
@@ -15448,6 +15538,7 @@ static void gen_par_steps(gen *g, const decl *sys)
             sb_printf(o, "    %s%s%s = tide_cx->%s;\n    (void)%s;\n", c->ctype, c->ctype[strlen(c->ctype) - 1] == '*' ? "" : " ",
                       c->name, c->name, c->name);
         }
+        gen_par_local_use(g, sys, o);
         if (g->prog->grids.count) sb_printf(o, "    tide_grid_cache tide_gc[%d] = {{0}};\n    (void)tide_gc;\n", g->prog->grids.count);
         if (g->prog->lists.count || g->prog->maps.count) {
             const int outer_indent = g->indent;

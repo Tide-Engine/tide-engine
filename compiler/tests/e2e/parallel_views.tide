@@ -1,0 +1,138 @@
+// Parallel loops in views (parallel_views_test.c): a frame's loops take the
+// pool's threads as a tick's do, over a local singleton's list and over a
+// query's rows, whose steps read and write their own row's local fields.
+
+scene Main { }
+
+component Man
+{
+    float3 position;
+    float yaw;
+    local float shown;
+    local float3 posed;
+    local int seen;
+}
+
+// A man of another kind, so the rows come from two archetypes
+component Mounted { float height; }
+
+struct Job
+{
+    float at;
+    float result;
+}
+
+local singleton Jobs
+{
+    List<Job> items;
+    List<float> weights;
+    float total;
+    float fields;
+    float read;
+    int frames;
+}
+
+singleton Tally
+{
+    List<float> values;
+    int ticks;
+}
+
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < 3000; i++)
+    {
+        if (i % 4 == 1) Spawn(Man { position = float3(i, 0, 0), yaw = i * 0.25 }, Mounted { height = 2 });
+        else Spawn(Man { position = float3(i, 0, 0), yaw = i * 0.25 });
+    }
+}
+
+system Move(mut Man m)
+{
+    m.yaw += 0.01;
+    m.position.x += 0.5;
+}
+
+// A step's work is in a function it calls
+float Heavy(float x)
+{
+    mut var v = x * 0.001;
+    for (var i = 0; i < 60; i++) v = Math.Sin(v * 1.3 + 0.7) + Math.Cos(v * 0.9);
+    return v;
+}
+
+// A system's steps read a list the system made itself, on whichever thread
+// runs them
+system Weigh(mut Tally t)
+{
+    t.ticks++;
+    mut List<float> scale = [];
+    for (int i = 0; i < 64; i++) scale.Add(i * 0.5 + t.ticks);
+    if (t.values.count == 0) t.values.Resize(2000);
+    parallel (var k in t.values) t.values[k] = Heavy(k) * scale[k % 64];
+}
+
+// A local singleton's list, filled from the rows in order, worked out at once
+view Collect(mut Jobs jobs, query (Man m) men)
+{
+    jobs.frames++;
+    if (jobs.weights.count == 0)
+    {
+        for (int i = 0; i < 16; i++) jobs.weights.Add(1 + i * 0.125);
+    }
+    jobs.items.Clear();
+    foreach (var row in men) jobs.items.Add(Job { at = row.m.position.x + row.m.yaw });
+    parallel (var i in jobs.items)
+    {
+        mut var j = jobs.items[i];
+        j.result = Heavy(j.at) * jobs.weights[i % 16];
+        jobs.items[i] = j;
+    }
+    mut var total = 0.0;
+    for (int i = 0; i < jobs.items.count; i++) total += jobs.items[i].result * (1 + i % 3);
+    jobs.total = total;
+}
+
+float Lean(mut Man m, float by)
+{
+    m.shown += by;
+    return m.shown;
+}
+
+// A query's rows at once: each step reads its row's local fields and writes
+// them, itself and through a function, and the rows after read what they left
+[After(Collect)]
+view Pose(mut Jobs jobs, query (mut Man m) men)
+{
+    parallel (var row in men)
+    {
+        if (row.m.position.x < 40) continue;
+        var height = row.m.yaw > 300 ? 2.0 : 1.0;
+        row.m.posed = float3(Heavy(row.m.position.x + row.m.shown), row.m.yaw, height);
+        row.m.seen += 1;
+        var lean = Lean(row.m, 0.25);
+        row.m.posed.z += lean;
+    }
+    mut var fields = 0.0;
+    foreach (var row in men) fields += (row.m.posed.x + row.m.posed.z) * (1 + row.m.seen % 5) + row.m.shown;
+    jobs.fields = fields;
+}
+
+// Steps that read a list their view made stay on the view's thread, where
+// the list is
+[After(Pose)]
+view Scratch(mut Jobs jobs, query (Man m) men)
+{
+    mut List<float> scale = [];
+    for (int i = 0; i < 8; i++) scale.Add(i + jobs.frames);
+    parallel (var i in jobs.items)
+    {
+        mut var j = jobs.items[i];
+        j.at = Heavy(j.result) + scale[i % 8];
+        jobs.items[i] = j;
+    }
+    mut var read = 0.0;
+    for (int i = 0; i < jobs.items.count; i++) read += jobs.items[i].at;
+    foreach (var row in men) read += row.m.seen;
+    jobs.read = read;
+}
