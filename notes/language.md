@@ -274,6 +274,11 @@ avoiding array arithmetic across individual scalar frame members. No component v
 counts are hashed into match identity. The old value-derived presentation birth
 hash is replaced by a hash of the logical identity alone.
 
+Since 2026-11-12 a site's count is added to the hash of its cause and site rather
+than mixed into it (`tide_causal_next`): the same inputs, and one site's
+occurrences for one cause are consecutive lineages, in the order they're made
+(ecs.md, A spawn site's entities in the order they're made).
+
 Query iteration executed by match/simulation code is now ascending
 `(birth, lineage)` across all admitted
 archetypes. Structural/event and otherwise serial per-entity systems

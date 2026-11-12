@@ -1738,7 +1738,12 @@ static void gen_causal_helpers(gen *g)
         "    uint64_t count; memcpy(&count, slot, sizeof count);\n"
         "    if (count == UINT64_MAX) { fputs(\"tide: causal spawn site exhausted\\n\", stderr); abort(); }\n"
         "    const uint64_t next = count + 1u; memcpy(slot, &next, sizeof next);\n"
-        "    return tide_causal_mix(tide_causal_mix(context->path, site), count);\n}\n"
+        // The count is added, not mixed in: a site's occurrences for one cause are then one after another in the
+        // entities' order ((birth, lineage)), which is the order their rows are made in, so going through a
+        // tick's spawns in that order reads rows in sequence. What an identity is made from is the same
+        // (the cause, the site, the site's own count), and two causes' runs of numbers meet with the chance
+        // two 64-bit hashes do.
+        "    return tide_causal_mix(context->path, site) + count;\n}\n"
         "TIDE_HELPER uint64_t tide_causal_entity(uint64_t path, tide_entity entity)\n{\n"
         "    return tide_causal_mix(tide_causal_mix(path, entity.birth), entity.lineage);\n}\n\n");
 }

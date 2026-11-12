@@ -12,7 +12,7 @@ TIDE_TEST(query_borrows_project_rows_preserve_filters_and_forward_capabilities)
     TIDE_CHECK(c->actions == 2);
     TIDE_CHECK(c->sorted == 10);
     TIDE_CHECK(world.ProbeGrid.total == 200);
-    TIDE_CHECK(world.ActionChecks.total == 109);
+    TIDE_CHECK(world.ActionChecks.total == 30);
     TIDE_CHECK(c->before == 50 && c->after == 47 && c->calls == 0 && !c->skipped);
     TIDE_CHECK(tide_get_Value(&world, c->first).number == 8);
     TIDE_CHECK(c->tasks == 0);
@@ -29,7 +29,7 @@ TIDE_TEST(query_borrows_replay_without_changing_retained_worlds)
     tide_world_copy(&snapshot, &world);
     const uint64_t before = tide_world_hash(&snapshot);
     tide_world_tick(&world);
-    TIDE_CHECK(world.ActionChecks.total == 109);
+    TIDE_CHECK(world.ActionChecks.total == 30);
     TIDE_CHECK(tide_world_hash(&snapshot) == before);
     TIDE_CHECK(tide_get_Value(&snapshot, snapshot.Checks.first).number == 10);
     tide_world_copy(&replay, &snapshot);

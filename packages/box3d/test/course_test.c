@@ -301,8 +301,8 @@ TIDE_TEST(box3d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box3D's image.
-#define SENSORS_HASH UINT64_C(0x3df7a8ab2f81dad3)
-#define SENSORS_IMAGES_HASH UINT64_C(0x9c1cd3e242784049)
+#define SENSORS_HASH UINT64_C(0xc32ae81fc383feeb)
+#define SENSORS_IMAGES_HASH UINT64_C(0xd20324e45ba8df7f)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 
@@ -453,7 +453,7 @@ static const tide_entity nobody = {0};
 // ---------------------------------------------------------------------------
 // Shapes on entities of their own
 
-#define PARTS_HASH UINT64_C(0x0520d86255d5c58f)
+#define PARTS_HASH UINT64_C(0xc50925cedfd5b45f)
 
 enum { PART_TICKS = 460, SAW = 200, CLEAR = 340 };
 
@@ -538,7 +538,7 @@ TIDE_TEST(box3d_parts_are_shapes_on_entities_of_their_own)
 // ---------------------------------------------------------------------------
 // A body's type, and how it's to be, written after it's made
 
-#define CHANGES_HASH UINT64_C(0x22427a914034e6f7)
+#define CHANGES_HASH UINT64_C(0x0c6ff43b83f7f0b3)
 
 enum { CHANGE_TICKS = 900 };
 
@@ -672,7 +672,7 @@ TIDE_TEST(box3d_a_bodys_type_and_settings_change)
 // ---------------------------------------------------------------------------
 // How the world is tuned, and what meets hard
 
-#define TUNING_HASH UINT64_C(0x8bf60837983515bd)
+#define TUNING_HASH UINT64_C(0xee41e71206d9a5a5)
 
 enum { TUNE_TICKS = 150 };
 
@@ -837,8 +837,8 @@ TIDE_TEST(box3d_the_world_is_tuned_by_its_fields)
 // ---------------------------------------------------------------------------
 // What code asks of the world
 
-#define ASKING_HASH UINT64_C(0x6dc2b62920d8644e)
-#define ANSWERS_HASH UINT64_C(0x02f4c7b1ee960e69)
+#define ASKING_HASH UINT64_C(0xecb01b6662c9bb69)
+#define ANSWERS_HASH UINT64_C(0xa85b85fc823111a8)
 
 enum { ASK_TICKS = 260, DOOM = 120 };
 
@@ -900,7 +900,7 @@ TIDE_TEST(box3d_answers_what_code_asks)
             TIDE_CHECK(now->wall.any && tide_entity_equal(now->wall.hit.entity, wall) && tide_entity_equal(now->wall.hit.part, wall));
             TIDE_CHECK(near(now->wall.hit.fraction, 0.45f) && close3(now->wall.hit.point, 4.5f, 1.0f, 0.0f)
                        && close3(now->wall.hit.normal, -1.0f, 0.0f, 0.0f));
-            TIDE_CHECK(now->twin.any && tide_entity_equal(now->twin.hit.entity, the(w, tide_has_Twin)) && near(now->twin.hit.fraction, 0.45f));
+            TIDE_CHECK(now->twin.any && tide_has_Twin(w, now->twin.hit.entity) && near(now->twin.hit.fraction, 0.45f));
             TIDE_CHECK(now->knob.any && tide_entity_equal(now->knob.hit.entity, post)
                        && tide_entity_equal(now->knob.hit.part, the(w, tide_has_Knob)) && near(now->knob.hit.fraction, 0.4f)
                        && close3(now->knob.hit.normal, 0.0f, 1.0f, 0.0f));

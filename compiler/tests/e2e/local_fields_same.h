@@ -16,20 +16,20 @@
 #include "game.h"
 #include "tide_test.h"
 
-#define SAME_HASH UINT64_C(0x8C9F63CDEC836FF7)
+#define SAME_HASH UINT64_C(0xE1E9C79DE1E37CF4)
 #define SAME_WHOLE_SIZE 332u
-#define SAME_WHOLE UINT64_C(0xD0FACE6F3EAFB7EB)
+#define SAME_WHOLE UINT64_C(0x94CA55F8337FA514)
 #define SAME_DELTA_SIZE 148u
-#define SAME_DELTA UINT64_C(0x019BB1618DD07A25)
+#define SAME_DELTA UINT64_C(0x780342538EFA3397)
 // Raw headers are pointer-sized in places, so their pins are the platform's.
 // Since tags move entities (2026-10-29) this game's tag is an archetype's, so
 // it has no sparse filter and no derived cache slot.
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define SAME_PACKED_SIZE 909u
-#define SAME_PACKED UINT64_C(0xDD3782ED82AD5128)
+#define SAME_PACKED UINT64_C(0x412EDECFC63C2907)
 #else
 #define SAME_PACKED_SIZE 837u
-#define SAME_PACKED UINT64_C(0x5477DED16B027388)
+#define SAME_PACKED UINT64_C(0xCD767AC24606FCE7)
 #endif
 
 static uint64_t same_bytes_hash(const uint8_t *bytes, const uint32_t size)

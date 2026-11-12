@@ -18,7 +18,7 @@ TIDE_TEST(crossplatform_text_and_lists)
     for (int i = 0; i < 300; i++) tide_world_tick(&world);
 
     const uint64_t h = tide_world_hash(&world);
-    const uint64_t expected = 0xE7B8E66042CD7CFFull;
+    const uint64_t expected = 0x5F1BB2F8D30F2CAFull;
     if (h != expected) {
         const tide_str last = tide_text_read(&world.heap, world.Log.last);
         printf("    world: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);

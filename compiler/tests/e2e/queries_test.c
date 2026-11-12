@@ -189,7 +189,7 @@ TIDE_TEST(queries_match_across_platforms)
     PROBE = tide_entity_in_slot(&world.entities, 16);
     for (int i = 0; i < 16; i++) tide_world_tick(&world);
     const uint64_t hash = semantic_hash(&world);
-    const uint64_t expected = UINT64_C(0x8FA74C3B18C86E22);
+    const uint64_t expected = UINT64_C(0xA2ED4881C51D1FF5);
     if (hash != expected) printf("    queries: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", hash, expected);
     TIDE_CHECK(hash == expected);
     tide_world_free(&world);

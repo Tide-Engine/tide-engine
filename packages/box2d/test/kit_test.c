@@ -130,8 +130,8 @@ static bool stays(tide_world *w)
 // The match of parts after its ticks, on every platform and in every
 // configuration: its parts' shapes are in Box2D's image, and whose each is in
 // the match.
-#define PARTS_HASH UINT64_C(0xceb501c85ee2e8d0)
-#define PARTS_IMAGES_HASH UINT64_C(0x1ea9df5390662619)
+#define PARTS_HASH UINT64_C(0x6e88cd5de4d7d563)
+#define PARTS_IMAGES_HASH UINT64_C(0x05b84e0e2247d88c)
 
 enum { PART_TICKS = 420, SNIP = 200, FELL = 260, LOOK = 180 };
 
@@ -399,8 +399,8 @@ static bool same_bytes(const void *x, const void *y, const size_t size, const ch
 
 // The match of questions after its ticks, and every answer the match was
 // given along the way, on every platform and in every configuration.
-#define ASKS_HASH UINT64_C(0xd478440c23769400)
-#define ANSWERS_HASH UINT64_C(0xbc944a22c14580f3)
+#define ASKS_HASH UINT64_C(0xed2f4e8f62e855ba)
+#define ANSWERS_HASH UINT64_C(0xd283cca0bf305d0f)
 
 enum { ASK_TICKS = 150, FADE = 100 };
 
@@ -433,7 +433,7 @@ TIDE_TEST(box2d_answers_what_code_asks)
     TIDE_CHECK(got.inside.any && same(got.inside.entity, wall) && got.inside.fraction == 0.0f);
     TIDE_CHECK(got.inside.normal.x == 0.0f && got.inside.normal.y == 0.0f);
     TIDE_CHECK(got.twins.any && same(got.twins.entity, the(w, tide_has_First)) && near(got.twins.fraction, 0.8f));
-    TIDE_CHECK(got.others.any && same(got.others.entity, the(w, tide_has_Third)) && got.others.fraction == got.twins.fraction);
+    TIDE_CHECK(got.others.any && same(got.others.entity, the(w, tide_has_Fourth)) && got.others.fraction == got.twins.fraction);
     printf("    a box 4 wide let down from 5 onto two boxes 1 high touches at (%g, %g), %g of its way; one turned an eighth meets the "
            "floor %g of its way\n",
            (double)got.wide.point.x, (double)got.wide.point.y, (double)got.wide.fraction, (double)got.turned.fraction);
@@ -457,7 +457,14 @@ TIDE_TEST(box2d_answers_what_code_asks)
     const Some trap = w->Asked.trapAfter;
     const Some eye = w->Asked.eyeAfter;
     printf("    the trap has %d bodies in its sensors, and its part %d\n", (int)trap.count, (int)eye.count);
-    TIDE_CHECK(trap.count == 3 && same(trap.a, floor) && tide_has_Caught(w, trap.b) && tide_has_Caught(w, trap.c) && !same(trap.b, trap.c));
+    // In their entities' order: where the floor comes among the two caught goes by their spawn sites' keys
+    const tide_entity in_trap[3] = {trap.a, trap.b, trap.c};
+    int floors = 0, caught = 0;
+    for (int i = 0; i < 3; i++) {
+        floors += same(in_trap[i], floor);
+        caught += tide_has_Caught(w, in_trap[i]);
+    }
+    TIDE_CHECK(trap.count == 3 && floors == 1 && caught == 2 && !same(trap.a, trap.b) && !same(trap.b, trap.c) && !same(trap.a, trap.c));
     TIDE_CHECK(eye.count == 2 && same(eye.a, floor) && tide_has_Caught(w, eye.b) && !same(eye.b, trap.b) && !same(eye.b, trap.c));
 
     uint64_t answers = 0;
