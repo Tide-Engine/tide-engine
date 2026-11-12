@@ -1,0 +1,124 @@
+// A view's guard (view_guard_test.c): a per-entity view whose code starts
+// with tests on this machine's own state runs them before anything of the
+// entity's components is copied, with what the same view gives without.
+
+scene Main { }
+
+component Man
+{
+    float3 position;
+    float yaw;
+    float4 a; float4 b; float4 c; float4 d;
+    local bool chosen;
+    local bool fresh = true;
+    local int drawn;
+    local Kept kept;
+}
+
+struct Kept
+{
+    bool whole;
+    int times;
+}
+
+// A man of another kind, so the rows come from two archetypes
+component Mounted { float height; }
+
+local singleton Show
+{
+    bool on;
+    int frame;
+    float guarded;
+    float plain;
+    int guardedRows;
+    int plainRows;
+    int freshRows;
+    int nestedRows;
+    int drawn;
+}
+
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < 600; i++)
+    {
+        if (i % 4 == 1) Spawn(Man { position = float3(i, 0, 0), yaw = i * 0.25 }, Mounted { height = 2 });
+        else Spawn(Man { position = float3(i, 0, 0), yaw = i * 0.25 });
+    }
+}
+
+system Move(mut Man m)
+{
+    m.yaw += 0.01;
+    m.position.x += 0.5;
+}
+
+// Off every third frame
+view Tick(mut Show show)
+{
+    show.frame += 1;
+    show.on = show.frame % 3 != 0;
+}
+
+// A local field's default, for an entity nothing was written for yet: read by
+// the guard as the code would read it
+[After(Tick)]
+view Fresh(Man m, mut Show show)
+{
+    if (!m.fresh) return;
+    show.freshRows += 1;
+}
+
+// Chosen anew each frame: no guard, as its first statement isn't a test that returns
+[After(Fresh)]
+view Choose(mut Man m, Show show)
+{
+    m.chosen = (m.drawn + show.frame + int(m.position.x)) % 7 == 0;
+    m.kept.whole = m.chosen && show.frame % 2 == 0;
+}
+
+float Whole(Man m)
+{
+    return m.position.x + m.yaw + m.a.x + m.b.y + m.c.z + m.d.w;
+}
+
+// Guarded: a local singleton's field, the entity's local field, and a constant
+// folded in; then a second statement's tests too
+[After(Choose)]
+view Guarded(mut Man m, mut Show show)
+{
+    if (!show.on || !m.chosen) return;
+    if (show.frame > 1000) return;
+    show.guarded += Whole(m);
+    show.guardedRows += 1;
+    m.drawn += 1;
+}
+
+bool Is(bool value) { return value; }
+
+// The same through a call, which is no guard: every row is copied first
+[After(Guarded)]
+view Plain(Man m, mut Show show)
+{
+    if (!Is(show.on) || !Is(m.chosen)) return;
+    if (show.frame > 1000) return;
+    show.plain += Whole(m);
+    show.plainRows += 1;
+    show.drawn += m.drawn;
+}
+
+// A field of a struct in the local part
+[After(Plain)]
+view Nested(Man m, mut Show show)
+{
+    if (!m.kept.whole) return;
+    show.nestedRows += 1;
+}
+
+// A test of the match's own field is the code's, not the guard's: its value is
+// the frame's, between two ticks
+[After(Nested)]
+view Match(Man m, mut Show show)
+{
+    if (m.yaw < 0) return;
+    show.drawn += 0;
+}

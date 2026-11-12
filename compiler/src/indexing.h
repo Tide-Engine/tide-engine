@@ -59,6 +59,8 @@ const char *loop_index_summary(const stmt *loop);
 // rows, or is written `indexed`, with the code it's in.
 typedef void (*loop_visitor)(void *user, const decl *code, const stmt *loop);
 void each_guarded_loop(const program *prog, loop_visitor fn, void *user);
+// Every parallel loop: a `parallel`, and a grid's foreach whose steps only touch their own cell
+void each_parallel_loop(const program *prog, loop_visitor fn, void *user);
 
 // The schedule's section on loops that skip rows (tidec --schedule).
 void print_loop_indexes(const program *prog, sb *out);

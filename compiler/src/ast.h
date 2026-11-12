@@ -1926,6 +1926,8 @@ void put_decl_name(sb *out, const decl *d, const char *quote, const decl *from);
 
 // The whole tick's schedule as text, for `tidec --schedule`.
 void print_schedule(const program *prog, const char *game, sb *out);
+// After it: each parallel loop, what a step of it is reckoned to cost and when its steps go to the threads
+void print_parallel_loops(const program *prog, sb *out);
 
 // What the game declares, file by file, as JSON (outline.c), for `tidec --outline` and tide unity's outline.json.
 void print_outline(const program *prog, sb *out);

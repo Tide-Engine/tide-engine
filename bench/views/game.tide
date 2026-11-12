@@ -24,6 +24,7 @@ component Wide
     float spare60; float spare61; float spare62; float spare63; float spare64; float spare65;
     local float feetYaw;
     local float4x4 placed;
+    local bool picked;
 }
 
 component Small
@@ -161,4 +162,34 @@ view PlaceEach(query (mut Wide w) all)
 view PlaceAtOnce(query (mut Wide w) all)
 {
     parallel (var row in all) row.w.placed = Place(row.w.position, row.w.yaw, row.w.pitch);
+}
+
+// One row in 400 acted on, each read whole: a guard on a local field turns the
+// rest away before they're copied and blended (FewGuarded), where the same
+// test through a call copies every row first (FewPlain).
+float AllOf(Wide w)
+{
+    return w.pitch + w.spare65 + w.rows.x;
+}
+
+[After(PlaceAtOnce)]
+view Pick(mut Wide w)
+{
+    w.picked = w.rows.x < 1;
+}
+
+[After(Pick)]
+view FewGuarded(Wide w, mut Sink sink)
+{
+    if (!w.picked) return;
+    sink.total += AllOf(w) * 0;
+}
+
+bool Same(bool value) { return value; }
+
+[After(FewGuarded)]
+view FewPlain(Wide w, mut Sink sink)
+{
+    if (!Same(w.picked)) return;
+    sink.total += AllOf(w) * 0;
 }

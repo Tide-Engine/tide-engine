@@ -76,6 +76,49 @@ TIDE_TEST(attached_finds_rows_by_entity)
     TIDE_CHECK(a.rows.count == 0 && !a.index);
 }
 
+// A lookup first tries the row this thread last found and the next one, in
+// whichever table (tide_attached_find). Asked in every order of two tables
+// whose rows differ, with rows removed between, it gives each entity's own
+// row or none, never a row another entity has.
+static uint32_t row_by_scan(const tide_attached *a, const tide_entity e)
+{
+    for (uint32_t row = 0; row < a->rows.count; row++) {
+        if (tide_entity_equal(tide_attached_entity(a, &columns, row), e)) return row;
+    }
+    return TIDE_ATTACHED_NONE;
+}
+
+TIDE_TEST(attached_row_guesses_give_only_the_entitys_own_row)
+{
+    tide_attached a = {0}, b = {0};
+    tide_entity all[90];
+    for (uint32_t i = 0; i < 90; i++) all[i] = (tide_entity){1u + i * 3u, 5u};
+    for (uint32_t i = 0; i < 60; i++) keep(&a, all[i], (int32_t)i);
+    for (uint32_t i = 89; i >= 30; i--) keep(&b, all[i], (int32_t)i); // The other way round, and other entities
+    uint32_t wrong = 0, found = 0;
+    for (uint32_t pass = 0; pass < 6; pass++) {
+        const uint32_t step = pass == 2 ? 2u : pass == 3 ? 7u : pass == 4 ? 37u : 1u;
+        for (uint32_t n = 0; n < 90; n++) {
+            const uint32_t i = pass == 1 ? 89u - n : n * step % 90u;
+            const tide_attached *first = (n + pass) % 2u ? &a : &b, *second = first == &a ? &b : &a;
+            const uint32_t one = tide_attached_find(first, &columns, all[i]), two = tide_attached_find(second, &columns, all[i]);
+            wrong += one != row_by_scan(first, all[i]) || two != row_by_scan(second, all[i]);
+            wrong += tide_attached_find(first, &columns, all[i]) != one; // Asked again, from its own row
+            found += one != TIDE_ATTACHED_NONE;
+        }
+        // Rows go between passes: the last one moves into each gap
+        if (a.rows.count > 8) tide_attached_remove(&a, &columns, pass * 5u);
+        if (b.rows.count > 8) tide_attached_remove(&b, &columns, b.rows.count - 1u - pass);
+    }
+    TIDE_CHECK(wrong == 0u);
+    TIDE_CHECK(found > 90u);
+    TIDE_CHECK(tide_attached_find(&a, &columns, (tide_entity){0, 0}) == TIDE_ATTACHED_NONE);
+    tide_attached empty = {0};
+    TIDE_CHECK(tide_attached_find(&empty, &columns, all[3]) == TIDE_ATTACHED_NONE);
+    tide_attached_free(&b, &columns);
+    tide_attached_free(&a, &columns);
+}
+
 TIDE_TEST(attached_remove_moves_the_last_row_in)
 {
     tide_attached a = {0};

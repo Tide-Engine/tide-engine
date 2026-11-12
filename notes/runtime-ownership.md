@@ -1,5 +1,13 @@
 # Runtime written by Claude for now
 
+## Lookups that guess (2026-11-12, evening)
+
+Mine, under the entity and attached maintenance below (ecs.md, top section). `tide_entity_slot_index` keeps a
+thread's guesses by key (65,536 slots, allocated at the thread's first lookup and never freed) and
+`tide_attached_find` the row it last found; both check a guess against what it names, and their results and
+signatures are as they were. Generated C calls no new runtime function: a view's guard is generated code.
+`platform/src/embed.c` calls `tide_loops_enter` around its own frame, as `tide/host.h` does.
+
 ## A frame's loops and the slot guess (2026-11-12)
 
 Mine, under the jobs and entity maintenance below (schedule-and-threads.md and ecs.md, top sections). New in

@@ -24,3 +24,8 @@ stage 4  Count  (once)
          after Blur: it writes Field, which this reads (and through Fall)
          after Fall: it writes Field, which this reads
          alongside nothing
+
+Parallel loops, and when their steps go to the threads:
+         Blur, line 23: a grid's cells, a step reckoned at 86: on the threads from 1163 steps in a tick that's on them, 23256 in one that isn't
+         Fall, line 32: a grid's cells, a step reckoned at 96: on the threads from 1042 steps in a tick that's on them, 20834 in one that isn't
+         Fall, line 40: a grid's cells, a step reckoned at 42: on the threads from 2381 steps in a tick that's on them, 47620 in one that isn't

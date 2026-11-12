@@ -231,6 +231,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     if (schedule) {
         print_schedule(prog, named.name, schedule);
         print_loop_indexes(prog, schedule);
+        print_parallel_loops(prog, schedule);
         return true;
     }
     const bool ok = codegen(prog, &named);

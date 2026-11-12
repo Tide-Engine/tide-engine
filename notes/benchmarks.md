@@ -11,6 +11,31 @@ After the deliberate identity-pin update, all five quick cases pass on native
 ASan and WASI.
 
 
+## A view's guard (2026-11-12, evening)
+
+For notes/ecs.md (A view's guard, and lookups that guess by the key). Release, Windows, Ryzen 9 7900X, hidden.
+
+`bench_views` (20,000 rows of a 75-lane component, blended; ms a frame, machine quiet). `Pick` marks one row in
+400 in a local field; `FewGuarded` starts with `if (!w.picked) return;` and hands the row whole to a function,
+and `FewPlain` is the same with the test behind a call, which is no guard:
+
+| View | ms |
+|---|---|
+| FewPlain (every row copied and blended, then tested) | 1.65 (before the lookups below), 0.97 after |
+| FewGuarded, the cell found by the index | 0.43 |
+| FewGuarded, the cell found by a guess | 0.08 |
+
+Entity lookups by the key's guess, `bench_views` with COUNT at 1,000 (the size of the game's battle; ns a row,
+3,000 frames): a blended per-entity row 52 without the guess, 20 with; a query's row 47 and 13. At 20,000 of each
+of two kinds (40,000 keys in 65,536 places, and slots read out of order) a per-entity row is 42 against 58.
+
+Mount & Rifle with its pose-on-threads patch (its dev 7683573, the 1,000-man battle as above), built with `dev`
+before this and with this checkout, the machine busy both times (three runs each, lowest two):
+`Infantry.DrawWholeMen`, the per-entity view that returns on a local bool for 994 of 1,000 men, 0.23-0.28 ms to
+0.12; what's left is the six men it draws. `PoseWholeMen` 0.23-0.29 to 0.19. `tide schedule` on the game lists
+four views with a guard (`GearKeys`, `Infantry.DrawWholeMen`, `Infantry.HurtOverlay`, `Infantry.Hud`) and its
+rows loop as "a step reckoned at 45944: on the threads from 44 steps a frame".
+
 ## Views' rows and loops on threads (2026-11-12)
 
 For notes/ecs.md (A view's rows: the slot guessed) and notes/schedule-and-threads.md (A frame's parallel loops on

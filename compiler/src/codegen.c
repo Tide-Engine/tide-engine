@@ -205,6 +205,7 @@ typedef struct gen {
     struct owned_plan *owned_plan;
     const decl *blending;  // The view whose run function is being generated: its blended parameters are copies
     bool row_guarded;      // In a system's rows function: its rows are tested by tide_guard_<System> first (row_lanes_codegen.inc)
+    bool fields_found;     // In a guarded view's row: its local fields are found already, before its guard (gen_chunk)
     bool guard_call;       // ...in the arguments of its call to that guard: no copy of a component it reads nothing of
     bool row_apart;        // ...and it writes the lanes the system changes in another place than it reads them
     bool view_frame_made;  // tide_view_frame is declared: what a view makes its queries' rows from, when it first reaches them
@@ -11506,6 +11507,8 @@ static bool view_rows_lazy(const gen *g, const decl *sys);
 static int view_rows_from(const decl *sys);
 static bool text_names_rows(const decl *sys, const char *text, size_t n);
 static bool system_guarded(const gen *g, const decl *sys);
+static bool view_guarded(const decl *sys);
+static int view_guard_terms(const decl *sys, const expr **terms);
 static bool match_query_lanes(const gen *g, const stmt *s, const param *p, const field *binding, uint64_t *words);
 
 // In tide_prev_<Component>: the entity found in last tick's world and in this one, once each (its slot holds its
@@ -15004,18 +15007,29 @@ static void gen_query_fresh(gen *g, const param *q, const char *name);
 // - Local code but a view's: only a frame's views are handed threads
 //   (tide_loops_enter), and their steps set those up (gen_par_local_use).
 // - A sharded game's views, which read which shard they draw from their thread.
-static bool par_stays(gen *g, const decl *sys, const stmt *loop)
+// ...and why, for `tide schedule` (print_parallel_loops): NULL for a loop that shares its steps out. `held` is
+// the variable its steps read, for the first reason.
+static const char *par_stays_why(const program *prog, const decl *sys, const stmt *loop, const stmt **held)
 {
-    if (sys->is_worker) return false; // Its captures are made its own (gen_parallel_call)
-    if (sys->is_local && !sys->is_view) return true;
-    if (sys->is_view && sharded(g)) return true;
+    *held = NULL;
+    if (sys->is_worker) return NULL; // Its captures are made its own (gen_parallel_call)
+    if (sys->is_local && !sys->is_view) return "a local handler's loops stay on its thread";
+    if (sys->is_view && prog->shard_state) return "a sharded game's views stay on the frame's thread";
     stmt_list locals = {0};
     outer_locals_stmt(loop->then_stmt, loop->then_stmt, loop, &locals);
     for (int i = 0; i < locals.count; i++) {
         const type t = locals.items[i]->type;
-        if (t.kind == TY_GRID || worker_has_storage(t)) return true;
+        if (t.kind != TY_GRID && !worker_has_storage(t)) continue;
+        *held = locals.items[i];
+        return "lives on the thread that made it, as text, lists, maps, sets and grids in variables do";
     }
-    return false;
+    return NULL;
+}
+
+static bool par_stays(gen *g, const decl *sys, const stmt *loop)
+{
+    const stmt *held;
+    return par_stays_why(g->prog, sys, loop, &held) != NULL;
 }
 
 // In a view's step: the heaps its frame reads, as the thread that reached the
@@ -16168,8 +16182,8 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
     // TIDE_HELPER (or TIDE_CODE): a system that no entity matches is never called.
     code_start(g, sys->at);
     if (sys->is_view) {
-        sb_printf(o, "%s void tide_view_%s(const tide_world *tide_w, tide_local *tide_l, tide_draw_list *tide_draw, "
-                     "tide_gui *tide_ui, uint32_t tide_seed", code_helper(g), name);
+        sb_printf(o, "%s %s tide_view_%s%s(const tide_world *tide_w, tide_local *tide_l, tide_draw_list *tide_draw, "
+                     "tide_gui *tide_ui, uint32_t tide_seed", code_helper(g), guard ? "bool" : "void", guard ? "guard_" : "", name);
     } else if (sys->is_handler) {
         sb_printf(o, "%s void tide_handler_%s(%s *%s, const %s *restrict %s", code_helper(g), name, world_type(sys->is_local),
                   sys->is_local ? "tide_l" : "tide_w", type_cname(sys->event), trigger_cname(g, sys));
@@ -16216,14 +16230,18 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
     if (guard) {
         if (g->has_scene) line(g, o, "(void)tide_scene;");
         line(g, o, "(void)tide_this; (void)tide_w;");
+        if (sys->is_view) line(g, o, "(void)tide_l; (void)tide_draw; (void)tide_ui; (void)tide_seed;");
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
             if (p->name.len > 0 && p->mode != PARAM_EVENT && p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT && p->type.kind != TY_WORLD
                 && p->type.kind != TY_QUERY) line(g, o, "(void)%s;", local_cname(g, p->name));
             if (p->type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, p->name));
+            if (sys->is_view && p->type.kind == TY_QUERY && p->query_rows) line(g, o, "(void)tide_q%d; (void)tide_q%dn;", i, i);
+            if (sys->is_view && p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT && p->mode != PARAM_EVENT && p->type.kind != TY_WORLD
+                && p->type.kind != TY_QUERY && has_fields_ptr(p)) line(g, o, "(void)%s;", fields_name(g, p->name));
         }
         const expr *terms[GUARD_TERMS_MOST];
-        const int n = system_guard_terms(sys, terms);
+        const int n = sys->is_view ? view_guard_terms(sys, terms) : system_guard_terms(sys, terms);
         for (int k = 0; k < n; k++) {
             line_directive(g, terms[k]->at);
             line(g, o, "if (%s) return true;", condition_text(g, terms[k]));
@@ -16325,7 +16343,7 @@ static void gen_system_body(gen *g, const decl *sys)
 {
     gen_system_body_variant(g, sys, BODY_SYSTEM);
     if (batch_destroy(sys)) gen_system_body_variant(g, sys, BODY_DESTROYING);
-    if (system_guarded(g, sys)) gen_system_body_variant(g, sys, BODY_GUARD);
+    if (system_guarded(g, sys) || view_guarded(sys)) gen_system_body_variant(g, sys, BODY_GUARD);
 }
 
 // Whether field `f` is left out of blending.
@@ -16926,7 +16944,7 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
             }
             // (The fields a correction changes are among the lanes it copies: view_lane_mask)
             if (decl_corrects(p->type.decl)) sb_printf(o, "%stide_correct_view_%s(tide_l, tide_w, tide_ent[tide_i], &tide_v%d);\n", pad, c, i);
-            if (has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
+            if (has_fields_ptr(p) && !g->fields_found) gen_row_fields(g, p, i, pad);
             continue;
         }
         sb_printf(o, "%s%s tide_v%d;\n%stide_gather_%s(&tide_v%d, (const uint8_t *const *)tide_%s_%s, tide_i);\n", pad, c, i, pad, c,
@@ -16954,7 +16972,7 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
             sb_printf(&value, "tide_v%d", i);
             gen_confirmed_copy(o, p->type.decl, value.data, pad);
         }
-        if (sys->is_view && has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
+        if (sys->is_view && has_fields_ptr(p) && !g->fields_found) gen_row_fields(g, p, i, pad);
     }
     if (which == COPIES_CHANGED) return;
     if (reads_owner(g, sys, a) && !filters_owner(g, sys, a)) gen_row_owner(g, sys, pad); // Its filter got it already
@@ -17104,6 +17122,12 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
             if (g->blending == sys && has_fields_ptr(p)) sb_printf(o, ", &tide_l->%s", type_cname(local_part_of(p->type)));
             break;
         case TY_COMPONENT: // Its copy, from gen_row_copies, and its local fields, from gen_row_fields
+            if (g->guard_call && sys->is_view && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) {
+                // A view's guard reads nothing of the match's components (view_guard_terms): none is copied yet
+                sb_put(o, ", NULL");
+                if (g->blending == sys && has_fields_ptr(p)) sb_printf(o, ", tide_lf%d", i);
+                break;
+            }
             if (g->guard_call && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && system_param_splits(g, sys, i)) {
                 // Nothing of it is copied yet where the guard's tests read none of it
                 const row_lanes lanes = system_row_lanes(g, sys, i, true, g->row_apart);
@@ -19412,7 +19436,26 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     }
     gen_row_join(g, sys, inner.data);
     if (g->blending == sys && g->row_queries) sb_printf(o, "%s%s\n", inner.data, g->row_queries);
+    // A view's guard (row_lanes_codegen.inc): the entity's local fields found, as its row finds them anyway, and
+    // the tests its code starts with run on them, before anything of its components is copied, blended or
+    // corrected. A row they turn away is done: the code would have returned on those tests, having changed nothing.
+    const bool guarded = g->blending == sys && view_guarded(sys);
+    if (guarded) {
+        for (int i = 0; i < sys->params.count; i++) {
+            const param *p = &sys->params.items[i];
+            if (p->type.kind == TY_COMPONENT && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && has_fields_ptr(p)) {
+                gen_row_fields(g, p, i, inner.data);
+            }
+        }
+        sb_printf(o, "%sif (tide_view_guard_%s(tide_w, tide_l, tide_draw, tide_ui, 0u", inner.data, decl_cname(sys));
+        g->guard_call = true;
+        gen_system_args(g, sys, a);
+        g->guard_call = false;
+        sb_put(o, ")) continue;\n");
+        g->fields_found = true;
+    }
     gen_row_copies(g, sys, a, inner.data, COPIES_ALL);
+    g->fields_found = false;
     sb_printf(o, "%s%s", inner.data, call);
     gen_system_args(g, sys, a);
     sb_printf(o, ");%s\n", clear);
@@ -27601,4 +27644,78 @@ bool codegen(program *prog, const codegen_options *opts)
     ok = ok && write_pack(&g) && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
     free(g.pack_bytes);
     return ok;
+}
+
+// `tide schedule`'s last part: each parallel loop, what one step of it is reckoned at, and from how many steps
+// the loop is worth the threads, or why its steps stay on one. The numbers are the runtime's bars
+// (engine/src/jobs.c) in tidec's units: a loop inside a tick already on threads is shared from LOOP_WORK,
+// and one in a view, or in a tick on one thread, calls the pool in from ROUND_WORK; a browser's are three
+// times these. A reckoning is of the code as written: every step counted as its whole body, whatever it skips.
+#define SHOWN_LOOP_WORK 100000u
+#define SHOWN_ROUND_WORK 2000000u
+
+static void print_parallel_loop(void *user, const decl *code, const stmt *s)
+{
+    sb *out = user;
+    sb_printf(out,"         " STR_FMT ", line %d: ", STR_ARG(code->qualified.len ? code->qualified : code->name), s->at.line);
+}
+
+typedef struct shown_loops {
+    const program *prog;
+    sb lines;
+} shown_loops;
+
+static void show_parallel_loop(void *user, const decl *code, const stmt *s)
+{
+    shown_loops *shown = user;
+    sb *out = &shown->lines;
+    print_parallel_loop(out, code, s);
+    const char *over = s->query ? "a query's rows" : s->value->type.kind == TY_LIST ? "a list's elements" : "a grid's cells";
+    const uint64_t reckoned = step_cost(s->then_stmt);
+    const uint64_t cost = reckoned ? (reckoned < 1000000u ? reckoned : 1000000u) : 1u;
+    const stmt *held = NULL;
+    const char *why = par_stays_why(shown->prog, code, s, &held);
+    if (why && held) {
+        sb_printf(out, "%s, on one thread: its steps read '" STR_FMT "', which %s\n", over, STR_ARG(held->name), why);
+        return;
+    }
+    if (why) {
+        sb_printf(out, "%s, on one thread: %s\n", over, why);
+        return;
+    }
+    // (One step alone is never shared out)
+    const uint64_t round_at = (SHOWN_ROUND_WORK + cost - 1u) / cost, inside_at = (SHOWN_LOOP_WORK + cost - 1u) / cost;
+    const uint64_t round = round_at < 2u ? 2u : round_at, inside = inside_at < 2u ? 2u : inside_at;
+    if (code->is_worker) {
+        sb_printf(out, "%s, a step reckoned at %llu: on the threads from %llu steps\n", over, (unsigned long long)cost,
+                  (unsigned long long)inside);
+    } else if (code->is_view) {
+        sb_printf(out, "%s, a step reckoned at %llu: on the threads from %llu steps a frame\n", over, (unsigned long long)cost,
+                  (unsigned long long)round);
+    } else {
+        sb_printf(out, "%s, a step reckoned at %llu: on the threads from %llu steps in a tick that's on them, %llu in one that isn't\n",
+                  over, (unsigned long long)cost, (unsigned long long)inside, (unsigned long long)round);
+    }
+}
+
+void print_parallel_loops(const program *prog, sb *out)
+{
+    shown_loops shown = {prog, {0}};
+    each_parallel_loop(prog, show_parallel_loop, &shown);
+    if (shown.lines.len) {
+        sb_put(out, "\nParallel loops, and when their steps go to the threads:\n");
+        sb_put(out, shown.lines.data);
+    }
+    // Views that run for each entity and start with tests of this machine's own state (row_lanes_codegen.inc)
+    bool any = false;
+    for (int i = 0; i < prog->views.count; i++) {
+        const decl *view = prog->views.items[i];
+        const expr *terms[GUARD_TERMS_MOST];
+        if (!view_guarded(view)) continue;
+        if (!any) sb_put(out, "\nViews that test an entity before copying anything of it:\n");
+        any = true;
+        const int n = view_guard_terms(view, terms);
+        sb_printf(out, "         " STR_FMT ": %d test%s, down to line %d\n", STR_ARG(view->qualified.len ? view->qualified : view->name), n,
+                  n == 1 ? "" : "s", terms[n - 1]->at.line);
+    }
 }

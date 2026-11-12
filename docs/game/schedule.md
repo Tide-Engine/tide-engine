@@ -140,6 +140,25 @@ A spawn returns its final logical identity immediately; there is no temporary ha
 
 The third kind is inside a system: a `parallel` loop goes through a grid's cells, or blocks of them, all at once (see [Grids](../language/grids.md)). It can also go through a [list's elements by index](../language/text-and-lists.md#going-through-every-element-at-once). Its steps spread across the threads that are free, even while other systems run, and the system goes on once they're all done. Each step reads the collection as the loop found it and changes only its own cell, element or block, so the result is the same as on one thread. A foreach over a grid whose steps only touch their own cell runs the same way. The system itself waits for others as any system that writes the collection's component or singleton would, and the schedule shows its loops: `Fall  (once, 1 parallel loop)`.
 
+`tide schedule` ends with every parallel loop: what one step of it is reckoned to cost, and from how many steps the loop is worth the threads, or what keeps its steps on one:
+
+```
+Parallel loops, and when their steps go to the threads:
+         Crowd, line 107: a query's rows, a step reckoned at 4843: on the threads from 413 steps a frame
+         Weigh, line 72: a list's elements, on one thread: its steps read 'scale', which lives on the thread that made it, as text, lists, maps, sets and grids in variables do
+```
+
+The reckoning is of the code as written: a step that returns on its first line counts as much as one that runs it all. A loop under its number runs in order on the thread that reached it, with the same results.
+
+A view that runs for each entity and starts with `if (...) return;` tests of this machine's own state (the entity's [local fields](./views.md), a local singleton's fields) has those tests run before anything of the entity is copied, so a view that goes through a thousand entities to draw six costs little for the rest. `tide schedule` lists them:
+
+```
+Views that test an entity before copying anything of it:
+         DrawChosen: 2 tests, down to line 90
+```
+
+A test that calls a function, or reads a field of the match's, is run by the view's code as usual, after the entity's components are read.
+
 ## In CMake builds
 
 In a CMake build of the engine's repo, `<game>_schedule` is a build target that prints it, and `tidec --schedule` prints it for any files.
