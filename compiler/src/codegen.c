@@ -16125,6 +16125,9 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
     g->indent--; line(g, o, "}");
 }
 
+// gen_rows_function is writing tide_live_<System>_<a>: the rows its guard lets through, marked (gen_rows_live)
+static bool generating_rows_live;
+
 typedef enum { BODY_SYSTEM, BODY_DESTROYING, BODY_GUARD } body_variant;
 
 // A system's, view's or handler's code as a C function. BODY_DESTROYING: tide_update_<System>, which returns
@@ -16903,6 +16906,7 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                 sb_printf(&value, "tide_v%d", i);
                 sb_printf(&from, "tide_%s_%s", g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
                 sb_printf(o, "%s%s tide_v%d;\n", pad, c, i);
+                if (generating_rows_live) sb_printf(o, "%s(void)tide_v%d; // The marking pass hands the guard only what its tests read\n", pad, i);
                 gen_gather_lanes(o, pad, p->type.decl, value.data, from.data, &lanes.first);
                 continue;
             }
@@ -19320,8 +19324,6 @@ static bool runs_on(const gen *g, const decl *sys, const int a)
 // The rows of a chunk a task runs: all of them, or with `pieced`, the task's
 // piece of them (tide_piece of tide_pieces), as tide_from and tide_to.
 static bool generating_canonical_range;
-// gen_rows_function is writing tide_live_<System>_<a>: the rows its guard lets through, marked (gen_rows_live)
-static bool generating_rows_live;
 static bool generating_canonical_prepared;
 
 static void gen_piece_rows(sb *o, const char *pad, const bool pieced)
