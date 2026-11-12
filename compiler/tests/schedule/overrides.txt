@@ -14,6 +14,7 @@ stage 2  Combat.Move  (per entity)
          alongside Combat.Count, Combat.Rest(Combat.Health, Combat.Log, with Combat.Player), Combat.Rest(Combat.Health, Combat.Log, without Combat.Player)
 stage 2  Combat.Rest(Combat.Health, Combat.Log, with Combat.Player)  (per entity)
          writes Combat.Health, Combat.Log
+         on one thread: it changes the singleton Combat.Log (overrides.tide:39)
          after Combat.Count: both write Log
          alongside Combat.Gravity, Combat.Move, Combat.Clamp
 
@@ -24,6 +25,7 @@ stage 3  Combat.Clamp  (per entity)
 stage 3  Combat.Rest(Combat.Health, Combat.Log, without Combat.Player)  (per entity)
          reads Combat.Health
          writes Combat.Log
+         on one thread: it changes the singleton Combat.Log (fast.tide:11)
          after Combat.Count: both write Log (and through Combat.Rest(Combat.Health, Combat.Log, with Combat.Player))
          after Combat.Rest(Combat.Health, Combat.Log, with Combat.Player): both write Log
          alongside Combat.Gravity, Combat.Move, Combat.Clamp

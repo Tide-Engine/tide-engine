@@ -20711,7 +20711,12 @@ static void gen_canonical_kept(gen *g, const decl *sys)
 // at a time in the rows' own order (rows_live), where their bytes are one after another. The walk then leaves
 // out the entities whose row has no mark, a chunk with none isn't begun (gen_canonical_lanes), and with none
 // anywhere there's no walk. tide_busy: some row somewhere may run.
-static void gen_canonical_live(gen *g, const decl *sys)
+// `whole`: where the system's order goes to threads in runs (system_splits_in_order). LIVE_PIECED, in its
+// task: with more than one piece every row is marked instead, and each row's own first line decides, since
+// by the time a task looked, other tasks' rows would be changing under it. LIVE_WHOLE, in tide_own_ and
+// tide_done_<System>, which begin and end every chunk's lanes around the pieces: every row marked.
+enum { LIVE_MARKED, LIVE_PIECED, LIVE_WHOLE };
+static void gen_canonical_live(gen *g, const decl *sys, const int whole)
 {
     sb *o = &g->c;
     const program *prog = g->prog;
@@ -20732,6 +20737,12 @@ static void gen_canonical_live(gen *g, const decl *sys)
                      "    uint64_t *const tide_live_%d = tide_live_rows_%d <= 1024u ? tide_live_few_%d\n"
                      "        : tide_alloc_zeroed(((size_t)tide_live_rows_%d + 63u) / 64u, sizeof(uint64_t));\n",
                   a, arch_name(g, a), a, a, a, a, a);
+        if (whole != LIVE_MARKED) {
+            sb_printf(o, "    %s{\n        memset(tide_live_%d, 0xFF, (((size_t)tide_live_rows_%d + 63u) / 64u) * sizeof(uint64_t));\n"
+                         "        tide_busy = true;\n    }%s\n",
+                      whole == LIVE_PIECED ? "if (tide_pieces > 1u) " : "", a, a, whole == LIVE_PIECED ? " else" : "");
+            if (whole == LIVE_WHOLE) continue;
+        }
         sb_printf(o, "    { const tide_table *tide_t = &tide_w->%s;\n"
                      "        for (uint32_t tide_c = 0; tide_c < tide_t->chunks; tide_c++) {\n"
                      "            const uint32_t tide_from = 0u, tide_to = tide_table_rows(tide_t, %d, tide_c);\n"
@@ -21033,6 +21044,8 @@ static void gen_system_run(gen *g, const decl *sys)
     }
     const bool split = system_splits(sys);
     const bool canonical = !view && sys->per_entity && !split;
+    // Its entities' order shared out in runs, a task each (system_splits_in_order)
+    const bool ordered = canonical && system_splits_in_order(sys);
     bool fast_task = false;
     bool fresh_mark = false; // A view's: it borrowed text for its entities' default local fields
     bool confirmed_mark = false; // ...and copied elements out of the confirmed world
@@ -21216,18 +21229,27 @@ static void gen_system_run(gen *g, const decl *sys)
         // Views only read the match; the local world is theirs to change.
         const bool read_only = view && !sys->entity_local;
         const bool prepared = canonical;
+        // Runs on several threads write one chunk's pages at once: begun for
+        // all of them before (tide_own_<System>), ended after (tide_done_)
+        const bool around = ordered && system_owns(g, sys);
         bool marked = false;
         for (int a = 0; prepared && a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
         if (prepared) {
             gen_canonical_kept(g, sys);
-            gen_canonical_live(g, sys);
+            gen_canonical_live(g, sys, ordered ? LIVE_PIECED : LIVE_MARKED);
+            if (around) sb_put(o, "    if (tide_pieces == 1u) {\n");
             gen_canonical_lanes(g, sys, false);
+            if (around) sb_put(o, "    }\n");
         }
         if (canonical) {
             gen_canonical_system_keys(g, sys);
             if (marked) sb_put(o, "    if (!tide_busy) tide_key_count = 0u; // No row gets past its tests: no walk\n");
+            // The task's run of the order: all of it, or its share of the keys
+            if (ordered) sb_put(o, "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_task / tide_pieces);\n"
+                                   "    const uint32_t tide_key_to = (uint32_t)((uint64_t)tide_key_count * (tide_task + 1u) / tide_pieces);\n");
+            else sb_put(o, "    const uint32_t tide_key_from = 0u, tide_key_to = tide_key_count;\n");
         sb_put(o,
-                      "    for (uint32_t tide_key_at = 0; tide_key_at < tide_key_count;) {\n"
+                      "    for (uint32_t tide_key_at = tide_key_from; tide_key_at < tide_key_to;) {\n"
                       "        const tide_location tide_loc = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_at], tide_keys[tide_key_at]);\n"
                       "        uint32_t tide_key_end = tide_key_at + 1u;\n        switch (tide_loc.archetype) {\n");
         }
@@ -21246,7 +21268,7 @@ static void gen_system_run(gen *g, const decl *sys)
                 sb_printf(o, "            tide_table *tide_t = &tide_w->%s;\n"
                              "            const uint32_t tide_c = tide_loc.row >> %d;\n"
                              "            uint32_t tide_last_row = tide_loc.row + 1u;\n"
-                             "            while (tide_key_end < tide_key_count) {\n"
+                             "            while (tide_key_end < tide_key_to) {\n"
                              "                const tide_location next = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_end], tide_keys[tide_key_end]);\n"
                              "                if (next.archetype != %du || next.row != tide_last_row || (next.row >> %d) != tide_c) break;\n"
                              "                tide_key_end++; tide_last_row++;\n            }\n"
@@ -21279,7 +21301,9 @@ static void gen_system_run(gen *g, const decl *sys)
             }
         }
         if (canonical) sb_put(o, "        default: break;\n        }\n        tide_key_at = tide_key_end;\n    }\n");
+        if (prepared && around) sb_put(o, "    if (tide_pieces == 1u) {\n");
         if (prepared) gen_canonical_lanes(g, sys, true);
+        if (prepared && around) sb_put(o, "    }\n");
         if (marked) gen_canonical_live_done(g, sys);
         if (!any) {
             sb_printf(o, "    (void)tide_w;%s // No entity matches this %s.\n",
@@ -21297,6 +21321,18 @@ static void gen_system_run(gen *g, const decl *sys)
     sb_put(o, "}\n\n");
     if (fast_task) gen_system_cached_task(g, sys, rows);
     if (!view && split && system_owns(g, sys)) gen_system_pieces(g, sys);
+    if (ordered && system_owns(g, sys)) {
+        for (int done = 0; done < 2; done++) {
+            sb_printf(o, "static void tide_%s_%s(void *tide_world_v)\n{\n    tide_world *tide_w = tide_world_v;\n", done ? "done" : "own", name);
+            bool marked = false;
+            for (int a = 0; a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
+            gen_canonical_live(g, sys, LIVE_WHOLE);
+            if (marked) sb_put(o, "    (void)tide_busy;\n");
+            gen_canonical_lanes(g, sys, done);
+            if (marked) gen_canonical_live_done(g, sys);
+            sb_put(o, "    (void)tide_w;\n}\n\n");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -23245,7 +23281,7 @@ static void gen_api(gen *g)
                          "static void tide_owned_run_%s(void *world, uint32_t task, uint32_t pieces)\n{\n"
                          "    tide_world *w = world;\n    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_task_%s(world, task, pieces);\n}\n",
                       name, i, name, name, i, name);
-            if (system_splits(sys) && system_owns(g, sys)) {
+            if ((system_splits(sys) || system_splits_in_order(sys)) && system_owns(g, sys)) {
                 sb_printf(o, "static void tide_owned_own_%s(void *world)\n{\n    tide_world *w = world;\n"
                              "    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_own_%s(world);\n}\n", name, i, name);
                 if (!sys->extern_system) sb_printf(o, "static void tide_owned_done_%s(void *world)\n{\n    tide_world *w = world;\n"
@@ -23277,17 +23313,19 @@ static void gen_api(gen *g)
             const char *name = decl_cname(sys);
             if (prog->owned_prediction) sb_printf(o, "    {tide_owned_count_%s, tide_owned_run_%s, ", name, name);
             else sb_printf(o, "    {tide_tasks_%s, tide_task_%s, ", name, name);
-            const bool owns = system_splits(sys) && system_owns(g, sys);
+            const bool ordered = system_splits_in_order(sys);
+            const bool owns = (system_splits(sys) || ordered) && system_owns(g, sys);
             if (owns) sb_printf(o, "tide_%sown_%s, ", prog->owned_prediction ? "owned_" : "", name);
             else sb_put(o, "NULL, ");
             if (owns && !sys->extern_system) sb_printf(o, "tide_%sdone_%s, ", prog->owned_prediction ? "owned_" : "", name); // One written in C made them the world's own
             else sb_put(o, "NULL, ");
             int own_waits = 0;
             for (int k = 0; k < sys->waits.count; k++) own_waits += !sys->waits.items[k].through;
-            sb_printf(o, "%s, %d, ", system_splits(sys) ? "true" : "false", own_waits);
+            sb_printf(o, "%s, %d, ", system_splits(sys) || ordered ? "true" : "false", own_waits);
             if (sys->waits.count) sb_printf(o, "tide_waits_%s", name);
             else sb_put(o, "NULL");
-            sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", "false");
+            // One whose runs go to threads registers its spawns once they've joined, in the runs' order
+            sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", ordered && sys->spawns ? "true" : "false");
 
             gen_c_literal(o, diagnostic_name(g, tool_name(sys), "system", sys->index), false); // Its label, for the profile
             sb_put(o, "},\n");

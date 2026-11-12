@@ -117,9 +117,11 @@ static bool queued_stmt(const stmt *s)
     return false;
 }
 
-bool system_splits(const decl *sys)
+// Whether a system's rows are independent of each other but for what they
+// queue: no row reads or writes what another row writes.
+static bool rows_independent(const decl *sys)
 {
-    if (sys->is_view || !sys->per_entity || sys->writes_text || sys->extern_system || sys->acts[0] || sys->spawns || queued_stmt(sys->body)) return false;
+    if (sys->is_view || !sys->per_entity || sys->writes_text || sys->extern_system) return false;
     if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
@@ -131,6 +133,27 @@ bool system_splits(const decl *sys)
         if (sys->world_uses.items[i].writes) return false;
     }
     return !world_reads_own_writes(sys);
+}
+
+static bool queues(const decl *sys)
+{
+    return sys->acts[0] || sys->spawns || queued_stmt(sys->body);
+}
+
+bool system_splits(const decl *sys)
+{
+    return rows_independent(sys) && !queues(sys);
+}
+
+// A system whose rows are independent but queue changes (a Send, a Spawn, a
+// Destroy) goes through its entities in identity order, so what it queues is
+// in that order. Threads share that order out in runs, each run's queue its
+// own, joined in the runs' order: the same queue as one thread makes. A
+// spawn's identity is its row's entity and the place in the code, whatever
+// ran before it.
+bool system_splits_in_order(const decl *sys)
+{
+    return rows_independent(sys) && queues(sys);
 }
 
 // The components and singletons two systems both use, where at least one of
@@ -460,6 +483,65 @@ int world_use_names(const decl *sys, const bool writes, const char *quote, const
     return count;
 }
 
+// " (bots.tide:212)": where in the code, by the file's name alone.
+static void put_place(sb *out, const loc at)
+{
+    if (at.line <= 0) return;
+    const source *src = diag_source(at.file);
+    const char *name = src && src->path ? src->path : "";
+    for (const char *p = name; *p; p++) if (*p == '/' || *p == '\\') name = p + 1;
+    sb_printf(out, " (%s%s%d)", name, *name ? ":" : "line ", at.line);
+}
+
+// For a per-entity system written in Tide whose entities don't go across
+// threads: the first thing in it that keeps them in order on one, and where,
+// as rows_independent finds it.
+static void put_one_thread(sb *out, const decl *sys)
+{
+    if (!sys->per_entity || sys->extern_system || system_splits(sys) || system_splits_in_order(sys)) return;
+    sb_put(out, "         on one thread: ");
+    const param *singleton = NULL;
+    for (int i = 0; i < sys->params.count && !singleton; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT) singleton = p;
+    }
+    const world_use *set = NULL;
+    for (int i = 0; i < sys->world_uses.count && !set; i++) {
+        if (sys->world_uses.items[i].writes) set = &sys->world_uses.items[i];
+    }
+    const world_use *own = NULL;
+    for (int i = 0; i < sys->world_uses.count && !own; i++) {
+        const world_use *u = &sys->world_uses.items[i];
+        for (int k = 0; k < sys->params.count; k++) {
+            const param *q = &sys->params.items[k];
+            if (q->type.kind == TY_COMPONENT && q->mode == PARAM_MUT && q->type.decl == u->component) own = u;
+        }
+    }
+    if (singleton) {
+        sb_put(out, "it changes the singleton ");
+        put_decl_name(out, singleton->type.decl, "", NULL);
+        put_place(out, singleton->at);
+    } else if (sys->writes_text) {
+        sb_put(out, "it changes text, lists or grids, which the match keeps in one heap");
+        put_place(out, sys->writes_text_at);
+    } else if ((sys->task_access[0] | sys->task_access[1]) & 2u) {
+        sb_put(out, "it changes tasks, which the match keeps in the order they start");
+    } else if (set) {
+        sb_put(out, "it sets ");
+        put_decl_name(out, set->component, "", NULL);
+        sb_put(out, " through its World, on any entity");
+        put_place(out, set->write_at);
+    } else if (own) {
+        sb_put(out, "it changes ");
+        put_decl_name(out, own->component, "", NULL);
+        sb_put(out, " and reads other entities' through its World or a query");
+        put_place(out, own->at);
+    } else {
+        sb_put(out, "its entities go in order");
+    }
+    sb_put(out, "\n");
+}
+
 // What a system reads or writes beyond its outer entity, through World or queries.
 static void put_world_access(sb *out, const decl *sys, const bool writes)
 {
@@ -531,6 +613,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         put_world_access(out, sys, false);
         put_world_access(out, sys, true);
         if (sys->preparation_reads) sb_put(out, "         reads scene readiness\n");
+        put_one_thread(out, sys);
         for (int k = 0; k < sys->waits.count; k++) {
             const system_wait *w = &sys->waits.items[k];
             sb_put(out, "         after ");

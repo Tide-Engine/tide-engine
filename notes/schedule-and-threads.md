@@ -1,5 +1,110 @@
 # The schedule and the tick on threads
 
+## Per-entity systems that queue changes go to threads in entity order (2026-11-12)
+
+Second round of Mount & Rifle's 1,000-soldier report: with measured cost in
+(below), its two heaviest systems still ran on one thread, `Infantry.BotSense`
+(2.34 ms a tick for ~970 rows) and `Infantry.BotAct` (2.96 ms). Two causes,
+neither a threshold.
+
+- **A fixed array's element counted as the heap** (`check_writable`,
+  `compiler/src/check.c`). `in_list` was any `E_INDEX` on the way to the
+  target, so `bot.aware[slot] = x` on an `float[N]` field marked the system
+  `writes_text`: one thread, and a wait on every other system that changes
+  text, lists or grids ("both change text, lists or grids"). A fixed array is
+  in its component's lanes; only an index into something that isn't a
+  `TY_ARRAY` (a list, a map, a grid, text) reaches the heap. An array whose
+  elements hold text or lists is still caught by the target's own type.
+  Functions' `heap_written` parameters use the same test, so helpers that
+  write array elements through a `mut` parameter no longer mark their callers.
+  In Mount & Rifle's schedule 18 per-entity systems stay heap writers, all
+  with real list or text writes.
+- **Any system that sent, spawned or destroyed stayed on one thread** since
+  entities got logical identities (2026-11-06: `system_splits` refuses
+  `acts[0]`, `spawns` and `queued_stmt`, because what a system queues must be
+  in identity order, which chunks aren't). Nothing in that order needs one
+  thread, though: a spawn's identity is its row's entity, the code and the
+  site's count within that row (`tide_causal_entity`, counters made per row),
+  never what ran before it, and a queue is joined in order whatever order its
+  parts were made in. So such a system now **splits in order**
+  (`system_splits_in_order`, `compiler/src/parallel.c`: `rows_independent`,
+  the old conditions without the queueing ones, and it queues something):
+  - Generated code (`gen_system`, `ordered`): its task is a run of the ordered
+    keys, `[count * task / pieces, count * (task + 1) / pieces)`, walked as
+    the whole order was, runs of contiguous rows merged up to the task's end.
+    `tide_tasks_<System>` still returns 1 (one "chunk"), and the table says
+    `splits`, so `pieces_for(1, work, threads)` decides the runs, by measured
+    cost like any chunk's pieces (up to 64).
+  - Lanes: the canonical walk already begins every chunk's written lanes with
+    `tide_table_lanes_begin_pieces` and asks where they are per run
+    (`tide_table_lanes_piece`), which is exactly what pieces of one chunk on
+    several threads need. With one piece the task begins and ends them itself,
+    as before; with more, `tide_own_<System>` and `tide_done_<System>` do
+    (the same `gen_canonical_lanes`), which the runtime calls before the first
+    task and after the last (`tide_system_tasks.own`, `done`).
+  - Queues and spawns: each task records into its own queue, appended in task
+    order (`run_on_threads`), which is key order. A system that spawns is
+    `settles` again (the table had it false since 2026-11-06): its tasks'
+    keys are registered when it joins, in task order, as
+    `jobs_split_spawns_return_final_full_keys` pins for the runtime. Nothing
+    in a row can tell: a spawn only pushes a command, and an entity not yet
+    installed has no archetype either way. The schedule's spawn waits are
+    unchanged (`CONFLICT_SPAWN` still orders spawners).
+  - Each task fetches the ordered keys itself
+    (`tide_entities_ordered_archetypes_slots`, cached, locked for the fetch).
+    A registration on another thread retires the cache, and the next fetch
+    rebuilds it with the same keys: only installed entities have an
+    archetype, and nothing is installed while systems run.
+  - The marks of rows that get past a system's first tests (`rows_live`, the
+    same day's work on the walk) are made before any row runs, from the rows'
+    own bytes. A task of several can't make them: other tasks' rows are
+    changing by then. So with more than one piece every row is marked
+    (`gen_canonical_live`, `LIVE_PIECED`; `LIVE_WHOLE` in `tide_own_` and
+    `tide_done_`, which then begin and end every chunk) and each row's own
+    first line decides, as it did before there were marks. With one piece the
+    marks are made and used as they were.
+  - No runtime function was added or changed.
+- **`tide schedule` says what keeps a system on one thread**
+  (`put_one_thread`): for a per-entity system written in Tide that splits
+  neither way, one line after its reads and writes, `on one thread: it changes
+  the singleton Score (game.tide:42)`: a `mut` singleton (the parameter's
+  place), a heap write (`decl.writes_text_at`, the first place that set it:
+  the write, the call of what sends or spawns text, the pass to a function
+  that changes it), tasks, a `Set` through its World, or reading through its
+  World or a query a component it changes. The game's question took a round
+  trip this line answers.
+
+Mount & Rifle built against this checkout (its origin/dev sources in a
+scratch folder with junctions to its art, `tide_add_game` with `BATTLE_TEST`
+and `ARMY`, release, 12 threads, hidden, `--host --seed 42 --frames 2400
+--profile-warmup 1500`), mean ms a tick: `BotAct` 2.96 (the game's own figure
+on nightly.24) to 0.63-1.0, `BotSense` 2.34 to 0.48-0.65, the match's tick
+4.3-5.5 over two runs on a shared machine. Its log isn't a determinism check:
+two identical runs differ, as the host paces ticks by the clock.
+
+Tests: `tidec_e2e_ordered_split` (`compiler/tests/e2e/ordered_split.tide`):
+3,000 soldiers in several archetypes, some left out, whose system writes fixed
+arrays, spawns, sends a world event through a function and an entity event,
+destroys and adds; a second system only sends; handlers log every event in
+order. Six ticks on one thread against a fake eight-thread pool (the runs'
+queues joined, every tick on threads) and against the platform's pool five
+times over: world hashes and logs equal every tick. Giving the tasks the runs
+in reverse fails it on the first tick. The schedule goldens gained their `on
+one thread` lines and nothing else.
+
+Validation: the whole native sanitize suite (Windows ASan), 3,267 of 3,270.
+`tide_server_smoke` failed in the full run and passes alone. `inside_out_tests`
+and `underfoot_tests` (the private prototypes, built into this tree) fail with
+both compiler changes switched off too: their commands aren't taken, so that
+checkout is behind the engine, not this. web-debug: the new fixture, the
+parallel, canonical, stable-entity and event fixtures, `tide_platform_jobs`
+and the schedule goldens. The docs build.
+
+Gaps: extern per-entity systems still run on one thread (their rows ABI takes
+runs, so the same split would fit; not done). A system that changes a
+singleton or the heap is the language's rule. A chunk-split system
+(`system_splits`) doesn't go in identity order and needs none.
+
 ## A frame's parallel loops on the pool, a row's local fields in steps, steps that read scratch values (2026-11-12)
 
 From Mount & Rifle's view breakdown (1,000 soldiers toward 144 Hz; its biggest view goes through ~1,000
@@ -174,9 +279,10 @@ and under Node). Passing: sanitize (ASan) `tide_tests jobs`, the jobs, rows,
 events and parallel e2e fixtures, `tide_platform_jobs`, `versus_systems`,
 `versus_particles`; web-debug `tide_platform_jobs` and the parallel fixtures.
 
-Gaps: a system that doesn't split (`system_splits`: it changes text, a list, a
-grid or a singleton, or calls `Set`) still runs on one thread whatever it
-costs; that's the language's rule, not a threshold. Nothing lowers tidec's
+Gaps: a system that doesn't split (it changes text, a list, a grid or a
+singleton, or calls `Set`) still runs on one thread whatever it costs; that's
+the language's rule, not a threshold (one that only queues changes splits in
+order since later that day, above). Nothing lowers tidec's
 reckoning where it's too high. The static estimate itself is unchanged (a
 system's row cost still doesn't count the bodies of the functions it calls,
 as `step_cost` does for loop steps): it now only matters for a system's first

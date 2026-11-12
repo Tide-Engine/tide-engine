@@ -8,6 +8,7 @@ stage 1  Hurt  (per entity)
 stage 2  Tally  (per entity)
          reads Unit
          writes Log
+         on one thread: it changes the singleton Log (methods.tide:29)
          after Hurt: it writes Unit, which this reads
          alongside nothing
 

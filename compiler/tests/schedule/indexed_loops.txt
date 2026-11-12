@@ -5,6 +5,7 @@ stage 1  Separate  (per entity)
          reads Sight
          writes Body
          reads any entity's Body, through queries
+         on one thread: it changes Body and reads other entities' through its World or a query (indexed_loops.tide:47)
          alongside ListLoop, Spots2, OneSided
 stage 1  ListLoop  (per entity)
          reads Body, Field
@@ -41,6 +42,7 @@ stage 2  Boxy  (per entity)
 stage 3  Changes  (per entity)
          writes Body
          reads any entity's Body, through queries
+         on one thread: it changes Body and reads other entities' through its World or a query (indexed_loops.tide:100)
          after Separate: it reads Body, which this writes; it writes Body, which this reads (and through SquaredLocal)
          after SquaredLocal: it reads Body, which this writes
          after Helper: it reads Body, which this writes

@@ -830,6 +830,7 @@ typedef struct decl {
                          // also marks the engine's resource and I/O builtins, which only need their order kept)
     bool c_self_indirect; // Private CPU ABI for a proven read-only aggregate method receiver
     bool writes_text;    // A system that writes text, lists or grids into its world: its heap, which one system changes at a time
+    loc writes_text_at;  // ...where it first does
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
     bool starts_tasks;   // Code that starts tasks, calling an async function without await: they're the world's, in order
     loc starts_at;       // ...where it first does
@@ -1888,6 +1889,7 @@ void analyze_parallelism(program *prog);
 // C is trusted: what it does on several threads at once is the game's to get
 // right.
 bool system_splits(const decl *sys);
+bool system_splits_in_order(const decl *sys);
 
 // Whether a system reads through its World or a query a component it also changes
 // through a parameter: it runs on one thread, and writes its rows in place, so

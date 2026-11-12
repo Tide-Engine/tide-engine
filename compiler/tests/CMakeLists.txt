@@ -527,6 +527,11 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_parallel_query PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_parallel_query PRIVATE TIDE_PARALLEL_QUERY_THREADS=1)
 endif()
+tide_e2e_test(ordered_split) # A per-entity system that spawns and sends, its entities' order in runs on threads
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_ordered_split PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_ordered_split PRIVATE TIDE_ORDERED_SPLIT_THREADS=1)
+endif()
 tide_e2e_test(parallel_views) # A frame's parallel loops take the pool's threads, and a row's steps write its local fields
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_parallel_views PRIVATE tide_platform)

@@ -123,7 +123,16 @@ Some things are the whole match's, so systems wait for each other over them what
 
 ## Splitting across threads
 
-The other kind of parallelism is a system splitting its entities across threads: each thread takes a run of them, 2,048 at most. How small the runs get depends on what the entities cost: the engine times each system as the match runs, so a few hundred entities that each take a lot of work are shared out over every core, down to a few dozen a thread, while a few hundred cheap ones stay on one thread, where they're done sooner than another thread would wake. It doesn't change results either, and needs nothing from you, but a system only splits when nothing it does has to happen in order across its entities. One that changes text, lists or grids, or changes a singleton, runs on one thread, alongside the others. So does one that calls its `World`'s `Set`, which may change any entity, or that reads through its `World` or a query a component it also changes: it then sees the entities it already ran for as it left them, the same on every machine. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it.
+The other kind of parallelism is a system splitting its entities across threads: each thread takes a run of them, 2,048 at most. How small the runs get depends on what the entities cost: the engine times each system as the match runs, so a few hundred entities that each take a lot of work are shared out over every core, down to a few dozen a thread, while a few hundred cheap ones stay on one thread, where they're done sooner than another thread would wake. It doesn't change results either, and needs nothing from you, but a system only splits when no entity's turn depends on another's. One that changes text, lists or grids, or changes a singleton, runs on one thread, alongside the others. Writing an element of a fixed array in the entity's own component (`bot.seen[i] = x`) is a write to that component like any other, and splits. So does one that calls its `World`'s `Set`, which may change any entity, or that reads through its `World` or a query a component it also changes: it then sees the entities it already ran for as it left them, the same on every machine. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it: a system that records anything goes through its entities in the order of their identities, and threads take runs of that order.
+
+For a per-entity system that stays on one thread, `tide schedule` says what keeps it there, and where in the code it first does:
+
+```
+stage 3  Tally  (per entity)
+         reads Body
+         writes Score
+         on one thread: it changes the singleton Score (game.tide:42)
+```
 
 A spawn returns its final logical identity immediately; there is no temporary handle or later identity rewrite. Structural installation remains deferred. Queries executed by match/simulation code traverse ascending logical entity identity across archetypes. Presentation/view queries retain their existing traversal order. Extern systems receive contiguous runs in that same global order, while ordinary C function calls from otherwise independent parallel rows retain the game's existing determinism and thread-safety responsibility.
 
