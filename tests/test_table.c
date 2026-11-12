@@ -122,56 +122,6 @@ TIDE_TEST(table_settle_fills_holes_from_the_end)
     tide_entities_free(&entities);
 }
 
-// A tick's spawns, at the table's end in whatever order they were made, are put in their keys' order: rows born
-// before stay, a snapshot keeps its rows as they were, and the entity table says where each row went.
-TIDE_TEST(table_order_puts_a_ticks_spawns_in_their_entities_order)
-{
-    tide_table t = {0}, kept = {0};
-    tide_entities entities = {0};
-    // Three rows born at 1, in order already
-    for (uint32_t i = 0; i < 3; i++) {
-        const tide_entity e = tide_entity_create_key(&entities, (tide_entity){1, 10u + i});
-        const uint32_t row = tide_table_add(&t, &columns);
-        *(tide_entity *)tide_table_cell(&t, &columns, row, 0) = e;
-        ((float *)tide_table_cell(&t, &columns, row, 1))[0] = (float)(10u + i);
-        tide_entity_set_location(&entities, e, (tide_location){0, row});
-    }
-    tide_table_order(&t, &columns, &entities, 0, 1);
-    for (uint32_t row = 0; row < 3; row++) TIDE_CHECK(entity_at(&t, &columns, row).lineage == 10u + row);
-    // Forty born at 2, their keys in no order (a hash's), past a chunk's first room
-    for (uint32_t i = 0; i < 40; i++) {
-        const uint64_t lineage = (i * 37u) % 41u + 1u; // Each once
-        const tide_entity e = tide_entity_create_key(&entities, (tide_entity){2, lineage});
-        const uint32_t row = tide_table_add(&t, &columns);
-        *(tide_entity *)tide_table_cell(&t, &columns, row, 0) = e;
-        ((float *)tide_table_cell(&t, &columns, row, 1))[0] = (float)lineage;
-        tide_entity_set_location(&entities, e, (tide_location){0, row});
-    }
-    tide_table_copy(&kept, &t, &columns);
-    const tide_entity was_last = entity_at(&t, &columns, 42);
-    tide_table_order(&t, &columns, &entities, 0, 1); // Not this birth: nothing moves
-    TIDE_CHECK(tide_entity_equal(entity_at(&t, &columns, 42), was_last));
-    tide_table_order(&t, &columns, &entities, 0, 2);
-    TIDE_CHECK(t.count == 43 && t.holes == 0);
-    for (uint32_t row = 0; row < t.count; row++) {
-        const tide_entity e = entity_at(&t, &columns, row);
-        TIDE_CHECK(row == 0 || tide_entity_compare(entity_at(&t, &columns, row - 1), e) < 0);
-        TIDE_CHECK(position(&t, row)[0] == (float)e.lineage); // Its values came with it
-        const tide_location at = tide_entity_location(&entities, e);
-        TIDE_CHECK(at.archetype == 0 && at.row == row);
-    }
-    // The snapshot's rows are where they were
-    TIDE_CHECK(tide_entity_equal(entity_at(&kept, &columns, 42), was_last));
-    TIDE_CHECK(((const float *)tide_table_get(&kept, &columns, 42, 1))[0] == (float)was_last.lineage);
-    // In order already: the same pages
-    const tide_page *page = t.pages[0];
-    tide_table_order(&t, &columns, &entities, 0, 2);
-    TIDE_CHECK(t.pages[0] == page);
-    tide_table_free(&kept, &columns);
-    tide_table_free(&t, &columns);
-    tide_entities_free(&entities);
-}
-
 TIDE_TEST(table_move_keeps_shared_columns)
 {
     tide_table from = {0};

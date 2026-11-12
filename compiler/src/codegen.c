@@ -13563,10 +13563,6 @@ static void gen_apply(gen *g, const bool local)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) != local) continue;
         sb_printf(o, "    tide_table_settle(&w->%s, %s, &w->entities, %d);\n", arch_name(g, a), arch_columns(g, a), a);
-        // ...and this tick's spawns are put in their entities' order, where code that goes in that order reads
-        // them one after another (tide_table_order). The match's: a local entity's key counts up as it is.
-        if (!local) sb_printf(o, "    tide_table_order(&w->%s, %s, &w->entities, %d, w->tide_identity_clock);\n", arch_name(g, a),
-                              arch_columns(g, a), a);
     }
     sb_printf(o,
         "    tide_queue_clear(&w->commands);\n"

@@ -97,12 +97,6 @@ Fall's, which also writes one element of a `float[120]` (120 lanes copied and co
 255 to 0.5. Systems every row gets past are as they were (a system that writes a singleton behind a test all
 rows pass: 16 before and after, the marking pass within the noise). The game isn't measured on this yet.
 
-With a tick's spawns laid out in their entities' order (the probe's rows were all spawned in one tick), ns a
-row: a per-entity system that writes a singleton, 12 to 8 (`Slim`, one archetype) and 16 to 12 (`Fat`, two
-archetypes interleaved one row in three); one that may Destroy, 16 to 12; a query's `foreach`, 10 to 9; an
-empty per-entity view, 50 to 40 (`Slim`) and 89 to 80 (`Fat`). The probe is in cache whatever the order, so
-this is the shorter runs' gain alone; a game's rows aren't.
-
 ## A wide component's rows (2026-11-10)
 
 Mount & Rifle (branch `t3/visual-overhaul-144hz`, its workarounds in: `with Owner`, the `Hauler` and `Hired` tags),

@@ -89,54 +89,6 @@ void tide_table_settle(tide_table *t, const tide_columns *c, tide_entities *enti
     t->hole_from = t->count;
 }
 
-typedef struct ordered_row {
-    uint64_t lineage;
-    uint32_t row;
-} ordered_row;
-
-static int ordered_row_compare(const void *a, const void *b)
-{
-    const ordered_row *x = a, *y = b;
-    return x->lineage != y->lineage ? (x->lineage < y->lineage ? -1 : 1) : x->row != y->row ? (x->row < y->row ? -1 : 1) : 0;
-}
-
-void tide_table_order(tide_table *t, const tide_columns *c, tide_entities *entities, const uint32_t archetype,
-                      const uint64_t birth)
-{
-    if (t->count < 2u || row_entity(t, c, t->count - 1u)->birth != birth) return; // Nothing born now is at its end
-    uint32_t from = t->count - 1u;
-    bool ordered = true;
-    while (from > 0u && row_entity(t, c, from - 1u)->birth == birth) {
-        ordered &= row_entity(t, c, from - 1u)->lineage < row_entity(t, c, from)->lineage;
-        from--;
-    }
-    const uint32_t n = t->count - from;
-    if (ordered || n < 2u) return;
-    uint32_t widest = 0;
-    for (uint32_t k = 0; k < c->count; k++) widest = c->sizes[k] > widest ? c->sizes[k] : widest;
-    if ((uint64_t)n * widest > SIZE_MAX || (uint64_t)n * sizeof(ordered_row) > SIZE_MAX) tide_out_of_memory();
-    ordered_row *rows = tide_alloc((size_t)n * sizeof *rows);
-    for (uint32_t i = 0; i < n; i++) rows[i] = (ordered_row){row_entity(t, c, from + i)->lineage, from + i};
-    qsort(rows, n, sizeof *rows, ordered_row_compare);
-    // A lane at a time: its rows as they'll be, then put where they go. Each page written is the table's own
-    // first (tide_table_cell), so a snapshot, or a cache that holds one, keeps the rows as they were.
-    uint8_t *lane = tide_alloc((size_t)n * (widest ? widest : 1u));
-    for (uint32_t k = 0; k < c->count; k++) {
-        const uint32_t size = c->sizes[k];
-        if (!size) continue;
-        for (uint32_t i = 0; i < n; i++) memcpy(lane + (size_t)i * size, tide_table_get(t, c, rows[i].row, k), size);
-        for (uint32_t i = 0; i < n; i++) memcpy(tide_table_cell(t, c, from + i, k), lane + (size_t)i * size, size);
-    }
-    free(lane);
-    for (uint32_t i = 0; i < n; i++) {
-        if (rows[i].row == from + i) continue;
-        tide_entity moved;
-        memcpy(&moved, row_entity(t, c, from + i), sizeof moved);
-        tide_entity_set_location(entities, moved, (tide_location){archetype, from + i});
-    }
-    free(rows);
-}
-
 void tide_table_count_holes(tide_table *t, const tide_columns *c)
 {
     t->holes = 0;
