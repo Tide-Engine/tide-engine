@@ -150,6 +150,9 @@ void tide_entity_set_born(tide_entities *t, tide_entity e, uint32_t born);
 // came with a world another machine sent rather than a spawn this one ran.
 // Read where nothing changes the table: between ticks.
 uint32_t tide_entity_born(const tide_entities *t, tide_entity e);
+// The same for the entity alive in slot `slot` (tide_entity_slot_index), with
+// no lookup; 0 for a slot the table hasn't got.
+uint32_t tide_entity_born_at(const tide_entities *t, uint32_t slot);
 
 // Whether two of those can be one entity's: the same, or one isn't known.
 static inline bool tide_born_same(const uint32_t a, const uint32_t b) { return a == b || a == 0u || b == 0u; }
@@ -171,6 +174,28 @@ const tide_entity *tide_entities_ordered(const tide_entities *t, uint32_t *count
 // same borrowed lifetime until settle applies to invalidated subset arrays.
 const tide_entity *tide_entities_ordered_archetypes(const tide_entities *t, const uint32_t *archetypes,
                                                     uint32_t archetype_count, uint32_t *count);
+
+// The same keys, with the slot each is in beside them (`slots`, as many): a
+// walk reads each entity's place from its slot (tide_entity_location_at)
+// rather than looking its key up. Both arrays last as the keys alone do.
+const tide_entity *tide_entities_ordered_archetypes_slots(const tide_entities *t, const uint32_t *archetypes,
+                                                          uint32_t archetype_count, uint32_t *count,
+                                                          const uint32_t **slots);
+
+// tide_entity_location for an entity whose slot was `slot` when its order was
+// made. A slot is an entity's for as long as it lives here, so this is one
+// read; a slot that's no longer its own (destroyed since, its slot maybe a
+// newer entity's, or away and back) is looked up by the key as before.
+static inline tide_location tide_entity_location_at(const tide_entities *t, const uint32_t slot, const tide_entity e)
+{
+    const tide_entity_slot *s = tide_entity_slot_of(t, slot);
+    if (__atomic_load_n(&s->state, __ATOMIC_ACQUIRE) == TIDE_ENTITY_ALIVE &&
+        __atomic_load_n(&s->entity.birth, __ATOMIC_RELAXED) == e.birth &&
+        __atomic_load_n(&s->entity.lineage, __ATOMIC_RELAXED) == e.lineage)
+        return (tide_location){__atomic_load_n(&s->archetype, __ATOMIC_RELAXED),
+                               __atomic_load_n(&s->row, __ATOMIC_RELAXED)};
+    return tide_entity_location(t, e);
+}
 
 // For snapshots: `to` becomes `from`, sharing its pages (see tide/page.h),
 // including optional presentation metadata. The hash covers private allocation

@@ -421,6 +421,59 @@ TIDE_TEST(entity_ordered_archetypes_cache_membership_lifetime_and_snapshot)
     tide_entities_free(&t);
 }
 
+// A walk in the keys' order reads each entity's place from its slot, and a slot that's no longer the key's own
+// (destroyed since the order was made, and maybe another entity's now) gives what looking the key up gives.
+TIDE_TEST(entity_ordered_archetypes_slots_give_each_keys_place)
+{
+    tide_entities t = {0};
+    tide_entity made[40];
+    for (uint32_t i = 0; i < 40; i++)
+    {
+        made[i] = tide_entity_create_key(&t, (tide_entity){1, 1000u - i * 7u});
+        tide_entity_set_location(&t, made[i], (tide_location){i % 3u, 100u + i});
+    }
+    const uint32_t arches[] = {0, 2};
+    uint32_t count = 0, plain_count = 0;
+    const uint32_t *slots = NULL;
+    const tide_entity *keys = tide_entities_ordered_archetypes_slots(&t, arches, 2, &count, &slots);
+    TIDE_REQUIRE(count == 27 && slots != NULL);
+    TIDE_CHECK(keys == tide_entities_ordered_archetypes(&t, arches, 2, &plain_count) && plain_count == count);
+    for (uint32_t i = 0; i < count; i++)
+    {
+        TIDE_CHECK(i == 0 || tide_entity_compare(keys[i - 1], keys[i]) < 0);
+        TIDE_CHECK(slots[i] == tide_entity_slot_index(&t, keys[i]));
+        const tide_location by_key = tide_entity_location(&t, keys[i]);
+        const tide_location by_slot = tide_entity_location_at(&t, slots[i], keys[i]);
+        TIDE_CHECK(by_key.archetype == by_slot.archetype && by_key.row == by_slot.row && by_key.archetype != 1u);
+    }
+    // A row that moves keeps its slot: the same arrays, the new place
+    tide_entity_set_location(&t, keys[3], (tide_location){2, 7777});
+    TIDE_CHECK(tide_entity_location_at(&t, slots[3], keys[3]).row == 7777u);
+    // Destroyed, its slot taken by a newer entity: the old arrays stay (until settle), the old key finds nothing
+    // and never the newcomer's place
+    const tide_entity gone = keys[5];
+    const uint32_t gone_slot = slots[5];
+    TIDE_CHECK(tide_entity_destroy(&t, gone));
+    const tide_entity newer = tide_entity_create_key(&t, (tide_entity){1, 5000});
+    tide_entity_set_location(&t, newer, (tide_location){0, 4242});
+    TIDE_CHECK(tide_entity_slot_index(&t, newer) == gone_slot);
+    TIDE_CHECK(tide_entity_location_at(&t, gone_slot, gone).archetype == TIDE_ARCHETYPE_NONE);
+    TIDE_CHECK(tide_entity_location_at(&t, gone_slot, newer).row == 4242u);
+    // A slot that isn't the key's at all (or none the table has) is looked up by the key
+    TIDE_CHECK(tide_entity_location_at(&t, slots[8], keys[9]).row == tide_entity_location(&t, keys[9]).row);
+    TIDE_CHECK(tide_entity_location_at(&t, UINT32_MAX, keys[9]).row == tide_entity_location(&t, keys[9]).row);
+    TIDE_CHECK(tide_entity_born_at(&t, UINT32_MAX) == 0u);
+    tide_entity_set_born(&t, keys[9], 31u);
+    TIDE_CHECK(tide_entity_born_at(&t, slots[9]) == 31u && tide_entity_born(&t, keys[9]) == 31u);
+    const tide_entity *next = tide_entities_ordered_archetypes_slots(&t, arches, 2, &count, &slots);
+    TIDE_REQUIRE(next != keys && count == 27);
+    for (uint32_t i = 0; i < count; i++)
+        TIDE_CHECK(slots[i] == tide_entity_slot_index(&t, next[i]));
+    TIDE_CHECK(tide_entities_ordered_archetypes_slots(&t, NULL, 0, &count, &slots) == NULL && count == 0 && !slots);
+    tide_entities_settle(&t);
+    tide_entities_free(&t);
+}
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>

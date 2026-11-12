@@ -76,6 +76,8 @@ singleton Stats
     float sum;
     int around;
     int shifting;
+    int swing;
+    float swung;
 }
 
 local singleton Drawn
@@ -393,6 +395,22 @@ int Shifting(int salt)
         points[k] = float2(c.x + 0.5f, c.y);
     }
     return n;
+}
+
+// A bound that lets nearly every row through on some ticks and few on others: a search that finds most rows
+// goes through every row as the plain loop does, and the loop's site then leaves the search out for some runs
+// (tide_ix_most, tide_ix_pass), so this one goes both ways. The sum depends on the rows' order.
+system Swing(mut Stats stats, Time time, query (Body other, Unit u) units)
+{
+    var most = float(time.tick % 9) * 1.5f;
+    stats.swing = 0;
+    stats.swung = 0.0f;
+    foreach (var r in units)
+    {
+        if (r.u.health >= most) continue;
+        stats.swing += r.u.level + 1;
+        stats.swung = stats.swung * 0.75f + r.other.position.y;
+    }
 }
 
 system Scatter(mut Stats stats, Time time)

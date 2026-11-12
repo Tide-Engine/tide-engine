@@ -32,6 +32,7 @@
 // leaves it be and builds one of its own.
 
 #define IX_LEAST 32 // Rows below which a loop goes through them all: an index costs more than it saves
+#define IX_MOST 6   // A search of a world's query that finds more than one row in this many goes through them all too
 
 // The loops with an index in code: whether there's any, and the locals whose lists are kept (ix_locals).
 static bool ix_stmt_any(gen *g, const stmt *s);
@@ -119,13 +120,15 @@ static void gen_index_helpers(gen *g)
     if (!g->ix_any) return;
     sb *o = &g->c;
     sb_printf(o, "// Indexed loops (notes/indexed-loops.md): where an index is kept, and what it was made from\n"
-                 "#define TIDE_INDEX_CACHE_ABI 1u\n#define TIDE_IX_LEAST %du\n", IX_LEAST);
+                 "#define TIDE_INDEX_CACHE_ABI 2u\n#define TIDE_IX_LEAST %du\n#define TIDE_IX_MOST %du\n", IX_LEAST, IX_MOST);
     sb_put(o,
         "typedef struct tide_ix_site {\n"
         "    uint32_t lock;      // Checking and building (tide_index_lock)\n"
         "    uint32_t readers;   // Searches of `ix` running now\n"
         "    uint32_t ready;     // `ix` is of what `fact` says\n"
         "    uint32_t facts, fact_room, holds, hold_room;\n"
+        "    uint32_t most;      // Searches in a row that found most of the rows (tide_ix_most)\n"
+        "    uint32_t pass;      // Runs of the loop still to go through every row without searching\n"
         "    uint64_t plan;      // What the code that made it reads, which a reload can change\n"
         "    uint64_t valid;     // A system's own loop's: the tick's run (epoch) its index was found to hold in\n"
         "    uint64_t *fact;     // What it was made from: numbers, and pages as numbers, in the order they're checked\n"
@@ -259,7 +262,27 @@ static void gen_index_helpers(gen *g)
         "TIDE_HELPER void tide_ix_searched(tide_ix_site *s, tide_index *ix, const bool own, const bool held)\n{\n"
         "    if (held) return;\n"
         "    if (own) tide_index_free(ix);\n"
-        "    else __atomic_sub_fetch(&s->readers, 1u, __ATOMIC_ACQ_REL);\n}\n\n");
+        "    else __atomic_sub_fetch(&s->readers, 1u, __ATOMIC_ACQ_REL);\n}\n\n"
+        "// A search that finds most of a query's rows saves nothing: the loop then goes through every row as the plain\n"
+        "// loop does, which is what it would have done to each candidate, and cheaper a row. A site whose searches keep\n"
+        "// finding most rows stops searching for a while (1, 3, 7... up to 63 runs of its loop), so an index nothing\n"
+        "// is gained from isn't checked or built for each run either. Which way a loop goes changes no result. The\n"
+        "// counts are a site's own, read and written by whichever thread runs the loop: any value they hold is fine.\n"
+        "TIDE_HELPER bool tide_ix_pass(tide_ix_site *s)\n{\n"
+        "    if (!s) return false;\n"
+        "    const uint32_t left = __atomic_load_n(&s->pass, __ATOMIC_RELAXED);\n"
+        "    if (!left) return false;\n"
+        "    __atomic_store_n(&s->pass, left - 1u, __ATOMIC_RELAXED);\n"
+        "    return true;\n}\n\n"
+        "TIDE_HELPER bool tide_ix_most(tide_ix_site *s, const uint32_t found, const uint64_t rows)\n{\n"
+        "    const bool most = (uint64_t)found * TIDE_IX_MOST > rows;\n"
+        "    if (!s) return most;\n"
+        "    if (!most) {\n        __atomic_store_n(&s->most, 0u, __ATOMIC_RELAXED);\n        return false;\n    }\n"
+        "    uint32_t n = __atomic_load_n(&s->most, __ATOMIC_RELAXED);\n"
+        "    if (n < 6u) n++;\n"
+        "    __atomic_store_n(&s->most, n, __ATOMIC_RELAXED);\n"
+        "    __atomic_store_n(&s->pass, (1u << n) - 1u, __ATOMIC_RELAXED);\n"
+        "    return true;\n}\n\n");
 }
 
 // The number of sites, now that every loop has been written.
@@ -441,19 +464,17 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
             line(g, o, "const uint8_t *tide_qpres%d = tide_table_column(tide_qt, %s, tide_qc, %d);", c, arch_columns(g, a),
                  arch_presence(g, a, c));
         }
-        bool gathered[64] = {false};
+        // The lanes holding the keys, and no other: the rest of a wide component is neither looked up nor copied
         for (int k = 0; k < plan->count; k++) {
             const int b = x->binding[k];
-            if (b >= 64 || gathered[b]) continue;
-            gathered[b] = true;
             const decl *comp = x->q->query.items[b].type.decl;
-            indent(g, o);
-            sb_printf(o, "const uint8_t *const tide_xcol%d[%d] = {", b, comp_lanes(comp));
-            for (int l = 0; l < comp_lanes(comp); l++) {
-                sb_printf(o, "%s(const uint8_t *)tide_table_column(tide_qt, %s, tide_qc, %d)", l ? ", " : "", arch_columns(g, a),
-                          arch_column(g, a, comp->index) + l);
+            for (int l = x->lane_lo[k]; l <= x->lane_hi[k]; l++) {
+                bool before = false;
+                for (int j = 0; j < k; j++) before |= x->binding[j] == b && x->lane_lo[j] <= l && l <= x->lane_hi[j];
+                if (before) continue;
+                line(g, o, "const uint8_t *const tide_xcol%d_%d = tide_table_column(tide_qt, %s, tide_qc, %d);", b, l,
+                     arch_columns(g, a), arch_column(g, a, comp->index) + l);
             }
-            sb_put(o, "};\n");
         }
         line(g, o, "for (uint32_t tide_qi = 0; tide_qi < tide_qn; tide_qi++) {");
         g->indent++;
@@ -477,8 +498,17 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
                 const param *p = &x->q->query.items[i];
                 if (!param_binding(p)) continue;
                 const field *value = &x->row->fields.items[f++];
-                if (i < 64 && gathered[i]) line(g, o, "tide_gather_%s(&tide_xrow.%s, tide_xcol%d, tide_qi);", type_cname(p->type.decl),
-                                                field_cname(value), i);
+                const int width = comp_width(p->type.decl);
+                for (int k = 0; k < plan->count; k++) {
+                    if (x->binding[k] != i) continue;
+                    for (int l = x->lane_lo[k]; l <= x->lane_hi[k]; l++) {
+                        bool before = false;
+                        for (int j = 0; j < k; j++) before |= x->binding[j] == i && x->lane_lo[j] <= l && l <= x->lane_hi[j];
+                        if (before) continue;
+                        line(g, o, "memcpy((uint8_t *)&tide_xrow.%s + %d, tide_xcol%d_%d + (size_t)tide_qi * %d, %d);",
+                             field_cname(value), l * width, i, l, width, width);
+                    }
+                }
             }
             gen_ix_keys(g, plan, "tide_xrow", "tide_xkey");
             line(g, o, "tide_index_add(tide_xi, tide_xkey, tide_xord);");
@@ -622,21 +652,15 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
         if (query_admits(g, x.selection, a)) sb_printf(o, " + %s->%s.count", x.world, arch_name(g, a));
     }
     sb_put(o, ";\n");
-    line(g, o, "if (tide_xrows < TIDE_IX_LEAST) { // Few rows: the plain loop");
-    g->indent++;
-    const int sites = g->sites; // The same GUI sites in both: one runs
-    gen_query_walk(g, s, gather);
-    g->sites = sites;
-    g->indent--;
-    line(g, o, "} else {");
-    g->indent++;
-    gen_query_fresh(g, x.q, name);
-    if (causes && !gather) line(g, o, "const uint64_t tide_query_cause = tide_causal_next(&tide_causal, %uu); (void)tide_query_cause;", s->causal_site);
-    gen_ix_bounds(g, plan, "tide_xlo", "tide_xhi");
+    // Few rows, or a site whose searches find most of them (tide_ix_pass): the plain loop, with no search
     line(g, o, "tide_index_hits %s;", hits);
     line(g, o, "tide_index_hits_init(&%s);", hits);
     const char *fast = ix_fast(g) && strcmp(x.world, "tide_w") == 0 ? "true" : "false";
     line(g, o, "tide_ix_site *const tide_xs = tide_ix_site_at(%s->tide_index_cache, %du);", x.world, site);
+    line(g, o, "bool tide_xall = tide_xrows < TIDE_IX_LEAST || tide_ix_pass(tide_xs);");
+    line(g, o, "if (!tide_xall) {");
+    g->indent++;
+    gen_ix_bounds(g, plan, "tide_xlo", "tide_xhi");
     line(g, o, "const bool tide_xheld = tide_ix_hold(tide_xs, %s->tide_index_cache, %s);", x.world, fast);
     line(g, o, "tide_index *tide_xi = tide_xheld ? tide_xs->ix : NULL;");
     line(g, o, "bool tide_xown = false;");
@@ -663,10 +687,35 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     line(g, o, "}");
     line(g, o, "tide_index_find(tide_xi, tide_xlo, tide_xhi, &%s);", hits);
     line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown, tide_xheld);");
+    line(g, o, "tide_xall = tide_ix_most(tide_xs, %s.count, tide_xrows); // Most rows found: the plain loop is cheaper", hits);
+    g->indent--;
+    line(g, o, "}");
+    line(g, o, "if (tide_xall) {");
+    g->indent++;
+    line(g, o, "tide_index_hits_free(&%s);", hits);
+    const int sites = g->sites; // The same GUI sites in both: one runs
+    gen_query_walk(g, s, gather);
+    g->sites = sites;
+    g->indent--;
+    line(g, o, "} else {");
+    g->indent++;
+    gen_query_fresh(g, x.q, name);
+    if (causes && !gather) line(g, o, "const uint64_t tide_query_cause = tide_causal_next(&tide_causal, %uu); (void)tide_query_cause;", s->causal_site);
     line(g, o, "const uint64_t *const tide_xo = %s.items;", hits);
     line(g, o, "const uint32_t tide_xn = %s.count;", hits);
     sb cleanup = {0};
     const int containers = ix_hits_open(g, hits, &cleanup);
+    // A row's copy holds the lanes the body reads, as the plain loop's does (match_query_lanes)
+    query_lane_read *reads = arena_alloc((size_t)x.q->query.count * sizeof *reads);
+    memset(reads, 0, (size_t)x.q->query.count * sizeof *reads);
+    bool narrowed = false;
+    for (int i = 0, f = 1; i < x.q->query.count; i++) {
+        const param *p = &x.q->query.items[i];
+        if (!param_binding(p)) continue;
+        const field *binding = &x.row->fields.items[f++];
+        reads[i].some = canonical && !gather && match_query_lanes(g, s, p, binding, reads[i].words);
+        narrowed |= reads[i].some;
+    }
     if (canonical) {
         line(g, o, "tide_canonical_candidate tide_xinline[64];");
         line(g, o, "tide_canonical_candidate *const tide_xsorted = tide_xn <= 64u ? tide_xinline : tide_alloc_zeroed(tide_xn, sizeof *tide_xsorted);");
@@ -701,7 +750,7 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
         }
         if (x.q->local_use) line(g, o, "uint32_t tide_born;");
         g->indent--;
-        line(g, o, "} %s;", name);
+        line(g, o, "} %s%s;", name, narrowed ? " = {0}" : "");
     }
     bool first = true;
     for (int a = 0; a < g->prog->archetypes.count; a++) {
@@ -729,8 +778,18 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
             const param *p = &x.q->query.items[i];
             if (!param_binding(p)) continue;
             const field *value = &x.row->fields.items[f++];
+            const decl *comp = p->type.decl;
+            if (reads[i].some) {
+                const int width = comp_width(comp);
+                for (int k = 0; k < comp_lanes(comp); k++) {
+                    if (!query_reads_lane(&reads[i], k)) continue;
+                    line(g, o, "memcpy((uint8_t *)&%s.%s + %d, tide_table_get(tide_qt, %s, tide_xr, %d), %d);", name,
+                         field_cname(value), k * width, arch_columns(g, a), arch_column(g, a, comp->index) + k, width);
+                }
+                continue;
+            }
             line(g, o, "tide_table_gather(tide_qt, %s, tide_xr, %d, %du, %du, &%s.%s);", arch_columns(g, a),
-                 arch_column(g, a, p->type.decl->index), comp_lanes(p->type.decl), comp_width(p->type.decl), name, field_cname(value));
+                 arch_column(g, a, comp->index), comp_lanes(comp), comp_width(comp), name, field_cname(value));
         }
         g->indent--;
     }

@@ -35,19 +35,24 @@ TIDE_TEST(indexed_loops_give_what_plain_loops_give)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_local_init(&local);
     uint64_t at[80] = {0};
+    int swings = 0, swung_most = 0; // Ticks Swing's loop found rows in, and found most of them in
     for (int t = 0; t < 80; t++) {
         tide_world_tick_events(&world, NULL, &events);
         const uint64_t drawn = frame();
         at[t] = tide_world_hash(&world);
-        printf("ixloops %d %016" PRIx64 " %" PRIu64 " %.9g %d %d %d %d %.9g %d %d %d %d %d\n", t, at[t], drawn, (double)local.Drawn.sum,
+        printf("ixloops %d %016" PRIx64 " %" PRIu64 " %.9g %d %d %d %d %.9g %d %d %d %d %d %d %.9g\n", t, at[t], drawn, (double)local.Drawn.sum,
                world.Stats.teams, world.Stats.low, world.Stats.band, world.Stats.tagged, (double)world.Stats.sum,
-               world.Stats.around, world.Stats.shifting, world.Sparks.warm, local.Drawn.glanced, local.Drawn.marked);
+               world.Stats.around, world.Stats.shifting, world.Sparks.warm, local.Drawn.glanced, local.Drawn.marked,
+               world.Stats.swing, (double)world.Stats.swung);
+        swings += world.Stats.swing > 0;
+        swung_most += world.Stats.swing > 2000;
         if (t == 30) tide_world_copy(&snapshot, &world);
     }
     TIDE_CHECK(world.Stats.teams > 0 && world.Stats.low > 0 && world.Stats.band > 0 && world.Stats.tagged > 0);
     TIDE_CHECK(local.Drawn.rows > 0 && local.Drawn.helper > 0);
     TIDE_CHECK(world.Stats.around > 0 && world.Stats.shifting > 0 && local.Drawn.marked > 0);
     TIDE_CHECK(local.Drawn.glanced > 0);
+    TIDE_CHECK(swings > swung_most && swung_most > 0); // Few rows on some ticks, most on others
 #ifdef IXTEST_INDEXED
     TIDE_CHECK(world.tide_index_cache != NULL);
     TIDE_CHECK(local.tide_index_cache != NULL);

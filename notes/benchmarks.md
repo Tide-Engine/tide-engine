@@ -11,6 +11,32 @@ After the deliberate identity-pin update, all five quick cases pass on native
 ASan and WASI.
 
 
+## What a row costs in entity order (2026-11-12)
+
+For notes/ecs.md (What a row costs in entity order) and notes/indexed-loops.md (When most rows pass). A probe
+game, not kept in the repository: 1,000 `Slim` rows (6 lanes, one archetype) and 1,000 `Fat` rows (128 lanes of
+match state, a 2.6 KB `local` struct, two archetypes interleaved one row in three), each system named for what
+it does. Release, Windows, Ryzen 9 7900X, hidden, 300 ticks after 100 of warm-up, mean ms a tick from
+`--profile`'s `systems` (three runs each, within 5%). A thousand rows, so µs a tick is ns a row.
+
+| System | Before | After |
+|---|---|---|
+| `foreach` with `if (row.s.down) continue;`, 3 fields read, `Slim` (through an index) | 75 | 10 |
+| The same over `Fat` | 330 | 11 |
+| `foreach` with no guard, `Fat` (the plain loop) | 37 | 11 |
+| Per-entity, reads one field, may `Destroy` (`Fat`) | 65 | 16 |
+| Per-entity, writes a singleton (`Fat`) | 55 | 15 |
+| The same (`Slim`) | 50 | 12 |
+| Per-entity, writes its own component (`Slim` / `Fat`: by chunks, unchanged) | 5.7 / 18 | 5.8 / 19 |
+| Per-entity view, nothing in its body (`Slim`), a frame | 103 | 50 |
+| Per-entity view writing a `local` field (`Fat`), a frame | 142 | 89 |
+
+Where an index still pays, 1,000 `Fat` rows, the guard `row.f.beat >= N` (the key never changes, so the index
+is kept): one row in eight found, 6.6 against the plain loop's 10; one in four, 12 against 10 (now plain: more
+than one in six); one in two, 10 either way (plain).
+
+Not measured here: Mount & Rifle itself, whose thread measures it on the nightly with this in.
+
 ## A wide component's rows (2026-11-10)
 
 Mount & Rifle (branch `t3/visual-overhaul-144hz`, its workarounds in: `with Owner`, the `Hauler` and `Hired` tags),

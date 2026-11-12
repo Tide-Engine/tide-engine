@@ -31,6 +31,7 @@ struct tide_entity_order
 {
     struct tide_entity_order *next;
     uint32_t count;
+    const uint32_t *slots; // A subset's (tide_entities_ordered_archetypes_slots): each key's slot, after the keys
     tide_entity keys[];
 };
 
@@ -105,6 +106,7 @@ const tide_entity *tide_entities_ordered(const tide_entities *entities, uint32_t
         struct tide_entity_order *order = tide_alloc(sizeof *order + (size_t)n * sizeof(tide_entity));
         order->next = NULL;
         order->count = n;
+        order->slots = NULL;
         uint32_t out = 0;
         for (uint32_t at = 0; at < t->next_unused; at++)
         {
@@ -136,10 +138,17 @@ static bool admitted_archetype(const uint32_t *arches, uint32_t n, uint32_t arch
     return begin < n && arches[begin] == arch;
 }
 
-const tide_entity *tide_entities_ordered_archetypes(const tide_entities *entities, const uint32_t *arches, uint32_t n,
-                                                    uint32_t *count)
+typedef struct ordered_slot
+{
+    tide_entity key; // First: sorted with the keys' comparison
+    uint32_t slot;
+} ordered_slot;
+
+const tide_entity *tide_entities_ordered_archetypes_slots(const tide_entities *entities, const uint32_t *arches,
+                                                          uint32_t n, uint32_t *count, const uint32_t **slots)
 {
     *count = 0;
+    *slots = NULL;
     if (!n)
         return NULL;
     if ((uint64_t)n * sizeof(uint32_t) > SIZE_MAX - sizeof(struct tide_entity_filtered_order))
@@ -166,26 +175,48 @@ const tide_entity *tide_entities_ordered_archetypes(const tide_entities *entitie
             const tide_entity_slot *slot = tide_entity_slot_of(t, at);
             selected += slot->state == TIDE_ENTITY_ALIVE && admitted_archetype(f->archetypes, n, slot->archetype);
         }
-        if ((uint64_t)selected * sizeof(tide_entity) > SIZE_MAX - sizeof(struct tide_entity_order))
+        const uint64_t each = sizeof(tide_entity) + sizeof(uint32_t);
+        if ((uint64_t)selected * each > SIZE_MAX - sizeof(struct tide_entity_order) ||
+            (uint64_t)selected * sizeof(ordered_slot) > SIZE_MAX)
             tide_out_of_memory();
-        struct tide_entity_order *order = tide_alloc(sizeof *order + (size_t)selected * sizeof(tide_entity));
+        struct tide_entity_order *order = tide_alloc(sizeof *order + (size_t)selected * (size_t)each);
+        ordered_slot *sorted = selected ? tide_alloc((size_t)selected * sizeof *sorted) : NULL;
+        uint32_t *order_slots = (uint32_t *)(order->keys + selected);
         order->next = NULL;
         order->count = selected;
+        order->slots = order_slots;
         uint32_t out = 0;
         for (uint32_t at = 0; at < t->next_unused; at++)
         {
             const tide_entity_slot *slot = tide_entity_slot_of(t, at);
             if (slot->state == TIDE_ENTITY_ALIVE && admitted_archetype(f->archetypes, n, slot->archetype))
-                order->keys[out++] = slot->entity;
+            {
+                sorted[out].key = slot->entity;
+                sorted[out++].slot = at;
+            }
         }
         if (selected > 1u)
-            qsort(order->keys, selected, sizeof(tide_entity), entity_compare_qsort);
+            qsort(sorted, selected, sizeof *sorted, entity_compare_qsort);
+        for (uint32_t i = 0; i < selected; i++)
+        {
+            order->keys[i] = sorted[i].key;
+            order_slots[i] = sorted[i].slot;
+        }
+        free(sorted);
         f->order = order;
     }
     *count = f->order->count;
+    *slots = f->order->slots;
     const tide_entity *keys = f->order->keys;
     order_unlock(t);
     return keys;
+}
+
+const tide_entity *tide_entities_ordered_archetypes(const tide_entities *entities, const uint32_t *arches, uint32_t n,
+                                                    uint32_t *count)
+{
+    const uint32_t *slots;
+    return tide_entities_ordered_archetypes_slots(entities, arches, n, count, &slots);
 }
 
 static _Noreturn void identity_failure(const char *reason)
@@ -666,13 +697,17 @@ void tide_entity_set_born(tide_entities *t, tide_entity e, uint32_t born)
     *page = *page ? tide_page_own(*page, 1, BORN_BYTES) : tide_page_new(BORN_BYTES);
     ((uint32_t *)tide_page_data(*page))[at & (SLOTS - 1u)] = born;
 }
-uint32_t tide_entity_born(const tide_entities *t, tide_entity e)
+uint32_t tide_entity_born_at(const tide_entities *t, uint32_t at)
 {
-    const uint32_t at = tide_entity_slot_index(t, e);
-    if (at == UINT32_MAX)
+    if (at >= t->next_unused)
         return 0;
     const tide_page *p = t->page[t->room + (at >> TIDE_ENTITY_PAGE_SHIFT)];
     return p ? ((const uint32_t *)tide_page_data(p))[at & (SLOTS - 1u)] : 0;
+}
+uint32_t tide_entity_born(const tide_entities *t, tide_entity e)
+{
+    const uint32_t at = tide_entity_slot_index(t, e);
+    return at == UINT32_MAX ? 0 : tide_entity_born_at(t, at);
 }
 
 void tide_entities_copy(tide_entities *to, const tide_entities *from)

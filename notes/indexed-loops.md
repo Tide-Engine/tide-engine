@@ -10,6 +10,45 @@ view output and ordinary list order. Escape fallbacks, live Set/COW handling and
 focused regressions are documented in language.md, Narrow transient match-query
 reads. This does not change which loops may be indexed or their guards/order.
 
+## When most rows pass (2026-11-12)
+
+Mount & Rifle's once-a-tick walks of its 1,000 soldiers start with `if (row.t.down) continue;`. That's a guard
+on a bool, so each was an indexed loop, and with nobody down its search gave every row: 1,000 hits copied out,
+their entities fetched, sorted by identity (`qsort`, 128-bit keys), then each row gathered whole with
+`tide_table_gather`, whatever the body read. 74 ns a row on a 6-lane component and 340 on a 128-lane one, where
+the plain loop was 37 (now 11: notes/ecs.md, What a row costs in entity order). Three changes, all in
+`gen_indexed_query` (a world's query; rows made for views and lists are as they were):
+
+- **Most rows found: every row instead.** The search runs first; `tide_ix_most(site, found, rows)` is true when
+  `found * TIDE_IX_MOST > rows` (`IX_MOST` 6: more than one row in six), and the loop then frees its hits and
+  goes through the plain loop, which was already written beside it for tables of fewer than `TIDE_IX_LEAST`
+  rows. One in six is where the two cost the same on this machine: a candidate is about 50 ns (the sort, a
+  `tide_table_get` a lane) and a plain row 11; at one row in eight the index took 6.6 µs of 1,000 rows against
+  10, at one in four 12 against 10.
+- **A site that keeps finding most stops searching for a while.** `tide_ix_site` gained `most` (searches in a
+  row that found most) and `pass` (runs of the loop left to go through every row with no search). Each such
+  search sets `pass` to 1, 3, 7... 63 runs; one that finds few sets `most` back to 0. So a loop whose key changes
+  every tick and whose guard most rows pass doesn't check or build an index for each run that then isn't used.
+  `tide_ix_pass` is asked before the bounds are worked out. The counts are read and written with relaxed atomics
+  by whichever thread runs the loop; any value they hold only changes which of two equal loops runs.
+  `TIDE_INDEX_CACHE_ABI` is 2 (the site's layout).
+- **A candidate's copy holds the lanes the body reads** (`match_query_lanes`, as the plain loop's since
+  2026-11-07), each a `memcpy` from `tide_table_get`; a body that could let the row escape still gathers all.
+- **Building reads the keys' lanes only** (`gen_ix_query_rows`): a column pointer per key lane and a `memcpy`
+  each into the row, where it looked up and gathered every lane of the key's component.
+
+What a loop does is unchanged: the same rows pass the same guard in the same order. The spec's Indexed loops has
+the rule as Provisional, and docs/game/systems.md says it in a paragraph.
+
+Tests: the differential fixture's `Swing` (`indexed_loops.tide`) bounds `health` by a number that takes in
+nothing, a few rows or nearly all of them from tick to tick, over two archetypes with a sum that depends on the
+order, so one site goes through candidates, every row, and its passes; `indexed_loops_test.c` checks it found
+few on some ticks and most on others, and `tidec_indexed_loops_same` compares it with the plain build's. The
+fixture's other loops cover the rest: `Count`'s team and bool guards pass most rows, `Avoid`'s few.
+
+Gap: lists and rows made for views still go through an index however many it finds. A list's candidates are
+its elements in order with no sort or gather, so there's little to gain.
+
 # Indexed loops
 
 ## Canonical logical entity order (2026-11-06)

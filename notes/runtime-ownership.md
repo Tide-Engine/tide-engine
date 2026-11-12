@@ -53,6 +53,14 @@ sets, invalidating subsets on actual membership changes while preserving them
 for row-only moves. Contracts and
 focused validation: ecs.md and memory-safety.md.
 
+Since 2026-11-12 generated walks in entity order call
+`tide_entities_ordered_archetypes_slots` (the same keys, with each key's slot
+beside it) and `tide_entity_location_at(entities, slot, key)` (inline: the
+slot when it's still that key's, else the lookup by key), and a view's blend
+calls `tide_entity_slot_index`, `tide_entity_slot_of` and
+`tide_entity_born_at(entities, slot)`. Contracts: ecs.md, What a row costs in
+entity order.
+
 Attached local fields use a full-key hash index. Shard references carry their
 full 16-byte entity key plus an 8-byte shard location; world-clock/status/checkpoint
 metadata preserves identity clocks (checkpoint 6). `tide_layout_world` appends

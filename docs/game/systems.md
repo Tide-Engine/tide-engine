@@ -132,6 +132,8 @@ indexed foreach (var b in boids) { ... }
 
 `tidec --schedule` lists every loop that skips rows, and whether an index finds the rest or why not. An index of rows that don't change, like walls, is made once and kept across ticks.
 
+An index pays when the condition leaves most rows out. A condition most rows pass, such as `if (b.unit.down) continue;` in a battle where few are down, gains nothing from one, so when a search of a query's rows finds more than about one row in six, the loop goes through every row instead, which costs less for each. The results are the same either way, and nothing needs writing differently.
+
 ## Other entities: the World
 
 A system often needs another entity's component in the same tick: the target it attacks, the leader it follows. A `World` parameter gives it, by the entity's handle:
