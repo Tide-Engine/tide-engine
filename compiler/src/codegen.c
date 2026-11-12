@@ -11504,6 +11504,7 @@ static bool spawn_has_text(const gen *g, const int a)
 static bool field_blends(const field *f);
 static bool decl_blends(const decl *d);
 static bool reads_some_used(const gen *g, const decl *d);
+static bool blend_prev_words(const gen *g, const decl *d, sb *words);
 // A system's guard (row_lanes_codegen.inc)
 #define GUARD_TERMS_MOST 32
 static int system_guard_terms(const decl *sys, const expr **terms);
@@ -11755,7 +11756,7 @@ static void gen_far_blend(gen *g, const decl *d)
     }
     sb_printf(o, "    %s now;\n    if (!tide_load_%s(tide_far_verified, e, &now)) return false;\n"
                  "    if (tide_far_vprev && tide_far_valpha < 1.0f) {\n"
-                 "        %s before;\n        tide_blend_%s(&now, tide_prev_%s(tide_far_vprev, tide_far_verified, e, &before), tide_far_valpha);\n"
+                 "        %s before;\n        tide_blend_%s(&now, tide_prev_blended_%s(tide_far_vprev, tide_far_verified, e, &before), tide_far_valpha);\n"
                  "    }\n    *v = now;\n    return true;\n}\n\n", name, name, name, name, name);
 }
 
@@ -11829,8 +11830,13 @@ static void gen_blend_helpers(gen *g)
                       name, name, name);
             gen_prev_found(g);
             sb_printf(o, "    return tide_load_%s_at(w, (tide_location){was->archetype, was->row}, out) ? out : NULL;\n}\n\n", name);
-            gen_far_blend(g, d);
-            if (!reads_some_used(g, d)) continue;
+            if (!reads_some_used(g, d)) {
+                // What a blend takes of the tick before: all of it, for a component with no partial copies
+                sb_printf(o, "TIDE_HELPER const %s *tide_prev_blended_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n"
+                             "    return tide_prev_%s(w, now, e, out);\n}\n\n", name, name, name, name);
+                gen_far_blend(g, d);
+                continue;
+            }
             // The same for the lanes a view reads: only the fields in them blend, and only those are found
             sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) void tide_blend_some_%s(%s *v, const %s *before, float t, const uint64_t *some)\n{\n"
                          "    (void)some;\n    if (!before) return;\n", name, name, name);
@@ -11864,6 +11870,18 @@ static void gen_blend_helpers(gen *g)
                              "        %s before;\n        tide_blend_some_%s(v, tide_prev_some_%s(tide_far_vprev, tide_far_verified, e, &before, some), "
                              "tide_far_valpha, some);\n    }\n    return true;\n}\n\n", name, name, name, name);
             }
+            // What a blend takes of the tick before, for a row copied whole: the lanes of the fields that blend
+            // (and the counts of jumps it compares). The rest of that tick's value is never read, and a wide
+            // component's was loaded lane by lane for every row all the same.
+            sb words = {0};
+            if (blend_prev_words(g, d, &words)) {
+                sb_printf(o, "TIDE_HELPER const %s *tide_prev_blended_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n"
+                             "    return tide_prev_some_%s(w, now, e, out, %s);\n}\n\n", name, name, name, name, words.data);
+            } else {
+                sb_printf(o, "TIDE_HELPER const %s *tide_prev_blended_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n"
+                             "    return tide_prev_%s(w, now, e, out);\n}\n\n", name, name, name, name);
+            }
+            gen_far_blend(g, d);
         }
     }
     g->indent = 0;
@@ -16979,7 +16997,7 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
             if (!p->verified && far_blends(g, p->type.decl)) {
                 sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &tide_v%d))\n", pad, c, i);
             }
-            sb_printf(o, "%sif (%s) { %s tide_p%d; %s(&tide_v%d, tide_prev_%s(%s, %s, tide_ent[tide_i], "
+            sb_printf(o, "%sif (%s) { %s tide_p%d; %s(&tide_v%d, tide_prev_blended_%s(%s, %s, tide_ent[tide_i], "
                          "&tide_p%d), %s%s); }\n", pad, p->verified ? "tide_vblend" : "tide_blend", c, i, view_blender(p->type.decl), i, c,
                       p->verified ? "tide_vprev" : "tide_prev", p->verified ? "tide_verified" : "tide_w", i,
                       p->verified ? "tide_valpha" : "tide_alpha", blend_worlds(p->type.decl, p->verified));
@@ -17053,7 +17071,7 @@ static void gen_row_join(gen *g, const decl *sys, const char *pad)
         sb_printf(&value, "tide_v%d", i);
         if (param_blends(p)) {
             const char *c = type_cname(p->type.decl);
-            sb_printf(o, "%sif (tide_vblend) { %s tide_p; %s(&%s, tide_prev_%s(tide_vprev, tide_verified, "
+            sb_printf(o, "%sif (tide_vblend) { %s tide_p; %s(&%s, tide_prev_blended_%s(tide_vprev, tide_verified, "
                          "tide_ent[tide_i], &tide_p), tide_valpha%s); }\n", pad, c, view_blender(p->type.decl), value.data, c, blend_worlds(p->type.decl, true));
         }
         gen_confirmed_copy(o, p->type.decl, value.data, pad);
@@ -20779,7 +20797,7 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
             if (!p->verified || confirmed) sb_printf(o, "%stide_gather_%s(&%s, tide_col%d, tide_i);\n", pad, c, place.data, i);
             if (p->verified) {
                 if (decl_blends(comp)) {
-                    sb_printf(o, "%sif (tide_vblend) { %s tide_p; %s(&%s, tide_prev_%s(tide_vprev, tide_verified, "
+                    sb_printf(o, "%sif (tide_vblend) { %s tide_p; %s(&%s, tide_prev_blended_%s(tide_vprev, tide_verified, "
                                  "tide_ent[tide_i], &tide_p), tide_valpha%s); }\n", pad, c, view_blender(comp), place.data, c, blend_worlds(comp, true));
                 }
                 gen_confirmed_copy(o, comp, place.data, pad);
@@ -20787,7 +20805,7 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
             }
             if (decl_blends(comp)) {
                 if (far_blends(g, comp)) sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &%s))\n", pad, c, place.data);
-                sb_printf(o, "%sif (tide_blend) { %s tide_p; %s(&%s, tide_prev_%s(tide_prev, tide_w, tide_ent[tide_i], &tide_p), "
+                sb_printf(o, "%sif (tide_blend) { %s tide_p; %s(&%s, tide_prev_blended_%s(tide_prev, tide_w, tide_ent[tide_i], &tide_p), "
                              "tide_alpha%s); }\n", pad, c, view_blender(comp), place.data, c, blend_worlds(comp, false));
             }
             if (decl_corrects(comp)) sb_printf(o, "%stide_correct_view_%s(tide_l, tide_w, tide_ent[tide_i], &%s);\n", pad, c, place.data);

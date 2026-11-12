@@ -27,6 +27,24 @@ component Wide
     local bool picked;
 }
 
+// As a soldier is: a few numbers a frame draws between two ticks, among many
+// that are what the tick has (counts, kinds, flags): 80 lanes, 16 of them blended
+component Mixed
+{
+    float3 position;
+    float3 velocity;
+    float yaw; float pitch; float lean; float aim;
+    float4 pose;
+    float reach; float stride;
+    int kit0; int kit1; int kit2; int kit3; int kit4; int kit5; int kit6; int kit7; int kit8; int kit9;
+    int kit10; int kit11; int kit12; int kit13; int kit14; int kit15; int kit16; int kit17; int kit18; int kit19;
+    int kit20; int kit21; int kit22; int kit23; int kit24; int kit25; int kit26; int kit27; int kit28; int kit29;
+    int kit30; int kit31; int kit32; int kit33; int kit34; int kit35; int kit36; int kit37; int kit38; int kit39;
+    int kit40; int kit41; int kit42; int kit43; int kit44; int kit45; int kit46; int kit47; int kit48; int kit49;
+    int kit50; int kit51; int kit52; int kit53; int kit54; int kit55; int kit56; int kit57; int kit58; int kit59;
+    bool down; bool armed; bool holstered; bool sprinting;
+}
+
 component Small
 {
     float3 position;
@@ -65,6 +83,7 @@ event(Spawned) Setup(with Main)
     for (int i = 0; i < COUNT; i++)
     {
         Spawn(Small { position = float3(i, 0, 0) });
+        if (i % 4 == 0) Spawn(Mixed { position = float3(i, 0, 0), kit3 = i });
         Spawn(Wide { position = float3(i, 0, 0), rows = float4(i % 400, i % 400 + 1, (i * 7) % 400, (i * 7) % 400 + 1) });
     }
 }
@@ -73,6 +92,13 @@ system MoveWide(mut Wide w)
 {
     w.pitch += 0.01;
     w.position.x += 0.01;
+}
+
+system MoveMixed(mut Mixed m)
+{
+    m.position.x += 0.01;
+    m.yaw += 0.01;
+    m.kit7 += 1;
 }
 
 system MoveSmall(mut Small s)
@@ -192,4 +218,30 @@ view FewPlain(Wide w, mut Sink sink)
 {
     if (!Same(w.picked)) return;
     sink.total += AllOf(w) * 0;
+}
+
+
+// Every field of it read, so the row is copied whole whatever a C compiler can see through
+float Mass(Mixed m)
+{
+    var kit = m.kit0 + m.kit1 + m.kit2 + m.kit3 + m.kit4 + m.kit5 + m.kit6 + m.kit7 + m.kit8 + m.kit9 + m.kit10 + m.kit11 + m.kit12 + m.kit13 + m.kit14 + m.kit15 + m.kit16 + m.kit17 + m.kit18 + m.kit19 + m.kit20 + m.kit21 + m.kit22 + m.kit23 + m.kit24 + m.kit25 + m.kit26 + m.kit27 + m.kit28 + m.kit29 + m.kit30 + m.kit31 + m.kit32 + m.kit33 + m.kit34 + m.kit35 + m.kit36 + m.kit37 + m.kit38 + m.kit39 + m.kit40 + m.kit41 + m.kit42 + m.kit43 + m.kit44 + m.kit45 + m.kit46 + m.kit47 + m.kit48 + m.kit49 + m.kit50 + m.kit51 + m.kit52 + m.kit53 + m.kit54 + m.kit55 + m.kit56 + m.kit57 + m.kit58 + m.kit59;
+    return m.position.x + m.position.y + m.position.z + m.velocity.x + m.velocity.y + m.velocity.z + m.yaw + m.pitch + m.lean + m.aim
+        + m.pose.x + m.pose.y + m.pose.z + m.pose.w + m.reach + m.stride + kit + (m.down || m.armed || m.holstered || m.sprinting ? 1 : 0);
+}
+
+// A row read whole (its value copied): every lane gathered, and of the tick
+// before only what blends (5,000 rows)
+[After(FewPlain)]
+view MixedWhole(Mixed m, mut Sink sink)
+{
+    var all = m;
+    sink.total += Mass(all) * 0;
+}
+
+// MixedWhole again, with the rows' memory already read this frame
+[After(MixedWhole)]
+view MixedWarm(Mixed m, mut Sink sink)
+{
+    var all = m;
+    sink.total += Mass(all) * 0;
 }

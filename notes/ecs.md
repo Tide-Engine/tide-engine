@@ -89,10 +89,29 @@ lanes were gathered and blended before the code ran.
   `Beams`/`BeamsPlain` (a view with two queries handing both to a function whose loop starts with two such
   tests and a third that's a call: same rows and sum as the loop over all, the rows' fill tests first and
   gathers some of `Man`, not all).
-- **Remaining**: a guard reads no field that blends (`if (!InView(t.position)) return;` copies first), and calls
-  nothing. A whole row of a far entity still loads the component from two confirmed worlds lane by lane; the
-  tick before is read whole though only its blending fields are used. The key guesses collide past some tens
-  of thousands of entities (20,000 of two kinds: a blended row 42 ns).
+- **The tick before, for a whole row: its blending lanes** (`tide_prev_blended_<C>`, `blend_prev_lanes`). A row
+  copied whole was blended with the whole component of the tick before (`tide_prev_<C>`: every lane loaded by
+  `tide_table_get`), of which the blend reads the fields that blend and the hidden counts of jumps.
+  `tide_prev_blended_<C>` is `tide_prev_some_<C>` with those lanes for a component whose blend is field by
+  field (no `Interpolate`, nothing read from the heap, not local, not sharded, 2 to 1,024 lanes), and
+  `tide_prev_<C>` for any other; the whole-row blends call it (a per-entity view's, a query's rows', `verified`
+  bindings', and a far entity's in `tide_far_blend_<C>`). `reads_some_used` is true for every such component
+  that blends, so its partial helpers exist. The corrections' own blends and the Unity embedding keep
+  `tide_prev_<C>`. Measured: benchmarks.md, The tick before.
+- **Tried and taken out** (the same night; not in the tree): a guard whose tests read *blended* fields and call
+  small pure functions (`if (!InView(crowd, stage, t.position, out var far)) return;`), handed a copy of just
+  those lanes made as the row's is (far, blended, corrected), with a back-off where it turned few rows away. It
+  worked (rows and sums bit-equal to the unguarded view's in the fixture), and gained next to nothing: with the
+  rows' memory warm, 5,000 rows of an 80-lane component of which one in ten passed cost 0.29-0.32 ms guarded
+  against 0.31-0.33 with every row copied whole, because what a blended row costs is the lookups for the tick
+  before (its slot, its jumps, what it was born as), which the guard's copy pays in full, not the lanes.
+  Mount & Rifle's `OthersOnFoot`, whose `InView` it guarded, went 0.62 to 0.61 ms, inside its run-to-run
+  spread (0.45 to 0.87). A guard pays where its test needs no world but this one: local state, and the match's
+  fields that don't blend.
+- **Remaining**: a whole row of a far entity still loads the component from the confirmed world lane by lane
+  (`tide_load_<C>`: a `tide_table_get` a lane), which is most of what `OthersOnFoot` has left besides its own
+  work; a view over far entities that reads fewer fields pays less, and nothing else was found to cut. The key
+  guesses collide past some tens of thousands of entities (20,000 of two kinds: a blended row 42 ns).
 
 ## A view's rows: the slot guessed, and a mut query's lanes (2026-11-12, later)
 
