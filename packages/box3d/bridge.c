@@ -1840,6 +1840,7 @@ static world *at(const int64_t stamp)
 // state yet, and nothing to find in it.
 bool b3t_find(const int64_t stamp)
 {
+    tide_ticks_settle(); // A view's question, while a tick beside the frame steps this world: once it has
     return stamp != 0 && at(stamp) != NULL;
 }
 
@@ -1851,6 +1852,7 @@ bool b3t_find(const int64_t stamp)
 void b3t_rebuild(const tide_resident *state)
 {
     if (state->stamp == 0 || !state->pages) return;
+    tide_ticks_settle();
     while (__atomic_exchange_n(&rebuilding, 1u, __ATOMIC_ACQUIRE)) {
     }
     if (!at(state->stamp)) { // No other thread restored it meanwhile

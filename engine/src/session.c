@@ -996,6 +996,22 @@ struct tide_server {
     // are the server's, shared after each tick, and what its local handlers
     // hear is what the tick sent (mirror_tick)
     tide_client *twin;
+    // A tick run beside its session's frame (tide_session_desc.alongside): begun on the session's thread, its
+    // systems, changes, handlers and hash on the pool's leading thread (tide_jobs.lead), and ended on the session's
+    // thread again, at an update after (land). From its begin to its end `world` is the leading thread's alone, the
+    // tick isn't counted in `tick`, and nothing of the server is read or changed but by tick_run.
+    bool alongside;        // Its session wants them so, as of this update
+    bool flying;
+    bool flight_led;       // The leading thread took it: it's waited for there (tide_jobs.led)
+    uint32_t flight_done;  // Atomic: tick_run returned
+    double flew_at;        // The update's time it began at
+    uint64_t flight_ns;    // What tick_run took, as its thread left it...
+    uint64_t landed_ns;    // ...and of the last one that ended
+    uint32_t flights;      // How many ended
+    tide_client *flight_twin;
+    struct ticking *flight;
+    tide_jobs flight_jobs; // desc.jobs, with a profile of its own that goes into the host's as it lands
+    tide_profile flight_profile;
 };
 
 // Whether `c` is this machine's own player, whose world is the server's
@@ -2632,14 +2648,32 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
 static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size, private_journal *journal);
 static tide_event_log *mirror_hearing(tide_server *s, uint32_t tick);
 static void mirror_tick(tide_server *s, uint32_t tick, bool heard);
+static tide_client *mirrored(const tide_server *s, uint32_t tick);
 
-static void server_tick(tide_server *s)
+// A tick in three parts, which server_tick runs one after another: what goes into it (tick_begin), the tick
+// itself and the world's hash after it (tick_run), and what's made of it: its frame, its player's world and the
+// others' projections (tick_end). Only tick_run may be on another thread (fly_tick), with nothing else touching
+// the server or its world meanwhile.
+typedef struct ticking {
+    uint32_t tick;
+    private_journal journal;
+    private_journal *private;
+    void *before;          // The world before it, where players get projections
+    uint32_t size;         // Of its frame so far, in the server's `frame`
+    tide_event_log *journals;
+    tide_event_log *heard;
+    const tide_jobs *jobs;
+    uint64_t hash;
+} ticking;
+
+static void tick_begin(tide_server *s, ticking *t)
 {
     const tide_game *g = s->game;
     const uint32_t tick = s->tick;
-    private_journal journal = {.commands = {.grows = true}, .shards = {.grows = true}, .downloads = {.grows = true}};
-    private_journal *private = g->client_state && s->desc.journal ? &journal : NULL;
-    void *before = g->client_state ? calloc(1, g->world_size) : NULL;
+    *t = (ticking){.tick = tick, .jobs = s->desc.jobs,
+                   .journal = {.commands = {.grows = true}, .shards = {.grows = true}, .downloads = {.grows = true}}};
+    private_journal *private = t->private = g->client_state && s->desc.journal ? &t->journal : NULL;
+    void *before = t->before = g->client_state ? calloc(1, g->world_size) : NULL;
     if (g->client_state && !before) tide_out_of_memory();
     if (before) g->copy_world(before, s->world);
     tide_writer w = {s->frame, frame_capacity(g), 0, false, false};
@@ -2741,9 +2775,29 @@ static void server_tick(tide_server *s)
     // What this machine's own player's local handlers hear of the tick, the whole match's
     tide_event_log *heard = mirror_hearing(s, tick);
     if (heard) tide_event_log_take(heard, &s->preparation_events);
-    if (journals) g->tick_client_events(s->world, s->desc.jobs, journals, heard);
-    else if (heard) g->tick_events(s->world, s->desc.jobs, heard);
-    else g->tick(s->world, s->desc.jobs);
+    t->size = w.size;
+    t->journals = journals;
+    t->heard = heard;
+}
+
+static void tick_run(tide_server *s, ticking *t)
+{
+    const tide_game *g = s->game;
+    if (t->journals) g->tick_client_events(s->world, t->jobs, t->journals, t->heard);
+    else if (t->heard) g->tick_events(s->world, t->jobs, t->heard);
+    else g->tick(s->world, t->jobs);
+    t->hash = hash_of(g, s->world, t->jobs);
+}
+
+static void tick_end(tide_server *s, ticking *t)
+{
+    const tide_game *g = s->game;
+    const uint32_t tick = t->tick;
+    private_journal *private = t->private;
+    void *before = t->before;
+    tide_event_log *journals = t->journals;
+    tide_event_log *heard = t->heard;
+    const tide_writer w = {s->frame, frame_capacity(g), t->size, false, false};
     for (uint32_t p = 0; journals && s->preparation_journals && p < s->players; p++) {
         if (!s->preparation_journals[p].count) continue;
         tide_event_log_take(&s->preparation_journals[p], &journals[p]);
@@ -2753,7 +2807,7 @@ static void server_tick(tide_server *s)
     }
     s->tick++;
     s->ended = g->ended && g->ended(s->world);
-    patch_u64(s->frame, hash_of(g, s->world, s->desc.jobs));
+    patch_u64(s->frame, t->hash);
     mirror_tick(s, tick, heard != NULL);
 
     keep_needed(s, tick);
@@ -2764,9 +2818,9 @@ static void server_tick(tide_server *s)
         free(before);
         for (uint32_t p = 0; journals && p < s->players; p++) tide_event_log_free(&journals[p]);
         free(journals);
-        free(journal.commands.data);
-        free(journal.shards.data);
-        free(journal.downloads.data);
+        free(t->journal.commands.data);
+        free(t->journal.shards.data);
+        free(t->journal.downloads.data);
         return;
     }
     memcpy(data, s->frame, w.size);
@@ -2774,9 +2828,9 @@ static void server_tick(tide_server *s)
     free(f->world);
     *f = (stored_frame){.tick = tick, .size = w.size, .data = data, .world = before};
     if (s->desc.journal) journal_tick(s, tick, data, w.size, private); // What went into the tick, for tide_replay
-    free(journal.commands.data);
-    free(journal.shards.data);
-    free(journal.downloads.data);
+    free(t->journal.commands.data);
+    free(t->journal.shards.data);
+    free(t->journal.downloads.data);
     if (before) {
         // Every player's projection hash: at once where the game can, as most of it is alike for them all
         tide_player_id *recipients = malloc(((size_t)s->players + 1u) * sizeof *recipients);
@@ -2802,6 +2856,73 @@ static void server_tick(tide_server *s)
     }
     for (uint32_t p = 0; journals && p < s->players; p++) tide_event_log_free(&journals[p]);
     free(journals);
+}
+
+static void server_tick(tide_server *s)
+{
+    ticking t;
+    tick_begin(s, &t);
+    tick_run(s, &t);
+    tick_end(s, &t);
+}
+
+// On the pool's leading thread: the tick a session's frame goes on beside.
+static void flight_work(void *context)
+{
+    tide_server *s = context;
+    const uint64_t began = tide_time_now_ns();
+    tick_run(s, s->flight);
+    s->flight_ns = tide_time_now_ns() - began;
+    __atomic_store_n(&s->flight_done, 1u, __ATOMIC_RELEASE);
+}
+
+// Whether the next tick can run beside its session's frame: the session asked, the pool has a thread to lead it,
+// and this machine's player is level with the server, so that what views draw meanwhile is its worlds, which
+// only share the server's pages, and nothing of its goes on from the server's world until the tick has ended.
+static bool can_fly(const tide_server *s)
+{
+    const tide_jobs *jobs = s->desc.jobs;
+    return s->alongside && jobs && jobs->lead && jobs->led && s->twin && mirrored(s, s->tick) != NULL;
+}
+
+// Begins a tick and hands it to the leading thread. It ends in `land`.
+static void fly_tick(tide_server *s, const double now)
+{
+    const tide_jobs *jobs = s->desc.jobs;
+    if (!s->flight) s->flight = tide_alloc_zeroed(1, sizeof *s->flight);
+    tick_begin(s, s->flight);
+    // Timed apart: the host reads its profile while this runs
+    s->flight_jobs = *jobs;
+    s->flight_jobs.profile = jobs->profile ? &s->flight_profile : NULL;
+    s->flight->jobs = &s->flight_jobs;
+    s->flight_twin = s->twin;
+    s->flew_at = now;
+    __atomic_store_n(&s->flight_done, 0u, __ATOMIC_RELEASE);
+    s->flying = true;
+    s->flight_led = jobs->lead(jobs->self, flight_work, s);
+    if (s->flight_led) tide_tick_beside(&s->flight_done); // For C the tick and this thread's local code share
+    else flight_work(s); // No thread for it after all: here, and it ends at the next update all the same
+}
+
+// Ends the tick that runs beside the frame, waiting for it where it hasn't returned. Nothing without one.
+static void land(tide_server *s)
+{
+    if (!s->flying) return;
+    const tide_jobs *jobs = s->desc.jobs;
+    if (s->flight_led) {
+        jobs->led(jobs->self);
+        tide_tick_beside(NULL);
+    }
+    s->flying = false;
+    s->flights++;
+    s->landed_ns = s->flight_ns;
+    if (jobs->profile) tide_profile_take_ticks(jobs->profile, &s->flight_profile);
+    else tide_profile_free(&s->flight_profile);
+    tide_client *const twin = s->twin;
+    s->twin = s->flight_twin;
+    tick_end(s, s->flight);
+    s->twin = twin;
+    s->flight_twin = NULL;
 }
 
 // ---------------------------------------------------------------------------
@@ -3370,6 +3491,9 @@ static void discard_preparation(tide_server *s)
 void tide_server_destroy(tide_server *s)
 {
     if (!s) return;
+    land(s);
+    free(s->flight);
+    tide_profile_free(&s->flight_profile);
     discard_preparation(s);
     for (uint32_t i = 0; s->connections && i < s->players; i++) {
         connection *c = &s->connections[i];
@@ -3491,6 +3615,7 @@ static void send_handover(tide_server *s)
 
 void tide_server_update(tide_server *s, const double now)
 {
+    land(s);
     s->now = now;
     s->updates++;
     for (uint32_t i = 0; i < 2; i++) server_receive(s, i);
@@ -3513,13 +3638,20 @@ void tide_server_update(tide_server *s, const double now)
     const bool prepared = s->ended || tide_preparation_update_clients(&s->preparation, s->game, s->world,
                                                           s->desc.jobs, s->preparation_journals, &s->preparation_events);
     if (!prepared) { s->clock_base = s->tick; s->clock_start = now; }
+    // The last tick that's due runs beside the session's frame where it can: it's begun once everything below
+    // has gone out, as nothing reads the server while it runs
+    bool fly = false;
     if (prepared && s->started && !s->ended) {
         const uint64_t due = (uint64_t)s->clock_base + ticks_in(now - s->clock_start, s->desc.tick_rate);
         for (uint32_t n = 0; s->tick < due && n < MAX_TICKS && !s->ended; n++) {
+            if ((uint64_t)s->tick + 1u == due && can_fly(s)) {
+                fly = true;
+                break;
+            }
             server_tick(s);
             if (s->game->prepare_pending && s->game->prepare_pending(s->world)) break;
         }
-        if (s->tick < due && !s->ended) { // Stalled: drop the time instead of catching up
+        if ((uint64_t)s->tick + (fly ? 1u : 0u) < due && !s->ended) { // Stalled: drop the time instead of catching up
             s->clock_base = s->tick;
             s->clock_start = now;
         }
@@ -3553,10 +3685,12 @@ void tide_server_update(tide_server *s, const double now)
     }
     if (s->published_count) forget_published(s);
     if (!s->ended) send_handover(s);
+    if (fly) fly_tick(s, now);
 }
 
 const void *tide_server_world(const tide_server *s)
 {
+    land((tide_server *)(uintptr_t)s); // As it is after the tick that's running, if one is
     return s->world;
 }
 
@@ -3772,6 +3906,9 @@ struct tide_client {
     double last_hello;
     double last_heard;
     double now;
+    // Its session's server runs ticks beside the frame: views are of `view_now`, the frame before's update
+    bool view_behind;
+    double view_now;
     bool welcomed;
     bool asset_failed; // Retry self-contained state after an unavailable asset reference.
     int32_t player;
@@ -5989,7 +6126,9 @@ static void take_server_world(tide_client *c, const tide_server *s);
 static void mirror_play(tide_client *c)
 {
     const tide_server *s = c->mirror;
-    if (c->game == s->game && (c->verified != s->tick || c->ahead != s->tick
+    // While the server's tick runs beside the frame (fly_tick), its world is that tick's alone: this
+    // player is level with it, or the tick wouldn't be
+    if (!s->flying && c->game == s->game && (c->verified != s->tick || c->ahead != s->tick
         || (c->game->prepare_pending && c->game->prepare_pending(world_at(c, c->verified))
             && !c->game->prepare_pending(s->world)))) {
         tide_hearing_skip_to(&c->hearing, s->tick); // Ticks it never heard as they ran, as a world that came
@@ -6786,16 +6925,31 @@ tide_view_worlds tide_client_view(const tide_client *c)
     if (!c->loaded) return (tide_view_worlds){0};
     // How many ticks into the match this moment is, by the client's clock,
     // less its input delay: the latest tick it ran is at most one of them
-    // behind.
-    const double at = (double)c->clock_base + (c->now - c->clock_start) * (double)c->tick_rate - (double)c->delay;
-    double alpha = at - (double)c->ahead;
+    // behind. Where its server's ticks run beside the frame, the moment is
+    // the frame before's (tide_session_view), whose ticks have all ended.
+    const double now = c->view_behind && c->view_now < c->now ? c->view_now : c->now;
+    const double at = (double)c->clock_base + (now - c->clock_start) * (double)c->tick_rate - (double)c->delay;
+    uint32_t ahead = c->ahead;
+    double verified_view = c->verified_view;
+    if (c->view_behind) {
+        // The frame before's moment can be ticks before the latest one, where an update ran several: it's
+        // between the two ticks around it, as far back as the ring still has both, and what's shown as
+        // confirmed is no later than it
+        const uint32_t kept = c->ahead + 2u > c->ring ? c->ahead + 2u - c->ring : 0u;
+        const uint32_t lowest = kept > c->first_tick ? kept : c->first_tick;
+        // (a moment a hair before a tick, which the clock counts already, is that tick's start: ticks_in)
+        if (at < (double)ahead - 1e-6) ahead = at > (double)lowest ? (uint32_t)at : lowest;
+        if (verified_view > at - 1.0) verified_view = at - 1.0;
+        if (verified_view < (double)lowest) verified_view = (double)lowest;
+    }
+    double alpha = at - (double)ahead;
     if (alpha < 0.0) alpha = 0.0;
     if (alpha > 1.0) alpha = 1.0;
-    const uint32_t before = (uint32_t)c->verified_view;
-    const double fraction = c->verified_view - (double)before;
+    const uint32_t before = (uint32_t)verified_view;
+    const double fraction = verified_view - (double)before;
     const uint32_t shown = fraction > 0.0 && before < c->verified ? before + 1u : before;
-    return (tide_view_worlds){.current = world_at(c, c->ahead),
-        .previous = c->ahead > c->first_tick ? world_at(c, c->ahead - 1u) : NULL,
+    return (tide_view_worlds){.current = world_at(c, ahead),
+        .previous = ahead > c->first_tick ? world_at(c, ahead - 1u) : NULL,
         .alpha = (float)alpha, .verified = world_at(c, shown),
         .verified_previous = shown > c->first_tick ? world_at(c, shown - 1u) : NULL,
         .verified_alpha = fraction > 0.0 ? (float)fraction : 1.0f, .verified_tick = shown};
@@ -6841,6 +6995,10 @@ struct tide_session {
     uint32_t event_count;
     double last_now; // The host's time at the last update
     double paused;   // Host time that didn't pass for this machine's own match (see tide_session_update)
+    // Ticks beside the frame (tide_session_desc.alongside): the match's time at the update the views were
+    // last taken after (tide_session_view), and at the one before that, which is the moment they showed
+    double view_taken;
+    double view_shown;
 
     // Host migration: the client that lost its server, offline, whose last
     // world views see until the match is back. `migrating` while no other
@@ -6896,6 +7054,22 @@ static void start_clock(tide_session *s, const double now)
     if (!s->local_generation) s->local_generation++;
     s->last_now = now;
     s->paused = 0.0;
+    s->view_taken = s->view_shown = now;
+}
+
+// Whether the match this machine runs has its ticks beside the frame: the host asked, the pool has a thread to
+// lead them, and it's one server's match. Views are a frame behind then, whether or not a tick is running.
+static bool alongside(const tide_session *s)
+{
+    const tide_jobs *jobs = s->desc.jobs;
+    return s->desc.alongside && s->server && s->client && !s->shard_client && !s->shards && jobs && jobs->lead && jobs->led;
+}
+
+// The tick that runs beside the frame has ended, where there is one: the server and its world are as they
+// are after it. Before anything of the session's reads or changes them.
+static void settle(tide_session *s)
+{
+    if (s->server) land(s->server);
 }
 
 static void push_event(tide_session *s, const tide_session_event e)
@@ -6920,6 +7094,7 @@ static void drop_stale(tide_session *s)
 // Ends whatever it's in, without a word to local code.
 static void tear_down(tide_session *s)
 {
+    settle(s); // While its player is there to take the tick's world
     if (s->desc.correct_views && (s->client || s->stale || s->server)) {
         s->desc.correct_views(s->desc.user, &(tide_view_correction){.reset = true});
     }
@@ -7156,11 +7331,13 @@ void tide_session_close(tide_session *s)
 
 void tide_session_kick(tide_session *s, const tide_player_id player, const char *message)
 {
+    settle(s);
     if (s->server) tide_server_kick(s->server, player, message);
 }
 
 void tide_session_kick_all(tide_session *s, const char *message)
 {
+    settle(s);
     for (int32_t i = 0; s->server && i < (int32_t)s->server->players; i++) {
         tide_server_kick(s->server, tide_player_from_index(i), message);
     }
@@ -7168,11 +7345,13 @@ void tide_session_kick_all(tide_session *s, const char *message)
 
 void tide_session_ban(tide_session *s, const tide_player_id player, const char *message)
 {
+    settle(s);
     if (s->server) tide_server_ban(s->server, player, message);
 }
 
 void tide_session_unban(tide_session *s, const tide_player_id player)
 {
+    settle(s);
     if (s->server) tide_server_unban(s->server, player);
 }
 
@@ -7334,10 +7513,18 @@ void tide_session_update(tide_session *s, const double now)
         s->client->local_user = s->local_user;
     } else {
         update_client(s->client, t); // Its inputs for the ticks the server runs now
-        if (s->server) {
-            s->server->twin = s->client;
-            tide_server_update(s->server, t);
-            s->server->twin = NULL;
+        // A tick that runs beside the frame is left to it for as long as nothing needs it ended: the views
+        // (they show the moment of the update they were last taken after, so a tick begun since isn't theirs
+        // yet) or the next tick, which is due. The server hears and sends nothing meanwhile.
+        tide_server *server = s->server;
+        const bool held = server && server->flying && !__atomic_load_n(&server->flight_done, __ATOMIC_ACQUIRE)
+            && server->flew_at > s->view_taken
+            && (uint64_t)server->clock_base + ticks_in(t - server->clock_start, server->desc.tick_rate) <= (uint64_t)server->tick + 1u;
+        if (server && !held) {
+            server->twin = s->client;
+            server->alongside = alongside(s);
+            tide_server_update(server, t);
+            server->twin = NULL;
         }
         update_client(s->client, t); // What the server just said
     }
@@ -7437,15 +7624,39 @@ const void *tide_session_world(const tide_session *s)
     return world || !s->stale ? world : tide_client_world(s->stale); // The last one, while the match changes hands
 }
 
-tide_view_worlds tide_session_view(const tide_session *s)
+tide_view_worlds tide_session_view(const tide_session *session)
 {
+    tide_session *s = (tide_session *)(uintptr_t)session; // It keeps which update the views were taken after
     if (s->client) {
+        // With ticks beside the frame, the views are of the moment of the update they were last taken
+        // after: every tick due by then was begun by then, and has ended by now (tide_session_update)
+        s->client->view_behind = alongside(s);
+        if (s->client->view_behind) {
+            const double t = s->last_now - s->paused;
+            if (t != s->view_taken) {
+                s->view_shown = s->view_taken;
+                s->view_taken = t;
+            }
+            s->client->view_now = s->view_shown;
+        }
         const tide_view_worlds view = tide_client_view(s->client);
         if (view.current) return view;
     }
     if (s->stale) return (tide_view_worlds){.current = tide_client_world(s->stale), .alpha = 1.0f,
         .verified = tide_client_verified_world(s->stale), .verified_alpha = 1.0f, .verified_tick = s->stale->verified};
     return (tide_view_worlds){0};
+}
+
+void tide_session_set_alongside(tide_session *s, const bool on)
+{
+    if (s) s->desc.alongside = on;
+}
+
+uint64_t tide_session_alongside_ns(const tide_session *s, uint32_t *ended)
+{
+    const tide_server *server = s ? s->server : NULL;
+    if (ended) *ended = server ? server->flights : 0u;
+    return server ? server->landed_ns : 0u;
 }
 
 tide_event_log *tide_session_events(tide_session *s)
@@ -7484,6 +7695,7 @@ const void *tide_session_server_world(const tide_session *s)
 
 tide_server *tide_session_server(tide_session *s)
 {
+    settle(s); // What the host reads or changes of it is as it is after the tick that's running
     return s->server;
 }
 
@@ -7523,6 +7735,7 @@ bool tide_session_next_event(tide_session *s, tide_session_event *event)
 void tide_session_end(tide_session *s)
 {
     if (!s->server) return;
+    settle(s);
     // Its goodbyes say the match ended, and so does its transports' `end`
     s->server->ended = true;
     tear_down(s);
@@ -7670,11 +7883,13 @@ struct tide_shards *tide_session_shards(const tide_session *s)
 
 bool tide_session_can_reload(const tide_session *s)
 {
+    settle((tide_session *)(uintptr_t)s); // A tick beside the frame runs the old build's code: it ends first
     return !s->shards || tide_shards_quiet(s->shards);
 }
 
 void tide_session_set_game(tide_session *s, const tide_game *game)
 {
+    settle(s);
     if (s->server) {
         discard_preparation(s->server);
     }
@@ -8015,6 +8230,7 @@ static bool migrate_shards(tide_session *s, const tide_game *game, const tide_mi
 
 bool tide_session_migrate(tide_session *s, const tide_game *game, const tide_migrate_fn migrate, void *user)
 {
+    settle(s);
     if (s->server) {
         discard_preparation(s->server);
     }
@@ -8058,6 +8274,7 @@ uint32_t tide_session_remote_players(const tide_session *s)
 bool tide_session_rewind(tide_session *s, const void *world)
 {
     tide_server *server = s ? s->server : NULL;
+    if (server) settle(s);
     if (!server || !s->client || !s->client->loaded || s->shards || s->shard_client || !world) return false;
     const tide_game *g = server->game;
     discard_preparation(server);
@@ -8088,6 +8305,7 @@ bool tide_session_rewind(tide_session *s, const void *world)
 
 void tide_session_record(tide_session *s, const tide_session_recorder *recorder)
 {
+    settle(s);
     s->recorder = recorder ? *recorder : (tide_session_recorder){0};
     record_server(s);
 }

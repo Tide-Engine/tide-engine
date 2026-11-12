@@ -240,6 +240,15 @@ static const argument_help arguments[] = {
     {"--profile-warmup", "--profile-warmup <n>", "Skip the first n frames of a profile capture",
      "Requires --profile. A whole number from 0 to 1000000000; default 0.\n"
      "Warmup frames still run normally and count toward --frames.", RUN},
+    {"--ticks-alongside", "--ticks-alongside", "Run the match's ticks beside the frames that draw",
+     "As the ticksAlongsideViews setting does, whatever the game says: on the\n"
+     "machine that runs the match, a tick runs on the job threads while the\n"
+     "frame draws, and what's drawn is one frame older.", RUN},
+    {"--frame-rate", "--frame-rate <n>", "Frames a second of a run with no window",
+     "A run with --frames, --script or --capture makes its time up: 60 frames\n"
+     "a second unless this says, from 1 to 1000. At another rate than the\n"
+     "match's ticks, some frames have a tick and some none, as in a window:\n"
+     "--frame-rate 144 for a profile of what a 144 Hz display's frames cost.", RUN},
     {"--report", "--report <file>", "Write where the build's time and bytes went",
      "Writes a report of the build: the time of each step and of the compiler's\n"
      "phases, each C/C++ file's compile time, each asset's import time and the\n"

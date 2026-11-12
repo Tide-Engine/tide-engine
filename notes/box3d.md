@@ -1,5 +1,13 @@
 # The Box3D package
 
+## Questions from views while a tick runs beside the frame (2026-11-12)
+
+With `ticksAlongsideViews` (schedule-and-threads.md, top section) a view's or a local handler's question can come
+while the tick steps C's world on other threads. `b3t_find` and `b3t_rebuild` call `tide_ticks_settle()` first, so such a
+question waits for that tick's run to end and then finds or restores its state as a view of an older tick always
+did; a tick's own threads don't wait. A game whose views ask gives the frame back that tick's time each frame
+they do. Nothing in a match changes: no pin moved.
+
 ## Far bodies held in predicted ticks (2026-11-04)
 
 Under `predictionRange` a client's predicted ticks leave far entities out

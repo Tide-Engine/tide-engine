@@ -9,5 +9,6 @@ const int SEATS = 4;
 settings
 {
     debugViews = PROFILED;
+    ticksAlongsideViews = PROFILED;
     maxPlayers = SEATS;
 }

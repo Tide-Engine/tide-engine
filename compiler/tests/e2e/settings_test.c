@@ -17,7 +17,7 @@ TIDE_TEST(settings_are_in_the_game)
 TIDE_TEST(settings_of_every_block_are_the_games)
 {
     TIDE_CHECK(tide_game_api.tick_rate == 30 && tide_game_api.stats);
-    TIDE_CHECK(tide_game_api.debug_views);
+    TIDE_CHECK(tide_game_api.debug_views && tide_game_api.ticks_alongside);
     TIDE_CHECK(tide_game_api.max_players == 4 && TIDE_GAME_PLAYERS == 4);
 }
 

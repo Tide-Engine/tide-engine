@@ -11,6 +11,33 @@ After the deliberate identity-pin update, all five quick cases pass on native
 ASan and WASI.
 
 
+## Ticks beside the frame (2026-11-12)
+
+For notes/schedule-and-threads.md, A tick beside the frame. Mount & Rifle unmodified (its dev 95fec0e), the
+1,000-man battle, built with this checkout through a scratch `TIDE_EXTERNAL_DIRS` folder (`DEFINES BATTLE_TEST
+ARMY`), release, 12 threads, hidden, Vulkan: `--host --seed 42 --frames 5760 --size 1920 1080 --frame-rate 144
+--profile x.json --profile-warmup 3600` (the battle's seconds 25 to 40, 2,160 frames of which 900 have a tick),
+alone and with `--ticks-alongside`, two runs each, alternating, another session building on the machine.
+A frame's CPU work on the frame's thread, ms:
+
+| | Ticks in the update | Ticks alongside |
+|---|---|---|
+| mean | 5.61, 5.88 | 3.64, 4.62 |
+| p50 | 4.44, 4.85 | 3.56, 4.43 |
+| p95 (the frames with a tick) | 8.88, 9.34 | 5.33, 5.90 |
+| longest | 17.97, 16.43 | 7.95, 10.43 |
+| `match` phase, mean | 1.45, 1.40 | 0.04, 0.04 |
+| `views` phase, mean | 3.22, 3.50 | 2.81, 3.59 |
+| `render` phase, mean | 0.92, 0.97 | 0.76, 0.98 |
+| a tick beside a frame, mean / p95 | | 3.45 / 4.12, 3.52 / 4.18 |
+
+So a frame with a tick costs what one without does, and at 144 Hz (6.94 ms) the 95th percentile fits where it
+was 2 ms over. The views aren't slower for sharing the machine with the tick's twelve threads. The longest
+frames are the ones that wait for a tick that took more than a frame (ticks of 9 to 12.6 ms happen: `match`
+longest 4.9, 6.1 ms). GPU time isn't quoted: another program had the GPU. The game's own log differs between
+two identical runs with or without this (as noted before for this game), so it says nothing of the match
+being the same: `tide_platform_alongside` does, bit for bit, for a match that repeats.
+
 ## Rows a loop turns away, borrowed queries and far entities' lanes (2026-11-12, night)
 
 For notes/ecs.md (A view's rows, guarded; A far entity's lanes; A query handed to a function; Guards read the

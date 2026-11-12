@@ -1810,6 +1810,7 @@ typedef struct program {
     bool owned_prediction;     // Prediction.Owned: predict owned entities and descendants
     bool stats;                // stats: the host shows its stats overlay
     bool debug_views;          // debugViews: hosts show their debug views when asked
+    bool ticks_alongside;      // ticksAlongsideViews: the host's ticks run beside the frames that draw
     decl *prediction;          // The built-in enum Prediction
     // Shards (`settings { shards = true; reach = 64; }`, docs/spec.md, Shards)
     bool shards;

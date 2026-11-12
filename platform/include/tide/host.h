@@ -290,6 +290,10 @@ static bool tide_run_embedded;
 // The frame's views draw the match's latest tick as it is, not blended into
 // the one before: a debugger's paused match (tide/embed.h's time travel)
 static bool tide_run_unblended;
+// --ticks-alongside: the match this machine runs has its ticks beside the frame (tide_session_desc.alongside),
+// whatever the game's ticksAlongsideViews setting says; and how many of them the profile report has heard of
+static bool tide_run_alongside;
+static uint32_t tide_run_alongside_ended;
 // The room the last frame told local code the match is in (Session.room)
 static char tide_run_room[TIDE_NETWORK_ADDRESS_BYTES];
 
@@ -791,6 +795,7 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_report_path = NULL;
     tide_run_report_warmup = tide_run_report_frames = 0;
     tide_run_reporting = tide_run_report_started = false;
+    tide_run_alongside = false;
     tide_run_conditions = (tide_net_conditions){0};
     double conditions[3][33]; // --latency, --jitter and --loss, as tide_run_condition has them: -1 unsaid
     for (uint32_t kind = 0; kind < 3u; kind++) {
@@ -803,6 +808,11 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             tide_run_settings.stats = true; // Keep the host's chosen initial drawer state.
         } else if (strcmp(arg, "--debug-views") == 0) {
             tide_run_settings.debug_views = true;
+        } else if (strcmp(arg, "--ticks-alongside") == 0) {
+            tide_run_alongside = true;
+        } else if (strcmp(arg, "--frame-rate") == 0) {
+            const char *takes = "how many frames a second a run with no window makes up, from 1 to 1000, like --frame-rate 144";
+            tide_run_headless_desc.frame_rate = (uint32_t)tide_run_number(&i, arg, 1.0, 1000.0, takes);
         } else if (strcmp(arg, "--profile") == 0) {
             if (tide_run_report_path) {
                 fprintf(stderr, "tide: --profile takes one JSON report path\n");
@@ -1575,7 +1585,19 @@ static inline int tide_run_frame(void *user, const float seconds)
         }
     }
     const uint64_t update_began = measured_netcode ? tide_time_now_ns() : 0;
+    // Asked every frame, as a reload can bring the setting or take it away
+    tide_session_set_alongside(s, tide_run_alongside || game->game->ticks_alongside);
     tide_session_update(s, tide_run_now);
+    { // The ticks that ran beside frames and ended since the last one: the last of them, for the report
+        uint32_t ended;
+        const uint64_t ns = tide_session_alongside_ns(s, &ended);
+        if (tide_run_reporting && ended != tide_run_alongside_ended) tide_profile_report_alongside(&tide_run_report, (double)ns * 1e-6);
+        if (profiler && ended > tide_run_alongside_ended) {
+            profiler->beside += ended - tide_run_alongside_ended;
+            profiler->beside_ms += (double)ns * 1e-6 * (double)(ended - tide_run_alongside_ended);
+        }
+        tide_run_alongside_ended = ended;
+    }
     const uint64_t update_ns = measured_netcode ? tide_time_now_ns() - update_began : 0;
     tide_run_migrate();
     tide_session_event event;

@@ -251,7 +251,7 @@ int main(void)
     char *all[] = {"tide", "run", "--host", "7777", "--join", "K7QF2M", "--connect", "localhost", "--capture", "frame.png",
                    "--capture-audio", "run.wav", "--record", "run.gif", "--script", "play.txt", "--interactive", "live play.txt", "--microphone", "voice.wav", "--frames", "1",
                    "--scale", "2", "--players", "2", "--seed", "7", "--data-dir", "test saves", "--size", "640", "480",
-                   "--profile", "test profile.json", "--profile-warmup", "60",
+                   "--profile", "test profile.json", "--profile-warmup", "60", "--frame-rate", "144", "--ticks-alongside",
                    "--latency", "80", "--jitter", "10", "--loss", "5", "--latency", "2:120", "game"};
     const int all_count = (int)(sizeof all / sizeof all[0]);
     call_count = 0;

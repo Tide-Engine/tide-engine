@@ -1,0 +1,3 @@
+// expect: ticksAlongsideViews is true or false, or a constant that is
+settings { ticksAlongsideViews = !false; }
+scene Main { }

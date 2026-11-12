@@ -111,16 +111,19 @@ static void take_stock(tide_profiler *p, const uint32_t again_ticks)
              p->longest * 1000.0);
     add_time(p, FRAME, 1, "Input", part[TIDE_FRAME_INPUT], frame_ms);
     add_time(p, FRAME, 1, "Match", part[TIDE_FRAME_MATCH], frame_ms);
-    const double ticks_ms = (f->systems_ms + f->changes_ms) / frames;
+    // Of the ticks that ran, the ones in the update are Match's; the ones beside frames are a row of their own
+    const double in_update = f->ticks > p->beside ? (double)(f->ticks - p->beside) / (double)f->ticks : 0.0;
+    const double ticks_ms = (f->systems_ms + f->changes_ms) / frames * in_update;
     if (f->ticks) {
         // Ticks run again count from one stock to the next: a count that went
         // down is another client's, which starts from none
         const uint32_t again = p->again_known && again_ticks >= p->again_from ? again_ticks - p->again_from : 0u;
+        const double here = (double)(f->ticks > p->beside ? f->ticks - p->beside : 0u);
         r = add_time(p, FRAME, 2, "Ticks", ticks_ms, frame_ms);
         if (again) {
-            snprintf(r->note, sizeof r->note, "%.1f a frame, %.1f again", (double)f->ticks / frames, (double)again / frames);
+            snprintf(r->note, sizeof r->note, "%.1f a frame, %.1f again", here / frames, (double)again / frames);
         } else {
-            snprintf(r->note, sizeof r->note, "%.1f a frame", (double)f->ticks / frames);
+            snprintf(r->note, sizeof r->note, "%.1f a frame", here / frames);
         }
         add_time(p, FRAME, 2, "Netcode", at_least_zero(part[TIDE_FRAME_MATCH] - ticks_ms), frame_ms);
     }
@@ -130,6 +133,12 @@ static void take_stock(tide_profiler *p, const uint32_t again_ticks)
     add_time(p, FRAME, 1, "Render", part[TIDE_FRAME_RENDER], frame_ms);
     add_time(p, FRAME, 1, "Other", part[TIDE_FRAME_OTHER], frame_ms);
     add_time(p, FRAME, 1, "Swap, idle", at_least_zero(frame_ms - work), frame_ms);
+    if (p->beside) {
+        // They overlap the frames they ran beside: a tick's time, with no share bar, apart from the frame's parts
+        r = add_row(p, FRAME, 0, "Ticks alongside");
+        snprintf(r->note, sizeof r->note, "%.1f a frame, on the threads", (double)p->beside / frames);
+        snprintf(r->value, sizeof r->value, "%.2f ms", p->beside_ms / (double)p->beside);
+    }
     if (f->worker_runs && f->workers.count >= 2u) {
         // Background intervals overlap the frame and each other. Show a per-job
         // duration with no share bar, separate from the frame's timed parts.
@@ -172,6 +181,8 @@ static void take_stock(tide_profiler *p, const uint32_t again_ticks)
     p->frames = 0;
     p->longest = 0.0;
     memset(p->part_ms, 0, sizeof p->part_ms);
+    p->beside = 0;
+    p->beside_ms = 0.0;
     p->again_from = again_ticks;
     p->again_known = true;
     tide_profile_clear(&p->profile);
@@ -185,6 +196,8 @@ void tide_profiler_reset(tide_profiler *p)
     p->frames = 0;
     p->longest = 0.0;
     memset(p->part_ms, 0, sizeof p->part_ms);
+    p->beside = 0;
+    p->beside_ms = 0.0;
     p->again_known = false;
     tide_profile_clear(&p->profile);
     p->row_count[FRAME] = 0;

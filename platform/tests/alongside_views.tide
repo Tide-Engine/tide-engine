@@ -1,0 +1,94 @@
+// Views and local handlers over the busy match of jobs.tide, for ticks beside the frame (alongside.c): each
+// frame they go through every body, text, grid and list of the worlds the frame shows, while the next tick
+// changes the match on the pool's threads.
+
+local singleton Drawn
+{
+    // Of this frame: begun over by the first view
+    int bodies;
+    float sum;
+    int letters;
+    int sand;
+    float swarm;
+    int hits;
+    // Since the match began
+    int frames;
+    int heard;
+    int damage;
+    int chipped;
+    int confirmed;
+    int inside; // Times a view found a tick's system inside the C they share
+}
+
+// C both a system and a view call (alongside_shared.c)
+extern int SharedByTick(int from);
+extern int SharedByView();
+
+singleton Touched
+{
+    int times;
+}
+
+system Touch(mut Touched touched)
+{
+    touched.times = SharedByTick(touched.times);
+}
+
+view Peek(mut Drawn drawn)
+{
+    drawn.inside += SharedByView();
+}
+
+view Begin(Stats stats, mut Drawn drawn)
+{
+    drawn.frames += 1;
+    drawn.bodies = 0;
+    drawn.sum = 0;
+    drawn.letters = 0;
+    drawn.hits = stats.hits + stats.chipped * 3 + stats.spawned * 7 + stats.wobbled * 11;
+}
+
+view Bodies(Body body, mut Drawn drawn)
+{
+    drawn.bodies += 1;
+    drawn.sum += body.position.x * 0.001 + body.position.y + float(body.id % 5);
+}
+
+view Labels(Label label, mut Drawn drawn)
+{
+    drawn.letters += label.text.length;
+}
+
+view Names(Name name, mut Drawn drawn)
+{
+    drawn.letters += name.value.length * 3;
+}
+
+view Grains(Sandbox sand, Swarm swarm, mut Drawn drawn)
+{
+    mut var grains = 0;
+    for (var y = 0; y < 512; y += 3)
+    {
+        for (var x = 0; x < 512; x += 5) grains += sand.cells[x, y];
+    }
+    drawn.sand = grains + sand.poured;
+    mut var along = 0.0;
+    for (var i = 0; i < swarm.bodies.count; i += 7) along += swarm.bodies[i].x;
+    drawn.swarm = along;
+}
+
+local event(Hit hit) HeardHit(mut Drawn drawn)
+{
+    drawn.heard += 1;
+    drawn.damage = drawn.damage * 31 + hit.damage;
+}
+
+local event(Chipped chipped) HeardChip(mut Drawn drawn)
+{
+    drawn.chipped += 1;
+}
+
+local event(verified Hit hit) ConfirmedHit(mut Drawn drawn)
+{
+    drawn.confirmed += 1;
+}

@@ -1,5 +1,24 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Ticks beside the frame, and a hidden run's frame rate (2026-11-12)
+
+- Each frame, before the session's update, `tide_run_frame` asks the session for ticks beside the frame where
+  `--ticks-alongside` (`tide_run_alongside`) or the game's `ticksAlongsideViews` says
+  (`tide_session_set_alongside`): a reload can bring the setting or take it away. What it is:
+  schedule-and-threads.md, A tick beside the frame.
+- The update the host makes while it waits to present (`tide_run_wait_update`) is where a tick usually falls
+  due on a display faster than the tick rate. It begins there, runs through the rest of the wait and the next
+  frame, whose views are of a moment before it, and ends at the frame after: the session holds the server's
+  update for the one frame between (`tide_session_update`).
+- Where a frame's time goes: the tick's own time isn't in the frame's parts. The report has it as
+  `ticks_alongside` (`tide_profile_report_alongside`, fed from `tide_session_alongside_ns` when the count of
+  ended ones moves), and F7 as a "Ticks alongside" row with no share bar; "Ticks" under "Match" counts the
+  update's own ticks alone (`tide_profiler.beside`, `beside_ms`).
+- `--frame-rate <n>` (1 to 1000; `tide_headless_desc.frame_rate`, 0 for 60): how many frames make up a second
+  of a hidden run's time. At 60 every frame of a 60-tick match has a tick, so what a faster display's frames
+  cost, with and without one, never showed in a profile. The headless mixer renders 48000 / rate samples a
+  frame, the remainder carried, so `--capture-audio` stays in step; a recorded GIF still plays 30 pictures a
+  second. `tide run` passes both flags through (`compiler/cli/main.c`, help in `help.c`).
 ## A frame's views get the pool (2026-11-12)
 
 `tide_run_frame` calls `tide_loops_enter(tide_run_gui.jobs)` before `frame_shards` and `frame` and

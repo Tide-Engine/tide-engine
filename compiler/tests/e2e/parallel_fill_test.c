@@ -45,7 +45,7 @@ TIDE_TEST(parallel_list_filled_in_its_tick_uses_the_pool)
     start(&one);
     start(&many);
     uint32_t rounds = 0;
-    const tide_jobs two = {&rounds, 2u, second_first, NULL, NULL, NULL, NULL, NULL, false};
+    const tide_jobs two = {&rounds, 2u, second_first, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL};
 
     // The first tick finds both lists empty: one thread, and a round for each loop
     tide_world_tick(&one);

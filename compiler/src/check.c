@@ -15489,6 +15489,10 @@ static void check_settings(checker *c)
                 const expr *known = bool_literal(value);
                 if (!known) diag_error(value->at, "debugViews is true or false, or a constant that is");
                 else prog->debug_views = known->bool_value;
+            } else if (str_eq_c(f->name, "ticksAlongsideViews")) {
+                const expr *known = bool_literal(value);
+                if (!known) diag_error(value->at, "ticksAlongsideViews is true or false, or a constant that is");
+                else prog->ticks_alongside = known->bool_value;
             } else if (str_eq_c(f->name, "prediction")) {
                 int64_t member;
                 if (!fold_int(value, &member)) {

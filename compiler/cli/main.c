@@ -88,14 +88,14 @@ static const char *dispatch_folder(int argc, char **argv)
         "--port", "--max-matches", "--max-connections", "--shards", "--shard-width",
         "--shard-most", "--shard-journal", "--join", "--connect", "--data-dir",
         "--profile", "--profile-warmup", "--capture", "--capture-audio", "--record",
-        "--script", "--microphone", "--interactive", "--frames", "--scale",
+        "--script", "--microphone", "--interactive", "--frames", "--scale", "--frame-rate",
         "--latency", "--jitter", "--loss", "--players", "--seed", "--define",
         "--scene", "--editor-cache", "--title", "-o", "--assets", "--report"
     };
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
         "--no-open", "--release", "--distribution", "--web", "--single-file",
-        "--android", "--stats", "--debug-views"
+        "--android", "--stats", "--debug-views", "--ticks-alongside"
     };
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
@@ -382,6 +382,17 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
             if (a[2] == 'f') headless = profile_bounded = true;
+        } else if (run && strcmp(a, "--frame-rate") == 0) {
+            // The game says what's wrong with a value
+            if (left < 1) {
+                fputs("tide: --frame-rate takes how many frames a second a run with no window makes up, like `--frame-rate 144`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+        } else if (run && strcmp(a, "--ticks-alongside") == 0) {
+            game_args[game_arg_count++] = a;
         } else if (run && (strcmp(a, "--latency") == 0 || strcmp(a, "--jitter") == 0 || strcmp(a, "--loss") == 0)) {
             // The game says what's wrong with a value: a player's (2:120) needs its --players
             if (left < 1) {

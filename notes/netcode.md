@@ -1,5 +1,14 @@
 # Netcode: sessions, prediction, commands
 
+## The host's tick beside its frame (2026-11-12)
+
+A session whose host asks (`tide_session_desc.alongside`, the `ticksAlongsideViews` setting) runs the last tick
+an update finds due on the pool's leading thread while the frame draws, and ends it at a later update: design,
+contracts, tests and gaps are in schedule-and-threads.md (A tick beside the frame). What it changes here:
+`server_tick` is `tick_begin`, `tick_run`, `tick_end`; a server can have one tick begun and not ended
+(`flying`), during which nothing but `tick_run` touches it or its world; its own player's views are of the
+update before; other players get that tick's frame at the host's next update. A match is the same match, tick
+for tick. Clients of another machine's match, shards and the web are unchanged.
 ## Owned predicts its singleton dependencies (2026-11-07)
 
 Owner-approved change replaces the earlier all-singletons behavior. Generated

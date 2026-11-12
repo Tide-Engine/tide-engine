@@ -72,7 +72,7 @@ TIDE_TEST(parallel_view_loops_call_the_pool_in)
     start(&one);
     start(&two);
     uint32_t rounds = 0;
-    const tide_jobs fake = {&rounds, 2u, second_first, NULL, NULL, NULL, NULL, NULL, false};
+    const tide_jobs fake = {&rounds, 2u, second_first, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL};
     for (int i = 0; i < 4; i++) {
         step(&one, NULL, NULL);
         const uint32_t before = rounds;

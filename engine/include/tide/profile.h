@@ -65,6 +65,12 @@ typedef struct tide_profile {
 // The totals start over, and the ticks' count.
 void tide_profile_clear(tide_profile *p);
 
+// What `from`'s ticks measured since the last time goes into `to`, as if they
+// had filled it themselves, and `from` starts over: for ticks that run on
+// another thread than the one that reads `to` (a tick beside a frame's views),
+// filled apart and taken once that thread is done.
+void tide_profile_take_ticks(tide_profile *to, tide_profile *from);
+
 // Lets its memory go: it's zeroed, and ready to use again.
 void tide_profile_free(tide_profile *p);
 

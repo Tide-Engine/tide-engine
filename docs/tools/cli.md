@@ -225,6 +225,7 @@ still performs only front-end validation, even with a preview flag.
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
+| `--ticks-alongside` | `run` only: on the machine that runs the match, ticks run on the job threads while the frame draws, as the game's `ticksAlongsideViews` [setting](../language/basics.md#settings) does, whatever it says |
 | `--profile <file.json>` | `run` only, native desktop: writes a [structured profile capture](debug-views.md#profile-captures), independently of the panels. Requires `--frames`, `--script` or `--interactive` |
 | `--profile-warmup <n>` | With `--profile`: excludes the first `n` frames from measurements (default 0). They still count toward `--frames` |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
@@ -844,6 +845,7 @@ tide run --frames 300 --capture menu.png --stats
 | `--capture-audio <file.wav>` | Writes everything the run played as a WAV (16-bit stereo at 48 kHz). A game with no sound gives silence, a 60th of a second a frame |
 | `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
+| `--frame-rate <n>` | How many frames make up a second of the run's time, from 1 to 1000 (60 without it). At another rate than the match's ticks, some frames have a tick and some have none, as in a window: `--frame-rate 144` profiles what a 144 Hz display's frames cost. A recorded GIF still plays 30 pictures a second |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
 | `--interactive <replay.txt>` | Keeps the game alive for [dynamic input and captures](#interactive-play), saving executed actions as a replay script |
 | `--profile <file.json>` | Writes a [profile report](debug-views.md#profile-captures) when the run ends. Combine with `--frames`, `--script` or `--interactive` |

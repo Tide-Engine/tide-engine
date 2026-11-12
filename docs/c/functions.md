@@ -123,6 +123,8 @@ Tide brings no C++ runtime, so this is C++ the language, with nothing behind it:
 
 The rest of the language is there, as C++20: classes, templates, lambdas, virtual functions. A global's constructor runs before the game starts, and again at each reload under `tide run`, like everything C keeps. A function's `static` is made the first time through, without the lock a runtime would take: two systems on different threads getting there at once is the game's to get right, like the rest of what C does on threads.
 
+With the [`ticksAlongsideViews` setting](../language/basics.md#settings), a tick runs on other threads while the frame's views and local handlers run, so C that keeps something both sides use (a library's world that systems change and views ask) can be called by both at once. On the view's side, call `tide_ticks_settle()` (`tide/jobs.h`) first: it returns once the tick beside this frame has run, and no other starts until the frame is over. It costs nothing when no tick is running, and gives the frame that tick's time back when one is, so keep it to C that needs it.
+
 When a build fails for want of the runtime, tide says so after the compiler's error, and what to write instead.
 
 Libraries written to need no runtime, as Dear ImGui is, go in as source. One that needs it comes prebuilt instead: a `.dll`, `.so` or `.dylib` behind a C API has its runtime inside. A static library (`.a`, `.lib`) has to be built to need none, as the game's own C++ is (`-fno-exceptions -fno-rtti -fno-threadsafe-statics`, and nothing of the standard library), and the web only has static ones, so a library that needs the runtime can't be used there.

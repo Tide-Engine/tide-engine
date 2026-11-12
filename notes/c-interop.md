@@ -1,5 +1,13 @@
 # C: lists C makes, jobs, systems written in C
 
+## C that a tick and local code both call (2026-11-12)
+
+With ticks beside the frame (schedule-and-threads.md, top section) a game's `extern` C can be called by a
+system on the tick's threads while a view or a local handler calls it on the frame's. C with no state of its
+own, or state per call, needs nothing. C with state both sides use calls `tide_ticks_settle()` (`tide/jobs.h`)
+first on the local side: it returns once the tick handed over from this thread has run, and at once anywhere
+else, after which no tick starts until the frame is over. The physics packages do, where a question looks C's
+world up. `platform/tests/alongside_shared.c` is the smallest case, and fails without the call.
 ## Logical Entity128 ABI (2026-11-06)
 
 Owner-approved projected-spawn identity repair: `tide_entity` is now the opaque

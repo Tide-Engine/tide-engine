@@ -64,6 +64,19 @@ typedef struct tide_jobs {
     // rounds or tasks with leaves it false, and gets tidec's reckoning alone,
     // the same on every run. Results are the same either way.
     bool timed;
+    // For a pool with a thread to spare for it, or NULL. `lead` hands
+    // work(context) to a thread of the pool's own, which isn't one of
+    // `threads`, and returns at once: true once it's handed over, false when
+    // it can't be, and the caller runs it itself. `led` returns once that
+    // work has returned. One at a time: the next `lead` comes after `led`.
+    // The work makes rounds as any caller does (`run`, as thread 0), while the
+    // thread that handed it over goes on with something else: a match's tick
+    // beside a frame's views (tide/session.h, tide_session_desc.alongside).
+    // A pool with it takes one caller's round at a time, whichever thread
+    // asks: a round asked for while another is open runs on its caller's
+    // thread alone, which every work allows.
+    bool (*lead)(void *self, void (*work)(void *context), void *context);
+    void (*led)(void *self);
 } tide_jobs;
 
 // A system, as the tick runs it: generated code has a table of them, in the
@@ -141,6 +154,18 @@ void tide_parallel_for(uint32_t count, void (*work)(void *context, uint32_t task
 // Gives what was set before, for leave.
 const tide_jobs *tide_loops_enter(const tide_jobs *jobs);
 void tide_loops_leave(const tide_jobs *previous);
+
+// For C that keeps state of its own which both a tick's code and local code use (views and local handlers), as a
+// physics library's world is asked by both. Where a host runs ticks beside its frames
+// (tide_session_desc.alongside), a tick can be running on other threads when local code calls in.
+// tide_ticks_settle, called first, returns once that tick has run: at once on a thread no tick was handed over
+// from (the tick's own threads among them), and with none running. No tick starts beside the thread it returns
+// on until that thread's frame is over, so what follows it there has the state to itself and the tick's threads,
+// which are done.
+void tide_ticks_settle(void);
+// For what hands a tick over (a session): *done becomes nonzero, atomically, once the tick has run, and stays
+// where it is until this is called again; NULL once the tick has ended, on the thread that handed it over.
+void tide_tick_beside(const uint32_t *done);
 
 // Jobs, for C that shares its own work out: a library with a task interface
 // of its own (a physics solver's start and finish), which a loop that returns

@@ -67,6 +67,28 @@ void tide_profile_clear(tide_profile *p)
     p->changes_ms = 0.0;
 }
 
+void tide_profile_take_ticks(tide_profile *to, tide_profile *from)
+{
+    if (from->systems.count) tide_profile_count(&to->systems, from->systems.count);
+    for (uint32_t i = 0; i < from->systems.count; i++) {
+        tide_profile_time *f = &from->systems.items[i];
+        tide_profile_time *t = &to->systems.items[i];
+        if (!f->measurements) continue;
+        set_source(t, f->source);
+        t->ms = f->ms;
+        t->total += f->total;
+        t->measured_ms += f->measured_ms;
+        t->measurements += f->measurements;
+        f->ms = f->total = f->measured_ms = 0.0;
+        f->measurements = 0;
+    }
+    to->ticks += from->ticks;
+    to->systems_ms += from->systems_ms;
+    to->changes_ms += from->changes_ms;
+    from->ticks = 0;
+    from->systems_ms = from->changes_ms = 0.0;
+}
+
 void tide_profile_free(tide_profile *p)
 {
     free_times(&p->systems);

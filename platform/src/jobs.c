@@ -240,7 +240,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = tide_web_threads();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help, true}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help, true, NULL, NULL}; // A profile given before stays
     return p->jobs.threads > 1 ? &p->jobs : NULL;
 }
 
@@ -350,6 +350,15 @@ typedef struct pool {
     uint32_t cores[MOST_GROUPS];    // Each group's, as many threads as it runs at once
     uint8_t worker_group[MOST_THREADS]; // By thread
     choice choices[CHOICES];
+    bool taken;                     // A round is some thread's, from its start to its last worker's leaving
+    // The thread that runs handed-over work (tide_jobs.lead): made the first time there's some
+    pool_lock lead_lock;
+    pool_signal lead_start;         // There's work for it
+    pool_signal lead_done;          // ...and it has returned
+    bool lead_made;
+    bool leading;                   // From the work's handing over until it has returned
+    void (*lead_work)(void *context);
+    void *lead_context;
 #ifdef _WIN32
     GROUP_AFFINITY affinity[MOST_GROUPS]; // Each group's logical processors
 #elif defined(__linux__)
@@ -485,7 +494,9 @@ static void wake(pool *p, const uint32_t home, uint32_t count)
 // group alone, or with `every`, of every group.
 static _Thread_local bool kept_home; // This thread keeps to the home group's cores
 
-static void round_of(pool *p, const bool every, const uint32_t others, void (*work)(void *context, uint32_t thread),
+// False when the pool was another thread's (a tick handed to the leading
+// thread beside a frame, or the other way round): the work ran here alone.
+static bool round_of(pool *p, const bool every, const uint32_t others, void (*work)(void *context, uint32_t thread),
                      void *context)
 {
     const uint32_t home = p->home;
@@ -503,6 +514,12 @@ static void round_of(pool *p, const bool every, const uint32_t others, void (*wo
     (void)kept_home;
 #endif
     LOCK(&p->lock);
+    if (p->taken) {
+        UNLOCK(&p->lock);
+        work(context, 0);
+        return false;
+    }
+    p->taken = true;
     p->work = work;
     p->context = context;
     p->open = true;
@@ -522,7 +539,9 @@ static void round_of(pool *p, const bool every, const uint32_t others, void (*wo
     LOCK(&p->lock);
     p->open = false;
     while (p->inside) WAIT(&p->done, &p->lock);
+    p->taken = false;
     UNLOCK(&p->lock);
+    return true;
 }
 
 // A round for a few workers, of the caller's group, which has in its cache
@@ -541,22 +560,31 @@ static void run(void *self, void (*work)(void *context, uint32_t thread), void *
         round_of(p, true, UINT32_MAX, work, context);
         return;
     }
+    // Under the lock: two threads can ask for rounds (tide_jobs.lead)
+    LOCK(&p->lock);
     choice *c = NULL;
     for (uint32_t i = 0; i < CHOICES && !c; i++) {
         if (p->choices[i].work == work || !p->choices[i].work) c = &p->choices[i];
     }
     if (!c) c = &p->choices[0]; // More works than kept: the first makes way
     if (c->work != work) *c = (choice){.work = work};
-    const uint64_t n = c->rounds++;
+    const uint64_t n = c->rounds;
     bool every = n & 1u;
     if (n >= TRIALS) {
         every = typical(c, 1) < typical(c, 0);
         if (n % EXPLORE == 0) every = !every;
     }
+    UNLOCK(&p->lock);
     const uint64_t began = tide_time_now_ns();
-    round_of(p, every, UINT32_MAX, work, context);
+    if (!round_of(p, every, UINT32_MAX, work, context)) return; // Alone: it says nothing of either way
+    const uint64_t took = tide_time_now_ns() - began;
     const uint32_t way = every ? 1u : 0u;
-    c->took[way][c->tried[way]++ % 3u] = tide_time_now_ns() - began;
+    LOCK(&p->lock);
+    if (c->work == work) {
+        c->rounds++;
+        c->took[way][c->tried[way]++ % 3u] = took;
+    }
+    UNLOCK(&p->lock);
 }
 
 static void more(void *self, const uint32_t count)
@@ -564,6 +592,86 @@ static void more(void *self, const uint32_t count)
     pool *p = self;
     __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
     wake(p, p->home, count);
+}
+
+// The thread handed-over work runs on (tide_jobs.lead). It's none of the
+// pool's workers: it asks for rounds as the thread that made the pool does,
+// and keeps to the same cores from its first one (round_of).
+static void lead_loop(pool *p)
+{
+    LOCK(&p->lead_lock);
+    for (;;) {
+        while (!p->lead_work) WAIT(&p->lead_start, &p->lead_lock);
+        void (*const work)(void *) = p->lead_work;
+        void *const context = p->lead_context;
+        UNLOCK(&p->lead_lock);
+        work(context);
+        LOCK(&p->lead_lock);
+        p->lead_work = NULL;
+        p->leading = false;
+        WAKE_ALL(&p->lead_done);
+    }
+}
+
+// With the room on its stack a program's first thread has, since it runs what that one would have: a tick's
+// handlers and changes, which a worker never runs.
+#define LEAD_STACK ((size_t)8u << 20)
+
+#ifdef _WIN32
+static DWORD WINAPI lead_thread(LPVOID self)
+{
+    lead_loop(self);
+    return 0;
+}
+#else
+static void *lead_thread(void *self)
+{
+    lead_loop(self);
+    return NULL;
+}
+#endif
+
+static bool lead(void *self, void (*work)(void *context), void *context)
+{
+    pool *p = self;
+    LOCK(&p->lead_lock);
+    if (p->leading) {
+        UNLOCK(&p->lead_lock);
+        return false;
+    }
+    if (!p->lead_made) {
+#ifdef _WIN32
+        HANDLE h = CreateThread(NULL, LEAD_STACK, lead_thread, p, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+        if (h) CloseHandle(h);
+        p->lead_made = h != NULL;
+#else
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, LEAD_STACK);
+        pthread_t t;
+        p->lead_made = pthread_create(&t, &attr, lead_thread, p) == 0;
+        if (p->lead_made) pthread_detach(t);
+        pthread_attr_destroy(&attr);
+#endif
+        if (!p->lead_made) {
+            UNLOCK(&p->lead_lock);
+            return false;
+        }
+    }
+    p->lead_work = work;
+    p->lead_context = context;
+    p->leading = true;
+    UNLOCK(&p->lead_lock);
+    WAKE_ONE(&p->lead_start);
+    return true;
+}
+
+static void led(void *self)
+{
+    pool *p = self;
+    LOCK(&p->lead_lock);
+    while (p->leading) WAIT(&p->lead_done, &p->lead_lock);
+    UNLOCK(&p->lead_lock);
 }
 
 // The CPU's cores, not counting the second thread a core runs (SMT): two
@@ -686,15 +794,22 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = cores(p);
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help, true}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help, true,
+                          lead, led}; // A profile given before stays
 #ifdef _WIN32
     InitializeSRWLock(&p->lock);
     for (uint32_t g = 0; g < MOST_GROUPS; g++) InitializeConditionVariable(&p->start[g]);
     InitializeConditionVariable(&p->done);
+    InitializeSRWLock(&p->lead_lock);
+    InitializeConditionVariable(&p->lead_start);
+    InitializeConditionVariable(&p->lead_done);
 #else
     pthread_mutex_init(&p->lock, NULL);
     for (uint32_t g = 0; g < MOST_GROUPS; g++) pthread_cond_init(&p->start[g], NULL);
     pthread_cond_init(&p->done, NULL);
+    pthread_mutex_init(&p->lead_lock, NULL);
+    pthread_cond_init(&p->lead_start, NULL);
+    pthread_cond_init(&p->lead_done, NULL);
 #endif
     // Each group's share of the threads, the caller's group's first, the
     // caller one of them: as many as the group has cores, while there are

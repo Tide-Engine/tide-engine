@@ -56,8 +56,9 @@ void tide_platform_open(const tide_window_desc *desc);
 //   them to a logical pixel, whatever this machine's display is.
 //   tide_platform_frame_pixels reads them, and tide_platform_capture writes
 //   them as a PNG.
-// - Time is made up: every frame is a 60th of a second long, however long it
-//   took, and frames come as fast as the machine runs them.
+// - Time is made up: every frame is a 60th of a second long (or what
+//   frame_rate says), however long it took, and frames come as fast as the
+//   machine runs them.
 // - The devices are made up too, never the system's: tide_platform_poll takes
 //   what tide_platform_input said and what the script says, as it would take
 //   a player's input. The cursor is locked whenever the game asks, and
@@ -71,6 +72,9 @@ typedef struct tide_headless_desc {
     int width, height; // In logical pixels; default 960 x 540
     float scale;       // Pixels to a logical one, each way, as a display scaled to 150% has 1.5; default 1
     uint32_t frames;   // The run ends once this many drew; 0 for when its script quits
+    // How many frames make up a second of its time, from 1 to 1000; 0 for 60. Another rate than the match's ticks
+    // has frames with a tick and frames without, as a window's do. A recorded GIF still plays 30 pictures a second.
+    uint32_t frame_rate;
     const char *capture; // The file the run's last frame goes to, as a PNG; NULL for none
     const char *record;  // The file the whole run goes to, as a GIF (tide_platform_record); NULL for none
     // The file everything the run played goes to, as a WAV (tide_platform_capture_audio); NULL for none

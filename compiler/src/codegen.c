@@ -26084,6 +26084,7 @@ static void gen_game_api(gen *g)
     if (prog->owned_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_OWNED,\n");
     if (prog->stats) sb_put(o, "    .stats = true,\n");
     if (prog->debug_views) sb_put(o, "    .debug_views = true,\n");
+    if (prog->ticks_alongside) sb_put(o, "    .ticks_alongside = true,\n");
     if (prog->title) {
         sb_put(o, "    .title = ");
         gen_c_literal(o, prog->title->text, false);

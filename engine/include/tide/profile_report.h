@@ -42,6 +42,9 @@ void tide_profile_report_render(tide_profile_report *r, const double ms[TIDE_REN
 // Asynchronous GPU results have no source-frame identity. They are a separate
 // distribution, never paired with or added to a CPU frame.
 void tide_profile_report_gpu(tide_profile_report *r, double ms);
+// A tick that ran beside a frame took this long on its own thread (tide_session_alongside_ns): a distribution
+// apart, as it overlaps frames and is in none of their parts.
+void tide_profile_report_alongside(tide_profile_report *r, double ms);
 // Occlusion culling's counts of a frame as they came back from the GPU (tide_platform_occlusion), once each: the
 // instances tested, and those it hid. Asynchronous, as GPU timing is.
 void tide_profile_report_occlusion(tide_profile_report *r, uint64_t tested, uint64_t hidden);

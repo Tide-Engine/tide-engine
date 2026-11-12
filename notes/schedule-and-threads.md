@@ -1,5 +1,89 @@
 # The schedule and the tick on threads
 
+## A tick beside the frame (2026-11-12)
+
+Mount & Rifle (1,000 soldiers, 144 Hz): a frame with a tick cost its thread tick + views + render, 9.4-9.9 ms
+against 6.94, with nothing left to take off either. The owner lifted the 2026-11-04 "not now" the same day
+("whatever it takes ... any 'not now' can be dealt with"). Built for the machine that runs the match; a client
+of another machine's match is unchanged (gaps).
+
+What it is: `settings { ticksAlongsideViews = true; }` (`tide_game.ticks_alongside`), `--ticks-alongside`, or
+`tide_session_desc.alongside` / `tide_session_set_alongside`. The name, the default (off) and whether it should
+turn itself on where a tick is costly are Provisional (spec, Settings).
+
+- **A tick in three parts** (`engine/src/session.c`): `tick_begin` (joins and leaves, inputs, commands, shard
+  messages, the frame's head, the hearing's log), `tick_run` (`tide_game.tick*` and the world's hash) and
+  `tick_end` (the tick counted, `ended`, the hash patched in, `mirror_tick`, the stored frame, the journal, the
+  players' projections). `server_tick` is the three in a row, as it always was. `tide_server_update` runs every
+  due tick but the last that way; the last, where `can_fly` (the session asked, the pool can lead, and this
+  machine's player is level with the server: `mirrored`), is begun *after* the update's sends (`fly_tick`), its
+  `tick_run` handed to the pool's leading thread, and ended by `land` at the top of a later update. From begin
+  to end the server's world is that thread's alone and `tick` doesn't count it; every session function that
+  reads or changes the server lands first (`settle`: tear down, kick, ban, end, set_game, migrate, rewind,
+  record, can_reload, `tide_session_server`, `tide_server_world`), and `mirror_play` leaves the server's world
+  alone while one flies.
+- **The pool's leading thread** (`tide_jobs.lead`, `led`; `platform/src/jobs.c`, desktop): one more thread than
+  `threads`, made at the first `lead`, 8 MB of stack (it runs what the program's first thread would: handlers and
+  changes). It asks for rounds as any caller does, as thread 0. Since two threads can now ask, **a round is one
+  caller's at a time** (`pool.taken`): a round asked for while another is open runs on its caller's thread alone,
+  which every work allows (`round_of` returns false; `run`'s timing of the two ways skips it, and its `choice`
+  table is under the pool's lock). So a frame's loops, skinning's poses and audio's rounds on the frame's thread
+  stay there while a tick has the pool, and a tick's hash round stays on the leader if the frame took the pool
+  between the tick's rounds. This settles the gap noted the same morning ("a tick must not run on the pool at
+  the same time as a frame's loops").
+- **Views a frame behind.** With `alongside(s)` (asked, a leading thread, one server, a client), the view's
+  moment is that of the update the views were last taken after (`tide_session_view` keeps `view_taken` and
+  `view_shown`; calls between two updates give the same). `tide_client_view` works `at` out from that moment;
+  where it's ticks before the latest (an update that ran several), it's between the two ticks around it, as
+  far back as the ring has both (`ahead - ring + 2`), and the confirmed interval is held to `at - 1`, so near
+  and far entities show one moment. A moment within 1e-6 of a tick is that tick's start, as `ticks_in` counts
+  it. Nothing else of the client changed: `verified_view` adapts by itself to the later `verified`.
+- **Which update ends it.** `tide_session_update` holds the server's update (nothing heard, sent or ticked)
+  while a tick flies that isn't done, wasn't begun by the time the views were last taken (`flew_at >
+  view_taken`: begun by a host's update between frames, like the standard host's while it waits to present)
+  and no further tick is due. Otherwise it lands: the frame after the one that began it, which is the first
+  whose views need it. A tick longer than a frame is waited for there (`tide_jobs.led`).
+- **What it costs**, as the spec says: views one frame older; a tick's frame to other players at the next
+  update instead of at once (the standard host's update while it waits to present sends it sooner); local
+  handlers hear a tick the frame its world is first shown; and C that the match and views both call is on two
+  threads at once.
+- **C with state of its own** (`tide/jobs.h`): `tide_ticks_settle()` returns once the tick this thread handed
+  over has run (`tide_tick_beside`, a thread-local the session sets with the tick's done word), and at once on
+  any other thread. Box3D's `b3t_find`/`b3t_rebuild` and Box2D's `b2t_seek`/`b2t_recall` call it: a view's
+  question waits for the tick that's stepping C's world, then restores its own state as a view of an older
+  tick always did. So a view that asks physics gives the frame back the tick's time; nothing is corrupted.
+- **Profiles.** The tick fills a profile of its own (`flight_profile`, through a copy of the jobs with it),
+  taken into the host's at landing (`tide_profile_take_ticks`), so the frame's thread never reads rows a tick
+  is writing. `tide_session_alongside_ns` is what the last one took; the report has `ticks_alongside` (a
+  distribution apart; `cpu_phases.match` is then begin, end and any wait), and F7 a "Ticks alongside" row.
+- **Measuring it** needs frames that aren't all ticks: `--frame-rate <n>` (`tide_headless_desc.frame_rate`)
+  makes a hidden run's time up at another rate than 60 (the mixer renders a frame's worth at that rate).
+
+Tests. `tests/test_alongside.c` (a stand-in leading "thread" that runs its work when waited for, the latest a
+real one could, or at once): the same match byte for byte as ticks in the update, commands in the same ticks;
+views show the world and alpha the frame before showed without it; a tick begun between frames isn't waited
+for by the next frame and is by the one after; leave, restart and destroy land first; nothing without `lead`.
+`tide_platform_alongside` (`platform/tests/alongside.c`: the standard host, the real pool, `jobs.tide`'s busy
+match plus views over every body, text, grid and list, local handlers, and C a system and a view share): at
+144, 60 and 24 frames a second, every frame's world hash, alpha, view sums and (with a tick a frame at most)
+heard events are the frame before's with ticks in the update, bit for bit, and the final worlds equal. With the
+settle taken out of the shared C, two of its three cases fail. Passing under Windows ASan.
+
+Measured: benchmarks.md, Ticks beside the frame.
+
+Gaps:
+- **Clients of another machine's match**: prediction, confirmed ticks and ticks run again still run in the
+  update. The same split would fit `run_tick`, with rollback's worlds the hard part.
+- **The web**: its pool has no leading thread (`lead` NULL), so the setting does nothing there. A worker could
+  lead rounds as desktop's does; the page's own thread can only spin while it waits.
+- **Sharded matches** run their shards' ticks in the update.
+- A frame's own rounds (view loops, skinning poses) run alone while a tick has the pool: the pool takes one
+  caller's round at a time rather than sharing its threads between two.
+- At fewer frames a second than ticks, a frame's earlier ticks run in its update and its handlers hear them
+  up to a frame's worth of ticks before the views show them.
+- A tick that doesn't fit in a frame is waited for by a sleeping frame thread; it doesn't help the tick.
+- Unity's frames (`platform/src/embed.c`) don't ask for it.
+
 ## Per-entity systems that queue changes go to threads in entity order (2026-11-12)
 
 Second round of Mount & Rifle's 1,000-soldier report: with measured cost in
@@ -219,7 +303,8 @@ Gaps:
   little. Nothing times a frame's loops (a tick's systems are timed since this morning).
 - A tick must not run on the pool at the same time as a frame's loops: both are rounds, and the pool takes one
   caller's at a time. Today the host runs them one after the other on one thread. Overlapping a tick with the
-  views (the game's other gap) has to settle that first.
+  views (the game's other gap) has to settle that first. (Settled the same day: the pool gives a round to one
+  caller at a time and the other's runs on its own thread, top section.)
 - Local handlers' loops, sharded views and Unity's frames stay on one thread. A step still can't draw, send a
   local event, or fill a list of the code's by index; results go through the row's local fields or a
   singleton's list of plain values.

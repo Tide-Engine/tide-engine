@@ -364,6 +364,18 @@ else()
     set_tests_properties(tide_platform_host_wait PROPERTIES TIMEOUT 60)
 endif()
 
+# Ticks beside the frame (tide_session_desc.alongside) through the standard host, on the pool's own leading
+# thread: what frames show and hear against ticks in the update. Desktop: the web's pool has no leading thread yet.
+if(NOT TIDE_WEB)
+    tide_add_game(tide_platform_alongside SOURCES tests/jobs.tide tests/alongside_views.tide tests/jobs_tasks.c
+        tests/alongside_shared.c NAME game
+        HOST tests/alongside.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_alongside PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+    target_link_libraries(tide_platform_alongside PRIVATE tide_platform)
+    add_test(NAME tide_platform_alongside COMMAND tide_platform_alongside)
+    set_tests_properties(tide_platform_alongside PROPERTIES TIMEOUT 300)
+endif()
+
 # Time travel inside another program (tide/embed.h) and the timeline under it (tide/timeline.h): pausing,
 # stepping, showing kept ticks again, recording and replaying bit for bit, and going on from a tick shown
 tide_add_game(tide_platform_travel SOURCES tests/travel.tide NAME game EMBED

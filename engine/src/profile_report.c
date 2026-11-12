@@ -6,7 +6,7 @@
 
 #include "tide/page.h"
 
-enum { CPU = TIDE_FRAME_PARTS, GPU, RENDER, RENDER_OTHER = RENDER + TIDE_RENDER_PARTS, METRICS, GROUPS = 3, INDEX_SIZE = TIDE_PROFILE_REPORT_ROWS * 2u };
+enum { CPU = TIDE_FRAME_PARTS, GPU, RENDER, RENDER_OTHER = RENDER + TIDE_RENDER_PARTS, ALONGSIDE, METRICS, GROUPS = 3, INDEX_SIZE = TIDE_PROFILE_REPORT_ROWS * 2u };
 
 typedef struct distribution {
     uint64_t count;
@@ -218,6 +218,11 @@ void tide_profile_report_gpu(tide_profile_report *r, const double ms)
     sample(&state(r)->metrics[GPU], ms);
 }
 
+void tide_profile_report_alongside(tide_profile_report *r, const double ms)
+{
+    sample(&state(r)->metrics[ALONGSIDE], ms);
+}
+
 void tide_profile_report_occlusion(tide_profile_report *r, const uint64_t tested, const uint64_t hidden)
 {
     report_state *s = state(r);
@@ -363,6 +368,7 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
     fputs("]},\n", out);
     fprintf(out, "\"ticks\":{\"count\":%llu,\"systems_ms\":%.9g,\"changes_events_tasks_ms\":%.9g},\n",
             (unsigned long long)s->ticks, s->systems_ms, s->changes_ms);
+    fputs("\"ticks_alongside\":", out); distribution_json(out, &s->metrics[ALONGSIDE]); fputs(",\n", out);
     for (uint32_t g = 0; g < GROUPS; g++) {
         const char *groups[GROUPS] = {"systems", "views", "workers"};
         string(out, groups[g]); fputs(":[", out);
@@ -418,6 +424,7 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
             (unsigned long long)s->dropped, (unsigned long long)r->draw.dropped_calls, (unsigned long long)r->draw.dropped_candidates);
     fputs("\"semantics\":{\"cpu_work\":\"Host callback wall time; excludes interactive waits, present, headless audio mixing, screenshot readback and report collection. Includes instrumentation and any enabled overlays. Not display FPS.\","
           "\"render_phases\":\"Parts of cpu_phases.render: the renderer's CPU work on the frame's list, then other (the host's own work there). Excludes presenting, where command buffers are submitted and frames in flight waited for.\","
+          "\"ticks_alongside\":\"Each tick that ran beside a frame (the ticksAlongsideViews setting, --ticks-alongside): its systems, changes, handlers and hash, on the threads' leading thread, from start to end. It overlaps the frames it ran beside and is in no cpu_phases part: cpu_phases.match is then what beginning and ending ticks took the frame's thread, and any wait for one that hadn't ended.\","
           "\"systems\":\"Elapsed first-job-start to last-job-end; overlapping systems must not be summed as CPU work.\","
           "\"workers\":\"Completed-job queue, compute and copy intervals; may overlap frames.\","
           "\"mesh_recording\":\"Inclusive bounds, frustum testing, LOD and instance recording after mesh acquisition; contained in the caller view, not isolated culling or GPU time.\","

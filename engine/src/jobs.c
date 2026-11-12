@@ -765,6 +765,24 @@ void tide_job_wake(const uint32_t *word)
 
 #endif
 
+// The tick this thread handed over to run beside its frame, by where it says it's done (tide/jobs.h)
+static TIDE_THREAD_LOCAL const uint32_t *beside_done;
+
+void tide_tick_beside(const uint32_t *done)
+{
+    beside_done = done;
+}
+
+void tide_ticks_settle(void)
+{
+    const uint32_t *done = beside_done;
+    if (!done) return;
+    for (uint32_t looks = 0; !__atomic_load_n(done, __ATOMIC_ACQUIRE); looks++) {
+        if (looks < IDLE_LOOKS) relax();
+        else tide_yield();
+    }
+}
+
 // Each task's queue, kept from tick to tick by the thread that runs ticks, so
 // their pages are made once rather than every tick.
 static TIDE_THREAD_LOCAL tide_queue *kept_queues;

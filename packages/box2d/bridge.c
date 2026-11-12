@@ -1626,6 +1626,7 @@ void b2t_query_filter(int64_t category, int64_t mask);
 
 bool b2t_seek(const int64_t stamp)
 {
+    tide_ticks_settle(); // A view's question, while a tick beside the frame steps a world: once it has
     b2t_query_filter(1, -1);
     static TIDE_THREAD_LOCAL bool counted;
     if (!counted) {
@@ -1651,6 +1652,7 @@ int32_t b2t_asking_threads(void)
 // next finds it.
 void b2t_recall(const uint8_t *image, const int32_t size, const int64_t stamp)
 {
+    tide_ticks_settle();
     find_begin();
     asked = world_at(stamp); // Another thread may have made it since this one looked
     if (!asked) asked = restore(image, size, stamp);

@@ -359,7 +359,14 @@ static void headless_audio_frame(void)
             kept = captured;
         }
     }
-    const uint64_t need = played - kept + HEADLESS_AUDIO_FRAMES;
+    // A frame's worth at the rate the run makes up (tide_headless_desc.frame_rate): what's left over of a rate
+    // that doesn't divide the mixer's goes to the frames after
+    static uint64_t owed;
+    const uint32_t rate = headless_run.frame_rate ? headless_run.frame_rate : 60u;
+    owed += (uint64_t)HEADLESS_AUDIO_FRAMES * 60u;
+    const uint64_t frames = owed / rate;
+    owed %= rate;
+    const uint64_t need = played - kept + frames;
     if (need > audio_capacity) {
         uint64_t c = audio_capacity ? audio_capacity : 16u * HEADLESS_AUDIO_FRAMES;
         while (c < need) c *= 2;
@@ -367,8 +374,8 @@ static void headless_audio_frame(void)
                                       (size_t)c * 2 * sizeof *headless_audio);
         audio_capacity = c;
     }
-    tide_mixer_render(headless_audio + (played - kept) * 2, HEADLESS_AUDIO_FRAMES);
-    played += HEADLESS_AUDIO_FRAMES;
+    if (frames) tide_mixer_render(headless_audio + (played - kept) * 2, (uint32_t)frames);
+    played += frames;
 }
 
 // Writes what was played from frame `from` on, which the buffer still has, to
@@ -549,7 +556,7 @@ static int step(void)
 {
     const double start = now();
     // A headless window's time is made up: the same on every machine, every run
-    const float seconds = headless ? 1.0f / 60.0f : (float)(start - frame_start);
+    const float seconds = headless ? 1.0f / (float)(headless_run.frame_rate ? headless_run.frame_rate : 60u) : (float)(start - frame_start);
     frame_start = start;
     frame_due = start + 1.0 / 60.0;
     due_asked = false;

@@ -302,6 +302,9 @@ typedef struct tide_game {
     uint8_t prediction;  // prediction: how its clients keep up (tide_prediction)
     bool stats;          // stats: the host shows its stats overlay, though nothing else asked it to
     bool debug_views;    // debugViews: the host shows its debug views over the game when asked (tide/host.h)
+    // ticksAlongsideViews: on the machine that runs the match, a tick runs beside the frame that draws
+    // (tide_session_desc.alongside), which the host asks its session for
+    bool ticks_alongside;
     // maxPlayers: how many players its matches take, up to TIDE_PLAYERS_MOST;
     // 0 for TIDE_PLAYERS_DEFAULT. The world keeps an input for each, and the
     // server's after them, so it's part of the game's layout: its hash differs.
@@ -720,6 +723,18 @@ typedef struct tide_session_desc {
     tide_shard_box shard_world;
     uint32_t shard_split[3];
     uint32_t shard_most;
+    // The match this machine runs has its ticks beside the frame: an update begins the tick that's due and
+    // hands it to `jobs`' leading thread (tide_jobs.lead), and returns; the tick's systems, changes, handlers
+    // and hash run there while the host goes on to its views and its drawing, and an update after ends it:
+    // this machine's player gets its world, the other players its frame, and local handlers what it sent. So a
+    // frame with a tick costs the host's thread the longer of the two, not their sum. For that, views show the
+    // moment of the update they were last taken after (tide_session_view): one frame behind, as every tick
+    // due by then has ended by the time they're taken again, so nothing waits where the tick fits in a frame.
+    // Input isn't later for it: a tick still takes what was sampled at the update that begins it. What the
+    // match's code and the views share outside the worlds (a game's C) is used from two threads at once.
+    // Nothing without a leading thread, in a sharded match, or in a match another machine runs.
+    // tide_session_set_alongside changes it between updates.
+    bool alongside;
 } tide_session_desc;
 
 typedef enum tide_session_event_kind {
@@ -828,8 +843,17 @@ uint64_t tide_session_data_generation(const tide_session *s);
 double tide_session_until_tick(const tide_session *s);
 // What views read, or NULL outside a match.
 const void *tide_session_world(const tide_session *s);
-// What views draw, blended between ticks (see tide_view_worlds).
+// What views draw, blended between ticks (see tide_view_worlds). With ticks
+// beside the frame (tide_session_desc.alongside), as of the update it was last
+// called after; calls between two updates give the same.
 tide_view_worlds tide_session_view(const tide_session *s);
+// Whether the match this machine runs has its ticks beside the frame from now
+// on (tide_session_desc.alongside), as a new build's settings may say.
+void tide_session_set_alongside(tide_session *s, bool alongside);
+// What the last tick that ran beside the frame took on its thread, in
+// nanoseconds, and how many have ended: for a host that says where a frame's
+// time goes, as the update that began it took none of it. 0 with none yet.
+uint64_t tide_session_alongside_ns(const tide_session *s, uint32_t *ended);
 // In a sharded match, what views draw beside it: each other shard this
 // machine follows, its own entities, as tide_session_view has the home's (see
 // tide_view_use). Up to `capacity` of them, with which shard each is, and how

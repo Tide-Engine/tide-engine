@@ -74,6 +74,10 @@ typedef struct tide_profiler {
     double part_ms[TIDE_FRAME_PARTS];
     uint32_t again_from; // The session's count of predicted ticks run again, as it was then
     bool again_known;
+    // Ticks that ran beside frames and ended since (tide_session_alongside_ns), which the host adds: how many, and
+    // what they took on their own thread. None of it is in the frame's parts.
+    uint32_t beside;
+    double beside_ms;
     // What the host says of its memory (tide_platform_memory, tide_platform_gpu_memory), as of the last frame: the
     // frame's last row, where either is above 0
     uint64_t memory, gpu_memory;

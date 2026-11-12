@@ -2249,6 +2249,12 @@ static const setting settings[] = {
      "The engine's debug views are on in the game: F7 shows the profiler, which says where a frame's time goes (the "
      "match's ticks, each view, drawing) and a tick's (each system, then its changes and events). Nothing is measured "
      "until it's shown. Starting the game with `--debug-views` turns them on too, whatever this says."},
+    {"ticksAlongsideViews", TY_BOOL, "false",
+     "On the machine that runs the match, a tick runs on the job threads while the frame draws, so a frame with a "
+     "tick takes the longer of the two rather than both. For that, views show the match as of the frame before: "
+     "what's drawn is one frame older, and input is felt that much later, though it reaches the match as soon. "
+     "A game's C that both the match's code and its views call is then called from two threads at once. Nothing "
+     "changes on a machine that joined a match another runs. `--ticks-alongside` turns it on too, whatever this says."},
 };
 
 #define SETTING_COUNT (sizeof settings / sizeof settings[0])
