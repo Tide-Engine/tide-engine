@@ -97,7 +97,20 @@ system Hits(query (Body body, with Fighter) fighters, Arena arena)
 }
 ```
 
-The row is a foreach's: `f.entity` and the bindings, read-only. Steps follow a [parallel loop's rules](../language/grids.md#going-through-every-cell): they change only the variables they declare, and can't spawn, add, remove, destroy or draw. Unlike a list's or a grid's steps, they can send the match's events, to the world or to an entity, and those arrive in the order the `foreach` would have sent them, so the results are the same on any number of threads. An event that holds text or lists can't be sent from a step. A query with a `mut` binding, and reading a row's local fields, need a `foreach` for now. This is provisional.
+The row is a foreach's: `f.entity` and the bindings, read-only. Steps follow a [parallel loop's rules](../language/grids.md#going-through-every-cell): they change only the variables they declare, and can't spawn, add, remove, destroy or draw. Unlike a list's or a grid's steps, they can send the match's events, to the world or to an entity, and those arrive in the order the `foreach` would have sent them, so the results are the same on any number of threads. An event that holds text or lists can't be sent from a step.
+
+In a view, a step also reads its row's [local fields](views.md), and writes them through a `mut` binding: each row is one entity's, so each step's local fields are its own. That is how a view works something costly out for every row on all the threads, then draws from the results in order:
+
+```tide
+view Crowd(query (mut Fighter fighter) fighters)
+{
+    // `shown` is a local field of Fighter: where to draw him, worked out for every row at once
+    parallel (var f in fighters) f.fighter.shown = Stance(f.fighter.position, f.fighter.yaw);
+    foreach (var f in fighters) Draw.Circle(f.fighter.shown, 0.5, Color.white);
+}
+```
+
+A local field that holds text or lists can be read in a step but not changed there, and a step can't read the local fields of the view's own entity where the rows write the same component's. A frame's loops take the threads whenever a host hands them its pool, as the standard one does. This is provisional.
 
 ## Only the rows that can pass
 

@@ -131,6 +131,17 @@ tide_entity tide_new_entity(tide_entities *t);
 // each other, so the result is the same either way.
 void tide_parallel_for(uint32_t count, void (*work)(void *context, uint32_t task), void *context, uint64_t cost);
 
+// Outside a tick, a parallel loop on this thread takes `jobs`' threads when
+// it's worth a round of theirs, from here to tide_loops_leave: a host calls
+// these around a frame's views (tide/host.h), with nothing else making rounds
+// on the pool meanwhile. NULL, or a pool of one thread, leaves the loops on
+// this thread. A thread that joins runs the steps as it is: the steps' own
+// code sets up what they read (a view's does, tidec's gen_par_local_use; a
+// loop of code that doesn't tells tide_parallel_for it has no work to share).
+// Gives what was set before, for leave.
+const tide_jobs *tide_loops_enter(const tide_jobs *jobs);
+void tide_loops_leave(const tide_jobs *previous);
+
 // Jobs, for C that shares its own work out: a library with a task interface
 // of its own (a physics solver's start and finish), which a loop that returns
 // once it's done can't serve. Called from a system, or from what it calls.

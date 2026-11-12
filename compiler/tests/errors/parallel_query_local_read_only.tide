@@ -1,10 +1,10 @@
-// expect: 'shown' is a local field of 'Body', which a parallel loop's steps don't read yet
+// expect: query row 'f' is read-only, and a parallel loop's steps change nothing outside them
 component Body { float x; local float shown; }
 scene Main { }
 view Look(query (Body body) bodies)
 {
     parallel (var f in bodies)
     {
-        if (f.body.shown > 1) continue;
+        f.body.shown = f.body.x;
     }
 }

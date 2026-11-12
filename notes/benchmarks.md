@@ -11,13 +11,60 @@ After the deliberate identity-pin update, all five quick cases pass on native
 ASan and WASI.
 
 
+## Views' rows and loops on threads (2026-11-12)
+
+For notes/ecs.md (A view's rows: the slot guessed) and notes/schedule-and-threads.md (A frame's parallel loops on
+the pool). Release, Windows, Ryzen 9 7900X (12 threads), hidden.
+
+`bench_views` (20,000 rows, frames blended halfway between two ticks, 200 frames; `bench_views <frames> <alpha>
+threads` hands the frame's loops the platform's pool). Before is `dev` 7fa88319a; both taken with the machine
+quiet. ms a frame, and ns a row:
+
+| View | Before | After |
+|---|---|---|
+| PitchWide (per entity, reads one field of 75 lanes) | 1.15 (58) | 0.42 (21) |
+| PitchSmall (per entity, small component) | 1.16 (58) | 0.42 (21) |
+| QueryWide (a query's rows, wide) | 1.06 (53) | 0.29 (14) |
+| QuerySmall (a query's rows, small) | 1.05 (53) | 0.25 (13) |
+| The same four with no blending (alpha 1) | 0.18 / 0.18 / 0.03 / 0.03 | as before |
+
+So the blend's lookups were 49 of a per-entity row's 58 ns; the benchmark spawns its two kinds in turn, so a
+kind's slots are two apart (the stride). New in the benchmark: `PlaceEach` and `PlaceAtOnce` work a matrix out
+for every row of `query (mut Wide w)` (six `Math.Sin`, a `quaternion.Euler`, a `float4x4.TRS`) into a local field,
+in a `foreach` and in a `parallel` loop: 2.3 ms in order; at once 2.9 on one thread (the cells are looked up
+twice a row, once to make them ready and once in the step) and 1.4 on twelve, of which the steps' round is 0.47
+and the rest is making the rows and readying the cells in order. Before, the parallel form was a compile error.
+
+Mount & Rifle (its `dev` 14737bb, built with each checkout through a scratch `TIDE_EXTERNAL_DIRS` folder with
+`DEFINES BATTLE_TEST ARMY`; `--host --seed 42 --frames 2400 --size 1920 1080 --profile x.json --profile-warmup
+1500`, the 1,000-man battle, frames 1501-2400). Nine runs before and eight after, alternating, on a machine other
+sessions were building on (the whole frame drifted 11 to 18 ms between runs, so only differences well past the
+views that didn't change count; those moved -2 to -10%). Medians of each view's mean, ms a frame:
+
+| View | Before | After |
+|---|---|---|
+| Campaign.DrawCampaign (`foreach` over Places, 346 `mut Party` rows, Encounters) | 0.465 | 0.322 |
+| Infantry.Traces (`foreach` over Bullets and ~1,000 Troopers) | 0.326 | 0.217 |
+| Campaign.CampaignHud | 0.229 | 0.195 |
+| Infantry.OthersOnFoot (per entity, ~1,000 `mut Trooper`) | 0.729 | 0.639 |
+| DrawFlora (its own `parallel` loops, on threads for the first time) | 0.546 | 0.523 |
+| Every view, summed | 5.73 | 5.00 |
+
+About 0.3 ms of the difference is the rows' (the two walks a third less each); the rest is within the drift.
+`DrawFlora` didn't change: its loops are short or rare in this battle. `OthersOnFoot` is its own work (posing
+near men, pushing far ones): the game can now put that in a parallel loop over its rows. All 17 runs of the
+after build finished, 2,400 frames each with the views' loops on the pool. One after-run had every tick at ~52 ms
+(the match phase; its systems' own times summed as usual) while other sessions compiled: the pool's threads
+weren't getting cores. It didn't happen in the eight others, and the before build wasn't run under the same load
+at that moment, so it's put down to the machine, unproven.
+
 ## What a row costs in entity order (2026-11-12)
 
 For notes/ecs.md (What a row costs in entity order) and notes/indexed-loops.md (When most rows pass). A probe
 game, not kept in the repository: 1,000 `Slim` rows (6 lanes, one archetype) and 1,000 `Fat` rows (128 lanes of
 match state, a 2.6 KB `local` struct, two archetypes interleaved one row in three), each system named for what
 it does. Release, Windows, Ryzen 9 7900X, hidden, 300 ticks after 100 of warm-up, mean ms a tick from
-`--profile`'s `systems` (three runs each, within 5%). A thousand rows, so µs a tick is ns a row.
+`--profile`'s `systems` (three runs each, within 5%). A thousand rows, so Âµs a tick is ns a row.
 
 | System | Before | After |
 |---|---|---|
@@ -35,7 +82,20 @@ Where an index still pays, 1,000 `Fat` rows, the guard `row.f.beat >= N` (the ke
 is kept): one row in eight found, 6.6 against the plain loop's 10; one in four, 12 against 10 (now plain: more
 than one in six); one in two, 10 either way (plain).
 
-Not measured here: Mount & Rifle itself, whose thread measures it on the nightly with this in.
+Mount & Rifle on nightly.24 (its thread's numbers, the 1,000-man battle, mean ms a tick, nightly.13 before):
+Measure 0.127 to 0.032, LeaveField 0.072 to 0.032, Roam 0.69 to 0.35, Muster 0.059 to 0.024; the match's p50
+8.49 to 7.62 ms and its views' 4.55 to 4.22. Still 77 to 130 ns a row there: FallOnField, Fall and Routed,
+which is what finding a chunk's lanes once for the chunk is for. In the probe, a system shaped like FallOnField
+(`mut Fat f, mut World world`, returning on its first line, 7 of 134 lanes used, runs of one or two rows):
+46 ns a row on nightly.24, 28 without the NULL stores, 22 with the lanes kept for the chunk.
+
+The game on nightly.25 (its thread): Fall 0.099 to 0.067, KeepInside 0.053 to 0.033, Upkeep 0.113 to 0.092; no
+better, FallOnField 0.123, Routed 0.079, Enlist 0.178. Those return on their first line for every row and were
+still walked in the entities' order. With the rows a guard lets through marked first (notes/ecs.md), the probe's
+systems of those shapes, ns a row, nightly.25 to now: FallOnField's 22 to 0.6; Routed's (333 rows) 9 to 0.6;
+Fall's, which also writes one element of a `float[120]` (120 lanes copied and compared every tick, now one),
+255 to 0.5. Systems every row gets past are as they were (a system that writes a singleton behind a test all
+rows pass: 16 before and after, the marking pass within the noise). The game isn't measured on this yet.
 
 ## A wide component's rows (2026-11-10)
 
@@ -62,8 +122,8 @@ Probes added beside the game's code (`Party` is 186 lanes, 346 rows):
 | 60 calls of a helper handed `mut Party`, `mut World` and `Ground` between a Get and a Set | 6.03 | 0.080 |
 | 17 times through `query (Spot s)` in a system (5,900 rows) | 0.39 | 0.43 |
 
-The last two are what the report's third cost was (the helper's copy of `Ground`'s lists, 100 µs a call, not the
-Get and Set at 2 µs a pair) and what's left of Roam (a query's rows in entity order, 70 ns each). The last row's
+The last two are what the report's third cost was (the helper's copy of `Ground`'s lists, 100 Âµs a call, not the
+Get and Set at 2 Âµs a pair) and what's left of Roam (a query's rows in entity order, 70 ns each). The last row's
 function is the same C in both; its 8% is what the code around it does to the optimizer's choices.
 
 The game without the probes:

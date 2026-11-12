@@ -1,5 +1,13 @@
 # Runtime written by Claude for now
 
+## A frame's loops and the slot guess (2026-11-12)
+
+Mine, under the jobs and entity maintenance below (schedule-and-threads.md and ecs.md, top sections). New in
+`tide/jobs.h`: `tide_loops_enter(jobs)` and `tide_loops_leave(previous)`, called by hosts around a frame's views
+(`tide/host.h` does), never by generated code. Generated C calls no new runtime function: a view's steps call the
+existing `tide_text_use`, `tide_text_use_verified` and `tide_pack_use`. `tide_entity_slot_index` keeps a
+thread-local guess; its results and every signature are as they were.
+
 ## Debug.Log's listener and the host table's shape (2026-11-10)
 
 For Unity's Console (notes/unity.md, Made for production; mine, Provisional): `tide_debug_log_to(heard)` in

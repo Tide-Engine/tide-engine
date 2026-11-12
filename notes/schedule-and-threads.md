@@ -55,6 +55,14 @@ neither a threshold.
     A registration on another thread retires the cache, and the next fetch
     rebuilds it with the same keys: only installed entities have an
     archetype, and nothing is installed while systems run.
+  - The marks of rows that get past a system's first tests (`rows_live`, the
+    same day's work on the walk) are made before any row runs, from the rows'
+    own bytes. A task of several can't make them: other tasks' rows are
+    changing by then. So with more than one piece every row is marked
+    (`gen_canonical_live`, `LIVE_PIECED`; `LIVE_WHOLE` in `tide_own_` and
+    `tide_done_`, which then begin and end every chunk) and each row's own
+    first line decides, as it did before there were marks. With one piece the
+    marks are made and used as they were.
   - No runtime function was added or changed.
 - **`tide schedule` says what keeps a system on one thread**
   (`put_one_thread`): for a per-entity system written in Tide that splits
@@ -96,6 +104,92 @@ Gaps: extern per-entity systems still run on one thread (their rows ABI takes
 runs, so the same split would fit; not done). A system that changes a
 singleton or the heap is the language's rule. A chunk-split system
 (`system_splits`) doesn't go in identity order and needs none.
+
+## A frame's parallel loops on the pool, a row's local fields in steps, steps that read scratch values (2026-11-12)
+
+From Mount & Rifle's view breakdown (1,000 soldiers toward 144 Hz; its biggest view goes through ~1,000
+`mut Trooper` rows writing local fields). Asked: could a `parallel` loop over a query's rows in a view write the
+row's local fields. Looking into it found two things that mattered more.
+
+- **Every parallel loop in a view ran on the frame's thread.** `tide_parallel_for` shares a loop out inside a
+  tick on threads (`current`), in a tick on one thread (`round_loop`, `serial_jobs`) and inside a worker
+  (`tide_worker_parallel`, `worker_jobs`); a frame's views are none of those, so their loops ran in order,
+  whatever they cost (Mount & Rifle's `DrawFlora` loops among them). An earlier line in rendering.md ("the
+  views' parallel loops") assumed otherwise.
+- **A step that read a list its code made crashed on another thread, in match code too.** A local's text, list,
+  map, set or grid is in its thread's scratch area (`tide_scratch_slots`, thread-local), and a step is handed the
+  handle by value: on another thread it's an offset into that thread's area. `parallel_views.tide`'s `Weigh`
+  (a system: `mut List<float> scale = []; ... parallel (var k in t.values) ... scale[k % 64]`) segfaulted on the
+  platform pool on `dev`. Nothing refused it; a loop *over* a local's list or grid was already refused.
+
+Built:
+
+- **`tide_loops_enter(jobs)` / `tide_loops_leave(previous)`** (`tide/jobs.h`, `engine/src/jobs.c`): a
+  thread-local `frame_jobs`. Outside a tick, a loop whose cost is at least `ROUND_WORK` (the same bar as a tick
+  on one thread: 50 us of tidec's units natively) takes the pool in a round of its own (`frame_loop`,
+  `take_frame_loop`: `jobs->run`), cleared during the round so a loop inside a step runs in order. A joining
+  thread only syncs memory: there's no tick to `prepare` it, so the steps set their thread up themselves
+  (next point). A pool of one thread, or NULL, is none. Called by hosts, not by generated code:
+  `tide/host.h` (`tide_run_frame`) enters around `frame_shards` and `frame` with `tide_run_gui.jobs` (the platform's pool) and
+  leaves after; local handlers (`game->events`) run before it, outside. `platform/src/embed.c` (Unity) doesn't
+  call it: its frames stay on one thread.
+- **A view's steps set up the thread they land on** (`gen_par_local_use`, `gen_parallel_call` in
+  `compiler/src/codegen.c`): the loop's call site reads the frame thread's three heaps
+  (`tide_world_heaps[TIDE_IN_MATCH / LOCAL / VERIFIED]`) into locals that are captures of every view loop
+  (`tide_heap_m`, `tide_heap_l`, `tide_heap_v`, in `par_captures`), and each step function starts with
+  `tide_text_use`, `tide_text_use_verified` and, with assets, `tide_pack_use`. Nothing is put back: on the
+  frame's thread they're what was there, and a pool thread's next tick or worker sets its own.
+- **Loops that stay on their thread** (`par_stays`): the loop passes `tide_parallel_for` a cost of 0, which every
+  path reads as "not worth sharing" (a tick on threads wants `LOOP_WORK`, rounds want `ROUND_WORK`, workers
+  100,000), so its steps run in order where the loop is. Task sizes still come from the real cost. Three cases:
+  steps that read a variable of the code around them whose type holds text, a list, a map, a set or a grid
+  (`worker_has_storage` or `TY_GRID`, over `outer_locals_stmt`'s captures; a worker's captures are made its own
+  already and are left alone), which is the crash's fix, for systems and handlers as for views; local code that
+  isn't a view (local handlers: only views' steps set their thread up); a sharded game's views (which shard a
+  view draws is its thread's).
+  It's by type: a local that only borrows a world's list keeps its loop on one thread too.
+- **A step reaches its row's local fields** (checker: `check_local_field`, `check_step_write`,
+  `check_parallel_query`, `check_local_field_calls`; spec, Read-only entity queries, Provisional). Reads through
+  any binding; writes through a `mut` binding's local fields, directly or handed to a function (the binding
+  whole or one field). Codegen (`gen_parallel_query_call`, `gen_par_query_steps`): before the steps, a pass over
+  `tide_rows` in order calls `tide_query_fields_mut_<C>_local` for each binding a foreach's row would make ready
+  (`gen_query_field_refs`' test: a `mut` binding, or one the code can mutate through a query), which attaches
+  storage and runs a reused identity's reset; each step then begins as a foreach's row does (`gen_query_fresh`,
+  `gen_query_field_refs`), where the same call is now a find and a pointer, changing nothing shared. Rows of an
+  indexed loop are made ready for its candidates only, as its foreach does. Refused: a step writing a local
+  field that holds text or lists (`holds_heap_beside_meshes`), a `mut` binding handed to a function when its
+  component's local part holds any, and a step reading the local fields of an outer parameter of a component
+  the loop's rows write (the code's own entity is one of the rows).
+- A `parallel` loop over a view's query now counts as going through it for lanes-only rows
+  (`stmt_query_uses`, `stmt_row_reads` in `lane_reads_codegen.inc`): before, any `parallel` over a query made the
+  view copy and blend every lane of every row.
+
+Tests: `tidec_e2e_parallel_views` (`compiler/tests/e2e/parallel_views.tide`, 3,000 men in two archetypes): a
+local singleton's list filled from rows and worked out by a parallel loop; a parallel loop over
+`query (mut Man m)` whose steps skip some rows, read and write three local fields and write one through a
+function, with a foreach after it reading what they left; a view whose steps read a list it made; and the
+system above. With a pool that's one thread saying it has two, each frame makes exactly two rounds (the list's
+and the rows'; the scratch reader's none) and every result is bit-equal to no pool; on the platform's pool,
+ticks and frames, five runs of six frames equal one thread's (this is the run that crashed before).
+`jobs_loops_outside_a_tick_call_a_frames_pool_in` (`tests/test_jobs.c`): no round before enter, one for a
+costly loop and none for a cheap one or one inside a step, none for a pool of one thread, none after leave.
+Errors: `parallel_query_local_text`, `_local_handed`, `_local_outer`, `_local_read_only` (replacing
+`parallel_query_mut` and `parallel_query_local_field`, which are no longer errors). Measured: benchmarks.md,
+Views' rows and loops on threads.
+
+Gaps:
+- A round wakes the whole pool, as a tick's loop does; a loop a little over the bar on a 12-thread pool gains
+  little. Nothing times a frame's loops (a tick's systems are timed since this morning).
+- A tick must not run on the pool at the same time as a frame's loops: both are rounds, and the pool takes one
+  caller's at a time. Today the host runs them one after the other on one thread. Overlapping a tick with the
+  views (the game's other gap) has to settle that first.
+- Local handlers' loops, sharded views and Unity's frames stay on one thread. A step still can't draw, send a
+  local event, or fill a list of the code's by index; results go through the row's local fields or a
+  singleton's list of plain values.
+- The preparing pass and each step both look the row's cell up (`tide_attached_find`): about 30 ns a row twice.
+  Handing the steps the cells' rows would halve it.
+- Steps reading scratch values stay on one thread rather than reading them across threads: scratch handles
+  would have to name their thread, and its slot table not move while another reads it.
 
 ## Systems' work from their measured time (2026-11-12)
 

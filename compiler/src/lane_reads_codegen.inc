@@ -71,11 +71,7 @@ static writes_place reads_place_of(const expr *e, const reads_root *root)
         if (at < 0) return p;
         return (writes_place){true, p.off + at, type_layout(e->field->type).size, false};
     }
-    case E_INDEX: {
-        writes_place p = reads_place_of(e->object, root);
-        p.element = p.rooted;
-        return p;
-    }
+    case E_INDEX: return element_place(e, reads_place_of(e->object, root));
     default: return none;
     }
 }
@@ -435,7 +431,8 @@ static void expr_query_uses(const expr *e, query_uses *u)
 static void stmt_query_uses(const stmt *s, query_uses *u)
 {
     if (!s) return;
-    if (s->kind == S_FOREACH && same_param(s->query, u->q) && s->value && s->value->kind == E_NAME && same_param(s->value->param, u->q)) {
+    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && same_param(s->query, u->q) && s->value && s->value->kind == E_NAME
+        && same_param(s->value->param, u->q)) {
         u->looped++;
     }
     for (int i = 0; i < s->stmts.count; i++) stmt_query_uses(s->stmts.items[i], u);
@@ -505,7 +502,7 @@ static bool text_names_rows(const decl *sys, const char *text, const size_t n)
 static void stmt_row_reads(const stmt *s, const param *q, const field *binding, byte_writes *r, int *reached)
 {
     if (!s || r->all) return;
-    if (s->kind == S_FOREACH && same_param(s->query, q)) {
+    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && same_param(s->query, q)) {
         const reads_root root = {NULL, s, binding, false};
         stmt_reads(s->then_stmt, &root, r);
         (*reached)++;

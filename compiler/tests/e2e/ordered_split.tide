@@ -10,6 +10,7 @@ component Soldier
     int id;
     float aim;
     int shots;
+    bool down;     // Its soldier's turn ends on its first line: the rows marked before the walk, on one thread
     int[4] seen;   // A fixed array is in the component: writing its elements keeps the rows independent
     float[4] heat;
 }
@@ -72,6 +73,7 @@ void Report(int id, float speed)
 
 system Shoot(mut Soldier s, without Resting, Time time)
 {
+    if (s.down) return;
     var slot = (s.id + time.tick) % 4;
     // Written out here, where tidec counts it: a tick's worth of threads on a pool that doesn't time its ticks
     mut var aim = (s.aim + float(time.tick)) * 0.001;
@@ -87,6 +89,7 @@ system Shoot(mut Soldier s, without Resting, Time time)
         this.Send(Hit { shot = s.shots });
     }
     if (time.tick == 2 && s.id % 11 == 4) this.Destroy();
+    if (time.tick >= 2 && (s.id + time.tick) % 17 == 3) s.down = true;
     if (time.tick == 3 && s.id % 13 == 5) this.Add(Veteran);
 }
 
@@ -94,6 +97,7 @@ system Shoot(mut Soldier s, without Resting, Time time)
 [After(Shoot)]
 system Call(Soldier s, with Veteran, Time time)
 {
+    if (s.down) return;
     if ((s.id + time.tick) % 4 == 1) Send(Fired { id = -s.id, speed = Heavy(s.aim) });
 }
 

@@ -1,5 +1,35 @@
 # ECS and simulation state
 
+## A view's rows: the slot guessed, and a mut query's lanes (2026-11-12, later)
+
+The same morning's "Remaining" said a per-entity view's row still cost about 50 ns in the blend's two lookups.
+Measured with `bench_views` (20,000 rows, blended): 58 ns a row per entity, 53 for a query's row, where 2026-10-30
+measured 10 and 8 (before entities had logical identities and a lookup became a hash of 16 bytes and a probe).
+Mount & Rifle's views go through ~1,000 soldiers several times a frame.
+
+- **A lookup guesses the slot first** (`tide_entity_slot_index`, `engine/src/entity.c`): a thread remembers the
+  slot it last found an entity in and how far that was from the one before (`slot_hint`, `slot_stride`,
+  thread-local), and looks at that slot and the one a stride on before hashing the key. A slot that is alive and
+  holds the key is the entity's, in whichever table (the rule `tide_entity_location_at` rests on), so a guess
+  is checked, never trusted: results are what the lookup gives. It fits what row code asks: the same entity
+  again (what it was born as, then last tick's world, whose slots are a copy's), then the next row's entity,
+  whose slot is most often one stride on, as rows and slots are both handed out in the order entities are made
+  (men and their kit spawned in turn: a stride of 2). A table whose rows no longer follow its slots falls back
+  to the lookup at the cost of two reads. Every caller gains: `tide_entity_location`, `tide_entity_born`,
+  `tide_entity_alive`, the views' `tide_prev_<C>`.
+- **A `parallel` loop over a view's query counts as a loop for its rows' lanes** (`stmt_query_uses`,
+  `stmt_row_reads`, `lane_reads_codegen.inc`): a query named anywhere but as a foreach's value made its rows
+  whole, and a parallel loop was "anywhere else".
+- **Tests**: `entity_slot_guesses_give_only_the_keys_own_slot` (tide_tests): two tables, one a copy of the other
+  with every third entity destroyed and others in their slots, asked in six orders (forward, back, strides of 2,
+  7 and 37, alternating tables) against a scan of every slot; an unknown key, the null key, an empty table.
+- **Measured** (benchmarks.md, Views' rows and loops on threads): a blended per-entity view row 58 to 21 ns, a
+  query's row 53 to 13.
+- **Remaining**: a blended row is still about twice 2026-10-30's (two checked slot reads and the born values'
+  page, where there was one array index). A view's query with a `mut` binding looks its entity up once more a
+  row for what it was born as, which the guess now answers. The GUI seed still hashes the entity for every
+  per-entity view row.
+
 ## What a row costs in entity order: slots beside the ordered keys (2026-11-12)
 
 Found profiling Mount & Rifle's 1,000-soldier battle toward 144 Hz. Two reports, one cause, plus two more found
@@ -35,7 +65,56 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
   now find its slot once in each world (`tide_entity_slot_index`) and read the snaps, `tide_entity_born_at` and
   the place from there; `tide_load_<C>_at` and `tide_load_some_<C>_at` load by place (`tide_load_<C>` is a call
   of it). This is the views' own cost, not the tick's.
-- **Tests**: `entity_ordered_archetypes_slots_give_each_keys_place` (tide_tests): slots against lookups, a row
+- **A chunk's lanes found once for the chunk, not for each run of rows** (later the same day, after the game
+  measured nightly.24: its `FallOnField`, `Fall` and `Routed` were still 77 to 130 ns a row). Entities spawned in
+  one tick are ordered by their lineage, a hash, so a battle's thousand soldiers come in an order that has nothing
+  to do with their rows: nearly every run of rows is one row. `gen_system_chunk` wrote, for each run, where every
+  lane the system uses is (`tide_table_column`, `tide_table_lanes_piece`: a page's header read for each lane),
+  and two NULL stores for every lane of a `mut` component it doesn't use: 180 stores a row for the game's
+  92-lane `Trooper`. Now (`gen_canonical_kept`): before the keys are gone through, each archetype has
+  `tide_kept_<a>` (the chunk whose lanes were last found) and arrays `tide_kept_col_<C>_<a>`,
+  `tide_kept_was_<C>_<a>` and `tide_kept_own_<C>_<a>`; a run names them (`tide_col_<C>`, `tide_was_<C>` and
+  `tide_own_<C>` are pointers to them) and fills them only when its chunk isn't the one kept. Lanes no row
+  copies are left unset rather than NULL: nothing names them (`gen_rows_columns` hands over the used ones by
+  number). What keeps the pointers right for the task: the lanes it changes are all begun before its first row
+  (`gen_canonical_lanes`), those it only reads nothing writes while it runs, and a component it sets through its
+  World isn't kept (`tide_pages_<C>`, asked for each run as before). The entity and scene columns, whether the
+  chunk has holes and the filters' presence bytes are still asked per run. Only systems in entity order whose
+  lanes are prepared (`generating_canonical_prepared`); a one-Send or self-destroying system's batched loop
+  (`gen_chunk`) and extern systems are as they were.
+- **The rows a guard lets through, marked first** (`rows_live`, `gen_rows_live`, `gen_canonical_live`; the
+  owner, the same day: "any reason we can't close those gaps too?"). The game on nightly.25 still had FallOnField
+  and Routed near 80 to 120 ns a row: each returns on its first line for every row, yet every entity was still
+  visited in the entities' order (a hash's), its guard's lanes read at random and a rows function called for it.
+  Now a system in entity order that has a guard first goes through each chunk in the rows' own order with
+  `tide_live_<System>_<a>`, a rows function that runs nothing: it copies the lanes the guard reads, calls
+  `tide_guard_<System>`, and sets a bit for each row the filters and the guard let through (a bit a row of the
+  table: 16 words on the stack up to 1,024 rows, `tide_alloc_zeroed` past that, freed after the walk). Then:
+  - the walk leaves out an entity whose row has no bit, before anything is asked of its chunk (and a row past
+    what was marked, which the walk didn't begin with);
+  - a chunk with no bit isn't begun: no page taken, copied or compared for the lanes the system changes
+    (`gen_canonical_live_chunk` in `gen_canonical_lanes`), which was the other gap;
+  - with no bit anywhere (`tide_busy` false) there is no walk: `tide_key_count` is 0.
+  The guard runs again when a marked row's turn comes, so marking only ever leaves rows out. That is right
+  when nothing an earlier row does can change what a later row's guard reads, which `rows_live` requires: the
+  guard reads no singleton the system takes `mut` (`guard_reads_changing`); the system sets no component it
+  takes through its World (`world_sets_component`), has no joined parameter and no query with a `mut` binding
+  (another entity's component), and neither reads nor filters by Owner for the archetype (the Owner is read
+  where the row starts, and a World write can change one). Otherwise the system is as it was. Not batched
+  loops (`rows_batched`), which never had a guard. A chunk with holes marks whatever its dead rows' bytes say:
+  the walk never comes to those.
+- **One element of a fixed array is its own lanes** (`element_place`, lane_writes_codegen.inc, for reads and
+  writes): `f.cooldowns[3]` with the number written in the code and inside the array reads or writes that
+  element's bytes, where any element counted as the whole array. Any other index is still all of it.
+- **Tests**: `kept_lanes` (e2e, native and WASI): 2,600 entities of a wide component in two archetypes, more
+  than a chunk of each, spawned in one tick, through a system that writes a singleton and far-apart lanes, one
+  that reads behind a test and one that takes the World; every entity is checked (its own values, its place in
+  the order no other has), written in place and apart beside a snapshot. For the marks: `Rare`, whose guard
+  lets through one row in 97 of those not skipped, other rows each tick, writing an array's element and a
+  singleton whose number depends on the order; `Never`, whose guard lets none through; and `Chain`, whose guard
+  reads a singleton an earlier row changes, so it isn't marked ahead (entity 7 and every one after it in the
+  order: with `guard_reads_changing` taken out, the test fails).
+  `entity_ordered_archetypes_slots_give_each_keys_place` (tide_tests): slots against lookups, a row
   that moves, a destroyed key whose slot a newer entity took, a slot that isn't the key's, `tide_entity_born_at`.
   The indexed loops' differential fixture gained `Swing` (notes/indexed-loops.md). The walks themselves are what
   every game's tests run.
@@ -43,8 +122,14 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
 - **Remaining** (not built):
   - A row in entity order is now about 11 ns in a query's `foreach` and 12 to 18 in a per-entity system, against
     6 for a system that goes by chunks. What's left is the slot's page (a load through the table's pages for each
-    row) and, for systems, the setup of each run of rows: entities of several archetypes interleaved in identity
-    order make runs of one or two.
+    row), a call of the rows function for each run, and that rows come in the order of a hash, so each lane's
+    bytes are read at random within the chunk.
+  - A system in entity order with no guard, or one most rows get past, still goes to every entity in the order
+    of a hash. Laying rows out in their entities' order when a tick's spawns are applied would make those walks
+    sequential too; it changes where every row is, so every pinned world hash, and isn't done.
+  - A system whose whole code is `if (test) { ... }` has no guard (a guard is leading `if (...) return;`
+    statements), and a system that batches a Send or a Destroy has none either: the game's LeaveField is both.
+  - A chunk with one row past the guard is begun whole: each lane the system can write copied and compared.
   - A per-entity view's row is still about 50 ns with nothing in its body: the blend's lookup in each world (two
     now), the correction's lookup in the local state (`tide_attached_find`, for a component with a `[Position]`
     or `[Rotation]` field), and the GUI seed's hash of the entity.

@@ -60,6 +60,7 @@ tide_e2e_test(wide_lanes) # Lanes a system can't write past 64; text passed whol
 add_test(NAME tidec_wide_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_wide_lanes/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/wide_lanes_codegen.cmake")
+tide_e2e_test(kept_lanes) # Systems in entity order find a chunk's lanes once for the chunk, over two archetypes and several chunks
 tide_e2e_test(row_lanes) # Rows copy the lanes their system reads or writes, after its leading tests; views make their rows when named
 add_test(NAME tidec_row_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_row_lanes/game.c"
@@ -530,6 +531,11 @@ tide_e2e_test(ordered_split) # A per-entity system that spawns and sends, its en
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_ordered_split PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_ordered_split PRIVATE TIDE_ORDERED_SPLIT_THREADS=1)
+endif()
+tide_e2e_test(parallel_views) # A frame's parallel loops take the pool's threads, and a row's steps write its local fields
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_parallel_views PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_parallel_views PRIVATE TIDE_PARALLEL_VIEWS_THREADS=1)
 endif()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances

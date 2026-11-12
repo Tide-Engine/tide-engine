@@ -1651,6 +1651,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
+    // The views' parallel loops take the pool's threads, as a tick's do (tide/jobs.h)
+    const tide_jobs *const loops_before = tide_loops_enter(tide_run_gui.jobs);
     if (game->frame_shards) { // A sharded match's other shards this machine follows, drawn beside its home's
         tide_view_worlds more[TIDE_SESSION_VIEWS];
         uint32_t shards[TIDE_SESSION_VIEWS];
@@ -1658,6 +1660,7 @@ static inline int tide_run_frame(void *user, const float seconds)
         game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
     }
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
+    tide_loops_leave(loops_before);
     if (game->voice) {
         const tide_voice_provider *voice = game->voice();
         if (voice) voice->frame(voice->self, s, &tide_run_audio, tide_run_now);

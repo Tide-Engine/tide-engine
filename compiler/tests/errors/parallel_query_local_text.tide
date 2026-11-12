@@ -1,0 +1,11 @@
+// expect: 'label' holds text or lists, which a parallel loop's steps can't change
+component Body { float x; local float shown; local string label; }
+scene Main { }
+view Look(query (mut Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        f.body.shown = f.body.x;
+        f.body.label = "seen";
+    }
+}
