@@ -65,7 +65,28 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
   now find its slot once in each world (`tide_entity_slot_index`) and read the snaps, `tide_entity_born_at` and
   the place from there; `tide_load_<C>_at` and `tide_load_some_<C>_at` load by place (`tide_load_<C>` is a call
   of it). This is the views' own cost, not the tick's.
-- **Tests**: `entity_ordered_archetypes_slots_give_each_keys_place` (tide_tests): slots against lookups, a row
+- **A chunk's lanes found once for the chunk, not for each run of rows** (later the same day, after the game
+  measured nightly.24: its `FallOnField`, `Fall` and `Routed` were still 77 to 130 ns a row). Entities spawned in
+  one tick are ordered by their lineage, a hash, so a battle's thousand soldiers come in an order that has nothing
+  to do with their rows: nearly every run of rows is one row. `gen_system_chunk` wrote, for each run, where every
+  lane the system uses is (`tide_table_column`, `tide_table_lanes_piece`: a page's header read for each lane),
+  and two NULL stores for every lane of a `mut` component it doesn't use: 180 stores a row for the game's
+  92-lane `Trooper`. Now (`gen_canonical_kept`): before the keys are gone through, each archetype has
+  `tide_kept_<a>` (the chunk whose lanes were last found) and arrays `tide_kept_col_<C>_<a>`,
+  `tide_kept_was_<C>_<a>` and `tide_kept_own_<C>_<a>`; a run names them (`tide_col_<C>`, `tide_was_<C>` and
+  `tide_own_<C>` are pointers to them) and fills them only when its chunk isn't the one kept. Lanes no row
+  copies are left unset rather than NULL: nothing names them (`gen_rows_columns` hands over the used ones by
+  number). What keeps the pointers right for the task: the lanes it changes are all begun before its first row
+  (`gen_canonical_lanes`), those it only reads nothing writes while it runs, and a component it sets through its
+  World isn't kept (`tide_pages_<C>`, asked for each run as before). The entity and scene columns, whether the
+  chunk has holes and the filters' presence bytes are still asked per run. Only systems in entity order whose
+  lanes are prepared (`generating_canonical_prepared`); a one-Send or self-destroying system's batched loop
+  (`gen_chunk`) and extern systems are as they were.
+- **Tests**: `kept_lanes` (e2e, native and WASI): 2,600 entities of a wide component in two archetypes, more
+  than a chunk of each, spawned in one tick, through a system that writes a singleton and far-apart lanes, one
+  that reads behind a test and one that takes the World; every entity is checked (its own values, its place in
+  the order no other has), written in place and apart beside a snapshot.
+  `entity_ordered_archetypes_slots_give_each_keys_place` (tide_tests): slots against lookups, a row
   that moves, a destroyed key whose slot a newer entity took, a slot that isn't the key's, `tide_entity_born_at`.
   The indexed loops' differential fixture gained `Swing` (notes/indexed-loops.md). The walks themselves are what
   every game's tests run.
@@ -73,8 +94,12 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
 - **Remaining** (not built):
   - A row in entity order is now about 11 ns in a query's `foreach` and 12 to 18 in a per-entity system, against
     6 for a system that goes by chunks. What's left is the slot's page (a load through the table's pages for each
-    row) and, for systems, the setup of each run of rows: entities of several archetypes interleaved in identity
-    order make runs of one or two.
+    row), a call of the rows function for each run, and that rows come in the order of a hash, so each lane's
+    bytes are read at random within the chunk.
+  - A system in entity order that changes components copies each lane it can write, for every chunk, before its
+    first row and compares it after its last (`gen_canonical_lanes`: prepared pages), whether or not a row wrote
+    anything: a few ns a row for a handful of lanes, 250 ns a row in the probe for a system that writes one
+    element of a `float[120]` (an array element's write counts as all of the array's lanes).
   - A per-entity view's row is still about 50 ns with nothing in its body: the blend's lookup in each world (two
     now), the correction's lookup in the local state (`tide_attached_find`, for a component with a `[Position]`
     or `[Rotation]` field), and the GUI seed's hash of the entity.

@@ -19943,10 +19943,10 @@ static void gen_unwritten_lanes(gen *g, const decl *sys, const int a, const int 
     const lane_mask used = system_comp_lanes(g, sys, a, c); // The ones no row copies either are nowhere (row_lanes_codegen.inc)
     for (int k = 0; k < comp_lanes(d); k++) {
         if (lane_has(&mask, k)) continue;
-        if (!lane_has(&used, k)) {
-            sb_printf(&g->c, "%stide_was_%s[%d] = NULL;\n%stide_own_%s[%d] = NULL;\n", pad, type_cname(d), k, pad, type_cname(d), k);
-            continue;
-        }
+        // Nothing names a lane no row copies (gen_rows_columns hands over the used ones, by number), so it's left
+        // unset: a system in entity order comes here for every run of rows, and two stores a lane for each of a
+        // wide component's lanes was most of what such a row cost
+        if (!lane_has(&used, k)) continue;
         sb_printf(&g->c, "%stide_was_%s[%d] = tide_table_column(tide_t, %s, tide_c, %d);\n%stide_own_%s[%d] = (uint8_t *)(uintptr_t)tide_was_%s[%d];\n",
                   pad, type_cname(d), k, arch_columns(g, a), arch_column(g, a, c) + k, pad, type_cname(d), k, type_cname(d), k);
     }
@@ -20060,6 +20060,18 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
         }
         if (changed && staged) continue;
         const lane_mask used = system_comp_lanes(g, sys, a, c); // The ones no row copies are nowhere (row_lanes_codegen.inc)
+        if (generating_canonical_prepared) { // Found once for the chunk, not for each run of its rows (gen_canonical_kept)
+            sb_printf(o, "%s%suint8_t *const *const tide_col_%s = tide_kept_col_%s_%d;\n", pad, changed ? "" : "const ", type_cname(d),
+                      type_cname(d), a);
+            sb_printf(o, "%sif (tide_kept_%d != tide_c) {\n", pad, a);
+            for (int k = 0; k < comp_lanes(d); k++) {
+                if (!lane_has(&used, k)) continue;
+                sb_printf(o, "%s    tide_kept_col_%s_%d[%d] = (%suint8_t *)tide_table_column%s(tide_t, %s, tide_c, %d);\n", pad, type_cname(d),
+                          a, k, changed ? "" : "const ", changed ? "_mut" : "", columns, arch_column(g, a, c) + k);
+            }
+            sb_printf(o, "%s}\n", pad);
+            continue;
+        }
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, changed ? "" : "const ", type_cname(d), comp_lanes(d));
         for (int k = 0; k < comp_lanes(d); k++) {
             if (!lane_has(&used, k)) {
@@ -20072,6 +20084,7 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
         sb_put(o, "};\n");
     }
     if (!part) {
+        if (generating_canonical_prepared) sb_printf(o, "%stide_kept_%d = tide_c;\n", pad, a);
         sb in_run = {0};
         gen_runs_begin(g, sys, a, pad, &in_run);
         sb_put(o, in_run.data);
@@ -20085,26 +20098,37 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
     for (int c = 0; c < prog->components.count; c++) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
         const decl *d = prog->components.items[c];
+        if (generating_canonical_prepared) {
+            sb_printf(o, "%sconst uint8_t **const tide_was_%s = tide_kept_was_%s_%d;\n%suint8_t **const tide_own_%s = tide_kept_own_%s_%d;\n",
+                      pad, type_cname(d), type_cname(d), a, pad, type_cname(d), type_cname(d), a);
+            continue;
+        }
         sb_printf(o, "%sconst uint8_t *tide_was_%s[%d];\n%suint8_t *tide_own_%s[%d];\n", pad, type_cname(d), comp_lanes(d), pad,
                   type_cname(d), comp_lanes(d));
     }
     sb in = {0};
     sb_printf(&in, "%s%s", pad, pieced ? "    " : "");
     if (generating_canonical_prepared) {
-        sb_printf(o, "%sconst bool tide_apart = false;\n", pad);
+        // Where the chunk's lanes are, asked once for the chunk: the task began them all before its first row
+        // (gen_canonical_lanes), and a system in entity order comes here for each run of rows, a row or two when
+        // entities of several archetypes are interleaved
+        sb_printf(o, "%sconst bool tide_apart = false;\n%sif (tide_kept_%d != tide_c) {\n", pad, pad, a);
+        sb deep = {0};
+        sb_printf(&deep, "%s    ", pad);
         for (int c = 0; c < prog->components.count; c++) {
             if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
             const decl *d = prog->components.items[c];
-            gen_unwritten_lanes(g, sys, a, c, pad);
+            gen_unwritten_lanes(g, sys, a, c, deep.data);
             lane_run runs[LANE_MASK_MOST];
             const int n = written_runs(g, sys, c, runs);
             for (int r = 0; r < n; r++) {
-                sb_printf(o, "%s(void)tide_table_lanes_piece(tide_t, %s, tide_c, %d, %d, &tide_was_%s[%d], &tide_own_%s[%d]);\n", pad,
+                sb_printf(o, "%s    (void)tide_table_lanes_piece(tide_t, %s, tide_c, %d, %d, &tide_was_%s[%d], &tide_own_%s[%d]);\n", pad,
                           columns, arch_column(g, a, c) + runs[r].first, runs[r].count, type_cname(d), runs[r].first, type_cname(d), runs[r].first);
-                sb_printf(o, "%sfor (uint32_t k = %du; k < %du; k++) tide_was_%s[k] = tide_own_%s[k];\n", pad,
+                sb_printf(o, "%s    for (uint32_t k = %du; k < %du; k++) tide_was_%s[k] = tide_own_%s[k];\n", pad,
                           runs[r].first, runs[r].first + runs[r].count, type_cname(d), type_cname(d));
             }
         }
+        sb_printf(o, "%s    tide_kept_%d = tide_c;\n%s}\n", pad, a, pad);
     } else {
     if (pieced) sb_printf(o, "%sbool tide_apart = false;\n%sif (tide_pieces == 1u) {\n%s    tide_apart = tide_whole && (", pad, pad, pad);
     else sb_printf(o, generating_canonical_range ? "%sconst bool tide_apart = tide_whole && tide_from == 0u && tide_to == tide_n && (" : "%sconst bool tide_apart = tide_whole && (", pad);
@@ -20587,6 +20611,34 @@ static void gen_canonical_lanes(gen *g, const decl *sys, const bool done)
     }
 }
 
+// Before a system's entities are gone through in their order: for each archetype, the chunk whose lanes were
+// last found (tide_kept_<a>) and where they are, which gen_system_chunk fills when a run of rows is in another
+// chunk and reads for every run after. Nothing moves them while the task runs: the lanes it changes were all
+// begun before its first row (gen_canonical_lanes), those it only reads no one writes while it runs, and a
+// component it sets through its World isn't kept (its pages are asked for each run, world_sets_component).
+static void gen_canonical_kept(gen *g, const decl *sys)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    const bool staged = !world_reads_own_writes(sys);
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!runs_on(g, sys, a) || rows_batched(g, sys, a)) continue;
+        sb_printf(o, "    uint32_t tide_kept_%d = UINT32_MAX;\n    (void)tide_kept_%d;\n", a, a);
+        for (int c = 0; c < prog->components.count; c++) {
+            const decl *d = prog->components.items[c];
+            if (rows_take(g, sys, a, c) && !world_sets_component(sys, d)) {
+                const bool changed = changes_component(sys, c, false);
+                if (!(changed && staged)) sb_printf(o, "    %suint8_t *tide_kept_col_%s_%d[%d];\n", changed ? "" : "const ", type_cname(d), a,
+                                                    comp_lanes(d));
+            }
+            if (rows_part(g, sys, a) && arch_stores(g, a, c) && changes_component(sys, c, false)) {
+                sb_printf(o, "    const uint8_t *tide_kept_was_%s_%d[%d];\n    uint8_t *tide_kept_own_%s_%d[%d];\n", type_cname(d), a,
+                          comp_lanes(d), type_cname(d), a, comp_lanes(d));
+            }
+        }
+    }
+}
+
 // Canonical iteration visits only the system's admitted archetypes. The runtime
 // copies these values and caches immutable keys independently of generated code.
 static void gen_canonical_system_keys(gen *g, const decl *sys)
@@ -21011,6 +21063,7 @@ static void gen_system_run(gen *g, const decl *sys)
         const bool prepared = canonical;
         if (prepared) gen_canonical_lanes(g, sys, false);
         if (canonical) {
+            if (prepared) gen_canonical_kept(g, sys);
             gen_canonical_system_keys(g, sys);
         sb_put(o,
                       "    for (uint32_t tide_key_at = 0; tide_key_at < tide_key_count;) {\n"

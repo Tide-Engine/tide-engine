@@ -1,0 +1,77 @@
+// Systems that go through their entities in the entities' own order (they write a singleton, or take a World)
+// find where a chunk's lanes are once for the chunk, not for each run of rows (notes/ecs.md, What a row costs in
+// entity order). Here 2,600 entities of a wide component are in two archetypes, more than a chunk of each, all
+// spawned in one tick, so their order goes back and forth between archetypes and chunks: each row must still read
+// and write its own. kept_lanes_test.c checks every entity, and a world written apart beside a snapshot.
+
+component Tag
+{
+    int n;
+}
+
+component Wide
+{
+    int id;
+    float x;
+    int order;      // Walk: its place in the tick's order
+    int seen;       // Walk: the ticks it ran for
+    float3 at;
+    int[24] spare;
+    int reached;
+    bool skip;
+    float out;
+}
+
+singleton Tally
+{
+    int n;
+    float sum;
+    int read;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 2600; i++)
+    {
+        var wide = Wide { id = i, x = float(i) * 0.25, skip = i % 5 == 0 };
+        if (i % 3 == 0) Spawn(wide, Tag { n = i });
+        else Spawn(wide);
+    }
+}
+
+system Begin(mut Tally tally)
+{
+    tally.n = 0;
+    tally.read = 0;
+}
+
+// Writes a singleton, so in order: several lanes written, some far apart, and the sum depends on the order
+[After(Begin)]
+system Walk(mut Wide w, mut Tally tally)
+{
+    w.order = tally.n;
+    tally.n += 1;
+    tally.sum = tally.sum * 0.5 + w.x;
+    w.seen += 1;
+    w.out = w.x * 2.0 + float(w.seen);
+    w.spare[3] = w.id + w.seen;
+}
+
+// Reads alone, behind a test
+[After(Walk)]
+system Read(Wide w, mut Tally tally)
+{
+    if (w.skip) return;
+    tally.read += w.id % 7 + w.spare[3] - w.seen;
+}
+
+// Takes the World, and changes its own component
+[After(Read)]
+system Reach(mut Wide w, World world)
+{
+    if (w.skip) return;
+    if (world.Has<Tag>(this)) w.reached += 2;
+    else w.reached += 1;
+}
