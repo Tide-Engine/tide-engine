@@ -140,8 +140,9 @@ TIDE_TEST(all_queries_sort_filter_and_preserve_individual_colliders)
         equivalent(o->ignored, o->historicalIgnored);
         TIDE_CHECK(hits_on(o->live, compound) == 3 && hits_on(o->ignored, compound) == 0);
         TIDE_CHECK(same_entity(hit_at(o->live, 0)->entity, near));
-        TIDE_CHECK(same_entity(hit_at(o->live, 1)->entity, marked(&w, 40)));
-        TIDE_CHECK(same_entity(hit_at(o->live, 2)->entity, marked(&w, 41)));
+        // Two at one distance, in their entities' order: which of the two that is goes by their spawn sites' keys
+        TIDE_CHECK(same_entity(hit_at(o->live, 1)->entity, marked(&w, 41)));
+        TIDE_CHECK(same_entity(hit_at(o->live, 2)->entity, marked(&w, 40)));
         TIDE_CHECK(hit_at(o->live, 1)->fraction == hit_at(o->live, 2)->fraction);
         bool saw_part = false;
         for (int i = 0; i < tide_list_count(o->live); i++) saw_part |= same_entity(hit_at(o->live, i)->part, part);
@@ -153,9 +154,9 @@ TIDE_TEST(all_queries_sort_filter_and_preserve_individual_colliders)
     }
     printf("    all-hit output bits: %016llx\n", (unsigned long long)hash);
 #ifdef QUERY_ALL_3D
-    TIDE_CHECK(hash == UINT64_C(0xb91fa1bde2dfd707));
+    TIDE_CHECK(hash == UINT64_C(0xe26e24cc5d0e68d3));
 #else
-    TIDE_CHECK(hash == UINT64_C(0xfcfd84f736b6bd93));
+    TIDE_CHECK(hash == UINT64_C(0x94c3ddbae46e8d9f));
 #endif
     local.Controls.ignore = body_of(&w, near).id;
     const Observed *o = probe(&w, &local, 0);

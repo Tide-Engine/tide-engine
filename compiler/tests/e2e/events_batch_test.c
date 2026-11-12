@@ -70,9 +70,11 @@ TIDE_TEST(events_batches_keep_order_filters_calls_and_snapshots)
     }
     TIDE_REQUIRE(sender_count == 4097);
     qsort(senders, (size_t)sender_count, sizeof *senders, entity_order_compare);
-    bool creation_order_differs = false;
-    for (int32_t i = 0; i < sender_count; i++) creation_order_differs |= senders[i].value != i;
-    TIDE_CHECK(creation_order_differs);
+    // One spawn site's entities for one cause come in the order they were made: a site's count is added to its
+    // key, not hashed into it (tide_causal_next), so their rows are in the entities' order too.
+    bool creation_order = true;
+    for (int32_t i = 0; i < sender_count; i++) creation_order &= senders[i].value == i;
+    TIDE_CHECK(creation_order);
     tide_world_copy(&many, &one);
     tide_world_copy(&snapshot, &one);
     const uint64_t before = tide_world_hash(&one);

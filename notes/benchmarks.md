@@ -97,6 +97,12 @@ Fall's, which also writes one element of a `float[120]` (120 lanes copied and co
 255 to 0.5. Systems every row gets past are as they were (a system that writes a singleton behind a test all
 rows pass: 16 before and after, the marking pass within the noise). The game isn't measured on this yet.
 
+With a spawn site's entities in the order they're made (the probe's rows are spawned by one loop, three
+statements), ns a row, nightly.29 to now: a per-entity system that writes a singleton, 12 to 7.4 (`Slim`) and
+16 to 7.5 (`Fat`); one that may Destroy, 16 to 7.6; a query's `foreach`, 10 to 7; an empty per-entity view,
+50 to 17 (`Slim`) and 89 to 62 (`Fat`): a view's blend finds each row's entity in last tick's world, and
+those lookups now go through the entity table in sequence too.
+
 ## A wide component's rows (2026-11-10)
 
 Mount & Rifle (branch `t3/visual-overhaul-144hz`, its workarounds in: `with Owner`, the `Hauler` and `Hired` tags),

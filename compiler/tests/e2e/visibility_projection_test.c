@@ -52,8 +52,8 @@ TIDE_TEST(visibility_projection_omits_secrets_and_uses_normal_component_presence
     TIDE_CHECK(tide_has_Secret(&client, server.Control.player));
     TIDE_CHECK(tide_get_Secret(&client, server.Control.card).code == 0);
     const uint64_t permitted_hash = tide_game_api.client_hash(&server, tide_player_from_index(1));
-    if (permitted_hash != UINT64_C(0xd1253f8809e3ffcd)) printf("    permitted hash 0x%016llx\n", (unsigned long long)permitted_hash);
-    TIDE_CHECK(permitted_hash == UINT64_C(0xd1253f8809e3ffcd));
+    if (permitted_hash != UINT64_C(0x37bee73936b81d17)) printf("    permitted hash 0x%016llx\n", (unsigned long long)permitted_hash);
+    TIDE_CHECK(permitted_hash == UINT64_C(0x37bee73936b81d17));
     TIDE_CHECK(tide_game_api.client_hash(&server, tide_player_from_index(1)) == tide_game_api.client_hash(&client, tide_player_from_index(1)));
     visibility_present_rows = visibility_absent_rows = 0;
     tide_world_tick(&client);

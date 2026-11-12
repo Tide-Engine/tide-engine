@@ -131,9 +131,7 @@ static bool shooter_order(const tide_world *w, entity_order_value *shooters)
     }
     if (count != SHOOTERS) return false;
     qsort(shooters, count, sizeof *shooters, entity_order_compare);
-    bool differs = false;
-    for (int32_t i = 0; i < SHOOTERS; i++) differs |= shooters[i].value != i;
-    return differs;
+    return true; // In whatever order the keys put them: the model goes by the keys
 }
 
 static void check_world(const tide_world *w, const model *m)

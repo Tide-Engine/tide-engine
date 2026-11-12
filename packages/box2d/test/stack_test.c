@@ -32,17 +32,17 @@ void b2t_images(int32_t *whole, int32_t *in_parts);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box2D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0xf4e8505b39eadced)
-#define IMAGES_HASH UINT64_C(0xc76d77ded409eb86)
+#define SETTLED_HASH UINT64_C(0x493b12e252f029cf)
+#define IMAGES_HASH UINT64_C(0x66b2a2d3f8f29fb5)
 // Where the crates are and how fast, at each of the 300 ticks: the simulation
 // alone. A change to what the image holds of a world moves the two above and
 // leaves this one; a change to how the world steps moves all three.
-#define BODIES_HASH UINT64_C(0x18c939fafb918105)
+#define BODIES_HASH UINT64_C(0xa2292c6100587813)
 // Box2D's own images, byte for byte, at each of the 300 ticks, without the
 // rest of the match: a change to what the match keeps beside the image (a
 // field of Body or of Physics) moves the first two and leaves this one, where
 // a change to what Box2D keeps of a world moves this one too.
-#define BYTES_HASH UINT64_C(0x2836af3f54975643)
+#define BYTES_HASH UINT64_C(0xef4ea1cbb872c70a)
 
 static tide_world a;
 static tide_world b;

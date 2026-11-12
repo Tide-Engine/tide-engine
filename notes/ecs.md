@@ -103,6 +103,22 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
   where the row starts, and a World write can change one). Otherwise the system is as it was. Not batched
   loops (`rows_batched`), which never had a guard. A chunk with holes marks whatever its dead rows' bytes say:
   the walk never comes to those.
+- **A spawn site's entities in the order they're made** (`tide_causal_next`; the owner, 2026-11-12: "we can do
+  2", with the reminder that the hash was there for visibility: an identity that counted spawns would be
+  mispredicted by a machine that doesn't see them all, and corrected at length). A lineage was
+  `mix(mix(path, site), count)`; it is `mix(path, site) + count`. What it's made from is unchanged: the cause's
+  path, the statement's site, and that site's own count for that cause, so a spawn a machine can't see still
+  can't move another's identity (a count is one site's, for one cause; nothing global is counted). What
+  changes is that one site's entities for one cause are consecutive numbers, so in the entities' order
+  (`(birth, lineage)`) they come as they were made, which is the order their rows are in: a battle's soldiers
+  spawned by one loop are walked one row after another, in runs as long as the chunk. Two causes' runs of
+  numbers overlap with the chance two 64-bit hashes meet (a duplicate key ends the program, as before). The
+  count also enters a query's and a call's cause this way, mixed again before anything is made from it.
+  Every match entity's key changed, so every pinned world hash did (about fifty tests: the compiler's
+  cross-platform pins, the benchmarks' and the demo's, Box2D's and Box3D's, towers and sumo; the 32-bit packed
+  pins from a web build), and five checks that named which of two entities at one distance comes first, which
+  goes by their statements' keys. `events_batch` now checks that a site's 4,097 senders are in creation
+  order, where it checked they weren't. Measured: notes/benchmarks.md.
 - **One element of a fixed array is its own lanes** (`element_place`, lane_writes_codegen.inc, for reads and
   writes): `f.cooldowns[3]` with the number written in the code and inside the array reads or writes that
   element's bytes, where any element counted as the whole array. Any other index is still all of it.
@@ -124,17 +140,12 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
     6 for a system that goes by chunks. What's left is the slot's page (a load through the table's pages for each
     row), a call of the rows function for each run, and that rows come in the order of a hash, so each lane's
     bytes are read at random within the chunk.
-  - A system in entity order with no guard, or one most rows get past, still goes to every entity in the order
-    of a hash. Laying rows out in their entities' order when a tick's spawns are settled (a `tide_table_order`
-    that sorts each table's rows born that tick by key) makes those walks sequential, and was built, pushed and
-    reverted the same day (dev 7523109cc, then its revert). It isn't only a change of world hashes: where a row
-    is can be seen. A per-entity view goes through its rows as they're stored, so entities spawned in one tick
-    draw in the order they were spawned, and sorted they draw in the order of a hash (`draw_stencil`'s shapes
-    came in another order); the Box2D and Box3D packages make their bodies in row order (their pinned
-    simulation hashes moved); and local tasks, shared bindings' runs, shards and visibility tests failed too
-    (not looked into one by one). In the probe it gained 12 to 8 ns a row for a system that writes a singleton.
-    To do it, either views and those packages go by entity order, or the order of a tick's spawns' keys
-    follows the order they're made in (a lineage that counts up within a cause, not a hash): the owner's call.
+  - Entities of different spawn statements, or of different causes, are still in the order of a hash between
+    them: one system's rows of two archetypes spawned by two statements come as two sequences, not one.
+    (Sorting each table's rows by key at settle, `tide_table_order`, was built, pushed and reverted on
+    2026-11-12, dev 7523109cc: where a row is can be seen. Per-entity views go through rows as stored, so draw
+    order follows it, and the Box2D and Box3D packages make their bodies in row order. So the keys were made to
+    follow the rows instead: see "A spawn site's entities in the order they're made" above.)
   - A system whose whole code is `if (test) { ... }` has no guard (a guard is leading `if (...) return;`
     statements), and a system that batches a Send or a Destroy has none either: the game's LeaveField is both.
   - A chunk with one row past the guard is begun whole: each lane the system can write copied and compared.
