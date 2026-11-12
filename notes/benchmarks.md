@@ -38,6 +38,27 @@ longest 4.9, 6.1 ms). GPU time isn't quoted: another program had the GPU. The ga
 two identical runs with or without this (as noted before for this game), so it says nothing of the match
 being the same: `tide_platform_alongside` does, bit for bit, for a match that repeats.
 
+## The tick before, for a whole row (2026-11-12, night)
+
+For notes/ecs.md (The tick before, for a whole row; Tried and taken out). `bench_views` gained `Mixed`, a
+component as a soldier's is (80 lanes: 16 of floats that blend, 60 ints, 4 bools; 5,000 rows) and two views
+that read every field of it through a function (`Mass`, so no C compiler drops the copy): `MixedWhole`, the
+first to touch the rows' memory in the frame, and `MixedWarm` after it. Release, Windows, 7900X, hidden,
+`bench_views 300 0.5`, alternating with `dev` 813a756b4's build of the same game, three runs, ms a frame:
+
+| View | Before | After |
+|---|---|---|
+| MixedWhole (memory not read yet this frame) | 0.93 / 1.01 / 0.98 | 0.85 / 0.87 / 0.85 |
+| MixedWarm | 0.42 / 0.41 / 0.40 | 0.33 / 0.31 / 0.30 |
+
+So 82 ns a row to 62 warm: the 64 lanes of the tick before that no longer load. On Mount & Rifle's battle the
+whole-row view (`OthersOnFoot`) didn't move measurably (five alternating pairs: 0.62 to 0.61 ms, runs from 0.45
+to 0.87): its rows are far entities', loaded from the confirmed world whole, and most of it is its own work.
+
+The guard on blended fields that was tried with it and taken out, on the same benchmark (two more views, not
+kept: a test of `m.position` through a small function, one row in ten passing and nineteen in twenty): 0.29-0.32
+and 0.32-0.34 ms, against `MixedWarm`'s 0.31-0.33 for every row whole.
+
 ## Rows a loop turns away, borrowed queries and far entities' lanes (2026-11-12, night)
 
 For notes/ecs.md (A view's rows, guarded; A far entity's lanes; A query handed to a function; Guards read the

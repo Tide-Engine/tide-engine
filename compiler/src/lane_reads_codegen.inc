@@ -703,9 +703,41 @@ static bool match_query_lanes(const gen *g, const stmt *s, const param *p, const
 
 // Whether any view copies only some of component `d`'s lanes: then it has
 // the helpers that do (gen_component_access, gen_blend_helpers)
+static void lane_words_c(sb *o, const lane_mask *m, int lanes);
+
+// The lanes of component `d` a blend reads of the tick before: those of its fields that blend, and the hidden
+// counts it compares. False where that's every lane, or the blend isn't field by field (a custom Interpolate,
+// one that reads the heap), or the component is too wide for a mask.
+static bool blend_prev_lanes(const gen *g, const decl *d, lane_mask *mask)
+{
+    const int lanes = comp_lanes(d), size = decl_layout(d).size;
+    if (d->kind != DECL_COMPONENT || d->is_local || d->interpolate || blend_reads_heap(d) || sharded(g) || lanes <= 1
+        || lanes > LANE_MASK_MOST || size <= 0 || size > LANE_WRITES_MOST || !decl_blends(d)) return false;
+    byte_writes r = {size, false, arena_alloc((size_t)size)};
+    memset(r.bytes, 0, (size_t)size);
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (!field_blends(f)) continue;
+        const int at = writes_field_offset(d, f);
+        if (at < 0) return false;
+        writes_mark(&r, at, type_layout(f->type).size);
+    }
+    return reads_lane_mask(d, &r, mask); // (With the hidden fields; false for every lane)
+}
+
+static bool blend_prev_words(const gen *g, const decl *d, sb *words)
+{
+    lane_mask mask;
+    if (!blend_prev_lanes(g, d, &mask)) return false;
+    lane_words_c(words, &mask, comp_lanes(d));
+    return true;
+}
+
 static bool reads_some_used(const gen *g, const decl *d)
 {
     const program *prog = g->prog;
+    lane_mask blended;
+    if (blend_prev_lanes(g, d, &blended)) return true; // tide_prev_blended_<C> is made of the partial helpers
     for (int v = 0; v < prog->views.count; v++) {
         const decl *sys = prog->views.items[v];
         for (int i = 0; i < sys->params.count; i++) {
