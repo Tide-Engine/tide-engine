@@ -355,7 +355,7 @@ static type check_prefab_spawn(checker *c, expr *e, decl *d, const bool load)
     e->spawn_mask = root->spawn_mask;
     vec_push(c->spawns, e);
     if (inherits(c)) note_act(c, local, e->at, local ? "spawns local prefab entities" : "spawns prefab entities", true, text);
-    note_text_write(c, text);
+    note_text_write(c, text, e->at);
     note_spawn(c);
     return local ? (type){TY_LOCAL_ENTITY, NULL} : T_ENTITY_;
 }

@@ -106,6 +106,7 @@ typedef struct heap_pass {
     param *from;  // ...the function's parameter
     decl *to;     // The callee...
     int index;    // ...and its parameter
+    loc at;       // Where it's passed
 } heap_pass;
 
 typedef struct call_site {
@@ -1373,9 +1374,15 @@ static bool holds_text(type t);
 
 // The system being checked writes text into its world, so it changes the
 // world's heap: other systems that do too wait for it.
-static void note_text_write(const checker *c, const bool text)
+static void note_heap_writer(decl *sys, const loc at)
 {
-    if (text && c->system && c->system->kind == DECL_SYSTEM && !c->method) c->system->writes_text = true;
+    if (!sys->writes_text) sys->writes_text_at = at; // The first: what the schedule names
+    sys->writes_text = true;
+}
+
+static void note_text_write(const checker *c, const bool text, const loc at)
+{
+    if (text && c->system && c->system->kind == DECL_SYSTEM && !c->method) note_heap_writer(c->system, at);
 }
 
 // The system being checked spawns: it hands out entity IDs, which go in order,
@@ -3957,7 +3964,7 @@ static bool task_registry_access(checker *c, const bool local, const bool writes
         code->acts[local] = true;
         code->acts_at[local] = at;
         code->acts_what[local] = local ? "changes local tasks" : "changes match tasks";
-        note_text_write(c, true);
+        note_text_write(c, true, at);
     }
     return true;
 }
@@ -4720,7 +4727,7 @@ static type check_send(checker *c, expr *e)
         return T_ERR;
     }
     e->type_decl = event;
-    note_text_write(c, decl_holds_text(event));
+    note_text_write(c, decl_holds_text(event), e->at);
     decl *sender = reading_code(c);
     if (sender) {
         bool known = false;
@@ -5877,7 +5884,7 @@ static void check_task_call(checker *c, expr *e, decl *fn)
     if (!awaited && !c->method && from->kind == DECL_SYSTEM) {
         if (!from->starts_tasks) from->starts_at = e->at;
         from->starts_tasks = true;
-        note_text_write(c, true);
+        note_text_write(c, true, e->at);
         note_spawn(c);
     }
     for (int i = 0; i < e->args.count && i < fn->params.count; i++) {
@@ -6151,7 +6158,7 @@ static type check_call(checker *c, expr *e)
             note_act(c, e->local_world, e->at, e->local_world ? "spawns local entities" : "spawns entities", true, text);
         }
         for (int i = 0; i < c->prog->components.count; i++) {
-            if (mask_has(e->spawn_mask, i)) note_text_write(c, decl_holds_text(c->prog->components.items[i]));
+            if (mask_has(e->spawn_mask, i)) note_text_write(c, decl_holds_text(c->prog->components.items[i]), e->at);
         }
         c->prog->spawned_mask = mask_or(c->prog->spawned_mask, e->spawn_mask);
         vec_push(c->spawns, e);
@@ -6667,7 +6674,7 @@ static type check_scene_call(checker *c, expr *e)
         e->call = CALL_LOAD;
         if (c->system) c->system->loads_scenes = true;
         e->type_decl = scene;
-        note_text_write(c, decl_holds_text(scene));
+        note_text_write(c, decl_holds_text(scene), e->at);
         e->spawn_mask = bit(scene);
         for (int i = 1; i < e->args.count; i++) {
             expr *value = e->args.items[i];
@@ -6680,7 +6687,7 @@ static type check_scene_call(checker *c, expr *e)
             if (mask_has(e->spawn_mask, comp->index))
                 diag_error(value->at, "'" STR_FMT "' appears twice; an entity has at most one of each component", STR_ARG(comp->name));
             e->spawn_mask = mask_or(e->spawn_mask, bit(comp));
-            note_text_write(c, decl_holds_text(comp));
+            note_text_write(c, decl_holds_text(comp), value->at);
         }
         vec_push(c->spawns, e);
         note_spawn(c);
@@ -8027,7 +8034,7 @@ static type check_world_call(checker *c, expr *e, param *world)
     e->call = CALL_WORLD;
     if (ok) note_world_use(c, d, set, e->at);
     if (set && builds(c->prog)) d->world_set_used = true;
-    if (set) note_text_write(c, decl_holds_text(d)); // Its text and lists go into the world's heap
+    if (set) note_text_write(c, decl_holds_text(d), e->at); // Its text and lists go into the world's heap
     if (set) return T_VOID_;
     return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
 }
@@ -9302,7 +9309,7 @@ static type check_method(checker *c, expr *e)
         bool text = false;
         for (int i = 0; i < c->prog->components.count; i++) {
             if (!mask_has(added, i)) continue;
-            note_text_write(c, decl_holds_text(c->prog->components.items[i]));
+            note_text_write(c, decl_holds_text(c->prog->components.items[i]), e->at);
             text |= decl_holds_text(c->prog->components.items[i]);
         }
         if (passed) note_act(c, e->local_world, e->at, e->local_world ? "adds local components" : "adds components", false, text);
@@ -12861,7 +12868,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     const bool world_place = root && root->bind == BIND_PARAM && !root->param->function_param
                           && (root->param->type.kind == TY_COMPONENT || root->param->type.kind == TY_SINGLETON);
     bool in_list = false;
-    for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) in_list |= e->kind == E_INDEX;
+    for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) in_list |= e->kind == E_INDEX && e->object->type.kind != TY_ARRAY; // A fixed array is in its component, not the heap
     const bool passed_holder = world_place && arg_of && target == root && decl_holds_text(root->param->type.decl);
     const bool heap_place = holds_heap(target->type) || target->type.kind == TY_GRID || in_list;
     // Passed whole to a Tide function's parameter: what it changes there is
@@ -12872,9 +12879,9 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                                ? (int)(arg_of - called->params.items)
                                : -1;
     if (passed_holder && pass_index >= 0 && c->system && c->system->kind == DECL_SYSTEM && !c->method) {
-        vec_push(c->heap_passes, ((heap_pass){c->system, NULL, (decl *)called, pass_index}));
+        vec_push(c->heap_passes, ((heap_pass){c->system, NULL, (decl *)called, pass_index, target->at}));
     } else {
-        note_text_write(c, world_place && (heap_place || passed_holder));
+        note_text_write(c, world_place && (heap_place || passed_holder), target->at);
     }
     // A function's own parameter changed: text, lists or grids in it, or the
     // whole of one holding them (passed on whole, as the callee says)
@@ -12883,7 +12890,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         const bool whole_holds = target == root && (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON || p->type.kind == TY_STRUCT)
                               && p->type.decl && decl_holds_text(p->type.decl);
         if (target == root && whole_holds && pass_index >= 0) {
-            vec_push(c->heap_passes, ((heap_pass){NULL, p, (decl *)called, pass_index}));
+            vec_push(c->heap_passes, ((heap_pass){NULL, p, (decl *)called, pass_index, target->at}));
         } else if (heap_place || whole_holds) {
             p->heap_written = true;
         }
@@ -22855,7 +22862,7 @@ static void settle_heap_passes(checker *c)
     }
     for (int i = 0; i < c->heap_passes.count; i++) {
         const heap_pass *h = &c->heap_passes.items[i];
-        if (h->system && h->to->params.items[h->index].heap_written) h->system->writes_text = true;
+        if (h->system && h->to->params.items[h->index].heap_written) note_heap_writer(h->system, h->at);
     }
 }
 
@@ -22948,11 +22955,11 @@ static void check_acts(checker *c)
             continue;
         }
         from->spawns |= to->acts_spawn[0] || to->acts_spawn[1];
-        from->writes_text |= to->acts_text;
+        if (to->acts_text) note_heap_writer(from, at);
         if (tasks) { // As a start written in it (check_task_call): its tasks are made in order, on one thread
             if (!from->starts_tasks) from->starts_at = at;
             from->starts_tasks = true;
-            from->writes_text = true;
+            note_heap_writer(from, at);
             from->spawns = true;
         }
     }
@@ -23167,7 +23174,7 @@ static void check_world_passing(checker *c)
                 diag_note("views draw: a system changes the match");
                 break;
             }
-            if (decl_holds_text(d)) from->writes_text = true; // Into the world's heap, which one system changes at a time
+            if (decl_holds_text(d)) note_heap_writer(from, at); // Into the world's heap, which one system changes at a time
         }
     }
 }

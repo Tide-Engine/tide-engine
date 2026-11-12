@@ -14,6 +14,7 @@ stage 2  Settle  (per entity)
 stage 3  Watch  (per entity)
          reads Body
          writes Log
+         on one thread: it changes the singleton Log (shared_names.tide:36)
          after Move(Body, Speed, with Player): it writes Body, which this reads (and through Settle)
          after Settle: it writes Body, which this reads
          alongside nothing

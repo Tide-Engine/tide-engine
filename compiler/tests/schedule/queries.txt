@@ -20,6 +20,7 @@ stage 2  BulletHits  (per entity)
 stage 3  Alias  (per entity)
          writes Body
          reads any entity's Body, through queries
+         on one thread: it changes Body and reads other entities' through its World or a query (queries.tide:30)
          after MoveFighters: it writes Body, which this reads (and through BulletHits)
          after BulletHits: it reads Body, which this writes
          alongside Count, Carry
@@ -27,6 +28,7 @@ stage 3  Alias  (per entity)
 stage 4  WorldAlias  (per entity)
          reads any entity's Body, through queries
          writes any entity's Body, through World
+         on one thread: it sets Body through its World, on any entity (queries.tide:41)
          after MoveFighters: both write Body (and through BulletHits)
          after BulletHits: it reads Body, which this writes (and through Alias)
          after Alias: both write Body; it reads Body, which this writes

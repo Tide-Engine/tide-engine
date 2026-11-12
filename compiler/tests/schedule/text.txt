@@ -3,10 +3,12 @@ A system starts once everything it runs after is done.
 
 stage 1  Rename  (per entity)
          writes Name
+         on one thread: it changes text, lists or grids, which the match keeps in one heap (text.tide:29)
          alongside nothing
 
 stage 2  Retitle  (per entity)
          writes Title
+         on one thread: it changes text, lists or grids, which the match keeps in one heap (text.tide:34)
          after Rename: both change text, lists or grids, which the match keeps in one heap
          alongside Count
 stage 2  Count  (per entity)

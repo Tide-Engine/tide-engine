@@ -8,6 +8,7 @@ stage 1  Heal  (per entity)
          reads Healer
          reads any entity's Armor, through World
          writes any entity's Health, through World
+         on one thread: it sets Health through its World, on any entity (world.tide:61)
          alongside Aim, Chase, Rest
 stage 1  Rest  (per entity)
          reads any entity's Idle, through World
@@ -17,6 +18,7 @@ stage 2  Chase  (per entity)
          reads Runner
          writes TestTransform
          reads any entity's TestTransform, through World
+         on one thread: it changes TestTransform and reads other entities' through its World or a query (world.tide:53)
          after Aim: it writes TestTransform, which this reads
          alongside Heal, Drain, Rust, Rest
 stage 2  Drain  (per entity)

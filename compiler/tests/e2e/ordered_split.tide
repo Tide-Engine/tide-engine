@@ -1,0 +1,114 @@
+// A per-entity system whose rows are independent but queue changes (events,
+// spawns, a destroy) goes through its entities in identity order. On threads
+// that order is shared out in runs, and what the runs queue is joined in their
+// order: the events arrive, the spawns are made and the world hashes exactly as
+// on one thread. Soldiers are in several archetypes, with holes where some were
+// destroyed, so the order isn't the tables' own.
+
+component Soldier
+{
+    int id;
+    float aim;
+    int shots;
+    int[4] seen;   // A fixed array is in the component: writing its elements keeps the rows independent
+    float[4] heat;
+}
+
+component Mounted { }  // Its soldiers are an archetype of their own
+component Resting { }  // ...and these are left out
+component Veteran { }
+
+component Round
+{
+    int from;
+    float speed;
+}
+
+singleton Log
+{
+    List<int> fired;    // Ids, as the world heard each shot
+    List<int> hit;      // ...and as each soldier heard its own
+    List<float> speeds; // What the shots carried
+    int rounds;         // Rounds the handlers counted alive
+}
+
+event Fired
+{
+    int id;
+    float speed;
+}
+
+event Hit
+{
+    int shot;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 3000; i++)
+    {
+        var e = Spawn(Soldier { id = i, aim = float(i) * 0.37 });
+        if (i % 3 == 0) e.Add(Mounted);
+        if (i % 7 == 2) e.Add(Resting);
+        if (i % 5 == 1) e.Add(Veteran);
+    }
+}
+
+// Work enough that a run of rows is worth a thread
+float Heavy(float x)
+{
+    mut var y = x * 0.001;
+    for (var i = 0; i < 40; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    return y;
+}
+
+// Sends through a function: the system's own, in the same order
+void Report(int id, float speed)
+{
+    Send(Fired { id = id, speed = speed });
+}
+
+system Shoot(mut Soldier s, without Resting, Time time)
+{
+    var slot = (s.id + time.tick) % 4;
+    // Written out here, where tidec counts it: a tick's worth of threads on a pool that doesn't time its ticks
+    mut var aim = (s.aim + float(time.tick)) * 0.001;
+    for (var i = 0; i < 600; i++) aim = Math.Sin(aim * 1.3 + 0.7) + Math.Cos(aim * 0.9);
+    s.aim = aim;
+    s.seen[slot] = s.seen[slot] + s.id;
+    s.heat[slot] = s.aim;
+    if ((s.id + time.tick) % 3 == 0)
+    {
+        s.shots++;
+        Spawn(Round { from = s.id, speed = s.aim });
+        Report(s.id, s.aim);
+        this.Send(Hit { shot = s.shots });
+    }
+    if (time.tick == 2 && s.id % 11 == 4) this.Destroy();
+    if (time.tick == 3 && s.id % 13 == 5) this.Add(Veteran);
+}
+
+// A system that only sends: nothing of its rows to write
+[After(Shoot)]
+system Call(Soldier s, with Veteran, Time time)
+{
+    if ((s.id + time.tick) % 4 == 1) Send(Fired { id = -s.id, speed = Heavy(s.aim) });
+}
+
+event(Fired fired) OnFired(mut Log log)
+{
+    log.fired.Add(fired.id);
+    log.speeds.Add(fired.speed);
+}
+
+event(Hit hit) OnHit(Soldier s, mut Log log)
+{
+    log.hit.Add(s.id * 16 + hit.shot);
+}
+
+system Count(Round round, mut Log log)
+{
+    log.rounds += 1 + round.from % 2;
+}

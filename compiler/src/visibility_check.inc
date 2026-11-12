@@ -30,7 +30,7 @@ static bool visibility_match(checker *c, const expr *e)
         diag_error(e->at, "visibility groups are the match's to change; local code only reads permitted state");
         return false;
     }
-    note_text_write(c, true); // The shared directory changes the world's heap.
+    note_text_write(c, true, e->at); // The shared directory changes the world's heap.
     return true;
 }
 
@@ -141,7 +141,7 @@ static type check_visibility_method(checker *c, expr *e, const type object)
     if (!contains) {
         if (!check_writable(c, e->object, NULL, NULL)) return T_ERR;
         e->visibility_operation |= VISIBILITY_MUT;
-        if (!audience) note_text_write(c, true);
+        if (!audience) note_text_write(c, true, e->at);
     }
     e->call = CALL_VISIBILITY;
     return contains ? T_BOOL_ : T_VOID_;

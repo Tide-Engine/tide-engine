@@ -526,6 +526,11 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_parallel_query PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_parallel_query PRIVATE TIDE_PARALLEL_QUERY_THREADS=1)
 endif()
+tide_e2e_test(ordered_split) # A per-entity system that spawns and sends, its entities' order in runs on threads
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_ordered_split PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_ordered_split PRIVATE TIDE_ORDERED_SPLIT_THREADS=1)
+endif()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates
