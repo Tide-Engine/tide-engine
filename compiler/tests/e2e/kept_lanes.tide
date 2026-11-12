@@ -20,6 +20,11 @@ component Wide
     int reached;
     bool skip;
     float out;
+    int rare;       // Rare: the ticks it got past the tests
+    int rareAt;     // ...and the last of them
+    int chained;    // Chain
+    int never;      // Never
+    int lot;        // Which tick in 97 Rare takes it in
 }
 
 singleton Tally
@@ -27,6 +32,13 @@ singleton Tally
     int n;
     float sum;
     int read;
+    int rare;
+    int open;
+}
+
+singleton Pick
+{
+    int at;
 }
 
 scene Main { }
@@ -35,16 +47,18 @@ event(Spawned) Setup(with Main)
 {
     for (var i = 0; i < 2600; i++)
     {
-        var wide = Wide { id = i, x = float(i) * 0.25, skip = i % 5 == 0 };
+        var wide = Wide { id = i, x = float(i) * 0.25, skip = i % 5 == 0, lot = i % 97 };
         if (i % 3 == 0) Spawn(wide, Tag { n = i });
         else Spawn(wide);
     }
 }
 
-system Begin(mut Tally tally)
+system Begin(mut Tally tally, mut Pick pick, Time time)
 {
+    pick.at = int(time.tick % 97);
     tally.n = 0;
     tally.read = 0;
+    tally.open = 0;
 }
 
 // Writes a singleton, so in order: several lanes written, some far apart, and the sum depends on the order
@@ -74,4 +88,36 @@ system Reach(mut Wide w, World world)
     if (w.skip) return;
     if (world.Has<Tag>(this)) w.reached += 2;
     else w.reached += 1;
+}
+
+// Tests that few rows get past: the rows that do are marked first, in the rows' order, and the walk in the
+// entities' order goes only to those (rows_live). Which rows changes every tick, and the singleton's number
+// depends on the order they come in.
+[After(Reach)]
+system Rare(mut Wide w, mut Tally tally, Pick pick)
+{
+    if (w.skip || w.lot != pick.at) return;
+    w.rare += 1;
+    w.rareAt = pick.at;
+    w.spare[5] = w.id;
+    tally.rare = tally.rare * 3 + w.id;
+}
+
+// Tests no row gets past: nothing is marked, no chunk is begun and there is no walk
+[After(Rare)]
+system Never(mut Wide w, mut Tally tally)
+{
+    if (w.id >= 0) return;
+    w.never += 1;
+    tally.n = -1;
+}
+
+// A test of a singleton an earlier row changes: what it answers before the first row runs isn't what it answers
+// when a row's turn comes, so these rows aren't marked ahead. From entity 7 on, in the entities' order.
+[After(Never)]
+system Chain(mut Wide w, mut Tally tally)
+{
+    if (tally.open == 0 && w.id != 7) return;
+    tally.open = 1;
+    w.chained += 1;
 }

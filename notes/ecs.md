@@ -52,10 +52,38 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
   chunk has holes and the filters' presence bytes are still asked per run. Only systems in entity order whose
   lanes are prepared (`generating_canonical_prepared`); a one-Send or self-destroying system's batched loop
   (`gen_chunk`) and extern systems are as they were.
+- **The rows a guard lets through, marked first** (`rows_live`, `gen_rows_live`, `gen_canonical_live`; the
+  owner, the same day: "any reason we can't close those gaps too?"). The game on nightly.25 still had FallOnField
+  and Routed near 80 to 120 ns a row: each returns on its first line for every row, yet every entity was still
+  visited in the entities' order (a hash's), its guard's lanes read at random and a rows function called for it.
+  Now a system in entity order that has a guard first goes through each chunk in the rows' own order with
+  `tide_live_<System>_<a>`, a rows function that runs nothing: it copies the lanes the guard reads, calls
+  `tide_guard_<System>`, and sets a bit for each row the filters and the guard let through (a bit a row of the
+  table: 16 words on the stack up to 1,024 rows, `tide_alloc_zeroed` past that, freed after the walk). Then:
+  - the walk leaves out an entity whose row has no bit, before anything is asked of its chunk (and a row past
+    what was marked, which the walk didn't begin with);
+  - a chunk with no bit isn't begun: no page taken, copied or compared for the lanes the system changes
+    (`gen_canonical_live_chunk` in `gen_canonical_lanes`), which was the other gap;
+  - with no bit anywhere (`tide_busy` false) there is no walk: `tide_key_count` is 0.
+  The guard runs again when a marked row's turn comes, so marking only ever leaves rows out. That is right
+  when nothing an earlier row does can change what a later row's guard reads, which `rows_live` requires: the
+  guard reads no singleton the system takes `mut` (`guard_reads_changing`); the system sets no component it
+  takes through its World (`world_sets_component`), has no joined parameter and no query with a `mut` binding
+  (another entity's component), and neither reads nor filters by Owner for the archetype (the Owner is read
+  where the row starts, and a World write can change one). Otherwise the system is as it was. Not batched
+  loops (`rows_batched`), which never had a guard. A chunk with holes marks whatever its dead rows' bytes say:
+  the walk never comes to those.
+- **One element of a fixed array is its own lanes** (`element_place`, lane_writes_codegen.inc, for reads and
+  writes): `f.cooldowns[3]` with the number written in the code and inside the array reads or writes that
+  element's bytes, where any element counted as the whole array. Any other index is still all of it.
 - **Tests**: `kept_lanes` (e2e, native and WASI): 2,600 entities of a wide component in two archetypes, more
   than a chunk of each, spawned in one tick, through a system that writes a singleton and far-apart lanes, one
   that reads behind a test and one that takes the World; every entity is checked (its own values, its place in
-  the order no other has), written in place and apart beside a snapshot.
+  the order no other has), written in place and apart beside a snapshot. For the marks: `Rare`, whose guard
+  lets through one row in 97 of those not skipped, other rows each tick, writing an array's element and a
+  singleton whose number depends on the order; `Never`, whose guard lets none through; and `Chain`, whose guard
+  reads a singleton an earlier row changes, so it isn't marked ahead (entity 7 and every one after it in the
+  order: with `guard_reads_changing` taken out, the test fails).
   `entity_ordered_archetypes_slots_give_each_keys_place` (tide_tests): slots against lookups, a row
   that moves, a destroyed key whose slot a newer entity took, a slot that isn't the key's, `tide_entity_born_at`.
   The indexed loops' differential fixture gained `Swing` (notes/indexed-loops.md). The walks themselves are what
@@ -66,10 +94,12 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
     6 for a system that goes by chunks. What's left is the slot's page (a load through the table's pages for each
     row), a call of the rows function for each run, and that rows come in the order of a hash, so each lane's
     bytes are read at random within the chunk.
-  - A system in entity order that changes components copies each lane it can write, for every chunk, before its
-    first row and compares it after its last (`gen_canonical_lanes`: prepared pages), whether or not a row wrote
-    anything: a few ns a row for a handful of lanes, 250 ns a row in the probe for a system that writes one
-    element of a `float[120]` (an array element's write counts as all of the array's lanes).
+  - A system in entity order with no guard, or one most rows get past, still goes to every entity in the order
+    of a hash. Laying rows out in their entities' order when a tick's spawns are applied would make those walks
+    sequential too; it changes where every row is, so every pinned world hash, and isn't done.
+  - A system whose whole code is `if (test) { ... }` has no guard (a guard is leading `if (...) return;`
+    statements), and a system that batches a Send or a Destroy has none either: the game's LeaveField is both.
+  - A chunk with one row past the guard is begun whole: each lane the system can write copied and compared.
   - A per-entity view's row is still about 50 ns with nothing in its body: the blend's lookup in each world (two
     now), the correction's lookup in the local state (`tide_attached_find`, for a component with a `[Position]`
     or `[Rotation]` field), and the GUI seed's hash of the entity.

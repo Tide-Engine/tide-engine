@@ -19229,6 +19229,8 @@ static bool runs_on(const gen *g, const decl *sys, const int a)
 // The rows of a chunk a task runs: all of them, or with `pieced`, the task's
 // piece of them (tide_piece of tide_pieces), as tide_from and tide_to.
 static bool generating_canonical_range;
+// gen_rows_function is writing tide_live_<System>_<a>: the rows its guard lets through, marked (gen_rows_live)
+static bool generating_rows_live;
 static bool generating_canonical_prepared;
 
 static void gen_piece_rows(sb *o, const char *pad, const bool pieced)
@@ -19645,9 +19647,18 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
     const bool staged = !world_reads_own_writes(sys);
     sb_printf(o, "(tide_world *tide_w%s, const uint32_t tide_from, const uint32_t tide_to", g->prog->uses_text ? ", const uint64_t tide_mark" : "");
     gen_rows_columns(g, sys, a, apart, ROWS_PARAMS, selection == ROWS_CACHED);
+    const bool live = generating_rows_live;
+    if (live) sb_put(o, ", uint64_t *tide_live, const uint32_t tide_live_base");
     sb_printf(o, ")\n{\n    (void)tide_w;\n    (void)tide_ent;\n%s%s", g->prog->uses_text ? "    (void)tide_mark;\n" : "",
               arch_scene_column(g, a) ? "    (void)tide_scn;\n" : "");
     gen_rows_columns(g, sys, a, apart, ROWS_PLACES, selection == ROWS_CACHED);
+    if (live) { // It writes nothing: the places it would write through are only named
+        for (int c = 0; c < prog->components.count; c++) {
+            if (!rows_take(g, sys, a, c) || world_sets_component(sys, prog->components.items[c])) continue;
+            sb_printf(o, "    (void)tide_col_%s;\n", type_cname(prog->components.items[c]));
+        }
+        sb_put(o, "    bool tide_any = false;\n");
+    }
     if (selection == ROWS_CACHED) sb_put(o, "    const uint16_t *tide_selected = tide_selection->selected;\n");
     for (int c = 0; every && c < prog->components.count; c++) { // Its filters' columns, which it doesn't look at
         if (!comp_sparse(g, c) || !arch_stores(g, a, c) || (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c))) continue;
@@ -19720,11 +19731,16 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
         gen_system_args(g, sys, a);
         g->guard_call = false;
         sb_put(o, ")) {\n");
+        if (live) {
+            sb_printf(o, "%stide_live[(tide_live_base + tide_i) >> 6] |= UINT64_C(1) << ((tide_live_base + tide_i) & 63u);\n"
+                         "%stide_any = true;\n", inner.data, inner.data);
+        } else {
         gen_row_copies_rest(g, sys, inner.data);
         sb_printf(o, "%s%s", inner.data, call);
         gen_system_args(g, sys, a);
         sb_printf(o, ");%s\n", clear);
         if (!g->row_apart) gen_row_puts(g, sys, inner.data, false);
+        }
         sb_printf(o, "%s}\n", pad);
     } else {
         if (destroying) sb_printf(o, "%stide_destroy[tide_i - tide_base] = tide_update_%s(tide_w", pad, decl_cname(sys));
@@ -19741,10 +19757,57 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
                   "            if (tide_destroy[tide_i - tide_base]) tide_cmd_destroy(tide_w, tide_ent[tide_i]);\n"
                   "        }\n        tide_base = tide_end;\n");
     }
-    sb_put(o, "    }\n}\n\n");
+    sb_put(o, live ? "    }\n    return tide_any;\n}\n\n" : "    }\n}\n\n");
     g->lanes_in = false;
     g->row_guarded = false;
     g->row_apart = false;
+}
+
+// Whether `e`, one of a guard's tests, reads a singleton its system can change
+static bool guard_reads_changing(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param && e->param->type.kind == TY_SINGLETON
+        && e->param->mode != PARAM_READ) return true;
+    return guard_reads_changing(e->object) || guard_reads_changing(e->lhs) || guard_reads_changing(e->rhs);
+}
+
+// Whether a system that goes through archetype `a`'s entities in their order first marks, in the rows' order,
+// the rows its guard lets through (tide_live_<System>_<a>), and then goes only to those. Its guard is tests of
+// its own row's components and of singletons (guard_plain), so a row's answer is the same before the first row
+// runs as when its turn comes, as long as nothing an earlier row does can change what the tests read: no
+// singleton it takes `mut` among them, no component it takes set through its World, no component of another
+// entity (a joined parameter, a query's `mut` binding), and no Owner read where the row starts.
+static bool rows_live(const gen *g, const decl *sys, const int a)
+{
+    if (!sys->per_entity || sys->is_view || !runs_on(g, sys, a) || rows_batched(g, sys, a) || !system_guarded(g, sys)) return false;
+    if (reads_owner(g, sys, a) || filters_owner(g, sys, a)) return false;
+    const expr *terms[GUARD_TERMS_MOST];
+    const int n = system_guard_terms(sys, terms);
+    for (int k = 0; k < n; k++) {
+        if (guard_reads_changing(terms[k])) return false;
+    }
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind == TY_COMPONENT && (world_sets_component(sys, p->type.decl) || joined(sys, p))) return false;
+        if (p->type.kind != TY_QUERY) continue;
+        for (int k = 0; k < p->query.count; k++) {
+            if (p->query.items[k].mode == PARAM_MUT) return false;
+        }
+    }
+    return true;
+}
+
+// tide_live_<System>_<a>: a rows function that runs nothing. For the rows from tide_from to tide_to that the
+// system's filters and its guard let through, a bit in tide_live (the row's number in the table, from
+// tide_live_base); whether there was any.
+static void gen_rows_live(gen *g, const decl *sys, const int a)
+{
+    sb_printf(&g->c, "// " STR_FMT "'s rows that get past the tests it starts with, marked\n"
+                     "TIDE_ROWS bool tide_live_%s_%d", STR_ARG(tool_name(sys)), decl_cname(sys), a);
+    generating_rows_live = true;
+    gen_rows_function(g, sys, a, "", "", false, false, ROWS_FILTERED);
+    generating_rows_live = false;
 }
 
 // The rows functions a system has so far: each one's text from its parameters
@@ -20486,12 +20549,15 @@ static void gen_extern_filtered_call(gen *g, const decl *sys, const int a, const
 // a chunk that goes in pieces is made the world's own first (gen_system_own).
 // Begin/end each writable chunk once around logical-order runs. Prepared pages
 // are copied before publication, read in place, and compared only once at end.
+static void gen_canonical_live_chunk(gen *g, int a);
+
 static void gen_canonical_lanes(gen *g, const decl *sys, const bool done)
 {
     sb *o = &g->c;
     for (int a = 0; a < g->prog->archetypes.count; a++) {
         if (!runs_on(g, sys, a) || !rows_part(g, sys, a) || rows_batched(g, sys, a)) continue;
         sb_printf(o, "    { tide_table *t = &tide_w->%s;\n        for (uint32_t chunk = 0; chunk < t->chunks; chunk++) {\n", arch_name(g, a));
+        if (rows_live(g, sys, a)) gen_canonical_live_chunk(g, a); // None of its rows runs: it stays as it is
         // Far tags are fixed for this predicted tick. A fully excluded chunk
         // needs no writable lane preparation or finalization.
         const decl *far = g->prog->predict_far;
@@ -20546,6 +20612,92 @@ static void gen_canonical_kept(gen *g, const decl *sys)
             }
         }
     }
+}
+
+// Before a system's entities are gone through in their order: the rows its guard lets through, marked a chunk
+// at a time in the rows' own order (rows_live), where their bytes are one after another. The walk then leaves
+// out the entities whose row has no mark, a chunk with none isn't begun (gen_canonical_lanes), and with none
+// anywhere there's no walk. tide_busy: some row somewhere may run.
+static void gen_canonical_live(gen *g, const decl *sys)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    const bool staged = !world_reads_own_writes(sys);
+    bool some = false, every = true;
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!runs_on(g, sys, a)) continue;
+        if (rows_live(g, sys, a)) some = true;
+        else every = false;
+    }
+    if (!some) return;
+    sb_printf(o, "    bool tide_busy = %s;\n", every ? "false" : "true");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!rows_live(g, sys, a)) continue;
+        const char *columns = arch_columns(g, a);
+        sb_printf(o, "    const uint32_t tide_live_rows_%d = tide_w->%s.count;\n"
+                     "    uint64_t tide_live_few_%d[16] = {0};\n"
+                     "    uint64_t *const tide_live_%d = tide_live_rows_%d <= 1024u ? tide_live_few_%d\n"
+                     "        : tide_alloc_zeroed(((size_t)tide_live_rows_%d + 63u) / 64u, sizeof(uint64_t));\n",
+                  a, arch_name(g, a), a, a, a, a, a);
+        sb_printf(o, "    { const tide_table *tide_t = &tide_w->%s;\n"
+                     "        for (uint32_t tide_c = 0; tide_c < tide_t->chunks; tide_c++) {\n"
+                     "            const uint32_t tide_from = 0u, tide_to = tide_table_rows(tide_t, %d, tide_c);\n"
+                     "            const tide_entity *tide_ent = tide_table_column(tide_t, %s, tide_c, 0);\n",
+                  arch_name(g, a), arch_shift(g, a), columns);
+        if (arch_scene_column(g, a)) sb_printf(o, "            const tide_entity *tide_scn = tide_table_column(tide_t, %s, tide_c, 1);\n", columns);
+        for (int c = 0; c < prog->components.count; c++) {
+            if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+            if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
+            sb_printf(o, "            const uint8_t *tide_pres_%s = tide_table_column(tide_t, %s, tide_c, %d);\n",
+                      type_cname(prog->components.items[c]), columns, arch_presence(g, a, c));
+        }
+        // Where its lanes are now, in the arrays the walk keeps a chunk's in (gen_canonical_kept): read only here,
+        // and found again by the walk, after the lanes it changes are begun
+        for (int c = 0; c < prog->components.count; c++) {
+            if (!rows_take(g, sys, a, c)) continue;
+            const decl *d = prog->components.items[c];
+            const bool changed = changes_component(sys, c, false);
+            const bool own = changed && staged;
+            const lane_mask used = system_comp_lanes(g, sys, a, c);
+            if (own) sb_printf(o, "            uint8_t **const tide_own_%s = tide_kept_own_%s_%d;\n", type_cname(d), type_cname(d), a);
+            else sb_printf(o, "            %suint8_t **const tide_col_%s = tide_kept_col_%s_%d;\n", changed ? "" : "const ", type_cname(d),
+                           type_cname(d), a);
+            for (int k = 0; k < comp_lanes(d); k++) {
+                if (!lane_has(&used, k)) continue;
+                sb_printf(o, "            tide_%s_%s[%d] = (%suint8_t *)(uintptr_t)tide_table_column(tide_t, %s, tide_c, %d);\n",
+                          own ? "own" : "col", type_cname(d), k, changed ? "" : "const ", columns, arch_column(g, a, c) + k);
+            }
+        }
+        sb_printf(o, "            if (tide_live_%s_%d((tide_world *)(uintptr_t)tide_w%s, tide_from, tide_to", decl_cname(sys), a,
+                  prog->uses_text ? ", tide_mark" : "");
+        gen_rows_columns(g, sys, a, false, ROWS_ARGS, false);
+        sb_printf(o, ", tide_live_%d, tide_c << %d)) tide_busy = true;\n        }\n    }\n", a, arch_shift(g, a));
+    }
+}
+
+// After the walk: the marks let go
+static void gen_canonical_live_done(gen *g, const decl *sys)
+{
+    for (int a = 0; a < g->prog->archetypes.count; a++) {
+        if (rows_live(g, sys, a)) sb_printf(&g->c, "    if (tide_live_%d != tide_live_few_%d) free(tide_live_%d);\n", a, a, a);
+    }
+}
+
+// Whether any row of `chunk` of archetype `a` is marked, as C statements that `continue` when none is
+static void gen_canonical_live_chunk(gen *g, const int a)
+{
+    sb *o = &g->c;
+    const int shift = arch_shift(g, a);
+    sb_printf(o, "            { bool live = false;\n");
+    if (shift >= 6) {
+        sb_printf(o, "                const uint32_t words = (tide_live_rows_%d + 63u) >> 6;\n"
+                     "                for (uint32_t w = chunk << %d; w < ((chunk + 1u) << %d) && w < words; w++) live |= tide_live_%d[w] != 0u;\n",
+                  a, shift - 6, shift - 6, a);
+    } else {
+        sb_printf(o, "                for (uint32_t r = chunk << %d; r < ((chunk + 1u) << %d) && r < tide_live_rows_%d; r++) "
+                     "live |= (tide_live_%d[r >> 6] >> (r & 63u) & 1u) != 0u;\n", shift, shift, a, a);
+    }
+    sb_put(o, "                if (!live) continue;\n            }\n");
 }
 
 // Canonical iteration visits only the system's admitted archetypes. The runtime
@@ -20821,6 +20973,7 @@ static void gen_system_run(gen *g, const decl *sys)
         rows[a].place_cached = rows_cacheable(g, sys, a)
             ? gen_rows(g, sys, a, call.data, clear, false, false, ROWS_CACHED, &rows_made) : -1;
         fast_task |= rows_task_fastable(g, sys, a);
+        if (canonical && rows_live(g, sys, a)) gen_rows_live(g, sys, a);
     }
 
     if (view) {
@@ -20970,10 +21123,16 @@ static void gen_system_run(gen *g, const decl *sys)
         // Views only read the match; the local world is theirs to change.
         const bool read_only = view && !sys->entity_local;
         const bool prepared = canonical;
-        if (prepared) gen_canonical_lanes(g, sys, false);
+        bool marked = false;
+        for (int a = 0; prepared && a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
+        if (prepared) {
+            gen_canonical_kept(g, sys);
+            gen_canonical_live(g, sys);
+            gen_canonical_lanes(g, sys, false);
+        }
         if (canonical) {
-            if (prepared) gen_canonical_kept(g, sys);
             gen_canonical_system_keys(g, sys);
+            if (marked) sb_put(o, "    if (!tide_busy) tide_key_count = 0u; // No row gets past its tests: no walk\n");
         sb_put(o,
                       "    for (uint32_t tide_key_at = 0; tide_key_at < tide_key_count;) {\n"
                       "        const tide_location tide_loc = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_at], tide_keys[tide_key_at]);\n"
@@ -20984,7 +21143,14 @@ static void gen_system_run(gen *g, const decl *sys)
             any = true;
             if (canonical) {
                 const int shift = arch_shift(g, a);
-                sb_printf(o, "        case %d: {\n            tide_table *tide_t = &tide_w->%s;\n"
+                sb_printf(o, "        case %d: {\n", a);
+                // An entity whose row has no mark returns on its first line: left out here, before anything
+                // is asked of its chunk. (A row past what was marked isn't one the walk began with.)
+                if (rows_live(g, sys, a)) {
+                    sb_printf(o, "            if (tide_loc.row >= tide_live_rows_%d || !(tide_live_%d[tide_loc.row >> 6] >> (tide_loc.row & 63u) & 1u)) break;\n",
+                              a, a);
+                }
+                sb_printf(o, "            tide_table *tide_t = &tide_w->%s;\n"
                              "            const uint32_t tide_c = tide_loc.row >> %d;\n"
                              "            uint32_t tide_last_row = tide_loc.row + 1u;\n"
                              "            while (tide_key_end < tide_key_count) {\n"
@@ -20993,7 +21159,7 @@ static void gen_system_run(gen *g, const decl *sys)
                              "                tide_key_end++; tide_last_row++;\n            }\n"
                              "            const uint32_t tide_canonical_from = tide_loc.row & %du;\n"
                              "            const uint32_t tide_canonical_to = tide_canonical_from + tide_key_end - tide_key_at;\n",
-                          a, arch_name(g, a), shift, a, shift, (1u << shift) - 1u);
+                          arch_name(g, a), shift, a, shift, (1u << shift) - 1u);
                 generating_canonical_range = true;
                 generating_canonical_prepared = prepared;
                 if (rows_batched(g, sys, a)) gen_chunk(g, sys, a, call.data, clear, "            ", false, false);
@@ -21021,6 +21187,7 @@ static void gen_system_run(gen *g, const decl *sys)
         }
         if (canonical) sb_put(o, "        default: break;\n        }\n        tide_key_at = tide_key_end;\n    }\n");
         if (prepared) gen_canonical_lanes(g, sys, true);
+        if (marked) gen_canonical_live_done(g, sys);
         if (!any) {
             sb_printf(o, "    (void)tide_w;%s // No entity matches this %s.\n",
                       view ? " (void)tide_l; (void)tide_draw; (void)tide_ui;" : "", view ? "view" : "system");

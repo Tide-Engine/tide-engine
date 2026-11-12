@@ -71,11 +71,7 @@ static writes_place reads_place_of(const expr *e, const reads_root *root)
         if (at < 0) return p;
         return (writes_place){true, p.off + at, type_layout(e->field->type).size, false};
     }
-    case E_INDEX: {
-        writes_place p = reads_place_of(e->object, root);
-        p.element = p.rooted;
-        return p;
-    }
+    case E_INDEX: return element_place(e, reads_place_of(e->object, root));
     default: return none;
     }
 }

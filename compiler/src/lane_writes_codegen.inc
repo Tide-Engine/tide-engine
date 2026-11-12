@@ -103,6 +103,23 @@ static int writes_field_offset(const decl *d, const field *f)
     return -1;
 }
 
+// An element `e` of the place `p`: all of what it's in, which a field after can't narrow. But one element of a
+// fixed array, named by a number that's in it (`f.cooldowns[3]`), is its own bytes: a system that writes one
+// element of a `float[120]` then takes one lane of it, not a hundred and twenty.
+static writes_place element_place(const expr *e, writes_place p)
+{
+    const type ot = e->object ? e->object->type : (type){0};
+    if (p.rooted && !p.element && ot.kind == TY_ARRAY && ot.decl && ot.decl->fields.count == 1 && e->lhs && e->lhs->kind == E_INT) {
+        const int64_t count = ot.decl->array_length, at = e->lhs->int_value;
+        const int each = type_layout(ot.decl->fields.items[0].type).size;
+        if (at >= 0 && at < count && each > 0 && each != LAYOUT_MOST && (int64_t)each * count == p.size) {
+            return (writes_place){true, p.off + (int)at * each, each, false};
+        }
+    }
+    p.element = p.rooted;
+    return p;
+}
+
 static writes_place writes_place_of(const expr *e, const param *root)
 {
     const writes_place none = {false, 0, 0, false};
@@ -132,11 +149,8 @@ static writes_place writes_place_of(const expr *e, const param *root)
         if (at < 0) return p;
         return (writes_place){true, p.off + at, type_layout(e->field->type).size, false};
     }
-    case E_INDEX: { // An element: all of what it's in
-        writes_place p = writes_place_of(e->object, root);
-        p.element = p.rooted;
-        return p;
-    }
+    case E_INDEX: // An element: all of what it's in, or of a fixed array its own bytes (element_place)
+        return element_place(e, writes_place_of(e->object, root));
     default: return none;
     }
 }

@@ -40,8 +40,15 @@ Measure 0.127 to 0.032, LeaveField 0.072 to 0.032, Roam 0.69 to 0.35, Muster 0.0
 8.49 to 7.62 ms and its views' 4.55 to 4.22. Still 77 to 130 ns a row there: FallOnField, Fall and Routed,
 which is what finding a chunk's lanes once for the chunk is for. In the probe, a system shaped like FallOnField
 (`mut Fat f, mut World world`, returning on its first line, 7 of 134 lanes used, runs of one or two rows):
-46 ns a row on nightly.24, 28 without the NULL stores, 22 with the lanes kept for the chunk. The game on a
-nightly with that in isn't measured yet.
+46 ns a row on nightly.24, 28 without the NULL stores, 22 with the lanes kept for the chunk.
+
+The game on nightly.25 (its thread): Fall 0.099 to 0.067, KeepInside 0.053 to 0.033, Upkeep 0.113 to 0.092; no
+better, FallOnField 0.123, Routed 0.079, Enlist 0.178. Those return on their first line for every row and were
+still walked in the entities' order. With the rows a guard lets through marked first (notes/ecs.md), the probe's
+systems of those shapes, ns a row, nightly.25 to now: FallOnField's 22 to 0.6; Routed's (333 rows) 9 to 0.6;
+Fall's, which also writes one element of a `float[120]` (120 lanes copied and compared every tick, now one),
+255 to 0.5. Systems every row gets past are as they were (a system that writes a singleton behind a test all
+rows pass: 16 before and after, the marking pass within the noise). The game isn't measured on this yet.
 
 ## A wide component's rows (2026-11-10)
 
