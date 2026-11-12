@@ -125,8 +125,16 @@ tick for the same reason. Results, row order, hashes and snapshots are what they
     row), a call of the rows function for each run, and that rows come in the order of a hash, so each lane's
     bytes are read at random within the chunk.
   - A system in entity order with no guard, or one most rows get past, still goes to every entity in the order
-    of a hash. Laying rows out in their entities' order when a tick's spawns are applied would make those walks
-    sequential too; it changes where every row is, so every pinned world hash, and isn't done.
+    of a hash. Laying rows out in their entities' order when a tick's spawns are settled (a `tide_table_order`
+    that sorts each table's rows born that tick by key) makes those walks sequential, and was built, pushed and
+    reverted the same day (dev 7523109cc, then its revert). It isn't only a change of world hashes: where a row
+    is can be seen. A per-entity view goes through its rows as they're stored, so entities spawned in one tick
+    draw in the order they were spawned, and sorted they draw in the order of a hash (`draw_stencil`'s shapes
+    came in another order); the Box2D and Box3D packages make their bodies in row order (their pinned
+    simulation hashes moved); and local tasks, shared bindings' runs, shards and visibility tests failed too
+    (not looked into one by one). In the probe it gained 12 to 8 ns a row for a system that writes a singleton.
+    To do it, either views and those packages go by entity order, or the order of a tick's spawns' keys
+    follows the order they're made in (a lineage that counts up within a cause, not a hash): the owner's call.
   - A system whose whole code is `if (test) { ... }` has no guard (a guard is leading `if (...) return;`
     statements), and a system that batches a Send or a Destroy has none either: the game's LeaveField is both.
   - A chunk with one row past the guard is begun whole: each lane the system can write copied and compared.
