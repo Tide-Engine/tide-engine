@@ -177,7 +177,31 @@ Errors: `parallel_query_local_text`, `_local_handed`, `_local_outer`, `_local_re
 `parallel_query_mut` and `parallel_query_local_field`, which are no longer errors). Measured: benchmarks.md,
 Views' rows and loops on threads.
 
+First use, and what it showed (2026-11-12, later): Mount & Rifle moved its near men's posing (PoseMan and two-arm
+IK, ~0.1 ms a man) into `parallel (var row in men)` over `query (mut Trooper t)`, ~1,000 rows of which a guard
+passes about six, on nightly.29, and took it out again: the views cost 1.0 ms where the one per-entity view had
+cost 0.79. Its patch built against this checkout with a temporary trace around `frame_loop` (not kept): the
+loop took the pool on every frame (1,001 tasks, a row each, reckoned at 45,944 units a row), and in the measured
+frames a round took 140 to 196 us against 147 us for the same steps kept on the frame's thread (the same binary,
+alternating runs). In the run's first 600 frames, where more men are posed at once, it was 837 us in order and
+293 shared. So the loop wasn't the loss, and wasn't a gain either: in the steady battle about one man is posed
+anew a frame (half the whole men reuse last frame's pose, by the game's own rule), a step can't be split, and a
+round's wake is tens of microseconds. The loss was two more passes over the thousand men: the loop's view makes
+1,000 blended rows and readies 1,000 cells (~0.1 ms) before any step runs, and the per-entity view that draws
+from the results cost 0.23 to 0.28 ms for 994 rows that return on their first line, as each row's 128 lanes are
+gathered and blended before the code runs.
+
 Gaps:
+- **A view's rows have no guard.** A system that starts with plain `if (...) return;` tests reads only the lanes
+  those tests need before copying the rest (`tide_guard_<System>`, row_lanes_codegen.inc); a per-entity view
+  gathers, blends and corrects every lane its code can read first, and a view's query makes every row whole
+  before a `continue`. A view over many fat rows that acts on a few pays the full walk (above: ~250 ns a row).
+  The first cut would be tests on the row's local fields and on singletons, which need no blending.
+- **Nothing says whether a loop took the pool.** `tide schedule` could print each parallel loop's reckoned step
+  cost, the rows it needs to be worth a round, and why one stays on its thread; the profile could count a view's
+  rounds. The game guessed the loop had stayed on one thread; it hadn't.
+- A step can't write a row's `Pose` (it holds a list), so the game copied 128 bones out to a fixed array and back.
+  `without ownership` isn't a query filter.
 - A round wakes the whole pool, as a tick's loop does; a loop a little over the bar on a 12-thread pool gains
   little. Nothing times a frame's loops (a tick's systems are timed since this morning).
 - A tick must not run on the pool at the same time as a frame's loops: both are rounds, and the pool takes one
