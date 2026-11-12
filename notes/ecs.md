@@ -40,9 +40,59 @@ lanes were gathered and blended before the code ran.
   (tide_tests): two tables asked in six orders with rows and entities removed between, against a scan.
 - **Measured** (benchmarks.md, A view's guard): a view acting on one row in 400 of 20,000, 1.65 ms without a
   guard, 0.08 with; a blended per-entity row at 1,000 entities 52 ns to 20, a query's 47 to 13.
-- **Remaining**: a view's *query* still makes every row whole before a loop's `continue` (the guard is for a
-  view's own entity). A guard reads no field of the match's, so `if (t.down) return;` copies first. The key
-  guesses collide past some tens of thousands of entities (20,000 of two kinds: a blended row 42 ns).
+- **A view's rows, guarded** (later the same evening; `rows_guard_terms`, `gen_rows_guard`, in `gen_query_fill`).
+  A view that runs once (its rows are made where its code first names its query), takes one query, and goes
+  through it in one loop that is a statement of the view's own (a `foreach` or a `parallel`) has the tests that
+  loop's steps start with (`if (...) continue;`) run in the rows' fill, before a row is made: an entity they
+  turn away gets no row, so it isn't gathered, blended, readied for a parallel loop or handed a task. The tests
+  read the row's own local fields (through a binding), local singletons the view takes read-only, and
+  constants. That those can't change between the fill and a row's own step is the whole argument: no other
+  query (so no other loop writing those entities' local fields), the loop runs once, a step writes only its own
+  row's local fields, and a singleton the view only reads isn't written. In the fill the tests are generated
+  with the names the step uses: a two-field `row` (entity and what it was born as), each binding's local part
+  through `tide_query_fields_get_<C>_local` (never attaching), and the singletons as the view's parameters are
+  named. Not where a local part has seeded generators or heap defaults, a `verified` binding or query, or a
+  sharded game. `tide schedule` lists them with the views that have a guard.
+  Tests: `view_guard.tide`'s `EachGuarded`/`EachPlain` (a foreach with a singleton's and a local field's test,
+  against the same through calls: rows and sums bit-equal each frame, and the guarded loop's writes to its
+  rows) and `AtOnce`/`Sum` (a parallel loop's steps writing a local field for the rows let through, read back
+  by a loop over all); the codegen check finds the tests before the first gather in both fills and none in the
+  plain ones.
+- **A far entity's lanes** (night of 2026-11-12; `tide_far_blend_some_<C>`). With `predictionRange` a view
+  draws a far entity from the confirmed worlds (`tide_far_blend_<C>`), and that loaded the whole component from
+  the confirmed world and again from its tick before, a `tide_table_get` a lane, for every row, even where the
+  view's row was a partial copy: in Mount & Rifle nearly all 1,000 soldiers are far, so a view reading three of
+  `Trooper`'s 128 lanes loaded 256 a row. The partial paths (a per-entity view's parameter, a query's rows) now
+  call `tide_far_blend_some_<C>` with their mask: `tide_load_some_<C>`, `tide_prev_some_<C>`,
+  `tide_blend_some_<C>`, straight into the copy (a load that fails changes nothing of it). The whole path is as
+  it was.
+- **A query handed to a function** (`query_row_reads`, `query_one_loop`, lane_reads_codegen.inc). A view that
+  names its query anywhere but as a loop's value made its rows whole, and handing it to a function was such a
+  naming: Mount & Rifle's `Traces` and `TracesInScope` both hand theirs to `PaintAllTraces`. The reads are now
+  followed into a plain function of the game's (not extern, async, virtual, an override or a worker), four
+  deep: its loops over the parameter are the caller's rows' reads, by the binding's place among the row's.
+  Anything else it does with the query (names it outside a loop, hands it to something that can't be followed)
+  still makes the rows whole.
+- **Guards read the match's fields that don't blend** (`guard_match_field`, `guard_match_comp`,
+  `rows_guard_match`). A bool, an int, an enum or an Entity field (`field_blends` false, not hidden) of a
+  component a view draws from this world's ticks is in a frame what the tick has, so a test of it can run on the
+  lanes as they are: a per-entity view's guard is handed a copy with just those lanes (`tide_g<i>`,
+  `view_guard_lanes`, `gen_gather_lanes`), and a rows' fill gathers them into the test's row. Under
+  `predictionRange` the copy goes through `tide_far_blend_some_<C>` first, as the row's own would. Not for a
+  component with a custom `Interpolate`, a local world's, a sharded game's, or under `predictionRange` one no
+  view reads in part (it has no partial helpers).
+- **A rows' guard no longer needs the view to itself** where its tests read only such fields and constants:
+  nothing in a frame changes them, so the view may take other queries and the loop may be anywhere, in the view
+  or in the function it hands the query to (`query_one_loop`: named once, looped once, at each step of the
+  chain). Tests of this machine's state keep the stricter rule above.
+- Tests: `view_guard.tide`'s `MatchGuarded`/`MatchPlain` (a bool and an int of the match's), and
+  `Beams`/`BeamsPlain` (a view with two queries handing both to a function whose loop starts with two such
+  tests and a third that's a call: same rows and sum as the loop over all, the rows' fill tests first and
+  gathers some of `Man`, not all).
+- **Remaining**: a guard reads no field that blends (`if (!InView(t.position)) return;` copies first), and calls
+  nothing. A whole row of a far entity still loads the component from two confirmed worlds lane by lane; the
+  tick before is read whole though only its blending fields are used. The key guesses collide past some tens
+  of thousands of entities (20,000 of two kinds: a blended row 42 ns).
 
 ## A view's rows: the slot guessed, and a mut query's lanes (2026-11-12, later)
 

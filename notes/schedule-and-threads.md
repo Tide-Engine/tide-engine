@@ -195,6 +195,17 @@ Gaps:
 - Built the same evening: **a view's guard** (ecs.md, top section), for a per-entity view's tests of local
   state; the game's `DrawWholeMen` went from 0.23-0.28 ms to 0.12 with its patch, what's left being the six men
   it draws. A view's query still makes every row whole before a `continue`.
+- Built later the same evening: **a frame's loops are timed** (`frame_cost`, `frame_job` in
+  `engine/src/jobs.c`), as a tick's systems are since the morning: on a pool that times its work
+  (`tide_jobs.timed`) a loop outside a tick is known by its steps' function (32 kept by the frame's thread, the
+  oldest replaced), and what it took against tidec's reckoning (`note_cost`, `work_of`; every thread's steps
+  summed for a round) raises its work next time, never lowers it. So three men posed at 0.1 ms each, reckoned
+  at a seventh of the bar, go to the pool from the second frame. A loop that passes no work (`par_stays`) and
+  one of a single step stay put whatever they took. `frame_loop` now runs the steps itself where it doesn't
+  share them. `jobs_a_frames_costly_steps_go_to_the_pool_once_timed` pins it: no round on an untimed pool, none
+  the first time on a timed one, one each time after. With the rows' guard (ecs.md) Mount & Rifle's patch went
+  from `PoseWholeMen` 0.19 ms to 0.12-0.17 and `DrawWholeMen` 0.12 to 0.09-0.15 (a busy machine): its three
+  views now total about 0.6 ms against the 0.79 of the one view they replaced.
 - Built the same evening: **`tide schedule` ends with every parallel loop** (`print_parallel_loops`,
   `par_stays_why` in codegen.c, `each_parallel_loop` in indexing.c): what its steps go through, a step's
   reckoning, and from how many steps it's worth the threads (the runtime's `LOOP_WORK` and `ROUND_WORK` in

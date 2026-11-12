@@ -9,10 +9,14 @@ component Man
     float3 position;
     float yaw;
     float4 a; float4 b; float4 c; float4 d;
+    bool down;
+    int rank;
     local bool chosen;
     local bool fresh = true;
     local int drawn;
     local Kept kept;
+    local int counted;
+    local float placed;
 }
 
 struct Kept
@@ -35,6 +39,15 @@ local singleton Show
     int freshRows;
     int nestedRows;
     int drawn;
+    float matchGuarded;
+    float matchPlain;
+    int matchRows;
+    int matchPlainRows;
+    float lasers;
+    float lasersPlain;
+    int laserRows;
+    int laserPlainRows;
+    int riders;
 }
 
 event(Spawned) Setup(with Main)
@@ -50,6 +63,8 @@ system Move(mut Man m)
 {
     m.yaw += 0.01;
     m.position.x += 0.5;
+    m.down = int(m.position.x * 2) % 3 == 0;
+    m.rank = int(m.position.x) % 5;
 }
 
 // Off every third frame
@@ -121,4 +136,120 @@ view Match(Man m, mut Show show)
 {
     if (m.yaw < 0) return;
     show.drawn += 0;
+}
+
+// A view's rows, guarded: a view that runs once and goes through its one query
+// in one loop makes no row for an entity the loop's first tests turn away
+local singleton Rows
+{
+    float guarded;
+    float plain;
+    int guardedRows;
+    int plainRows;
+    float atOnce;
+    float expected;
+    int counted;
+}
+
+[After(Match)]
+view EachGuarded(mut Rows rows, Show show, query (mut Man m) men)
+{
+    foreach (var row in men)
+    {
+        if (!show.on || !row.m.chosen) continue;
+        rows.guarded += Whole(row.m);
+        rows.guardedRows += 1;
+        row.m.counted += 1;
+    }
+}
+
+// The same through calls: every row is made
+[After(EachGuarded)]
+view EachPlain(mut Rows rows, Show show, query (Man m) men)
+{
+    foreach (var row in men)
+    {
+        if (!Is(show.on) || !Is(row.m.chosen)) continue;
+        rows.plain += Whole(row.m);
+        rows.plainRows += 1;
+        rows.counted += row.m.counted;
+    }
+}
+
+// Steps of a parallel loop, for the rows its tests let through alone
+[After(EachPlain)]
+view AtOnce(query (mut Man m) men)
+{
+    parallel (var row in men)
+    {
+        if (!row.m.chosen) continue;
+        row.m.placed = Whole(row.m) * 2;
+    }
+}
+
+[After(AtOnce)]
+view Sum(mut Rows rows, query (Man m) men)
+{
+    foreach (var row in men)
+    {
+        if (row.m.chosen)
+        {
+            rows.atOnce += row.m.placed;
+            rows.expected += Whole(row.m) * 2;
+        }
+    }
+}
+
+// Fields of the match's that a frame shows as the tick has them (a bool, an
+// int) are a guard's too: its tests read just their lanes
+[After(Sum)]
+view MatchGuarded(Man m, mut Show show)
+{
+    if (m.down || m.rank == 2) return;
+    show.matchGuarded += Whole(m);
+    show.matchRows += 1;
+}
+
+[After(MatchGuarded)]
+view MatchPlain(Man m, mut Show show)
+{
+    if (Is(m.down) || Is(m.rank == 2)) return;
+    show.matchPlain += Whole(m);
+    show.matchPlainRows += 1;
+}
+
+// A query handed to a function that goes through it: its rows hold only what
+// the function's loop reads, and none is made for an entity the loop's first
+// tests of the match's unblended fields turn away. The third test is a call:
+// the loop's own.
+void Lasers(mut Show show, query (Man m) men, query (Mounted h) horses)
+{
+    mut var riders = 0;
+    foreach (var row in horses) riders += row.h.height > 1 ? 1 : 0;
+    foreach (var row in men)
+    {
+        if (row.m.down || row.m.rank == 2 || Is(row.m.rank == 4)) continue;
+        show.lasers += row.m.position.x + row.m.yaw;
+        show.laserRows += 1;
+    }
+    show.riders = riders;
+}
+
+[After(MatchPlain)]
+view Beams(mut Show show, query (Man m) men, query (Mounted h) horses)
+{
+    if (!show.on) return;
+    Lasers(show, men, horses);
+}
+
+[After(Beams)]
+view BeamsPlain(mut Show show, query (Man m) men)
+{
+    if (!show.on) return;
+    foreach (var row in men)
+    {
+        if (Is(row.m.down) || Is(row.m.rank == 2) || Is(row.m.rank == 4)) continue;
+        show.lasersPlain += row.m.position.x + row.m.yaw;
+        show.laserPlainRows += 1;
+    }
 }

@@ -517,6 +517,148 @@ static void stmt_row_reads(const stmt *s, const param *q, const field *binding, 
     stmt_row_reads(s->else_stmt, q, binding, r, reached);
 }
 
+// What `code` reads of the rows of its query parameter `q`, of the binding that's the `ordinal`th of a row's:
+// false when it can't be said. The code goes through the query in loops, or hands it to a function of the
+// game's that does (a function borrowing a query: its loops' reads are the caller's rows'), and names it
+// nowhere else. A function is followed four deep.
+static bool query_row_reads(const decl *code, const param *q, int ordinal, byte_writes *r, int depth);
+
+typedef struct query_passes {
+    const param *q;
+    int ordinal;
+    byte_writes *r;
+    int depth;
+    int passed; // Times the query is an argument of such a function
+    bool lost;  // ...or of one that can't be followed
+    bool probe; // Only find the function it's handed to and which parameter takes it (`callee`, `index`)
+    const decl *callee;
+    int index;
+} query_passes;
+
+static void stmt_query_passes(const stmt *s, query_passes *w);
+
+static void expr_query_passes(const expr *e, query_passes *w)
+{
+    if (!e || w->lost) return;
+    const decl *callee = e->method;
+    for (int i = 0; i < e->args.count; i++) {
+        const expr *arg = e->args.items[i];
+        if (arg->kind == E_NAME && arg->bind == BIND_PARAM && same_param(arg->param, w->q)) {
+            const bool plain = callee && callee->kind == DECL_FUNCTION && callee->body && !callee->is_extern && !callee->is_async
+                && !callee->is_virtual && !callee->is_override && !callee->replaced_by && !callee->is_worker
+                && (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && i < callee->params.count
+                && callee->params.items[i].type.kind == TY_QUERY;
+            if (!plain || (!w->probe && !query_row_reads(callee, &callee->params.items[i], w->ordinal, w->r, w->depth + 1))) {
+                w->lost = true;
+                return;
+            }
+            w->callee = callee;
+            w->index = i;
+            w->passed++;
+            continue;
+        }
+        expr_query_passes(arg, w);
+    }
+    expr_query_passes(e->object, w);
+    expr_query_passes(e->lhs, w);
+    expr_query_passes(e->rhs, w);
+    expr_query_passes(e->cond, w);
+    for (int i = 0; i < e->inits.count; i++) expr_query_passes(e->inits.items[i].value, w);
+    expr_query_passes(e->lambda_body, w);
+    expr_query_passes(e->values, w);
+    expr_query_passes(e->mesh_lod, w);
+    expr_query_passes(e->skin_mesh, w);
+    expr_query_passes(e->skin_pose, w);
+    expr_query_passes(e->callable_receiver, w);
+    expr_query_passes(e->task_source, w);
+    expr_query_passes(e->binding_value, w);
+    stmt_query_passes(e->block, w);
+    stmt_query_passes(e->step, w);
+    stmt_query_passes(e->compare[0], w);
+    stmt_query_passes(e->compare[1], w);
+    stmt_query_passes(e->out_local, w);
+    stmt_query_passes(e->binding, w);
+}
+
+static void stmt_query_passes(const stmt *s, query_passes *w)
+{
+    if (!s || w->lost) return;
+    for (int i = 0; i < s->stmts.count; i++) stmt_query_passes(s->stmts.items[i], w);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) expr_query_passes(s->cases.items[i].labels.items[k], w);
+        for (int k = 0; k < s->cases.items[i].body.count; k++) stmt_query_passes(s->cases.items[i].body.items[k], w);
+    }
+    expr_query_passes(s->cond, w);
+    expr_query_passes(s->value, w);
+    expr_query_passes(s->target, w);
+    expr_query_passes(s->property_set, w);
+    expr_query_passes(s->by, w);
+    expr_query_passes(s->offset, w);
+    stmt_query_passes(s->init, w);
+    stmt_query_passes(s->step, w);
+    stmt_query_passes(s->then_stmt, w);
+    stmt_query_passes(s->else_stmt, w);
+}
+
+static bool query_row_reads(const decl *code, const param *q, const int ordinal, byte_writes *r, const int depth)
+{
+    if (depth > 4 || !code->body || q->type.kind != TY_QUERY || !q->type.decl) return false;
+    // The row's field for that binding, in this code's own row type: of the component it is everywhere
+    const decl *row = q->type.decl;
+    const field *binding = NULL;
+    for (int i = 0, k = 0; i < q->query.count && !binding; i++) {
+        if (!param_binding(&q->query.items[i])) continue;
+        if (k++ == ordinal && 1 + ordinal < row->fields.count) binding = &row->fields.items[1 + ordinal];
+    }
+    if (!binding || type_layout(binding->type).size != r->size) return false;
+    query_uses u = {q, 0, 0};
+    stmt_query_uses(code->body, &u);
+    int reached = 0;
+    stmt_row_reads(code->body, q, binding, r, &reached);
+    if (reached != u.looped || r->all) return false; // A loop in a block it didn't look in, or a row read whole
+    query_passes w = {q, ordinal, r, depth, 0, false, false, NULL, 0};
+    if (u.named != u.looped) stmt_query_passes(code->body, &w);
+    return !w.lost && !r->all && u.named == u.looped + w.passed && u.named > 0;
+}
+
+// The loop over query `q` among statement `s`'s own (statements of statements, as stmt_row_reads looks)
+static const stmt *find_query_loop(const stmt *s, const param *q)
+{
+    if (!s) return NULL;
+    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && same_param(s->query, q)) return s;
+    const stmt *found = NULL;
+    for (int i = 0; i < s->stmts.count && !found; i++) found = find_query_loop(s->stmts.items[i], q);
+    for (int i = 0; i < s->cases.count && !found; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count && !found; k++) found = find_query_loop(s->cases.items[i].body.items[k], q);
+    }
+    if (!found) found = find_query_loop(s->init, q);
+    if (!found) found = find_query_loop(s->step, q);
+    if (!found) found = find_query_loop(s->then_stmt, q);
+    if (!found) found = find_query_loop(s->else_stmt, q);
+    return found;
+}
+
+// The one loop that goes through the rows of `code`'s query `q`, in `code` or in the function it hands the query
+// to (and so on, four deep), and whose code that is: NULL where the rows are used any other way
+static const stmt *query_one_loop(const decl *code, const param *q, const decl **owner)
+{
+    for (int depth = 0; depth <= 4 && code && code->body; depth++) {
+        query_uses u = {q, 0, 0};
+        stmt_query_uses(code->body, &u);
+        if (u.named != 1) return NULL;
+        if (u.looped == 1) {
+            *owner = code;
+            return find_query_loop(code->body, q);
+        }
+        query_passes w = {q, 0, NULL, depth, 0, false, true, NULL, 0};
+        stmt_query_passes(code->body, &w);
+        if (w.lost || w.passed != 1 || !w.callee) return NULL;
+        code = w.callee;
+        q = &code->params.items[w.index];
+    }
+    return NULL;
+}
+
 // The lanes view `sys` reads of binding `b` of its query parameter `qi`, the
 // row's field `binding`, into `mask`: false when it reads all of them, or
 // can't say. Only a query the view does nothing with but go through it.
@@ -528,16 +670,13 @@ static bool view_query_lanes(const gen *g, const decl *sys, const int qi, const 
         || !reads_some_allowed(g, p->type.decl, sys)) {
         return false;
     }
-    query_uses u = {q, 0, 0};
-    stmt_query_uses(sys->body, &u);
-    if (!u.looped || u.named != u.looped) return false;
     const int size = type_layout(binding->type).size;
     if (size != decl_layout(p->type.decl).size) return false;
     byte_writes r = {size, false, arena_alloc((size_t)size)};
     memset(r.bytes, 0, (size_t)size);
-    int reached = 0;
-    stmt_row_reads(sys->body, q, binding, &r, &reached);
-    if (reached != u.looped) return false; // One in a block it didn't look in
+    int ordinal = 0; // Which of the row's bindings it is
+    for (int i = 0; i < b; i++) ordinal += param_binding(&q->query.items[i]) ? 1 : 0;
+    if (!query_row_reads(sys, q, ordinal, &r, 0)) return false;
     return view_lane_mask(p->type.decl, &r, mask);
 }
 

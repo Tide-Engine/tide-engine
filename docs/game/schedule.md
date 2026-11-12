@@ -148,16 +148,17 @@ Parallel loops, and when their steps go to the threads:
          Weigh, line 72: a list's elements, on one thread: its steps read 'scale', which lives on the thread that made it, as text, lists, maps, sets and grids in variables do
 ```
 
-The reckoning is of the code as written: a step that returns on its first line counts as much as one that runs it all. A loop under its number runs in order on the thread that reached it, with the same results.
+The reckoning is of the code as written: a step that returns on its first line counts as much as one that runs it all. A loop under its number runs in order on the thread that reached it, with the same results. The numbers are where a loop starts: as the game runs, the engine times each loop, and one whose steps take longer than their code looks goes to the threads from fewer.
 
-A view that runs for each entity and starts with `if (...) return;` tests of this machine's own state (the entity's [local fields](./views.md), a local singleton's fields) has those tests run before anything of the entity is copied, so a view that goes through a thousand entities to draw six costs little for the rest. `tide schedule` lists them:
+A view that runs for each entity and starts with `if (...) return;` tests of this machine's own state (the entity's [local fields](./views.md), a local singleton's fields), or of the entity's `bool`, `int`, enum and `Entity` fields, has those tests run before anything else of the entity is copied, so a view that goes through a thousand entities to draw six costs little for the rest. `tide schedule` lists them:
 
 ```
 Views that test an entity before copying anything of it:
          DrawChosen: 2 tests, down to line 90
+         PoseChosen, the rows of its loop at line 120: 1 test, down to line 122
 ```
 
-A test that calls a function, or reads a field of the match's, is run by the view's code as usual, after the entity's components are read.
+The second line is a view's query: a view that runs once and goes through its one query in one loop, whose steps start with `if (...) continue;` tests of the same kind, makes no row for an entity they turn away. The loop may be in a function the view hands its query to. The tests may also read fields of the match's that a frame shows exactly as the tick has them: a `bool`, an `int`, an enum or an `Entity`, as in `if (!row.t.laserOn || row.t.holstered) continue;`. A test that calls a function, or reads a field that's drawn between two ticks (a position, an angle), is run by the view's code as usual, after the entity's components are read.
 
 ## In CMake builds
 

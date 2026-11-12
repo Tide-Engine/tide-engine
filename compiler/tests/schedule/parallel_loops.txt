@@ -37,4 +37,5 @@ Parallel loops, and when their steps go to the threads:
          Heard, line 49: a list's elements, on one thread: a local handler's loops stay on its thread
 
 Views that test an entity before copying anything of it:
+         Place, the rows of its loop at line 40: 1 test, down to line 42
          Near: 2 tests, down to line 54

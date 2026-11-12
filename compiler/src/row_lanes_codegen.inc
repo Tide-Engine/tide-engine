@@ -171,12 +171,43 @@ static int system_guard_terms(const decl *sys, const expr **terms)
 
 // A view's guard. A view that runs for each entity gathers, blends and corrects what it reads of the entity's
 // components before its code runs, so one that goes through a thousand entities to act on six pays for a
-// thousand. Where its code starts with `if (...) return;` tests that read nothing of the match's components,
-// the row's tests run first (tide_view_guard_<View>) and a row they turn away is never copied.
+// thousand. Where its code starts with `if (...) return;` tests of what a frame doesn't change, the row's tests
+// run first (tide_view_guard_<View>) and a row they turn away is never copied.
 //
-// A test here reads this machine's own state alone, which needs no world between ticks and no correction:
-// the entity's local fields (through a component parameter), a local singleton's fields, and constants.
-static bool view_guard_base(const expr *e)
+// A test reads:
+// - this machine's own state, which needs no world between ticks and no correction: the entity's local fields
+//   (through a component parameter), a local singleton's fields;
+// - fields of the entity's components that a frame shows as the tick has them (guard_match_field): ones that
+//   don't blend (a bool, an int, an enum, an Entity), of a component drawn from this world alone. The guard is
+//   handed a copy with just their lanes;
+// - constants.
+
+// Whether a view sees component `d`'s unblended fields exactly as the world it draws has them
+static bool guard_match_comp(const gen *g, const decl *d)
+{
+    // (A far entity's fields are the confirmed world's: the guard's copy is taken from there with the same
+    // function its row's is, tide_far_blend_some_<C>, which is made for components some view reads in part)
+    return !d->is_local && !d->interpolate && (!far_blends(g, d) || reads_some_used(g, d)) && !sharded(g)
+        && comp_lanes(d) <= LANE_MASK_MOST && decl_layout(d).size <= LANE_WRITES_MOST;
+}
+
+// `t.down`, `t.kit.kind`: a field of component parameter `of`'s that doesn't blend, or a field in one
+static bool guard_match_field(const gen *g, const expr *e, const param **of)
+{
+    if (!e || e->kind != E_MEMBER || e->property || e->local_field || e->edge != EDGE_NONE || e->c_constant || e->typed_text
+        || e->raw_sampled || e->target_colors || e->asset_ref_value || !e->field || !e->object) return false;
+    const expr *root = e->object;
+    if (root->kind == E_NAME) {
+        if (root->bind != BIND_PARAM || !root->param || root->param->type.kind != TY_COMPONENT || root->param->verified
+            || (root->param->mode != PARAM_READ && root->param->mode != PARAM_MUT)) return false;
+        if (field_blends(e->field) || e->field->hidden || !guard_match_comp(g, root->param->type.decl)) return false;
+        *of = root->param;
+        return true;
+    }
+    return guard_value(root->type) && guard_match_field(g, root, of);
+}
+
+static bool view_guard_base(const gen *g, const expr *e)
 {
     if (!e || e->hoisted || e->lambda) return false;
     if (e->kind == E_NAME) { // A local singleton, whole: its fields are read below
@@ -190,10 +221,12 @@ static bool view_guard_base(const expr *e)
         return of && of->kind == E_NAME && of->bind == BIND_PARAM && of->param && of->param->type.kind == TY_COMPONENT
             && !of->param->verified && (of->param->mode == PARAM_READ || of->param->mode == PARAM_MUT);
     }
-    return view_guard_base(e->object);
+    const param *comp = NULL;
+    if (guard_match_field(g, e, &comp)) return true;
+    return view_guard_base(g, e->object);
 }
 
-static bool view_guard_plain(const expr *e)
+static bool view_guard_plain(const gen *g, const expr *e)
 {
     if (!e || e->hoisted || e->lambda) return false;
     switch (e->kind) {
@@ -203,12 +236,12 @@ static bool view_guard_plain(const expr *e)
     case E_MEMBER:
         if (e->enum_member) return true;
         if (e->constant) return guard_value(e->type);
-        if (e->swizzle_len > 0 && !e->field) return view_guard_base(e->object) && guard_value(e->type);
-        return view_guard_base(e);
+        if (e->swizzle_len > 0 && !e->field) return view_guard_base(g, e->object) && guard_value(e->type);
+        return view_guard_base(g, e);
     case E_UNARY:
-        return !e->method && view_guard_plain(e->lhs) && guard_value(e->type);
+        return !e->method && view_guard_plain(g, e->lhs) && guard_value(e->type);
     case E_BINARY:
-        return !e->method && view_guard_plain(e->lhs) && view_guard_plain(e->rhs) && guard_value(e->lhs->type)
+        return !e->method && view_guard_plain(g, e->lhs) && view_guard_plain(g, e->rhs) && guard_value(e->lhs->type)
             && guard_value(e->rhs->type) && guard_value(e->type);
     default: return false;
     }
@@ -223,7 +256,7 @@ static bool view_guard_reads(const expr *e)
 }
 
 // The tests view `sys`'s code starts with that its guard runs: as system_guard_terms, by a view's rule
-static int view_guard_terms(const decl *sys, const expr **terms)
+static int view_guard_terms(const gen *g, const decl *sys, const expr **terms)
 {
     int n = 0;
     bool reads = false;
@@ -243,7 +276,7 @@ static int view_guard_terms(const decl *sys, const expr **terms)
         chain[links++] = e;
         bool whole = true;
         for (int k = links - 1; k >= 0; k--) {
-            if (!view_guard_plain(chain[k]) || chain[k]->type.kind != TY_BOOL || n == GUARD_TERMS_MOST) {
+            if (!view_guard_plain(g, chain[k]) || chain[k]->type.kind != TY_BOOL || n == GUARD_TERMS_MOST) {
                 whole = false;
                 break;
             }
@@ -257,12 +290,49 @@ static int view_guard_terms(const decl *sys, const expr **terms)
 
 // Whether view `sys`'s rows are tested by tide_view_guard_<View> before anything of them is copied: one that
 // runs for each entity of the world it draws alone (a `verified` parameter's row is found in another world)
-static bool view_guarded(const decl *sys)
+static bool view_guarded(const gen *g, const decl *sys)
 {
     if (!sys->is_view || !sys->per_entity || !sys->body || sys->is_async || sys->starts_tasks || sys->takes_verified
         || sys->verified_join || sys->verified_entities) return false;
     const expr *terms[GUARD_TERMS_MOST];
-    return view_guard_terms(sys, terms) > 0;
+    return view_guard_terms(g, sys, terms) > 0;
+}
+
+// The lanes of `d` that hold the bytes `r` marks: false for none
+static bool guard_bytes_lanes(const decl *d, const byte_writes *r, lane_mask *mask)
+{
+    const int lanes = comp_lanes(d), width = comp_width(d);
+    *mask = (lane_mask){{0}};
+    if (!r || r->all || r->size != lanes * width) { // It can't be said: every lane
+        *mask = lane_every(lanes);
+        return true;
+    }
+    bool any = false;
+    for (int k = 0; k < lanes; k++) {
+        for (int b = 0; b < width; b++) {
+            if (r->bytes[k * width + b]) {
+                lane_set(mask, k);
+                any = true;
+            }
+        }
+    }
+    return any;
+}
+
+// The lanes of its component parameter `i` a view's guard reads, for the copy it's handed: false for none
+static bool view_guard_lanes(const gen *g, const decl *sys, const int i, lane_mask *mask)
+{
+    const param *p = &sys->params.items[i];
+    if (p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) return false;
+    const int size = decl_layout(p->type.decl).size;
+    if (size <= 0 || size > LANE_WRITES_MOST) return false;
+    byte_writes r = {size, false, arena_alloc((size_t)size)};
+    memset(r.bytes, 0, (size_t)size);
+    const expr *terms[GUARD_TERMS_MOST];
+    const int n = view_guard_terms(g, sys, terms);
+    const reads_root root = {p, NULL, NULL, false};
+    for (int k = 0; k < n; k++) expr_reads(terms[k], &root, &r);
+    return guard_bytes_lanes(p->type.decl, &r, mask);
 }
 
 // Whether system `sys`'s rows are tested by tide_guard_<System> before their copies are made

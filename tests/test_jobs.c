@@ -256,6 +256,45 @@ TIDE_TEST(jobs_loops_outside_a_tick_call_a_frames_pool_in)
     TIDE_CHECK(each);
 }
 
+// A frame's loop of a few steps tidec reckons at little, each of which takes a
+// quarter of a millisecond: on a pool that times its work it runs in order the
+// first time and goes to the pool from the second, by what it took; on one
+// that doesn't, never. A loop that says it has no work to share stays put.
+static uint32_t slow_steps;
+
+static void slow_step(void *context, const uint32_t task)
+{
+    (void)context;
+    (void)task;
+    slow_steps++;
+    const uint64_t until = tide_time_now_ns() + 250000u;
+    while (tide_time_now_ns() < until) {
+    }
+}
+
+TIDE_TEST(jobs_a_frames_costly_steps_go_to_the_pool_once_timed)
+{
+    const tide_jobs timed = {.threads = 8, .run = counted_round, .timed = true};
+    const tide_jobs untimed = {.threads = 8, .run = counted_round};
+    rounds = 0;
+    slow_steps = 0;
+    const tide_jobs *const before = tide_loops_enter(&untimed);
+    for (int i = 0; i < 3; i++) tide_parallel_for(4, slow_step, NULL, 4000);
+    TIDE_CHECK(rounds == 0u);
+    tide_loops_leave(before);
+    tide_loops_enter(&timed);
+    tide_parallel_for(4, slow_step, NULL, 4000);
+    TIDE_CHECK(rounds == 0u); // Nothing measured yet: tidec's reckoning alone
+    tide_parallel_for(4, slow_step, NULL, 4000);
+    tide_parallel_for(4, slow_step, NULL, 4000);
+    TIDE_CHECK(rounds == 2u);
+    tide_parallel_for(1, slow_step, NULL, 1000); // One step is never shared out
+    tide_parallel_for(4, slow_step, NULL, 0);    // Nor a loop with no work to share
+    TIDE_CHECK(rounds == 2u);
+    tide_loops_leave(before);
+    TIDE_CHECK(slow_steps == 29u);
+}
+
 TIDE_TEST(jobs_on_one_thread_make_no_pieces)
 {
     static const uint32_t after_first[1] = {0};

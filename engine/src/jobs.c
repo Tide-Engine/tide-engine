@@ -558,10 +558,44 @@ const tide_jobs *tide_loops_enter(const tide_jobs *jobs)
 
 void tide_loops_leave(const tide_jobs *previous) { frame_jobs = previous; }
 
+// What a frame's loops took against what tidec reckoned them, as a tick's
+// systems are measured (system_cost), for a pool that times its work
+// (tide_jobs.timed): a loop is known by its steps' function. tidec reckons a
+// few steps of costly code (a man posed, his arms solved) at next to nothing,
+// and they stayed on the frame's thread however long they took. Only which
+// threads run the steps depends on this, never a result. The frame thread's,
+// the oldest replaced.
+#define FRAME_COSTS 32u
+typedef struct frame_cost {
+    void (*work)(void *context, uint32_t task);
+    system_cost cost;
+} frame_cost;
+static TIDE_THREAD_LOCAL frame_cost frame_costs[FRAME_COSTS];
+static TIDE_THREAD_LOCAL uint32_t frame_cost_next;
+
+static system_cost *frame_cost_of(void (*work)(void *context, uint32_t task))
+{
+    for (uint32_t i = 0; i < FRAME_COSTS; i++) {
+        if (frame_costs[i].work == work) return &frame_costs[i].cost;
+    }
+    frame_cost *made = &frame_costs[frame_cost_next++ % FRAME_COSTS];
+    *made = (frame_cost){work, {0, 0}};
+    return &made->cost;
+}
+
+typedef struct frame_job {
+    loop_job loop;
+    atomic_uint_least64_t spent; // Nanoseconds in its steps, every thread's summed: 0 when it isn't timed
+    bool timed;
+} frame_job;
+
 static void take_frame_loop(void *context, const uint32_t thread)
 {
-    loop_job *job = context;
+    frame_job *frame = context;
+    loop_job *job = &frame->loop;
     bool synced = thread == 0u; // The caller's thread made what there is to see
+    uint64_t began = 0u;
+    bool took = false;
     for (;;) {
         const uint32_t task = atomic_fetch_add(&job->next, 1u);
         if (task >= job->count) break;
@@ -569,24 +603,41 @@ static void take_frame_loop(void *context, const uint32_t thread)
             tide_memory_sync(); // What the frame made on its own thread
             synced = true;
         }
+        if (!took && frame->timed) began = tide_time_now_ns();
+        took = true;
         job->work(job->context, task);
         atomic_fetch_add(&job->done, 1u);
     }
+    if (took && frame->timed) atomic_fetch_add(&frame->spent, tide_time_now_ns() - began);
 }
 
+// A loop outside a tick, on a thread a frame's pool was handed to: its steps
+// on the pool's threads when they're worth a round, by tidec's reckoning or by
+// what the loop took the last times; here in order otherwise. False for a
+// thread with no frame's pool.
 static bool frame_loop(const uint32_t count, void (*work_fn)(void *context, uint32_t task), void *context,
                        const uint64_t cost)
 {
     const tide_jobs *jobs = frame_jobs;
-    if (!jobs || count < 2u || cost < ROUND_WORK) return false;
-    loop_job job = {work_fn, context, count, 0u, 0u};
-    atomic_init(&job.next, 0u);
-    atomic_init(&job.done, 0u);
+    if (!jobs) return false;
+    // (A loop that says it has no work to share stays here, whatever it took: tidec's par_stays)
+    system_cost *measured = jobs->timed && cost ? frame_cost_of(work_fn) : NULL;
+    if (count < 2u || work_of(measured, cost) < ROUND_WORK || !cost) {
+        const uint64_t began = measured ? tide_time_now_ns() : 0u;
+        for (uint32_t task = 0; task < count; task++) work_fn(context, task);
+        if (measured && count) note_cost(measured, tide_time_now_ns() - began, cost);
+        return true;
+    }
+    frame_job frame = {{work_fn, context, count, 0u, 0u}, 0u, measured != NULL};
+    atomic_init(&frame.loop.next, 0u);
+    atomic_init(&frame.loop.done, 0u);
+    atomic_init(&frame.spent, 0u);
     frame_jobs = NULL; // A loop inside its steps runs in order (the other threads have none)
     tide_memory_sync();
-    jobs->run(jobs->self, take_frame_loop, &job);
+    jobs->run(jobs->self, take_frame_loop, &frame);
     frame_jobs = jobs;
     tide_memory_sync(); // What the other threads made (see tide/page.h)
+    if (measured) note_cost(measured, atomic_load(&frame.spent), cost);
     return true;
 }
 

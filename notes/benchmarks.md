@@ -11,6 +11,33 @@ After the deliberate identity-pin update, all five quick cases pass on native
 ASan and WASI.
 
 
+## Rows a loop turns away, borrowed queries and far entities' lanes (2026-11-12, night)
+
+For notes/ecs.md (A view's rows, guarded; A far entity's lanes; A query handed to a function; Guards read the
+match's fields that don't blend) and notes/schedule-and-threads.md (a frame's loops are timed).
+
+Mount & Rifle unmodified (its dev a145828), the 1,000-man battle (`--host --seed 42 --frames 2400 --size 1920
+1080 --profile x.json --profile-warmup 1500`, `DEFINES BATTLE_TEST ARMY`), built with `dev` b90ffaa43 and with
+this checkout through the same scratch `TIDE_EXTERNAL_DIRS` folder; four runs each, alternating, the machine
+quiet. Medians of each view's mean, ms a frame (and the least of the four):
+
+| View | Before | After |
+|---|---|---|
+| Infantry.Traces (hands `query (Trooper t)` to a function whose loop tests two bools first) | 0.304 (0.265) | 0.050 (0.042) |
+| Campaign.DrawCampaign (a rows' guard; partial rows of far entities) | 0.442 (0.387) | 0.236 (0.210) |
+| Campaign.CampaignHud | 0.253 (0.229) | 0.135 (0.126) |
+| Infantry.OthersOnFoot (per entity, reads `Trooper` whole) | 0.783 (0.631) | 0.636 (0.526) |
+| Present, DrawFlora, DrawCompoundKits, HeldWeapon, DrawLand, Bloodshed (nothing of theirs changed) | | -2 to -4% |
+| Every view, summed, per run | 5.86, 6.94, 5.32, 6.05 | 6.63, 4.94, 5.11, 4.89 |
+
+`tide schedule` on the game: `Infantry.Traces` and `Infantry.TracesInScope`, "the rows of its loop at line 214:
+2 tests"; `Campaign.DrawCampaign` and `Infantry.BattleOver` rows; `Infantry.OthersOnFoot`, `GearKeys`,
+`HurtOverlay` and `Hud` as per-entity guards.
+
+With the game's pose-on-threads patch (its dev 7683573), earlier the same night, the machine busy: once the
+rows of `PoseWholeMen`'s loop were guarded and the loop timed, `PoseWholeMen` 0.19 ms to 0.12-0.17 and
+`DrawWholeMen` 0.12 to 0.09-0.15; its three views about 0.6 ms in all against the 0.79 of the one they replace.
+
 ## A view's guard (2026-11-12, evening)
 
 For notes/ecs.md (A view's guard, and lookups that guess by the key). Release, Windows, Ryzen 9 7900X, hidden.

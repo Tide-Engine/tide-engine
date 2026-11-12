@@ -11507,8 +11507,8 @@ static bool view_rows_lazy(const gen *g, const decl *sys);
 static int view_rows_from(const decl *sys);
 static bool text_names_rows(const decl *sys, const char *text, size_t n);
 static bool system_guarded(const gen *g, const decl *sys);
-static bool view_guarded(const decl *sys);
-static int view_guard_terms(const decl *sys, const expr **terms);
+static bool view_guarded(const gen *g, const decl *sys);
+static int view_guard_terms(const gen *g, const decl *sys, const expr **terms);
 static bool match_query_lanes(const gen *g, const stmt *s, const param *p, const field *binding, uint64_t *words);
 
 // In tide_prev_<Component>: the entity found in last tick's world and in this one, once each (its slot holds its
@@ -11844,6 +11844,21 @@ static void gen_blend_helpers(gen *g)
                          "const uint64_t *some)\n{\n", outline ? "noinline" : "always_inline", name, name, name);
             gen_prev_found(g);
             sb_printf(o, "    return tide_load_some_%s_at(w, (tide_location){was->archetype, was->row}, out, some) ? out : NULL;\n}\n\n", name);
+            // A far entity's (gen_far_blend), for the lanes a view reads alone: with predictionRange nearly
+            // every entity is far, and the whole component was loaded from the confirmed world and from its
+            // tick before for each row, whatever the view read of it
+            if (far_blends(g, d)) {
+                sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) bool tide_far_blend_some_%s(const tide_world *w, tide_entity e, %s *v, "
+                             "const uint64_t *some)\n{\n"
+                             "    if (!tide_far_verified || !tide_has_tide_far(w, e)) return false;\n", name, name);
+                if (entities_born(g)) {
+                    sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&tide_far_verified->entities, e))) return false;\n");
+                }
+                sb_printf(o, "    if (!tide_load_some_%s(tide_far_verified, e, v, some)) return false; // (Nothing of `v` changed)\n"
+                             "    if (tide_far_vprev && tide_far_valpha < 1.0f) {\n"
+                             "        %s before;\n        tide_blend_some_%s(v, tide_prev_some_%s(tide_far_vprev, tide_far_verified, e, &before, some), "
+                             "tide_far_valpha, some);\n    }\n    return true;\n}\n\n", name, name, name, name);
+            }
         }
     }
     g->indent = 0;
@@ -16241,7 +16256,7 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
                 && p->type.kind != TY_QUERY && has_fields_ptr(p)) line(g, o, "(void)%s;", fields_name(g, p->name));
         }
         const expr *terms[GUARD_TERMS_MOST];
-        const int n = sys->is_view ? view_guard_terms(sys, terms) : system_guard_terms(sys, terms);
+        const int n = sys->is_view ? view_guard_terms(g, sys, terms) : system_guard_terms(sys, terms);
         for (int k = 0; k < n; k++) {
             line_directive(g, terms[k]->at);
             line(g, o, "if (%s) return true;", condition_text(g, terms[k]));
@@ -16343,7 +16358,7 @@ static void gen_system_body(gen *g, const decl *sys)
 {
     gen_system_body_variant(g, sys, BODY_SYSTEM);
     if (batch_destroy(sys)) gen_system_body_variant(g, sys, BODY_DESTROYING);
-    if (system_guarded(g, sys) || view_guarded(sys)) gen_system_body_variant(g, sys, BODY_GUARD);
+    if (system_guarded(g, sys) || view_guarded(g, sys)) gen_system_body_variant(g, sys, BODY_GUARD);
 }
 
 // Whether field `f` is left out of blending.
@@ -16937,7 +16952,7 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                       pad, c, i, c, some.data);
             if (param_blends(p)) {
                 if (sys->is_view && !p->verified && far_blends(g, p->type.decl)) {
-                    sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &tide_v%d))\n", pad, c, i);
+                    sb_printf(o, "%sif (!tide_far_blend_some_%s(tide_w, tide_ent[tide_i], &tide_v%d, %s))\n", pad, c, i, some.data);
                 }
                 sb_printf(o, "%sif (tide_blend) { %s tide_p%d; tide_blend_some_%s(&tide_v%d, tide_prev_some_%s(tide_prev, tide_w, "
                              "tide_ent[tide_i], &tide_p%d, %s), tide_alpha, %s); }\n", pad, c, i, c, i, c, i, some.data, some.data);
@@ -17123,8 +17138,11 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
             break;
         case TY_COMPONENT: // Its copy, from gen_row_copies, and its local fields, from gen_row_fields
             if (g->guard_call && sys->is_view && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) {
-                // A view's guard reads nothing of the match's components (view_guard_terms): none is copied yet
-                sb_put(o, ", NULL");
+                // A view's guard is handed the lanes its tests read of a component, copied for it alone
+                // (tide_g<i>, gen_chunk), and nothing of one they read none of
+                lane_mask read;
+                if (view_guard_lanes(g, sys, i, &read)) sb_printf(o, ", &tide_g%d", i);
+                else sb_put(o, ", NULL");
                 if (g->blending == sys && has_fields_ptr(p)) sb_printf(o, ", tide_lf%d", i);
                 break;
             }
@@ -19439,12 +19457,27 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     // A view's guard (row_lanes_codegen.inc): the entity's local fields found, as its row finds them anyway, and
     // the tests its code starts with run on them, before anything of its components is copied, blended or
     // corrected. A row they turn away is done: the code would have returned on those tests, having changed nothing.
-    const bool guarded = g->blending == sys && view_guarded(sys);
+    const bool guarded = g->blending == sys && view_guarded(g, sys);
     if (guarded) {
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
             if (p->type.kind == TY_COMPONENT && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && has_fields_ptr(p)) {
                 gen_row_fields(g, p, i, inner.data);
+            }
+            // What its tests read of the component as the tick has it: fields that don't blend
+            lane_mask read;
+            if (view_guard_lanes(g, sys, i, &read)) {
+                sb value = {0}, from = {0};
+                sb_printf(&value, "tide_g%d", i);
+                sb_printf(&from, "tide_col_%s", type_cname(p->type.decl));
+                sb_printf(o, "%s%s tide_g%d;\n", inner.data, type_cname(p->type.decl), i);
+                gen_gather_lanes(o, inner.data, p->type.decl, value.data, from.data, &read);
+                if (far_blends(g, p->type.decl)) { // A far entity's are the confirmed world's, as its row's will be
+                    sb some = {0};
+                    lane_words_c(&some, &read, comp_lanes(p->type.decl));
+                    sb_printf(o, "%s(void)tide_far_blend_some_%s(tide_w, tide_ent[tide_i], &tide_g%d, %s);\n", inner.data,
+                              type_cname(p->type.decl), i, some.data);
+                }
             }
         }
         sb_printf(o, "%sif (tide_view_guard_%s(tide_w, tide_l, tide_draw, tide_ui, 0u", inner.data, decl_cname(sys));
@@ -20391,6 +20424,213 @@ static void gen_system_pieces(gen *g, const decl *sys)
 // left to settle, or, `verified`, as the last confirmed tick has them. A query
 // with bindings or filters of both worlds takes the drawn world's entities
 // that are the same entities in the confirmed one.
+// A view's rows, guarded. Where the one loop that goes through a view's query starts its steps with
+// `if (...) continue;` tests of what can't change before a row's own step, a row the tests turn away is never
+// made: the step would have done nothing with it. So a loop over a thousand entities that acts on six gathers,
+// blends and readies six. The loop may be in a function the view hands its query to.
+//
+// A test reads:
+// - fields of the row's components that a frame shows as the tick has them (ones that don't blend: a bool, an
+//   int, an enum, an Entity; guard_match_comp), gathered for the test alone. Nothing in a frame changes them;
+// - where the loop is a statement of the view's own, in a view that runs once and takes no other query
+//   (`local`): the row's own local fields (through a binding) and local singletons the view only reads. Nothing
+//   between making the rows and a row's own step can change those: no other loop reaches these entities' local
+//   fields, the loop runs once, a step writes only its own row's, and it can't write such a singleton;
+// - constants.
+static bool rows_guard_match(const gen *g, const expr *e, const stmt *loop)
+{
+    if (!e || e->kind != E_MEMBER || e->property || e->local_field || e->edge != EDGE_NONE || e->c_constant || e->typed_text
+        || e->raw_sampled || e->target_colors || e->asset_ref_value || !e->field || !e->object || !guard_value(e->type)) return false;
+    const param *binding = query_component(e->object); // `row.t`, of `row.t.down`
+    if (binding) {
+        return e->object->object->local == loop && !binding->verified && !field_blends(e->field) && !e->field->hidden
+            && guard_match_comp(g, binding->type.decl);
+    }
+    return rows_guard_match(g, e->object, loop);
+}
+
+static bool rows_guard_base(const gen *g, const expr *e, const stmt *loop, const bool local)
+{
+    if (!e || e->hoisted || e->lambda) return false;
+    if (e->kind == E_NAME) {
+        return local && e->bind == BIND_PARAM && e->param && e->param->type.kind == TY_SINGLETON && e->param->type.decl->is_local
+            && !e->param->verified && e->param->mode == PARAM_READ;
+    }
+    if (e->kind != E_MEMBER || e->property || e->edge != EDGE_NONE || e->c_constant || e->typed_text || e->raw_sampled
+        || e->target_colors || e->asset_ref_value || !e->field || !guard_value(e->type)) return false;
+    if (e->local_field) { // `row.t.wholeNow`
+        const expr *of = e->object;
+        const param *binding = of ? query_component(of) : NULL;
+        return local && binding && of->object->local == loop && !binding->verified && !heap_defaults(local_part_of(binding->type));
+    }
+    if (rows_guard_match(g, e, loop)) return true;
+    return rows_guard_base(g, e->object, loop, local);
+}
+
+static bool rows_guard_plain(const gen *g, const expr *e, const stmt *loop, const bool local)
+{
+    if (!e || e->hoisted || e->lambda) return false;
+    switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: return true;
+    case E_DEFAULT: return guard_value(e->type);
+    case E_NAME: return e->bind == BIND_CONST && guard_value(e->type);
+    case E_MEMBER:
+        if (e->enum_member) return true;
+        if (e->constant) return guard_value(e->type);
+        if (e->swizzle_len > 0 && !e->field) return rows_guard_base(g, e->object, loop, local) && guard_value(e->type);
+        return rows_guard_base(g, e, loop, local);
+    case E_UNARY:
+        return !e->method && rows_guard_plain(g, e->lhs, loop, local) && guard_value(e->type);
+    case E_BINARY:
+        return !e->method && rows_guard_plain(g, e->lhs, loop, local) && rows_guard_plain(g, e->rhs, loop, local)
+            && guard_value(e->lhs->type) && guard_value(e->rhs->type) && guard_value(e->type);
+    default: return false;
+    }
+}
+
+// The loop the rows of view `sys`'s query `qi` go through, whose code it's in (`owner`: the view, or a function
+// handed the query), whether its tests may read this machine's state (`local`), and the tests: 0 for none
+static int rows_guard_terms(const gen *g, const decl *sys, const int qi, const stmt **loop_out, const decl **owner_out,
+                            bool *local_out, const expr **terms)
+{
+    const param *q = &sys->params.items[qi];
+    if (!sys->is_view || !sys->body || !q->query_rows || q->query_verified_entities || q->query_verified_join || sharded(g)) return 0;
+    const decl *owner = NULL;
+    const stmt *loop = query_one_loop(sys, q, &owner);
+    if (!loop || !loop->then_stmt) return 0;
+    bool local = owner == sys && view_rows_lazy(g, sys);
+    for (int i = 0; local && i < sys->params.count; i++) { // Its one query
+        if (i != qi && sys->params.items[i].type.kind == TY_QUERY) local = false;
+    }
+    for (int i = 0; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        if (!param_binding(p)) continue;
+        if (p->verified) return 0;
+        if (has_fields_ptr(p) && seeds_fields(g, local_part_of(p->type))) local = false;
+    }
+    bool own = false; // A statement of the view's own: it runs once
+    for (int i = 0; local && i < sys->body->stmts.count; i++) own = own || sys->body->stmts.items[i] == loop;
+    local = local && own;
+    int n = 0;
+    bool reads = false;
+    const stmt *body = loop->then_stmt;
+    const int count = body->kind == S_BLOCK ? body->stmts.count : 1;
+    for (int i = 0; i < count; i++) {
+        const stmt *s = body->kind == S_BLOCK ? body->stmts.items[i] : body;
+        if (s->kind != S_IF || s->else_stmt || !s->cond || !s->then_stmt) break;
+        const stmt *then = s->then_stmt;
+        if (then->kind == S_BLOCK && then->stmts.count == 1) then = then->stmts.items[0];
+        if (then->kind != S_CONTINUE) break;
+        const expr *chain[GUARD_TERMS_MOST];
+        int links = 0;
+        const expr *e = s->cond;
+        while (e->kind == E_BINARY && e->op == T_OR && !e->method && links < GUARD_TERMS_MOST - 1) {
+            chain[links++] = e->rhs;
+            e = e->lhs;
+        }
+        chain[links++] = e;
+        bool whole = true;
+        for (int k = links - 1; k >= 0; k--) {
+            if (!rows_guard_plain(g, chain[k], loop, local) || chain[k]->type.kind != TY_BOOL || n == GUARD_TERMS_MOST) {
+                whole = false;
+                break;
+            }
+            reads = reads || view_guard_reads(chain[k]);
+            terms[n++] = chain[k];
+        }
+        if (!whole) break;
+    }
+    *loop_out = loop;
+    *owner_out = owner;
+    *local_out = local;
+    return reads ? n : 0;
+}
+
+// In the rows' fill, for the entity at tide_i: the loop's tests, with the names its step would read them by,
+// and `continue` past an entity they turn away
+static void gen_rows_guard(gen *g, const decl *sys, const int qi, const char *world, const char *pad)
+{
+    const stmt *loop = NULL;
+    const decl *owner = NULL;
+    bool local = false;
+    const expr *terms[GUARD_TERMS_MOST];
+    const int n = rows_guard_terms(g, sys, qi, &loop, &owner, &local, terms);
+    if (!n) return;
+    sb *o = &g->c;
+    const param *q = &sys->params.items[qi];
+    const decl *row = loop->query->type.decl; // The row as the loop's code names it (the view's, or a function's)
+    const char *name = local_cname(g, loop->name);
+    const char *entity = field_cname(&row->fields.items[0]);
+    sb inner = {0};
+    sb_printf(&inner, "%s    ", pad);
+    sb_printf(o, "%s{ // The tests its loop's steps start with (rows_guard_terms): an entity they turn away has no row\n", pad);
+    // The row the tests read: the entity, what it was born as, and of each component the lanes they read
+    lane_mask *read = arena_alloc(sizeof(lane_mask) * (size_t)(q->query.count + 1));
+    bool *reads = arena_alloc(sizeof(bool) * (size_t)(q->query.count + 1));
+    sb_printf(o, "%s    struct { tide_entity %s; uint32_t tide_born;", pad, entity);
+    for (int i = 0, f = 1; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        reads[i] = false;
+        if (!param_binding(p)) continue;
+        const field *value = f < row->fields.count ? &row->fields.items[f] : NULL;
+        f++;
+        const int size = decl_layout(p->type.decl).size;
+        if (!value || size <= 0 || size > LANE_WRITES_MOST || type_layout(value->type).size != size) continue;
+        byte_writes r = {size, false, arena_alloc((size_t)size)};
+        memset(r.bytes, 0, (size_t)size);
+        const reads_root root = {NULL, loop, value, false};
+        for (int k = 0; k < n; k++) expr_reads(terms[k], &root, &r);
+        reads[i] = guard_bytes_lanes(p->type.decl, &r, &read[i]);
+        if (reads[i]) sb_printf(o, " %s %s;", type_cname(p->type.decl), field_cname(value));
+    }
+    sb_printf(o, " } %s;\n%s    %s.%s = tide_ent[tide_i];\n", name, pad, name, entity);
+    if (q->local_use) sb_printf(o, "%s    %s.tide_born = tide_entity_born(&%s->entities, tide_ent[tide_i]);\n", pad, name, world);
+    else sb_printf(o, "%s    %s.tide_born = 0u;\n", pad, name);
+    for (int i = 0, f = 1; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        if (!param_binding(p)) continue;
+        const field *value = f < row->fields.count ? &row->fields.items[f] : NULL;
+        f++;
+        if (!value) continue;
+        if (reads[i]) {
+            sb place = {0}, from = {0};
+            sb_printf(&place, "%s.%s", name, field_cname(value));
+            sb_printf(&from, "tide_col%d", i);
+            gen_gather_lanes(o, inner.data, p->type.decl, place.data, from.data, &read[i]);
+            if (far_blends(g, p->type.decl)) { // A far entity's are the confirmed world's, as its row's will be
+                sb some = {0};
+                lane_words_c(&some, &read[i], comp_lanes(p->type.decl));
+                sb_printf(o, "%s(void)tide_far_blend_some_%s(tide_w, tide_ent[tide_i], &%s, %s);\n", inner.data, type_cname(p->type.decl),
+                          place.data, some.data);
+            }
+        }
+        if (!local || !has_fields_ptr(p)) continue;
+        const char *part = type_cname(local_part_of(p->type));
+        if (p->mode == PARAM_MUT) {
+            sb_printf(o, "%s    const %s tide_guard_fresh%d = ", pad, part, i);
+            gen_value(g, o, local_part_of(p->type), NULL, 0);
+            sb_printf(o, ";\n%s    const %s *const tide_query_mut_%s_%s = tide_query_fields_get_%s(tide_l, %s.%s, %s.tide_born, &tide_guard_fresh%d);\n",
+                      pad, part, name, field_cname(value), part, name, entity, name, i);
+            sb_printf(o, "%s    (void)tide_query_mut_%s_%s;\n", pad, name, field_cname(value));
+        } else {
+            sb_printf(o, "%s    const %s tide_query_fresh_%s_%s = ", pad, part, name, field_cname(value));
+            gen_value(g, o, local_part_of(p->type), NULL, 0);
+            sb_printf(o, ";\n%s    (void)tide_query_fresh_%s_%s;\n", pad, name, field_cname(value));
+        }
+    }
+    for (int i = 0; local && i < sys->params.count; i++) { // The local singletons the view only reads, by its names for them
+        const param *p = &sys->params.items[i];
+        if (p->type.kind != TY_SINGLETON || !p->type.decl->is_local || p->mode != PARAM_READ || p->verified || p->name.len <= 0) continue;
+        sb_printf(o, "%s    const %s *const %s = &tide_l->%s;\n%s    (void)%s;\n", pad, c_type(p->type), local_cname(g, p->name),
+                  type_cname(p->type.decl), pad, local_cname(g, p->name));
+    }
+    const decl *code = g->code;
+    g->code = owner;
+    for (int k = 0; k < n; k++) sb_printf(o, "%s    if ((bool)(%s)) continue;\n", pad, condition_text(g, terms[k]));
+    g->code = code;
+    sb_printf(o, "%s}\n", pad);
+}
+
 static void gen_query_fill(gen *g, const decl *sys, const int qi)
 {
     const program *prog = g->prog;
@@ -20468,6 +20708,7 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
             else if (mask_has(q->query_without_mask, c)) sb_printf(o, "%sif (tide_pres%d[tide_i]) continue;\n", pad, c);
         }
         if (shards) sb_printf(o, "%sif (tide_view_hides(%s, tide_ent[tide_i])) continue; // Another world drawn has it\n", pad, world);
+        gen_rows_guard(g, sys, qi, world, pad);
         sb_printf(o, "%s%s *const tide_row = &tide_rows[tide_n];\n", pad, type);
         if (q->query_verified_join) {
             // The entity's row in the confirmed world, which has to be the same
@@ -20521,7 +20762,7 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
                 sb_printf(o, "%stide_gather_some_%s(&%s, tide_col%d, tide_i, %s);\n", pad, c, place.data, i, some.data);
                 if (decl_blends(comp) && !comp->is_local) {
                     if (!p->verified && far_blends(g, comp)) {
-                        sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &%s))\n", pad, c, place.data);
+                        sb_printf(o, "%sif (!tide_far_blend_some_%s(tide_w, tide_ent[tide_i], &%s, %s))\n", pad, c, place.data, some.data);
                     }
                     sb_printf(o, "%sif (tide_blend) { %s tide_p; tide_blend_some_%s(&%s, tide_prev_some_%s(tide_prev, tide_w, tide_ent[tide_i], "
                                  "&tide_p, %s), tide_alpha, %s); }\n", pad, c, c, place.data, c, some.data, some.data);
@@ -27711,10 +27952,28 @@ void print_parallel_loops(const program *prog, sb *out)
     for (int i = 0; i < prog->views.count; i++) {
         const decl *view = prog->views.items[i];
         const expr *terms[GUARD_TERMS_MOST];
-        if (!view_guarded(view)) continue;
+        // (Its one query's rows, where its loop over them starts with such tests: rows_guard_terms)
+        for (int q = 0; q < view->params.count; q++) {
+            if (view->params.items[q].type.kind != TY_QUERY || !view->params.items[q].query_rows || !view->body) continue;
+            gen with = {0};
+            with.prog = (program *)(uintptr_t)prog; // Read only: what rows_guard_terms asks of a generator
+            const stmt *loop = NULL;
+            const decl *owner = NULL;
+            bool local = false;
+            const int tests = rows_guard_terms(&with, view, q, &loop, &owner, &local, terms);
+            if (!tests) continue;
+            if (!any) sb_put(out, "\nViews that test an entity before copying anything of it:\n");
+            any = true;
+            sb_printf(out, "         " STR_FMT ", the rows of its loop at line %d: %d test%s, down to line %d\n",
+                      STR_ARG(view->qualified.len ? view->qualified : view->name), loop->at.line, tests, tests == 1 ? "" : "s",
+                      terms[tests - 1]->at.line);
+        }
+        gen plain = {0};
+        plain.prog = (program *)(uintptr_t)prog; // Read only
+        if (!view_guarded(&plain, view)) continue;
         if (!any) sb_put(out, "\nViews that test an entity before copying anything of it:\n");
         any = true;
-        const int n = view_guard_terms(view, terms);
+        const int n = view_guard_terms(&plain, view, terms);
         sb_printf(out, "         " STR_FMT ": %d test%s, down to line %d\n", STR_ARG(view->qualified.len ? view->qualified : view->name), n,
                   n == 1 ? "" : "s", terms[n - 1]->at.line);
     }
