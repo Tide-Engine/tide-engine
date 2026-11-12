@@ -474,6 +474,61 @@ TIDE_TEST(entity_ordered_archetypes_slots_give_each_keys_place)
     tide_entities_free(&t);
 }
 
+// Where an entity is by going through every slot: what a lookup has to say
+static uint32_t slot_by_scan(const tide_entities *t, const tide_entity e)
+{
+    for (uint32_t i = 0; i < t->next_unused; i++)
+    {
+        if (tide_entity_equal(tide_entity_in_slot(t, i), e))
+            return i;
+    }
+    return UINT32_MAX;
+}
+
+// A lookup first tries the slot this thread last found one in and the one a
+// stride on (tide_entity_slot_index), in whichever table it's asked of. Asked
+// in every order of two tables that share some slots and differ in others, it
+// gives each key's own slot or none, never a slot another entity has.
+TIDE_TEST(entity_slot_guesses_give_only_the_keys_own_slot)
+{
+    tide_entities a = {0}, b = {0};
+    tide_entity keys[96];
+    for (uint32_t i = 0; i < 64; i++)
+        keys[i] = tide_entity_create_key(&a, (tide_entity){1, 9000u - i * 13u});
+    tide_entities_copy(&b, &a);
+    // The copy loses every third and takes others into their slots; the first loses a few of its own
+    for (uint32_t i = 0; i < 64; i += 3)
+        TIDE_CHECK(tide_entity_destroy(&b, keys[i]));
+    for (uint32_t i = 64; i < 96; i++)
+        keys[i] = tide_entity_create_key(&b, (tide_entity){2, 100u + i});
+    for (uint32_t i = 5; i < 64; i += 11)
+        TIDE_CHECK(tide_entity_destroy(&a, keys[i]));
+    uint32_t wrong = 0, found = 0;
+    for (uint32_t pass = 0; pass < 6; pass++)
+    {
+        const uint32_t step = pass == 2 ? 2u : pass == 3 ? 7u : pass == 4 ? 37u : 1u;
+        for (uint32_t n = 0; n < 96; n++)
+        {
+            const uint32_t i = pass == 1 ? 95u - n : n * step % 96u;
+            const tide_entities *first = (n + pass) % 2u ? &a : &b, *second = first == &a ? &b : &a;
+            const uint32_t one = tide_entity_slot_index(first, keys[i]), two = tide_entity_slot_index(second, keys[i]);
+            wrong += one != slot_by_scan(first, keys[i]) || two != slot_by_scan(second, keys[i]);
+            wrong += tide_entity_slot_index(first, keys[i]) != one; // Asked again, from its own slot
+            found += one != UINT32_MAX;
+        }
+    }
+    TIDE_CHECK(wrong == 0u);
+    TIDE_CHECK(found > 96u);
+    TIDE_CHECK(tide_entity_slot_index(&a, (tide_entity){7, 7}) == UINT32_MAX);
+    TIDE_CHECK(tide_entity_slot_index(&a, (tide_entity){0, 0}) == UINT32_MAX);
+    tide_entities empty = {0};
+    TIDE_CHECK(tide_entity_slot_index(&empty, keys[1]) == UINT32_MAX);
+    tide_entities_settle(&a);
+    tide_entities_settle(&b);
+    tide_entities_free(&b);
+    tide_entities_free(&a);
+}
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>

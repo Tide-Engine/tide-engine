@@ -145,6 +145,8 @@ A list's elements go through a parallel loop the same way, by index (see [Lists]
 
 A parallel loop goes in a system, a view, an event handler that isn't async, or a local worker: not in ordinary functions, methods, async code or an input's `Sample`. It goes through a component's or a singleton's grid: a local's lives on the thread that made it, so a `foreach` goes through it in order. Workers can run parallel loops over their own lists, reading captured grids from each step. Their read-only grid inputs cannot be the writable output of an explicit parallel loop.
 
+A view's parallel loops take the threads as a system's do. A step that reads a variable declared outside the loop holding text, a list, a map or a set keeps the whole loop on one thread, as those live on the thread that made them: read a component's or a singleton's instead, or plain values.
+
 ### Moving things: blocks
 
 Sand moves: a grain leaves its cell and lands in another. A step that only changes its own cell can't do that, so `by` gives each step a block of cells instead. Each step owns its block, reads any cell, and changes only the cells in its block, so things can move within it:

@@ -23,6 +23,7 @@ component Wide
     float spare50; float spare51; float spare52; float spare53; float spare54; float spare55; float spare56; float spare57; float spare58; float spare59;
     float spare60; float spare61; float spare62; float spare63; float spare64; float spare65;
     local float feetYaw;
+    local float4x4 placed;
 }
 
 component Small
@@ -138,4 +139,26 @@ view Far(mut Wide w, mut Crowd crowd, Skins skins)
 view DrawCrowd(mut Crowd crowd)
 {
     crowd.items.Clear();
+}
+
+// A far man's place worked out for each row and kept in its local fields, in
+// order and in a parallel loop (bench_views <frames> <alpha> threads hands the
+// frame's loops the pool): what a crowd's view does before it draws.
+float4x4 Place(float3 at, float yaw, float pitch)
+{
+    mut var lean = 0.0;
+    for (int i = 0; i < 6; i++) lean += Math.Sin(yaw * (i + 1) + pitch) * 0.01;
+    return float4x4.TRS(at, quaternion.Euler(lean, yaw, 0), float3(1));
+}
+
+[After(DrawCrowd)]
+view PlaceEach(query (mut Wide w) all)
+{
+    foreach (var row in all) row.w.placed = Place(row.w.position, row.w.yaw, row.w.pitch);
+}
+
+[After(PlaceEach)]
+view PlaceAtOnce(query (mut Wide w) all)
+{
+    parallel (var row in all) row.w.placed = Place(row.w.position, row.w.yaw, row.w.pitch);
 }

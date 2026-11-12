@@ -225,6 +225,37 @@ TIDE_TEST(jobs_costly_loops_in_a_tick_on_one_thread_call_threads_in)
     tide_entities_free(&entities);
 }
 
+// Outside a tick, between tide_loops_enter and tide_loops_leave (a frame's
+// views): a costly loop takes the pool's threads in a round of its own, a
+// cheap one and a loop inside a step run in order, and after leave none do.
+TIDE_TEST(jobs_loops_outside_a_tick_call_a_frames_pool_in)
+{
+    const tide_jobs eight = {.threads = 8, .run = counted_round};
+    const tide_jobs one = {.threads = 1, .run = counted_round};
+    rounds = 0;
+    memset(steps_seen, 0, sizeof steps_seen);
+    run_loops(NULL, 0, 1); // No pool yet
+    TIDE_CHECK(rounds == 0u);
+    const tide_jobs *const before = tide_loops_enter(&eight);
+    TIDE_CHECK(before == NULL);
+    run_loops(NULL, 0, 1);
+    TIDE_CHECK(rounds == 1u); // The costly loop's; not the cheap one's, nor the one inside a step
+    TIDE_CHECK(tide_loops_enter(&one) == &eight); // A pool of one thread is none
+    run_loops(NULL, 0, 1);
+    TIDE_CHECK(rounds == 1u);
+    tide_loops_leave(&eight);
+    run_loops(NULL, 0, 1);
+    TIDE_CHECK(rounds == 2u);
+    tide_loops_leave(before);
+    run_loops(NULL, 0, 1);
+    TIDE_CHECK(rounds == 2u);
+    bool each = true;
+    for (uint32_t k = 0; k < 3u; k++) {
+        for (uint32_t i = 0; i < 40u; i++) each &= steps_seen[k][i] == 5u;
+    }
+    TIDE_CHECK(each);
+}
+
 TIDE_TEST(jobs_on_one_thread_make_no_pieces)
 {
     static const uint32_t after_first[1] = {0};

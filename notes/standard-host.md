@@ -1,5 +1,12 @@
 # The standard host: runs with no window, the stats, debug views
 
+## A frame's views get the pool (2026-11-12)
+
+`tide_run_frame` calls `tide_loops_enter(tide_run_gui.jobs)` before `frame_shards` and `frame` and
+`tide_loops_leave` after, so the views' parallel loops take the platform's pool as a tick's do
+(schedule-and-threads.md, top section). Local handlers run before it, on the frame's thread alone. The tick and
+the frame still run one after the other on this thread; the pool takes one caller's rounds at a time.
+
 ## What an embedded game says (2026-11-10)
 
 `tide_embed_log(e, &size)` (embed ABI 19) gives the other program what the game and the host said since the last

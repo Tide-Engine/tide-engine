@@ -10071,12 +10071,6 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         diag_note("read and write them in a view, and keep what the task needs in local state of its own");
         return T_ERR;
     }
-    if (c->parallel && c->parallel->query && row_binding(e->object)) {
-        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', which a parallel loop's steps don't read yet",
-                   STR_ARG(f->name), STR_ARG(d->name));
-        diag_note("read it in a 'foreach', which goes in order, or keep what the steps need in the match's fields");
-        return T_ERR;
-    }
     if (c->method && c->method->kind != DECL_FUNCTION && c->method->kind != DECL_SHADER && !row_binding(e->object)) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and methods work on values, which have none",
                    STR_ARG(f->name), STR_ARG(d->name));
@@ -10102,6 +10096,19 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
                        "confirmed: read it through '" STR_FMT "'", STR_ARG(f->name), STR_ARG(d->name), STR_ARG(twin->name));
             diag_note("'" STR_FMT "' is '" STR_FMT "' as the server confirmed it, for its match fields", STR_ARG(p->name),
                       STR_ARG(d->name));
+            return T_ERR;
+        }
+    }
+    // In a step of a loop whose rows write this component's local fields: another step may be writing the same
+    // entity's, as the code's own entity is one of the rows
+    if (c->parallel && c->parallel->query && !row_binding(e->object)) {
+        for (int i = 0; i < c->parallel->query->query.count; i++) {
+            const param *b = &c->parallel->query->query.items[i];
+            if (!param_binding(b) || b->mode != PARAM_MUT || b->type.decl != d) continue;
+            diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', which this parallel loop's steps write for "
+                       "their own rows: read the row's", STR_ARG(f->name), STR_ARG(d->name));
+            diag_note("steps run at once, so one can't read what another may be writing; copy the value into a variable "
+                      "before the loop");
             return T_ERR;
         }
     }
@@ -12638,9 +12645,38 @@ static bool own_index(const expr *e, const stmt *loop, int64_t *out);
 // In a parallel loop's step: whether it may write `target`, its own cell or
 // block of the grid the loop goes over, its own element or block of the list,
 // or a variable it declares itself.
-static bool check_step_write(checker *c, const expr *target)
+static bool check_step_write(checker *c, const expr *target, const param *arg_of)
 {
     const stmt *loop = c->parallel;
+    // A row's own local fields, through a 'mut' binding of the loop's query: each row is one entity's, so each
+    // step's are its own. Ones holding text or lists are this machine's heap's, which steps on threads can't change.
+    if (loop->query) {
+        const expr *row = assign_root((expr *)target);
+        const param *binding = row && row->bind == BIND_LOCAL && row->local == loop ? row_binding(target) : NULL;
+        const expr *local = NULL;
+        for (const expr *part = target; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+            if (part->kind == E_MEMBER && part->local_field) local = part;
+        }
+        const bool whole = binding && arg_of && target->kind == E_MEMBER && target->object == row; // 'row.man' handed to a function
+        if (binding && binding->mode == PARAM_MUT && (local || whole)) {
+            const decl *part = binding->type.decl->local_part;
+            bool storage = local && holds_heap_beside_meshes(local->field->type, 0);
+            for (int i = 0; whole && part && i < part->fields.count; i++) {
+                storage = storage || holds_heap_beside_meshes(part->fields.items[i].type, 0);
+            }
+            if (!storage) return true;
+            if (local) {
+                diag_error(target->at, "'" STR_FMT "' holds text or lists, which a parallel loop's steps can't change: they run "
+                           "on threads, and those are kept in this machine's one heap", STR_ARG(local->member));
+            } else {
+                diag_error(target->at, "'" STR_FMT "' has local fields that hold text or lists, which a parallel loop's steps "
+                           "can't change: they run on threads, and those are kept in this machine's one heap",
+                           STR_ARG(binding->type.decl->name));
+            }
+            diag_note("change it in a 'foreach', which goes in order; the steps can read it, and write the row's plain local fields");
+            return false;
+        }
+    }
     if (target->kind == E_INDEX && target->object->type.kind == TY_LIST && same_place(target->object, loop->value)) {
         int64_t at = 0;
         if (own_index(target->lhs, loop, &at) && at >= 0 && at < loop->block[0]) return true;
@@ -12682,7 +12718,8 @@ static bool check_step_write(checker *c, const expr *target)
     if (root && root->bind == BIND_LOCAL && root->local == loop && loop->query) {
         diag_error(target->at, "query row '" STR_FMT "' is read-only, and a parallel loop's steps change nothing outside them",
                    STR_ARG(root->name));
-        diag_note("copy a component binding into a 'mut var' to change the copy, or send an event to the row's entity");
+        diag_note("copy a component binding into a 'mut var' to change the copy, or send an event to the row's entity; a "
+                  "view's steps can write their row's local fields through a 'mut' binding");
         return false;
     }
     diag_error(target->at, "a parallel loop's steps run at once, so each changes only its own place (a grid's cell "
@@ -12726,7 +12763,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("copy the field into a 'mut' local, pass that local, then assign it back after the call");
         return false;
     }
-    if (c->parallel && !check_step_write(c, target)) return false;
+    if (c->parallel && !check_step_write(c, target, arg_of)) return false;
     if (c->compare && !check_compare_write(c, target)) return false;
     const expr *pixel = target;
     while (pixel->kind == E_MEMBER || pixel->kind == E_INDEX) pixel = pixel->object;
@@ -13603,14 +13640,6 @@ static void check_parallel_query(checker *c, stmt *s, const type query)
     if (s->type_name.len > 0) {
         diag_error(s->type_at, "a query row takes its type from the query: write 'parallel (var " STR_FMT " in ...)'",
                    STR_ARG(s->name));
-    }
-    for (int i = 0; s->query && i < s->query->query.count; i++) {
-        const param *p = &s->query->query.items[i];
-        if (!param_binding(p) || p->mode != PARAM_MUT) continue;
-        diag_error(s->value->at, "a parallel loop's rows are read-only, and '" STR_FMT "' takes 'mut " STR_FMT " " STR_FMT "'",
-                   STR_ARG(s->value->name), STR_ARG(p->type_name), STR_ARG(p->name));
-        diag_note("change local fields in a 'foreach', which goes in order, or loop over a query without 'mut'");
-        break;
     }
     check_parallel_steps(c, s);
 }
@@ -22670,12 +22699,6 @@ static void check_local_field_calls(const checker *c)
             if (q->mode == PARAM_MUT && q->match_write && row_binding(arg)) {
                 diag_error(arg->at, "a query row's match fields are read-only, and '" STR_FMT "' changes them", STR_ARG(to->name));
                 diag_note_at(q->match_write_at, "it does on line %d; copy the component to change its value", q->match_write_at.line);
-                continue;
-            }
-            if (q->local_use && site->parallel && row_binding(arg)) {
-                diag_error(arg->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which a parallel loop's steps "
-                           "don't read yet", STR_ARG(to->name), STR_ARG(q->type.decl->name));
-                diag_note("call it from a 'foreach', which goes in order");
                 continue;
             }
             if (q->mode == PARAM_MUT && q->match_write && local_code && own) {
