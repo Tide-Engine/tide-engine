@@ -1,5 +1,49 @@
 # ECS and simulation state
 
+## A view's guard, and lookups that guess by the key (2026-11-12, evening)
+
+From Mount & Rifle's first parallel loop over a view's rows (schedule-and-threads.md): a per-entity view over
+~1,000 `Trooper` rows that returned on its first line for 994 of them cost 0.23 to 0.28 ms, as every row's 128
+lanes were gathered and blended before the code ran.
+
+- **A view's guard** (`view_guarded`, `view_guard_terms`, `view_guard_plain` in `row_lanes_codegen.inc`;
+  `gen_chunk` and `gen_system_body_variant` in `codegen.c`). A per-entity view whose code starts with
+  `if (...) return;` statements gets `tide_view_guard_<View>`, the tests alone (a `||`'s terms from the left, up
+  to the first that isn't one), and its row loop finds the entity's local fields (as `gen_row_fields` does
+  anyway, attaching where the row would), calls the guard, and `continue`s past a row it turns away before
+  `gen_row_copies`: no gather, blend, far blend, correction or confirmed copy. The code is unchanged and still
+  starts with the tests. A test may read the entity's local fields through the view's own component parameter
+  (`t.wholeNow`, `t.kept.whole`), a local singleton's fields (`stage.on`) and constants, with plain operators:
+  this machine's state, which is the same before the row is blended as after. Not a field of the match's (its
+  value in a view is the frame's, between two ticks), a match singleton (a view may have a blended copy), a call,
+  a property, text or a list. Tests of constants alone make no guard. Not for views with a `verified` parameter
+  or join, async ones or ones that start tasks. The guard is handed NULL for each component and the same
+  local-field pointers, singletons and rows the view is. `tide schedule` lists the views that have one.
+- **A row's local fields are found by a guess first** (`tide_attached_find`, `engine/src/attached.c`): the row
+  this thread last found and the next one, checked against the row's entity, before the index. What's kept for
+  entities was first written in the order a view went through them, so the next entity's is most often the next
+  row; and a parallel loop's readying pass and its steps ask for the same one twice. Unpacking checks duplicates
+  by the index alone (`find_indexed`): a guess there would be the row being added.
+- **An entity lookup guesses by the key, not by the last slot** (`tide_entity_slot_index`): this morning's guess
+  (the last slot and one a stride on) rested on rows being in the order slots were handed out. While a change
+  that laid a tick's spawns out in key order was on `dev` (reverted since), every guess missed and a blended row
+  was back at 58 ns. Now a thread keeps a slot for each of 65,536 places picked by the key's own bits
+  (`slot_guesses`, 256 KB, made at a thread's first lookup, none if the memory isn't there), checked against the
+  slot as before. Nothing in it is about where rows are.
+- **Tests**: `tidec_e2e_view_guard` (600 men in two archetypes, 12 blended frames): a guarded view and one that
+  tests the same through a call give the same rows and the same sum bit for bit each frame, a local singleton's
+  test turns every row away on its frames, a nested local field's guard, a local field's default read for an
+  entity nothing was written for, and the guarded view's own writes; `tidec_view_guard_codegen`: the guard's
+  call comes before the first gather and blend in `Fresh`, `Guarded` and `Nested`, and `Choose` (an assignment
+  first), `Plain` (calls) and `Match` (a field of the match's) have none.
+  `attached_row_guesses_give_only_the_entitys_own_row` and `entity_slot_guesses_give_only_the_keys_own_slot`
+  (tide_tests): two tables asked in six orders with rows and entities removed between, against a scan.
+- **Measured** (benchmarks.md, A view's guard): a view acting on one row in 400 of 20,000, 1.65 ms without a
+  guard, 0.08 with; a blended per-entity row at 1,000 entities 52 ns to 20, a query's 47 to 13.
+- **Remaining**: a view's *query* still makes every row whole before a loop's `continue` (the guard is for a
+  view's own entity). A guard reads no field of the match's, so `if (t.down) return;` copies first. The key
+  guesses collide past some tens of thousands of entities (20,000 of two kinds: a blended row 42 ns).
+
 ## A view's rows: the slot guessed, and a mut query's lanes (2026-11-12, later)
 
 The same morning's "Remaining" said a per-entity view's row still cost about 50 ns in the blend's two lookups.

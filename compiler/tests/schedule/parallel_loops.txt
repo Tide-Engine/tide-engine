@@ -1,0 +1,40 @@
+parallel_loops: 3 systems each tick, 3 stages deep; none can run at the same time.
+A system starts once everything it runs after is done.
+
+stage 1  Raise  (once, 1 parallel loop)
+         writes Field
+         alongside nothing
+
+stage 2  Scale  (once, 1 parallel loop)
+         writes Field
+         after Raise: both change text, lists or grids, which the match keeps in one heap; both write Field
+         alongside nothing
+
+stage 3  Tell  (once)
+         reads Field
+         after Raise: it writes Field, which this reads (and through Scale)
+         after Scale: it writes Field, which this reads
+         alongside nothing
+
+Views, every frame in this order (they only read, so nothing waits):
+         Place
+         Near
+         Fast
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup
+
+Local handlers of the match's events, at the start of a frame, for what the ticks since the last one sent:
+         Poke: Heard
+
+Loops that skip rows, and whether an index finds the rest:
+         Place, line 40: not indexed: its guard puts no bound on a number of the row: compare one of the row's numbers, or its distance to a place, with a value the loop doesn't change
+
+Parallel loops, and when their steps go to the threads:
+         Raise, line 27: a list's elements, a step reckoned at 3008: on the threads from 34 steps in a tick that's on them, 665 in one that isn't
+         Scale, line 35: a list's elements, on one thread: its steps read 'by', which lives on the thread that made it, as text, lists, maps, sets and grids in variables do
+         Place, line 40: a query's rows, a step reckoned at 3017: on the threads from 663 steps a frame
+         Heard, line 49: a list's elements, on one thread: a local handler's loops stay on its thread
+
+Views that test an entity before copying anything of it:
+         Near: 2 tests, down to line 54

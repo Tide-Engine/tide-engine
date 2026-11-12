@@ -169,6 +169,102 @@ static int system_guard_terms(const decl *sys, const expr **terms)
     return n;
 }
 
+// A view's guard. A view that runs for each entity gathers, blends and corrects what it reads of the entity's
+// components before its code runs, so one that goes through a thousand entities to act on six pays for a
+// thousand. Where its code starts with `if (...) return;` tests that read nothing of the match's components,
+// the row's tests run first (tide_view_guard_<View>) and a row they turn away is never copied.
+//
+// A test here reads this machine's own state alone, which needs no world between ticks and no correction:
+// the entity's local fields (through a component parameter), a local singleton's fields, and constants.
+static bool view_guard_base(const expr *e)
+{
+    if (!e || e->hoisted || e->lambda) return false;
+    if (e->kind == E_NAME) { // A local singleton, whole: its fields are read below
+        return e->bind == BIND_PARAM && e->param && e->param->type.kind == TY_SINGLETON && e->param->type.decl->is_local
+            && !e->param->verified;
+    }
+    if (e->kind != E_MEMBER || e->property || e->edge != EDGE_NONE || e->c_constant || e->typed_text || e->raw_sampled
+        || e->target_colors || e->asset_ref_value || !e->field || !guard_value(e->type)) return false;
+    if (e->local_field) { // `t.wholeNow`: a field of the entity's local part, through the view's own parameter
+        const expr *of = e->object;
+        return of && of->kind == E_NAME && of->bind == BIND_PARAM && of->param && of->param->type.kind == TY_COMPONENT
+            && !of->param->verified && (of->param->mode == PARAM_READ || of->param->mode == PARAM_MUT);
+    }
+    return view_guard_base(e->object);
+}
+
+static bool view_guard_plain(const expr *e)
+{
+    if (!e || e->hoisted || e->lambda) return false;
+    switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: return true;
+    case E_DEFAULT: return guard_value(e->type);
+    case E_NAME: return e->bind == BIND_CONST && guard_value(e->type);
+    case E_MEMBER:
+        if (e->enum_member) return true;
+        if (e->constant) return guard_value(e->type);
+        if (e->swizzle_len > 0 && !e->field) return view_guard_base(e->object) && guard_value(e->type);
+        return view_guard_base(e);
+    case E_UNARY:
+        return !e->method && view_guard_plain(e->lhs) && guard_value(e->type);
+    case E_BINARY:
+        return !e->method && view_guard_plain(e->lhs) && view_guard_plain(e->rhs) && guard_value(e->lhs->type)
+            && guard_value(e->rhs->type) && guard_value(e->type);
+    default: return false;
+    }
+}
+
+// Whether a test reads anything: one of constants alone is left to the code (it turns away every row or none)
+static bool view_guard_reads(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_MEMBER && !e->enum_member && !e->constant) return true;
+    return view_guard_reads(e->lhs) || view_guard_reads(e->rhs);
+}
+
+// The tests view `sys`'s code starts with that its guard runs: as system_guard_terms, by a view's rule
+static int view_guard_terms(const decl *sys, const expr **terms)
+{
+    int n = 0;
+    bool reads = false;
+    for (int i = 0; i < sys->body->stmts.count; i++) {
+        const stmt *s = sys->body->stmts.items[i];
+        if (s->kind != S_IF || s->else_stmt || !s->cond || !s->then_stmt) break;
+        const stmt *then = s->then_stmt;
+        if (then->kind == S_BLOCK && then->stmts.count == 1) then = then->stmts.items[0];
+        if (then->kind != S_RETURN || then->value) break;
+        const expr *chain[GUARD_TERMS_MOST];
+        int links = 0;
+        const expr *e = s->cond;
+        while (e->kind == E_BINARY && e->op == T_OR && !e->method && links < GUARD_TERMS_MOST - 1) {
+            chain[links++] = e->rhs;
+            e = e->lhs;
+        }
+        chain[links++] = e;
+        bool whole = true;
+        for (int k = links - 1; k >= 0; k--) {
+            if (!view_guard_plain(chain[k]) || chain[k]->type.kind != TY_BOOL || n == GUARD_TERMS_MOST) {
+                whole = false;
+                break;
+            }
+            reads = reads || view_guard_reads(chain[k]);
+            terms[n++] = chain[k];
+        }
+        if (!whole) break;
+    }
+    return reads ? n : 0;
+}
+
+// Whether view `sys`'s rows are tested by tide_view_guard_<View> before anything of them is copied: one that
+// runs for each entity of the world it draws alone (a `verified` parameter's row is found in another world)
+static bool view_guarded(const decl *sys)
+{
+    if (!sys->is_view || !sys->per_entity || !sys->body || sys->is_async || sys->starts_tasks || sys->takes_verified
+        || sys->verified_join || sys->verified_entities) return false;
+    const expr *terms[GUARD_TERMS_MOST];
+    return view_guard_terms(sys, terms) > 0;
+}
+
 // Whether system `sys`'s rows are tested by tide_guard_<System> before their copies are made
 static bool system_guarded(const gen *g, const decl *sys)
 {

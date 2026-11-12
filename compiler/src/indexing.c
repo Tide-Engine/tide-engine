@@ -1431,6 +1431,7 @@ const char *loop_index_summary(const stmt *loop)
 typedef struct loop_visit {
     loop_visitor fn;
     void *user;
+    bool parallel; // Every parallel loop (each_parallel_loop), rather than the loops that start with a guard
 } loop_visit;
 
 static void visit_stmt(const loop_visit *v, const decl *code, const stmt *s);
@@ -1448,7 +1449,9 @@ static void visit_expr(const loop_visit *v, const decl *code, const expr *e)
 static void visit_stmt(const loop_visit *v, const decl *code, const stmt *s)
 {
     if (!s) return;
-    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && (s->index_guarded || s->indexed) && loop_index_summary(s)) {
+    if (v->parallel) {
+        if (s->kind == S_PARALLEL || (s->kind == S_FOREACH && s->parallel)) v->fn(v->user, code, s);
+    } else if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && (s->index_guarded || s->indexed) && loop_index_summary(s)) {
         v->fn(v->user, code, s);
     }
     visit_expr(v, code, s->cond);
@@ -1463,9 +1466,20 @@ static void visit_stmt(const loop_visit *v, const decl *code, const stmt *s)
     }
 }
 
+static void each_loop(const program *prog, const loop_visit v);
+
 void each_guarded_loop(const program *prog, const loop_visitor fn, void *user)
 {
-    const loop_visit v = {fn, user};
+    each_loop(prog, (loop_visit){fn, user, false});
+}
+
+void each_parallel_loop(const program *prog, const loop_visitor fn, void *user)
+{
+    each_loop(prog, (loop_visit){fn, user, true});
+}
+
+static void each_loop(const program *prog, const loop_visit v)
+{
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) && d->body) visit_stmt(&v, d, d->body);

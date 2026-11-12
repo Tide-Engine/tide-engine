@@ -131,8 +131,8 @@ Built:
   thread only syncs memory: there's no tick to `prepare` it, so the steps set their thread up themselves
   (next point). A pool of one thread, or NULL, is none. Called by hosts, not by generated code:
   `tide/host.h` (`tide_run_frame`) enters around `frame_shards` and `frame` with `tide_run_gui.jobs` (the platform's pool) and
-  leaves after; local handlers (`game->events`) run before it, outside. `platform/src/embed.c` (Unity) doesn't
-  call it: its frames stay on one thread.
+  leaves after; local handlers (`game->events`) run before it, outside. `platform/src/embed.c`'s own frame (a
+  timeline's picture) enters too since the evening; its ordinary frames are the host's.
 - **A view's steps set up the thread they land on** (`gen_par_local_use`, `gen_parallel_call` in
   `compiler/src/codegen.c`): the loop's call site reads the frame thread's three heaps
   (`tide_world_heaps[TIDE_IN_MATCH / LOCAL / VERIFIED]`) into locals that are captures of every view loop
@@ -192,14 +192,16 @@ from the results cost 0.23 to 0.28 ms for 994 rows that return on their first li
 gathered and blended before the code runs.
 
 Gaps:
-- **A view's rows have no guard.** A system that starts with plain `if (...) return;` tests reads only the lanes
-  those tests need before copying the rest (`tide_guard_<System>`, row_lanes_codegen.inc); a per-entity view
-  gathers, blends and corrects every lane its code can read first, and a view's query makes every row whole
-  before a `continue`. A view over many fat rows that acts on a few pays the full walk (above: ~250 ns a row).
-  The first cut would be tests on the row's local fields and on singletons, which need no blending.
-- **Nothing says whether a loop took the pool.** `tide schedule` could print each parallel loop's reckoned step
-  cost, the rows it needs to be worth a round, and why one stays on its thread; the profile could count a view's
-  rounds. The game guessed the loop had stayed on one thread; it hadn't.
+- Built the same evening: **a view's guard** (ecs.md, top section), for a per-entity view's tests of local
+  state; the game's `DrawWholeMen` went from 0.23-0.28 ms to 0.12 with its patch, what's left being the six men
+  it draws. A view's query still makes every row whole before a `continue`.
+- Built the same evening: **`tide schedule` ends with every parallel loop** (`print_parallel_loops`,
+  `par_stays_why` in codegen.c, `each_parallel_loop` in indexing.c): what its steps go through, a step's
+  reckoning, and from how many steps it's worth the threads (the runtime's `LOOP_WORK` and `ROUND_WORK` in
+  tidec's units, native; never fewer than two), or what keeps it on one thread, naming the variable. And the
+  views with a guard. `compiler/tests/schedule/parallel_loops.tide` pins all of it; `grids.txt` gained its
+  loops. Still not there: the profile doesn't count a view's rounds, and a reckoning counts a step that returns
+  on its first line as its whole body.
 - A step can't write a row's `Pose` (it holds a list), so the game copied 128 bones out to a fixed array and back.
   `without ownership` isn't a query filter.
 - A round wakes the whole pool, as a tick's loop does; a loop a little over the bar on a 12-thread pool gains
@@ -210,8 +212,8 @@ Gaps:
 - Local handlers' loops, sharded views and Unity's frames stay on one thread. A step still can't draw, send a
   local event, or fill a list of the code's by index; results go through the row's local fields or a
   singleton's list of plain values.
-- The preparing pass and each step both look the row's cell up (`tide_attached_find`): about 30 ns a row twice.
-  Handing the steps the cells' rows would halve it.
+- The preparing pass and each step both look the row's cell up (`tide_attached_find`); since the evening the
+  second is a guess that hits (ecs.md, top section).
 - Steps reading scratch values stay on one thread rather than reading them across threads: scratch handles
   would have to name their thread, and its slot table not move while another reads it.
 

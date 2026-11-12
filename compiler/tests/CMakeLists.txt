@@ -78,6 +78,10 @@ add_test(NAME tidec_shared_bindings_private COMMAND tidec_shared_bindings_privat
 add_test(NAME tidec_view_reads_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_view_reads/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/view_reads_codegen.cmake")
+tide_e2e_test(view_guard) # A per-entity view's tests of local state run before its rows are copied
+add_test(NAME tidec_view_guard_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_view_guard/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/view_guard_codegen.cmake")
 tide_e2e_test(destroy_rows) # Pure updates and deferred self-destroys preserve math, order, handles and snapshots
 add_test(NAME tidec_destroy_rows_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_destroy_rows/game.c"

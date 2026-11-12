@@ -460,30 +460,45 @@ static bool slot_key(const tide_entity_slot *slot, tide_entity e)
            __atomic_load_n(&slot->entity.lineage, __ATOMIC_RELAXED) == e.lineage;
 }
 
-// The slot this thread last found an entity in, in whichever table, and how
-// far that was from the one before. Code that goes through a table's rows asks
-// for the same entity again (what it was born as, then its place in last
-// tick's world, whose slots are this one's), and then for the next row's,
-// which is most often as far on again: rows and slots are both handed out in
-// the order entities are made, so one kind's are a step apart. A slot that's
-// alive and holds the key is the entity's, in any table, so those two slots
-// are looked at before the key is hashed and looked up; a wrong guess costs
-// two reads.
-static TIDE_THREAD_LOCAL uint32_t slot_hint, slot_stride = 1u;
+// Where this thread last found each entity, in whichever table: a slot for
+// each of SLOT_GUESSES places a key's own bits pick (its lineage is a hash
+// already). Code that goes through a table's rows asks for the same entity
+// again and again: what it was born as, its place in last tick's world, whose
+// slots are this one's, and all of it the next frame. A slot that's alive and
+// holds the key is the entity's, in any table, so the guess is looked at
+// before the key is hashed and looked up, and never trusted: a wrong one (two
+// keys in one place, a slot that changed hands) costs a read. Nothing here is
+// about where rows are, or the order entities were made in.
+// Made the first time a thread looks one up; without the memory, no guesses.
+#define SLOT_GUESSES 65536u
+static TIDE_THREAD_LOCAL uint32_t *slot_guesses;
+static TIDE_THREAD_LOCAL bool slot_guesses_tried;
+
+static uint32_t *slot_guess(const tide_entity e)
+{
+    if (!slot_guesses)
+    {
+        if (slot_guesses_tried)
+            return NULL;
+        slot_guesses_tried = true;
+        slot_guesses = calloc(SLOT_GUESSES, sizeof *slot_guesses); // The thread's, for as long as it lives
+        if (!slot_guesses)
+            return NULL;
+    }
+    const uint64_t mixed = e.lineage ^ (e.lineage >> 29) ^ ((uint64_t)e.birth * UINT64_C(0x9E3779B97F4A7C15));
+    return &slot_guesses[(uint32_t)(mixed ^ (mixed >> 16)) & (SLOT_GUESSES - 1u)];
+}
 
 uint32_t tide_entity_slot_index(const tide_entities *t, tide_entity e)
 {
     if (tide_entity_is_null(e))
         return UINT32_MAX;
-    const uint32_t hint = slot_hint, next = hint + slot_stride; // Wrapped, it's a slot like any other guess
-    const tide_entity_slot *guess = slot_of(t, hint); // One the table hasn't got reads as free
-    if (__atomic_load_n(&guess->state, __ATOMIC_ACQUIRE) == TIDE_ENTITY_ALIVE && slot_key(guess, e))
-        return hint;
-    guess = slot_of(t, next);
-    if (__atomic_load_n(&guess->state, __ATOMIC_ACQUIRE) == TIDE_ENTITY_ALIVE && slot_key(guess, e))
+    uint32_t *const kept = slot_guess(e);
+    if (kept)
     {
-        slot_hint = next;
-        return next;
+        const tide_entity_slot *guess = slot_of(t, *kept); // One the table hasn't got reads as free
+        if (__atomic_load_n(&guess->state, __ATOMIC_ACQUIRE) == TIDE_ENTITY_ALIVE && slot_key(guess, e))
+            return *kept;
     }
     const uint32_t at = index_get(__atomic_load_n(&t->index, __ATOMIC_ACQUIRE), e);
     if (at == UINT32_MAX)
@@ -491,8 +506,8 @@ uint32_t tide_entity_slot_index(const tide_entities *t, tide_entity e)
     const tide_entity_slot *slot = slot_of(t, at);
     if (__atomic_load_n(&slot->state, __ATOMIC_ACQUIRE) != TIDE_ENTITY_ALIVE || !slot_key(slot, e))
         return UINT32_MAX;
-    slot_stride = at - hint;
-    slot_hint = at;
+    if (kept)
+        *kept = at;
     return at;
 }
 

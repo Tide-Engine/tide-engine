@@ -557,7 +557,9 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     tide_gui_begin(&tide_run_gui, &tide_run_devices, tide_platform_screen_size(), tide_platform_measure_text);
     tide_run_gui.copy = tide_platform_copy;
     tide_run_gui.jobs = tide_platform_jobs();
+    const tide_jobs *const loops_before = tide_loops_enter(tide_run_gui.jobs); // As a frame's views have it (tide/host.h)
     game->frame(world, NULL, 1.0f, world, NULL, 1.0f, local, &tide_run_draw, &tide_run_gui);
+    tide_loops_leave(loops_before);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     // What's pressed, sent or asked for on another tick's picture goes nowhere
     tide_devices_consume(&tide_run_devices);

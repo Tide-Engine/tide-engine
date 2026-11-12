@@ -11,7 +11,8 @@ static uint32_t index_slot(const tide_attached *a, const tide_entity e)
     return (uint32_t)tide_entity_hash(0, e) & (a->indexed - 1u);
 }
 
-uint32_t tide_attached_find(const tide_attached *a, const tide_columns *c, const tide_entity e)
+// An entity's row by the index alone: only rows the index holds.
+static uint32_t find_indexed(const tide_attached *a, const tide_columns *c, const tide_entity e)
 {
     if (!a->indexed) return TIDE_ATTACHED_NONE;
     for (uint32_t at = index_slot(a, e);; at = (at + 1u) & (a->indexed - 1u)) {
@@ -19,6 +20,30 @@ uint32_t tide_attached_find(const tide_attached *a, const tide_columns *c, const
         if (!row) return TIDE_ATTACHED_NONE;
         if (tide_entity_equal(tide_attached_entity(a, c, row - 1u), e)) return row - 1u;
     }
+}
+
+// The row this thread last found, in whichever table. Views go through a
+// table's entities in order, and what's kept for them was first written in
+// that order too, so the next entity's row is most often the next row; and a
+// loop that makes rows ready and then runs them asks for the same one twice.
+// A row that holds the entity is its row (an entity has one), so the guess is
+// checked against the row, never trusted: a wrong one costs two reads.
+static TIDE_THREAD_LOCAL uint32_t row_hint;
+
+uint32_t tide_attached_find(const tide_attached *a, const tide_columns *c, const tide_entity e)
+{
+    if (!a->indexed) return TIDE_ATTACHED_NONE;
+    const uint32_t hint = row_hint;
+    for (uint32_t k = 0; k < 2u; k++) {
+        const uint32_t row = hint + k;
+        if (row >= hint && row < a->rows.count && tide_entity_equal(tide_attached_entity(a, c, row), e)) {
+            row_hint = row;
+            return row;
+        }
+    }
+    const uint32_t row = find_indexed(a, c, e);
+    if (row != TIDE_ATTACHED_NONE) row_hint = row;
+    return row;
 }
 
 static void insert_row(tide_attached *a, const tide_columns *c, const uint32_t row)
@@ -93,7 +118,8 @@ bool tide_attached_unpack(tide_attached *a, const tide_columns *c, tide_reader *
     if (!tide_table_unpack(&a->rows, c, r)) return false;
     for (uint32_t row = 0; row < a->rows.count; row++) {
         const tide_entity e = tide_attached_entity(a, c, row);
-        if (tide_entity_is_null(e) || tide_attached_find(a, c, e) != TIDE_ATTACHED_NONE) {
+        // (By the index, which holds the rows before this one: a guessed row would be this row itself)
+        if (tide_entity_is_null(e) || find_indexed(a, c, e) != TIDE_ATTACHED_NONE) {
             tide_attached_free(a, c);
             return false;
         }
