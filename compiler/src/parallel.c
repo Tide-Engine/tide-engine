@@ -838,7 +838,10 @@ static void put_threads(sb *out, const decl *sys)
 static int put_measured(sb *out, decl *const *items, const int count, const char *rows, const char *numbered,
                         const double per, const char *each, const char *what)
 {
-    const char *rows_end = strstr(rows, "],\n");
+    // Its rows end at a "]," that ends a line (a name can hold one: `Fill(int[4], float)`), whichever way the
+    // file's lines end: a checkout may have made them Windows'
+    const char *rows_end = strstr(rows, "],");
+    while (rows_end && rows_end[2] != '\n' && rows_end[2] != '\r') rows_end = strstr(rows_end + 2, "],");
     if (!rows_end) rows_end = rows + strlen(rows);
     double *cost = arena_alloc(sizeof(double) * (size_t)(count + 1));
     double *finish = arena_alloc(sizeof(double) * (size_t)(count + 1));
