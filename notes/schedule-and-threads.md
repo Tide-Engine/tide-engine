@@ -18,6 +18,7 @@ drawn on top), four proposals were put to him. His rulings:
 - **`[After]` and `[Before]` on views are run order**, as on systems. What's drawn on top "should be potentially a
   graphics API thing versus when a view runs": a layer or order the draws name. Not designed; parked, as views
   beside each other gain that game nothing yet (below).
+
 ## A system's own rows' text and lists across threads: a heap in runs (2026-11-13, later)
 
 The owner's task, one of three threads on the schedule that day: a per-entity system that changes its own rows'
