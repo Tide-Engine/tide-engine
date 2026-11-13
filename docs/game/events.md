@@ -93,6 +93,8 @@ Rows are read-only. To act on an entity, send it an event or use an explicit `mu
 
 Async handlers and tasks cannot take queries yet. Local handlers' [recorded query rows](#other-entities) retain their own timing rules.
 
+A handler's query can read the tick's start too: `query (previous Body was) all` gives each entity's `Body` as it was when the tick started, whatever the tick's systems and the handlers before this one did to it, and `world.GetPrevious<Body>(entity)` the same for one entity. By a handler's turn entities have come and gone, so such a query has the entities that are in the world now and had the component then: one spawned this tick is no row. See [As the tick started](./systems.md#as-the-tick-started).
+
 ## When they run
 
 Events are handled at the end of the tick, along with structural changes, in the order they were all recorded. A `Send` before a `Destroy` of the same entity is handled while the entity still exists. An event sent to an entity that's gone by its turn is dropped.

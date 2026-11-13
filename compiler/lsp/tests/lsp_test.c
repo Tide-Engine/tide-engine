@@ -4470,7 +4470,7 @@ TIDE_TEST(lsp_previous)
     // Not a filter's, a view's, a handler's, a function's or the system's own parameter's
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Look(mut Body body, query (with $) others)\n{\n}\n"), "previous"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "view Bar(Body body, query ($) others)\n{\n}\n"), "previous"));
-    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "event(Spawned) Grow(mut Body body, query ($) others)\n{\n}\n"), "previous"));
+    TIDE_CHECK(offers(complete(VERIFIED_TYPES "event(Spawned) Grow(mut Body body, query ($) others)\n{\n}\n"), "previous"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "int Count(query ($) others)\n{\n    return 0;\n}\n"), "previous"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Look(mut Body body, $)\n{\n}\n"), "previous"));
 
@@ -4505,16 +4505,33 @@ TIDE_TEST(lsp_previous)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *system = request("textDocument/hover");
     TIDE_CHECK(has(system, "system Look(mut Body body, query (previous Body other) others)"));
-    TIDE_CHECK(has(system, "reads any entity's `Body` as the tick started: it waits for no system over that"));
+    TIDE_CHECK(has(system, "It reads any entity's `Body` as the tick started: it waits for no system over that"));
     TIDE_CHECK(has(system, "Its entities can go across threads."));
     open_document(VERIFIED_TYPES "system Look(mut Body body, query (previous Body oth$er) others)\n{\n"
                                  "    foreach (var o in others) body.radius += o.other.radius;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "As it was when this tick started, whatever has run since."));
 
+    // Through the World: offered, explained, and said above the system
+    const char *world = complete(VERIFIED_TYPES "system Look(mut Body body, World world, Entity e)\n{\n    world.$\n}\n");
+    TIDE_CHECK(offers(world, "GetPrevious") && offers(world, "HasPrevious") && offers(world, "TryGetPrevious") && offers(world, "Get"));
+    TIDE_CHECK(has(world, "TryGetPrevious<${1:Component}>(${2:entity}, out var ${3:value})"));
+    open_document(VERIFIED_TYPES "system Look(mut Body body, World world)\n{\n"
+                                 "    body.radius += world.GetPrev$ious<Body>(this).radius;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *asked = request("textDocument/hover");
+    TIDE_CHECK(has(asked, "GetPrevious<") && has(asked, "as it was when this tick started"));
+    const char *asking = request("textDocument/codeLens");
+    TIDE_CHECK(has(asking, "World/query: reads Body as the tick started") && has(asking, "its entities go across threads"));
+    // A match handler takes the word too
+    open_document(VERIFIED_TYPES "event(Spawned) Heard(mut Arena arena, with Body, query (prev$ious Body was) all)\n{\n"
+                                 "    foreach (var row in all) arena.halfSize.x += row.was.radius;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "The entity's `Body` as it was when this tick started"));
+
     // Where it can't be: the error, and the word still explained
     open_document(VERIFIED_TYPES "view Bar(Body body, query (prev$ious Body other) others)\n{\n"
                                  "    foreach (var o in others) { }\n}\n");
-    TIDE_CHECK(has(last_sent(), "'previous' is for a system's query"));
+    TIDE_CHECK(has(last_sent(), "'previous' is for a system's or a match handler's query"));
     TIDE_CHECK(has(request("textDocument/hover"), "As the tick started. It goes before a binding of a system's query"));
     // A name anywhere else
     open_document(VERIFIED_TYPES "int Step(int previous, int next) { return previous + next; }\n");

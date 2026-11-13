@@ -128,3 +128,27 @@ event(Seen seen) Heard(mut Count count)
 {
     count.close += seen.count;
 }
+
+// The same through the World: the bot's target as the tick started, in a system that changes Body. No wait
+// over it, and its entities across threads, where `world.Get<Body>` would keep them on one
+system Chase(mut Body body, Bot bot, World world)
+{
+    if (world.TryGetPrevious<Body>(bot.target, out var was)) body.velocity = was.position - body.position;
+}
+
+float3 PlaceWas(World world, Entity e) { return world.GetPrevious<Body>(e).position; }
+
+// ...and through a function handed the World
+system Lead(mut Bot bot, World world)
+{
+    bot.alarm = PlaceWas(world, bot.target).x;
+}
+
+// A handler takes the word too: the tick's start, once the tick's changes are in
+event(Seen seen) Recall(mut Count count, World world, query (previous Body was, Bot bot) all)
+{
+    foreach (var row in all)
+    {
+        if (world.HasPrevious<Body>(row.bot.target)) count.far += row.was.near;
+    }
+}

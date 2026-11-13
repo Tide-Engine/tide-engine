@@ -1,0 +1,9 @@
+// expect: 'GetPrevious' reads an entity as the tick started, and a view runs between ticks
+// expect: 'world.Get<Body>' reads it as this code sees the match
+component Body { float3 position; Entity next; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body); }
+view Show(Body body, World world)
+{
+    var was = world.GetPrevious<Body>(body.next);
+}

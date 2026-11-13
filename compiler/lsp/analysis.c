@@ -1047,6 +1047,11 @@ static void walk_value(const expr *e)
         } else if (e->object->type.kind == TY_WORLD) { // world.Get<Health>(e), even one the checker refused
             o.kind = OCC_METHOD;
             o.call = CALL_WORLD;
+            // world.GetPrevious<Health>(e): the checker keeps Get, Has or TryGet as the call's name
+            if (e->world_previous) {
+                o.name = str_from(str_eq_c(e->name, "Get") ? "GetPrevious" : str_eq_c(e->name, "Has") ? "HasPrevious" : "TryGetPrevious");
+                o.len = o.name.len;
+            }
             o.component = e->type_decl && e->type_decl->kind == DECL_COMPONENT ? e->type_decl : NULL;
             add_occ(o);
         }
@@ -2690,6 +2695,15 @@ static const method_form world_calls[] = {
     {"TryGet", "TryGet<T>(Entity entity, out T value) -> bool",
      "Whether the entity has the component, and through `out`, a copy of it, or the component's default when the "
      "entity has none: `if (world.TryGet<Health>(target, out var health)) ...`. It counts as reading every entity's."},
+    {"GetPrevious", "GetPrevious<T>(Entity entity) -> T",
+     "A copy of the entity's component as it was when this tick started, whatever has run since, or the component's "
+     "zero value when the entity had none then. Nothing in the tick can change it, so no system waits over it and it "
+     "never keeps a system on one thread. In a system or a match handler."},
+    {"HasPrevious", "HasPrevious<T>(Entity entity) -> bool",
+     "Whether the entity had the component when this tick started: false for one spawned this tick. No system waits over it."},
+    {"TryGetPrevious", "TryGetPrevious<T>(Entity entity, out T value) -> bool",
+     "Whether the entity had the component when this tick started, and through `out`, a copy of it as it was then, or "
+     "the component's default: `if (world.TryGetPrevious<Body>(target, out var was)) ...`. No system waits over it."},
     {"Set", "Set<T>(Entity entity, T value)",
      "Puts the component back on the entity, right away; nothing happens when the entity has none. It needs "
      "`mut World`, counts as writing every entity's, and keeps a system on one thread."},
@@ -3216,8 +3230,8 @@ static void describe_world(const decl *d, sb *out)
     const int write_count = world_use_names(d, true, "`", d, &writes);
     sb before = {0};
     if (previous_read_names(d, "`", d, &before)) {
-        sb_printf(out, "\n\nThrough its queries, it reads any entity's %s as the tick started: it waits for no system "
-                       "over that, and none waits for it.", before.data);
+        sb_printf(out, "\n\nIt reads any entity's %s as the tick started: it waits for no system over that, and none waits "
+                       "for it.", before.data);
     }
     if (read_count + write_count == 0) return;
     bool world = false;
@@ -4517,7 +4531,7 @@ static bool put_world_lens(sb *title, const decl *d, const char *before)
     const int before_count = previous_read_names(d, "", d, &started);
     if (read_count + write_count + before_count == 0) return false;
     if (read_count + write_count == 0) { // Only the tick's start
-        sb_printf(title, "%sQuery: reads %s as the tick started", before, started.data);
+        sb_printf(title, "%s%s: reads %s as the tick started", before, d->previous_read_at.line ? "World/query" : "Query", started.data);
         return true;
     }
     bool world = false;
@@ -7633,6 +7647,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             format_method(&forms[i], t, &detail);
             sb snippet = {0};
             if (strcmp(forms[i].name, "TryGet") == 0) sb_put(&snippet, "TryGet<${1:Component}>(${2:entity}, out var ${3:value})");
+            else if (strcmp(forms[i].name, "TryGetPrevious") == 0) sb_put(&snippet, "TryGetPrevious<${1:Component}>(${2:entity}, out var ${3:value})");
             else sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
             item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
         }
@@ -10299,7 +10314,18 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const bool local_fields = in_view || outer.header == HEADER_ROUTINE || local_match_handler(outer.open);
             const bool confirmed = in_view && pk == T_IDENT && str_eq_c(prev->text, "verified") && last > f.open;
             // system Sense(query (previous Body other) others): a system's query reads the tick's start too
-            const bool in_system = outer.kind == CTX_HEADER && outer.open >= 2 && DOC->toks[outer.open - 2].kind == T_SYSTEM;
+            bool in_system = outer.kind == CTX_HEADER && outer.open >= 2 && DOC->toks[outer.open - 2].kind == T_SYSTEM;
+            // ...and so does a match handler's: event(Hit hit) Heard(query (previous Body was) all), not a local one's
+            if (!in_system && outer.kind == CTX_HEADER && outer.open >= 2 && DOC->toks[outer.open - 2].kind == T_RPAREN) {
+                int at = outer.open - 2, nest = 0;
+                for (; at >= 0; at--) {
+                    if (DOC->toks[at].kind == T_RPAREN) nest++;
+                    if (DOC->toks[at].kind == T_LPAREN && --nest == 0) break;
+                }
+                bool local = false;
+                for (int k = at - 2; k >= 0 && k >= at - 4 && DOC->toks[k].kind == T_IDENT; k--) local |= str_eq_c(DOC->toks[k].text, "local");
+                in_system = at >= 1 && !local;
+            }
             const bool started = in_system && pk == T_IDENT && str_eq_c(prev->text, "previous") && last > f.open;
             const tok_kind marked = confirmed || started ? DOC->toks[last - 1].kind : T_EOF;
             if (started && (marked == T_LPAREN || marked == T_COMMA)) {
@@ -12358,7 +12384,9 @@ static int call_param_names(const expr *call, str *names, const int max)
         break;
     }
     case CALL_WORLD: {
-        const method_form *form = find_form(world_calls, sizeof world_calls / sizeof world_calls[0], call->name);
+        const str written = !call->world_previous ? call->name
+                          : str_from(str_eq_c(call->name, "Get") ? "GetPrevious" : str_eq_c(call->name, "Has") ? "HasPrevious" : "TryGetPrevious");
+        const method_form *form = find_form(world_calls, sizeof world_calls / sizeof world_calls[0], written);
         sb label = {0};
         if (form) format_world_method(form, call->type_decl, &label);
         if (form) vec_push(list.labels, label.data);

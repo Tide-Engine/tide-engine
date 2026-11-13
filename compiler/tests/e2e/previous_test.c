@@ -46,6 +46,11 @@ static void check_start(const tide_world *w, const int tick)
     TIDE_CHECK(w->Tally.startPlaces == w->Tally.beforePlaces);
     TIDE_CHECK(w->Tally.startNames == w->Tally.beforeNames);
     TIDE_CHECK(w->Tally.startRanks == w->Tally.beforeRanks);
+    // Asked one entity at a time: through the World in a system, and in a handler by a query and the World once
+    // entities have come, gone and moved
+    TIDE_CHECK(w->Tally.wrong == 0);
+    TIDE_CHECK(w->Tally.asked > 1000 && w->Tally.rowsLate > 1000 && w->Tally.askedLate == w->Tally.rowsLate);
+    if (tick > 2) TIDE_CHECK(w->Tally.rowsLate < w->Tally.asked); // Some were destroyed before the handler's turn
     if (tick > 2) TIDE_CHECK(w->Tally.nowRanks != w->Tally.beforeRanks); // ...and not the world as they found it
 }
 

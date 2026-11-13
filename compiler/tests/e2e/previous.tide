@@ -15,6 +15,7 @@ component Boid
     int seen;
     float nearest;
     int friends;
+    Entity friend;      // The boid spawned before it
     string name;        // What it holds in a heap is read as it was, too
     List<int> marks;
     List<string> notes; // ...and a list of text, whose elements are in the heap themselves
@@ -23,6 +24,14 @@ component Boid
 
 component Rank
 {
+    int level;
+}
+
+// What a system that runs first in the tick saw of the entity: what `previous` must give, however it's asked
+component Memo
+{
+    long place = -1;
+    long names;
     int level;
 }
 
@@ -45,6 +54,13 @@ singleton Tally
     long heardSum;
     int told;
     long toldSum;
+    // Every entity's value of the tick's start, asked through the World in a system and in a handler, and through
+    // a handler's query once the tick's entities have come, gone and moved: how many were asked, and how many
+    // weren't what Remember saw
+    int asked;
+    int askedLate;
+    int rowsLate;
+    int wrong;
 }
 
 event Sighted
@@ -52,6 +68,8 @@ event Sighted
     int id;
     int count;
 }
+
+event Audit { }
 
 event Told
 {
@@ -64,10 +82,12 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
+    mut Entity last = default;
     for (var i = 0; i < 1500; i++)
     {
         var e = Spawn(Boid { id = i, position = float3(float(i % 53), float(i % 7), float(i % 41)), team = i % 3,
-                             name = $"boid {i}" }, Rank { level = i % 5 });
+                             friend = last, name = $"boid {i}" }, Rank { level = i % 5 }, Memo { });
+        last = e;
         if (i % 4 == 0) e.Add(Leader);
         if (i % 9 == 2) e.Add(Lost);
     }
@@ -90,6 +110,13 @@ long NameOf(Boid b)
 }
 
 // First in the tick, reading the world as it is: everything that writes Boid or Rank waits for these
+system Remember(mut Memo memo, Boid b, Rank rank)
+{
+    memo.place = PlaceOf(b);
+    memo.names = NameOf(b);
+    memo.level = rank.level;
+}
+
 system StartPlaces(mut Tally tally, query (Boid b) all)
 {
     mut var sum = 0L;
@@ -204,6 +231,69 @@ event(Told t) Keep(mut Tally tally)
     tally.toldSum = Mix(tally.toldSum, t.id + t.name.length * 1000 + t.marks.count * 100000);
 }
 
+// Another entity's values of the tick's start through the World, in a system that changes the component it
+// asks for: across threads, waiting for nobody over it
+system Follow(mut Boid b, World world)
+{
+    if (world.TryGetPrevious<Boid>(b.friend, out var was)) b.friends += was.team + was.marks.count;
+    if (world.HasPrevious<Rank>(b.friend)) b.seen += world.GetPrevious<Rank>(b.friend).level;
+}
+
+long WasPlace(World world, Entity e)
+{
+    return PlaceOf(world.GetPrevious<Boid>(e));
+}
+
+// Last of the systems: every entity asked through the World, against what Remember saw
+[After(Churn)]
+system AskAll(mut Tally tally, World world, query (Memo memo) all)
+{
+    mut var asked = 0;
+    mut var wrong = 0;
+    foreach (var row in all)
+    {
+        asked++;
+        if (!world.TryGetPrevious<Boid>(row.entity, out var was)) { wrong++; continue; }
+        if (PlaceOf(was) != row.memo.place || NameOf(was) != row.memo.names) wrong++;
+        if (WasPlace(world, row.entity) != row.memo.place) wrong++;
+        if (world.GetPrevious<Rank>(row.entity).level != row.memo.level) wrong++;
+    }
+    tally.asked = asked;
+    tally.wrong += wrong;
+    Send(Audit { });
+}
+
+// ...and in a handler, once the tick's spawns, destroys and moves between archetypes are in: an entity is found
+// where it was, one spawned this tick (its Memo untouched) is no row of a `previous` query, and has nothing
+event(Audit a) Late(mut Tally tally, World world, query (previous Boid was, previous Rank rank, Memo memo) before, query (Memo memo) now)
+{
+    mut var rows = 0;
+    mut var wrong = 0;
+    foreach (var row in before)
+    {
+        rows++;
+        if (row.memo.place == -1) wrong++;
+        if (PlaceOf(row.was) != row.memo.place || NameOf(row.was) != row.memo.names || row.rank.level != row.memo.level) wrong++;
+    }
+    mut var asked = 0;
+    foreach (var row in now)
+    {
+        var fresh = row.memo.place == -1;
+        if (world.HasPrevious<Boid>(row.entity) == fresh) wrong++;
+        if (fresh)
+        {
+            if (world.TryGetPrevious<Boid>(row.entity, out var none) || none.id != 0) wrong++;
+            continue;
+        }
+        asked++;
+        if (WasPlace(world, row.entity) != row.memo.place) wrong++;
+        if (!world.TryGetPrevious<Boid>(row.entity, out var was) || NameOf(was) != row.memo.names) wrong++;
+    }
+    tally.rowsLate = rows;
+    tally.askedLate = asked;
+    tally.wrong += wrong;
+}
+
 // After every writer, in the tick's order: what was there when the tick started
 system BeforePlaces(mut Tally tally, query (previous Boid b) all)
 {
@@ -260,8 +350,11 @@ system Churn(Boid b, Time time)
     if ((b.id * 5 + time.tick) % 89 == 0)
     {
         Spawn(Boid { id = b.id + 10000 * (time.tick + 1), position = b.position + float3(0.5, 0, 0.5), team = b.team,
-                     name = "late" }, Rank { level = 1 });
+                     name = "late" }, Rank { level = 1 }, Memo { });
     }
     if ((b.id + time.tick) % 31 == 0) this.Add(Lost);
     if ((b.id + time.tick) % 37 == 0) this.Remove(Lost);
+    // Another archetype by the tick's end
+    if ((b.id + time.tick) % 41 == 0) this.Add(Leader);
+    if ((b.id + time.tick) % 43 == 0) this.Remove(Leader);
 }

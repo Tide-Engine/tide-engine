@@ -7929,13 +7929,19 @@ static type check_world_call(checker *c, expr *e, param *world)
     const decl *code = c->system;
     const bool helper = c->method != NULL; // A function's or method's own World
     const char *code_what = !helper ? system_what(code) : code->kind == DECL_FUNCTION ? "function" : "method";
+    // world.GetPrevious<Health>(e), TryGetPrevious, HasPrevious: Get, TryGet and Has of the entity as the tick started
+    const bool previous = str_eq_c(e->name, "GetPrevious") || str_eq_c(e->name, "TryGetPrevious") || str_eq_c(e->name, "HasPrevious");
+    if (previous) e->name = str_from(str_eq_c(e->name, "GetPrevious") ? "Get" : str_eq_c(e->name, "HasPrevious") ? "Has" : "TryGet");
     const bool set = str_eq_c(e->name, "Set");
     const bool try_get = str_eq_c(e->name, "TryGet");
     if (set) world->written = true;
     if (!set && !try_get && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
         check_world_args(c, e);
-        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, Parent, ParentToWorld and LocalToWorld", STR_ARG(e->name));
+        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, GetPrevious, HasPrevious, TryGetPrevious, Parent, ParentToWorld and LocalToWorld", STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
+        suggest_consider_c(&s, "GetPrevious");
+        suggest_consider_c(&s, "TryGetPrevious");
+        suggest_consider_c(&s, "HasPrevious");
         suggest_consider_c(&s, "Get");
         suggest_consider_c(&s, "Has");
         suggest_consider_c(&s, "TryGet");
@@ -8075,6 +8081,41 @@ static type check_world_call(checker *c, expr *e, param *world)
         return T_ERR;
     }
     e->call = CALL_WORLD;
+    if (previous) { // Of the tick's start: nothing the schedule orders, read from what the tick kept
+        const char *word = try_get ? "TryGetPrevious" : str_eq_c(e->name, "Has") ? "HasPrevious" : "GetPrevious";
+        if (d->is_local) {
+            diag_error(e->type_arg_at, "'" STR_FMT "' is local: nothing of it is part of a tick, so it has no value from the tick's start",
+                       STR_ARG(d->name));
+            diag_note("'%s' is for the match's components, which the tick's systems change", word);
+            return T_ERR;
+        }
+        if (!helper && (code->is_view || code->is_local)) {
+            diag_error(e->at, "'%s' reads an entity as the tick started, and %s runs between ticks, when nothing changes the match",
+                       word, code->is_view ? "a view" : "local code");
+            diag_note("'" STR_FMT "." STR_FMT "<" STR_FMT ">' reads it as this code sees the match", STR_ARG(world->name), STR_ARG(e->name),
+                      STR_ARG(d->name));
+            return T_ERR;
+        }
+        if (code->is_async) {
+            diag_error(e->at, "'%s' reads an entity as the tick started, and a task goes on once the tick's systems and changes are done",
+                       word);
+            diag_note("read it before the first 'await', in the system or handler that starts the task, and pass the value on");
+            return T_ERR;
+        }
+        e->world_previous = true;
+        decl *reader = c->system;
+        bool listed = false;
+        for (int i = 0; i < reader->previous_reads.count; i++) listed |= reader->previous_reads.items[i] == d;
+        if (ok && !listed) vec_push(reader->previous_reads, d);
+        if (!reader->previous_read_at.line) reader->previous_read_at = e->at;
+        d->kept_previous = true;
+        c->prog->keeps_previous = true;
+        if (decl_holds_text(d)) c->prog->uses_text = true;
+        if (try_get) d->tried_previous = true;
+        // Once the tick's changes apply, an entity is found where it was by the entities as the tick started
+        if (helper || code->is_handler) c->prog->keeps_previous_entities = true;
+        return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
+    }
     if (ok) note_world_use(c, d, set, e->at);
     if (set && builds(c->prog)) d->world_set_used = true;
     if (set) note_text_write(c, decl_holds_text(d), e->at, d, false); // Its text and lists go into its heap
@@ -18843,17 +18884,14 @@ static bool check_previous_binding(const decl *sys, const param *query, param *p
         return false;
     }
     if (sys->kind != DECL_SYSTEM || sys->is_view || sys->is_local) {
-        diag_error(at, "'previous' is for a system's query: it's what lets systems of one tick run without waiting for "
-                       "each other, and %s", sys->is_view ? "a view runs between ticks, when nothing changes the match"
-                                                          : "this isn't part of a tick's schedule");
+        diag_error(at, "'previous' is for a system's or a match handler's query: it reads the match as the tick started, "
+                       "and %s", sys->is_view ? "a view runs between ticks, when nothing changes the match"
+                                              : "this isn't part of a tick");
         if (sys->is_view) diag_note("a view's query reads the match as the view draws it; drop 'previous'");
         return false;
     }
-    if (sys->is_handler) {
-        diag_error(at, "'previous' is for a system's query: a handler runs once the tick's systems are done, one at a "
-                       "time, and waits for nothing");
-        diag_note("a system reads the tick's start with 'system Name(query (previous " STR_FMT " %s) others) { ... }'; a "
-                  "handler's query reads the world as its event's turn finds it", STR_ARG(p->type_name), name);
+    if (sys->is_async) {
+        diag_error(at, "'previous' reads the tick's start, and a task goes on once the tick's systems and changes are done");
         return false;
     }
     if (p->mode == PARAM_MUT) {
@@ -18987,6 +19025,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         if (p->previous) { // As the tick started: its pages are kept from then (previous_codegen.inc)
             d->kept_previous = true;
             c->prog->keeps_previous = true;
+            if (sys->is_handler) c->prog->keeps_previous_entities = true; // ...and where each entity was
             // What it kept in its heap is read there, and elements with text come as copies in the scratch area
             if (decl_holds_text(d)) c->prog->uses_text = true;
         }
@@ -23355,11 +23394,33 @@ static void check_world_passing(checker *c)
             }
         }
     }
+    // What a function reads of the tick's start through its World (GetPrevious) is each caller's too
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!(world_param(site->to) && world_param(site->from)) && !site->to->borrows_owner_world) continue;
+            if (!site->to->previous_read_at.line) continue;
+            for (int k = 0; k < site->to->previous_reads.count; k++) {
+                decl *theirs = site->to->previous_reads.items[k];
+                bool has = false;
+                for (int j = 0; j < site->from->previous_reads.count; j++) has |= site->from->previous_reads.items[j] == theirs;
+                if (has) continue;
+                vec_push(site->from->previous_reads, theirs);
+                grew = true;
+            }
+            if (!site->from->previous_read_at.line) {
+                site->from->previous_read_at = site->call->at;
+                grew = true;
+            }
+        }
+    }
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
         for (int k = -1; k < d->methods.count; k++) {
             decl *m = k < 0 ? d : d->methods.items[k];
             if (m->kind != DECL_FUNCTION && m->kind != DECL_METHOD) continue;
+            m->world_match |= m->previous_reads.count > 0; // GetPrevious reads the match's world too
             for (int j = 0; j < m->world_uses.count; j++) {
                 const world_use *u = &m->world_uses.items[j];
                 if (!u->through_world) continue;
@@ -23390,6 +23451,13 @@ static void check_world_passing(checker *c)
             continue;
         }
         if (from->kind != DECL_SYSTEM) continue; // A function's own callers answer for it
+        if (to->previous_read_at.line && (from->is_view || from->is_local || from->is_async)) {
+            diag_error(at, "'" STR_FMT "' reads entities as the tick started through its World (GetPrevious), and %s", STR_ARG(to->name),
+                       from->is_async ? "a task goes on once the tick's systems and changes are done"
+                                      : "this runs between ticks, when nothing changes the match");
+            diag_note("a system or a match handler can call it");
+            continue;
+        }
         for (int k = 0; k < to->world_uses.count; k++) {
             const world_use *u = &to->world_uses.items[k];
             if (!u->through_world) continue;

@@ -1,0 +1,10 @@
+// expect: 'Was' reads entities as the tick started through its World (GetPrevious), and this runs between ticks
+// expect: a system or a match handler can call it
+component Body { float3 position; Entity next; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body); }
+float3 Was(World world, Entity e) { return world.GetPrevious<Body>(e).position; }
+view Show(Body body, World world)
+{
+    var was = Was(world, body.next);
+}

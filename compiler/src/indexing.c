@@ -1367,7 +1367,11 @@ static void plan_loop(const program *prog, const decl *code, stmt *loop)
         plan->component = query ? path_component(&c, plan->keys[0].path) : NULL;
         plan->previous = query && path_previous(&c, plan->keys[0].path);
         const bool still = query ? query_source_still(&c, plan) : list_source_still(&c);
-        if (still && code->is_async && stmt_waits(loop->then_stmt)) {
+        if (still && plan->previous && code->is_handler) {
+            // (The tick's index is of rows as they were, and a handler's entities have moved since)
+            because(&c, loop->at, "a handler finds each entity's 'previous' values by the entity, once rows have moved: a "
+                                  "system's loop goes through the tick's index");
+        } else if (still && code->is_async && stmt_waits(loop->then_stmt)) {
             because(&c, loop->at, "its body waits (await), and the index's search can't be kept across a wait");
         } else if (still) {
             loop->index = plan;

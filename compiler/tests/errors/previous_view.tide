@@ -1,4 +1,4 @@
-// expect: 'previous' is for a system's query
+// expect: 'previous' is for a system's or a match handler's query
 // expect: a view's query reads the match as the view draws it; drop 'previous'
 component Body { float3 position; }
 scene Main { }

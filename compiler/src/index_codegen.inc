@@ -668,6 +668,11 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     ix_used(g, s);
     bool any = false;
     for (int a = 0; a < g->prog->archetypes.count; a++) any |= query_admits(g, x.selection, a);
+    // A handler's rows have moved since the tick started, so its `previous` values are found by the entity: a
+    // loop keyed by one goes through every row (a function handed a handler's query comes here)
+    const decl *asker = borrowed ? source.owner : g->code;
+    const bool late = any_before && asker && asker->is_handler;
+    if (late && x.before) any = false;
     if (!any) { // No table has rows it could take: nothing to index
         gen_query_walk(g, s, gather);
         return true;
@@ -751,6 +756,12 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
         const field *binding = &x.row->fields.items[f++];
         reads[i].some = canonical && !gather && match_query_lanes(g, s, p, binding, reads[i].words);
         narrowed |= reads[i].some;
+        if (!before[i]) continue; // What the tick keeps for it: the lanes read, or by the entity, all
+        if (late || !reads[i].some) previous_wants(g, p->type.decl, -1);
+        else for (int k = 0; k < comp_lanes(p->type.decl); k++) if (query_reads_lane(&reads[i], k)) previous_wants(g, p->type.decl, k);
+    }
+    if (x.before) for (int k = 0; k < plan->count; k++) { // ...and the lanes its index is made of
+        for (int l = x.lane_lo[k]; l <= x.lane_hi[k]; l++) previous_wants(g, x.q->query.items[x.binding[k]].type.decl, l);
     }
     if (canonical) {
         line(g, o, "tide_canonical_candidate tide_xinline[64];");
@@ -796,7 +807,7 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
         g->indent++;
         line(g, o, "const tide_table *tide_qt = &%s->%s;", x.world, arch_name(g, a));
         line(g, o, "if (tide_xr >= tide_qt->count) continue;");
-        if (any_before) {
+        if (any_before && !late) {
             line(g, o, "const tide_table *tide_qp = %s;", previous_table(g, x.world, a));
             line(g, o, "if (tide_xr >= tide_qp->count) continue; // Not there as the tick started");
         }
@@ -819,6 +830,11 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
             if (!param_binding(p)) continue;
             const field *value = &x.row->fields.items[f++];
             const decl *comp = p->type.decl;
+            if (before[i] && late) {
+                line(g, o, "if (!tide_previous_%s(%s, tide_xe, &%s.%s)) continue; // Not there as the tick started",
+                     type_cname(comp), x.world, name, field_cname(value));
+                continue;
+            }
             if (reads[i].some) {
                 const int width = comp_width(comp);
                 for (int k = 0; k < comp_lanes(comp); k++) {
