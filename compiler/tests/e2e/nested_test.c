@@ -51,9 +51,9 @@ TIDE_TEST(nested_lists_reuse_their_memory)
     tide_world_init(&world, 1.0f);
     grid_entity = tide_entity_in_slot(&world.entities, 1);
     for (int i = 0; i < 60; i++) tide_world_tick(&world);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     for (int i = 0; i < 400; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.heap.used == used);
+    TIDE_CHECK(tide_heaps_used(&world.heap) == used);
 }
 
 TIDE_TEST(nested_snapshot_and_repeat)

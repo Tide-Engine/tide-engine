@@ -1,5 +1,21 @@
 # C: lists C makes, jobs, systems written in C
 
+## What C writes stays in the match's own heap (2026-11-13)
+
+Each owner's text and lists are in a heap of its own now (schedule-and-threads.md, top section), named by the
+`where` a write is given. C says `TIDE_IN_MATCH` for what it writes, so **an owner C can write keeps its text and
+lists in the match's own heap**, which is what `TIDE_IN_MATCH` names: one a system written in C takes `mut`, or one
+that code hands, whole or in part (a `Resident` field counts: Box3D's C reaches the singleton's lists through its
+own pointer), to a `mut` or `out` parameter of an extern function, or of a Tide function that hands that parameter
+on to one (`c_lend`, `param.c_passed`, `decl.c_written` in `compiler/src/check.c`). The packages' bridges and a
+game's C are unchanged. Systems that change any such owner's text or lists wait for each other, as every system
+that changed text did before; `tide schedule` lists them (`C can write it`).
+
+The generated header has `TIDE_WHERE_<Type>` for every owner. C that writes a field of an owner it wasn't handed
+(a host, a test poking `world.Store.names`) says that instead of `TIDE_IN_MATCH`: with the wrong `where` a list
+function takes the field's block for a borrowed one and copies it into the match's heap. A `mut List<T>` parameter
+is handed its `where` as before.
+
 ## C that a tick and local code both call (2026-11-12)
 
 With ticks beside the frame (schedule-and-threads.md, top section) a game's `extern` C can be called by a

@@ -486,8 +486,8 @@ TIDE_TEST(box2d_gravity_wakes_manual_sleep_when_automatic_sleeping_is_off)
 // The scripted match after its ticks, on every platform and in every
 // configuration: whether a body is asleep is in its component and in Box2D's
 // image.
-#define SCRIPT_HASH UINT64_C(0x97971781cb27c3bf)
-#define SCRIPT_IMAGES_HASH UINT64_C(0xf500c36618f67cab)
+#define SCRIPT_HASH UINT64_C(0x1c2354a9c3988464)
+#define SCRIPT_IMAGES_HASH UINT64_C(0x99cf5db22ceea403)
 
 enum { SCRIPT_TICKS = 320, KEPT_AT = 95 };
 

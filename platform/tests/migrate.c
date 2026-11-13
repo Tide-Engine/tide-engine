@@ -12,7 +12,7 @@
 
 extern const tide_layout tide_game_layout;
 
-#define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f)}
+#define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f), 0}
 
 TIDE_TEST(migrate_preserves_logical_entity_clock_at_a_changed_header_offset)
 {
@@ -1129,7 +1129,7 @@ TIDE_TEST(migrate_carries_local_fields_by_name)
         const uint32_t size = tide_local_pack(bare, NULL, 0);
         uint8_t *bytes = malloc(size);
         tide_local_pack(bare, bytes, size);
-        const uint32_t heap = tide_heap_packed_size(&bare->heap);
+        const uint32_t heap = tide_heaps_packed_size(&bare->heap);
         memmove(bytes + size - heap - 4u, bytes + size - heap, heap); // The empty table's count goes
         void *moved = NULL;
         uint32_t moved_size = 0;

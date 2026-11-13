@@ -318,7 +318,7 @@ static tide_float4x4 hollow_at(const float x, const float z)
 TIDE_TEST(draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     tide_list vertices = {0}, indices = {0}, others = {0}, triangles = {0};
     hollow_lists(&vertices, &indices, 0.0f);
@@ -398,7 +398,7 @@ TIDE_TEST(draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy)
     tide_list_release(&triangles, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // Past the budget, the idle mesh farthest from where the frame's camera was goes first, however recently drawn:
@@ -1352,7 +1352,7 @@ TIDE_TEST(draw_meshes_append)
 TIDE_TEST(draw_grids_are_textures)
 {
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}}; // As tidec makes Grid2<Color>'s
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const uint64_t mark = tide_scratch_mark();
     tide_grid grid = {0};
@@ -1416,7 +1416,7 @@ TIDE_TEST(draw_grids_are_textures)
     tide_grid_release(&grid, &colors, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // What a renderer that has the texture `t` as it was at `had` is told changed:
@@ -1459,7 +1459,7 @@ static void shown_kind(const void *element, int32_t *words)
 TIDE_TEST(draw_textures_say_what_changed)
 {
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const uint64_t mark = tide_scratch_mark();
     tide_grid grid = {0};
@@ -1609,7 +1609,7 @@ TIDE_TEST(draw_textures_say_what_changed)
     tide_grid_release(&grid, &colors, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 static void int_words(const void *element, int32_t *words)
@@ -1646,7 +1646,7 @@ TIDE_TEST(draw_textures_kept_are_the_textures_made_anew)
 {
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
     static const tide_grid_shape ints = {sizeof(int32_t), 3u, {4u, 4u, 2u}};
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const uint64_t mark = tide_scratch_mark();
     tide_grid paint = {0}, blocks = {0};
@@ -1725,7 +1725,7 @@ TIDE_TEST(draw_textures_kept_are_the_textures_made_anew)
     tide_grid_release(&blocks, &ints, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // ---------------------------------------------------------------------------
@@ -1976,7 +1976,7 @@ TIDE_TEST(draw_meshes_3d_many)
 // the same places in the scratch area again, are told apart by what's in them.
 TIDE_TEST(draw_lists_are_meshes_3d)
 {
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const uint64_t mark = tide_scratch_mark();
     tide_list vertices = {0}, big = {0};
@@ -2040,7 +2040,7 @@ TIDE_TEST(draw_lists_are_meshes_3d)
     tide_list_release(&big, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // A list that forgot its meshes copies them again, and its commands draw
@@ -2075,7 +2075,7 @@ TIDE_TEST(draw_meshes_3d_forget_and_append)
 TIDE_TEST(draw_instance_lists_are_copied_and_batched)
 {
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
@@ -2125,7 +2125,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
     tide_grid_release(&grid, &colors, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // A packed instance run keeps every value, copies its uniforms once, and

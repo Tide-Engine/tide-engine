@@ -8,7 +8,7 @@
 
 typedef struct json_world {
     tide_list bytes;
-    tide_heap heap;
+    tide_heaps heap;
 } json_world;
 
 static json_world world;
@@ -295,7 +295,7 @@ TIDE_TEST(json_reader_bounds_depth_text_and_what_it_makes)
 
 TIDE_TEST(json_reads_bytes_wherever_a_list_keeps_them)
 {
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
     memset(&world, 0, sizeof world);
     tide_text_use(&world.heap, NULL);
     const uint64_t mark = tide_scratch_mark();
@@ -336,7 +336,7 @@ TIDE_TEST(json_reads_bytes_wherever_a_list_keeps_them)
     tide_json_begin_bytes(&j, world.bytes);
     TIDE_CHECK(!tide_json_skip(&j));
     tide_scratch_reset(mark);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
     memset(&world, 0, sizeof world);
     tide_text_use(NULL, NULL);
 }

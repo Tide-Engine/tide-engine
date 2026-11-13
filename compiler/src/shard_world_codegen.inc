@@ -447,7 +447,7 @@ static void gen_shard_queries(gen *g)
     // The trees this shard owns near `box`: on the root, the ones with no position too, and elsewhere one with
     // no position that goes with an entity near it (a part with its body)
     sb_put(o, "TIDE_SHARD_FN void tide_shard_border(const void *world, const tide_shard_box *box, tide_shard_each each, void *context)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    const bool root = tide_shard_root(w);\n    (void)root;\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
@@ -473,7 +473,7 @@ static void gen_shard_queries(gen *g)
     sb_put(o, "}\n\n");
     // Owned entities: how many, and the box around their positions
     sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_load(const void *world, tide_shard_box *box)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    uint32_t count = 0;\n"
               "    for (uint32_t k = 0; k < 3u; k++) { box->lo[k] = 0.0; box->hi[k] = 0.0; }\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
@@ -491,7 +491,7 @@ static void gen_shard_queries(gen *g)
     }
     sb_put(o, "    return count;\n}\n\n");
     sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_sample(const void *world, const uint32_t stride, double (*out)[3], const uint32_t capacity)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    uint32_t seen = 0, count = 0;\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
@@ -506,7 +506,7 @@ static void gen_shard_queries(gen *g)
     sb_put(o, "    return count;\n}\n\n");
     // Each player owning entities here: how many, and where
     sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_presence_of(const void *world, tide_shard_presence *out, const uint32_t capacity)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    uint32_t count = 0;\n    (void)out;\n    (void)capacity;\n");
     if (shard_uses(prog, prog->owner)) {
         const char *owner = type_cname(prog->owner);
@@ -536,7 +536,7 @@ static void gen_shard_queries(gen *g)
     sb_put(o, "    return count;\n}\n\n");
     sb_put(o, "TIDE_SHARD_FN void tide_shard_ghosts_of(const void *world, void (*each)(void *context, tide_entity e, int32_t source),\n"
               "                                       void *context)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n");
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
@@ -559,7 +559,7 @@ static void gen_shard_queries(gen *g)
     sb_put(o, "}\n\n");
     sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_route_of(const void *world, const tide_player_id player, uint32_t *home,\n"
               "                                          tide_shard_link *out, const uint32_t capacity)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    const tide_list routes = w->tide_shard_state.routes;\n"
               "    const int32_t at = tide_shard_route_at(routes, (int64_t)player.id);\n"
               "    if (at < 0) return 0u;\n"
@@ -571,7 +571,7 @@ static void gen_shard_queries(gen *g)
               "    return count;\n}\n\n");
     // The regions, as a machine watching an area finds the shards owning it
     sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_regions_of(const void *world, tide_shard_region *out, const uint32_t capacity)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    const tide_shard_state *s = &w->tide_shard_state;\n"
               "    const uint32_t count = (uint32_t)(tide_list_count(s->regions) / 7);\n"
               "    for (uint32_t i = 0; i < count && i < capacity; i++) {\n"
@@ -583,7 +583,7 @@ static void gen_shard_queries(gen *g)
               "        out[i].match = (uint64_t)tide_shard_long(s->matches, (int32_t)i);\n    }\n"
               "    return count;\n}\n\n");
     sb_put(o, "TIDE_SHARD_FN void tide_shard_status_of(const void *world, tide_shard_status *out)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    const tide_shard_state *s = &w->tide_shard_state;\n"
               "    memset(out, 0, sizeof *out);\n"
               "    out->id = s->shard - 1;\n    out->role = (uint32_t)s->role;\n");
@@ -696,7 +696,7 @@ static void gen_shard_tick(gen *g)
               "    tide_world_free(&before);\n"
               "    tide_text_use(&w->heap, NULL);\n"
               "    tide_shard_after(w, &t);\n"
-              "    tide_heap_flush(&w->heap);\n    tide_heap_settle(&w->heap);\n"
+              "    tide_heaps_flush(&w->heap);\n    tide_heaps_settle(&w->heap);\n"
               "    tide_shard_tick_free(&t);\n}\n\n");
 }
 

@@ -10,7 +10,7 @@
 
 typedef struct scratch_world {
     tide_list numbers;
-    tide_heap heap;
+    tide_heaps heap;
 } scratch_world;
 
 static scratch_world world;
@@ -24,7 +24,7 @@ static uint32_t value_at(const int32_t i)
 
 static void start(void)
 {
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
     memset(&world, 0, sizeof world);
     tide_text_use(&world.heap, NULL);
     for (int32_t i = 0; i < BIG_COUNT; i++) {
@@ -87,7 +87,7 @@ TIDE_TEST(scratch_big_lists_are_whole)
 
     tide_scratch_reset(mark);
     TIDE_CHECK(tide_scratch_mark() == mark);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(scratch_big_text_is_whole)
@@ -138,7 +138,7 @@ TIDE_TEST(scratch_results_are_the_same_whatever_came_first)
         TIDE_CHECK(same);
         tide_scratch_reset(mark);
     }
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(scratch_pieces_go_back_with_the_mark)
@@ -187,7 +187,7 @@ TIDE_TEST(scratch_pieces_go_back_with_the_mark)
         tide_scratch_reset(mark);
     }
     TIDE_CHECK(marks[0][0] == marks[1][0] && marks[0][1] == marks[1][1]);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 // A spare goes once nothing takes it (tide_scratch_trim): at once for 0, and
@@ -208,5 +208,5 @@ TIDE_TEST(scratch_spare_goes_when_nothing_takes_it)
     TIDE_CHECK(tide_scratch_mark() == at);
     tide_scratch_reset(mark);
     TIDE_CHECK(!tide_scratch_trim(0));
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }

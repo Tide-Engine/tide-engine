@@ -1,0 +1,72 @@
+heaps: 15 systems each tick, 4 stages deep; 15 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Write  (once)
+         writes Ledger
+         alongside Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2
+stage 1  Enlist  (once)
+         writes Roster
+         alongside Write, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2
+stage 1  Note  (once)
+         writes Notes
+         alongside Write, Enlist, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2
+stage 1  Stuff  (per entity)
+         writes Pack
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:33)
+         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2
+stage 1  Walk  (per entity)
+         writes Trail
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:34)
+         alongside Write, Enlist, Note, Stuff, StuffMarked, StuffPlain, Haunt, Summon, Tag, Call, Shout, Native1, Native2
+stage 1  Haunt  (per entity)
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:42)
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Tag, Retag, Call, Shout, Native1, Native2
+stage 1  Call  (per entity)
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:48)
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Native1, Native2
+stage 1  Native1  (once)
+         writes Native
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout
+
+stage 2  StuffMarked  (per entity)
+         writes Pack
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:37)
+         after Stuff: both change the text, lists or grids of Pack; both write Pack
+         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2
+stage 2  Summon  (per entity)
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:43)
+         after Haunt: both change the text, lists or grids of Ghost
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Tag, Retag, Call, Shout, Native1, Native2
+stage 2  Retag  (per entity)
+         reads Trail
+         after Walk: it writes Trail, which this reads
+         alongside Write, Enlist, Note, Stuff, StuffMarked, StuffPlain, Haunt, Summon, Tag, Call, Shout, Native1, Native2
+stage 2  Shout  (per entity)
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:49)
+         after Call: both change the text, lists or grids of Named
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Native1, Native2
+stage 2  Native2  (once)
+         writes Other
+         after Native1: both change text, lists or grids kept in one heap, those of Native and Other
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout
+
+stage 3  StuffPlain  (per entity)
+         writes Pack
+         on one thread: it changes text, lists or grids, which go in the order its entities do (heaps.tide:38)
+         after Stuff: both change the text, lists or grids of Pack; both write Pack (and through StuffMarked)
+         after StuffMarked: both change the text, lists or grids of Pack
+         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2
+
+stage 4  Tag  (per entity)
+         reads Pack
+         after Stuff: it writes Pack, which this reads (and through StuffMarked)
+         after StuffMarked: it writes Pack, which this reads (and through StuffPlain)
+         after StuffPlain: it writes Pack, which this reads
+         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2
+
+Systems that change the text, lists or grids of any of these wait for each other, as they're kept in one heap:
+         Native: C can write it
+         Other: C can write it
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

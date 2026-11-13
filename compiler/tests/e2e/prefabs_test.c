@@ -112,7 +112,7 @@ TIDE_TEST(prefab_inherited_values_keep_source_namespace)
     tide_world_free(&w);
 }
 
-static bool prefab_label_is(const tide_heap *heap, const tide_text label, const char *expected)
+static bool prefab_label_is(const tide_heaps *heap, const tide_text label, const char *expected)
 {
     const tide_str text = tide_text_read(heap, label);
     return text.bytes == (int32_t)strlen(expected) && memcmp(text.ptr, expected, (size_t)text.bytes) == 0;

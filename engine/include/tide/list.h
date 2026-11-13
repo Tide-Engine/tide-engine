@@ -400,8 +400,8 @@ static inline void *tide_list_cached_at_mut(tide_list_cache *c, const tide_list 
 
 // A world's list, read from outside, like a host reading a component: its
 // count, and its element at `i` (NULL past the end).
-int32_t tide_list_read_count(const tide_heap *heap, tide_list l);
-const void *tide_list_read(const tide_heap *heap, tide_list l, int32_t i, uint32_t size);
+int32_t tide_list_read_count(const tide_heaps *heaps, tide_list l);
+const void *tide_list_read(const tide_heaps *heaps, tide_list l, int32_t i, uint32_t size);
 
 // A new element at the end, zeroed, or NULL when the list is as big as one
 // gets (INT32_MAX elements: its count is an int).

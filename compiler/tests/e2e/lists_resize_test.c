@@ -42,14 +42,14 @@ static bool bytes_are(const tide_world *w, const int filled, const int count)
 
 static uint32_t chunks(const tide_world *w, const tide_list l)
 {
-    const tide_block *b = tide_heap_block(&w->heap, tide_handle_offset(l.at));
+    const tide_block *b = tide_heap_block(tide_heaps_read(&w->heap, l.at), tide_handle_offset(l.at));
     return l.at && (b->b & TIDE_LIST_CHUNKED) ? b->b & ~TIDE_LIST_CHUNKED : 0u;
 }
 
-static uint32_t pages_apart(const tide_heap *a, const tide_heap *b)
+static uint32_t pages_apart(const tide_heaps *a, const tide_heaps *b)
 {
-    uint32_t apart = a->pages > b->pages ? a->pages - b->pages : b->pages - a->pages;
-    for (uint32_t i = 0; i < a->pages && i < b->pages; i++) apart += a->page[i] != b->page[i];
+    const uint32_t ours = tide_heaps_pages_apart(a, b), theirs = tide_heaps_pages_apart(b, a);
+    uint32_t apart = ours > theirs ? ours : theirs;
     return apart;
 }
 
@@ -79,7 +79,7 @@ TIDE_TEST(lists_resize_snapshots_and_chunks)
     tide_world_copy(&snapshot, &world);
     tide_world_copy(&twin, &world);
     const uint64_t before = tide_world_hash(&snapshot);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
 
     run(&world, 1, BIG);
     run(&twin, 0, BIG);
@@ -94,13 +94,13 @@ TIDE_TEST(lists_resize_snapshots_and_chunks)
     run(&world, 1, 100000);
     TIDE_CHECK(bytes_are(&world, 100000, 100000) && chunks(&world, world.Store.bytes) == 7);
     run(&world, 1, BIG);
-    TIDE_CHECK(bytes_are(&world, 100000, BIG) && world.heap.used == used);
+    TIDE_CHECK(bytes_are(&world, 100000, BIG) && tide_heaps_used(&world.heap) == used);
     run(&world, 1, 5);
     TIDE_CHECK(bytes_are(&world, 5, 5));
     run(&world, 1, 0);
     TIDE_CHECK(bytes_are(&world, 0, 0));
     run(&world, 1, BIG);
-    TIDE_CHECK(bytes_are(&world, 0, BIG) && world.heap.used == used);
+    TIDE_CHECK(bytes_are(&world, 0, BIG) && tide_heaps_used(&world.heap) == used);
 
     TIDE_CHECK(bytes_are(&snapshot, BIG, BIG));
     TIDE_CHECK(tide_world_hash(&snapshot) == before);
@@ -138,11 +138,11 @@ TIDE_TEST(lists_resize_lets_go_of_text)
     TIDE_CHECK(name.bytes == 6 && memcmp(name.ptr, "name 9", 6) == 0);
     run(&world, 3, 0);
     run(&world, 4, 6000);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     run(&world, 3, 10);
     run(&world, 3, 0);
     run(&world, 4, 6000);
-    TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 6000 && world.heap.used == used);
+    TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 6000 && tide_heaps_used(&world.heap) == used);
     tide_world_free(&world);
 }
 

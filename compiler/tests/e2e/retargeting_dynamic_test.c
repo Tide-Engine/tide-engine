@@ -11,7 +11,7 @@ static tide_world world, copy;
 static tide_world *active = &world;
 
 int64_t StateHash(void) { return (int64_t)tide_world_hash(active); }
-int32_t HeapUsed(void) { return (int32_t)active->heap.used; }
+int32_t HeapUsed(void) { return (int32_t)tide_heaps_used(&active->heap); }
 
 static void tick(tide_world *value)
 {
@@ -54,12 +54,12 @@ TIDE_TEST(retargeting_dynamic_owned_bakes_survive_inputs_pack_and_snapshots)
     TIDE_CHECK(same(&world, &copy));
     for (int i = 0; i < 12; i++) { tick(&world); tick(&copy); }
     TIDE_CHECK(same(&world, &copy) && world.Probe.passed == world.Probe.checks);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     for (int i = 0; i < 60; i++) tick(&world);
-    TIDE_CHECK(world.heap.used == used && world.Probe.passed == world.Probe.checks);
+    TIDE_CHECK(tide_heaps_used(&world.heap) == used && world.Probe.passed == world.Probe.checks);
     TIDE_CHECK(tide_scratch_mark() == 0);
     printf("    baked world hash: %llu\n", (unsigned long long)tide_world_hash(&world));
-    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(12913807730970119762));
+    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(17630739187767656375));
     tide_world_free(&copy);
     tide_world_free(&world);
 }

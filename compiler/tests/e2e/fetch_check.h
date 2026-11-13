@@ -20,7 +20,7 @@ static void fetch_check(const bool ok, const char *what)
 static int check_fetches(tide_local *local)
 {
     tide_text_use(NULL, &local->heap);
-    const tide_heap *heap = &local->heap;
+    const tide_heaps *heap = &local->heap;
     const char *hello = "hello, tide";
     const int32_t n = tide_list_read_count(heap, local->Fetches.hello);
     bool same = n == (int32_t)strlen(hello);

@@ -225,28 +225,22 @@ tide_str tide_str_typed(const tide_typed *typed);
 // A handle: a block's tagged offset, where the block is (TIDE_IN_*) in its top
 // two bits and its offset there in the rest. 0 is no block. The text, lists,
 // maps, sets and grids of fields hold one each (`at`).
+//
+// A world has a heap for each owner of text and lists (tide/heap.h, A world's
+// heaps), so a block in a world also says which: its heap's id, in the
+// handle's low TIDE_HEAP_ID_BITS, below the block's offset in that heap. A
+// block starts at a multiple of 16, so its offset is kept from bit 8 up and a
+// handle stays a few bytes as a varint. A `where` says the same: the world in
+// its low two bits and the heap's id above them, so TIDE_IN_MATCH alone is the
+// match's own heap, and a handle is in a field's memory when its `where` is
+// the field's. The scratch area's handles have no id: their offset is all 62
+// bits.
 typedef uint64_t tide_handle;
 #define TIDE_WHERE_SHIFT 62u
 #define TIDE_HANDLE_OFFSET ((UINT64_C(1) << TIDE_WHERE_SHIFT) - 1u)
-
-// Where a handle's block is (TIDE_IN_*), its offset there, and the handle of
-// an offset there.
-static inline uint32_t tide_handle_where(const tide_handle at)
-{
-    return (uint32_t)(at >> TIDE_WHERE_SHIFT);
-}
-static inline tide_handle tide_handle_offset(const tide_handle at)
-{
-    return at & TIDE_HANDLE_OFFSET;
-}
-static inline tide_handle tide_handle_of(const uint32_t where, const tide_handle offset)
-{
-    return (tide_handle)where << TIDE_WHERE_SHIFT | offset;
-}
-
-typedef struct tide_text {
-    tide_handle at; // 0: empty. Otherwise the block's offset, and where in the top two bits
-} tide_text;
+#define TIDE_WHERE_WORLD 3u        // A `where`'s world: TIDE_IN_*
+#define TIDE_WHERE_HEAP_SHIFT 2u   // ...and from here up, the id of its heap
+#define TIDE_HANDLE_BLOCK_SHIFT 8u // A world's handle: its block's offset from here up, and below it the id
 
 // Where memory is, for `where` arguments, and in the top two bits of a
 // block's tagged offset.
@@ -258,6 +252,36 @@ typedef struct tide_text {
 // view takes `verified` is a copy whose text, lists, maps, sets and grids say
 // so (tide_confirmed), and reading them goes to that world's heap.
 #define TIDE_IN_VERIFIED 3u
+
+// A world's `where` for the heap with that id.
+#define TIDE_WHERE(world, id) ((uint32_t)(world) | (uint32_t)(id) << TIDE_WHERE_HEAP_SHIFT)
+
+// Where a handle's block is (a world and its heap's id, or TIDE_IN_SCRATCH),
+// the world alone, its offset there, and the handle of an offset there.
+static inline uint32_t tide_handle_world(const tide_handle at)
+{
+    return (uint32_t)(at >> TIDE_WHERE_SHIFT);
+}
+static inline uint32_t tide_handle_where(const tide_handle at)
+{
+    const uint32_t world = (uint32_t)(at >> TIDE_WHERE_SHIFT);
+    return world == TIDE_IN_SCRATCH ? world : TIDE_WHERE(world, (uint32_t)at & (TIDE_HEAP_IDS - 1u));
+}
+static inline tide_handle tide_handle_offset(const tide_handle at)
+{
+    const tide_handle offset = at & TIDE_HANDLE_OFFSET;
+    return (uint32_t)(at >> TIDE_WHERE_SHIFT) == TIDE_IN_SCRATCH ? offset : offset >> TIDE_HEAP_ID_BITS << 4;
+}
+static inline tide_handle tide_handle_of(const uint32_t where, const tide_handle offset)
+{
+    const uint32_t world = where & TIDE_WHERE_WORLD;
+    if (world == TIDE_IN_SCRATCH) return (tide_handle)world << TIDE_WHERE_SHIFT | offset;
+    return (tide_handle)world << TIDE_WHERE_SHIFT | offset << TIDE_HANDLE_BLOCK_SHIFT | where >> TIDE_WHERE_HEAP_SHIFT;
+}
+
+typedef struct tide_text {
+    tide_handle at; // 0: empty. Otherwise the block's offset, and where in the top two bits
+} tide_text;
 
 // The pack (tide/pack.h): a game's assets, in a region every world can name
 // and none holds, in the top half of the scratch area's offsets. A handle into
@@ -276,18 +300,18 @@ extern tide_heap tide_pack_still;
 
 // The heaps of the worlds generated code runs with: the match's (or NULL),
 // and the local world's (or NULL).
-void tide_text_use(tide_heap *match_heap, tide_heap *local_heap);
+void tide_text_use(tide_heaps *match_heap, tide_heaps *local_heap);
 
 // The heap of the world the server has confirmed, for a frame's views to read
 // (or NULL): the match's own where there's one world.
-void tide_text_use_verified(const tide_heap *verified_heap);
+void tide_text_use_verified(const tide_heaps *verified_heap);
 
 // This thread's: the heaps tide_text_use set, by `where`, the scratch area,
 // as the start of each of its slots (NULL where it has no piece; the table
 // grows as the area does), and the pack's region as tide_pack_use last saw it
 // (NULL for none). They're here for the functions below, which run for every
 // element code reads or writes, so they inline.
-extern TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[4];
+extern TIDE_THREAD_LOCAL tide_heaps *tide_world_heaps[4];
 extern TIDE_THREAD_LOCAL char **tide_scratch_slots;
 extern TIDE_THREAD_LOCAL char *tide_pack_memory;
 
@@ -302,34 +326,44 @@ static inline char *tide_scratch_at(const uint64_t offset)
     return tide_scratch_slots[offset >> TIDE_SCRATCH_SHIFT] + (offset & (TIDE_SCRATCH_BYTES - 1u));
 }
 
-// The heap of TIDE_IN_MATCH or TIDE_IN_LOCAL, as tide_text_use set it; NULL
-// for TIDE_IN_SCRATCH.
+// The heap of a `where` in the match or the local world, as tide_text_use set
+// them: the one with its id. NULL for TIDE_IN_SCRATCH.
 static inline tide_heap *tide_heap_of(const uint32_t where)
 {
-    return where == TIDE_IN_MATCH || where == TIDE_IN_LOCAL ? tide_world_heaps[where] : NULL;
+    const uint32_t world = where & TIDE_WHERE_WORLD;
+    tide_heaps *heaps = world == TIDE_IN_MATCH || world == TIDE_IN_LOCAL ? tide_world_heaps[world] : NULL;
+    return heaps ? tide_heaps_of(heaps, where >> TIDE_WHERE_HEAP_SHIFT) : NULL;
 }
 
-// The heap a tagged offset's block is read from, by the offset's top two bits:
-// a world's, the confirmed one's too, or NULL for the scratch area's. Only to
-// read: what changes a block finds its heap with tide_heap_of, which the
-// confirmed world's is never.
+// The heap a tagged offset's block is read from, by its `where`
+// (tide_handle_where): a world's, the confirmed one's too, or NULL for the
+// scratch area's. Only to read: what changes a block finds its heap with
+// tide_heap_of, which the confirmed world's is never.
 static inline const tide_heap *tide_heap_read(const uint32_t where)
 {
-    return tide_world_heaps[where & 3u];
+    tide_heaps *heaps = tide_world_heaps[where & TIDE_WHERE_WORLD];
+    return heaps ? tide_heaps_of(heaps, where >> TIDE_WHERE_HEAP_SHIFT) : NULL;
+}
+
+// The heap a handle's block is in among `heaps`, another world's than this
+// thread's: for code handed a world to read.
+static inline const tide_heap *tide_heaps_read(const tide_heaps *heaps, const tide_handle at)
+{
+    return tide_heaps_of((tide_heaps *)(uintptr_t)heaps, tide_handle_where(at) >> TIDE_WHERE_HEAP_SHIFT);
 }
 
 // A tagged offset from a value copied out of the confirmed world, where it
-// said TIDE_IN_MATCH, as that world's own does: the same block, read there.
+// said the match, as that world's own does: the same block, read there.
 static inline tide_handle tide_confirmed(const tide_handle at)
 {
-    return at && tide_handle_where(at) == TIDE_IN_MATCH ? tide_handle_of(TIDE_IN_VERIFIED, at) : at;
+    return at && tide_handle_world(at) == TIDE_IN_MATCH ? at | (tide_handle)TIDE_IN_VERIFIED << TIDE_WHERE_SHIFT : at;
 }
 
 // Reading: a view of the text, which lasts until the running code is done.
 tide_str tide_text_view(tide_text t);
 
 // A world's own text, read from outside, like a host reading a component.
-tide_str tide_text_read(const tide_heap *heap, tide_text t);
+tide_str tide_text_read(const tide_heaps *heaps, tide_text t);
 
 // Writing a field: its own copy of `value` if the field is part of a world
 // (the old text is released), or a borrowed one.

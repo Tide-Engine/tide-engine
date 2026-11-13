@@ -468,4 +468,4 @@ Text and lists that code makes along the way, joining text, say, live in a scrat
 
 An input can't hold text or dynamic collections: what players send every tick is plain data, including vectors, structs and fixed-length arrays (see [Input](../game/input.md)).
 
-Systems that change the match's text or collections wait for each other, since they share one heap.
+Each component, singleton and event keeps its text and collections in memory of its own, which one system changes at a time: two systems that change the same one's wait for each other, and systems that change different ones' run at the same time (see [The schedule](../game/schedule.md)).

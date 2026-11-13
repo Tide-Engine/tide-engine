@@ -105,8 +105,8 @@ TIDE_TEST(rows_are_the_same_on_every_platform)
          tide_columns_arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.shift));
     TIDE_CHECK(world.arch2_Owner_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 10);
     TIDE_CHECK(world.arch1_Spark.count > 100);
-    if (tide_world_hash(&world) != UINT64_C(0xea6ca69fe0bd0be7)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
-    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0xea6ca69fe0bd0be7));
+    if (tide_world_hash(&world) != UINT64_C(0x942da88b3738a7ea)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
+    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0x942da88b3738a7ea));
     TIDE_CHECK(tide_world_hash(&world) == plain[TICKS - 1]);
     tide_world_free(&world);
 }

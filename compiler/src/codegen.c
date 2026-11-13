@@ -16,6 +16,7 @@
 #include "spirv.h"
 #include "shader_names.h"
 #include "texture_compress.h"
+#include "tide/heap.h" // How many ids a world's heaps have
 #include "tide/pack.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
@@ -1209,10 +1210,23 @@ static const char *comp_take(const gen *g, const char *world, const int a, const
     return comp_lanes_call(g, "gather", world, a, c, row, out);
 }
 
-// Where a world's text and lists are, for tide/text.h's `where`.
+// Where a world's text and lists are, for tide/text.h's `where`: its own
+// heap, which holds what's no component's, singleton's or event's.
 static const char *world_where(const bool local)
 {
     return local ? "TIDE_IN_LOCAL" : "TIDE_IN_MATCH";
+}
+
+// Where a component's, a singleton's or an event's text and lists are: its
+// world, and its own heap there when it has one (decl.heap_id, assign_heaps
+// in check.c). Everything that puts a value in `d`'s memory says this, and
+// nothing else does, so its blocks are in that heap alone.
+static const char *decl_where(const decl *d)
+{
+    if (d->is_local || !d->heap_id) return world_where(d->is_local);
+    sb b = {0};
+    sb_printf(&b, "TIDE_WHERE_%s", type_cname(d));
+    return b.data;
 }
 
 // Whether two values can refer to overlapping storage through typed fields.
@@ -2832,9 +2846,9 @@ static const char *place_where(const gen *g, const expr *e)
     if (e->bind == BIND_FIELD) return g->routine && g->routine->is_mut_method && !g->in_input ? "tide_self_where" : "TIDE_IN_SCRATCH";
     if (e->bind != BIND_PARAM) return "TIDE_IN_SCRATCH";
     const param *p = e->param;
-    if (p->task_ref) return world_where(p->type.decl->is_local);
+    if (p->task_ref) return decl_where(p->type.decl);
     if (p->function_param) return p->mode == PARAM_MUT ? where_name(g, e->name) : "TIDE_IN_SCRATCH";
-    if (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) return world_where(p->type.decl->is_local);
+    if (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) return decl_where(p->type.decl);
     return "TIDE_IN_SCRATCH";
 }
 
@@ -6514,7 +6528,7 @@ static void gen_task_value(gen *g, expr *call, const char *name)
             if (t.kind == TY_GRID) sb_put(&g->c, "tide_worker_grid_capture(");
             if (t.kind == TY_STRING) sb_put(&g->c, "tide_text_view(tide_text_temp(");
             gen_value_of(g, &g->c, arg, t);
-            if (t.kind == TY_GRID) sb_printf(&g->c, ", &%s, &tide_l->heap, TIDE_IN_LOCAL)", grid_shape_name(t.decl));
+            if (t.kind == TY_GRID) sb_printf(&g->c, ", &%s, tide_heaps_of(&tide_l->heap, 0u), TIDE_IN_LOCAL)", grid_shape_name(t.decl));
             if (t.kind == TY_STRING) sb_put(&g->c, "))");
             sb_put(&g->c, ";\n");
             if (t.kind == TY_GRID) {
@@ -9510,6 +9524,48 @@ static bool program_uses_io(const program *prog)
     return false;
 }
 
+// Where each match component's, singleton's and event's text, lists and grids
+// are (decl_where): the `where` to give tide/text.h's and tide/list.h's
+// functions for a value in its memory. C that writes one of its fields says
+// this too, rather than TIDE_IN_MATCH, which is only right for the owners C is
+// handed (assign_heaps in check.c).
+static void gen_heap_wheres(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->h;
+    if (!prog->uses_heap) return;
+    decl **const lists[] = {prog->components.items, prog->singletons.items, prog->events.items};
+    const int counts[] = {prog->components.count, prog->singletons.count, prog->events.count};
+    bool any = false;
+    for (int l = 0; l < 3; l++) {
+        for (int i = 0; i < counts[l]; i++) {
+            const decl *d = lists[l][i];
+            if (d->is_local || d->builtin || !decl_has_text(d)) continue;
+            if (!any) sb_put(o, "// Where each owner's text, lists and grids are: its `where` (tide/text.h), the match and the id of its\n"
+                                "// heap there (tide/heap.h, A world's heaps).\n");
+            any = true;
+            if (d->heap_id) sb_printf(o, "#define TIDE_WHERE_%s TIDE_WHERE(TIDE_IN_MATCH, %uu)\n", type_cname(d), (unsigned)d->heap_id);
+            else sb_printf(o, "#define TIDE_WHERE_%s TIDE_IN_MATCH\n", type_cname(d));
+        }
+    }
+    if (any) sb_put(o, "\n");
+}
+
+// The match's heaps, for the runtime: which slot each id is, and each slot's
+// id, said before any world is made (tide_heaps_shape).
+static void gen_heap_shape(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (prog->heap_ids.count < 2) return;
+    sb_put(o, "static const uint16_t tide_game_heap_slots[TIDE_HEAP_IDS] = {");
+    for (int i = 1; i < prog->heap_ids.count; i++) sb_printf(o, "%s[%u] = %d", i > 1 ? ", " : "", (unsigned)prog->heap_ids.items[i], i);
+    sb_put(o, "};\nstatic const uint16_t tide_game_heap_ids[] = {");
+    for (int i = 0; i < prog->heap_ids.count; i++) sb_printf(o, "%s%u", i ? ", " : "", (unsigned)prog->heap_ids.items[i]);
+    sb_printf(o, "};\n__attribute__((constructor)) static void tide_game_heaps(void)\n{\n"
+                 "    tide_heaps_shape(tide_game_heap_slots, tide_game_heap_ids, %d);\n}\n\n", prog->heap_ids.count);
+}
+
 static void gen_header(gen *g)
 {
     const program *prog = g->prog;
@@ -9537,6 +9593,7 @@ static void gen_header(gen *g)
                                          "{ return a.tide_id == b.tide_id && a.tide_slot == b.tide_slot; }\n\n");
     if (program_uses_io(prog)) sb_put(o, "#define TIDE_HAS_IO 1\n\n");
     if (prog->shards) sb_put(o, "#define TIDE_GAME_SHARDED 1 // A world split across shards (tide/shards.h)\n\n");
+    gen_heap_wheres(g);
     if (prog->assets.count) sb_put(o, "#define TIDE_HAS_ASSETS 1\n\n");
     if (prog->skinned_types.count) sb_put(o, "#include \"tide/skinned.h\"\n\n");
     for (int i = 0; i < prog->assets.count; i++) {
@@ -9781,7 +9838,7 @@ static void gen_header(gen *g)
         sb_printf(o, "    %s inputs[TIDE_GAME_PLAYERS + 1];\n", name);
         sb_printf(o, "    %s previous_inputs[TIDE_GAME_PLAYERS + 1];\n", name);
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap heap; // The text its fields hold\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heaps heap; // The text its fields hold, a heap for each owner (tide/heap.h)\n");
     if (rows_cache_count(g)) {
         sb_put(o, "    struct tide_rows_cache *tide_rows_cache; // Derived selection, never copied, hashed or packed\n");
     }
@@ -9880,7 +9937,7 @@ static void gen_header(gen *g)
     if (prog->rolls_local) sb_put(o, "    tide_random tide_dice;     // What local code rolls with (Random.NextInt and the like)\n");
     if (prog->seed_local) sb_put(o, "    int32_t tide_match_seed;   // Random.seed for local code: the match's, as the last frame had it; 0 with none\n");
     if (prog->uses_resident) sb_put(o, "    tide_residents tide_residents; // The arenas of resident state (tide/resident.h), which the host keeps across reloads\n");
-    if (world_heap(prog, true)) sb_put(o, "    tide_heap heap;\n");
+    if (world_heap(prog, true)) sb_put(o, "    tide_heaps heap;\n");
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
     sb_put(o, "    tide_start tide_request_start;\n");
     sb_put(o, "    tide_session_request tide_request_open; // Session.Open or Close, after tide_request\n");
@@ -10961,9 +11018,10 @@ static void gen_text_helpers(gen *g)
             for (int c = 0; c < prog->components.count; c++) {
                 const decl *comp = prog->components.items[c];
                 if (!arch_stores(g, a, c) || !decl_has_text(comp)) continue;
-                sb_printf(o, "    tide_%s_%s(&v->%s, where);\n", pass ? "release" : "own", type_cname(comp), type_cname(comp));
+                // Each component's in its own heap, where its row's will be
+                sb_printf(o, "    tide_%s_%s(&v->%s, %s);\n", pass ? "release" : "own", type_cname(comp), type_cname(comp), decl_where(comp));
             }
-            sb_put(o, "}\n\n");
+            sb_put(o, "    (void)where;\n}\n\n");
         }
     }
 }
@@ -11813,15 +11871,15 @@ static void gen_blend_helpers(gen *g)
                 sb_printf(o, "TIDE_HELPER void tide_blend_owned_%s(%s *v, const %s *before, float t, "
                              "const tide_world *previous, const tide_world *current)\n{\n"
                              "    if (!before) return;\n"
-                             "    const tide_heap *match = tide_heap_read(TIDE_IN_MATCH);\n"
-                             "    tide_heap *local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
-                             "    tide_text_use((tide_heap *)(uintptr_t)&previous->heap, local);\n"
+                             "    tide_heaps *match = tide_world_heaps[TIDE_IN_MATCH];\n"
+                             "    tide_heaps *local = tide_world_heaps[TIDE_IN_LOCAL];\n"
+                             "    tide_text_use((tide_heaps *)(uintptr_t)&previous->heap, local);\n"
                              "    %s old = *before;\n", name, name, name, name);
                 const type t = {side ? TY_SINGLETON : TY_COMPONENT, (decl *)d};
                 gen_blend_snapshot(g, t, "old", 0);
-                sb_printf(o, "    tide_text_use((tide_heap *)(uintptr_t)&current->heap, local);\n    %s now = *v;\n", name);
+                sb_printf(o, "    tide_text_use((tide_heaps *)(uintptr_t)&current->heap, local);\n    %s now = *v;\n", name);
                 gen_blend_snapshot(g, t, "now", 0);
-                sb_printf(o, "    tide_text_use((tide_heap *)(uintptr_t)match, local);\n"
+                sb_printf(o, "    tide_text_use(match, local);\n"
                              "    tide_blend_%s(&now, &old, t);\n    *v = now;\n}\n\n", name);
             }
             if (side) continue;
@@ -12480,7 +12538,7 @@ static void gen_component_access(gen *g)
                       name, name, name, c);
             // A mut copy may own newer container handles than its stored row.
             // Release/replace the actual owned value, then refresh both copies.
-            if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(&row, value, %s);\n", name, world_where(d->is_local));
+            if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(&row, value, %s);\n", name, decl_where(d));
             else sb_put(o, "    row = value;\n");
             sb_printf(o, "    tide_store_%s(w, e, &row);\n    if (active) *active = row;\n}\n\n", name);
         }
@@ -12981,7 +13039,7 @@ static void gen_command_recorders(gen *g)
         if (!d->is_local && sharded(g)) sb_put(o, "    if (!tide_shard_may(w, e)) return;\n");
         sb_printf(o, "    tide_command *c = %scmd_push(w, TIDE_CMD_ADD, %d, e, TIDE_COMMAND_SIZE(%s));\n    c->data.%s = value;\n",
                   world_prefix(d->is_local), c, comp, comp);
-        if (decl_has_text(d)) sb_printf(o, "    tide_own_%s(&c->data.%s, %s);\n", comp, comp, world_where(d->is_local));
+        if (decl_has_text(d)) sb_printf(o, "    tide_own_%s(&c->data.%s, %s);\n", comp, comp, decl_where(d));
         sb_put(o, "}\n\n");
     }
 
@@ -13006,7 +13064,7 @@ static void gen_command_recorders(gen *g)
         sb_printf(o, "    tide_command *c = %scmd_push(w, TIDE_CMD_EVENT, %d, target, TIDE_COMMAND_SIZE(event_%s));\n"
                      "    c->cause = cause;\n    c->data.event_%s = value;\n",
                   world_prefix(d->is_local), d->index, name, name);
-        if (decl_has_text(d)) sb_printf(o, "    tide_own_%s(&c->data.event_%s, %s);\n", name, name, world_where(d->is_local));
+        if (decl_has_text(d)) sb_printf(o, "    tide_own_%s(&c->data.event_%s, %s);\n", name, name, decl_where(d));
         sb_put(o, "}\n\n");
         sb_printf(o, "TIDE_HELPER void tide_cmd_send_%s(%s *w, tide_entity target, %s value)\n{\n", name, world_type(d->is_local), name);
         if (d == prog->player_joined || d == prog->player_left) {
@@ -13306,7 +13364,7 @@ static void gen_apply(gen *g, const bool local)
                 sb_printf(o, "        case %d: {", a);
                 if (decl_has_text(prog->components.items[comp_i])) {
                     sb_printf(o, " if (%s) { %s tide_old; %s; tide_release_%s(&tide_old, %s); }", presence_cell(g, "w", a, comp_i, "loc.row", false),
-                              comp, comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), comp, world_where(local));
+                              comp, comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), comp, decl_where(prog->components.items[comp_i]));
                 }
                 sb_printf(o, " %s = 1; %s; break; }\n", presence_cell(g, "w", a, comp_i, "loc.row", true),
                           comp_put(g, "w", a, comp_i, "loc.row", value.data));
@@ -13315,7 +13373,7 @@ static void gen_apply(gen *g, const bool local)
             if (has_component(mask, comp_i)) {
                 if (decl_has_text(prog->components.items[comp_i])) { // The old value's text goes
                     sb_printf(o, "        case %d: { %s tide_old; %s; tide_release_%s(&tide_old, %s); %s; break; }\n", a, comp,
-                              comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), comp, world_where(local),
+                              comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), comp, decl_where(prog->components.items[comp_i]),
                               comp_put(g, "w", a, comp_i, "loc.row", value.data));
                 } else {
                     sb_printf(o, "        case %d: %s; break;\n", a, comp_put(g, "w", a, comp_i, "loc.row", value.data));
@@ -13339,7 +13397,7 @@ static void gen_apply(gen *g, const bool local)
         const decl *comp = prog->components.items[comp_i];
         if (!has_component(prog->added_mask, comp_i) || comp->is_local != local || !decl_has_text(comp)) continue;
         sb_printf(o, "        case %d: tide_release_%s(&c->data.%s, %s); break;\n", comp_i, type_cname(comp), type_cname(comp),
-                  world_where(local));
+                  decl_where(comp));
     }
     sb_put(o, "        default: break;\n        }\n        return;\n    }\n");
     if (!local) gen_component_availability(g, true, true);
@@ -13366,7 +13424,7 @@ static void gen_apply(gen *g, const bool local)
                 sb_printf(o, "        case %d: if (%s) {", a, presence_cell(g, "w", a, comp_i, "loc.row", false));
                 if (decl_has_text(comp)) {
                     sb_printf(o, " %s tide_old; %s; tide_release_%s(&tide_old, %s);", type_cname(comp),
-                              comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), type_cname(comp), world_where(local));
+                              comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), type_cname(comp), decl_where(comp));
                 }
                 sb_printf(o, " %s tide_none = {0}; %s; %s = 0; } break;\n", type_cname(comp),
                           comp_put(g, "w", a, comp_i, "loc.row", "tide_none"), presence_cell(g, "w", a, comp_i, "loc.row", true));
@@ -13379,7 +13437,7 @@ static void gen_apply(gen *g, const bool local)
             }
             if (decl_has_text(comp)) {
                 sb_printf(o, "        case %d: { %s tide_old; %s; tide_release_%s(&tide_old, %s); tide_move%d_%d(w, loc.row); break; }\n",
-                          a, type_cname(comp), comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), type_cname(comp), world_where(local),
+                          a, type_cname(comp), comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), type_cname(comp), decl_where(comp),
                           a, to);
             } else {
                 sb_printf(o, "        case %d: tide_move%d_%d(w, loc.row); break;\n", a, a, to);
@@ -13425,7 +13483,7 @@ static void gen_apply(gen *g, const bool local)
             if (!arch_stores(g, a, c) || !decl_has_text(comp)) continue;
             if (comp_sparse(g, c)) sb_printf(o, " if (%s)", presence_cell(g, "w", a, c, "loc.row", false));
             sb_printf(o, " { %s tide_old; %s; tide_release_%s(&tide_old, %s); }", type_cname(comp),
-                      comp_take(g, "w", a, c, "loc.row", "tide_old"), type_cname(comp), world_where(local));
+                      comp_take(g, "w", a, c, "loc.row", "tide_old"), type_cname(comp), decl_where(comp));
         }
         sb_printf(o, " tide_table_remove(&w->%s, %s, loc.row, &w->entities, %d); break;\n", arch_name(g, a), arch_columns(g, a), a);
     }
@@ -13516,7 +13574,7 @@ static void gen_apply(gen *g, const bool local)
                               d->is_command ? ", &c->sender" : "");
         // Its local handlers hear it as its turn left things
         if (heard) sb_printf(o, " if (tide_listening) tide_hear_%s(w, c->entity, &c->data.event_%s);", type_cname(d), type_cname(d));
-        if (decl_has_text(d)) sb_printf(o, " tide_release_%s(&c->data.event_%s, %s);", type_cname(d), type_cname(d), world_where(local));
+        if (decl_has_text(d)) sb_printf(o, " tide_release_%s(&c->data.event_%s, %s);", type_cname(d), type_cname(d), decl_where(d));
         sb_put(o, " break;\n");
     }
     sb_put(o, "    default: break;\n    }\n    tide_event_cause = tide_saved_cause;\n}\n\n");
@@ -13609,7 +13667,7 @@ static void gen_apply(gen *g, const bool local)
         "    tide_queue_clear(&w->commands);\n"
         "%s"
         "}\n\n",
-        prog->uses_heap ? "    tide_heap_flush(&w->heap);\n    tide_heap_settle(&w->heap); // Nothing reads it on other threads now\n" : "");
+        prog->uses_heap ? "    tide_heaps_flush(&w->heap);\n    tide_heaps_settle(&w->heap); // Nothing reads it on other threads now\n" : "");
 
     if (prog->input && !local) {
         const char *name = type_cname(prog->input);
@@ -13850,9 +13908,9 @@ static void gen_hear_rows(gen *g)
     sb_put(o, "static void tide_hear_rows(const tide_world *w, tide_event_log *log)\n{\n");
     bool heap_rows = false;
     for (int n = 0; n < g->heard_rows.count; n++) heap_rows |= heard_query_heap(g, g->heard_rows.items[n]);
-    if (heap_rows) sb_put(o, "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
-                             "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
-                             "    tide_text_use((tide_heap *)(uintptr_t)&w->heap, saved_local);\n");
+    if (heap_rows) sb_put(o, "    tide_heaps *const saved_match = tide_world_heaps[TIDE_IN_MATCH];\n"
+                             "    tide_heaps *const saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
+                             "    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, saved_local);\n");
     for (int n = 0; n < g->heard_rows.count; n++) {
         const param *q = g->heard_rows.items[n];
         const bool heap = heard_query_heap(g, q);
@@ -14136,8 +14194,8 @@ static void gen_hear(gen *g)
                       type_cname(prog->owner), field_cname(&prog->owner->fields.items[0]));
         }
         if (heap) {
-            sb_put(o, "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
-                      "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+            sb_put(o, "    tide_heaps *const saved_match = tide_world_heaps[TIDE_IN_MATCH];\n"
+                      "    tide_heaps *const saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                       "    tide_text_use(&w->heap, saved_local);\n");
             sb_put(o, "    tide_writer tide_captured = {.grows = true};\n");
             gen_heard_capture(g, o, event, event, "v.event", NULL, 0, false);
@@ -14572,9 +14630,9 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
         capture(&out, "uint32_t", "tide_seed");
         if (sys->takes_verified && sys->borrows_owner_world) capture(&out, "const tide_world *", "tide_verified");
         // The frame's heaps, for a step on a thread the frame called in (gen_par_local_use)
-        capture(&out, "tide_heap *", "tide_heap_m");
-        capture(&out, "tide_heap *", "tide_heap_l");
-        capture(&out, "tide_heap *", "tide_heap_v");
+        capture(&out, "tide_heaps *", "tide_heap_m");
+        capture(&out, "tide_heaps *", "tide_heap_l");
+        capture(&out, "tide_heaps *", "tide_heap_v");
     } else if (sys->is_handler) {
         capture(&out, ptr_type("", world_type(sys->is_local)), sys->is_local ? "tide_l" : "tide_w");
         capture(&out, ptr_type("const ", type_cname(sys->event)), trigger_cname(g, sys));
@@ -15296,8 +15354,8 @@ static void gen_parallel_call(gen *g, const stmt *s)
     // A view's steps take the frame's heaps with them (gen_par_local_use)
     line(g, o, "{");
     g->indent++;
-    line(g, o, "tide_heap *const tide_heap_m = tide_world_heaps[TIDE_IN_MATCH], *const tide_heap_l = tide_world_heaps[TIDE_IN_LOCAL];");
-    line(g, o, "tide_heap *const tide_heap_v = tide_world_heaps[TIDE_IN_VERIFIED];");
+    line(g, o, "tide_heaps *const tide_heap_m = tide_world_heaps[TIDE_IN_MATCH], *const tide_heap_l = tide_world_heaps[TIDE_IN_LOCAL];");
+    line(g, o, "tide_heaps *const tide_heap_v = tide_world_heaps[TIDE_IN_VERIFIED];");
     gen_parallel_call_at(g, s);
     g->indent--;
     line(g, o, "}");
@@ -17252,7 +17310,7 @@ static void gen_dispatch_handlers(gen *g, const decl *event, const bool local)
         sb clear_text = {0};
         const bool its_text = touches_text(h);
         if (prog->uses_text && its_text) sb_put(&clear_text, " tide_scratch_reset(tide_mark);");
-        if (world_heap(prog, local) && its_text) sb_printf(&clear_text, " tide_heap_flush(&%s->heap);", world);
+        if (world_heap(prog, local) && its_text) sb_printf(&clear_text, " tide_heaps_flush(&%s->heap);", world);
         const char *clear = clear_text.data ? clear_text.data : "";
         if (h->is_async) { // A task: its frame has the event, and it gets its components itself
             const task_info *ti = task_of(g, h);
@@ -17483,7 +17541,7 @@ static void gen_forgotten_calls(gen *g, const decl *part, const char *pad, const
         sb_put(o, ");");
         if (touches_text(h)) {
             if (prog->uses_text) sb_put(o, " tide_scratch_reset(tide_mark);");
-            if (world_heap(prog, true)) sb_put(o, " tide_heap_flush(&l->heap);");
+            if (world_heap(prog, true)) sb_put(o, " tide_heaps_flush(&l->heap);");
         }
         sb_put(o, "\n");
     }
@@ -17702,7 +17760,7 @@ static void gen_heard(gen *g)
             if (h->per_entity && has_scenes(prog, h->entity_local)) sb_put(o, ", (tide_entity){0}"); // What it spawns is local
             sb_put(o, ");");
             if (prog->uses_text) sb_put(o, " tide_scratch_reset(tide_mark);");
-            if (world_heap(prog, true)) sb_put(o, " tide_heap_flush(&tide_l->heap);");
+            if (world_heap(prog, true)) sb_put(o, " tide_heaps_flush(&tide_l->heap);");
             sb_put(o, "\n");
             gen_row_field_puts(g, h, "        ");
             sb_put(o, "    }\n");
@@ -17715,9 +17773,9 @@ static void gen_heard(gen *g)
     sb_put(o, "static void tide_local_hear(tide_local *l)\n{\n    uint32_t at = 0;\n");
     if (g->heard_heap) {
         sb_put(o, "    if (!l->tide_heard.size) return;\n"
-                  "    tide_heap captured = {0};\n"
-                  "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
-                  "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                  "    tide_heaps captured = {0};\n"
+                  "    tide_heaps *const saved_match = tide_world_heaps[TIDE_IN_MATCH];\n"
+                  "    tide_heaps *const saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                   "    const uint64_t captured_mark = tide_scratch_mark();\n"
                   "    tide_text_use(&captured, saved_local);\n"
                   "    uint64_t budget = SIZE_MAX;\n"
@@ -17741,7 +17799,7 @@ static void gen_heard(gen *g)
                   event_reads_rows(event) ? ", &l->tide_heard, at" : "");
     }
     sb_put(o, "        default: break;\n        }\n    }\n    tide_event_log_clear(&l->tide_heard);\n");
-    if (g->heard_heap) sb_put(o, "    tide_heap_free(&captured);\n    tide_scratch_reset(captured_mark);\n"
+    if (g->heard_heap) sb_put(o, "    tide_heaps_free(&captured);\n    tide_scratch_reset(captured_mark);\n"
                                "    tide_text_use(saved_match, saved_local);\n");
     sb_put(o, "}\n\n");
     gen_availability_delivery(g);
@@ -18345,7 +18403,7 @@ static void gen_task_pass(gen *g, const bool local)
         sb_put(o, "            break;\n        }\n");
     }
     sb_put(o, "        default: break;\n        }\n");
-    sb_printf(o, "        tide_scratch_reset(tide_mark);\n        tide_heap_flush(&%s->heap);\n", w);
+    sb_printf(o, "        tide_scratch_reset(tide_mark);\n        tide_heaps_flush(&%s->heap);\n", w);
     if (g->prog->task_slots[local]) sb_put(o, "        }\n"
                                            "        if (!tide_top) break;\n"
                                            "        tide_current = tide_stack[--tide_top];\n"
@@ -21362,8 +21420,18 @@ static void gen_system_run(gen *g, const decl *sys)
     sb clear_text = {0};
     const bool text = view || touches_text(sys);
     if (prog->uses_text && text) sb_put(&clear_text, " tide_scratch_reset(tide_mark);");
-    if (world_heap(prog, view) && text && (view || sys->writes_text)) {
-        sb_printf(&clear_text, " tide_heap_flush(&%s->heap);", view ? "tide_l" : "tide_w");
+    if (world_heap(prog, view) && text && view) sb_put(&clear_text, " tide_heaps_flush(&tide_l->heap);");
+    // A system's blocks go back to the heaps of the owners it changes, which
+    // are all it may touch while others run
+    if (world_heap(prog, false) && text && !view && sys->writes_text) {
+        bool done[TIDE_HEAP_IDS] = {false};
+        for (int i = 0; i < sys->heap_owners.count; i++) {
+            const decl *owner = sys->heap_owners.items[i];
+            const uint32_t id = owner ? owner->heap_id : 0u;
+            if (done[id]) continue;
+            done[id] = true;
+            sb_printf(&clear_text, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu));", id);
+        }
     }
     const char *clear = clear_text.data ? clear_text.data : "";
 
@@ -23538,7 +23606,7 @@ static void gen_api(gen *g)
             gen_value(g, o, d, NULL, 0);
             sb_put(o, ";\n");
             if (decl_has_text(d)) {
-                sb_printf(o, "    tide_own_%s(&w->%s, TIDE_IN_MATCH);\n", type_cname(d), type_cname(d));
+                sb_printf(o, "    tide_own_%s(&w->%s, %s);\n", type_cname(d), type_cname(d), decl_where(d));
                 sb_put(o, "    tide_scratch_reset(tide_mark);\n    }\n");
             }
         }
@@ -23614,12 +23682,49 @@ static void gen_api(gen *g)
     // Systems that split their entities give their spawns temporary handles,
     // settled once they're done.
     if (prog->systems.count) {
+        // Builds that check (TIDE_HEAP_CHECKS, tide/heap.h): each system's task
+        // says whose heaps it may change, the owners the schedule keeps other
+        // systems off, and the runtime ends the program at any other
+        const char *run = prog->owned_prediction ? "tide_owned_run" : "tide_task";
+        if (prog->uses_heap) {
+            sb_put(o, "#ifdef TIDE_HEAP_CHECKS\n");
+            for (int i = 0; i < prog->systems.count; i++) {
+                const decl *sys = prog->systems.items[i];
+                // C's writes are C's to keep apart (it reaches what it was once handed, like a package's own
+                // singleton, whatever this call hands it), and a task that starts runs whatever its code does until
+                // it first waits, which the schedule keeps every system that changes a heap away from
+                if (sys->extern_system || sys->reaches_extern || sys->starts_tasks) continue;
+                const char *name = decl_cname(sys);
+                bool done[TIDE_HEAP_IDS] = {false};
+                int allowed = 0;
+                for (int k = 0; k < sys->heap_owners.count; k++) {
+                    const decl *owner = sys->heap_owners.items[k];
+                    const uint32_t id = owner ? owner->heap_id : 0u;
+                    if (done[id]) continue;
+                    done[id] = true;
+                    if (!allowed++) sb_printf(o, "static const uint16_t tide_allowed_%s[] = {", name);
+                    sb_printf(o, "%s%u", allowed > 1 ? ", " : "", id);
+                }
+                if (allowed) sb_put(o, "};\n");
+                sb who = {0}, ids = {0};
+                gen_c_literal(&who, diagnostic_name(g, tool_name(sys), "system", sys->index), false);
+                if (allowed) sb_printf(&ids, "tide_allowed_%s", name);
+                sb_printf(o, "static void tide_checked_%s(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)\n{\n"
+                             "    tide_heaps_allow(&((tide_world *)tide_world_v)->heap, %s, %d, %s);\n"
+                             "    %s_%s(tide_world_v, tide_task, tide_pieces);\n    tide_heaps_allow(NULL, NULL, 0, NULL);\n}\n",
+                          name, allowed ? ids.data : "NULL", allowed, who.data, run, name);
+            }
+            sb_put(o, "#define TIDE_CHECKED(run, checked) checked\n#else\n#define TIDE_CHECKED(run, checked) run\n#endif\n");
+        }
         sb_put(o, "static const tide_system_tasks tide_systems[] = {\n");
         for (int i = 0; i < prog->systems.count; i++) {
             const decl *sys = prog->systems.items[i];
             const char *name = decl_cname(sys);
-            if (prog->owned_prediction) sb_printf(o, "    {tide_owned_count_%s, tide_owned_run_%s, ", name, name);
-            else sb_printf(o, "    {tide_tasks_%s, tide_task_%s, ", name, name);
+            sb_printf(o, "    {%s_%s, ", prog->owned_prediction ? "tide_owned_count" : "tide_tasks", name);
+            if (prog->uses_heap && !sys->extern_system && !sys->reaches_extern && !sys->starts_tasks) {
+                sb_printf(o, "TIDE_CHECKED(%s_%s, tide_checked_%s), ", run, name, name);
+            }
+            else sb_printf(o, "%s_%s, ", run, name);
             const bool ordered = system_splits_in_order(sys);
             const bool owns = (system_splits(sys) || ordered) && system_owns(g, sys);
             if (owns) sb_printf(o, "tide_%sown_%s, ", prog->owned_prediction ? "owned_" : "", name);
@@ -23631,8 +23736,9 @@ static void gen_api(gen *g)
             sb_printf(o, "%s, %d, ", system_splits(sys) || ordered ? "true" : "false", own_waits);
             if (sys->waits.count) sb_printf(o, "tide_waits_%s", name);
             else sb_put(o, "NULL");
-            // One whose runs go to threads registers its spawns once they've joined, in the runs' order
-            sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", ordered && sys->spawns ? "true" : "false");
+            // Every system that spawns registers its entities once its tasks have joined and the spawner before
+            // it has registered its own (tide/jobs.h): the tick's order, with no system waiting for another to run
+            sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", sys->spawns ? "true" : "false");
 
             gen_c_literal(o, diagnostic_name(g, tool_name(sys), "system", sys->index), false); // Its label, for the profile
             sb_put(o, "},\n");
@@ -23801,7 +23907,7 @@ static void gen_api(gen *g)
     if (prog->uses_heap) {
         // Views only read the match, so its heap is theirs to read, not change.
         if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
-        sb_put(o, "    tide_text_use(w ? (tide_heap *)(uintptr_t)&w->heap : NULL, &local->heap);\n");
+        sb_put(o, "    tide_text_use(w ? (tide_heaps *)(uintptr_t)&w->heap : NULL, &local->heap);\n");
         // ...and the confirmed world's, for what views take `verified` (gen_confirmed_copy)
         bool confirmed = false;
         for (int i = 0; i < prog->views.count && !confirmed; i++) confirmed = prog->views.items[i]->takes_verified;
@@ -23928,7 +24034,7 @@ static void gen_api(gen *g)
     }
 
     sb_put(o, "void tide_world_print(const tide_world *w)\n{\n");
-    if (prog->uses_heap) sb_put(o, "    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL); // Its lists' heap\n");
+    if (prog->uses_heap) sb_put(o, "    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL); // Its lists' heap\n");
     sb_put(o, "    printf(\"tick %d, %u entities\\n\", (int)w->Time.tick, (unsigned)tide_world_entity_count(w));\n");
     for (int s = 0; s < prog->singletons.count; s++) {
         const decl *d = prog->singletons.items[s];
@@ -24450,7 +24556,7 @@ static void gen_world_bytes(gen *g, const bool local)
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    tide_attached_free(&w->%s, %s);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
     }
-    if (world_heap(prog, local)) sb_put(o, "    tide_heap_free(&w->heap);\n");
+    if (world_heap(prog, local)) sb_put(o, "    tide_heaps_free(&w->heap);\n");
     if (local && program_hears(prog)) sb_put(o, "    tide_event_log_free(&w->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    tide_local_clear_availability(w);\n");
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
@@ -24476,7 +24582,7 @@ static void gen_world_bytes(gen *g, const bool local)
     for (int i = 0; i < resident_count; i++) {
         sb_printf(o, "    size += tide_resident_packed_size(&w->%s.%s);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
     }
-    if (world_heap(prog, local)) sb_put(o, "    size += tide_heap_packed_size(&w->heap);\n");
+    if (world_heap(prog, local)) sb_put(o, "    size += tide_heaps_packed_size(&w->heap);\n");
     if (local && prog->command_types.count) { // The commands waiting: each its channel, size and bytes
         sb_put(o, "    size += tide_varint_bytes(w->tide_outgoing_count);\n"
                   "    for (uint32_t i = 0; i < w->tide_outgoing_count; i++) {\n"
@@ -24547,7 +24653,7 @@ static void gen_world_bytes(gen *g, const bool local)
     for (int i = 0; i < resident_count; i++) {
         sb_printf(o, "    tide_resident_pack(&w->%s.%s, &bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
     }
-    if (world_heap(prog, local)) sb_put(o, "    tide_heap_pack(&w->heap, &bytes);\n");
+    if (world_heap(prog, local)) sb_put(o, "    tide_heaps_pack(&w->heap, &bytes);\n");
     sb_put(o, "    return bytes.size;\n}\n\n");
 
     // Unpacking: bytes from the network or another build, so each part is
@@ -24652,7 +24758,7 @@ static void gen_world_bytes(gen *g, const bool local)
     for (int i = 0; i < resident_count; i++) {
         sb_printf(o, "    ok = ok && tide_resident_unpack(&w->%s.%s, &bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
     }
-    if (world_heap(prog, local)) sb_put(o, "    ok = ok && tide_heap_unpack(&w->heap, &bytes);\n");
+    if (world_heap(prog, local)) sb_put(o, "    ok = ok && tide_heaps_unpack(&w->heap, &bytes);\n");
     sb_put(o, "    ok = ok && bytes.at == size;\n");
     sb_printf(o, "    ok = ok && %splaced(w);\n", prefix);
     if (!local && sharded(g)) sb_put(o, "    ok = ok && tide_shard_words_valid(w);\n");
@@ -24741,7 +24847,7 @@ static void gen_world_delta(gen *g)
     for (int i = 0; i < resident_count; i++) { // Whole, as the queue goes: never against a base
         sb_printf(o, "    tide_resident_pack(&w->%s.%s, &d.bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap_pack_delta(&w->heap, base ? &base->heap : NULL, &d);\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heaps_pack_delta(&w->heap, base ? &base->heap : NULL, &d);\n");
     sb_put(o, "    return tide_delta_end(&d, size);\n}\n\n");
     sb_put(o, "uint8_t *tide_world_pack_delta(const tide_world *w, const tide_world *base, const uint8_t *need,\n"
               "                               const uint32_t need_size, uint32_t *size)\n{\n"
@@ -24771,7 +24877,7 @@ static void gen_world_delta(gen *g)
     for (int i = 0; i < resident_count; i++) {
         sb_printf(o, "    ok = ok && tide_resident_unpack(&w->%s.%s, &d.bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
     }
-    if (prog->uses_heap) sb_put(o, "    ok = ok && tide_heap_unpack_delta(&w->heap, base ? &base->heap : NULL, &d);\n");
+    if (prog->uses_heap) sb_put(o, "    ok = ok && tide_heaps_unpack_delta(&w->heap, base ? &base->heap : NULL, &d);\n");
     if (sharded(g)) sb_put(o, "    ok = ok && tide_shard_words_valid(w);\n");
     sb_put(o, "    ok = ok && w->tide_identity_clock && d.bytes.at == size && tide_world_placed(w) && tide_world_hash(w) == hash;\n");
     sb_put(o, "    if (!ok) tide_world_free(w);\n    return ok;\n}\n\n");
@@ -24786,7 +24892,7 @@ static void gen_world_delta(gen *g)
     for (int i = 0; i < tasks.count; i++) {
         sb_printf(o, "    tide_table_hash_pages(&w->tide_tasks_%s, &tide_columns_tasks_%s, &out);\n", tasks.items[i], tasks.items[i]);
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap_hash_pages(&w->heap, &out);\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heaps_hash_pages(&w->heap, &out);\n");
     sb_put(o, "    if (out.overflow) tide_out_of_memory();\n    *size = out.size;\n    return out.data;\n}\n\n");
 
     sb_put(o, "uint32_t tide_world_need_pages(const tide_world *base, const uint8_t *hashes, const uint32_t size, uint8_t *out,\n"
@@ -24800,7 +24906,7 @@ static void gen_world_delta(gen *g)
     for (int i = 0; i < tasks.count; i++) {
         sb_printf(o, "    tide_table_need_pages(&base->tide_tasks_%s, &tide_columns_tasks_%s, &n);\n", tasks.items[i], tasks.items[i]);
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap_need_pages(&base->heap, &n);\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heaps_need_pages(&base->heap, &n);\n");
     sb_put(o, "    return tide_needs_end(&n);\n}\n\n");
 }
 
@@ -24838,7 +24944,7 @@ static void gen_world_copy(gen *g)
         sb_put(o, "    memcpy(to->inputs, from->inputs, sizeof to->inputs);\n");
         sb_put(o, "    memcpy(to->previous_inputs, from->previous_inputs, sizeof to->previous_inputs);\n");
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap_copy(&to->heap, &from->heap);\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heaps_copy(&to->heap, &from->heap);\n");
     sb_put(o, "}\n\n");
 
     sb_put(o, "uint64_t tide_world_hash(const tide_world *w)\n{\n    uint64_t h = tide_hash_more(TIDE_HASH_START, &w->tide_identity_clock, sizeof w->tide_identity_clock);\n");
@@ -24876,7 +24982,7 @@ static void gen_world_copy(gen *g)
         sb_put(o, "    h = tide_hash_more(h, w->inputs, sizeof w->inputs);\n");
         sb_put(o, "    h = tide_hash_more(h, w->previous_inputs, sizeof w->previous_inputs);\n");
     }
-    if (prog->uses_heap) sb_put(o, "    h = tide_heap_hash(h, &w->heap);\n");
+    if (prog->uses_heap) sb_put(o, "    h = tide_heaps_hash(h, &w->heap);\n");
     sb_put(o, "    return tide_hash_end(h);\n}\n\n");
 
     gen_world_bytes(g, false);
@@ -25135,7 +25241,7 @@ static void gen_commands_api(gen *g)
         } else {
             sb_printf(o, "        tide_command *c = tide_cmd_push(w, TIDE_CMD_EVENT, %d, target, TIDE_COMMAND_SIZE(event_%s));\n"
                          "        c->cause = tide_causal_mix(tide_causal_mix(tide_causal_mix(UINT64_C(0x434f4d4d414e44), sender.id), channel), sequence);\n        c->sender = sender;\n        c->data.event_%s = value;\n", d->index, name, name);
-            if (decl_has_text(d)) sb_printf(o, "        tide_own_%s(&c->data.event_%s, TIDE_IN_MATCH);\n", name, name);
+            if (decl_has_text(d)) sb_printf(o, "        tide_own_%s(&c->data.event_%s, %s);\n", name, name, decl_where(d));
         }
         sb_put(o, "        ok = true;\n        break;\n    }\n");
     }
@@ -25152,7 +25258,7 @@ static void gen_commands_api(gen *g)
         sb_put(o, "            default: break;\n            }\n            break;\n");
     }
     sb_put(o, "        default: break;\n        }\n    }\n");
-    if (prog->uses_heap) sb_put(o, "    tide_heap_flush(&w->heap);\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heaps_flush(&w->heap);\n");
     if (text) sb_put(o, "    tide_scratch_reset(mark);\n");
     sb_put(o, "    return ok;\n}\n\n");
 }
@@ -25736,13 +25842,13 @@ static void gen_client_event_check(gen *g)
     sb_put(o, "    if (build) *build = TIDE_HEARD_BUILD;\n    if (count) *count = records;\n    return true;\n}\n\n");
     if (g->heard_heap) {
         sb_put(o, "static bool tide_game_check_client_events(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count)\n{\n"
-                  "    tide_heap captured = {0};\n"
-                  "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
-                  "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                  "    tide_heaps captured = {0};\n"
+                  "    tide_heaps *const saved_match = tide_world_heaps[TIDE_IN_MATCH];\n"
+                  "    tide_heaps *const saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                   "    const uint64_t mark = tide_scratch_mark();\n"
                   "    tide_text_use(&captured, saved_local);\n"
                   "    const bool ok = tide_game_check_client_events_inner(data, size, build, count);\n"
-                  "    tide_heap_free(&captured);\n    tide_scratch_reset(mark);\n"
+                  "    tide_heaps_free(&captured);\n    tide_scratch_reset(mark);\n"
                   "    tide_text_use(saved_match, saved_local);\n    return ok;\n}\n\n");
     }
 }
@@ -25910,7 +26016,7 @@ static void gen_game_api(gen *g)
         const char *id = task_id(g->tasks.items[i].fn);
         sb_printf(o, "    tide_table_stale(&w->tide_tasks_%s, &tide_columns_tasks_%s, &stale);\n", id, id);
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap_stale(&w->heap, &stale);\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heaps_stale(&w->heap, &stale);\n");
     sb_put(o, "    tide_pages_hash(&stale, jobs);\n");
     sb_put(o, "    return tide_world_hash(w);\n");
     sb_put(o, "}\n\n");
@@ -26039,6 +26145,7 @@ static void gen_game_api(gen *g)
     }
     gen_predict_far(g);
     vec_push(g->code_at, o->len);
+    gen_heap_shape(g);
     sb_put(o, "const tide_game tide_game_api = {\n");
     sb_printf(o, "    .hash = 0x%016llXull,\n", (unsigned long long)g->game_hash);
     sb_put(o, "    .simulation = {");
@@ -26407,12 +26514,15 @@ static void gen_layout(gen *g)
                           : t.kind == TY_ENUM   ? layout_index(&enums, t.decl)
                                                 : -1;
             const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
-            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s)},\n",
-                      STR_ARG(f->name), t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture"
-                      : t.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? "[Raw] TextureArray"
-                      : t.kind == TY_CUBEMAP && field_is_raw(f) ? "[Raw] Cubemap" : layout_field_name(t),
-                      layout_kind(t), dim, ref, name, field_cname(f), name,
-                      field_cname(f));
+            const char *type_name = t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture"
+                                  : t.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? "[Raw] TextureArray"
+                                  : t.kind == TY_CUBEMAP && field_is_raw(f) ? "[Raw] Cubemap" : layout_field_name(t);
+            // Its handles say which heap its blocks are in (decl.heap_id): in a
+            // build where that's another, the field starts again rather than
+            // carry handles into a heap that hasn't their blocks
+            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s), %u},\n",
+                      STR_ARG(f->name), type_name, layout_kind(t), dim, ref, name, field_cname(f), name,
+                      field_cname(f), type_has_text(t) ? (unsigned)d->heap_id : 0u);
         }
         sb_put(o, "};\n\n");
     }

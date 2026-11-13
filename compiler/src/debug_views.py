@@ -61,14 +61,33 @@ def _pointer(process, address):
     return value if error.Success() else None
 
 
-def _heap_page(valobj, where, offset):
-    """The address of the data of the page `offset` is in, and where that page starts, in heap `where`."""
+def _heap(valobj, at):
+    """The address of the heap a world's handle is in: its world's, with the handle's id (tide_heaps_of)."""
     process = valobj.GetProcess()
     target = valobj.GetTarget()
     heaps = _thread_local(valobj, "tide_world_heaps")
     if heaps is None:
         return None
-    heap = heaps.GetChildAtIndex(where).GetValueAsUnsigned()
+    world = heaps.GetChildAtIndex(at >> TIDE_WHERE_SHIFT).GetValueAsUnsigned()
+    set_layout = _layout(target, "tide_heaps")
+    heap_layout = _layout(target, "tide_heap")
+    if not world or set_layout is None or heap_layout is None:
+        return None
+    ident = at & ((1 << TIDE_HEAP_ID_BITS) - 1)
+    slot = 0
+    if ident:  # Which of the world's heaps: the game's table, by id
+        slots = target.FindFirstGlobalVariable("tide_heap_slots")
+        table = slots.GetValueAsUnsigned() if slots and slots.IsValid() else 0
+        slot = _read(process, table + ident * 2, 2) if table else 0
+    heaps = _pointer(process, world + set_layout[1]["all"])
+    return heaps + slot * heap_layout[0] if heaps else None
+
+
+def _heap_page(valobj, at, offset):
+    """The address of the data of the page `offset` is in, and where that page starts, in the heap of the handle `at`."""
+    process = valobj.GetProcess()
+    target = valobj.GetTarget()
+    heap = _heap(valobj, at)
     heap_layout = _layout(target, "tide_heap")
     page_layout = _layout(target, "tide_page")
     if not heap or heap_layout is None or page_layout is None:
@@ -103,7 +122,8 @@ def _block(valobj, at):
             return None
         base = _pointer(process, table + (offset >> TIDE_SCRATCH_SHIFT) * process.GetAddressByteSize())
         return base + (offset & (TIDE_SCRATCH_BYTES - 1)) if base else None
-    page = _heap_page(valobj, where, offset)
+    offset = (offset >> TIDE_HEAP_ID_BITS) << 4  # A world's handle: its heap's id below its block's offset
+    page = _heap_page(valobj, at, offset)
     if page is None:
         return None
     return page[0] + (offset - page[1])
@@ -124,7 +144,7 @@ def _element(valobj, at, block, index, size):
     chunk = _read(valobj.GetProcess(), block + header + (index // per) * 8, 8)
     if chunk is None:
         return None
-    page = _heap_page(valobj, at >> TIDE_WHERE_SHIFT, chunk)
+    page = _heap_page(valobj, at, chunk)
     if page is None:
         return None
     return page[0] + (chunk - page[1]) + header + (index % per) * size

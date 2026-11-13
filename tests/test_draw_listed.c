@@ -135,7 +135,7 @@ static void draw_both(tide_draw_list *listed, tide_draw_list *copied, const tide
 TIDE_TEST(draw_listed_runs_are_the_copied_runs)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
@@ -178,7 +178,7 @@ TIDE_TEST(draw_listed_runs_are_the_copied_runs)
     tide_list_release(&second, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // What a page sends: nothing for a list that stayed as it was, and only the rows of one that changed, once it's
@@ -186,7 +186,7 @@ TIDE_TEST(draw_listed_runs_are_the_copied_runs)
 TIDE_TEST(draw_listed_numbers_are_sent_once)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
@@ -251,14 +251,14 @@ TIDE_TEST(draw_listed_numbers_are_sent_once)
     tide_list_release(&keep, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // Appending another list's listed runs, or unlisting one, gives the instances' bytes.
 TIDE_TEST(draw_listed_runs_append_and_unlist_as_bytes)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
@@ -285,7 +285,7 @@ TIDE_TEST(draw_listed_runs_append_and_unlist_as_bytes)
     tide_list_release(&list, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // What draws its instances' bytes instead: a shader with no listed stage, a 3D transform, nothing to draw, and a
@@ -293,7 +293,7 @@ TIDE_TEST(draw_listed_runs_append_and_unlist_as_bytes)
 TIDE_TEST(draw_listed_declines_what_it_cannot_draw)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
@@ -346,7 +346,7 @@ TIDE_TEST(draw_listed_declines_what_it_cannot_draw)
     tide_list_release(&list, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // The page of the frame's first listed run, and its version.
@@ -373,7 +373,7 @@ static bool listed_draw(tide_draw_list *d, const tide_list items, const tide_lis
 TIDE_TEST(draw_listed_numbers_stay_while_skipped)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
@@ -423,7 +423,7 @@ TIDE_TEST(draw_listed_numbers_stay_while_skipped)
     tide_list_release(&other, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // Regions not drawn lately are kept within TIDE_DRAW_LISTED_IDLE_BYTES: past it, the longest unused go first, and
@@ -431,7 +431,7 @@ TIDE_TEST(draw_listed_numbers_stay_while_skipped)
 TIDE_TEST(draw_listed_idle_regions_past_the_budget_go)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
@@ -463,5 +463,5 @@ TIDE_TEST(draw_listed_idle_regions_past_the_budget_go)
     tide_list_release(&second, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }

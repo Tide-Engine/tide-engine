@@ -73,3 +73,7 @@ set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
     "${CMAKE_BINARY_DIR}/sanitizer_test_environment.cmake")
 add_compile_options("-fsanitize=${tide_sanitizers}" -fno-omit-frame-pointer -fno-sanitize-recover=all)
 add_link_options("-fsanitize=${tide_sanitizers}")
+# Each system's task says whose heaps it may change, and the runtime ends the
+# program when it changes another's (tide/heap.h, tide_heaps_allow): what the
+# schedule's waits rest on, checked wherever these tests run a tick.
+add_compile_definitions(TIDE_HEAP_CHECKS=1)

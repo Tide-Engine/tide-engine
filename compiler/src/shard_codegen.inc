@@ -206,7 +206,7 @@ static void gen_shard_views(gen *g)
               "    const tide_world *w = v->current;\n"
               "    tide_view_drawing = k;\n"
               "    tide_shard_use(w, w ? tide_shard_owns_world : NULL, w ? tide_shard_moves_world : NULL);\n"
-              "    tide_text_use(w ? (tide_heap *)(uintptr_t)&w->heap : NULL, &local->heap);\n");
+              "    tide_text_use(w ? (tide_heaps *)(uintptr_t)&w->heap : NULL, &local->heap);\n");
     if (confirmed) {
         sb_put(o, "    const tide_world *verified = v->verified;\n"
                   "    tide_text_use_verified(verified ? &verified->heap : w ? &w->heap : NULL);\n");
@@ -255,8 +255,8 @@ static void gen_shard_views(gen *g)
         }
         // Another world's: what it holds of that world's heap, copied, read with that heap
         sb_printf(o, "    if (at == w) return tide_get_%s(w, e);\n"
-                     "    tide_heap *const tide_match = tide_world_heaps[TIDE_IN_MATCH];\n"
-                     "    tide_text_use((tide_heap *)(uintptr_t)&at->heap, tide_world_heaps[TIDE_IN_LOCAL]);\n"
+                     "    tide_heaps *const tide_match = tide_world_heaps[TIDE_IN_MATCH];\n"
+                     "    tide_text_use((tide_heaps *)(uintptr_t)&at->heap, tide_world_heaps[TIDE_IN_LOCAL]);\n"
                      "    %s value = tide_get_%s(at, e);\n", name, name, name);
         gen_scratch_decl(o, d, "value", "    ", 0);
         sb_put(o, "    tide_text_use(tide_match, tide_world_heaps[TIDE_IN_LOCAL]);\n    return value;\n}\n\n");
@@ -348,8 +348,8 @@ static void gen_shard_early(gen *g)
               "        {w->tide_shard_state.spanned, 1, 1, 0},\n"
               "        {w->tide_shard_state.members, 1, 0, 0},\n"
               "    };\n"
-              "    tide_heap *const previous = tide_world_heaps[TIDE_IN_MATCH];\n"
-              "    tide_text_use((tide_heap *)(uintptr_t)&w->heap, tide_world_heaps[TIDE_IN_LOCAL]);\n"
+              "    tide_heaps *const previous = tide_world_heaps[TIDE_IN_MATCH];\n"
+              "    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, tide_world_heaps[TIDE_IN_LOCAL]);\n"
               "    bool ok = w->tide_identity_clock != 0;\n"
               "    for (uint32_t k = 0; ok && k < sizeof lists / sizeof *lists; k++) {\n"
               "        const int32_t count = tide_list_count(lists[k].list);\n"

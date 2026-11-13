@@ -153,13 +153,13 @@ static void gen_workers(gen *g)
         const decl *fn = g->prog->decls.items[i];
         if (!fn->is_worker) continue;
         const char *id = routine_cname(fn);
-        sb_printf(o, "typedef struct tide_worker_%s {\n    tide_heap input_heap, output_heap;\n    const tide_jobs *jobs;\n", id);
+        sb_printf(o, "typedef struct tide_worker_%s {\n    tide_heaps input_heap, output_heap;\n    const tide_jobs *jobs;\n", id);
         for (int k = 0; k < fn->params.count; k++) sb_printf(o, "    %s input%d;\n", elem_ctype(fn->params.items[k].type), k);
         if (fn->result.kind != TY_VOID) sb_printf(o, "    %s result;\n", elem_ctype(fn->result));
         sb_printf(o, "} tide_worker_%s;\n\n", id);
-        sb_printf(o, "static void tide_worker_release_%s(void *context)\n{\n    tide_worker_%s *v = context;\n    tide_heap_free(&v->input_heap);\n    tide_heap_free(&v->output_heap);\n    free(v);\n}\n\n", id, id);
+        sb_printf(o, "static void tide_worker_release_%s(void *context)\n{\n    tide_worker_%s *v = context;\n    tide_heaps_free(&v->input_heap);\n    tide_heaps_free(&v->output_heap);\n    free(v);\n}\n\n", id, id);
         sb_printf(o, "static void tide_worker_run_%s(void *context)\n{\n    tide_worker_%s *v = context;\n", id, id);
-        sb_put(o, "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
+        sb_put(o, "    tide_heaps *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                   "    const uint64_t mark = tide_scratch_mark();\n    tide_text_use(&v->input_heap, &v->output_heap);\n"
                   "    const tide_jobs *previous = tide_worker_enter(v->jobs);\n");
         // Built constant lists use packed handles, including in workers with no inputs.
@@ -185,12 +185,12 @@ static void gen_workers(gen *g)
         for (int k = 0; k < fn->params.count; k++) sb_printf(o, ", %s input%d", c_type(fn->params.items[k].type), k);
         sb_printf(o, ")\n{\n    const uint64_t began = tide_worker_transfer_begin(local->tide_workers);\n    tide_worker_%s *v = tide_alloc_zeroed(1, sizeof *v);\n", id);
         sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n"
-                  "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
+                  "    tide_heaps *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                   "    v->jobs = local->tide_worker_jobs;\n");
         for (int k = 0; k < fn->params.count; k++) {
             const type t = fn->params.items[k].type;
             if (t.kind == TY_GRID) {
-                sb_printf(o, "    v->input%d = tide_worker_grid_capture(input%d, &%s, &v->input_heap, TIDE_IN_MATCH);\n", k, k, grid_shape_name(t.decl));
+                sb_printf(o, "    v->input%d = tide_worker_grid_capture(input%d, &%s, tide_heaps_of(&v->input_heap, 0u), TIDE_IN_MATCH);\n", k, k, grid_shape_name(t.decl));
                 continue;
             }
             sb_printf(o, t.kind == TY_STRING ? "    v->input%d = tide_text_temp(input%d);\n" : "    v->input%d = input%d;\n", k, k);
@@ -203,19 +203,19 @@ static void gen_workers(gen *g)
             gen_worker_own(g, fn->params.items[k].type, place.data, "TIDE_IN_MATCH");
         }
         sb_put(o, "    tide_text_use(saved_match, saved_local);\n    tide_scratch_reset(mark);\n");
-        sb_printf(o, "    tide_worker_transferred(local->tide_workers, sizeof *v + (uint64_t)v->input_heap.used, began, false);\n    tide_worker_submit(local->tide_workers, ticket, tide_worker_run_%s, tide_worker_release_%s, v, sizeof *v + (uint64_t)v->input_heap.used);\n}\n\n", id, id);
+        sb_printf(o, "    tide_worker_transferred(local->tide_workers, sizeof *v + tide_heaps_used(&v->input_heap), began, false);\n    tide_worker_submit(local->tide_workers, ticket, tide_worker_run_%s, tide_worker_release_%s, v, sizeof *v + tide_heaps_used(&v->input_heap));\n}\n\n", id, id);
         sb_printf(o, "TIDE_HELPER bool tide_worker_take_%s(tide_local *local, uint32_t ticket", id);
         if (fn->result.kind != TY_VOID) sb_printf(o, ", %s *out", c_type(fn->result));
         sb_printf(o, ")\n{\n    if (!tide_worker_transfer_ready(local->tide_workers)) return false;\n    tide_worker_%s *v = tide_worker_poll(local->tide_workers, ticket);\n    if (!v) return false;\n    const uint64_t began = tide_worker_transfer_begin(local->tide_workers);\n", id);
         if (fn->result.kind != TY_VOID) {
-            sb_put(o, "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
+            sb_put(o, "    tide_heaps *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                       "    tide_text_use(&v->input_heap, &v->output_heap);\n");
             sb_printf(o, "    %s result = v->result;\n", elem_ctype(fn->result));
             gen_worker_snapshot(g, fn->result, "result", 0);
             sb_put(o, fn->result.kind == TY_STRING ? "    *out = tide_text_view(result);\n" : "    *out = result;\n");
             sb_put(o, "    tide_text_use(saved_match, saved_local);\n");
         }
-        sb_put(o, "    tide_worker_transferred(local->tide_workers, v->output_heap.used, began, true);\n    tide_worker_forget(local->tide_workers, ticket);\n    return true;\n}\n\n");
+        sb_put(o, "    tide_worker_transferred(local->tide_workers, tide_heaps_used(&v->output_heap), began, true);\n    tide_worker_forget(local->tide_workers, ticket);\n    return true;\n}\n\n");
     }
 }
 
@@ -279,7 +279,7 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
             if (input.kind == TY_GRID) {
                 sb_put(o, "tide_worker_grid_capture(");
                 gen_as(g, o, arg, input);
-                sb_printf(o, ", &%s, &tide_l->heap, TIDE_IN_LOCAL);\n", grid_shape_name(input.decl));
+                sb_printf(o, ", &%s, tide_heaps_of(&tide_l->heap, 0u), TIDE_IN_LOCAL);\n", grid_shape_name(input.decl));
                 line(g, o, "tide_f->%s = %s;", task_slot_for(g, temp, input), temp);
             } else {
                 gen_value_of(g, o, arg, input);

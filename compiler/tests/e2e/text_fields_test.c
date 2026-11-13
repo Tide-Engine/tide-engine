@@ -45,7 +45,7 @@ TIDE_TEST(text_fields_keep_their_own_text)
     TIDE_CHECK(world.Log.heard == 2);
     TIDE_CHECK(reads(&world, world.Log.last, "nobodys said hi"));
     TIDE_CHECK(reads(&world, world.Log.status, "tick 0"));
-    TIDE_CHECK(world.heap.pending == 0);
+    TIDE_CHECK(tide_heaps_pending(&world.heap) == 0);
 
     tide_world_tick(&world);
     TIDE_CHECK(!tide_has_Named(&world, tide_entity_in_slot(&world.entities, 2))); // Destroyed, its text released
@@ -70,9 +70,9 @@ TIDE_TEST(text_fields_reuse_their_memory)
     // Once the names stop growing, every tick's new text reuses released blocks.
     tide_world_init(&world, 1.0f);
     for (int i = 0; i < 50; i++) tide_world_tick(&world);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     for (int i = 0; i < 200; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.heap.used == used);
+    TIDE_CHECK(tide_heaps_used(&world.heap) == used);
     const Named cat = tide_get_Named(&world, tide_entity_in_slot(&world.entities, 1));
     TIDE_REQUIRE(tide_has_Named(&world, tide_entity_in_slot(&world.entities, 1)));
     TIDE_CHECK(reads(&world, cat.name, "CATSSSSSSSSS"));

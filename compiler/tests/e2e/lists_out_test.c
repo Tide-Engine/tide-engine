@@ -39,7 +39,7 @@ static void show(const int op, const int count, const int seed)
 }
 
 // Whether a list is the `count` bytes C makes from `seed`, but the one at `poked` (-1: none), which is another.
-static bool bytes_are(const tide_heap *heap, const tide_list l, const int count, const int seed, const int poked)
+static bool bytes_are(const tide_heaps *heap, const tide_list l, const int count, const int seed, const int poked)
 {
     if (tide_list_read_count(heap, l) != count) return false;
     for (int i = 0; i < count; i++) {
@@ -49,7 +49,7 @@ static bool bytes_are(const tide_heap *heap, const tide_list l, const int count,
     return tide_list_read(heap, l, count, 1) == NULL;
 }
 
-static bool cells_are(const tide_heap *heap, const tide_list l, const int count, const int seed)
+static bool cells_are(const tide_heaps *heap, const tide_list l, const int count, const int seed)
 {
     if (tide_list_read_count(heap, l) != count) return false;
     for (int i = 0; i < count; i++) {
@@ -64,9 +64,9 @@ static bool cells_are(const tide_heap *heap, const tide_list l, const int count,
     return true;
 }
 
-static bool chunked(const tide_heap *heap, const tide_list l)
+static bool chunked(const tide_heaps *heap, const tide_list l)
 {
-    return l.at && (tide_heap_block(heap, tide_handle_offset(l.at))->b & TIDE_LIST_CHUNKED);
+    return l.at && (tide_heap_block(tide_heaps_read(heap, l.at), tide_handle_offset(l.at))->b & TIDE_LIST_CHUNKED);
 }
 
 static Blob blob_of(const tide_world *w, const int seed)
@@ -88,10 +88,10 @@ static bool blobs_are(const tide_world *w, const int count)
     return right;
 }
 
-static uint32_t pages_apart(const tide_heap *a, const tide_heap *b)
+static uint32_t pages_apart(const tide_heaps *a, const tide_heaps *b)
 {
-    uint32_t apart = a->pages > b->pages ? a->pages - b->pages : b->pages - a->pages;
-    for (uint32_t i = 0; i < a->pages && i < b->pages; i++) apart += a->page[i] != b->page[i];
+    const uint32_t ours = tide_heaps_pages_apart(a, b), theirs = tide_heaps_pages_apart(b, a);
+    uint32_t apart = ours > theirs ? ours : theirs;
     return apart;
 }
 
@@ -101,7 +101,7 @@ TIDE_TEST(lists_out_from_empty_to_a_few_to_chunks_and_back)
     TIDE_CHECK(world.Store.image.at == 0);
     run(&world, 1, 100, 1, 0);
     TIDE_CHECK(world.Store.said == 100 && bytes_are(&world.heap, world.Store.image, 100, 1, -1));
-    TIDE_CHECK(!chunked(&world.heap, world.Store.image) && tide_handle_where(world.Store.image.at) == TIDE_IN_MATCH);
+    TIDE_CHECK(!chunked(&world.heap, world.Store.image) && tide_handle_world(world.Store.image.at) == TIDE_IN_MATCH);
     run(&world, 1, BIG, 2, 0);
     TIDE_CHECK(world.Store.said == BIG && bytes_are(&world.heap, world.Store.image, BIG, 2, -1));
     TIDE_CHECK(chunked(&world.heap, world.Store.image));
@@ -109,13 +109,13 @@ TIDE_TEST(lists_out_from_empty_to_a_few_to_chunks_and_back)
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, BIG + 50000, 3, -1));
     run(&world, 1, 200000, 4, 0);
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, 200000, 4, -1));
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     run(&world, 1, 40, 5, 0);
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, 40, 5, -1));
     run(&world, 1, 0, 0, 0);
     TIDE_CHECK(world.Store.said == 0 && tide_list_read_count(&world.heap, world.Store.image) == 0);
     run(&world, 1, BIG + 50000, 6, 0);
-    TIDE_CHECK(bytes_are(&world.heap, world.Store.image, BIG + 50000, 6, -1) && world.heap.used == used);
+    TIDE_CHECK(bytes_are(&world.heap, world.Store.image, BIG + 50000, 6, -1) && tide_heaps_used(&world.heap) == used);
     run(&world, 7, 0, 0, 0);
     TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.image) == 0);
     run(&world, 1, 9, 7, 0);
@@ -170,19 +170,19 @@ TIDE_TEST(lists_out_writes_only_what_differs)
     tide_world_copy(&snapshot, &world);
     tide_world_copy(&twin, &world);
     const uint64_t before = tide_world_hash(&snapshot);
-    const uint64_t heap_before = tide_heap_hash(0, &world.heap);
+    const uint64_t heap_before = tide_heaps_hash(0, &world.heap);
 
     run(&world, 1, BIG, 1, 0);
     run(&twin, 0, BIG, 1, 0);
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, BIG, 1, -1));
     TIDE_CHECK(tide_world_hash(&world) == tide_world_hash(&twin));
-    TIDE_CHECK(tide_heap_hash(0, &world.heap) == heap_before);
+    TIDE_CHECK(tide_heaps_hash(0, &world.heap) == heap_before);
     TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0);
 
     run(&world, 3, BIG, 1, 123456);
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, BIG, 1, 123456));
     TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 1);
-    TIDE_CHECK(tide_heap_hash(0, &world.heap) != heap_before);
+    TIDE_CHECK(tide_heaps_hash(0, &world.heap) != heap_before);
 
     run(&world, 1, 1000, 9, 0);
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, 1000, 9, -1));

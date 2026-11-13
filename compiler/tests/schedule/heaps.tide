@@ -1,0 +1,53 @@
+// Each owner's text, lists and grids are in a heap of its own, so systems
+// only wait over a heap when they change the same owner's, and spawning makes
+// no system wait.
+
+singleton Ledger { List<int> entries; }
+singleton Roster { List<string> names; }
+singleton Notes { string? last; }
+component Pack { int id; List<int> items; }
+component Trail { int id; List<float> points; }
+component Ghost { string name; }
+component Mark { int id; }
+event Named { string name; }
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Pack { id = 1 });
+    Spawn(Pack { id = 2 }, Mark { id = 2 });
+    Spawn(Trail { id = 3 });
+}
+
+// C functions handed a singleton's list: what C writes says TIDE_IN_MATCH,
+// so its text stays in the match's own heap, with the other owners C is handed
+singleton Native { List<int> cells; }
+singleton Other { List<int> cells; }
+extern void Fill(mut List<int> cells);
+extern void Refill(mut List<int> cells);
+
+// Different owners: all at once
+system Write(mut Ledger ledger) { ledger.entries.Add(1); }
+system Enlist(mut Roster roster) { roster.names.Add("a"); }
+system Note(mut Notes notes) { notes.last = "noted"; }   // Text behind a `?` counts
+system Stuff(mut Pack pack) { pack.items.Add(pack.id); }
+system Walk(mut Trail trail) { trail.points.Add(1.0); }
+
+// The same owner's heap, on entities that never meet: one at a time
+system StuffMarked(mut Pack pack, with Mark) { pack.items.Clear(); }
+system StuffPlain(mut Pack pack, without Mark) { pack.items.Add(2); }
+
+// What's spawned or sent holding text goes into the heap of what holds it:
+// these two wait for each other over Ghost's, not over spawning
+system Haunt(with Pack) { Spawn(Ghost { name = "from a pack" }); }
+system Summon(with Trail) { Spawn(Ghost { name = "from a trail" }); }
+// ...and these spawn with nothing in a heap, at the same time
+system Tag(Pack pack) { Spawn(Mark { id = pack.id }); }
+system Retag(Trail trail) { Spawn(Mark { id = trail.id }); }
+// Two senders of one event holding text
+system Call(with Pack) { Send(Named { name = "pack" }); }
+system Shout(with Trail) { Send(Named { name = "trail" }); }
+
+// Handed to C: both in the match's own heap, one at a time
+system Native1(mut Native native) { Fill(native.cells); }
+system Native2(mut Other other) { Refill(other.cells); }

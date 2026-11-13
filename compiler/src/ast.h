@@ -332,6 +332,7 @@ typedef struct param {
     bool read;    // The body names it
     bool written; // The body assigns through it
     bool heap_written; // A function's: its code can change text, lists or grids through it (check.c, settle_heap_passes)
+    bool c_passed;     // A function's: its code hands it, whole or in part, to C, itself or through other functions (assign_heaps)
     bool c_indirect; // Internal CPU ABI: a proven read-only aggregate can borrow its caller's storage
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
     bool scene;     // `with scene Arena`, `without scene Arena`: by whether the entity is a loaded Arena's; no type, ...
@@ -406,8 +407,9 @@ typedef enum conflict_kind {
     CONFLICT_BOTH_WRITE,     // Both write the data
     CONFLICT_EARLIER_READS,  // The earlier system reads what this one writes
     CONFLICT_EARLIER_WRITES, // The earlier system writes what this one reads
-    CONFLICT_TEXT,           // Both write text or lists, which the match keeps in one heap
-    CONFLICT_SPAWN,          // Both spawn: entities get their IDs in order
+    CONFLICT_TEXT,           // Both change one owner's text, lists or grids (`data`): its heap
+    CONFLICT_SHARED_HEAP,    // Each changes text, lists or grids of an owner (`data`, NULL for the match's tasks) that
+                             // shares a heap with the other's: the match's own, or two names with one id
     CONFLICT_TASKS,          // Both start tasks: the match keeps them in the order they start
 } conflict_kind;
 
@@ -831,6 +833,13 @@ typedef struct decl {
     bool c_self_indirect; // Private CPU ABI for a proven read-only aggregate method receiver
     bool writes_text;    // A system that writes text, lists or grids into its world: its heap, which one system changes at a time
     loc writes_text_at;  // ...where it first does
+    // ...and whose they are: components, singletons and events that hold some, and NULL for the match's own
+    // (note_heap_owner in check.c). A function's or method's: what it sends, spawns or adds holding some.
+    VEC(struct decl *) heap_owners;
+    // A component's, singleton's or event's: the id of the heap its text, lists and grids are in, 0 for the
+    // match's own (assign_heaps in check.c), and whether C can write it, which keeps it there
+    uint16_t heap_id;
+    bool c_written;
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
     bool starts_tasks;   // Code that starts tasks, calling an async function without await: they're the world's, in order
     loc starts_at;       // ...where it first does
@@ -1813,6 +1822,7 @@ typedef struct program {
     bool ticks_alongside;      // ticksAlongsideViews: the host's ticks run beside the frames that draw
     decl *prediction;          // The built-in enum Prediction
     // Shards (`settings { shards = true; reach = 64; }`, docs/spec.md, Shards)
+    VEC(uint16_t) heap_ids; // The ids of the match's heaps, ascending from 0, the match's own: its slots (tide/heap.h)
     bool shards;
     double shard_range;        // reach, or 0 where it isn't set
     loc shards_at, shard_range_at;

@@ -1,5 +1,32 @@
 # Benchmarks
 
+## A heap for each owner (2026-11-13)
+
+schedule-and-threads.md, top section: each component's, singleton's and event's text and lists in a heap of its
+own, so only systems that change the same owner's wait for each other.
+
+The fixture `compiler/tests/e2e/heaps.tide` (three once-a-tick systems that change a singleton's list, text, map
+or grid each, two per-entity systems that change their rows' list and text over 400 and 300 entities, two
+spawners of a component holding text, 1,500 `Math.Sin` and `Math.Cos` a row), release, Windows, 7900X, 12
+threads, 200 ticks after 20, mean ms a tick, three rounds each of two runs. "One heap" is the same engine with
+every owner given the match's own heap, which is the schedule there was before (a line in `assign_heaps`, for
+the measurement only, not kept):
+
+| | One thread | The pool's 12 |
+|---|---|---|
+| One heap, as before | 20.0-20.8 | 20.5-20.7 |
+| A heap for each owner | 20.0-20.7 | 10.7-10.9 |
+
+With one heap every one of its systems changes the heap, so they ran one after another on whatever threads; with
+its own the tick is as long as its longest system, the per-entity one that changes its rows' text, which keeps one
+thread (a gap in the note). One thread's time is the same either way: the table and pointer `tide_heap_of` reads
+more don't show where rows do arithmetic. Not measured: the list benchmarks (`bench/versus`) against `dev`, and
+Mount & Rifle's battle, whose schedule went from 2,925 waits to 1,907.
+
+The quick benchmarks' world-hash pins moved with the handles' bits (`bench/CMakeLists.txt`): sand tick 181
+`dd941e999e8fd01d`, gallery tick 272 `15fd48b33afb54c3`, earth and its divergence run tick 273
+`80ad260345c4efad`, earth in two shards tick 273 `cef083e5c74ba687`.
+
 The stable-identity change intentionally updates the quick benchmark world-hash
 pins, independently matching fresh Windows ASan and WASI runs: sand tick181
 `8aef90b836a56b9e`, gallery tick272 `017398d3dd004471`, earth and deliberate

@@ -4,7 +4,7 @@
 #include "game.h"
 #include "tide_test.h"
 
-static bool sequence(tide_heap *heap, const tide_list list, const int32_t *expected, const int32_t count)
+static bool sequence(tide_heaps *heap, const tide_list list, const int32_t *expected, const int32_t count)
 {
     tide_text_use(heap, NULL);
     if (tide_list_count(list) != count) return false;

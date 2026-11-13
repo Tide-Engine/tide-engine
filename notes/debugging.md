@@ -1,5 +1,18 @@
 # Debugging Tide code in native debuggers
 
+## Handles name a heap, and how long a natvis expression can be (2026-11-13)
+
+A world's handle is its heap's id in the low 12 bits and its block's offset from bit 8 (schedule-and-threads.md, top
+section), and a world's heaps are `tide_world_heaps[world]->all[tide_heap_slots[id]]`. Both views follow:
+`_heap` and `_block` in `debug_views.py`, `view_heap` and `view_block` in `debug_views_codegen.inc`.
+
+Windows' debugger engine (dbgeng 10.0.26100, what `tidec_debugger_natvis` drives) gives up on a text's
+`DisplayString` whose expression passes some length (it shows the raw struct), and with the scratch-or-world `?:`
+around one a little longer it never comes back: 8 GB of 240-byte allocations, then out of memory. Each piece of the
+same expression evaluates at once with `dx`. So the block's expression is kept short: a world's is
+`(char*)(heap->page[at << 2 >> 24] + 1) + (at >> 8 & 0x3FF0)`, a block being as far into its page as into its
+place. Bisected with natvis files loaded at run time (`.nvunloadall`, `.nvload <path with backslashes>`).
+
 ## CI append-order oracle correction (2026-11-07)
 
 Linux release LLDB exposed an outdated first-Pair value after the finalized

@@ -1,5 +1,21 @@
 # No Tide code can corrupt memory
 
+## Heaps by owner: what a system may change, checked (2026-11-13)
+
+Two systems change the same heap only one at a time, and since each owner has its own (schedule-and-threads.md, top
+section) that rests on the compiler knowing whose text and lists a system changes. Builds with `TIDE_HEAP_CHECKS`
+(the `sanitize` preset) check it wherever a tick runs: each system's task says its owners' heaps
+(`tide_heaps_allow`), and handing out, taking back or copying a block in another heap of that world ends the
+program, naming the system and the heap. Not checked: systems that reach C or start tasks (they may change what
+the schedule already keeps everything away from), and writes to a page the heap already owns.
+
+Its first run found a hole older than it: a system that assigned a `string?` field (any `T?` holding text or
+lists) wasn't counted as changing the heap, so it ran alongside systems that did and went across threads. Fixed in
+`check_writable` and `decl_holds_text` (`type_in_heap`).
+
+A handle taken from received bytes names a heap by its id: any 12 bits index the game's table of 4,096 slots, each
+below the world's count, so it's a heap of that world. Its offset is as unchecked as it was.
+
 ## A parallel step reading a list its code made (2026-11-12)
 
 Found building parallel loops for views: a step read a variable of the code around its loop holding a list on

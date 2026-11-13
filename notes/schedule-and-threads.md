@@ -1,6 +1,154 @@
 # The schedule and the tick on threads
 
-## A tick beside the frame (2026-11-12)
+## A heap for each owner, and spawners that don't wait (2026-11-13)
+
+Asked: review what can run in parallel, systems and views, where "strings or lists etc" break the assumptions.
+Measured first, with `tidec --schedule` over every game in the tree and Mount & Rifle (its `game/` sources with
+`BATTLE_TEST` and `ARMY`, the Rooms and Box3D packages):
+
+| What kept code off threads | 523 games in the tree (3,066 systems) | Mount & Rifle (126 systems) |
+|---|---|---|
+| Per-entity system on one thread: a `mut` singleton | 308 | 12 |
+| ...it changes text, lists or grids | 82 | 18 |
+| ...it changes a component and reads others' through World or a query | 37 | 0 |
+| ...it calls `Set` | 16 | 0 |
+| Waits over nothing but the heap or spawn order | 731 of 38,723 | 1,322 of 2,925 |
+| Systems that change the heap | | 72 of 126 |
+| Schedule depth | | 106 stages |
+
+So the gap was the one the owner named: every text, list, map, set and grid of a match lived in one heap, whose
+blocks are handed out in a fixed order, so **every system that changed any of them waited for every other**, whatever
+they changed, and Mount & Rifle's tick was a chain 106 systems long. A `Spawn`, `Add` or `Send` whose values hold a
+list counted too (its values are made the world's own as they're queued), and so did any two systems that spawn.
+
+Built:
+
+- **A world has a heap for each owner** (`tide_heaps`, `tide/heap.h`, A world's heaps; `engine/src/heap.c`). An owner
+  is a match component, singleton or event whose fields hold anything a heap keeps; what its fields hold is in its
+  heap and nothing else is. A block says which heap it's in: 12 bits of every handle and `where` (`tide/text.h`:
+  `TIDE_WHERE(world, id)`, `tide_handle_where`, `tide_handle_of`; a world's handle is its block's offset from bit 8
+  up, which is free as blocks start at multiples of 16, so a handle is a byte longer as a varint, not five). Every
+  runtime function already found its heap from a `where` or a handle (`tide_heap_of`, `tide_heap_read`) and told a
+  field's own block from a borrowed one by `tide_handle_where(at) == where`, so text.c, list.c, map.c and grid.c are
+  as they were: the same comparison now tells one owner's block from another's. `tide_heap` is still one heap, with
+  its functions; `tide_heaps` is the set, one array by slot (`all`, made with a compare-and-swap the first time a
+  heap is asked for, so a zeroed world is still an empty one), with `tide_heaps_of(set, id)` and
+  `tide_heaps_copy/free/flush/settle/hash/stale/pack/unpack/pack_delta/unpack_delta/hash_pages/need_pages/used/
+  pending/pages/pages_apart`. `tide_text_use`, `tide_world_heaps` and the
+  readers handed a world (`tide_text_read`, `tide_list_read`, `tide_list_read_count`, `tide_grid_read`,
+  `tide_grid_copy_from`) take the set.
+- **Ids are made from names** (`assign_heaps` in `compiler/src/check.c`: FNV-1a of the qualified name into 1..4095),
+  so they're the same in every build of a game and a world carried over by a hot reload keeps its handles. Two owners
+  whose names collide share a heap (the schedule compares ids, `decl.heap_id`). A game says its ids once, from a
+  constructor in its generated C (`tide_heaps_shape`, `gen_heap_shape`): a table from id to slot, and each slot's id.
+  Without one every id is heap 0, which is what the engine's own tests, a worker's private heaps and a build step's
+  heap are.
+- **Id 0, the match's own heap**, holds what's no owner's (tasks' frames, the hierarchy, visibility groups, inputs)
+  and every owner that can't have its own: the engine's built-in types and scenes; **an owner C can write** (one a
+  system written in C takes `mut`, or that code hands, whole or in part, to a `mut` or `out` parameter of a callee
+  that reaches C: `c_lend`, `decl.c_written`), since C says `TIDE_IN_MATCH` for what it writes, so packages' and
+  games' C is as it was; and every owner of a game with shards or hidden state, whose generated code packs and reads
+  one heap (`shard_*.inc`, `client_state_codegen.inc`). The generated header has `TIDE_WHERE_<Type>` for each owner,
+  which C that writes a field of one it wasn't handed says instead of `TIDE_IN_MATCH` (tests that poke a world do).
+- **Generated code** (`decl_where`, `place_where` in `compiler/src/codegen.c`): a place in a component's or
+  singleton's memory is its owner's `where`; a spawn's and an add's values are made their components' own
+  (`tide_own_spawn<a>` per component), an event's the event's, a singleton's defaults the singleton's; a system
+  flushes the heaps of the owners it changes after each row (`tide_heap_flush(tide_heaps_of(...))`), everything
+  serial flushes them all (`tide_heaps_flush`).
+- **The schedule** (`find_conflicts` in `compiler/src/parallel.c`): two systems wait over a heap only when both
+  change the same one (`decl.heap_owners`, noted wherever `writes_text` was: a write through a parameter, a `Set`, a
+  queued value, a helper's). `tide schedule` says whose: "both change the text, lists or grids of Party". A system
+  that starts tasks still waits for every system that changes a heap or spawns (a task runs whatever its code does
+  until it first waits).
+- **Spawning makes no system wait** (`CONFLICT_SPAWN` is gone): every system that spawns registers its entities once
+  its tasks have joined and the spawner before it has registered its own (`tide_system_tasks.settles` is true for
+  all of them, where it was for systems split in order; the runtime's chain was already there). Nothing in Tide can
+  tell: a spawn's key is its row's entity and place in the code, an entity that isn't installed has no archetype
+  either way, and no Tide code asks whether a key is registered (C can, with `tide_entity_alive`).
+- **Builds that check** (`TIDE_HEAP_CHECKS`, on in the `sanitize` preset; `tide_heaps_allow`): each system's task
+  says whose heaps it may change, and a block handed out, taken back or made a heap's own in another ends the
+  program, naming the system and the heap's id. On its first run it found a hole that was there before:
+  **assigning a `string?` (or any `T?` holding text or lists) counted as no heap write** (`holds_text` and
+  `holds_list` don't look inside `T?`), so such a system ran alongside others that changed the heap, and a
+  per-entity one went across threads. `decl_holds_text` and `check_writable` now use `type_in_heap`, which looks
+  through structs, arrays, `T?` and grids.
+- **Packed worlds**: the first heap as it was, then how many of the others have handed anything out and each with
+  its id and size (`tide_heaps_pack`), so a world with one heap in use packs four bytes more. A delta has only the
+  heaps that aren't their base's as it stands, by slot; the rest are shared with the base. A hash is the first
+  heap's, then each other one's id and hash, skipping those that never handed anything out.
+- **Hot reload** (`platform/src/migrate.c`, `gen_layout`): the heap's bytes still carry over whole. A layout field
+  says the id of the heap its text and lists are in (`tide_layout_field.heap`, the struct's new last member), and a
+  field only carries over to one with the same (`carries`): where an owner's id changes between builds (it's handed
+  to C now, or no longer) its fields start again rather than carry handles into a heap that hasn't their blocks. A
+  heap whose owner the new build hasn't is left out as the world is read. The id isn't in the layout's type names,
+  which `tide unity`'s schema and C# read.
+- **Two things the new handles broke, found by the suite and fixed.** A handle and a block's offset used to be the
+  same number for a match's block, so `client_state_codegen.inc` handed a list's chunk offsets and a grid's record
+  blocks to a function that takes a handle; they go to `tide_client_reach_block` now (the visibility hash memo kept
+  hashes of pages nothing had read). And the natvis expressions (`debug_views_codegen.inc`): Windows' debugger
+  engine gives up on a text's `DisplayString` past some length and never comes back from one a little longer
+  (8 GB, then out of memory), so `view_block` is shorter than it was before this, not longer: a world's block is
+  `(char*)(heap->page[at << 2 >> 24] + 1) + (at >> 8 & 0x3FF0)`, which rests on a block of more than a page
+  starting its page. The same engine ran out of memory walking the stack through the checked task's wrapper while it
+  called `tide_heaps_of` inline, which is one reason `tide_heaps_allow` takes ids.
+
+Mount & Rifle's schedule with all of it: 2,925 waits to 1,907, none over the heap between different owners, and 87
+stages deep where it was 106. What's left of the depth is data: 45 of Box3D's systems change its `Physics`
+singleton one after another (a C physics world's pipeline), and most of the campaign's change `Party`. Its owners
+that share the match's heap are Box3D's, which its C writes.
+
+Measured, on the fixture (`compiler/tests/e2e/heaps.tide`; release, 12 threads): its tick on the pool went from
+20.6 ms, which is one thread's, to 10.8, the length of its longest system (benchmarks.md, A heap for each owner).
+
+Tests:
+- `tidec_e2e_heaps` (`compiler/tests/e2e/heaps.tide`): every owner's handles say its own heap and nothing is in the
+  match's; twelve ticks on a pool that's one thread saying it has eight, and five runs of twelve on the platform's,
+  hash the same as one thread's every tick with the same lists and text; a world's bytes and a delta from a
+  snapshot (unpacked over the unpacked base) give the world back, and both go on as one.
+- `tests/test_heap.c`, three more: owners' blocks apart, a block of another owner's borrowed and copied, one heap's
+  blocks coming and going without the other's moving; copies sharing every heap's pages until one changes, bytes
+  with ids, a game without one of the owners leaving its heap out, a heap twice refused; a delta of nothing changed,
+  of one owner changed (the other's page still the base's) and with no base.
+- `compiler/tests/schedule/heaps.tide`: different owners at once, one owner's on entities that never meet one at a
+  time, two spawners of a component holding text waiting over its heap and two spawners of one holding none not at
+  all, two owners handed to C sharing the match's heap, and the list of those at the end. Six other goldens lost
+  their heap waits (`text`, `singleton_heap`, `grids`, `lists_out`, `ordered`, `parallel_loops`).
+- The pinned world hashes of every fixture, package test, example and benchmark whose world holds text or lists
+  moved (a handle's bits changed): 60 values in 31 files, among them `nested`, `arrays`, `rows`, `rolls`,
+  `crossplatform_text`, the Box2D and Box3D sequences, towers, sumo and the benchmarks' `--expect`.
+
+Validation: the whole native sanitize suite (Windows ASan, with `TIDE_HEAP_CHECKS`), 3,279 of 3,281:
+`inside_out_tests` and `underfoot_tests` (the private prototypes) fail as they did before it. On the web
+(`web-debug`, under Node, with threads): the fixtures whose pins moved and the heap's own (`nested`, `arrays`,
+`rows`, `rolls`, `crossplatform`, `crossplatform_text`, `chars`, `json`, `optional_fields`, `decode`, `lists`,
+`text_fields`, `ordered_split`, `visibility_lists`, `visibility_hash_memo`, `heaps`, `tide_tests`) pass with the
+values the native build made.
+
+Gaps, what still keeps code off threads, in the order the measurements above give them:
+- **A `mut` singleton keeps a per-entity system on one thread** (308 of the tree's systems, 12 of Mount & Rifle's):
+  the language's rule, as each row sees what the rows before it wrote. A system that only adds to one (a count, a
+  sum, a list it appends to) could go in runs and join them in order; not designed.
+- **A per-entity system that changes its rows' text or lists stays on one thread** (82 and 18): a heap's blocks go
+  in its entities' order. Runs on threads would each need blocks of their own that the join renumbers, or a heap
+  for each chunk; not designed.
+- **Owners C can write share one heap**, so Box3D's and Box2D's systems wait for every other such system over it
+  (they wait for each other over their singleton anyway). C would have to say an owner's `where`
+  (`TIDE_WHERE_<Type>` is in the header) and the compiler be told that it does.
+- **Games with shards or hidden state keep one heap**: `shard_*.inc` and `client_state_codegen.inc` pack, hash and
+  read one (`hs->heap`).
+- **The local world has one heap.** Views run one after another, so nothing waits over it yet; automatic parallel
+  views (the plan of 2026-11-04, stages 1 to 3, unbuilt) would want local owners' heaps too.
+- **A system that starts tasks waits for every system that changes any heap or spawns.**
+- **Systems written in C run their entities on one thread** (their rows ABI takes runs, so the split in order
+  would fit), and so do systems that call `Set` or read through their World a component they change (37 and 16).
+- **Steps of a parallel loop that read a list their code made stay on one thread** (the section of 2026-11-12
+  below).
+- **Event handlers and the tasks' pass** run one at a time at the end of the tick.
+- Two owners whose names make one id share a heap (one pair in about a hundred owners): `tide schedule` says they
+  share one, not why.
+- `tide_heap_of` reads a table and a pointer more than it did; not measured against `dev` on the list benchmarks.
+
+
 
 Mount & Rifle (1,000 soldiers, 144 Hz): a frame with a tick cost its thread tick + views + render, 9.4-9.9 ms
 against 6.94, with nothing left to take off either. The owner lifted the 2026-11-04 "not now" the same day

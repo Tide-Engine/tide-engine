@@ -28,6 +28,11 @@ typedef struct tide_layout_field {
     int32_t decl;     // TIDE_LAYOUT_STRUCT: a type; TIDE_LAYOUT_ENUM: an enum
     uint32_t offset;
     uint32_t size;
+    // A component's or singleton's field that holds text, lists, maps, sets
+    // or grids: the id of the heap they're in (tide/heap.h, A world's heaps),
+    // 0 for the world's own. Its handles say that id, so the field only
+    // carries over to a build where it's the same.
+    uint32_t heap;
 } tide_layout_field;
 
 // A component, singleton, input or struct.

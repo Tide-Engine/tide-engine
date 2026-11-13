@@ -331,22 +331,22 @@ TIDE_TEST(retarget_bake_borrows_owned_inputs_and_keeps_snapshot_bytes)
 {
     const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, true));
-    tide_heap heap = {0}, snapshot = {0};
+    tide_heaps heap = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
     tide_list source = {0}, target = {0}, plan = {0};
     tide_list_set(&source, f.source, 1, TIDE_IN_MATCH);
     tide_list_set(&target, f.target, 1, TIDE_IN_MATCH);
     tide_list_set(&plan, f.plan, 1, TIDE_IN_MATCH);
-    const uint64_t hash = tide_heap_hash(0, &heap);
-    tide_heap_copy(&snapshot, &heap);
+    const uint64_t hash = tide_heaps_hash(0, &heap);
+    tide_heaps_copy(&snapshot, &heap);
     uint8_t *bytes = NULL; uint32_t size = 0; char why[256];
     const uint64_t before = tide_scratch_mark();
     TIDE_REQUIRE(tide_retarget_bake(source, 0, target, plan, &f.settings, &bytes, &size, why));
-    TIDE_CHECK(tide_scratch_mark() == before && tide_heap_hash(0, &heap) == hash && tide_heap_hash(0, &snapshot) == hash);
+    TIDE_CHECK(tide_scratch_mark() == before && tide_heaps_hash(0, &heap) == hash && tide_heaps_hash(0, &snapshot) == hash);
     TIDE_CHECK(!tide_retarget_bake(source, 0, target, (tide_list){0}, &f.settings, &bytes, &size, why));
-    TIDE_CHECK(tide_scratch_mark() == before && tide_heap_hash(0, &heap) == hash && tide_heap_hash(0, &snapshot) == hash);
+    TIDE_CHECK(tide_scratch_mark() == before && tide_heaps_hash(0, &heap) == hash && tide_heaps_hash(0, &snapshot) == hash);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap); tide_heap_free(&snapshot);
+    tide_heaps_free(&heap); tide_heaps_free(&snapshot);
     tide_scratch_reset(mark);
     TIDE_CHECK(tide_skinned_data_validate(bytes, size));
     free(bytes);

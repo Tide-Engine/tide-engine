@@ -103,7 +103,7 @@ static void gen_build_main(gen *g)
                   "    fclose(in);\n"
                   "    if (!tide_assets_load(pack, (size_t)size)) {\n        fprintf(stderr, \"the pack doesn't load\\n\");\n        return 2;\n    }\n");
     }
-    sb_put(o, "    static tide_heap tide_build_heap;\n    tide_text_use(&tide_build_heap, NULL);\n");
+    sb_put(o, "    static tide_heaps tide_build_heap;\n    tide_text_use(&tide_build_heap, NULL);\n");
     if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
     sb_put(o, "    tide_build_out = fopen(argv[2], \"wb\");\n    if (!tide_build_out) return 2;\n");
     for (int i = 0; i < prog->build_roots.count; i++) {

@@ -18,9 +18,14 @@
 // A released block is only reused once the code running now is done (see
 // tide_heap_flush), so text read before the release stays readable until then.
 //
-// One system at a time changes a world's heap, while others may read it on
-// other threads: the heap's page table is read as a whole, and when it grows,
-// the old one stays until tide_heap_settle, once only one thread runs.
+// One system at a time changes a heap, while others may read it on other
+// threads: the heap's page table is read as a whole, and when it grows, the
+// old one stays until tide_heap_settle, once only one thread runs.
+//
+// A world has several (tide_heaps, below): one for each component, singleton
+// and event whose fields hold text, lists, maps, sets or grids, and one for
+// the rest. So two systems only wait for each other over a heap when they
+// change the same owner's.
 
 #define TIDE_HEAP_CLASSES 24 // Block sizes 16 << class bytes
 
@@ -161,3 +166,92 @@ static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
     return (tide_block *)(uintptr_t)((uint8_t *)tide_page_data(p) + (size_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)));
 }
 
+// ---------------------------------------------------------------------------
+// A world's heaps
+//
+// What a component's, a singleton's or an event's fields hold is in that
+// owner's heap, and nothing else is: a system that changes one owner's text
+// or lists hands out and takes back that heap's blocks alone, in its own
+// order, whatever other systems do to the other heaps meanwhile. Which heap a
+// block is in is its owner's id, 12 bits of every handle and `where`
+// (tide/text.h): a number tidec makes from the owner's name, so it's the same
+// in every build of a game and a world carried over to new code (hot reload)
+// keeps its handles. Id 0 is the world's own heap: its tasks', and every
+// owner's that C can write, as C says TIDE_IN_MATCH for all of them. Two
+// owners whose names make the same id share a heap.
+//
+// A game says which ids it has once, before any world is made
+// (tide_heaps_shape, from a constructor in its generated C). Without one,
+// every id is heap 0: a world of one heap, as the engine's own tests and a
+// worker's private heaps are.
+
+#define TIDE_HEAP_ID_BITS 12u
+#define TIDE_HEAP_IDS (1u << TIDE_HEAP_ID_BITS)
+
+typedef struct tide_heaps {
+    // Its heaps, tide_heap_count of them, by slot: made, all empty, the first
+    // time one is asked for, and read atomically, as two systems can ask at
+    // once. NULL is every heap empty, so a zeroed world is an empty one.
+    tide_heap *all;
+} tide_heaps;
+
+// By id, which of a world's heaps (its slot, 0 for the first); by slot, its
+// id; and how many slots.
+extern const uint16_t *tide_heap_slots;
+extern const uint16_t *tide_heap_ids;
+extern uint32_t tide_heap_count;
+
+// `slots` has TIDE_HEAP_IDS entries, below `count` each, and `ids` has
+// `count`, the first 0; both stay the program's. NULL `slots` is one heap
+// again. Only while no world with more heaps is left: a world's other heaps
+// are as many as the count was when they were made.
+void tide_heaps_shape(const uint16_t *slots, const uint16_t *ids, uint32_t count);
+
+// Makes `hs`'s heaps, if nothing has yet.
+tide_heap *tide_heaps_make(tide_heaps *hs);
+
+// The heap with that id.
+static inline tide_heap *tide_heaps_of(tide_heaps *hs, const uint32_t id)
+{
+    tide_heap *all = __atomic_load_n(&hs->all, __ATOMIC_ACQUIRE);
+    if (!all) all = tide_heaps_make(hs);
+    return all + tide_heap_slots[id & (TIDE_HEAP_IDS - 1u)];
+}
+
+// What tide_heap's own do, for all of a world's: only while nothing else
+// runs on it. A packed world's heaps say their ids, so one from another build
+// of the game is read into the heaps of the same owners.
+void tide_heaps_copy(tide_heaps *to, const tide_heaps *from);
+void tide_heaps_free(tide_heaps *hs);
+void tide_heaps_flush(tide_heaps *hs);
+void tide_heaps_settle(tide_heaps *hs);
+uint64_t tide_heaps_hash(uint64_t h, const tide_heaps *hs);
+void tide_heaps_stale(const tide_heaps *hs, tide_stale_pages *s);
+uint32_t tide_heaps_packed_size(const tide_heaps *hs);
+void tide_heaps_pack(const tide_heaps *hs, tide_writer *w);
+bool tide_heaps_unpack(tide_heaps *hs, tide_reader *r);
+void tide_heaps_pack_delta(const tide_heaps *hs, const tide_heaps *base, tide_delta_writer *d);
+bool tide_heaps_unpack_delta(tide_heaps *hs, const tide_heaps *base, tide_delta_reader *d);
+void tide_heaps_hash_pages(const tide_heaps *hs, tide_writer *w);
+void tide_heaps_need_pages(const tide_heaps *base, tide_needs *n);
+
+// What its heaps have handed out between them, and whether any has blocks
+// waiting to be freed: for code that keeps something worked out from a world's
+// text and lists while neither changes.
+uint64_t tide_heaps_used(const tide_heaps *hs);
+bool tide_heaps_pending(const tide_heaps *hs);
+
+// How many pages its heaps have between them, and how many of them aren't
+// `other`'s pages in the same places: what a world and its snapshot don't
+// share.
+uint32_t tide_heaps_pages(const tide_heaps *hs);
+uint32_t tide_heaps_pages_apart(const tide_heaps *hs, const tide_heaps *other);
+
+// The heaps the code this thread runs may change, for builds that check
+// (TIDE_HEAP_CHECKS): a system's are its owners', which is all the schedule
+// keeps other systems off. Generated code says which of `match`'s, by their
+// ids, around each system's task, with the system's name as `who`, and any
+// again after it (`who` NULL); a block handed out, taken back or made a heap's
+// own in another of `match`'s heaps meanwhile ends the program, naming the
+// system and the heap's id. Builds that don't check do nothing here.
+void tide_heaps_allow(const tide_heaps *match, const uint16_t *ids, uint32_t count, const char *who);

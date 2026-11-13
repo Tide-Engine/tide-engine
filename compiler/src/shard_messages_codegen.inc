@@ -44,7 +44,7 @@ static void gen_shard_outbox(gen *g)
               "    free(keep.data);\n"
               "    if ((int32_t)through > s->acked) s->acked = (int32_t)through;\n}\n\n"
               "TIDE_SHARD_FN uint8_t *tide_shard_outbox(const void *world, uint32_t *size)\n{\n"
-              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
               "    bool copied;\n    uint32_t n;\n"
               "    const uint8_t *flat = tide_shard_bytes_flat(w->tide_shard_state.outbox, &n, &copied);\n"
               "    *size = n;\n    if (!n) return NULL;\n"
@@ -202,7 +202,7 @@ static void gen_shard_singletons(gen *g)
     }
     sb_put(o, "    (void)w;\n    return !r->failed;\n}\n\n");
     sb_printf(o, "TIDE_SHARD_FN uint8_t *tide_shard_singletons_of(const void *world, uint32_t *size)\n{\n"
-                 "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+                 "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
                  "    const uint64_t owned = (uint64_t)w->tide_shard_state.singletons;\n"
                  "    *size = 0;\n    if (!w->tide_shard_state.shard) return NULL;\n"
                  "    tide_writer out = {.grows = true};\n    uint32_t count = 0;\n"

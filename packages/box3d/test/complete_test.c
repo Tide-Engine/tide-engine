@@ -140,7 +140,7 @@ TIDE_TEST(box3d_invalid_live_geometry_disables_and_can_be_repaired)
         if(kind==1) hull.density=-1;
         if(kind==2) hull.offset.z=INFINITY;
         if(kind==3) hull.scale.y=0;
-        if(kind==4) { tide_list_release(&hull.vertices,TIDE_IN_MATCH); hull.vertices=(tide_list){0}; }
+        if(kind==4) { tide_list_release(&hull.vertices,TIDE_WHERE_Box3D_HullCollider); hull.vertices=(tide_list){0}; }
         tide_set_Box3D_HullCollider(&w,w.Objects.hull,hull);
         tide_world_tick(&w);
         TIDE_CHECK(!probe(&w,&local)->hull);
@@ -148,9 +148,9 @@ TIDE_TEST(box3d_invalid_live_geometry_disables_and_can_be_repaired)
         const tide_float3 points[]={{-1,0,-1},{1,0,-1},{0,0,1},{0,2,0}};
         const uint64_t mark=tide_scratch_mark();
         Box3D_HullCollider current=tide_get_Box3D_HullCollider(&w,w.Objects.hull);
-        tide_list_release(&current.vertices,TIDE_IN_MATCH);
+        tide_list_release(&current.vertices,TIDE_WHERE_Box3D_HullCollider);
         hull.vertices=tide_list_from(points,4,sizeof *points);
-        tide_list_own(&hull.vertices,sizeof *points,TIDE_IN_MATCH);
+        tide_list_own(&hull.vertices,sizeof *points,TIDE_WHERE_Box3D_HullCollider);
         tide_set_Box3D_HullCollider(&w,w.Objects.hull,hull);
         tide_scratch_reset(mark);
         tide_world_tick(&w);
@@ -228,7 +228,7 @@ TIDE_TEST(box3d_complete_snapshot_replay)
     tide_world w={0}, saved={0}; start(&w); tide_world_copy(&saved,&w);
     uint64_t sequence=0;
     for (int i=0;i<100;i++) { tide_world_tick(&w); const uint64_t h=tide_world_hash(&w); sequence=tide_hash_more(sequence,&h,sizeof h); }
-    TIDE_CHECK(sequence==UINT64_C(0xe250a7e7936800b4));
+    TIDE_CHECK(sequence==UINT64_C(0x00209f76ff386481));
     printf("  complete sequence: %016llx\n",(unsigned long long)sequence);
     for (int i=0;i<100;i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved)==tide_world_hash(&w));

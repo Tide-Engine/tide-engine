@@ -285,7 +285,7 @@ TIDE_TEST(command_lists_a_big_one_goes_in_chunks_through_a_session)
     TIDE_REQUIRE(verified && verified->Seen.calls == 1);
     const tide_world *worlds[] = {authoritative, verified};
     for (int k = 0; k < 2; k++) {
-        const tide_heap *heap = &worlds[k]->heap;
+        const tide_heaps *heap = &worlds[k]->heap;
         const tide_list l = worlds[k]->Seen.attributes;
         TIDE_REQUIRE(tide_list_read_count(heap, l) == BIG);
         int64_t sum = 0, expected = 0;

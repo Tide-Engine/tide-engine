@@ -1,5 +1,14 @@
 # Hot reloading
 
+## Heaps by owner and what carries over (2026-11-13)
+
+A world's packed heaps are its first as before, then the others by their owners' ids (`tide_heaps_pack`), and
+`migrate.c` still copies those bytes whole (an empty world's are four bytes longer: `empty_heap`). Ids are made from
+the owners' names, so they're the same after a reload and handles stay good. Where an owner's id changes (it's
+handed to C now, or isn't any more), `tide_layout_field.heap` differs and the field starts again with its default
+(`carries`); a heap whose owner is gone is left out by `tide_heaps_unpack`. `TIDE_HOST_SHAPE` counts the layout's
+type and field sizes. schedule-and-threads.md, top section.
+
 ## A library another tide built isn't loaded (2026-11-10)
 
 `reload_library.inc`'s `load` (`tide run`'s host and `tide/embed.h`'s) checks each library before calling through

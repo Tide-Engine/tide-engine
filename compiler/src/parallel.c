@@ -226,11 +226,29 @@ static bool find_conflicts(const decl *earlier, const decl *later, const access_
     bool any = false;
     // Starting a task runs its code until it first waits, which can spawn and
     // change text, and the match keeps its tasks in the order they start.
+    // Spawns alone make nothing wait: every system that spawns registers its
+    // entities once it's done and the spawner before it has (tide/jobs.h).
     if (earlier->starts_tasks || later->starts_tasks) {
         if ((earlier->writes_text || earlier->spawns) && (later->writes_text || later->spawns)) any = add_conflict(w, CONFLICT_TASKS);
     } else {
-        if (earlier->writes_text && later->writes_text) any = add_conflict(w, CONFLICT_TEXT);
-        if (earlier->spawns && later->spawns && !system_splits(later)) any = add_conflict(w, CONFLICT_SPAWN);
+        // Each owner's text, lists and grids are in a heap of its own, which
+        // one system changes at a time, whatever entities the two meet
+        for (int i = 0; i < earlier->heap_owners.count; i++) {
+            for (int k = 0; k < later->heap_owners.count; k++) {
+                decl *a = earlier->heap_owners.items[i], *b = later->heap_owners.items[k];
+                if ((a ? a->heap_id : 0) != (b ? b->heap_id : 0)) continue; // Not the same heap
+                any = true;
+                if (!w) return true;
+                // One owner's, or two that share a heap: each said once
+                decl *const owners[2] = {a, b};
+                for (int o = 0; o < (a == b ? 1 : 2); o++) {
+                    const conflict c = {owners[o], a == b && a ? CONFLICT_TEXT : CONFLICT_SHARED_HEAP};
+                    bool said = false;
+                    for (int n = 0; n < w->conflicts.count; n++) said |= w->conflicts.items[n].kind == c.kind && w->conflicts.items[n].data == c.data;
+                    if (!said) vec_push(w->conflicts, c);
+                }
+            }
+        }
     }
     if (any && !w) return true;
     for (int i = 0; i < earlier_uses->count; i++) {
@@ -407,18 +425,35 @@ void describe_wait(const decl *sys, const system_wait *w, const char *quote, sb 
         [CONFLICT_EARLIER_READS] = ", which this writes",
         [CONFLICT_EARLIER_WRITES] = ", which this reads",
     };
-    // What the whole world shares, said once each
-    static const char *const shared[] = {
-        [CONFLICT_TEXT] = "both change text, lists or grids, which the match keeps in one heap",
-        [CONFLICT_SPAWN] = "both spawn, and entities get their IDs in order",
-        [CONFLICT_TASKS] = "tasks start in order, and spawn and change text as they start",
-    };
     bool first_part = true;
+    // What the whole world shares
     for (int i = 0; i < w->conflicts.count; i++) {
-        const conflict_kind kind = w->conflicts.items[i].kind;
-        if (kind < CONFLICT_TEXT) continue;
+        if (w->conflicts.items[i].kind != CONFLICT_TASKS) continue;
         sb_put(out, first_part ? "" : "; ");
-        sb_put(out, shared[kind]);
+        sb_put(out, "tasks start in order, and spawn and change text as they start");
+        first_part = false;
+    }
+    // Whose text, lists or grids both change: each owner's are in a heap of its own
+    int heaps = 0, heaps_written = 0;
+    for (int i = 0; i < w->conflicts.count; i++) heaps += w->conflicts.items[i].kind == CONFLICT_TEXT;
+    for (int i = 0; i < w->conflicts.count; i++) {
+        if (w->conflicts.items[i].kind != CONFLICT_TEXT) continue;
+        if (heaps_written == 0) sb_printf(out, "%sboth change the text, lists or grids of ", first_part ? "" : "; ");
+        else sb_put(out, heaps_written == heaps - 1 ? " and " : ", ");
+        put_decl_name(out, w->conflicts.items[i].data, quote, sys);
+        heaps_written++;
+        first_part = false;
+    }
+    // ...and those kept in one heap: the match's own, for what C can write and the match's tasks
+    int shared = 0, shared_written = 0;
+    for (int i = 0; i < w->conflicts.count; i++) shared += w->conflicts.items[i].kind == CONFLICT_SHARED_HEAP;
+    for (int i = 0; i < w->conflicts.count; i++) {
+        if (w->conflicts.items[i].kind != CONFLICT_SHARED_HEAP) continue;
+        if (shared_written == 0) sb_printf(out, "%sboth change text, lists or grids kept in one heap, those of ", first_part ? "" : "; ");
+        else sb_put(out, shared_written == shared - 1 ? " and " : ", ");
+        if (w->conflicts.items[i].data) put_decl_name(out, w->conflicts.items[i].data, quote, sys);
+        else sb_put(out, "the match's tasks");
+        shared_written++;
         first_part = false;
     }
     for (int kind = CONFLICT_BOTH_WRITE; kind <= CONFLICT_EARLIER_WRITES; kind++) {
@@ -522,7 +557,7 @@ static void put_one_thread(sb *out, const decl *sys)
         put_decl_name(out, singleton->type.decl, "", NULL);
         put_place(out, singleton->at);
     } else if (sys->writes_text) {
-        sb_put(out, "it changes text, lists or grids, which the match keeps in one heap");
+        sb_put(out, "it changes text, lists or grids, which go in the order its entities do");
         put_place(out, sys->writes_text_at);
     } else if ((sys->task_access[0] | sys->task_access[1]) & 2u) {
         sb_put(out, "it changes tasks, which the match keeps in the order they start");
@@ -637,6 +672,33 @@ void print_schedule(const program *prog, const char *game, sb *out)
             sb_printf(out, " and %d more", sys->alongside_count - sys->alongside.count);
         }
         sb_put(out, sys->alongside_count ? "\n" : "nothing\n");
+    }
+
+    // Whose text, lists and grids systems change, where those share a heap:
+    // what makes systems that change different owners' wait for each other
+    int shared = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        const decl **said = arena_alloc(sizeof(*said) * (size_t)(prog->components.count + prog->singletons.count + prog->events.count + 1));
+        int count = 0;
+        for (int i = 0; i < prog->systems.count; i++) {
+            const decl *sys = prog->systems.items[i];
+            for (int k = 0; k < sys->heap_owners.count; k++) {
+                const decl *owner = sys->heap_owners.items[k];
+                if (!owner || owner->heap_id || owner->is_local || contains(said, count, owner)) continue;
+                said[count++] = owner;
+                if (!pass) continue;
+                sb_put(out, count == 1 ? "\nSystems that change the text, lists or grids of any of these wait for each other, as they're kept in one heap:\n" : "");
+                sb_put(out, "         ");
+                put_decl_name(out, owner, "", NULL);
+                sb_printf(out, ": %s\n", prog->shards ? "the match is split across servers"
+                                       : prog->visibility_state ? "the match hides state from players"
+                                       : owner->c_written ? "C can write it"
+                                       : owner->is_scene ? "it's a scene's"
+                                       : "it's the engine's own");
+            }
+        }
+        if (!pass) shared = count;
+        if (shared < 2) break; // One alone shares with nothing
     }
 
     if (prog->views.count > 0) {

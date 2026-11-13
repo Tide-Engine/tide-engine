@@ -157,7 +157,7 @@ static void gen_visibility(gen *g)
               "    if (w->tide_visibility_state.client) return tide_client_has_component(w, e, component) && !tide_visibility_client_hidden(w, e);\n"
               "    return tide_client_has_component(w, e, component) && tide_audience_contains(tide_visibility_audience(w, e, (int32_t)component), player);\n}\n\n"
               "bool tide_world_visible(const tide_world *w, tide_entity e, tide_player_id player)\n{\n"
-              "    tide_text_use((tide_heap *)&w->heap, NULL);\n    return tide_visibility_entity(w, e, player);\n}\n\n"
+              "    tide_text_use((tide_heaps *)&w->heap, NULL);\n    return tide_visibility_entity(w, e, player);\n}\n\n"
               "bool tide_world_component_visible(const tide_world *w, tide_entity e, uint32_t component, tide_player_id player)\n{\n"
-              "    tide_text_use((tide_heap *)&w->heap, NULL);\n    return tide_visibility_component(w, e, component, player);\n}\n\n");
+              "    tide_text_use((tide_heaps *)&w->heap, NULL);\n    return tide_visibility_component(w, e, component, player);\n}\n\n");
 }

@@ -123,16 +123,17 @@ void *tide_list_cache_fill_mut(tide_list_cache *c, const tide_list l, const int3
     return found;
 }
 
-int32_t tide_list_read_count(const tide_heap *heap, const tide_list l)
+int32_t tide_list_read_count(const tide_heaps *heaps, const tide_list l)
 {
     if (tide_pack_holds(l.at)) return tide_list_count(l);
-    return l.at ? (int32_t)tide_heap_block(heap, OFFSET(l.at))->a : 0;
+    return l.at ? (int32_t)tide_heap_block(tide_heaps_read(heaps, l.at), OFFSET(l.at))->a : 0;
 }
 
-const void *tide_list_read(const tide_heap *heap, const tide_list l, const int32_t i, const uint32_t size)
+const void *tide_list_read(const tide_heaps *heaps, const tide_list l, const int32_t i, const uint32_t size)
 {
     if (tide_pack_holds(l.at)) return tide_list_at(l, i, size);
-    if (i < 0 || i >= tide_list_read_count(heap, l)) return NULL;
+    if (i < 0 || i >= tide_list_read_count(heaps, l)) return NULL;
+    const tide_heap *heap = tide_heaps_read(heaps, l.at);
     const tide_block *b = tide_heap_block(heap, OFFSET(l.at));
     if (b->b == TIDE_LIST_ASSET) {
         const tide_asset_data *data = tide_asset_find(heap, (const uint8_t *)(b + 1));
@@ -321,7 +322,7 @@ void tide_list_remove_at(tide_list *l, const int32_t i, const uint32_t size)
 {
     const int32_t count = tide_list_count(*l);
     if (i < 0 || i >= count) return;
-    tide_list_prepare(l, size, tide_handle_where(l->at) == TIDE_IN_VERIFIED ? TIDE_IN_SCRATCH : tide_handle_where(l->at));
+    tide_list_prepare(l, size, tide_handle_world(l->at) == TIDE_IN_VERIFIED ? TIDE_IN_SCRATCH : tide_handle_where(l->at));
     tide_block *b = tide_block_write(l->at);
     if (b->b & TIDE_LIST_CHUNKED) {
         for (int32_t k = i; k + 1 < count; k++) {
@@ -513,7 +514,7 @@ void tide_list_sort(tide_list *l, const uint32_t size, bool (*before)(const void
 {
     const uint32_t n = (uint32_t)tide_list_count(*l);
     if (n < 2) return;
-    tide_list_prepare(l, size, tide_handle_where(l->at) == TIDE_IN_VERIFIED ? TIDE_IN_SCRATCH : tide_handle_where(l->at));
+    tide_list_prepare(l, size, tide_handle_world(l->at) == TIDE_IN_VERIFIED ? TIDE_IN_SCRATCH : tide_handle_where(l->at));
     bool copied;
     char *flat = tide_list_flatten(*l, size, true, &copied);
     char *temp = tide_alloc((size_t)n * size);

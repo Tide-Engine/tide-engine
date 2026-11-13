@@ -9,7 +9,7 @@
 
 typedef struct map_world {
     tide_map scores;
-    tide_heap heap;
+    tide_heaps heap;
 } map_world;
 
 static map_world world;
@@ -42,7 +42,7 @@ static const tide_map_kind collision_kind = {sizeof(entry), offsetof(entry, key)
 
 static void start(void)
 {
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
     memset(&world, 0, sizeof world);
     tide_text_use(&world.heap, NULL);
 }
@@ -81,7 +81,7 @@ TIDE_TEST(map_keys_find_their_values_in_a_world)
     TIDE_CHECK(get(world.scores, 1) == -1 && get(world.scores, -7) == -1);
     put(&world.scores, 14, 99, TIDE_IN_MATCH);
     TIDE_CHECK(get(world.scores, 14) == 99 && tide_map_count(world.scores) == 1000);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 // Keys up to 16 bytes are hashed by tide_map_hash_bytes' own steps, which
@@ -112,10 +112,10 @@ TIDE_TEST(map_collision_probes_cross_chunks_and_wrap_without_changing_snapshots)
         e->key = key;
         e->value = key * 3;
     }
-    tide_heap snapshot = {0};
-    tide_heap_copy(&snapshot, &world.heap);
+    tide_heaps snapshot = {0};
+    tide_heaps_copy(&snapshot, &world.heap);
     const tide_map kept = world.scores;
-    const uint64_t before = tide_heap_hash(0, &snapshot);
+    const uint64_t before = tide_heaps_hash(0, &snapshot);
     for (int32_t key = 0; key < 1100; key += 7) {
         const int32_t at = tide_map_find(world.scores, &collision_kind, &key);
         TIDE_REQUIRE(at == key);
@@ -132,10 +132,10 @@ TIDE_TEST(map_collision_probes_cross_chunks_and_wrap_without_changing_snapshots)
         const entry *e = tide_map_entry(kept, at, &collision_kind);
         TIDE_CHECK(e->value == key * 3);
     }
-    TIDE_CHECK(tide_heap_hash(0, &snapshot) == before);
+    TIDE_CHECK(tide_heaps_hash(0, &snapshot) == before);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&snapshot);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&snapshot);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_entries_keep_the_order_keys_were_added_in)
@@ -151,7 +151,7 @@ TIDE_TEST(map_entries_keep_the_order_keys_were_added_in)
         seen++;
     }
     TIDE_CHECK(seen == 5);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_removing_keeps_the_rest_and_packs_once_mostly_dead)
@@ -174,7 +174,7 @@ TIDE_TEST(map_removing_keeps_the_rest_and_packs_once_mostly_dead)
         TIDE_CHECK(tide_map_live(e) && e->key > last);
         last = e->key;
     }
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_the_same_steps_give_the_same_bytes)
@@ -189,9 +189,9 @@ TIDE_TEST(map_the_same_steps_give_the_same_bytes)
         for (int32_t i = 0; i < 40; i++) put(&w->scores, 1000 + i, i, TIDE_IN_MATCH);
     }
     TIDE_CHECK(memcmp(&a.scores, &b.scores, sizeof a.scores) == 0);
-    TIDE_CHECK(tide_heap_hash(0, &a.heap) == tide_heap_hash(0, &b.heap));
-    tide_heap_free(&a.heap);
-    tide_heap_free(&b.heap);
+    TIDE_CHECK(tide_heaps_hash(0, &a.heap) == tide_heaps_hash(0, &b.heap));
+    tide_heaps_free(&a.heap);
+    tide_heaps_free(&b.heap);
     start();
 }
 
@@ -215,7 +215,7 @@ TIDE_TEST(map_copies_and_assignment_dont_share)
     TIDE_CHECK(get(other, 7) == 7 && tide_map_count(other) == 1);
     tide_map_release(&other, TIDE_IN_MATCH);
     tide_scratch_free();
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_iteration_reaches_survivors_and_additions_after_compaction)
@@ -238,7 +238,7 @@ TIDE_TEST(map_iteration_reaches_survivors_and_additions_after_compaction)
         TIDE_CHECK(e->key == want[i]);
     }
     TIDE_CHECK(tide_map_next(world.scores, &kind, &order, &next) == -1);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_iteration_keeps_a_removed_cursor_and_skips_removed_entries)
@@ -262,7 +262,7 @@ TIDE_TEST(map_iteration_keeps_a_removed_cursor_and_skips_removed_entries)
     TIDE_CHECK(tide_map_next(world.scores, &kind, &order, &next) == -1);
     const entry *dead = tide_map_entry(world.scores, 0, &kind);
     TIDE_CHECK(dead->live == -1 && dead->key == 0 && dead->value == 0);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_iteration_survives_clear_copies_and_assignment)
@@ -287,7 +287,7 @@ TIDE_TEST(map_iteration_survives_clear_copies_and_assignment)
     TIDE_CHECK(tide_map_next(other, &kind, &order, &next) == -1);
     tide_map_release(&other, TIDE_IN_MATCH);
     tide_scratch_free();
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_orders_are_wide_and_keep_their_limits_when_removed)
@@ -318,7 +318,7 @@ TIDE_TEST(map_orders_are_wide_and_keep_their_limits_when_removed)
     bad->live = INT64_MIN;
     next = 99;
     TIDE_CHECK(tide_map_next(world.scores, &kind, &order, &next) == -1);
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
 }
 
 TIDE_TEST(map_cursor_reads_change_no_map_heap_or_scratch_state)
@@ -327,12 +327,12 @@ TIDE_TEST(map_cursor_reads_change_no_map_heap_or_scratch_state)
     for (int32_t key = 0; key < 100; key++) put(&world.scores, key, key, TIDE_IN_MATCH);
     for (int32_t key = 0; key < 50; key++) remove_key(&world.scores, key, TIDE_IN_MATCH);
     const tide_map before = world.scores;
-    const uint64_t hash = tide_heap_hash(0, &world.heap);
+    const uint64_t hash = tide_heaps_hash(0, &world.heap);
     const uint64_t mark = tide_scratch_mark();
     int64_t order = 0;
     int32_t next = 0, seen = 0;
     while (tide_map_next(world.scores, &kind, &order, &next) >= 0) seen++;
     TIDE_CHECK(seen == 50 && memcmp(&before, &world.scores, sizeof before) == 0);
-    TIDE_CHECK(hash == tide_heap_hash(0, &world.heap) && mark == tide_scratch_mark());
-    tide_heap_free(&world.heap);
+    TIDE_CHECK(hash == tide_heaps_hash(0, &world.heap) && mark == tide_scratch_mark());
+    tide_heaps_free(&world.heap);
 }

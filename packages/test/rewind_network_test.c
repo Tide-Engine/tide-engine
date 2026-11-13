@@ -101,7 +101,7 @@ static void present(player *p)
 
 static void check_results(const tide_world *world, player players[2], const scenario s)
 {
-    tide_text_use((tide_heap *)&world->heap, NULL);
+    tide_text_use((tide_heaps *)&world->heap, NULL);
     const int count = tide_list_count(world->Shots.items);
     for (int i = 0; i < count; i++) {
         const Shot shot = *(const Shot *)tide_list_at(world->Shots.items, i, sizeof(Shot));

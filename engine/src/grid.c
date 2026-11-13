@@ -302,10 +302,12 @@ void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t wher
     d->records = 0;
 }
 
-tide_grid tide_grid_copy_from(const tide_heap *heap, const tide_grid g, const tide_grid_shape *s, const uint32_t where)
+tide_grid tide_grid_copy_from(const tide_heaps *heaps, const tide_grid g, const tide_grid_shape *s, const uint32_t where)
 {
     tide_heap *to = tide_heap_of(where);
-    if (!to || !heap || to == heap || !g.at || tide_handle_where(g.at) == TIDE_IN_SCRATCH) return (tide_grid){0};
+    if (!to || !heaps || !g.at || tide_handle_where(g.at) == TIDE_IN_SCRATCH) return (tide_grid){0};
+    const tide_heap *heap = tide_heaps_read(heaps, g.at);
+    if (to == heap) return (tide_grid){0};
     // The source's directory stays put: what's made goes in the other heap
     const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
     tide_grid out = {tide_handle_of(where, new_dir(to, d->size, s))};
@@ -316,10 +318,11 @@ tide_grid tide_grid_copy_from(const tide_heap *heap, const tide_grid g, const ti
     return out;
 }
 
-const void *tide_grid_read(const tide_heap *heap, const tide_grid g, const int32_t x, const int32_t y, const int32_t z,
+const void *tide_grid_read(const tide_heaps *heaps, const tide_grid g, const int32_t x, const int32_t y, const int32_t z,
                            const tide_grid_shape *s)
 {
     if (!g.at || tide_handle_where(g.at) == TIDE_IN_SCRATCH) return NULL;
+    const tide_heap *heap = tide_heaps_read(heaps, g.at);
     const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
     if (!d->records || !tide_grid_inside(d, x, y, s->dims == 3 ? z : 0)) return NULL;
     const uint32_t i = tide_grid_find(d, x >> s->shift[0], y >> s->shift[1], s->dims == 3 ? z >> s->shift[2] : 0);

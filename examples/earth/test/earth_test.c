@@ -349,8 +349,8 @@ static tide_entity walker_of(const tide_world *w, const tide_player_id who)
 // Tests of resume/drive height use this instead of assuming a perfect sphere.
 static tide_float3 ground_at(const tide_float3 direction)
 {
-    const tide_heap *match_heap = tide_heap_read(TIDE_IN_MATCH);
-    const tide_heap *local_heap = tide_heap_read(TIDE_IN_LOCAL);
+    tide_heaps *match_heap = tide_world_heaps[TIDE_IN_MATCH];
+    tide_heaps *local_heap = tide_world_heaps[TIDE_IN_LOCAL];
     tide_world probe = {0};
     tide_world_init(&probe, 1.0f / 60.0f);
     tide_world_player_joined(&probe, player(0));
@@ -364,7 +364,7 @@ static tide_float3 ground_at(const tide_float3 direction)
     tide_world_tick(&probe);
     const tide_float3 at = tide_get_Walker(&probe, entity).position;
     tide_world_free(&probe);
-    tide_text_use((tide_heap *)(uintptr_t)match_heap, (tide_heap *)(uintptr_t)local_heap);
+    tide_text_use((tide_heaps *)(uintptr_t)match_heap, (tide_heaps *)(uintptr_t)local_heap);
     return at;
 }
 
@@ -1138,7 +1138,7 @@ TIDE_TEST(earth_recovery_does_not_repeat_a_departure_from_the_journal)
     run(25);
     const tide_world *w = tide_shards_world(shards, 0);
     TIDE_CHECK(w->Roster.online == 1);
-    tide_text_use((tide_heap *)&w->heap, NULL);
+    tide_text_use((tide_heaps *)&w->heap, NULL);
     TIDE_CHECK(tide_map_count(w->Roster.walkers) == 1);
     TIDE_CHECK(tide_client_status_of(tide_shard_client_home(second.client)).player.id == id.id);
     tide_shard_client_destroy(second.client); second.client = NULL;

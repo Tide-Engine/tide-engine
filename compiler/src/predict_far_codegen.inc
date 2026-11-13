@@ -133,7 +133,7 @@ static void gen_near_same(gen *g)
         sb_put(o, "    if (memcmp(p->inputs, q->inputs, sizeof p->inputs) != 0) return false;\n"
                   "    if (memcmp(p->previous_inputs, q->previous_inputs, sizeof p->previous_inputs) != 0) return false;\n");
     }
-    if (prog->uses_heap) sb_put(o, "    if (tide_heap_hash(TIDE_HASH_START, &p->heap) != tide_heap_hash(TIDE_HASH_START, &q->heap)) return false;\n");
+    if (prog->uses_heap) sb_put(o, "    if (tide_heaps_hash(TIDE_HASH_START, &p->heap) != tide_heaps_hash(TIDE_HASH_START, &q->heap)) return false;\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         const char *cols = arch_columns(g, a);

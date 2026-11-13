@@ -384,8 +384,8 @@ static void gen_embed(gen *g)
     sb_put(o, "    if (!(alpha >= 0.0f && alpha <= 1.0f)) alpha = 1.0f;\n");
     if (heard) sb_put(o, "    tide_embed_heard_strings(out); // First, so the heard events' handles are the packet's\n");
     if (world_heap(prog, false) || world_heap(prog, true)) {
-        sb_printf(o, "    tide_text_use(%s, %s);\n", world_heap(prog, false) ? "(tide_heap *)(uintptr_t)&w->heap" : "NULL",
-                  world_heap(prog, true) ? "(tide_heap *)(uintptr_t)&l->heap" : "NULL");
+        sb_printf(o, "    tide_text_use(%s, %s);\n", world_heap(prog, false) ? "(tide_heaps *)(uintptr_t)&w->heap" : "NULL",
+                  world_heap(prog, true) ? "(tide_heaps *)(uintptr_t)&l->heap" : "NULL");
     }
     sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n");
     if (sharded(g)) { // Every world the frame drew: the host gave the others again (tide_frame_shards)
@@ -521,7 +521,7 @@ static void gen_embed(gen *g)
             const field *f = &d->fields.items[i];
             const type t = f->type;
             const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
-            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s)},\n", STR_ARG(f->name),
+            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s), 0},\n", STR_ARG(f->name),
                       layout_field_name(t), layout_kind(t), dim, t.kind == TY_STRUCT ? layout_index(&types, t.decl) : -1, name,
                       field_cname(f), name, field_cname(f));
         }

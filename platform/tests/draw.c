@@ -3864,7 +3864,7 @@ static void changing_scene(void)
 
 static void changed_textures(void)
 {
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     const uint64_t mark = tide_scratch_mark();
     tide_grid_set(&changing_colors, tide_grid_new(2, 80, 48, 0), &changing_color_cells, TIDE_IN_LOCAL);
@@ -3986,7 +3986,7 @@ static void changed_textures(void)
     tide_grid_release(&changing_floats, &changing_float_cells, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // ---------------------------------------------------------------------------
@@ -4144,7 +4144,7 @@ typedef struct bench_light {
 enum { BENCH_GRID = 1024, BENCH_LIGHTS = 65536, BENCH_FEW = 1024, BENCH_CORNERS = 16384 };
 
 static const tide_grid_shape bench_colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}}; // As tidec makes Grid2<Color>'s
-static tide_heap bench_heap;
+static tide_heaps bench_heap;
 static tide_grid bench_grid;
 static tide_list bench_lights, bench_corners, bench_triangles;
 static bench_light bench_few[BENCH_FEW];
@@ -4352,7 +4352,7 @@ static uint64_t hollow_frame(const bool drawn, const tide_list corners, const ti
 // again it's drawn from the GPU's, sending nothing; once the GPU lets it go, the list copies it again.
 static void hollow_meshes_kept(void)
 {
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     tide_list corners = {0}, faces = {0};
     tide_list_resize(&corners, 4, sizeof(tide_vertex3), TIDE_IN_LOCAL);
@@ -4396,7 +4396,7 @@ static void hollow_meshes_kept(void)
     tide_list_release(&corners, TIDE_IN_LOCAL);
     tide_list_release(&faces, TIDE_IN_LOCAL);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // A texture the list holds though no step draws with it (a page of listed
@@ -4457,7 +4457,7 @@ static void held_data_textures(void)
 
 static void bench_keep(void)
 {
-    if (bench_heap.pages) return;
+    if (tide_heaps_pages(&bench_heap)) return;
     tide_text_use(NULL, &bench_heap);
     tide_grid_set(&bench_grid, tide_grid_new(2, BENCH_GRID, BENCH_GRID, 0), &bench_colors, TIDE_IN_LOCAL);
     tide_grid_cache cache = {0};

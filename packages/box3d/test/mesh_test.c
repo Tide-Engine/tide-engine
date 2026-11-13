@@ -16,10 +16,10 @@ _Static_assert(sizeof(Box3D_MeshCollider) == 56 && offsetof(Box3D_MeshCollider, 
 static bool set_mesh(tide_world *w, tide_entity e, Box3D_MeshCollider mesh)
 {
     Box3D_MeshCollider old=tide_get_Box3D_MeshCollider(w,e);
-    tide_list_own(&mesh.vertices,sizeof(tide_float3),TIDE_IN_MATCH);
-    tide_list_own(&mesh.indices,sizeof(int32_t),TIDE_IN_MATCH);
-    tide_list_release(&old.vertices,TIDE_IN_MATCH);
-    tide_list_release(&old.indices,TIDE_IN_MATCH);
+    tide_list_own(&mesh.vertices,sizeof(tide_float3),TIDE_WHERE_Box3D_MeshCollider);
+    tide_list_own(&mesh.indices,sizeof(int32_t),TIDE_WHERE_Box3D_MeshCollider);
+    tide_list_release(&old.vertices,TIDE_WHERE_Box3D_MeshCollider);
+    tide_list_release(&old.indices,TIDE_WHERE_Box3D_MeshCollider);
     return tide_set_Box3D_MeshCollider(w,e,mesh);
 }
 static bool near(const float a, const float b) { return fabsf(a - b) < 0.0001f; }
@@ -128,7 +128,7 @@ TIDE_TEST(box3d_mesh_contacts_preserve_concavity_and_replay)
         TIDE_CHECK(tide_get_Falling(&w, e).gap ? b.position.y < -10 : b.position.y >= 0.24f && b.position.y <= 0.27f);
     }
     printf("  mesh simulation sequence: %016llx\n", (unsigned long long)sequence);
-    TIDE_CHECK(sequence == UINT64_C(0x13d72c7c9db4cf61));
+    TIDE_CHECK(sequence == UINT64_C(0x88a224fe3bdc5aca));
     tide_world_copy(&decoded, &saved);
     for (int i = 0; i < 110; i++) tide_world_tick(&decoded);
     TIDE_CHECK(tide_world_hash(&decoded) == tide_world_hash(&w));

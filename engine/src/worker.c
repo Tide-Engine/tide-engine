@@ -287,8 +287,8 @@ typedef struct parallel_work {
     void *context;
     uint32_t count;
     uint64_t next;
-    tide_heap *match;
-    tide_heap *local;
+    tide_heaps *match;
+    tide_heaps *local;
     const worker_item *owner;
 } parallel_work;
 
@@ -297,7 +297,7 @@ static void parallel_take(void *context)
     tide_memory_sync();
     parallel_work *p = context;
     const uint64_t mark = tide_scratch_mark();
-    tide_heap *match = tide_world_heaps[TIDE_IN_MATCH], *local = tide_world_heaps[TIDE_IN_LOCAL];
+    tide_heaps *match = tide_world_heaps[TIDE_IN_MATCH], *local = tide_world_heaps[TIDE_IN_LOCAL];
     tide_text_use(p->match, p->local);
     const worker_item *previous = current_worker;
     current_worker = p->owner;

@@ -484,21 +484,21 @@ TIDE_TEST(retarget_invalid_input_leaves_pose_and_heap_unchanged)
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, true);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
-    tide_heap heap = {0}, snapshot = {0};
+    tide_heaps heap = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
     tide_list output = {0}, kept_map = {0};
     tide_list_set(&output, p.target_pose, sizeof(tide_bone_transform), TIDE_IN_MATCH);
     tide_list_set(&kept_map, p.map, 1u, TIDE_IN_MATCH);
-    tide_heap_copy(&snapshot, &heap);
-    const uint64_t before_pose = transform_hash(output), before_heap = tide_heap_hash(TIDE_HASH_START, &heap);
+    tide_heaps_copy(&snapshot, &heap);
+    const uint64_t before_pose = transform_hash(output), before_heap = tide_heaps_hash(TIDE_HASH_START, &heap);
     tide_list bad = tide_list_copy(p.source_pose, sizeof(tide_bone_transform));
     transform_at(bad, source.role[TIDE_HUMANOID_LEFT_UPPER_ARM])->rotation.value.x = tide_f_from_bits(0x7f800000u);
     TIDE_CHECK(!tide_retarget_apply(kept_map, p.source, bad, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
-    TIDE_CHECK(transform_hash(output) == before_pose && tide_heap_hash(TIDE_HASH_START, &heap) == before_heap);
+    TIDE_CHECK(transform_hash(output) == before_pose && tide_heaps_hash(TIDE_HASH_START, &heap) == before_heap);
     const float values[] = {-1.0f, tide_f_from_bits(0x7f800000u), tide_f_from_bits(0x7fc00000u)};
     for (uint32_t i = 0; i < sizeof values / sizeof values[0]; i++) {
         TIDE_CHECK(!tide_retarget_apply(kept_map, p.source, p.source_pose, p.target, values[i], tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
-        TIDE_CHECK(transform_hash(output) == before_pose && tide_heap_hash(TIDE_HASH_START, &heap) == before_heap);
+        TIDE_CHECK(transform_hash(output) == before_pose && tide_heaps_hash(TIDE_HASH_START, &heap) == before_heap);
     }
     TIDE_CHECK(!tide_retarget_apply(kept_map, p.target, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
     TIDE_CHECK(!tide_retarget_apply((tide_list){tide_handle_of(TIDE_IN_SCRATCH, TIDE_HANDLE_OFFSET - 3u)}, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
@@ -510,15 +510,15 @@ TIDE_TEST(retarget_invalid_input_leaves_pose_and_heap_unchanged)
         TIDE_CHECK(!tide_retarget_apply(truncated, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
         tide_scratch_reset(cut_mark);
     }
-    TIDE_CHECK(transform_hash(output) == before_pose && tide_heap_hash(TIDE_HASH_START, &heap) == before_heap);
+    TIDE_CHECK(transform_hash(output) == before_pose && tide_heaps_hash(TIDE_HASH_START, &heap) == before_heap);
     TIDE_REQUIRE(tide_retarget_apply(kept_map, p.source, p.source_pose, p.target, p.scale, tide_f3(1, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
     const tide_bone_transform *old = tide_list_read(&snapshot, output, target.role[TIDE_HUMANOID_HIPS], sizeof *old);
     TIDE_REQUIRE(old);
     TIDE_CHECK(old->position.x == 0.0f);
-    const uint64_t settled = tide_heap_hash(TIDE_HASH_START, &heap);
+    const uint64_t settled = tide_heaps_hash(TIDE_HASH_START, &heap);
     for (int i = 0; i < 20; i++) TIDE_CHECK(tide_retarget_apply(kept_map, p.source, p.source_pose, p.target, p.scale, tide_f3(1, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
-    TIDE_CHECK(tide_heap_hash(TIDE_HASH_START, &heap) == settled);
-    tide_heap_free(&snapshot); tide_heap_free(&heap); tide_text_use(NULL, NULL);
+    TIDE_CHECK(tide_heaps_hash(TIDE_HASH_START, &heap) == settled);
+    tide_heaps_free(&snapshot); tide_heaps_free(&heap); tide_text_use(NULL, NULL);
     tide_scratch_reset(mark);
 }
 
@@ -596,7 +596,7 @@ TIDE_TEST(retarget_chunked_lists_keep_pose_bits_and_copy_on_write)
         p.target, p.target_pose, p.target_bones, p.target_status, &p.map, &p.scale, TIDE_IN_SCRATCH) == TIDE_RETARGET_OK);
     tide_list expected = {0};
     TIDE_REQUIRE(apply(&p, p.source_pose, &expected));
-    tide_heap heap = {0}, snapshot = {0};
+    tide_heaps heap = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
     tide_list input = {0}, output = {0}, plan = {0};
     const int32_t bigger = target_count + 10;
@@ -613,7 +613,7 @@ TIDE_TEST(retarget_chunked_lists_keep_pose_bits_and_copy_on_write)
     TIDE_CHECK(tide_block_at(input.at)->b & TIDE_LIST_CHUNKED);
     TIDE_CHECK(tide_block_at(output.at)->b & TIDE_LIST_CHUNKED);
     TIDE_CHECK(tide_block_at(plan.at)->b & TIDE_LIST_CHUNKED);
-    tide_heap_copy(&snapshot, &heap);
+    tide_heaps_copy(&snapshot, &heap);
     const uint64_t before = tide_scratch_mark();
     TIDE_REQUIRE(tide_retarget_apply(plan, p.source, input, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
     TIDE_CHECK(tide_scratch_mark() == before);
@@ -623,7 +623,7 @@ TIDE_TEST(retarget_chunked_lists_keep_pose_bits_and_copy_on_write)
         TIDE_REQUIRE(old);
         TIDE_CHECK(!memcmp(old, &target_nodes[i].local, sizeof *old));
     }
-    tide_heap_free(&snapshot); tide_heap_free(&heap); tide_text_use(NULL, NULL);
+    tide_heaps_free(&snapshot); tide_heaps_free(&heap); tide_text_use(NULL, NULL);
     tide_scratch_reset(mark);
 }
 

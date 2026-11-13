@@ -11,14 +11,14 @@ target_compile_definitions(tide_bench PRIVATE TIDE_BENCH_RESULTS="${CMAKE_CURREN
 
 tide_add_game(bench_sand SOURCES sand/sand.tide NAME sand HOST sand/main.c)
 target_link_libraries(bench_sand PRIVATE tide_bench)
-add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x5b3e702340dae3b1)
+add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0xdd941e999e8fd01d)
 # Sand to play, with its views and the mouse: `sand` in a window, sand.html on
 # the web, which the docs site shows (docs/guide/sand.md).
 tide_add_game(sand SOURCES sand/sand.tide sand/play.tide TITLE "Tide sand" STATS)
 
 tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST gallery/main.c)
 target_link_libraries(bench_gallery PRIVATE tide_bench)
-add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x519b281e7d53622f)
+add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x15fd48b33afb54c3)
 
 # The home page's planet (examples/earth), its match as it is but for taking
 # up to 256 players rather than the page's 64, to see how far it goes. Its
@@ -36,12 +36,12 @@ tide_add_game(bench_earth NAME game HOST earth/main.c
     SOURCES "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" "${earth_dir}/city.tide" "${earth_dir}/layout.tide"
             "${earth_dir}/globe.tide" "${earth_dir}/shapes.tide" "${earth_dir}/show.tide" "${earth_dir}/terrain.tide" "${earth_dir}/plants.tide")
 target_link_libraries(bench_earth PRIVATE tide_bench)
-add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x6574b9e94faf285c)
+add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x80ad260345c4efad)
 # A town hop changes shard and what the machine sees at once: corrections put it up to two seconds behind, as
 # the engine's visibility tests allow
-add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x885effe095127edc)
+add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0xcef083e5c74ba687)
 # Comparing one bot's world with what the server says it is, tick by tick
-add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x6574b9e94faf285c)
+add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x80ad260345c4efad)
 
 # Page hashes: the engine's beside candidates for its place, timed on the
 # shapes a world's hash reads (`bench_hash`, natively and under Node); the test

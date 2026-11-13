@@ -63,9 +63,8 @@ TIDE_TEST(lists_big_snapshots_share_chunks)
     TIDE_CHECK(tide_world_hash(&snapshot) == before);
     TIDE_CHECK(tide_world_hash(&world) != before);
 
-    uint32_t different = 0;
-    TIDE_REQUIRE(world.heap.pages == snapshot.heap.pages);
-    for (uint32_t i = 0; i < world.heap.pages; i++) different += world.heap.page[i] != snapshot.heap.page[i];
+    TIDE_REQUIRE(tide_heaps_pages(&world.heap) == tide_heaps_pages(&snapshot.heap));
+    const uint32_t different = tide_heaps_pages_apart(&world.heap, &snapshot.heap);
     TIDE_CHECK(different == 1);
     tide_world_free(&world);
     tide_world_free(&snapshot);

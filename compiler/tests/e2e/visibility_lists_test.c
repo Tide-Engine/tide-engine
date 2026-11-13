@@ -9,7 +9,7 @@
 // The loaded world's own hash, pages and heap alike, as the codecs read lists
 // one element at a time (tidec before runs, 2026-11-02): reading them in runs
 // must leave every block where it was.
-#define LOADED_WORLD_HASH UINT64_C(0x22f3c48749c88f94)
+#define LOADED_WORLD_HASH UINT64_C(0xfceec78bc1ff1776)
 
 static uint8_t *project(const tide_world *w, uint32_t *size)
 {
@@ -119,8 +119,8 @@ TIDE_TEST(visibility_lists_reload_over_the_last_projection)
         uint32_t a_size, b_size;
         uint8_t *a = ticked_projection(&client, &a_size), *b = ticked_projection(&fresh, &b_size);
         TIDE_CHECK(a_size == b_size && memcmp(a, b, a_size) == 0);
-        if (client.heap.pages > most_pages) most_pages = client.heap.pages;
-        fresh_pages = fresh.heap.pages;
+        if (tide_heaps_pages(&client.heap) > most_pages) most_pages = tide_heaps_pages(&client.heap);
+        fresh_pages = tide_heaps_pages(&fresh.heap);
         free(a); free(b); free(again);
         tide_world_free(&fresh);
         free(had);

@@ -91,9 +91,9 @@ TIDE_TEST(skinned_persistent_pose_sampling_reuses_storage)
 {
     start();
     for (int i = 0; i < 60; i++) tide_world_tick(&world);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     for (int i = 0; i < 100; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.heap.used == used && world.Probe.passed == world.Probe.checks);
+    TIDE_CHECK(tide_heaps_used(&world.heap) == used && world.Probe.passed == world.Probe.checks);
     tide_world_free(&world);
     tide_pack_unload();
 }

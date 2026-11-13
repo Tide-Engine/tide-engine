@@ -289,7 +289,7 @@ static void gpu_agrees(const tide_draw_list *d, uint32_t *slack, uint32_t *candi
 TIDE_TEST(draw_culled_runs_draw_what_the_cpu_draws)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     enum { LISTS = 12 };
     tide_list lists[LISTS];
@@ -332,7 +332,7 @@ TIDE_TEST(draw_culled_runs_draw_what_the_cpu_draws)
     for (int i = 0; i < LISTS; i++) tide_list_release(&lists[i], TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // Instances right at the frustum's planes, a few floats either side of where the CPU's exact test turns: the GPU
@@ -398,7 +398,7 @@ TIDE_TEST(draw_culled_gpu_never_culls_what_the_cpu_draws)
 TIDE_TEST(draw_culled_declines_and_hands_over)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     tide_list plain = scattered(300, 5u, NONE_MIRRORED, 20.0f), mixed = scattered(200, 6u, SOME_MIRRORED, 20.0f);
     tide_list mirrored = scattered(100, 8u, ALL_MIRRORED, 20.0f);
@@ -455,7 +455,7 @@ TIDE_TEST(draw_culled_declines_and_hands_over)
     tide_list_release(&mirrored, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // Draw.Occlusion: a destination's own, off each frame, put back by blocks; each culled draw carries what it was,
@@ -463,7 +463,7 @@ TIDE_TEST(draw_culled_declines_and_hands_over)
 TIDE_TEST(draw_culled_carry_occlusion)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     tide_list plain = scattered(300, 5u, NONE_MIRRORED, 20.0f);
     in_view(plain, 1u);
@@ -515,7 +515,7 @@ TIDE_TEST(draw_culled_carry_occlusion)
     tide_list_release(&plain, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 // Draws of one list joining a set whose levels end below theirs (Draw.LOD 1, then 3): the levels between would have
@@ -525,7 +525,7 @@ TIDE_TEST(draw_culled_carry_occlusion)
 TIDE_TEST(draw_culled_join_leaves_no_level_without_a_mesh)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(NULL, &heap);
     tide_list plain = scattered(200, 9u, NONE_MIRRORED, 20.0f);
     in_view(plain, 3u);
@@ -573,5 +573,5 @@ TIDE_TEST(draw_culled_join_leaves_no_level_without_a_mesh)
     tide_list_release(&plain, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }

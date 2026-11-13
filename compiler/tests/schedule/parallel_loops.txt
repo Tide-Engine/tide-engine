@@ -7,7 +7,7 @@ stage 1  Raise  (once, 1 parallel loop)
 
 stage 2  Scale  (once, 1 parallel loop)
          writes Field
-         after Raise: both change text, lists or grids, which the match keeps in one heap; both write Field
+         after Raise: both change the text, lists or grids of Field; both write Field
          alongside nothing
 
 stage 3  Tell  (once)

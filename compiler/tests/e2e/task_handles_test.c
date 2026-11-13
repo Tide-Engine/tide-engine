@@ -107,8 +107,8 @@ TIDE_TEST(task_completed_results_are_reclaimed_when_handles_leave_state)
         TIDE_CHECK(local.tide_tasks_function_tide_completed_function_Read.count == 0);
         TIDE_CHECK(local.tide_tasks_function_tide_completed_function_Numbers.count == 0);
         TIDE_CHECK(tide_list_count(local.tide_local_task_slots.slots) <= 32);
-        if (burst == 1) baseline = local.heap.used;
-        if (burst > 1) TIDE_CHECK(local.heap.used == baseline);
+        if (burst == 1) baseline = tide_heaps_used(&local.heap);
+        if (burst > 1) TIDE_CHECK(tide_heaps_used(&local.heap) == baseline);
     }
     finish();
 }

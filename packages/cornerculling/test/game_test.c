@@ -33,7 +33,7 @@ static void init(tide_world *w)
 static void rebuild(tide_world *w, const box *boxes, int count)
 {
     tide_text_use(&w->heap, NULL);
-    tide_list_resize(&w->Fixture.boxes, count, sizeof *boxes, TIDE_IN_MATCH);
+    tide_list_resize(&w->Fixture.boxes, count, sizeof *boxes, TIDE_WHERE_Fixture);
     for (int i = 0; i < count; i++)
         *(box *)tide_list_at_mut(w->Fixture.boxes, i, sizeof *boxes) = boxes[i];
     w->Fixture.action = 1;
@@ -283,9 +283,9 @@ TIDE_TEST(cornerculling_combined_coverage_gaps_masks_and_budget)
     q.maxSubdivisions = 32;
     TIDE_CHECK(ask(&w, q).status == CornerCulling_Status_Occluded);
     TIDE_CHECK(w.Fixture.answer.occluder == -1 && w.Fixture.cache.candidate == 0);
-    const uint64_t used = w.heap.used;
+    const uint64_t used = tide_heaps_used(&w.heap);
     for (int i = 0; i < 32; i++) TIDE_CHECK(ask(&w, q).status == CornerCulling_Status_Occluded);
-    TIDE_CHECK(w.heap.used == used && tide_scratch_mark() == 0);
+    TIDE_CHECK(tide_heaps_used(&w.heap) == used && tide_scratch_mark() == 0);
     box rounded[] = {staggered[0], staggered[1]};
     for (int i = 0; i < 2; i++) rounded[i].shape = CornerCulling_OccluderShape_Ellipsoid;
     rebuild(&w, rounded, 2);
@@ -637,12 +637,12 @@ TIDE_TEST(cornerculling_snapshots_replay_packing_and_scalar_query_storage)
     update(&w, 0, wall(0, 0, 0, 0.5f, 4, 4, 0));
     TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
     TIDE_CHECK(tide_world_hash(&snapshot) == hash);
-    const uint64_t used = snapshot.heap.used;
+    const uint64_t used = tide_heaps_used(&snapshot.heap);
     for (int i = 0; i < 64; i++) {
         tide_world_tick(&snapshot); tide_world_tick(&loaded);
         TIDE_CHECK(snapshot.Fixture.answer.status == CornerCulling_Status_Occluded);
         TIDE_CHECK(tide_world_hash(&snapshot) == tide_world_hash(&loaded));
-        TIDE_CHECK(snapshot.heap.used == used && tide_scratch_mark() == 0);
+        TIDE_CHECK(tide_heaps_used(&snapshot.heap) == used && tide_scratch_mark() == 0);
     }
     tide_world_free(&loaded); tide_world_free(&snapshot); tide_world_free(&w);
 }
@@ -723,7 +723,7 @@ static void batch(tide_world *w)
 static void player_queries(tide_world *w, int players, float expansion)
 {
     tide_text_use(&w->heap, NULL);
-    tide_list_resize(&w->Fixture.queries, players * (players - 1), sizeof(query), TIDE_IN_MATCH);
+    tide_list_resize(&w->Fixture.queries, players * (players - 1), sizeof(query), TIDE_WHERE_Fixture);
     int index = 0;
     for (int a = 0; a < players; a++) for (int b = 0; b < players; b++) {
         if (a == b) continue;
@@ -834,7 +834,7 @@ TIDE_TEST(cornerculling_performance_player_matrix_and_handwritten_baseline)
             rebuild(&w, boxes, blockers);
             for (int i = 0; i < 4; i++) batch(&w);
             TIDE_CHECK(occluded_results(&w) == players * players / 2);
-            const uint64_t used = w.heap.used;
+            const uint64_t used = tide_heaps_used(&w.heap);
             double samples[9], cold[9], reference[9];
             for (int sample = 0; sample < 9; sample++) {
                 const uint64_t start = tide_time_now_ns();
@@ -857,7 +857,7 @@ TIDE_TEST(cornerculling_performance_player_matrix_and_handwritten_baseline)
             qsort(samples, 9, sizeof *samples, compare_double);
             qsort(cold, 9, sizeof *cold, compare_double);
             qsort(reference, 9, sizeof *reference, compare_double);
-            TIDE_CHECK(w.heap.used == used && tide_scratch_mark() == 0);
+            TIDE_CHECK(tide_heaps_used(&w.heap) == used && tide_scratch_mark() == 0);
             printf("    %d players, %d links, %d boxes, %s: cached %.3f us, cold %.3f us; C one-box %.3f us\n",
                    players, count, blockers, expanded ? "bounds" : "point", samples[4], cold[4], reference[4]);
             TIDE_CHECK(occluded_results(&w) == players * players / 2);
@@ -887,7 +887,7 @@ TIDE_TEST(cornerculling_performance_near_misses_and_door_refit)
     query q = sight();
     q.target.extents = tide_f3(0.4f, 2, 0.4f);
     tide_text_use(&w.heap, NULL);
-    tide_list_resize(&w.Fixture.queries, 90, sizeof q, TIDE_IN_MATCH);
+    tide_list_resize(&w.Fixture.queries, 90, sizeof q, TIDE_WHERE_Fixture);
     for (int i = 0; i < 90; i++) *(query *)tide_list_at_mut(w.Fixture.queries, i, sizeof q) = q;
     rebuild(&w, boxes, 512);
     batch(&w);
@@ -938,7 +938,7 @@ TIDE_TEST(cornerculling_performance_shapes_and_combined_proofs)
             boxes[1] = wall(1, 0, 0.6f, 0.2f, 4, 0.8f, -1);
         }
         tide_text_use(&w.heap, NULL);
-        tide_list_resize(&w.Fixture.queries, 90, sizeof(query), TIDE_IN_MATCH);
+        tide_list_resize(&w.Fixture.queries, 90, sizeof(query), TIDE_WHERE_Fixture);
         for (int i = 0; i < 90; i++) {
             query q = sight();
             q.observer.extents = tide_f3(0.25f, 0.25f, 0.25f);
@@ -949,7 +949,7 @@ TIDE_TEST(cornerculling_performance_shapes_and_combined_proofs)
         rebuild(&w, boxes, count);
         for (int i = 0; i < 4; i++) batch(&w);
         TIDE_REQUIRE(occluded_results(&w) == 90);
-        const uint64_t used = w.heap.used;
+        const uint64_t used = tide_heaps_used(&w.heap);
         double samples[9];
         for (int sample = 0; sample < 9; sample++) {
             const uint64_t start = tide_time_now_ns();
@@ -958,7 +958,7 @@ TIDE_TEST(cornerculling_performance_shapes_and_combined_proofs)
             TIDE_CHECK(occluded_results(&w) == 90);
         }
         qsort(samples, 9, sizeof *samples, compare_double);
-        TIDE_CHECK(w.heap.used == used && tide_scratch_mark() == 0);
+        TIDE_CHECK(tide_heaps_used(&w.heap) == used && tide_scratch_mark() == 0);
         printf("    90-query %s: %.3f us/batch\n", names[kind], samples[4]);
     }
     tide_world_free(&w);

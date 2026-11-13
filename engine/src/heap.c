@@ -1,5 +1,6 @@
 #include "tide/heap.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "asset_store.h"
@@ -11,6 +12,55 @@
 #define FIRST 16u          // Offset 0 means no block, so blocks start after it
 // As far as its places reach: 2^32 of a page each (64 TiB), which memory reaches first
 #define LIMIT (UINT64_C(1) << (32u + TIDE_HEAP_PAGE_SHIFT))
+
+// ---------------------------------------------------------------------------
+// The heaps this thread's code may change
+
+#ifdef TIDE_HEAP_CHECKS
+static TIDE_THREAD_LOCAL const uint16_t *allowed_ids;
+static TIDE_THREAD_LOCAL uint32_t allowed_count;
+static TIDE_THREAD_LOCAL const tide_heaps *tide_world_heaps_checked; // The world whose heaps they are, to name one
+static TIDE_THREAD_LOCAL const char *allowed_who;
+
+// Ends the program when this thread's code isn't allowed to change `h`: a
+// system changed the text or lists of an owner the schedule doesn't know it
+// changes, which another system may be changing at the same time.
+static void check_allowed(const tide_heap *h)
+{
+    if (!allowed_who) return;
+    // Which heap: its id among the system's world's. Another world's (a
+    // worker's own, a snapshot being read) is none of the schedule's
+    int id = -1;
+    const tide_heaps *match = tide_world_heaps_checked;
+    for (uint32_t slot = 0; match && match->all && slot < tide_heap_count; slot++) {
+        if (h == &match->all[slot]) id = tide_heap_ids[slot];
+    }
+    if (id < 0) return;
+    for (uint32_t i = 0; i < allowed_count; i++) {
+        if (allowed_ids[i] == id) return;
+    }
+    fprintf(stderr, "tide: the system '%s' changed the heap with id %d, which isn't one of its owners' (TIDE_HEAP_CHECKS): "
+                    "the schedule lets another system change it at the same time\n", allowed_who, id);
+    abort();
+}
+#else
+#define check_allowed(h) ((void)(h))
+#endif
+
+void tide_heaps_allow(const tide_heaps *match, const uint16_t *ids, const uint32_t count, const char *who)
+{
+#ifdef TIDE_HEAP_CHECKS
+    tide_world_heaps_checked = match;
+    allowed_ids = ids;
+    allowed_count = count;
+    allowed_who = who;
+#else
+    (void)match;
+    (void)ids;
+    (void)count;
+    (void)who;
+#endif
+}
 
 // The references a heap has to `p`: one for each of its places.
 static uint32_t places(const tide_page *p)
@@ -67,6 +117,7 @@ static void add_page(tide_heap *h, const uint32_t count)
 
 tide_block *tide_heap_write_shared(tide_heap *h, const uint64_t block)
 {
+    check_allowed(h);
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
     tide_page *own = tide_page_own(p, places(p), in_use(h, p));
     if (own != p) { // Code reading the old page meanwhile reads the same bytes
@@ -78,6 +129,7 @@ tide_block *tide_heap_write_shared(tide_heap *h, const uint64_t block)
 
 tide_block *tide_heap_write_over(tide_heap *h, const uint64_t block, const uint32_t bytes)
 {
+    check_allowed(h);
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
     if (p->refs == places(p)) return tide_heap_write(h, block);
     const uint32_t from = (uint32_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)) + (uint32_t)sizeof(tide_block);
@@ -89,6 +141,7 @@ tide_block *tide_heap_write_over(tide_heap *h, const uint64_t block, const uint3
 
 uint64_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
 {
+    check_allowed(h);
     const uint64_t size = (uint64_t)sizeof(tide_block) + bytes;
     uint32_t c = 0;
     while (c + 1 < TIDE_HEAP_CLASSES && ((uint64_t)16 << c) < size) c++;
@@ -121,6 +174,7 @@ uint64_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
 void tide_heap_release(tide_heap *h, const uint64_t block)
 {
     if (!block) return;
+    check_allowed(h);
     tide_asset_origin_clear(h, block);
     tide_block *b = tide_heap_write(h, block);
     b->link = tide_block_link(tide_block_class(b), h->pending);
@@ -130,6 +184,7 @@ void tide_heap_release(tide_heap *h, const uint64_t block)
 
 void tide_heap_flush_pending(tide_heap *h)
 {
+    check_allowed(h);
     while (h->pending) {
         const uint64_t block = h->pending;
         tide_block *b = tide_heap_write(h, block);
@@ -387,4 +442,260 @@ void tide_heap_need_pages(const tide_heap *base, tide_needs *n)
         tide_needs_put(n, b != NULL, b ? tide_page_hash(b, in_use(base, b)) : 0u);
         if (!n->list.failed) at += taking;
     }
+}
+
+// ---------------------------------------------------------------------------
+// A world's heaps
+
+static const uint16_t no_slots[TIDE_HEAP_IDS]; // Every id is the first heap
+static const uint16_t no_ids[1];
+const uint16_t *tide_heap_slots = no_slots;
+const uint16_t *tide_heap_ids = no_ids;
+uint32_t tide_heap_count = 1u;
+
+void tide_heaps_shape(const uint16_t *slots, const uint16_t *ids, const uint32_t count)
+{
+    tide_heap_slots = slots ? slots : no_slots;
+    tide_heap_ids = slots ? ids : no_ids;
+    tide_heap_count = slots ? count : 1u;
+}
+
+tide_heap *tide_heaps_make(tide_heaps *hs)
+{
+    tide_heap *all = __atomic_load_n(&hs->all, __ATOMIC_ACQUIRE);
+    if (all) return all;
+    tide_heap *made = tide_alloc_zeroed(tide_heap_count, sizeof *made);
+    if (__atomic_compare_exchange_n(&hs->all, &all, made, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return made;
+    free(made); // Another thread's are the world's
+    return all;
+}
+
+static const tide_heap nothing; // An empty heap, to pack and hash in the place of one that isn't made
+
+// The heap in `slot`, or NULL when the world's heaps aren't made: all empty.
+static tide_heap *slot_heap(const tide_heaps *hs, const uint32_t slot)
+{
+    tide_heap *all = hs ? __atomic_load_n(&hs->all, __ATOMIC_ACQUIRE) : NULL;
+    return all ? all + slot : NULL;
+}
+
+// ...to read: an empty one for a world whose heaps aren't made.
+static const tide_heap *slot_read(const tide_heaps *hs, const uint32_t slot)
+{
+    const tide_heap *heap = slot_heap(hs, slot);
+    return heap ? heap : &nothing;
+}
+
+// Nothing was ever handed out of it: it's as a heap that isn't there.
+static bool blank(const tide_heap *h)
+{
+    return !h || h->used == 0;
+}
+
+// Whether a heap is its base's as it stands: what it's handed out, and every
+// page the same page.
+static bool same_heap(const tide_heap *h, const tide_heap *base)
+{
+    if (blank(h) || blank(base)) return blank(h) && blank(base);
+    if (h->used != base->used || h->pending != base->pending || h->pages != base->pages || h->assets != base->assets
+        || memcmp(h->free, base->free, sizeof h->free) != 0) {
+        return false;
+    }
+    for (uint32_t i = 0; i < h->pages; i++) {
+        if (h->page[i] != base->page[i]) return false;
+    }
+    return true;
+}
+
+void tide_heaps_copy(tide_heaps *to, const tide_heaps *from)
+{
+    if (to == from) return;
+    const tide_heap *theirs = slot_heap(from, 0);
+    tide_heap *ours = slot_heap(to, 0);
+    if (!theirs && !ours) return;
+    if (!ours) ours = tide_heaps_make(to);
+    for (uint32_t i = 0; i < tide_heap_count; i++) {
+        if (theirs) tide_heap_copy(&ours[i], &theirs[i]);
+        else tide_heap_free(&ours[i]);
+    }
+}
+
+void tide_heaps_free(tide_heaps *hs)
+{
+    tide_heap *all = slot_heap(hs, 0);
+    for (uint32_t i = 0; all && i < tide_heap_count; i++) tide_heap_free(&all[i]);
+    free(all);
+    hs->all = NULL;
+}
+
+void tide_heaps_flush(tide_heaps *hs)
+{
+    tide_heap *all = slot_heap(hs, 0);
+    for (uint32_t i = 0; all && i < tide_heap_count; i++) tide_heap_flush(&all[i]);
+}
+
+void tide_heaps_settle(tide_heaps *hs)
+{
+    tide_heap *all = slot_heap(hs, 0);
+    for (uint32_t i = 0; all && i < tide_heap_count; i++) tide_heap_settle(&all[i]);
+}
+
+// The first heap as a world of one heap hashes, then each of the others that
+// has handed anything out, with its id: the same whichever were made.
+uint64_t tide_heaps_hash(uint64_t h, const tide_heaps *hs)
+{
+    h = tide_heap_hash(h, slot_read(hs, 0));
+    for (uint32_t slot = 1; slot < tide_heap_count; slot++) {
+        const tide_heap *heap = slot_heap(hs, slot);
+        if (blank(heap)) continue;
+        const uint32_t id = tide_heap_ids[slot];
+        h = tide_hash_more(h, &id, sizeof id);
+        h = tide_heap_hash(h, heap);
+    }
+    return h;
+}
+
+void tide_heaps_stale(const tide_heaps *hs, tide_stale_pages *s)
+{
+    for (uint32_t slot = 0; slot < tide_heap_count; slot++) {
+        const tide_heap *heap = slot_heap(hs, slot);
+        if (!blank(heap)) tide_heap_stale(heap, s);
+    }
+}
+
+// Packed: the first heap, as a world of one heap is, then how many of the
+// others have handed anything out, and for each its id, its packed size and
+// the heap.
+
+uint32_t tide_heaps_packed_size(const tide_heaps *hs)
+{
+    uint64_t size = (uint64_t)tide_heap_packed_size(slot_read(hs, 0)) + sizeof(uint32_t);
+    for (uint32_t slot = 1; slot < tide_heap_count; slot++) {
+        const tide_heap *heap = slot_heap(hs, slot);
+        if (!blank(heap)) size += 2u * sizeof(uint32_t) + tide_heap_packed_size(heap);
+    }
+    if (size > UINT32_MAX) tide_out_of_memory();
+    return (uint32_t)size;
+}
+
+void tide_heaps_pack(const tide_heaps *hs, tide_writer *w)
+{
+    tide_heap_pack(slot_read(hs, 0), w);
+    uint32_t count = 0;
+    for (uint32_t slot = 1; slot < tide_heap_count; slot++) count += !blank(slot_heap(hs, slot));
+    tide_write_u32(w, count);
+    for (uint32_t slot = 1; slot < tide_heap_count; slot++) {
+        const tide_heap *heap = slot_heap(hs, slot);
+        if (blank(heap)) continue;
+        tide_write_u32(w, tide_heap_ids[slot]);
+        tide_write_u32(w, tide_heap_packed_size(heap));
+        tide_heap_pack(heap, w);
+    }
+}
+
+bool tide_heaps_unpack(tide_heaps *hs, tide_reader *r)
+{
+    if (!tide_heap_unpack(tide_heaps_of(hs, 0u), r)) return false;
+    const uint32_t count = tide_read_u32(r);
+    for (uint32_t i = 0; i < count && !r->failed; i++) {
+        const uint32_t id = tide_read_u32(r);
+        const uint32_t size = tide_read_u32(r);
+        const uint8_t *bytes = tide_read_bytes(r, size);
+        if (!bytes || id == 0 || id >= TIDE_HEAP_IDS) {
+            r->failed = true;
+            break;
+        }
+        // An owner this build of the game hasn't (the world is another build's,
+        // carried over): no field is left to say where its blocks are
+        const uint32_t slot = tide_heap_slots[id];
+        if (!slot || tide_heap_ids[slot] != id) continue;
+        tide_heap *heap = tide_heaps_of(hs, id);
+        tide_reader part = {bytes, size, 0, false};
+        if (!blank(heap) || !tide_heap_unpack(heap, &part) || part.at != size) r->failed = true;
+    }
+    return !r->failed;
+}
+
+// In a delta: the first heap, then how many of the others aren't their
+// base's as it stands, and for each its slot and the heap. The rest are the
+// base's, shared.
+
+void tide_heaps_pack_delta(const tide_heaps *hs, const tide_heaps *base, tide_delta_writer *d)
+{
+    tide_heap_pack_delta(slot_read(hs, 0), slot_heap(base, 0), d);
+    uint32_t count = 0;
+    for (uint32_t slot = 1; slot < tide_heap_count; slot++) count += !same_heap(slot_heap(hs, slot), slot_heap(base, slot));
+    tide_delta_number(d, count);
+    for (uint32_t slot = 1; slot < tide_heap_count; slot++) {
+        const tide_heap *from = slot_heap(base, slot);
+        if (same_heap(slot_heap(hs, slot), from)) continue;
+        tide_delta_number(d, slot);
+        tide_heap_pack_delta(slot_read(hs, slot), blank(from) ? NULL : from, d);
+    }
+}
+
+bool tide_heaps_unpack_delta(tide_heaps *hs, const tide_heaps *base, tide_delta_reader *d)
+{
+    if (!tide_heap_unpack_delta(tide_heaps_of(hs, 0u), slot_heap(base, 0), d)) return false;
+    const uint32_t count = tide_delta_get_number(d);
+    if (d->bytes.failed || count >= tide_heap_count) return !d->bytes.failed && count == 0;
+    tide_heap *all = tide_heaps_make(hs);
+    uint32_t next = 1; // The first slot not yet read or taken from the base
+    for (uint32_t i = 0; i <= count; i++) {
+        const uint32_t slot = i < count ? tide_delta_get_number(d) : tide_heap_count;
+        if (d->bytes.failed || slot < next || slot > tide_heap_count || (i < count && slot == tide_heap_count)) return false;
+        for (; next < slot; next++) { // As the base's are
+            const tide_heap *from = slot_heap(base, next);
+            if (!blank(from)) tide_heap_copy(&all[next], from);
+        }
+        if (i == count) break;
+        const tide_heap *from = slot_heap(base, slot);
+        if (!tide_heap_unpack_delta(&all[slot], blank(from) ? NULL : from, d)) return false;
+        next = slot + 1u;
+    }
+    return true;
+}
+
+uint64_t tide_heaps_used(const tide_heaps *hs)
+{
+    uint64_t used = 0;
+    const tide_heap *all = slot_heap(hs, 0);
+    for (uint32_t i = 0; all && i < tide_heap_count; i++) used += all[i].used;
+    return used;
+}
+
+bool tide_heaps_pending(const tide_heaps *hs)
+{
+    bool pending = false;
+    const tide_heap *all = slot_heap(hs, 0);
+    for (uint32_t i = 0; all && i < tide_heap_count; i++) pending |= all[i].pending != 0;
+    return pending;
+}
+
+uint32_t tide_heaps_pages(const tide_heaps *hs)
+{
+    uint32_t pages = 0;
+    const tide_heap *all = slot_heap(hs, 0);
+    for (uint32_t i = 0; all && i < tide_heap_count; i++) pages += all[i].pages;
+    return pages;
+}
+
+uint32_t tide_heaps_pages_apart(const tide_heaps *hs, const tide_heaps *other)
+{
+    uint32_t apart = 0;
+    for (uint32_t slot = 0; slot < tide_heap_count; slot++) {
+        const tide_heap *heap = slot_heap(hs, slot), *theirs = slot_heap(other, slot);
+        for (uint32_t i = 0; heap && i < heap->pages; i++) apart += !theirs || i >= theirs->pages || heap->page[i] != theirs->page[i];
+    }
+    return apart;
+}
+
+void tide_heaps_hash_pages(const tide_heaps *hs, tide_writer *w)
+{
+    for (uint32_t slot = 0; slot < tide_heap_count; slot++) tide_heap_hash_pages(slot_read(hs, slot), w);
+}
+
+void tide_heaps_need_pages(const tide_heaps *base, tide_needs *n)
+{
+    for (uint32_t slot = 0; slot < tide_heap_count; slot++) tide_heap_need_pages(slot_heap(base, slot), n);
 }

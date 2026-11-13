@@ -333,8 +333,8 @@ static void gen_shader_prep_begin(gen *g, const shader *sh)
     sb_put(o, "    if (tide_prep_safe) {\n    memset(tide_prep_sources, 0, sizeof tide_prep_sources);\n");
     for (int i = 0; i < 4; i++) sb_printf(o,
         "    tide_prep_sources[%d] = (uintptr_t)tide_world_heaps[%d];\n"
-        "    tide_prep_sources[%d] = tide_world_heaps[%d] ? tide_world_heaps[%d]->used : 0;\n"
-        "    tide_prep_sources[%d] = tide_world_heaps[%d] ? tide_world_heaps[%d]->pending : 0;\n",
+        "    tide_prep_sources[%d] = tide_world_heaps[%d] ? tide_heaps_used(tide_world_heaps[%d]) : 0;\n"
+        "    tide_prep_sources[%d] = tide_world_heaps[%d] ? tide_heaps_pending(tide_world_heaps[%d]) : 0;\n",
         i * 3, i, i * 3 + 1, i, i, i * 3 + 2, i, i);
     sb_put(o, "    tide_prep_safe = tide_prep_safe && !tide_prep_sources[2] && !tide_prep_sources[5]\n"
         "        && !tide_prep_sources[8] && !tide_prep_sources[11];\n");

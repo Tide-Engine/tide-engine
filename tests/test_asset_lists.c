@@ -30,23 +30,23 @@ static tide_list packed_bytes(void)
     return (tide_list){tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE | entry->offset)};
 }
 
-static uint8_t *delta(const tide_heap *heap, const tide_heap *base, const uint8_t *need,
+static uint8_t *delta(const tide_heaps *heap, const tide_heaps *base, const uint8_t *need,
     const uint32_t need_size, const bool assets, uint32_t *size)
 {
     tide_delta_writer writer;
-    tide_delta_begin(&writer, base != NULL, need, need_size, tide_heap_hash(0, heap));
+    tide_delta_begin(&writer, base != NULL, need, need_size, tide_heaps_hash(0, heap));
     writer.assets = assets;
-    tide_heap_pack_delta(heap, base, &writer);
+    tide_heaps_pack_delta(heap, base, &writer);
     return tide_delta_end(&writer, size);
 }
 
-static bool undelta(tide_heap *heap, const tide_heap *base, const uint8_t *bytes, const uint32_t size)
+static bool undelta(tide_heaps *heap, const tide_heaps *base, const uint8_t *bytes, const uint32_t size)
 {
     tide_delta_reader reader;
     uint64_t hash;
     return tide_delta_open(&reader, bytes, size, base != NULL, &hash)
-        && tide_heap_unpack_delta(heap, base, &reader) && reader.bytes.at == size
-        && tide_heap_hash(0, heap) == hash;
+        && tide_heaps_unpack_delta(heap, base, &reader) && reader.bytes.at == size
+        && tide_heaps_hash(0, heap) == hash;
 }
 
 TIDE_TEST(asset_lists_share_immutable_values_detach_and_survive_pack_unload)
@@ -56,25 +56,25 @@ TIDE_TEST(asset_lists_share_immutable_values_detach_and_survive_pack_unload)
     uint8_t *pack = asset_pack(&size, values);
     TIDE_REQUIRE(tide_pack_load(pack, size));
     tide_pack_use();
-    tide_heap heap = {0}, snapshot = {0}, back = {0};
+    tide_heaps heap = {0}, snapshot = {0}, back = {0};
     tide_text_use(&heap, NULL);
     tide_list lists[100] = {{0}};
     const tide_list source = packed_bytes();
     for (uint32_t i = 0; i < 100u; i++) tide_list_set(&lists[i], source, 1u, TIDE_IN_MATCH);
-    TIDE_CHECK(heap.used < 8192u);
+    TIDE_CHECK(tide_heaps_of(&heap, 0u)->used < 8192u);
     const tide_handle kept_at = lists[0].at;
-    const uint64_t kept_used = heap.used;
+    const uint64_t kept_used = tide_heaps_of(&heap, 0u)->used;
     for (uint32_t i = 0; i < 100u; i++) tide_list_set(&lists[0], source, 1u, TIDE_IN_MATCH);
-    TIDE_CHECK(lists[0].at == kept_at && heap.used == kept_used && !heap.pending);
+    TIDE_CHECK(lists[0].at == kept_at && tide_heaps_of(&heap, 0u)->used == kept_used && !tide_heaps_of(&heap, 0u)->pending);
     const void *shared = tide_list_at(lists[0], 0, 1u);
     for (uint32_t i = 0; i < 100u; i++) TIDE_CHECK(tide_list_at(lists[i], 0, 1u) == shared);
     TIDE_CHECK(!tide_list_at_mut(lists[0], 0, 1u));
-    const uint64_t original = tide_heap_hash(0, &heap);
-    tide_heap_copy(&snapshot, &heap);
+    const uint64_t original = tide_heaps_hash(0, &heap);
+    tide_heaps_copy(&snapshot, &heap);
     tide_list local = tide_list_copy(lists[0], 1u);
     tide_list_prepare(&local, 1u, TIDE_IN_SCRATCH);
     *(uint8_t *)tide_list_at_mut(local, 3, 1u) ^= 255u;
-    TIDE_CHECK(tide_heap_hash(0, &heap) == original);
+    TIDE_CHECK(tide_heaps_hash(0, &heap) == original);
     tide_list_prepare(&lists[0], 1u, TIDE_IN_MATCH);
     *(uint8_t *)tide_list_at_mut(lists[0], 3, 1u) ^= 7u;
     TIDE_CHECK(*(const uint8_t *)tide_list_at(lists[1], 3, 1u) == values[3]);
@@ -85,20 +85,20 @@ TIDE_TEST(asset_lists_share_immutable_values_detach_and_survive_pack_unload)
     tide_list_out_room(&out, 0);
     tide_list_out_end(&out, &lists[3], TIDE_IN_MATCH);
     TIDE_CHECK(!lists[3].at);
-    const uint32_t bytes_size = tide_heap_packed_size(&heap);
+    const uint32_t bytes_size = tide_heaps_packed_size(&heap);
     uint8_t *bytes = malloc(bytes_size);
     tide_writer writer = {bytes, bytes_size, 0, false, false};
-    tide_heap_pack(&heap, &writer);
+    tide_heaps_pack(&heap, &writer);
     TIDE_REQUIRE(!writer.overflow && writer.size == bytes_size);
     tide_pack_unload();
     TIDE_CHECK(!memcmp(tide_list_at(lists[1], 0, 1u), values, ASSET_BYTES));
     tide_reader reader = {bytes, bytes_size, 0, false};
-    TIDE_REQUIRE(tide_heap_unpack(&back, &reader));
-    TIDE_CHECK(reader.at == bytes_size && tide_heap_hash(0, &back) == tide_heap_hash(0, &heap));
+    TIDE_REQUIRE(tide_heaps_unpack(&back, &reader));
+    TIDE_CHECK(reader.at == bytes_size && tide_heaps_hash(0, &back) == tide_heaps_hash(0, &heap));
     TIDE_CHECK(!memcmp(tide_list_read(&back, lists[1], 0, 1u), values, ASSET_BYTES));
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
     TIDE_CHECK(!memcmp(tide_list_read(&snapshot, lists[1], 0, 1u), values, ASSET_BYTES));
-    tide_heap_free(&snapshot); tide_heap_free(&back);
+    tide_heaps_free(&snapshot); tide_heaps_free(&back);
     tide_text_use(NULL, NULL); tide_scratch_reset(0);
     free(bytes); free(pack); free(values);
 }
@@ -110,7 +110,7 @@ TIDE_TEST(asset_lists_transfer_references_sparse_patches_and_full_fallback)
     uint8_t *pack = asset_pack(&pack_size, values);
     TIDE_REQUIRE(tide_pack_load(pack, pack_size));
     tide_pack_use();
-    tide_heap heap = {0}, back = {0}, snapshot = {0};
+    tide_heaps heap = {0}, back = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
     tide_list list = {0}, other = {0};
     tide_list_set(&list, packed_bytes(), 1u, TIDE_IN_MATCH);
@@ -120,11 +120,11 @@ TIDE_TEST(asset_lists_transfer_references_sparse_patches_and_full_fallback)
     uint8_t *full = delta(&heap, NULL, NULL, 0, false, &full_size);
     TIDE_CHECK(ref_size < 256u && full_size > ASSET_BYTES);
     TIDE_REQUIRE(undelta(&back, NULL, reference, ref_size));
-    tide_heap_free(&back);
+    tide_heaps_free(&back);
     // Every incomplete reference packet rejects cleanly, including identity and shape records.
     for (uint32_t end = 0; end < ref_size; end++) {
         TIDE_CHECK(!undelta(&back, NULL, reference, end));
-        tide_heap_free(&back);
+        tide_heaps_free(&back);
     }
     // A sender cannot supply false leases or unknown descriptor identities.
     uint8_t *spoiled = malloc(ref_size);
@@ -132,21 +132,21 @@ TIDE_TEST(asset_lists_transfer_references_sparse_patches_and_full_fallback)
     const uint32_t one = 1;
     memcpy(spoiled + 53u, &one, sizeof one);
     TIDE_CHECK(!undelta(&back, NULL, spoiled, ref_size));
-    tide_heap_free(&back);
+    tide_heaps_free(&back);
     // Also remove the omitted lease's wire offset, leaving otherwise valid
     // dictionary/page framing. The authenticated registry must still reject it.
     memcpy(spoiled, reference, 65u);
     memcpy(spoiled + 53u, &one, sizeof one);
     memcpy(spoiled + 65u, reference + 69u, ref_size - 69u);
     TIDE_CHECK(!undelta(&back, NULL, spoiled, ref_size - 4u));
-    tide_heap_free(&back);
+    tide_heaps_free(&back);
     free(spoiled);
-    tide_heap_copy(&snapshot, &heap);
-    ((uint8_t *)(tide_heap_write(&snapshot, tide_handle_offset(list.at)) + 1))[0] ^= 1u;
+    tide_heaps_copy(&snapshot, &heap);
+    ((uint8_t *)(tide_heap_write(tide_heaps_of(&snapshot, 0u), tide_handle_offset(list.at)) + 1))[0] ^= 1u;
     uint32_t bad_size;
     uint8_t *bad = delta(&snapshot, NULL, NULL, 0, true, &bad_size);
     TIDE_CHECK(!undelta(&back, NULL, bad, bad_size));
-    tide_heap_free(&back); tide_heap_free(&snapshot); free(bad);
+    tide_heaps_free(&back); tide_heaps_free(&snapshot); free(bad);
     free(reference); free(full);
     tide_list_prepare(&list, 1u, TIDE_IN_MATCH);
     *(uint8_t *)tide_list_at_mut(list, 50000, 1u) ^= 1u;
@@ -155,35 +155,35 @@ TIDE_TEST(asset_lists_transfer_references_sparse_patches_and_full_fallback)
     TIDE_CHECK(ref_size < 2048u && full_size > ASSET_BYTES * 2u);
     TIDE_REQUIRE(undelta(&back, NULL, reference, ref_size));
     TIDE_CHECK(*(const uint8_t *)tide_list_read(&back, list, 50000, 1u) == (uint8_t)(values[50000] ^ 1u));
-    tide_heap_free(&back);
-    tide_heap_copy(&snapshot, &heap);
+    tide_heaps_free(&back);
+    tide_heaps_copy(&snapshot, &heap);
     *(uint8_t *)tide_list_at_mut(list, 50001, 1u) ^= 4u;
     uint32_t changed_size;
     uint8_t *changed = delta(&heap, &snapshot, NULL, 0, true, &changed_size);
     TIDE_REQUIRE(undelta(&back, &snapshot, changed, changed_size));
-    tide_heap_free(&back); free(changed);
+    tide_heaps_free(&back); free(changed);
     tide_writer hashes = {.grows = true};
-    tide_heap_hash_pages(&heap, &hashes);
+    tide_heaps_hash_pages(&heap, &hashes);
     uint8_t needs[512];
     tide_needs need;
     tide_needs_begin(&need, hashes.data, hashes.size, needs, sizeof needs);
-    tide_heap_need_pages(&snapshot, &need);
+    tide_heaps_need_pages(&snapshot, &need);
     const uint32_t need_size = tide_needs_end(&need);
     changed = delta(&heap, NULL, needs, need_size, true, &changed_size);
     TIDE_REQUIRE(undelta(&back, &snapshot, changed, changed_size));
-    tide_heap_free(&back); free(changed); free(hashes.data);
+    tide_heaps_free(&back); free(changed); free(hashes.data);
     tide_pack_unload();
     TIDE_CHECK(!undelta(&back, NULL, reference, ref_size));
-    tide_heap_free(&back);
+    tide_heaps_free(&back);
     // An explicit shared base already owns the immutable dictionary, even
     // without a loaded pack. Reuse it rather than sending the payload again.
     changed = delta(&heap, &snapshot, NULL, 0, false, &changed_size);
     TIDE_CHECK(changed_size < 2048u);
     TIDE_REQUIRE(undelta(&back, &snapshot, changed, changed_size));
     TIDE_CHECK(*(const uint8_t *)tide_list_read(&back, other, 0, 1u) == values[0]);
-    tide_heap_free(&back); free(changed);
+    tide_heaps_free(&back); free(changed);
     TIDE_REQUIRE(undelta(&back, NULL, full, full_size));
-    tide_heap_free(&back);
+    tide_heaps_free(&back);
     free(reference); free(full);
     TIDE_REQUIRE(tide_pack_load(pack, pack_size));
     tide_pack_use();
@@ -193,7 +193,7 @@ TIDE_TEST(asset_lists_transfer_references_sparse_patches_and_full_fallback)
     full = delta(&heap, NULL, NULL, 0, false, &full_size);
     TIDE_REQUIRE(undelta(&back, NULL, reference, ref_size));
     TIDE_CHECK(ref_size < 1024u && ref_size <= full_size);
-    tide_heap_free(&back); tide_heap_free(&snapshot); tide_heap_free(&heap);
+    tide_heaps_free(&back); tide_heaps_free(&snapshot); tide_heaps_free(&heap);
     tide_pack_unload(); tide_text_use(NULL, NULL); tide_scratch_reset(0);
     free(reference); free(full); free(pack); free(values);
 }

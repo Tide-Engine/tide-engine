@@ -41,7 +41,7 @@ static void same_as_fresh(tide_draw_list *d, tide_list list, uint32_t size, uint
 
 TIDE_TEST(draw_list_data_cache_tracks_in_place_writes_and_cow)
 {
-    tide_heap heap = {0}, snapshot = {0};
+    tide_heaps heap = {0}, snapshot = {0};
     tide_draw_list d = {0};
     tide_list list = {0};
     tide_text_use(NULL, &heap);
@@ -52,15 +52,15 @@ TIDE_TEST(draw_list_data_cache_tracks_in_place_writes_and_cow)
     const uint32_t slot = capture(&d, list, 2);
     TIDE_REQUIRE(d.list_data != NULL);
     const uint64_t initial = d.textures[slot - 1u].version;
-    const uint32_t moves = heap.moves;
-    TIDE_CHECK(capture(&d, list, 2) == slot && heap.moves == moves + 1u);
+    const uint32_t moves = tide_heaps_of(&heap, 0u)->moves;
+    TIDE_CHECK(capture(&d, list, 2) == slot && tide_heaps_of(&heap, 0u)->moves == moves + 1u);
     // The successful hash observation invalidates a previously retained
     // writable cache. Its next write must mark the page's hash stale again.
     *(int32_t *)tide_list_cached_at_mut(&writer, list, 1, sizeof(int32_t)) = -31;
     same_as_fresh(&d, list, sizeof(int32_t), 1, 0, one_word);
     TIDE_CHECK(d.textures[slot - 1u].version != initial);
     TIDE_CHECK(((const int32_t *)(const void *)d.textures[slot - 1u].pixels)[1] == -31);
-    tide_heap_copy(&snapshot, &heap);
+    tide_heaps_copy(&snapshot, &heap);
     *(int32_t *)tide_list_at_mut(list, 0, sizeof(int32_t)) = 53;
     same_as_fresh(&d, list, sizeof(int32_t), 1, 0, one_word);
     TIDE_CHECK(((const int32_t *)(const void *)d.textures[slot - 1u].pixels)[0] == 53);
@@ -69,14 +69,14 @@ TIDE_TEST(draw_list_data_cache_tracks_in_place_writes_and_cow)
     same_as_fresh(&d, verified, sizeof(int32_t), 1, 0, one_word);
     tide_text_use_verified(NULL);
     tide_draw_free(&d);
-    tide_heap_free(&snapshot);
+    tide_heaps_free(&snapshot);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 TIDE_TEST(draw_list_data_cache_resizes_layouts_slot_changes_and_lifecycle)
 {
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_draw_list d = {0};
     tide_list list = {0};
     tide_text_use(NULL, &heap);
@@ -115,14 +115,14 @@ TIDE_TEST(draw_list_data_cache_resizes_layouts_slot_changes_and_lifecycle)
     slot = capture(&d, list, 1);
     const tide_handle old = list.at;
     tide_list_release(&list, TIDE_IN_LOCAL);
-    tide_heap_flush(&heap);
+    tide_heaps_flush(&heap);
     tide_list_resize(&list, 4, 2u * sizeof(int32_t), TIDE_IN_LOCAL);
     TIDE_CHECK(list.at == old);
     *(int32_t *)tide_list_at_mut(list, 0, sizeof(int32_t)) = -89;
     same_as_fresh(&d, list, sizeof(int32_t), 1, 0, one_word);
     slot = capture(&d, list, 4);
     // Captured data owns its pixels independently of the source allocation.
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
     TIDE_CHECK(((const int32_t *)(const void *)d.textures[slot - 1u].pixels)[0] == -89);
     list = (tide_list){0};
     tide_list_resize(&list, 1, sizeof(int32_t), TIDE_IN_LOCAL);
@@ -131,13 +131,13 @@ TIDE_TEST(draw_list_data_cache_resizes_layouts_slot_changes_and_lifecycle)
     tide_draw_free(&d);
     TIDE_CHECK(d.list_data == NULL);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
 }
 
 TIDE_TEST(draw_list_data_cache_falls_back_for_scratch_and_chunked_sources)
 {
     const uint64_t mark = tide_scratch_mark();
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_draw_list d = {0};
     tide_text_use(NULL, &heap);
     const int32_t initial[] = {101, 103};
@@ -156,6 +156,6 @@ TIDE_TEST(draw_list_data_cache_falls_back_for_scratch_and_chunked_sources)
     same_as_fresh(&d, chunked, sizeof(int32_t), 1, 0, one_word);
     tide_draw_free(&d);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
     tide_scratch_reset(mark);
 }

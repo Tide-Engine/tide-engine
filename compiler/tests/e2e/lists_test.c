@@ -40,9 +40,9 @@ TIDE_TEST(lists_reuse_their_memory)
 {
     tide_world_init(&world, 1.0f);
     for (int i = 0; i < 50; i++) tide_world_tick(&world);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     for (int i = 0; i < 200; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.heap.used == used);
+    TIDE_CHECK(tide_heaps_used(&world.heap) == used);
     tide_world_print(&world);
 }
 

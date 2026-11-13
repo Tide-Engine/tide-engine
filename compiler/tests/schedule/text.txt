@@ -1,16 +1,15 @@
-text: 3 systems each tick, 2 stages deep; 2 can run alongside others.
+text: 3 systems each tick, 2 stages deep; 3 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  Rename  (per entity)
          writes Name
-         on one thread: it changes text, lists or grids, which the match keeps in one heap (text.tide:29)
-         alongside nothing
-
-stage 2  Retitle  (per entity)
+         on one thread: it changes text, lists or grids, which go in the order its entities do (text.tide:29)
+         alongside Retitle
+stage 1  Retitle  (per entity)
          writes Title
-         on one thread: it changes text, lists or grids, which the match keeps in one heap (text.tide:34)
-         after Rename: both change text, lists or grids, which the match keeps in one heap
-         alongside Count
+         on one thread: it changes text, lists or grids, which go in the order its entities do (text.tide:34)
+         alongside Rename, Count
+
 stage 2  Count  (per entity)
          reads Name
          writes Score

@@ -1,5 +1,29 @@
 # Runtime written by Claude for now
 
+## A world's heaps (2026-11-13)
+
+Mine, under the heap, text and list maintenance below (schedule-and-threads.md, top section, has the design and
+the tests). The boundary between generated C and the runtime changed:
+
+- A world's heap field is a `tide_heaps` (`tide/heap.h`): `tide_text_use`, `tide_text_use_verified`,
+  `tide_world_heaps`, `tide_text_read`, `tide_list_read`, `tide_list_read_count`, `tide_grid_read` and
+  `tide_grid_copy_from` take it where they took a `tide_heap`, and generated code calls `tide_heaps_copy`, `_free`,
+  `_flush`, `_settle`, `_hash`, `_stale`, `_packed_size`, `_pack`, `_unpack`, `_pack_delta`, `_unpack_delta`,
+  `_hash_pages`, `_need_pages`, `_used`, `_pending` and `tide_heaps_of` in the place of `tide_heap_*` on a world's
+  heap. `tide_heap` and its own functions are one heap's, as they were.
+- A handle's bits and a `where`'s (`tide/text.h`): a world's handle is its heap's id in the low 12 bits and its
+  block's offset from bit 8; a `where` is the world in its low two bits and the id above (`TIDE_WHERE`,
+  `tide_handle_world`). `tide_handle_where`, `tide_handle_offset` and `tide_handle_of` say and make them; nothing
+  else may take a handle apart, and a block's offset is not a handle (two places did, schedule-and-threads.md).
+- A game says its heaps before any world is made: `tide_heaps_shape(slots, ids, count)`, from a constructor in its
+  generated C. Process-wide, as each game's library has its own copy of the engine.
+- `tide_heaps_allow(match, ids, count, who)`, called around each system's task by generated code in builds with
+  `TIDE_HEAP_CHECKS` (the `sanitize` preset), does nothing in others.
+- `tide_layout_field.heap` (`tide/layout.h`), and `TIDE_HOST_SHAPE` (`tide/host.h`) now counts the layout's type
+  and field sizes too, so a library whose layout fields are another size isn't loaded.
+- `tide_system_tasks.settles` is true for every system that spawns, not only those split in order: the runtime's
+  chain (`engine/src/jobs.c`) is as it was.
+
 ## Lookups that guess (2026-11-12, evening)
 
 Mine, under the entity and attached maintenance below (ecs.md, top section). `tide_entity_slot_index` keeps a

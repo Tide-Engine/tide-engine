@@ -1,5 +1,15 @@
 # ECS and simulation state
 
+## A world's heaps, one for each owner (2026-11-13)
+
+A world's text, lists, maps, sets and grids are no longer in one heap: each match component, singleton and event
+that holds any has a heap of its own in the world (`tide_heaps`), which its handles name by a 12-bit id below the
+block's offset. The match's own heap (id 0) holds the rest: tasks, the hierarchy, visibility groups, inputs, and
+every owner C can write. The local world keeps one. What the lines below say of "the world's heap" is true of each
+of them: blocks in size classes reused in a fixed order, pages shared with snapshots until changed, a list's chunks
+and a grid's in the heap of their list or grid. Design, the schedule it buys and the tests:
+schedule-and-threads.md, top section.
+
 ## A view's guard, and lookups that guess by the key (2026-11-12, evening)
 
 From Mount & Rifle's first parallel loop over a view's rows (schedule-and-threads.md): a per-entity view over

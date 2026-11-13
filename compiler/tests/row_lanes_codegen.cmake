@@ -67,7 +67,7 @@ refuse("${flag}" "tide_gather_Fat(" "Flag's rows copy the whole component")
 
 # Calls: a singleton's lists where they are beside a Set of another component, and beside a list of another
 # thing to change; a copy where the Set, or the list changed, could be what was handed over
-require("${generated}" "tide_function_Visit(tide_w, tide_bindings, &((*f)), TIDE_IN_MATCH, (*ground));"
+require("${generated}" "tide_function_Visit(tide_w, tide_bindings, &((*f)), TIDE_WHERE_Fat, (*ground));"
     "Visit is handed a copy of the ground, though it Sets another component")
 require("${generated}" "tide_function_Append(tide_w, tide_bindings, tide_copy_Other(row.o), row.entity"
     "Append isn't handed a copy of the component it Sets")

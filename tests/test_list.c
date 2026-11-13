@@ -7,14 +7,14 @@
 typedef struct list_world {
     tide_list scores;
     tide_list other;
-    tide_heap heap;
+    tide_heaps heap;
 } list_world;
 
 static list_world world;
 
 static void start(void)
 {
-    tide_heap_free(&world.heap);
+    tide_heaps_free(&world.heap);
     memset(&world, 0, sizeof world);
     tide_text_use(&world.heap, NULL);
 }
@@ -47,11 +47,11 @@ TIDE_TEST(list_world_lists_grow_in_their_heap)
     *(int32_t *)tide_list_insert(&world.scores, -5, sizeof(int32_t), TIDE_IN_MATCH) = 42;
     TIDE_CHECK(at(world.scores, 0) == 42 && at(world.scores, 1) == 0);
 
-    tide_heap_flush(&world.heap);
-    const uint64_t used = world.heap.used;
+    tide_heaps_flush(&world.heap);
+    const uint64_t used = tide_heaps_of(&world.heap, 0u)->used;
     tide_list_clear(&world.scores, sizeof(int32_t));
     for (int32_t i = 0; i < 100; i++) add(&world.scores, i, TIDE_IN_MATCH);
-    TIDE_CHECK(world.heap.used == used);
+    TIDE_CHECK(tide_heaps_of(&world.heap, 0u)->used == used);
 
     for (int32_t i = 0; i < 20000; i++) add(&world.scores, i, TIDE_IN_MATCH);
     TIDE_CHECK(tide_list_count(world.scores) == 20100 && at(world.scores, 20099) == 19999);
@@ -81,8 +81,8 @@ TIDE_TEST(list_copies_are_their_own)
     TIDE_CHECK(tide_handle_where(world.other.at) == TIDE_IN_MATCH && at(world.other, 1) == 8);
 
     tide_list_release(&world.other, TIDE_IN_MATCH);
-    TIDE_CHECK(world.other.at == 0 && world.heap.pending != 0);
-    tide_heap_flush(&world.heap);
+    TIDE_CHECK(world.other.at == 0 && tide_heaps_of(&world.heap, 0u)->pending != 0);
+    tide_heaps_flush(&world.heap);
 }
 
 TIDE_TEST(list_snapshots_share_until_changed)
@@ -91,7 +91,7 @@ TIDE_TEST(list_snapshots_share_until_changed)
     for (int32_t i = 0; i < 10; i++) add(&world.scores, i, TIDE_IN_MATCH);
     list_world snapshot = {0};
     snapshot.scores = world.scores;
-    tide_heap_copy(&snapshot.heap, &world.heap);
+    tide_heaps_copy(&snapshot.heap, &world.heap);
 
     *(int32_t *)tide_list_at_mut(world.scores, 3, sizeof(int32_t)) = 33;
     tide_list_remove_at(&world.scores, 0, sizeof(int32_t));
@@ -100,7 +100,7 @@ TIDE_TEST(list_snapshots_share_until_changed)
     tide_text_use(&snapshot.heap, NULL);
     TIDE_CHECK(at(snapshot.scores, 3) == 3 && tide_list_count(snapshot.scores) == 10);
     tide_text_use(&world.heap, NULL);
-    tide_heap_free(&snapshot.heap);
+    tide_heaps_free(&snapshot.heap);
 }
 
 // The flat copy C gets of a chunked list comes from memory kept between calls; two can be out at once (a mesh's vertices and indices).
@@ -155,11 +155,10 @@ static void number(const tide_list l)
     for (int32_t i = 0; i < tide_list_count(l); i++) *(int32_t *)tide_list_at_mut(l, i, sizeof(int32_t)) = i;
 }
 
-static uint32_t pages_apart(const tide_heap *a, const tide_heap *b)
+static uint32_t pages_apart(const tide_heaps *a, const tide_heaps *b)
 {
-    uint32_t apart = a->pages > b->pages ? a->pages - b->pages : b->pages - a->pages;
-    for (uint32_t i = 0; i < a->pages && i < b->pages; i++) apart += a->page[i] != b->page[i];
-    return apart;
+    const uint32_t ours = tide_heaps_pages_apart(a, b), theirs = tide_heaps_pages_apart(b, a);
+    return ours > theirs ? ours : theirs;
 }
 
 TIDE_TEST(list_resize_in_a_world)
@@ -184,17 +183,17 @@ TIDE_TEST(list_resize_in_a_world)
     tide_list_resize(&world.scores, 9 * per, size, TIDE_IN_MATCH);
     TIDE_CHECK(counts_up(world.scores, 0, 3 * per + 5, 0) && zeros(world.scores, 3 * per + 5, 9 * per));
     number(world.scores);
-    tide_heap_flush(&world.heap);
-    const uint64_t used = world.heap.used;
+    tide_heaps_flush(&world.heap);
+    const uint64_t used = tide_heaps_of(&world.heap, 0u)->used;
 
     tide_list_resize(&world.scores, 4 * per, size, TIDE_IN_MATCH);
     TIDE_CHECK(tide_list_count(world.scores) == 4 * per && counts_up(world.scores, 0, 4 * per, 0));
-    TIDE_CHECK((tide_block_at(world.scores.at)->b & ~TIDE_LIST_CHUNKED) == 4u && world.heap.pending != 0);
+    TIDE_CHECK((tide_block_at(world.scores.at)->b & ~TIDE_LIST_CHUNKED) == 4u && tide_heaps_of(&world.heap, 0u)->pending != 0);
     tide_list_resize(&world.scores, per + 7, size, TIDE_IN_MATCH);
     TIDE_CHECK((tide_block_at(world.scores.at)->b & ~TIDE_LIST_CHUNKED) == 2u);
-    tide_heap_flush(&world.heap);
+    tide_heaps_flush(&world.heap);
     tide_list_resize(&world.scores, 9 * per, size, TIDE_IN_MATCH);
-    TIDE_CHECK(world.heap.used == used);
+    TIDE_CHECK(tide_heaps_of(&world.heap, 0u)->used == used);
     TIDE_CHECK(counts_up(world.scores, 0, per + 7, 0) && zeros(world.scores, per + 7, 9 * per));
 
     number(world.scores);
@@ -203,14 +202,14 @@ TIDE_TEST(list_resize_in_a_world)
     TIDE_CHECK(at(world.scores, 9 * per - 2) == 9 * per - 2 && at(world.scores, 9 * per - 1) == 0);
     tide_list_clear(&world.scores, size);
     tide_list_resize(&world.scores, 9 * per, size, TIDE_IN_MATCH);
-    TIDE_CHECK(zeros(world.scores, 0, 9 * per) && world.heap.used == used);
+    TIDE_CHECK(zeros(world.scores, 0, 9 * per) && tide_heaps_of(&world.heap, 0u)->used == used);
 
     number(world.scores);
     tide_list_resize(&world.scores, 3, size, TIDE_IN_MATCH);
     TIDE_CHECK(tide_list_count(world.scores) == 3 && counts_up(world.scores, 0, 3, 0) && at(world.scores, 3) == -999);
     tide_list_resize(&world.scores, 0, size, TIDE_IN_MATCH);
     TIDE_CHECK(tide_list_count(world.scores) == 0 && world.scores.at == 0);
-    tide_heap_flush(&world.heap);
+    tide_heaps_flush(&world.heap);
     tide_list_resize(&world.scores, 6, size, TIDE_IN_MATCH);
     TIDE_CHECK(tide_list_count(world.scores) == 6 && zeros(world.scores, 0, 6) && !chunked(world.scores));
     tide_list_resize(&world.scores, per, size, TIDE_IN_MATCH);
@@ -228,7 +227,7 @@ TIDE_TEST(list_resize_shares_with_snapshots)
     number(world.scores);
     list_world snapshot = {0};
     snapshot.scores = world.scores;
-    tide_heap_copy(&snapshot.heap, &world.heap);
+    tide_heaps_copy(&snapshot.heap, &world.heap);
 
     tide_list_resize(&world.scores, 8 * per, size, TIDE_IN_MATCH);
     TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0);
@@ -241,7 +240,7 @@ TIDE_TEST(list_resize_shares_with_snapshots)
     tide_text_use(&snapshot.heap, NULL);
     TIDE_CHECK(tide_list_count(snapshot.scores) == 8 * per && counts_up(snapshot.scores, 0, 8 * per, 0));
     tide_text_use(&world.heap, NULL);
-    tide_heap_free(&snapshot.heap);
+    tide_heaps_free(&snapshot.heap);
 }
 
 TIDE_TEST(list_resize_in_the_scratch_area)
@@ -294,16 +293,16 @@ TIDE_TEST(list_out_makes_the_list)
     TIDE_CHECK(tide_handle_where(world.scores.at) == TIDE_IN_MATCH);
     make(&world.scores, TIDE_IN_MATCH, (uint32_t)(5 * per + 3), 7, (uint32_t)(5 * per + 3));
     TIDE_CHECK(tide_list_count(world.scores) == 5 * per + 3 && counts_up(world.scores, 0, 5 * per + 3, 7) && chunked(world.scores));
-    tide_heap_flush(&world.heap);
-    const uint64_t used = world.heap.used;
+    tide_heaps_flush(&world.heap);
+    const uint64_t used = tide_heaps_of(&world.heap, 0u)->used;
     make(&world.scores, TIDE_IN_MATCH, (uint32_t)(2 * per), 50, (uint32_t)(2 * per));
     TIDE_CHECK(tide_list_count(world.scores) == 2 * per && counts_up(world.scores, 0, 2 * per, 50));
     TIDE_CHECK((tide_block_at(world.scores.at)->b & ~TIDE_LIST_CHUNKED) == 2u);
     make(&world.scores, TIDE_IN_MATCH, 3, 9, 3);
     TIDE_CHECK(tide_list_count(world.scores) == 3 && counts_up(world.scores, 0, 3, 9) && at(world.scores, 3) == -999);
-    tide_heap_flush(&world.heap);
+    tide_heaps_flush(&world.heap);
     make(&world.scores, TIDE_IN_MATCH, (uint32_t)(5 * per + 3), 1, (uint32_t)(5 * per + 3));
-    TIDE_CHECK(counts_up(world.scores, 0, 5 * per + 3, 1) && world.heap.used == used);
+    TIDE_CHECK(counts_up(world.scores, 0, 5 * per + 3, 1) && tide_heaps_of(&world.heap, 0u)->used == used);
 
     make(&world.scores, TIDE_IN_MATCH, 100, 0, 60);
     TIDE_CHECK(tide_list_count(world.scores) == 60 && counts_up(world.scores, 0, 60, 0));
@@ -367,11 +366,11 @@ TIDE_TEST(list_out_writes_what_differs)
     make(&world.scores, TIDE_IN_MATCH, count, 0, count);
     list_world snapshot = {0};
     snapshot.scores = world.scores;
-    tide_heap_copy(&snapshot.heap, &world.heap);
-    const uint64_t before = tide_heap_hash(0, &world.heap);
+    tide_heaps_copy(&snapshot.heap, &world.heap);
+    const uint64_t before = tide_heaps_hash(0, &world.heap);
 
     make(&world.scores, TIDE_IN_MATCH, count, 0, count);
-    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0 && tide_heap_hash(0, &world.heap) == before);
+    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0 && tide_heaps_hash(0, &world.heap) == before);
 
     tide_list_out out;
     tide_list_out_begin(&out, sizeof(int32_t));
@@ -381,12 +380,12 @@ TIDE_TEST(list_out_writes_what_differs)
     tide_list_out_count(&out, count);
     tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
     TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 1 && at(world.scores, 5 * per + 9) == -5);
-    TIDE_CHECK(counts_up(world.scores, 0, 5 * per + 9, 0) && tide_heap_hash(0, &world.heap) != before);
+    TIDE_CHECK(counts_up(world.scores, 0, 5 * per + 9, 0) && tide_heaps_hash(0, &world.heap) != before);
     TIDE_CHECK(counts_up(world.scores, 5 * per + 10, (int32_t)count, 5 * per + 10));
 
     list_world second = {0};
     second.scores = world.scores;
-    tide_heap_copy(&second.heap, &world.heap);
+    tide_heaps_copy(&second.heap, &world.heap);
     const uint32_t fewer = count - (uint32_t)per / 2u;
     tide_list_out_begin(&out, sizeof(int32_t));
     room = tide_list_out_room(&out, fewer);
@@ -399,22 +398,23 @@ TIDE_TEST(list_out_writes_what_differs)
     tide_text_use(&second.heap, NULL);
     TIDE_CHECK(at(second.scores, 5 * per + 9) == -5 && counts_up(second.scores, 7 * per, (int32_t)count, 7 * per));
     tide_text_use(&world.heap, NULL);
-    tide_heap_free(&second.heap);
+    tide_heaps_free(&second.heap);
 
     make(&world.scores, TIDE_IN_MATCH, 5, 1000, 5);
-    tide_heap_flush(&world.heap);
+    tide_heaps_flush(&world.heap);
     tide_text_use(&snapshot.heap, NULL);
     TIDE_CHECK(tide_list_count(snapshot.scores) == (int32_t)count && counts_up(snapshot.scores, 0, (int32_t)count, 0));
-    TIDE_CHECK(tide_heap_hash(0, &snapshot.heap) == before);
+    TIDE_CHECK(tide_heaps_hash(0, &snapshot.heap) == before);
     tide_text_use(&world.heap, NULL);
-    tide_heap_free(&snapshot.heap);
+    tide_heaps_free(&snapshot.heap);
 }
 
-static const tide_page *page_of(const tide_heap *heap, const tide_list l, const int32_t i)
+static const tide_page *page_of(const tide_heaps *heap, const tide_list l, const int32_t i)
 {
     uint32_t place;
-    const uint64_t chunk = tide_list_chunk(tide_heap_block(heap, tide_handle_offset(l.at)), (uint32_t)i, sizeof(int32_t), &place);
-    return heap->page[chunk >> TIDE_HEAP_PAGE_SHIFT];
+    const tide_heap *in = tide_heaps_read(heap, l.at);
+    const uint64_t chunk = tide_list_chunk(tide_heap_block(in, tide_handle_offset(l.at)), (uint32_t)i, sizeof(int32_t), &place);
+    return in->page[chunk >> TIDE_HEAP_PAGE_SHIFT];
 }
 
 // What C's parts point at has to be good after C returned: not a function's own variables.
@@ -443,8 +443,8 @@ TIDE_TEST(list_out_keeps_what_it_holds)
     make(&world.scores, TIDE_IN_MATCH, count, 0, count);
     list_world snapshot = {0};
     snapshot.scores = world.scores;
-    tide_heap_copy(&snapshot.heap, &world.heap);
-    const uint64_t before = tide_heap_hash(0, &world.heap);
+    tide_heaps_copy(&snapshot.heap, &world.heap);
+    const uint64_t before = tide_heaps_hash(0, &world.heap);
 
     tide_list_out out;
     tide_list_out_begin(&out, sizeof(int32_t));
@@ -453,10 +453,10 @@ TIDE_TEST(list_out_keeps_what_it_holds)
     TIDE_CHECK(tide_list_count(world.scores) == (int32_t)count && pages_apart(&world.heap, &snapshot.heap) == 0);
     patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(5 * per + 9), 40, 5 * per + 9);
     patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(2 * per - 20), (uint32_t)(2 * per), 2 * per - 20);
-    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0 && tide_heap_hash(0, &world.heap) == before);
+    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0 && tide_heaps_hash(0, &world.heap) == before);
 
     patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(5 * per + 9), 3, -50);
-    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 1 && tide_heap_hash(0, &world.heap) != before);
+    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 1 && tide_heaps_hash(0, &world.heap) != before);
     TIDE_CHECK(counts_up(world.scores, 0, 5 * per + 9, 0) && counts_up(world.scores, 5 * per + 9, 5 * per + 12, -50));
     TIDE_CHECK(counts_up(world.scores, 5 * per + 12, (int32_t)count, 5 * per + 12));
 
@@ -479,9 +479,9 @@ TIDE_TEST(list_out_keeps_what_it_holds)
 
     tide_text_use(&snapshot.heap, NULL);
     TIDE_CHECK(tide_list_count(snapshot.scores) == (int32_t)count && counts_up(snapshot.scores, 0, (int32_t)count, 0));
-    TIDE_CHECK(tide_heap_hash(0, &snapshot.heap) == before);
+    TIDE_CHECK(tide_heaps_hash(0, &snapshot.heap) == before);
     tide_text_use(&world.heap, NULL);
-    tide_heap_free(&snapshot.heap);
+    tide_heaps_free(&snapshot.heap);
 
     make(&world.scores, TIDE_IN_MATCH, count, 0, count);
     patch(&world.scores, TIDE_IN_MATCH, count + (uint32_t)per, count + 4u, 6, 77);

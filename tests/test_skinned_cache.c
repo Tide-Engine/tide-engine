@@ -150,12 +150,12 @@ TIDE_TEST(skinned_draw_cache_captures_edits_chunked_ownership_and_snapshots)
     uint8_t *bytes = cache_pack(raw, false, &size);
     TIDE_REQUIRE(bytes && tide_pack_load(bytes, size));
     const tide_list data = packed_model();
-    tide_heap heap = {0}, snapshot = {0};
+    tide_heaps heap = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
     tide_list pose = {0};
     TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_MATCH));
-    tide_heap_copy(&snapshot, &heap);
-    const uint64_t snapshot_hash = tide_heap_hash(1u, &snapshot);
+    tide_heaps_copy(&snapshot, &heap);
+    const uint64_t snapshot_hash = tide_heaps_hash(1u, &snapshot);
     tide_draw_list draw = {0}, other = {0};
     uint32_t first[2], changed[2], again[2];
     int32_t info[3];
@@ -172,7 +172,7 @@ TIDE_TEST(skinned_draw_cache_captures_edits_chunked_ownership_and_snapshots)
     tide_text_use(&snapshot, NULL);
     TIDE_REQUIRE(tide_draw_skinned_data(&draw, data, pose, again, info));
     TIDE_CHECK(again[0] == first[0] && captured_matches(&draw, first[0], data, pose));
-    TIDE_CHECK(tide_heap_hash(1u, &snapshot) == snapshot_hash);
+    TIDE_CHECK(tide_heaps_hash(1u, &snapshot) == snapshot_hash);
     TIDE_REQUIRE(tide_draw_skinned_data(&other, data, pose, again, info));
     TIDE_CHECK(captured_matches(&other, again[0], data, pose) && other.skinned != draw.skinned);
     tide_text_use(&heap, NULL);
@@ -192,8 +192,8 @@ TIDE_TEST(skinned_draw_cache_captures_edits_chunked_ownership_and_snapshots)
     tide_draw_free(&other);
     TIDE_CHECK(draw.skinned == NULL && other.skinned == NULL);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
-    tide_heap_free(&snapshot);
+    tide_heaps_free(&heap);
+    tide_heaps_free(&snapshot);
     tide_pack_unload();
     free(bytes);
     tide_scratch_reset(mark);
@@ -290,7 +290,7 @@ TIDE_TEST(skinned_draw_cache_rechecks_invalidated_proof_and_owned_models)
     uint32_t first[2], changed[2];
     int32_t info[3];
     TIDE_REQUIRE(tide_draw_skinned_data(&draw, data, pose, first, info));
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(&heap, NULL);
     tide_list owned = {0};
     tide_list_set(&owned, data, 1u, TIDE_IN_MATCH);
@@ -318,7 +318,7 @@ TIDE_TEST(skinned_draw_cache_rechecks_invalidated_proof_and_owned_models)
     tide_draw_free(&draw);
     tide_draw_free(&owned_draw);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
     tide_pack_unload();
     free(bytes);
     tide_scratch_reset(mark);
@@ -350,12 +350,12 @@ TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
     uint8_t *bytes = cache_pack(raw, false, &size);
     TIDE_REQUIRE(bytes && tide_pack_load(bytes, size));
     const tide_list data = packed_model();
-    tide_heap heap = {0}, snapshot = {0};
+    tide_heaps heap = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
     tide_list pose = {0};
     TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_MATCH));
-    tide_heap_copy(&snapshot, &heap);
-    const uint64_t snapshot_hash = tide_heap_hash(1u, &snapshot);
+    tide_heaps_copy(&snapshot, &heap);
+    const uint64_t snapshot_hash = tide_heaps_hash(1u, &snapshot);
     tide_float4x4 expected[3][2];
     expected_palette(data, pose, expected[0]);
     tide_draw_list draw = {0}, other = {0};
@@ -372,7 +372,7 @@ TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
     tide_text_use(&snapshot, NULL);
     TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, again, repeated));
     TIDE_CHECK(again[0] == textures[0][0] && repeated[3] == info[0][3]);
-    TIDE_CHECK(tide_heap_hash(1u, &snapshot) == snapshot_hash);
+    TIDE_CHECK(tide_heaps_hash(1u, &snapshot) == snapshot_hash);
     TIDE_REQUIRE(tide_draw_skinned_atlas(&other, data, pose, again, repeated));
     TIDE_CHECK(other.textures[again[0] - 1u].id != draw.textures[textures[0][0] - 1u].id);
     const uint64_t reused = tide_scratch_mark();
@@ -386,8 +386,8 @@ TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
     tide_scratch_reset(reused);
     memset(tide_scratch_memory(16384u), 0xa5, 16384u);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
-    tide_heap_free(&snapshot);
+    tide_heaps_free(&heap);
+    tide_heaps_free(&snapshot);
     tide_pack_unload();
     tide_draw_prepare(&draw, NULL);
     tide_draw_prepare(&other, NULL);
@@ -556,7 +556,7 @@ TIDE_TEST(skinned_atlas_rechecks_proof_and_keeps_immediate_owned_fallback)
     uint32_t first[2], next[2];
     int32_t info[4];
     TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, first, info));
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(&heap, NULL);
     tide_list owned = {0};
     tide_list_set(&owned, data, 1u, TIDE_IN_MATCH);
@@ -582,7 +582,7 @@ TIDE_TEST(skinned_atlas_rechecks_proof_and_keeps_immediate_owned_fallback)
     tide_draw_free(&draw);
     tide_draw_free(&owned_draw);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
     free(bytes);
     tide_scratch_reset(mark);
 }
@@ -819,7 +819,7 @@ TIDE_TEST(skinned_rest_capture_rechecks_invalidated_proof_and_owned_fallback)
     TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH));
     tide_float4x4 original[2];
     expected_palette(data, pose, original);
-    tide_heap heap = {0};
+    tide_heaps heap = {0};
     tide_text_use(&heap, NULL);
     tide_list owned = {0};
     tide_list_set(&owned, data, 1u, TIDE_IN_MATCH);
@@ -854,7 +854,7 @@ TIDE_TEST(skinned_rest_capture_rechecks_invalidated_proof_and_owned_fallback)
     tide_draw_free(&draw);
     tide_draw_free(&owned_draw);
     tide_text_use(NULL, NULL);
-    tide_heap_free(&heap);
+    tide_heaps_free(&heap);
     free(bytes);
     tide_scratch_reset(mark);
 }

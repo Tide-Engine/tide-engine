@@ -33,8 +33,8 @@ TIDE_TEST(decoded_meshes_are_their_assets_vertices_in_the_match)
     tide_world_copy(&snapshot, &world);
     const uint64_t hash = tide_world_hash(&world);
     // The decoded vertices are match state: the same bits natively and on the web
-    if (hash != UINT64_C(0xbe9ca227b3c95593)) printf("mesh_decode world hash %016llx\n", (unsigned long long)hash);
-    TIDE_CHECK(hash == UINT64_C(0xbe9ca227b3c95593));
+    if (hash != UINT64_C(0xf09a815572c04dbc)) printf("mesh_decode world hash %016llx\n", (unsigned long long)hash);
+    TIDE_CHECK(hash == UINT64_C(0xf09a815572c04dbc));
     TIDE_CHECK(tide_world_hash(&snapshot) == hash);
     const uint32_t size = tide_world_pack(&world, NULL, 0);
     uint8_t *bytes = malloc(size);

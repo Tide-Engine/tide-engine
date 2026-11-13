@@ -1287,17 +1287,17 @@ tide_list tide_str_split_char(const tide_str a, const int32_t separator)
 #define TEXT_WHERE(at) tide_handle_where(at)
 #define TEXT_OFFSET(at) tide_handle_offset(at)
 
-TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[4]; // By `where`: the scratch area's stays NULL
+TIDE_THREAD_LOCAL tide_heaps *tide_world_heaps[4]; // By a `where`'s world: the scratch area's stays NULL
 
-void tide_text_use(tide_heap *match_heap, tide_heap *local_heap)
+void tide_text_use(tide_heaps *match_heap, tide_heaps *local_heap)
 {
     tide_world_heaps[TIDE_IN_MATCH] = match_heap;
     tide_world_heaps[TIDE_IN_LOCAL] = local_heap;
 }
 
-void tide_text_use_verified(const tide_heap *verified_heap)
+void tide_text_use_verified(const tide_heaps *verified_heap)
 {
-    tide_world_heaps[TIDE_IN_VERIFIED] = (tide_heap *)(uintptr_t)verified_heap; // Read only (tide_heap_read)
+    tide_world_heaps[TIDE_IN_VERIFIED] = (tide_heaps *)(uintptr_t)verified_heap; // Read only (tide_heap_read)
 }
 
 static tide_str view_block(const tide_heap *heap, const uint64_t offset)
@@ -1306,9 +1306,9 @@ static tide_str view_block(const tide_heap *heap, const uint64_t offset)
     return (tide_str){(const char *)(b + 1), (int32_t)b->a, (int32_t)b->b};
 }
 
-tide_str tide_text_read(const tide_heap *heap, const tide_text t)
+tide_str tide_text_read(const tide_heaps *heaps, const tide_text t)
 {
-    return t.at ? view_block(heap, TEXT_OFFSET(t.at)) : TIDE_STR_EMPTY;
+    return t.at ? view_block(tide_heaps_read(heaps, t.at), TEXT_OFFSET(t.at)) : TIDE_STR_EMPTY;
 }
 
 tide_str tide_text_view(const tide_text t)

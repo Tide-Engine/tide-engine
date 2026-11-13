@@ -66,7 +66,7 @@ TIDE_TEST(text_arrays_keep_their_own_text)
     TIDE_CHECK(has(&world, world.Log.shown, "tick 1"));
     TIDE_CHECK(reads(&world, world.Log.joined, "ab"));
     TIDE_CHECK(reads(&world, world.Log.outside, "") && reads(&world, world.Log.grid.at[0].at[0], "a")); // Nothing past the ends
-    TIDE_CHECK(world.heap.pending == 0);
+    TIDE_CHECK(tide_heaps_pending(&world.heap) == 0);
     // Forward structs, nested arrays in a list, T? fields
     TIDE_CHECK(tide_list_count(world.Store.shelf.bags.at[0].parts) == 1);
     TIDE_CHECK(reads(&world, world.Store.shelf.bags.at[0].label.text, "bag 0"));
@@ -98,9 +98,9 @@ TIDE_TEST(text_arrays_reuse_their_memory)
     // Once the names stop growing, each tick's new text reuses what was released
     tide_world_init(&world, 1.0f);
     for (int i = 0; i < 50; i++) tide_world_tick(&world);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     for (int i = 0; i < 200; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.heap.used == used);
+    TIDE_CHECK(tide_heaps_used(&world.heap) == used);
     const Named a = tide_get_Named(&world, tide_entity_in_slot(&world.entities, 1));
     TIDE_CHECK(reads(&world, a.names.at[0], "FOXSSSSSSS"));
 }

@@ -62,9 +62,9 @@ TIDE_TEST(retargeting_owned_profiles_maps_poses_snapshot_and_pack)
         tide_world_tick(&copy);
     }
     TIDE_CHECK(same(&world, &copy) && world.Probe.passed == world.Probe.checks);
-    const uint64_t used = world.heap.used;
+    const uint64_t used = tide_heaps_used(&world.heap);
     for (int i = 0; i < 96; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.heap.used == used && world.Probe.passed == world.Probe.checks);
+    TIDE_CHECK(tide_heaps_used(&world.heap) == used && world.Probe.passed == world.Probe.checks);
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_world_free(&copy);
     tide_world_free(&world);
