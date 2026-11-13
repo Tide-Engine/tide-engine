@@ -205,6 +205,25 @@ hash moved, and a game with no `previous` binding generates the C it did (every 
 stack-use-after-return, which Linux's does. `bench_flock`'s two `--expect` hashes are from this machine's release
 build: another platform that disagrees has found a determinism bug, not a stale pin.
 
+## What the owner decided from the measurements (2026-11-13)
+
+Asked whether Mount & Rifle does by hand what a feature would do better (its own neighbour grid of soldiers made
+each tick, `Enlist`/`Gather`/`NearestFoes`; facts of a model worked out every frame and caches kept in a `mut`
+local singleton several views write; `if (time.tick % n != 0) return;`; `[After]`/`[Before]` on views for what's
+drawn on top), four proposals were put to him. His rulings:
+
+- **`previous` on a query binding**, the component as the tick began: built in `t3/previous-bindings`. The word and
+  that it's explicit are his; start of the tick rather than of the system, and where it's allowed, are picks.
+- **Purity is inferred, with no keyword, and used**: the same pure call made again with the same inputs in one
+  body is made once. **Remembering across calls is opt-in** (proposed `cached`; the word isn't ruled on). Built in
+  `t3/cached-functions`.
+- **No rated systems** (`[Every(n)]`, `[Spread(n)]`): "adds a lot of confusion and features that we don't need".
+  Measured first: the six systems that begin with a tick test cost 0.013 ms a tick together, and running `Roam`,
+  `Travel`, `Outfit` and `Upkeep` less often is the game's own choice to make with a guard.
+- **`[After]` and `[Before]` on views are run order**, as on systems. What's drawn on top "should be potentially a
+  graphics API thing versus when a view runs": a layer or order the draws name. Not designed; parked, as views
+  beside each other gain that game nothing yet (below).
+
 ## A system's own rows' text and lists across threads: a heap in runs (2026-11-13, later)
 
 
