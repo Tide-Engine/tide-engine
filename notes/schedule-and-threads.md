@@ -182,6 +182,14 @@ Validation: the whole native sanitize suite (Windows ASan, with `TIDE_HEAP_CHECK
 `text_fields`, `ordered_split`, `visibility_lists`, `visibility_hash_memo`, `heaps`, `tide_tests`) pass with the
 values the native build made.
 
+Correction (2026-11-13, later): the first push failed CI on every platform but Windows ASan. `check_writable`
+recorded a `c_lend` for a built-in's call too, whose `called` is a decl on its caller's stack made for the
+messages' name (`Random`'s methods, the skinned operations), and `assign_heaps` read it after the frame was gone:
+whether an owner counted as C's to write, and so its heap, came out by platform and build, and the skinned, FBX
+and sumo pins with it. Linux's ASan says so (stack-use-after-return); Windows' doesn't look for it. A lend is now
+recorded only for a real callee, and `FBX_HASH`, `BRAWL_HASH` and `MATCH_HASH` are what Linux, macOS and this
+machine then agree on.
+
 Gaps, what still keeps code off threads, in the order the measurements above give them:
 - **A `mut` singleton keeps a per-entity system on one thread** (308 of the tree's systems, 12 of Mount & Rifle's):
   the language's rule, as each row sees what the rows before it wrote. A system that only adds to one (a count, a

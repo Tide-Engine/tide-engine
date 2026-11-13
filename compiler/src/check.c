@@ -12947,7 +12947,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     // a list, or an element of one, is in its heap.
     const bool world_place = root && root->bind == BIND_PARAM && !root->param->function_param
                           && (root->param->type.kind == TY_COMPONENT || root->param->type.kind == TY_SINGLETON);
-    if (called && root && root->bind == BIND_PARAM
+    // (A built-in's `called` is its caller's own, made for the messages' name (a
+    // zeroed decl, so DECL_PREFAB, which nothing calls): gone by assign_heaps,
+    // and no C of the game's.)
+    if (called && called->kind != DECL_PREFAB && root && root->bind == BIND_PARAM
         && (world_place || (root->param->function_param && root->param->mode == PARAM_MUT))) {
         vec_push(c->c_lends, ((c_lend){world_place ? root->param->type.decl : NULL, world_place ? NULL : root->param, called,
                                        (param *)(uintptr_t)arg_of}));
