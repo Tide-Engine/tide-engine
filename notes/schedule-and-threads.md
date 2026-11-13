@@ -1,5 +1,122 @@
 # The schedule and the tick on threads
 
+## A system's own rows' text and lists across threads: a heap in runs (2026-11-13, later)
+
+The owner's task, one of three threads on the schedule that day: a per-entity system that changes its own rows'
+text, lists, maps, sets or grids ran its entities on one thread, because a heap hands out blocks in a fixed order
+and their offsets are in handles, hashed and packed every tick (82 systems in the tree, 18 of Mount & Rifle's).
+Required: the world after the system bit-identical to one thread's on every machine and thread count.
+
+Three ways were weighed, and the third built:
+
+- *Blocks of the threads' own, renumbered at the join* and *sizes logged, offsets given at the join*: both leave
+  handles that aren't final while rows run, so the join has to find and rewrite every one (in the rows' lanes, in
+  lists of text, in queued spawns' values), one thread's work in proportion to what was allocated, and a walker
+  generated for every type that can hold one. Not built.
+- **A heap whose layout is by run of entities, not by time** (`tide/heap.h`, A heap in runs). The system's entities,
+  in the order of their identities, are cut into runs: `min(32, count)` of them (`TIDE_HEAP_RUNS`), run `r` being
+  keys `[count * r / runs, count * (r + 1) / runs)`. That depends on the world alone. Each run hands its blocks
+  out of a heap of its own within the owner's, in its rows' order, so a block's offset is the same whichever
+  thread had the run and whatever the other runs did. A task of `pieces` is runs
+  `[runs * task / pieces, runs * (task + 1) / pieces)`; one thread's single task is all of them in order, through
+  the same heaps. Nothing is rewritten and the join does next to nothing.
+
+What it is:
+
+- **An owner's heap has 32** (`tide_heap.runs`, made the first time one past the first is asked for; run 0 is the
+  owner's heap as it was, where everything that isn't a run still allocates). A block says its run: 5 bits of its
+  handle above the offset (bit 54 up, which offsets, 46 bits from bit 8, never reach) and of a `where` above the id
+  (`TIDE_WHERE_RUN_SHIFT`). `tide_heaps_of` takes the run with the id, so `tide_heap_of(tide_handle_where(at))` is
+  the block's own heap, and text.c, list.c, map.c and every inline read are as they were. Run-0 handles are the
+  bits they were: a world no system changes in runs hashes and packs as before.
+- **Which run code is on** is the thread's (`tide_heap_run_where`, set by `tide_heap_run_enter(run)` around each
+  run's rows and put back by `tide_heap_run_leave`). Generated code says `TIDE_WHERE_RUN(TIDE_IN_MATCH, id)` for
+  the memory of an owner some system changes in runs (`decl.heap_runs`, `decl_where`), which is the owner's
+  `where` with the thread's run: outside runs that's run 0.
+- **A field's own block may be in another run's heap** (the entity was in that run when it was made, or it was
+  made outside runs). `tide_handle_in(at, where)` is "the field's own" now (same world and id, any run), which
+  `own_block`, `drop_block` and `tide_text_release` use; they change and release a block through its own heap.
+  Written, cut and added to within its room, a list stays where it is. A list in chunks that needs more chunks
+  moves whole into the heap of the run that adds them (`grow_chunks`: `kept` only for the same run), as its block
+  names its chunks by offset. A list side by side that grows was copied to a new block anyway.
+- **Letting go of another run's block** (`tide_heap_release` when `tide_heap_away`): that heap's free lists are its
+  run's thread's, so the block goes on this run's `away` list, is zeroed at the row's flush on this thread (`held`),
+  and goes back to its own heap's free list in `tide_heap_runs_join`, runs in order. An asset list's lease in
+  another run's heap is given up at the join too (`tide_heap_drop_later`). Outside runs a block goes to its own
+  heap's `pending` and the owner's flush finds it (`runs_pending`).
+- **Writing in place from any thread.** A page a snapshot shares is replaced with a copy by whichever thread gets
+  there first (`write_shared_in_runs`: copied outside the heap's lock, put in the table under it, the loser's copy
+  let go). The page it replaces **keeps the heap's references until the join** (`retired`): refs are how
+  `tide_heap_write` tells a page is the heap's to write, and a thread that read the old page from the table a
+  moment before would take it for the heap's own if the snapshot's were the only ones left. The run whose heap it
+  is grows the table under the same lock. `tide_heap_write` reads the table as `tide_heap_block` does.
+- **The compiler** (`rows_independent`, `system_splits_in_order`, `system_heap_runs` in `parallel.c`): a system
+  that changes text or lists splits in order as one that queues does, unless one of its owners (`heap_owners`) is
+  in the match's one heap (C can write it, or the game has shards or hidden state: no runs there), or holds a grid,
+  or it starts tasks. `tide schedule` and the editors say which (`system_one_thread`). `gen_system` wraps the
+  ordered walk in the runs' loop, flushes the run's heap after each row, and joins in the task when it had every
+  run, else in `tide_done_<System>`, which such a system now always has.
+- **Builds that check** (`TIDE_HEAP_CHECKS`): a block asked of a run's heap by code on another run ends the program.
+- **Packed, hashed, copied**: a run's heap is another heap of the world, named by its id with the run above it
+  (`tide_heaps_pack`, `tide_heaps_hash`), numbered slot by slot in a delta, copied and settled with its owner. An
+  owner whose runs were never made costs one test (`after`).
+
+Not grids, and why: a grid's directory names its chunks by offset as a list's block does, and its loops, windows
+and caches (grid.c, about 900 lines) take one heap for the grid from a `where`. Moving a grid whole into a run's
+heap when a row first adds a chunk is the same idea as the list's; it wasn't done here, so an owner that holds a
+grid keeps its systems in order.
+
+Tests:
+- `tidec_e2e_row_heaps` (`compiler/tests/e2e/row_heaps.tide`): 900 bags in three archetypes whose system changes a
+  list, text, a list of text, a map, a set and a list that goes past a page and is cut back; a system on one thread
+  (it changes a singleton) changing the same lists between; two more in runs that spawn and send values holding
+  text and lists; entities destroyed and spawned every tick, so the ones after them change runs. Fourteen ticks on
+  a pool that's one thread saying it has eight, and five runs of fourteen on the platform's with a snapshot taken
+  every tick: the hash and **the world's packed bytes** equal one thread's every tick; a pack, a delta over an
+  unpacked base and a snapshot rolled back and run again on one thread give the same world. Every run's heap is in
+  use after four ticks on one thread, and nothing a run kept is left. With every run given run 0's heap (a line in
+  `tide_heap_run_enter`) the platform's pool crashes in it.
+- `tests/test_heap.c`, four more: a run's blocks from its own heap's start and what a handle says; another run
+  letting one go (readable until the flush, zeroed, back at the join, handed out again); a list in chunks written
+  and cut where it is and moved whole when it needs chunks; a shared page's references kept until the join; copy,
+  hash, pack and a delta with a run's heap.
+- `tidec_e2e_heaps` as it was: its two per-entity systems are in runs now.
+- Schedule goldens: `heaps` (two more systems: a grid's owner and one C can write, with the lines that say so) and
+  `text` lost their "on one thread" lines.
+- One world-hash pin moved, `rows` (`0x7c197dd64b4bb904`), and `row_lanes`'s expected call says `TIDE_WHERE_RUN`.
+
+Validation: the whole native sanitize suite (Windows ASan, `TIDE_HEAP_CHECKS`), 3,283 tests: the two above failed
+and are updated, `tide_server_smoke` failed in the full run and passes alone, `inside_out_tests` and
+`underfoot_tests` (the private prototypes) fail as before; after the last changes to the heap's inline functions,
+the 847 tests that touch heaps, rows, lists, text, the schedule, the debugger views, reload and the benchmarks
+again. Web (`web-debug`, under Node, with threads): `tide_tests`, `rows` (the same new pin), `ordered_split`,
+`heaps` and `row_heaps` pass. Linux, macOS, MinGW and Android are CI's.
+
+Measured (benchmarks.md, A heap in runs): the fixture's tick on 12 threads 7.7-8.3 ms to 1.9-2.3; Mount & Rifle's
+`Campaign.Roam` 0.33-0.36 ms to 0.18-0.20 and `Upkeep` 0.08 to 0.03.
+
+**What Mount & Rifle showed.** Of the five systems the morning's table named, only those two were kept by the heap
+alone. `Travel` sets `Campaign.Place` through its World, `Outfit` sets `Gear.Inventory`, `FallOnField` sets
+`Field.Soldier`: `system_one_thread` says the first reason it finds, and the heap came first. None of its systems
+is kept on one thread by the heap now; four are by reading through their World a component they change, the rest
+by a `mut` singleton or a `Set`. So of the 0.8 ms the chain had in "own rows' text and lists", about 0.2 came off,
+and the rest is the `Set` question the owner was asked the same morning (queue it where it's unobservable).
+
+Gaps:
+- **Grids** (above).
+- **Owners in the match's one heap**: what C can write, and every owner of a game with shards or hidden state.
+- **A run's heap costs memory**: a page for each run that ever allocated, for each owner (32 runs: half a
+  megabyte an owner at most), and 208 bytes each in a full pack. Blocks freed in one run's heap are only handed
+  out again by that run.
+- **Entities change runs** as others come and go before them; a block made in the old run is released through the
+  join, and a list in chunks is copied whole the next time it needs chunks.
+- **One thread pays a little**: the fixture's tick on one thread went from 7.5-7.7 ms to 7.9-8.1.
+- **Map lookups about 2% slower** in `versus_lookup` (a handle's `where` takes three more instructions and
+  `tide_heaps_of` a test); `versus_buckets` and `versus_churn` within their runs' spread.
+- **Windows' debugger views** (natvis) don't find a block in a heap of a run past the first: the expression that
+  would is past what its engine bears (debugging.md). LLDB's do.
+- 32 runs are the most a system's entities go in, whatever the threads: fine to 16 cores or so.
+
 ## The schedule against measured time, and the one-thread reason in the editors (2026-11-13)
 
 After the heaps (below), the owner asked what closes the gap further, and agreed an order: measure which waits
@@ -224,7 +341,8 @@ Gaps, what still keeps code off threads, in the order the measurements above giv
   sum, a list it appends to) could go in runs and join them in order; not designed.
 - **A per-entity system that changes its rows' text or lists stays on one thread** (82 and 18): a heap's blocks go
   in its entities' order. Runs on threads would each need blocks of their own that the join renumbers, or a heap
-  for each chunk; not designed.
+  for each chunk; not designed. (Built later the same day: the top section. Text, lists, maps and sets; not
+  grids.)
 - **Owners C can write share one heap**, so Box3D's and Box2D's systems wait for every other such system over it
   (they wait for each other over their singleton anyway). C would have to say an owner's `where`
   (`TIDE_WHERE_<Type>` is in the header) and the compiler be told that it does.

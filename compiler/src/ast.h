@@ -840,6 +840,7 @@ typedef struct decl {
     // match's own (assign_heaps in check.c), and whether C can write it, which keeps it there
     uint16_t heap_id;
     bool c_written;
+    bool heap_runs;      // ...and a system changes it in runs, each run's blocks in a heap of its own (system_heap_runs)
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
     bool starts_tasks;   // Code that starts tasks, calling an async function without await: they're the world's, in order
     loc starts_at;       // ...where it first does
@@ -1901,6 +1902,8 @@ void analyze_parallelism(program *prog);
 // right.
 bool system_splits(const decl *sys);
 bool system_splits_in_order(const decl *sys);
+// ...of which those that change their rows' text or lists, in runs (tide/heap.h, A heap in runs).
+bool system_heap_runs(const decl *sys);
 
 // For a per-entity system written in Tide whose entities don't go across
 // threads: the first thing in it that keeps them in order on one, as "it

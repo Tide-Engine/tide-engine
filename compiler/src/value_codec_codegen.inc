@@ -374,7 +374,7 @@ static void gen_client_codecs(gen *g, client_codec *codec)
               "    while (count < need) {\n"
               "        const tide_block *b = tide_block_at(v->at);\n"
               "        uint32_t to = count + 1u;\n"
-              "        if (b && b->b != TIDE_LIST_ASSET && !tide_pack_holds(v->at) && tide_handle_where(v->at) == where) {\n"
+              "        if (b && b->b != TIDE_LIST_ASSET && !tide_pack_holds(v->at) && tide_handle_in(v->at, where)) {\n"
               "            const uint64_t room = b->b & TIDE_LIST_CHUNKED ? (uint64_t)(b->b & ~TIDE_LIST_CHUNKED) * (TIDE_LIST_CHUNK / size) : b->b;\n"
               "            if (room > count) to = room < most ? (uint32_t)room : most;\n"
               "        }\n"

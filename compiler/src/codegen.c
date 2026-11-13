@@ -1225,7 +1225,9 @@ static const char *decl_where(const decl *d)
 {
     if (d->is_local || !d->heap_id) return world_where(d->is_local);
     sb b = {0};
-    sb_printf(&b, "TIDE_WHERE_%s", type_cname(d));
+    // One a system changes in runs: in the heap of the run this thread is on (tide/heap.h, A heap in runs)
+    if (d->heap_runs) sb_printf(&b, "TIDE_WHERE_RUN(TIDE_IN_MATCH, %uu)", (unsigned)d->heap_id);
+    else sb_printf(&b, "TIDE_WHERE_%s", type_cname(d));
     return b.data;
 }
 
@@ -21009,6 +21011,19 @@ static void gen_extern_filtered_call(gen *g, const decl *sys, const int a, const
 // are copied before publication, read in place, and compared only once at end.
 static void gen_canonical_live_chunk(gen *g, int a);
 
+// Once every run of a system that changes its rows' text or lists is done: what the runs kept of each other's
+// heaps goes back, for each owner it changes (tide_heap_runs_join).
+static void gen_heap_runs_join(gen *g, const decl *sys)
+{
+    bool done[TIDE_HEAP_IDS] = {false};
+    for (int i = 0; i < sys->heap_owners.count; i++) {
+        const uint32_t id = sys->heap_owners.items[i]->heap_id;
+        if (done[id]) continue;
+        done[id] = true;
+        sb_printf(&g->c, "    tide_heap_runs_join(tide_heaps_of(&tide_w->heap, %uu));\n", id);
+    }
+}
+
 static void gen_canonical_lanes(gen *g, const decl *sys, const bool done)
 {
     sb *o = &g->c;
@@ -21430,7 +21445,10 @@ static void gen_system_run(gen *g, const decl *sys)
             const uint32_t id = owner ? owner->heap_id : 0u;
             if (done[id]) continue;
             done[id] = true;
-            sb_printf(&clear_text, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu));", id);
+            // One changed in runs: the run's own heap, which has what its rows let go of
+            if (owner && owner->heap_runs) {
+                sb_printf(&clear_text, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu | tide_heap_run_where >> TIDE_WHERE_HEAP_SHIFT));", id);
+            } else sb_printf(&clear_text, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu));", id);
         }
     }
     const char *clear = clear_text.data ? clear_text.data : "";
@@ -21606,7 +21624,8 @@ static void gen_system_run(gen *g, const decl *sys)
         const bool prepared = canonical;
         // Runs on several threads write one chunk's pages at once: begun for
         // all of them before (tide_own_<System>), ended after (tide_done_)
-        const bool around = ordered && system_owns(g, sys);
+        const bool heap_runs = ordered && system_heap_runs(sys);
+        const bool around = ordered && (system_owns(g, sys) || heap_runs);
         bool marked = false;
         for (int a = 0; prepared && a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
         if (prepared) {
@@ -21620,7 +21639,17 @@ static void gen_system_run(gen *g, const decl *sys)
             gen_canonical_system_keys(g, sys);
             if (marked) sb_put(o, "    if (!tide_busy) tide_key_count = 0u; // No row gets past its tests: no walk\n");
             // The task's run of the order: all of it, or its share of the keys
-            if (ordered) sb_put(o, "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_task / tide_pieces);\n"
+            // One that changes its rows' text or lists: the order in runs that are the same however many tasks
+            // there are, as many as there are entities up to TIDE_HEAP_RUNS, and the task's share of the runs.
+            // Each run's blocks come from its own heap (tide/heap.h, A heap in runs)
+            if (heap_runs) sb_put(o, "    const uint32_t tide_runs = tide_key_count < TIDE_HEAP_RUNS ? tide_key_count : TIDE_HEAP_RUNS;\n"
+                                     "    const uint32_t tide_run_to = (uint32_t)((uint64_t)tide_runs * (tide_task + 1u) / tide_pieces);\n"
+                                     "    const uint32_t tide_run_was = tide_heap_run_enter(0u);\n"
+                                     "    for (uint32_t tide_run = (uint32_t)((uint64_t)tide_runs * tide_task / tide_pieces); tide_run < tide_run_to; tide_run++) {\n"
+                                     "    (void)tide_heap_run_enter(tide_run);\n"
+                                     "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_run / tide_runs);\n"
+                                     "    const uint32_t tide_key_to = (uint32_t)((uint64_t)tide_key_count * (tide_run + 1u) / tide_runs);\n");
+            else if (ordered) sb_put(o, "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_task / tide_pieces);\n"
                                    "    const uint32_t tide_key_to = (uint32_t)((uint64_t)tide_key_count * (tide_task + 1u) / tide_pieces);\n");
             else sb_put(o, "    const uint32_t tide_key_from = 0u, tide_key_to = tide_key_count;\n");
         sb_put(o,
@@ -21676,8 +21705,10 @@ static void gen_system_run(gen *g, const decl *sys)
             }
         }
         if (canonical) sb_put(o, "        default: break;\n        }\n        tide_key_at = tide_key_end;\n    }\n");
+        if (heap_runs) sb_put(o, "    }\n    tide_heap_run_leave(tide_run_was);\n");
         if (prepared && around) sb_put(o, "    if (tide_pieces == 1u) {\n");
         if (prepared) gen_canonical_lanes(g, sys, true);
+        if (heap_runs) gen_heap_runs_join(g, sys); // Every run was this task's
         if (prepared && around) sb_put(o, "    }\n");
         if (marked) gen_canonical_live_done(g, sys);
         if (!any) {
@@ -21696,7 +21727,7 @@ static void gen_system_run(gen *g, const decl *sys)
     sb_put(o, "}\n\n");
     if (fast_task) gen_system_cached_task(g, sys, rows);
     if (!view && split && system_owns(g, sys)) gen_system_pieces(g, sys);
-    if (ordered && system_owns(g, sys)) {
+    if (ordered && (system_owns(g, sys) || system_heap_runs(sys))) {
         for (int done = 0; done < 2; done++) {
             sb_printf(o, "static void tide_%s_%s(void *tide_world_v)\n{\n    tide_world *tide_w = tide_world_v;\n", done ? "done" : "own", name);
             bool marked = false;
@@ -21704,6 +21735,7 @@ static void gen_system_run(gen *g, const decl *sys)
             gen_canonical_live(g, sys, LIVE_WHOLE);
             if (marked) sb_put(o, "    (void)tide_busy;\n");
             gen_canonical_lanes(g, sys, done);
+            if (done && system_heap_runs(sys)) gen_heap_runs_join(g, sys);
             if (marked) gen_canonical_live_done(g, sys);
             sb_put(o, "    (void)tide_w;\n}\n\n");
         }
@@ -23656,7 +23688,7 @@ static void gen_api(gen *g)
                          "static void tide_owned_run_%s(void *world, uint32_t task, uint32_t pieces)\n{\n"
                          "    tide_world *w = world;\n    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_task_%s(world, task, pieces);\n}\n",
                       name, i, name, name, i, name);
-            if ((system_splits(sys) || system_splits_in_order(sys)) && system_owns(g, sys)) {
+            if ((system_splits(sys) || system_splits_in_order(sys)) && (system_owns(g, sys) || system_heap_runs(sys))) {
                 sb_printf(o, "static void tide_owned_own_%s(void *world)\n{\n    tide_world *w = world;\n"
                              "    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_own_%s(world);\n}\n", name, i, name);
                 if (!sys->extern_system) sb_printf(o, "static void tide_owned_done_%s(void *world)\n{\n    tide_world *w = world;\n"
@@ -23726,7 +23758,7 @@ static void gen_api(gen *g)
             }
             else sb_printf(o, "%s_%s, ", run, name);
             const bool ordered = system_splits_in_order(sys);
-            const bool owns = (system_splits(sys) || ordered) && system_owns(g, sys);
+            const bool owns = (system_splits(sys) || ordered) && (system_owns(g, sys) || system_heap_runs(sys));
             if (owns) sb_printf(o, "tide_%sown_%s, ", prog->owned_prediction ? "owned_" : "", name);
             else sb_put(o, "NULL, ");
             if (owns && !sys->extern_system) sb_printf(o, "tide_%sdone_%s, ", prog->owned_prediction ? "owned_" : "", name); // One written in C made them the world's own

@@ -1,5 +1,16 @@
 # ECS and simulation state
 
+## A heap in runs (2026-11-13, later)
+
+An owner's heap is 32 heaps, one for each run of the entities of a system that changes its rows' text and lists
+on threads (`tide/heap.h`, A heap in runs; `tide_heap.runs`, made when one past the first is first asked for). A
+handle and a `where` say the run above the offset and the id; run 0 is the heap there was, and its handles are
+the bits they were. A field's own block is one in its owner's memory whichever run's heap it's in
+(`tide_handle_in`), changed and released through its own heap; a list in chunks moves whole into the heap of the
+run that gives it more chunks. Packs, hashes and deltas name a run's heap by its id with the run above it, and a
+world with none hashes and packs as before. The whole of it, what was weighed, the tests and the gaps (grids
+among them) are in schedule-and-threads.md, top section.
+
 ## A world's heaps, one for each owner (2026-11-13)
 
 A world's text, lists, maps, sets and grids are no longer in one heap: each match component, singleton and event

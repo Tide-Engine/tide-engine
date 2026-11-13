@@ -121,9 +121,41 @@ static bool queued_stmt(const stmt *s)
 
 // Whether a system's rows are independent of each other but for what they
 // queue: no row reads or writes what another row writes.
+static bool holds_a_grid(const decl *d, const int depth)
+{
+    for (int i = 0; d && depth < 8 && i < d->fields.count; i++) {
+        const type t = d->fields.items[i].type;
+        if (t.kind == TY_GRID || (t.kind == TY_STRUCT && holds_a_grid(t.decl, depth + 1))) return true;
+    }
+    return false;
+}
+
+// What keeps a system that changes text, lists or grids from doing it in runs
+// (tide/heap.h, A heap in runs), each run's blocks in a heap of its own: an
+// owner in the match's one heap (C can write it, or the game has shards or
+// hidden state), which has no runs, or one that holds a grid, whose chunks
+// name each other across what a run would add. NULL when nothing does;
+// `*grid` says which.
+static const decl *heap_keeps_order(const decl *sys, bool *grid)
+{
+    static const decl match_heap = {0}; // The match's own, when no owner is named
+    *grid = false;
+    for (int i = 0; i < sys->heap_owners.count; i++) {
+        const decl *owner = sys->heap_owners.items[i];
+        if (!owner || !owner->heap_id) return owner ? owner : &match_heap;
+        if (holds_a_grid(owner, 0)) {
+            *grid = true;
+            return owner;
+        }
+    }
+    return sys->heap_owners.count ? NULL : &match_heap;
+}
+
 static bool rows_independent(const decl *sys)
 {
-    if (sys->is_view || !sys->per_entity || sys->writes_text || sys->extern_system) return false;
+    if (sys->is_view || !sys->per_entity || sys->extern_system) return false;
+    bool grid;
+    if (sys->writes_text && (sys->starts_tasks || heap_keeps_order(sys, &grid))) return false;
     if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
@@ -144,7 +176,7 @@ static bool queues(const decl *sys)
 
 bool system_splits(const decl *sys)
 {
-    return rows_independent(sys) && !queues(sys);
+    return rows_independent(sys) && !queues(sys) && !sys->writes_text;
 }
 
 // A system whose rows are independent but queue changes (a Send, a Spawn, a
@@ -152,10 +184,17 @@ bool system_splits(const decl *sys)
 // in that order. Threads share that order out in runs, each run's queue its
 // own, joined in the runs' order: the same queue as one thread makes. A
 // spawn's identity is its row's entity and the place in the code, whatever
-// ran before it.
+// ran before it. One that changes its rows' text or lists goes the same way,
+// in runs that are the same however many threads there are, each run's blocks
+// in a heap of its own (system_heap_runs).
 bool system_splits_in_order(const decl *sys)
 {
-    return rows_independent(sys) && queues(sys);
+    return rows_independent(sys) && (queues(sys) || sys->writes_text);
+}
+
+bool system_heap_runs(const decl *sys)
+{
+    return sys->writes_text && system_splits_in_order(sys);
 }
 
 // The components and singletons two systems both use, where at least one of
@@ -557,8 +596,23 @@ bool system_one_thread(const decl *sys, const char *quote, const decl *from, sb 
         sb_put(out, "it changes the singleton ");
         put_decl_name(out, singleton->type.decl, quote, from);
         *at = singleton->at;
-    } else if (sys->writes_text) {
-        sb_put(out, "it changes text, lists or grids, which go in the order its entities do");
+    } else if (sys->writes_text && sys->starts_tasks) {
+        sb_put(out, "it changes text or lists and starts tasks, which run in the order they start");
+        *at = sys->writes_text_at;
+    } else if (sys->writes_text && heap_keeps_order(sys, &(bool){false})) {
+        bool grid = false;
+        const decl *owner = heap_keeps_order(sys, &grid);
+        if (grid) {
+            sb_put(out, "it changes the text, lists or grids of ");
+            put_decl_name(out, owner, quote, from);
+            sb_put(out, ", which holds a grid: a grid's chunks go in the order its entities do");
+        } else if (owner && owner->qualified.len) {
+            sb_put(out, "it changes the text, lists or grids of ");
+            put_decl_name(out, owner, quote, from);
+            sb_put(out, ", which are in the match's one heap and go in the order its entities do");
+        } else {
+            sb_put(out, "it changes text, lists or grids in the match's one heap, which go in the order its entities do");
+        }
         *at = sys->writes_text_at;
     } else if ((sys->task_access[0] | sys->task_access[1]) & 2u) {
         sb_put(out, "it changes tasks, which the match keeps in the order they start");

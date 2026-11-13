@@ -541,6 +541,11 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_heaps PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_heaps PRIVATE TIDE_HEAPS_THREADS=1)
 endif()
+tide_e2e_test(row_heaps) # A per-entity system that changes its rows' text and lists, in runs on threads: one thread's world
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_row_heaps PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_row_heaps PRIVATE TIDE_ROW_HEAPS_THREADS=1)
+endif()
 tide_e2e_test(parallel_views) # A frame's parallel loops take the pool's threads, and a row's steps write its local fields
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_parallel_views PRIVATE tide_platform)

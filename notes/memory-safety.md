@@ -1,5 +1,25 @@
 # No Tide code can corrupt memory
 
+## A heap in runs: what threads may do to one heap at once (2026-11-13, later)
+
+A per-entity system that changes its rows' text and lists has its entities on several threads now
+(schedule-and-threads.md, top section), so one owner's heaps are changed by several threads at once. What keeps
+that safe, and what checks it:
+
+- Each run hands out and frees blocks of its own run's heap alone (`TIDE_HEAP_CHECKS` ends the program at a block
+  asked of another run's). Another run's block a row lets go of is kept and goes back at the join, on one thread.
+- Any thread may write a block in place. A page a snapshot shares is replaced by a copy under the heap's lock, and
+  keeps the heap's references until the join: `tide_heap_write` takes a page for the heap's own by its references,
+  and a thread that read the old page a moment before the copy went in must still find it shared.
+  `heap_runs_pages_keep_their_references_until_the_join` (`tests/test_heap.c`) pins that.
+- A handle's run is five bits, masked, and an owner's runs' heaps are all made at once: a handle can't name a heap
+  that isn't there. A packed world names a run's heap by id and run, both checked as it's read; a handle in a
+  world that came as bytes is trusted as far as one was before (its heap may be empty, as an id's could be).
+- Rows don't read each other's lists: a system that reads through its World or a query a component it changes
+  doesn't split, as before.
+
+`tidec_e2e_row_heaps` runs it on the platform's pool under ASan with the checks on.
+
 ## Heaps by owner: what a system may change, checked (2026-11-13)
 
 Two systems change the same heap only one at a time, and since each owner has its own (schedule-and-threads.md, top

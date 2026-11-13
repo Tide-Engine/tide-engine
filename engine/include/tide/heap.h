@@ -29,6 +29,10 @@
 
 #define TIDE_HEAP_CLASSES 24 // Block sizes 16 << class bytes
 
+// A heap's runs (A heap in runs, below): how many, as bits of a handle.
+#define TIDE_HEAP_RUN_BITS 5u
+#define TIDE_HEAP_RUNS (1u << TIDE_HEAP_RUN_BITS)
+
 // Bytes in each page: 1 << this. A block never crosses from one page into
 // the next: a bigger block has a page of its own, as big as it needs.
 #define TIDE_HEAP_PAGE_SHIFT 14u
@@ -59,6 +63,12 @@ typedef struct tide_heap {
     uint64_t used;                    // Bytes handed out from the start, headers included
     uint64_t free[TIDE_HEAP_CLASSES]; // Released blocks of each class, most recent first
     uint64_t pending;                 // Blocks released while code runs, freed when it's done
+    // A heap in runs (below), beside `pending` as a flush looks at all three: the blocks of other runs' heaps
+    // this run's rows released while runs are on threads, until its row is done (tide_heap_flush); and, an
+    // owner's first heap's, which of its runs' heaps have blocks released outside runs, a bit each. Neither is
+    // part of the world's state: `away` is empty whenever nothing runs
+    uint64_t away;
+    uint32_t runs_pending;
     uint32_t pages;                   // Pages as far as `used` goes
     uint32_t room;                    // Pages `page` has room for
     // Counts the times a block may have moved or gone: a page copied to be
@@ -79,6 +89,23 @@ typedef struct tide_heap {
     struct tide_asset_pool *assets;
     struct tide_asset_retired *assets_retired;
     struct tide_asset_origins *origins; // Optional serialization hints, shared by snapshots.
+    // A heap in runs (below). An owner's first heap has the others, made when one is first asked for; each of
+    // those says whose it is and which run's.
+    struct tide_heap *runs;
+    struct tide_heap *base;
+    uint32_t run;
+    uint32_t lock;         // Held to change its page table while runs are on threads
+    // While runs are on threads, of this run's heap: the blocks of other runs' heaps its rows released, zeroed
+    // once their row was done, until the runs join (tide_heap_runs_join); the pages it replaced with copies,
+    // which keep their references until then; and the asset lists it let go of in other runs' heaps. All empty
+    // whenever nothing runs: no part of the world's state.
+    uint64_t held;
+    tide_page **retired;
+    uint32_t retired_count;
+    uint32_t retired_room;
+    struct tide_heap_later *later;
+    uint32_t later_count;
+    uint32_t later_room;
 } tide_heap;
 
 // A block with room for `bytes` bytes after its header. Offsets are never 0.
@@ -128,7 +155,7 @@ void tide_heap_release(tide_heap *h, uint64_t block);
 void tide_heap_flush_pending(tide_heap *h);
 static inline void tide_heap_flush(tide_heap *h)
 {
-    if (h->pending) tide_heap_flush_pending(h);
+    if (h->pending | h->away | h->runs_pending) tide_heap_flush_pending(h);
 }
 
 // Frees the page tables the heap grew out of, which code on other threads may
@@ -158,13 +185,76 @@ tide_block *tide_heap_write_over(tide_heap *h, uint64_t block, uint32_t bytes);
 
 static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
 {
-    tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
+    // Read as tide_heap_block reads them: while a system's runs are on threads, another run's thread may be
+    // giving the heap a page, or a page a copy of its own
+    tide_page *const *pages = __atomic_load_n(&h->page, __ATOMIC_ACQUIRE);
+    tide_page *p = __atomic_load_n(&pages[block >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
     // A page bigger than one place has a reference for each (see tide_heap)
     const uint32_t places = p->size > (1u << TIDE_HEAP_PAGE_SHIFT) ? p->size >> TIDE_HEAP_PAGE_SHIFT : 1u;
     if (p->refs != places) return tide_heap_write_shared(h, block);
     p->hashed = UINT32_MAX; // What it hashed to is out of date
     return (tide_block *)(uintptr_t)((uint8_t *)tide_page_data(p) + (size_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)));
 }
+
+// ---------------------------------------------------------------------------
+// A heap in runs
+//
+// A per-entity system that changes its rows' text and lists goes through its
+// entities in runs, a fixed share of their order each, which threads take
+// (tidec's system_splits_in_order). Blocks handed out in the order threads
+// got to them would be at other offsets on every machine, so each run has a
+// heap of its own within its owner's: run 0 the owner's first, where
+// everything else that runs allocates too. A block says which run's heap it
+// is in, TIDE_HEAP_RUN_BITS of its handle and of a `where` (tide/text.h), so
+// the offsets a run hands out depend on that run's rows alone, in their order,
+// whichever thread has it and whatever the others do. The runs are the same
+// on one thread: a world is the same bytes however many threads made it.
+//
+// While its runs are on threads (between tide_heap_run_enter and
+// tide_heap_run_leave on each thread, until tide_heap_runs_join):
+// - a run's thread hands out and takes back blocks of its own run's heap
+//   alone;
+// - a block of another run's heap that a row lets go of (its entity was in
+//   that run when the block was made) is kept, zeroed once the row is done,
+//   and goes back to its own heap when the runs join, in the runs' order;
+// - any thread may write a block of any run's heap in place, as a row's
+//   list can be anywhere: a page a snapshot shares is replaced with a copy by
+//   whichever thread gets there first, and keeps its references until the
+//   join, so that no thread still holding it takes it for the heap's own.
+//
+// Everything a value keeps in several blocks (a list in chunks) is in one
+// run's heap, as its blocks name each other by offset: list.c moves such a
+// list whole into the heap of the run that adds to it.
+
+// The run this thread's code is on, as the bits of a `where`: 0 outside runs,
+// which is run 0's too.
+extern TIDE_THREAD_LOCAL uint32_t tide_heap_run_where;
+
+// Where a `where` and a handle say the run (tide/text.h has the rest).
+#define TIDE_WHERE_RUN_SHIFT 14u
+#define TIDE_HANDLE_RUN_SHIFT 54u
+
+// This thread is on run `run` of a system's entities from here on, and what it
+// was on before, to hand to tide_heap_run_leave: generated code calls them
+// around each run's rows.
+uint32_t tide_heap_run_enter(uint32_t run);
+void tide_heap_run_leave(uint32_t was);
+
+// Once every run of a system is done, for each owner it changes (its first
+// heap): the blocks the runs kept go back to their heaps, and the pages they
+// replaced lose their references.
+void tide_heap_runs_join(tide_heap *base);
+
+// Whether this thread is on a run that isn't `h`'s, so that a block of `h`
+// it lets go of is kept until the join; and an asset list's lease in such a
+// heap to give up then (tide_asset_drop), not now, as that heap's leases are
+// its own run's to change meanwhile.
+bool tide_heap_away(const tide_heap *h);
+void tide_heap_drop_later(tide_heap *h, const uint8_t id[32], uint64_t block);
+
+// An owner's heap for a run past the first, made if nothing has yet. Not
+// inline: every lookup of a heap has the call in it, and few take it.
+tide_heap *tide_heap_run_of(tide_heap *base, uint32_t run);
 
 // ---------------------------------------------------------------------------
 // A world's heaps
@@ -210,12 +300,15 @@ void tide_heaps_shape(const uint16_t *slots, const uint16_t *ids, uint32_t count
 // Makes `hs`'s heaps, if nothing has yet.
 tide_heap *tide_heaps_make(tide_heaps *hs);
 
-// The heap with that id.
+// The heap with that id: with a run above the id's bits, as a `where` and a
+// handle have it, that run's.
 static inline tide_heap *tide_heaps_of(tide_heaps *hs, const uint32_t id)
 {
     tide_heap *all = __atomic_load_n(&hs->all, __ATOMIC_ACQUIRE);
     if (!all) all = tide_heaps_make(hs);
-    return all + tide_heap_slots[id & (TIDE_HEAP_IDS - 1u)];
+    tide_heap *h = all + tide_heap_slots[id & (TIDE_HEAP_IDS - 1u)];
+    if (__builtin_expect(id >> TIDE_HEAP_ID_BITS != 0, 0)) return tide_heap_run_of(h, id >> TIDE_HEAP_ID_BITS);
+    return h;
 }
 
 // What tide_heap's own do, for all of a world's: only while nothing else
