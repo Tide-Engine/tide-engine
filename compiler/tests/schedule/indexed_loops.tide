@@ -162,4 +162,20 @@ system OneSided(Body body, query (Unit unit) units)
     }
 }
 
+// A list the system may change has no index kept from one run to the next, so its loop is the plain one;
+// asked for by name, it gets one each run.
+system OwnList(mut Field field, with Body)
+{
+    foreach (var p in field.points)
+    {
+        if (p.x > field.reach) continue;
+        Send(Hit { amount = 9 });
+    }
+    indexed foreach (var p in field.points)
+    {
+        if (p.x > field.reach) continue;
+        Send(Hit { amount = 9 });
+    }
+}
+
 scene Main { }

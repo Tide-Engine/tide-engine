@@ -25,22 +25,22 @@ stage 1  Expire  (per entity)
 
 stage 2  Fire  (per entity)
          reads Body, Aim
-         after Steer: it writes Body and Aim, which this reads
+         after Steer: it writes Aim, which this reads
          alongside Expire
 
 stage 3  Move  (per entity)
          reads Time
          writes Body
-         after Steer: both write Body (and through Fire)
-         after Fire: it reads Body, which this writes
+         after Steer: it writes Body.velocity, which this reads (and through Fire)
+         after Fire: it reads Body.position, which this writes
          alongside Expire
 
 stage 4  Bounce  (per entity)
          reads Arena
          writes Body
-         after Steer: both write Body (and through Fire)
-         after Fire: it reads Body, which this writes (and through Move)
-         after Move: both write Body
+         after Steer: both write Body.velocity (and through Fire)
+         after Fire: it reads Body.position, which this writes (and through Move)
+         after Move: both write Body.position
          alongside Expire
 
 Views, every frame in this order (they only read, so nothing waits):
@@ -53,7 +53,7 @@ Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
 ```
 
-`Steer` and `Expire` are both stage 1: neither waits for another system. `Expire` only touches `Lifetime`, so it can run alongside everything else. The others all work on `Body`, so they wait for each other, in the order they're written. Stages show dependency depth; `Fire` can start when `Steer` finishes, even if `Expire` is still running.
+`Steer` and `Expire` are both stage 1: neither waits for another system. `Expire` only touches `Lifetime`, so it can run alongside everything else. The others work on the same fields of `Body`, so they wait for each other, in the order they're written, and each wait says which field it's over: `Fire` reads a ball's position, which `Steer` doesn't write, so it's the `Aim` it waits for. Stages show dependency depth; `Fire` can start when `Steer` finishes, even if `Expire` is still running.
 
 In the editors, each system shows its stage and why it waits right above it, like `stage 2 · after Move: both write Body`, and on hover. A system that runs for each entity also says whether its entities go across threads, or [what keeps them on one](#splitting-across-threads).
 
@@ -96,7 +96,7 @@ In a big game, the long lists are cut short. Every wait that's a system's own is
 
 ## When systems wait
 
-Two systems **conflict** when one writes a component or singleton the other reads or writes. Conflicting systems keep their order in the tick; `[Before]` and `[After]` order systems too. A system starts as soon as everything it waits for is done, with no barriers between stages: a system's stage is only how deep it is in that chain.
+Two systems **conflict** when one writes a field of a component or singleton that the other reads or writes. It goes by field: a system that writes `Party.money` and one that reads `Party.at` don't wait for each other, on the same parties at the same time, and `tide schedule` and the editors name the field a wait is over (`it writes Party.money, which this reads`, with `and 2 more of its fields` where there are several). What counts as a system's is what its code does with the value, through the functions it hands it to: reading or copying it whole, calling one of its own methods on it, or handing it to C is every field. A field is as far as it goes (two elements of one array are one field), and small fields kept side by side in a component (four `bool`s, say) count as one. What a system reaches through its `World` is the whole component; a query's rows are the fields its loops read of them, where the system does nothing else with the query. Conflicting systems keep their order in the tick; `[Before]` and `[After]` order systems too. A system starts as soon as everything it waits for is done, with no barriers between stages: a system's stage is only how deep it is in that chain.
 
 [Named phases](./systems.md#named-phases), assigned with `[Stage(MyStages.Simulation)]`, add explicit ordering requirements to that plan. Later phases wait for earlier ones, and higher offsets wait for lower offsets within a phase. These names are separate from the numbered dependency stages printed above: systems at one phase and offset can share a dependency stage and run together. The schedule explains these waits as requirements of the stage order.
 
@@ -118,12 +118,12 @@ Some things systems wait for each other over whatever entities they run for:
 
 - Take a component as `with` when a system only needs it to pick entities.
 - Don't declare `mut` for what a system only reads. Unused access is a warning, and the editors offer a quick fix for it.
-- Splitting a big component into the parts different systems use lets them run side by side.
+- Read and write the fields a system needs where it needs them (`party.money`), rather than copying a component or singleton whole into a variable: a copy reads every field. Systems that use different fields of a big component run side by side without it being split up.
 - Reach other entities through the `World` only where the answer is needed this tick. An event sent to the other entity makes no system wait.
 
 ## Splitting across threads
 
-The other kind of parallelism is a system splitting its entities across threads: each thread takes a run of them, 2,048 at most. How small the runs get depends on what the entities cost: the engine times each system as the match runs, so a few hundred entities that each take a lot of work are shared out over every core, down to a few dozen a thread, while a few hundred cheap ones stay on one thread, where they're done sooner than another thread would wake. It doesn't change results either, and needs nothing from you, but a system only splits when no entity's turn depends on another's. One that changes a singleton runs on one thread, alongside the others. One that changes its own entities' text, lists, maps or sets (`party.path.Add(next)`, `unit.name = "..."`) splits like any other: the result is the same as on one thread, on every machine. Two things keep such a system on one thread, and `tide schedule` says which: a component that holds a grid, and a component your code hands to a C function that may change it. Writing an element of a fixed array in the entity's own component (`bot.seen[i] = x`) is a write to that component like any other, and splits. So does one that calls its `World`'s `Set`, which may change any entity, or that reads through its `World` or a query a component it also changes: it then sees the entities it already ran for as it left them, the same on every machine. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it: a system that records anything goes through its entities in the order of their identities, and threads take runs of that order.
+The other kind of parallelism is a system splitting its entities across threads: each thread takes a run of them, 2,048 at most. How small the runs get depends on what the entities cost: the engine times each system as the match runs, so a few hundred entities that each take a lot of work are shared out over every core, down to a few dozen a thread, while a few hundred cheap ones stay on one thread, where they're done sooner than another thread would wake. It doesn't change results either, and needs nothing from you, but a system only splits when no entity's turn depends on another's. One that changes a singleton and reads it back runs on one thread, alongside the others (below). One that changes its own entities' text, lists, maps or sets (`party.path.Add(next)`, `unit.name = "..."`) splits like any other: the result is the same as on one thread, on every machine. Two things keep such a system on one thread, and `tide schedule` says which: a component that holds a grid, and a component your code hands to a C function that may change it. Writing an element of a fixed array in the entity's own component (`bot.seen[i] = x`) is a write to that component like any other, and splits. So does one that calls its `World`'s `Set`, which may change any entity, or that reads through its `World` or a query a component it also changes: it then sees the entities it already ran for as it left them, the same on every machine. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it: a system that records anything goes through its entities in the order of their identities, and threads take runs of that order.
 
 For a per-entity system that stays on one thread, `tide schedule` says what keeps it there, and where in the code it first does:
 
@@ -136,6 +136,31 @@ stage 3  Tally  (per entity)
 
 The editors say it above the system as well: `on one thread: it changes the singleton Score`, which goes to that place when clicked, or `its entities go across threads` beside its stage. Hovering the system says the same.
 
+### Adding to a singleton
+
+A system that runs for each entity and takes a singleton `mut` usually only adds to it: it counts, sums, keeps a least or a most, adds to a list, or hands the singleton to a function that does. No entity's turn then reads what another's wrote, and the system's entities go across threads like any other's. Each thread works out what its entities add, and once they're all done the singleton is changed with those values in the entities' order, on one thread: the count, the list and its order, and a `float` sum to its last bit are what one thread would have made. `tide schedule` says so:
+
+```
+stage 2  Enlist  (per entity)
+         reads Trooper
+         writes Crowd
+         across threads: what its entities change of Crowd is changed after them, in their order
+```
+
+```tide
+system Enlist(Trooper t, mut Crowd crowd)
+{
+    if (t.down) return;
+    crowd.standing[t.team] += 1;
+    crowd.sum += t.position.xz;
+    crowd.spots.Add(Spot { id = this, at = t.position });
+}
+```
+
+What makes a system one: every statement that names the singleton is an assignment into it or a call that changes it (a list's or a map's method, a function handed it `mut`), and what that statement takes from the entity is plain values: fields, variables, constants, operators, `Math` and constructors of those, or text written out or interpolated from them. A system stays in order on one thread when a row reads what rows write (`if (score.total > 10)`, `unit.rank = score.total`), when what a statement takes from the entity is a call of the game's own or a list, when the function handed the singleton sends, spawns, rolls or starts a task, or when the system calls C. Reading a field of the singleton that the system never writes (`if (unit.id < score.limit)`) is fine anywhere.
+
+It only pays where the entities have work of their own, since the adding itself still happens on one thread. A system whose entities do little else than add stays in order as it was, and says so: `on one thread: it changes the singleton Score, and adding to it is most of what its rows do`. Working something out for each entity in the same system as it's added (a path, a score, a nearest enemy) is what the threads take.
+
 ## Which waits cost time
 
 A wait only costs a tick time when it's on the longest run of systems that each wait for the one before. `tide schedule --measured <report.json>` takes the report a [profiled run](../tools/debug-views.md#profile-captures) wrote (`tide run --release --frames 600 --profile report.json`) and adds, after the schedule:
@@ -147,9 +172,9 @@ Measured (report.json, 100 ticks, 4 of 4 systems ran):
 
 That chain, last to first (a wait that isn't on it costs the tick nothing):
     0.500 ms  Settle  (across threads)
-               after Count: it reads Body, which this writes; it writes Score, which this reads
+               after Count: it writes Score, which this reads
     2.000 ms  Count  (on one thread: it changes the singleton Score (game.tide:10))
-               after Move: it writes Body, which this reads
+               after Move: it writes Body.position, which this reads
     1.000 ms  Move  (across threads)
 
 The costliest systems:
@@ -158,6 +183,8 @@ The costliest systems:
 ```
 
 The first number is the tick on one thread. The second is what the waits alone leave of it: more threads can't go under it, so a tick gets shorter by making a system on the chain cheaper, by getting its entities across threads, or by removing one of the chain's waits. `Think` costs the most here and isn't on the chain: nothing waits for it, so it runs beside the other three. A system's time is from its start to its end, with its entities on whatever threads they went to, so one that already goes across threads counts as it ran. Systems that didn't run in the profiled ticks count as nothing.
+
+A second part does the same for the frame's views, from the same report: what they took one after another, as they run today, and the longest chain of views that wait for each other, by what their parameters read and write and the order `[After]` and `[Before]` give them.
 
 A spawn returns its final logical identity immediately; there is no temporary handle or later identity rewrite. Structural installation remains deferred. Queries executed by match/simulation code traverse ascending logical entity identity across archetypes. Presentation/view queries retain their existing traversal order. Extern systems receive contiguous runs in that same global order, while ordinary C function calls from otherwise independent parallel rows retain the game's existing determinism and thread-safety responsibility.
 

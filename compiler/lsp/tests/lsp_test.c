@@ -7973,15 +7973,17 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
 
     const char *lenses = request("textDocument/codeLens");
     TIDE_CHECK(has(lenses, "stage 1"));
-    TIDE_CHECK(has(lenses, "stage 2") && has(lenses, "after Move: both write Body"));
-    TIDE_CHECK(has(lenses, "stage 3") && has(lenses, "after Look: both write Score; it writes Body, which this reads"));
+    TIDE_CHECK(has(lenses, "stage 2") && has(lenses, "after Move: it writes Body.position, which this reads")); // By field
+    TIDE_CHECK(has(lenses, "stage 3") && has(lenses, "after Look: both write Score"));
     TIDE_CHECK(has(lenses, "nothing runs alongside"));
-    // Move's entities are its own; Look's and Tag's share a singleton they change, which the lens goes to
-    TIDE_CHECK(count(lenses, "its entities go across threads") == 1 && count(lenses, "on one thread: ") == 2);
-    TIDE_CHECK(has(lenses, "\"title\":\"on one thread: it changes the singleton Score\",\"command\":\"editor.action.goToLocations\","
-                           "\"arguments\":[\"file:///test.tide\",{\"line\":4,\"character\":7},[{\"uri\":\"file:///test.tide\","
-                           "\"range\":{\"start\":{\"line\":4,\"character\":"));
-    TIDE_CHECK(has(lenses, "\"title\":\"after Move: both write Body\",\"command\":\"editor.action.goToLocations\","
+    // Move's entities are its own, and Look's only set a singleton, from a log in their order; setting it is
+    // all Tag's do, so they stay on one thread, which the lens says and goes to
+    TIDE_CHECK(count(lenses, "its entities go across threads") == 2 && count(lenses, "on one thread: ") == 1);
+    TIDE_CHECK(has(lenses, "\"title\":\"on one thread: it changes the singleton Score, and adding to it is most of what its rows do\","
+                           "\"command\":\"editor.action.goToLocations\","
+                           "\"arguments\":[\"file:///test.tide\",{\"line\":5,\"character\":7},[{\"uri\":\"file:///test.tide\","
+                           "\"range\":{\"start\":{\"line\":5,\"character\":"));
+    TIDE_CHECK(has(lenses, "\"title\":\"after Move: it writes Body.position, which this reads\",\"command\":\"editor.action.goToLocations\","
                            "\"arguments\":[\"file:///test.tide\",{\"line\":4,\"character\":7},[{\"uri\":\"file:///test.tide\","
                            "\"range\":{\"start\":{\"line\":3,\"character\":7},\"end\":{\"line\":3,\"character\":11}}}],\"goto\"]"));
     TIDE_CHECK(has(lenses, "{\"range\":{\"start\":{\"line\":0,\"character\":10},\"end\":{\"line\":0,\"character\":14}},"
@@ -7995,9 +7997,9 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
                                 "\"context\":{\"includeDeclaration\":false}"), "\"uri\"") == 4);
 
     const char *hover = request_at("file:///test.tide", "textDocument/hover", 5, 8, "");
-    TIDE_CHECK(has(hover, "**Stage 3.**") && has(hover, "`Move`: it writes `Body`, which this reads"));
+    TIDE_CHECK(has(hover, "**Stage 3.**") && has(hover, "`Move`: it writes `Body.position`, which this reads"));
     TIDE_CHECK(has(hover, "No other system can run at the same time."));
-    TIDE_CHECK(has(hover, "on one thread: it changes the singleton `Score` (line 6)."));
+    TIDE_CHECK(has(hover, "on one thread: it changes the singleton `Score`, and adding to it is most of what its rows do (line 6)."));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 3, 8, ""), "Its entities can go across threads."));
 
     const char *remove_mut = request_at("file:///test.tide", "textDocument/codeAction", 4, 0,
@@ -9633,7 +9635,7 @@ TIDE_TEST(lsp_out_selection_and_calls)
                              "system Halve(mut Tally tally) { TryHalf(8, out tally.total); }\n"
                              "system Read(Tally tally, mut Seen seen) { seen.total = tally.total; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(request("textDocument/codeLens"), "after Halve: it writes Tally, which this reads"));
+    TIDE_CHECK(has(request("textDocument/codeLens"), "after Halve: it writes Tally.total, which this reads"));
 }
 
 // The World in a function: its caller's, passed on; what it reaches shows as the system's own, and world.TryGet makes its variable.

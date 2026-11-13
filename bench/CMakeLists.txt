@@ -237,7 +237,7 @@ endif()
 # llvm-symbolizer and the program's PDB: profile release builds).
 if(WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_executable(tide_sample EXCLUDE_FROM_ALL profile/sample.c)
-    target_link_libraries(tide_sample PRIVATE psapi)
+    target_link_libraries(tide_sample PRIVATE psapi dbghelp)
     target_compile_definitions(tide_sample PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 

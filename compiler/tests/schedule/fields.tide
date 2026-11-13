@@ -1,0 +1,73 @@
+// Two systems that take the same component or singleton wait for each other
+// only where one writes fields the other reads or writes, and the wait says
+// which.
+
+singleton Tally
+{
+    int hits;
+    int misses;
+    float spent;
+    int[2] sides;
+    int Sum() { return hits + misses; }
+}
+singleton Ledger { int total; List<int> entries; List<int> notes; }
+component Body { float3 position; float3 velocity; float radius; int team; }
+component Flags { bool hot; bool wet; bool lit; bool old; int count; }
+component Marker { }
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body, Flags);
+    Spawn(Body, Flags, Marker);
+}
+
+void Bump(mut Tally tally) { tally.hits += 1; }
+void BumpThrough(mut Tally tally) { Bump(tally); }
+int Spent(Tally tally) { return int(tally.spent); }
+
+// A singleton's fields: these three are at once...
+system CountHits(mut Tally tally) { BumpThrough(tally); }
+system CountMisses(mut Tally tally) { tally.misses += 1; }
+system ReadSpent(Tally tally, mut Ledger ledger) { ledger.total = Spent(tally); }
+// ...this one reads what CountHits writes...
+system ReadHits(Tally tally, mut Flags flags) { flags.count = tally.hits; }
+// ...and a field is as far as it goes: two elements of one array wait
+system CountLeft(mut Tally tally) { tally.sides[0] += 1; }
+system CountRight(mut Tally tally) { tally.sides[1] += 1; }
+// The value whole, or a method of its own called on it: every field
+system CopyTally(Tally tally, mut Ledger ledger)
+{
+    var copy = tally;
+    ledger.total = copy.misses;
+}
+system SumTally(Tally tally, mut Ledger ledger) { ledger.total = tally.Sum(); }
+
+// A component's fields: its lanes, four bytes each. Position and velocity are
+// lanes apart, on the same entities at once...
+system Drift(mut Body body) { body.velocity.y -= 1; }
+system Grow(mut Body body) { body.radius += 1; }
+// ...this reads the velocity Drift writes, and writes the position...
+system Move(mut Body body) { body.position += body.velocity; }
+// ...and four bools share a lane, so these wait for each other
+system Heat(mut Flags flags) { flags.hot = true; }
+system Soak(mut Flags flags) { flags.wet = true; }
+
+// A query's rows: the fields its loops read of them
+system Teams(mut Tally tally, query (Body b) bodies)
+{
+    foreach (var row in bodies) if (row.b.team == 1) tally.spent += 1;
+}
+// ...all of it where the rows go to a function, or the World reaches it
+float Widest(query (Body b) bodies)
+{
+    mut var widest = 0.0;
+    foreach (var row in bodies) widest = Math.Max(widest, row.b.radius);
+    return widest;
+}
+system Reach(mut Ledger ledger, query (Body b) bodies) { ledger.total = int(Widest(bodies)); }
+system Peek(mut Ledger ledger, World world, with Marker) { ledger.total = world.Get<Body>(this).team; }
+
+// Two lists of one owner are in its heap, which one system changes at a time
+system Enter(mut Ledger ledger) { ledger.entries.Add(1); }
+system Annotate(mut Ledger ledger) { ledger.notes.Add(2); }

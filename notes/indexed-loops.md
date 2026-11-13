@@ -192,4 +192,17 @@ Built: `compiler/src/index_codegen.inc` (included by `codegen.c` before `gen_que
 | 20 of each | 1.48 µs | 1.42 µs |
 
   At 20 the loops are below `TIDE_IX_LEAST` and run the plain loop (before, they listed the rows and gathered each: 5.4 µs a tick). The boids and agents alone were measured before that change, which leaves 10,000 as it was.
-- **Gaps**: an index of the loop's own each run (lists without a proof they're unchanged, local handlers' rows) still pays a build each run, which skips the guard's work but not a pass over the elements. A local list's site is shared by the threads running its code, so per-entity code with a local list on several threads rebuilds it more often than it reuses it (correct, slower). A loop in async code whose body waits isn't indexed.
+- **No index for one run alone (2026-11-13).** A list without a proof it's unchanged (a component's, a `mut` or
+  local singleton's, a parameter's, a local the code writes, anything in a task) and a local handler's rows used to
+  get an index of the loop's own at each run: every element read for its keys, a sort, a search, and the index's
+  memory taken and given back, where the plain loop is one pass that tests the same keys. Found in Mount & Rifle
+  (`Infantry.Eyepiece`, two loops over a part's vertices in the `HeldWeapon` view: `tide_realloc` under
+  `grow_entries` and `build_sorted` were the frame thread's largest single cost in a `tide_sample --stacks` run;
+  25 such loops in the game). Now `plan_loop` (`indexing.c`, `list_kept`) plans none for such a list and says why
+  (`not indexed: its list could change between one run of the loop and the next...`, in `tide schedule` and the
+  editors), and codegen writes the plain loop where only its context rules a kept index out (inside a task, a
+  routine, a parallel loop's step: `gen_indexed_list`) and for a local handler's rows (`gen_indexed_rows`).
+  `indexed foreach` still gets its index, each run: the code asked. Measured on Mount & Rifle's battle, three
+  runs each alternating on a loaded machine (everything about twice its quiet time): `HeldWeapon` 0.73 to 0.49 ms
+  a frame, the other views within their spread; `Campaign.Roam`, three such loops, 0.52 to 0.49.
+- **Gaps**: A local list's site is shared by the threads running its code, so per-entity code with a local list on several threads rebuilds it more often than it reuses it (correct, slower). A loop in async code whose body waits isn't indexed.

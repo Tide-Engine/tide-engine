@@ -358,7 +358,7 @@ void print_outline(const program *prog, sb *out)
                 put_name(out, d->event);
             }
             put_access(out, d);
-            if (d->stage > 0) put_schedule(out, d);
+            if (d->stage > 0 && !d->is_view) put_schedule(out, d); // Views have waits among themselves too, for the measured schedule alone
             break;
         default:
             break;

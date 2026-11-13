@@ -1,4 +1,4 @@
-heaps: 17 systems each tick, 4 stages deep; 17 can run alongside others.
+heaps: 17 systems each tick, 3 stages deep; 17 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  Write  (once)
@@ -12,12 +12,18 @@ stage 1  Note  (once)
          alongside Write, Enlist, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2, Dig, Solder
 stage 1  Stuff  (per entity)
          writes Pack
-         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2, Dig, Solder
+         alongside Write, Enlist, Note, Walk, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2, Dig, Solder
 stage 1  Walk  (per entity)
          writes Trail
-         alongside Write, Enlist, Note, Stuff, StuffMarked, StuffPlain, Haunt, Summon, Tag, Call, Shout, Native1, Native2, Dig, Solder
+         alongside Write, Enlist, Note, Stuff, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2, Dig, Solder
 stage 1  Haunt  (per entity)
          alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Tag, Retag, Call, Shout, Native1, Native2, Dig, Solder
+stage 1  Tag  (per entity)
+         reads Pack
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Retag, Call, Shout, Native1, Native2, Dig, Solder
+stage 1  Retag  (per entity)
+         reads Trail
+         alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Call, Shout, Native1, Native2, Dig, Solder
 stage 1  Call  (per entity)
          alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Native1, Native2, Dig, Solder
 stage 1  Native1  (once)
@@ -30,15 +36,11 @@ stage 1  Dig  (per entity)
 
 stage 2  StuffMarked  (per entity)
          writes Pack
-         after Stuff: both change the text, lists or grids of Pack; both write Pack
-         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2, Dig, Solder
+         after Stuff: both change the text, lists or grids of Pack; both write Pack.items
+         alongside Write, Enlist, Note, Walk, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2, Dig, Solder
 stage 2  Summon  (per entity)
          after Haunt: both change the text, lists or grids of Ghost
          alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Tag, Retag, Call, Shout, Native1, Native2, Dig, Solder
-stage 2  Retag  (per entity)
-         reads Trail
-         after Walk: it writes Trail, which this reads
-         alongside Write, Enlist, Note, Stuff, StuffMarked, StuffPlain, Haunt, Summon, Tag, Call, Shout, Native1, Native2, Dig, Solder
 stage 2  Shout  (per entity)
          after Call: both change the text, lists or grids of Named
          alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Native1, Native2, Dig, Solder
@@ -49,22 +51,15 @@ stage 2  Native2  (once)
 
 stage 3  StuffPlain  (per entity)
          writes Pack
-         after Stuff: both change the text, lists or grids of Pack; both write Pack (and through StuffMarked)
+         after Stuff: both change the text, lists or grids of Pack; both write Pack.items (and through StuffMarked)
          after StuffMarked: both change the text, lists or grids of Pack
-         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2, Dig, Solder
+         alongside Write, Enlist, Note, Walk, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2, Dig, Solder
 stage 3  Solder  (per entity)
          writes Wire
          on one thread: it changes the text, lists or grids of Wire, which are in the match's one heap and go in the order its entities do (heaps.tide:63)
          after Native1: both change text, lists or grids kept in one heap, those of Native and Wire (and through Native2)
          after Native2: both change text, lists or grids kept in one heap, those of Other and Wire
          alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Dig
-
-stage 4  Tag  (per entity)
-         reads Pack
-         after Stuff: it writes Pack, which this reads (and through StuffMarked)
-         after StuffMarked: it writes Pack, which this reads (and through StuffPlain)
-         after StuffPlain: it writes Pack, which this reads
-         alongside Write, Enlist, Note, Walk, Haunt, Summon, Retag, Call, Shout, Native1, Native2, Dig, Solder
 
 Systems that change the text, lists or grids of any of these wait for each other, as they're kept in one heap:
          Native: C can write it
