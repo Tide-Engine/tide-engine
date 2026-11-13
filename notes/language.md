@@ -18,6 +18,13 @@ table of the program's own. All of it, with its contracts, tests, measurements a
   rewritten (`written_arg`).
 - `tidec --no-call-merging` and `--no-cached` (`NO_CALL_MERGING`, `NO_CACHED` in `tide_add_game`) are for the
   tests and benchmarks that compare a game with and without.
+## `previous` on a query binding (2026-11-13)
+
+`query (previous Trooper other) others`: the owner's word and meaning, the rest Provisional. The checker's rules
+(`check_previous_binding`), what a tick keeps and how rows read it, the schedule and the index are in
+schedule-and-threads.md, top section; the spec's is Read-only entity queries. `param.previous`, `decl.kept_previous`,
+`decl.previous_reads` and `program.keeps_previous` are its marks in the tree. Owned prediction's selection counts a
+`previous` read as a read of the component (its writers the tick before are wanted).
 
 ## Dense Owned dependency graphs compile in the embedded compiler (2026-11-07)
 

@@ -1,0 +1,130 @@
+// `previous` on a query's binding reads the tick's start: no wait either way, the system's entities across
+// threads though it changes what it reads of the others, and an index made once a tick.
+
+component Body
+{
+    float3 position;
+    float3 velocity;
+    int team;
+    int near;
+}
+
+component Bot
+{
+    float alarm;
+    Entity target;
+}
+
+component Mount { }
+
+singleton Count
+{
+    int close;
+    int far;
+}
+
+event Seen
+{
+    int count;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 100; i++)
+    {
+        var e = Spawn(Body { position = float3(float(i), 0, 0), team = i % 2 }, Bot { });
+        if (i % 4 == 0) e.Add(Mount);
+    }
+}
+
+// Writes Body, and reads every Body through a query as it is: on one thread, after every writer
+system Crowd(mut Body body, query (Body other) others)
+{
+    mut var n = 0;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, body.position) > 4) continue;
+        n++;
+    }
+    body.near = n;
+}
+
+system Move(mut Body body)
+{
+    body.position += body.velocity;
+}
+
+// The same as Crowd with `previous`: across threads, waiting for Move over its own rows alone, and its loop
+// indexed though it writes the position it searches by
+system Flock(mut Body body, query (previous Body other) others)
+{
+    mut var pull = float3(0, 0, 0);
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, body.position) > 4) continue;
+        pull += o.other.position - body.position;
+    }
+    body.position += pull * 0.01;
+}
+
+// Reads nothing of now: no wait at all, though it's last in the tick
+system Tally(mut Count count, query (previous Body body) all)
+{
+    mut var close = 0;
+    foreach (var row in all)
+    {
+        if (row.body.near < 3) continue;
+        close++;
+    }
+    count.close = close;
+}
+
+// One query of the tick's start beside one of now: it waits over what the second reads
+system Compare(mut Count count, query (previous Body was, with Mount) before, query (Body now, with Mount) after)
+{
+    mut var far = 0;
+    foreach (var a in before)
+    {
+        foreach (var b in after)
+        {
+            if (Math.Distance(a.was.position, b.now.position) > 30) far++;
+        }
+    }
+    count.far = far;
+}
+
+// A function handed the query reads what it reads
+float Nearest(query (Body other) others, float3 at)
+{
+    mut var best = 100.0;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, at) > 9) continue;
+        best = Math.Min(best, Math.Distance(o.other.position, at));
+    }
+    return best;
+}
+
+// Changes another component, sends, and looks through a function: in entity order across threads
+system Sense(mut Bot bot, Body body, query (previous Body other) others)
+{
+    bot.alarm = Nearest(others, body.position);
+    if (bot.alarm < 2) this.Send(Seen { count = 1 });
+}
+
+// A parallel loop over rows of the tick's start
+system Shout(query (previous Body body) all)
+{
+    parallel (var row in all)
+    {
+        if (row.body.near < 5) continue;
+        Send(Seen { count = row.body.near });
+    }
+}
+
+event(Seen seen) Heard(mut Count count)
+{
+    count.close += seen.count;
+}

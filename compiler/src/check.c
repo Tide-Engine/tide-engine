@@ -18820,6 +18820,53 @@ static bool check_verified_binding(const decl *sys, const param *p)
     return true;
 }
 
+// `previous` on a binding of a system's query: every entity's component as it was when this tick started
+// (docs/spec.md, `previous` in a query). Returns false after an error.
+static bool check_previous_binding(const decl *sys, const param *query, param *p)
+{
+    const loc at = p->previous_at;
+    const char *name = p->name.len ? str_to_cstr(p->name) : "other";
+    if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT) {
+        diag_error(at, "'previous' reads a component's values as they were when the tick started; which entities have "
+                       "'" STR_FMT "' is the same now as then, as components come and go at the tick's end", STR_ARG(p->type_name));
+        diag_note("drop 'previous' on the filter; on a binding it reads the values: 'query (previous " STR_FMT " %s) others'",
+                  STR_ARG(p->type_name), name);
+        return false;
+    }
+    if (p->verified) {
+        diag_error(at, "'previous' is the match as this tick started and 'verified' the match as the server confirmed it: "
+                       "a binding is one or the other");
+        return false;
+    }
+    if (query->function_param) {
+        diag_error(at, "a function's query is the one it's handed, and reads what that one reads: 'previous' goes on the "
+                       "system's query");
+        diag_note("like 'system Sense(query (previous " STR_FMT " %s) others) { Look(others); }', with 'query (" STR_FMT
+                  " %s) others' in the function", STR_ARG(p->type_name), name, STR_ARG(p->type_name), name);
+        return false;
+    }
+    if (sys->kind != DECL_SYSTEM || sys->is_view || sys->is_local) {
+        diag_error(at, "'previous' is for a system's query: it's what lets systems of one tick run without waiting for "
+                       "each other, and %s", sys->is_view ? "a view runs between ticks, when nothing changes the match"
+                                                          : "this isn't part of a tick's schedule");
+        if (sys->is_view) diag_note("a view's query reads the match as the view draws it; drop 'previous'");
+        return false;
+    }
+    if (sys->is_handler) {
+        diag_error(at, "'previous' is for a system's query: a handler runs once the tick's systems are done, one at a "
+                       "time, and waits for nothing");
+        diag_note("a system reads the tick's start with 'system Name(query (previous " STR_FMT " %s) others) { ... }'; a "
+                  "handler's query reads the world as its event's turn finds it", STR_ARG(p->type_name), name);
+        return false;
+    }
+    if (p->mode == PARAM_MUT) {
+        diag_error(at, "'previous' reads a component as it was when the tick started, which nothing can change: drop 'mut'");
+        p->mode = PARAM_READ;
+        return false;
+    }
+    return true;
+}
+
 // A second candidate set belongs to the system, but never to its outer
 // entity filter. Its row is compiler-only data: code reads its named fields.
 // A view takes one as a system does, and so does a local handler: local code
@@ -18870,6 +18917,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             refused_binding(row, p);
             continue;
         }
+        if (p->previous && !check_previous_binding(sys, query, p)) p->previous = false;
         if (p->mode == PARAM_MUT && !query->function_param && !is_local_code(sys)) {
             diag_error(p->at, "query component bindings are read-only and can't be 'mut'");
             p->mode = PARAM_READ;
@@ -18932,7 +18980,19 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             diag_note("'verified' is for the match's components, which a client predicts ahead of the server");
             p->verified = false;
         }
+        if (p->previous && d->is_local) {
+            diag_error(p->previous_at, "'" STR_FMT "' is local: nothing of it is part of a tick, so it has no value from the "
+                       "tick's start", STR_ARG(d->name));
+            diag_note("'previous' is for the match's components, which the tick's systems change");
+            p->previous = false;
+        }
         p->type = (type){TY_COMPONENT, d};
+        if (p->previous) { // As the tick started: its pages are kept from then (previous_codegen.inc)
+            d->kept_previous = true;
+            c->prog->keeps_previous = true;
+            // What it kept in its heap is read there, and elements with text come as copies in the scratch area
+            if (decl_holds_text(d)) c->prog->uses_text = true;
+        }
         if (p->verified) { // Of the entity as the server confirmed it
             // What the confirmed world keeps in its heap is read there, as for a view's own parameter
             if (param_binding(p) && decl_holds_text(d)) c->prog->uses_text = true;
@@ -18955,6 +19015,12 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         field binding = {.name = p->name, .type_name = p->type_name, .type = p->type, .at = p->name_at,
                          .type_at = p->type_at, .type_qual_at = p->type_qual_at};
         vec_push(row->fields, binding);
+        if (p->previous) { // Of the tick's start: nothing the schedule orders (decl.previous_reads)
+            bool listed = false;
+            for (int j = 0; j < sys->previous_reads.count; j++) listed |= sys->previous_reads.items[j] == d;
+            if (!listed) vec_push(sys->previous_reads, d);
+            continue;
+        }
         world_use *use = NULL;
         for (int j = 0; j < sys->world_uses.count; j++) {
             if (sys->world_uses.items[j].component == d) use = &sys->world_uses.items[j];
@@ -19072,6 +19138,13 @@ static void check_params(const checker *c, decl *sys)
             }
         }
 
+        if (p->previous && p->mode != PARAM_QUERY) {
+            diag_error(p->previous_at, "'previous' goes on a binding of a system's query, which reads other entities: this "
+                                       "is %s", p->mode == PARAM_EVENT ? "the event" : "the code's own parameter");
+            diag_note("like 'system Name(mut " STR_FMT " %s, query (previous " STR_FMT " other) others) { ... }'",
+                      STR_ARG(p->type_name), p->name.len ? str_to_cstr(p->name) : "mine", STR_ARG(p->type_name));
+            p->previous = false;
+        }
         if (p->verified && p->mode != PARAM_EVENT && !check_verified_param(sys, p, d)) p->verified = false;
         // What the confirmed world keeps in its heap is read there, and elements with text come as copies in the scratch area
         if (p->verified && p->mode != PARAM_EVENT && d && decl_holds_text(d)) c->prog->uses_text = true;

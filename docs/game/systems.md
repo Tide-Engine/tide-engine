@@ -76,11 +76,41 @@ Sparse components and tags are checked for each candidate, and an empty query ru
 
 Queries use normal deterministic ECS traversal. They do not sort by entity ID, distance or hit time. For a swept projectile, calculate each candidate's intersection and keep the earliest one before sending a hit.
 
-Query data reads the current world and participates in [the schedule](./schedule.md). A system that also changes a queried component runs on one thread, following the same rule as reading its own writes through `World`: it sees rows changed earlier in that run. Events and structural changes still wait for the end of the tick, so sending a hit or recording a destroy through `fighter.entity` does not change what this iteration reads.
+Query data reads the current world and participates in [the schedule](./schedule.md). A system that also changes a queried component runs on one thread, following the same rule as reading its own writes through `World`: it sees rows changed earlier in that run. A binding marked [`previous`](#as-the-tick-started) reads the tick's start instead, and does neither. Events and structural changes still wait for the end of the tick, so sending a hit or recording a destroy through `fighter.entity` does not change what this iteration reads.
 
 Queries have read-only component bindings and component filters. Queries are used directly in `foreach`, or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query) with the same `query (...)` parameter syntax. The caller's selection and data timing stay intact. Queries and whole rows cannot be stored or returned; whole rows cannot be passed to functions. Keep iteration and forwarding outside parallel loops (other than the query's own, below) and callback blocks. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
 
 Systems, views and synchronous event and command handlers take queries. A match handler reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
+
+### As the tick started
+
+Write `previous` before a binding to read every entity's component as it was when this tick started, whatever has run since:
+
+```csharp
+system Flock(mut Bird bird, query (previous Bird other) others)
+{
+    mut var center = float3(0, 0, 0);
+    mut var seen = 0;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, bird.position) > 2) continue;
+        center += o.other.position;
+        seen++;
+    }
+    if (seen > 0) bird.velocity += (center / float(seen) - bird.position) * 0.001;
+    bird.position += bird.velocity;
+}
+```
+
+Every bird steers by where the others were when the tick began, not by where the birds before it in the loop have already moved to. That is usually what such code means, and it is what lets it run fast:
+
+- **It waits for nothing.** Nothing in a tick can change what a `previous` binding reads, so the system doesn't wait for the systems that change `Bird` this tick, and they don't wait for it. See [the schedule](./schedule.md#when-systems-wait).
+- **Its entities go across threads.** A system that changes a component and reads everyone's through an unmarked query runs its entities one after another on one thread, as each sees what the ones before it wrote. With `previous` there is nothing of the others' to see, so the birds are shared out over every core, with the same results as on one.
+- **Its search is made once.** A loop that [starts by skipping rows](#only-the-rows-that-can-pass) by a number of a `previous` binding goes through an index of the tick's start. It's made at most once a tick, for every system that searches the same way, and the system may change the very field it searches by (`bird.position` above), which an unmarked query's loop can't.
+
+`previous` goes on a binding of a system's query, and reads the component's values: its text, lists, maps, sets and grids as they were too. The query has the same entities either way, as entities and their components come and go at the tick's end: one spawned this tick is in no query yet, and one destroyed this tick is still there with the values it started the tick with. Other bindings of the same query read the world as it is, and a [function handed the query](../language/functions.md#borrowing-a-query) reads what the query reads. Filters, a system's own parameters, views and handlers don't take it. To compare a component now with what it was, take two queries, one with the word and one without.
+
+Only the components some query marks `previous` are kept, and only while the tick's systems run. This is provisional but for the word and what it reads.
 
 ### Going through the rows at once
 
@@ -141,7 +171,7 @@ indexed foreach (var b in boids) { ... }
 
 - Something happens before the condition, such as a `Send`. Move the condition first.
 - The value compared with changes inside the loop.
-- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so move that change into a system of its own.
+- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so read the others as [the tick started](#as-the-tick-started) (`query (previous Body other, with Boid) boids`), or move that change into a system of its own.
 
 `tidec --schedule` lists every loop that skips rows, and whether an index finds the rest or why not. An index of rows that don't change, like walls, is made once and kept across ticks.
 

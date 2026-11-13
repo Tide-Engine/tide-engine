@@ -574,6 +574,13 @@
           }
         },
         {
+          "comment": "system Sense(query (previous Body other) others): a query's binding as the tick started. A word of its own where a binding starts, before its type and its name. A name anywhere else: previous score, previous is Stats checked",
+          "match": "(?:(?<=[(,])|^)\\s*(previous)(?=\\s+(?!(?:is|in)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*>)?\\??\\s+[A-Za-z_])",
+          "captures": {
+            "1": { "name": "storage.modifier.previous.tide" }
+          }
+        },
+        {
           "comment": "with verified Dead, without verified Dead: a view's filter by the world the server has confirmed. A component's name where none follows it: with verified",
           "match": "\\b(with|without)\\s+(verified)(?=\\s+[A-Za-z_])",
           "captures": {

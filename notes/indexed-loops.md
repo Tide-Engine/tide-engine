@@ -1,3 +1,27 @@
+## A key of the tick's start (2026-11-13)
+
+A query binding marked `previous` reads its component as the tick started (schedule-and-threads.md, top section;
+`docs/spec.md`, Read-only entity queries). For a loop whose key is in such a binding:
+
+- **The plan** (`loop_index.previous`, `path_previous` in `indexing.c`) isn't refused for the system changing the
+  key's field of its own entity, nor for the loop setting the component through its World
+  (`query_source_still`): neither changes what the loop finds rows by. A loop in a function handed the query is
+  still refused for a calling system that changes the key and has an unmarked query of the component; a system
+  whose queries take it `previous` alone no longer counts.
+- **The index** is of the tables the tick kept (`ix_query.before`, `ix_table` in `index_codegen.inc`): its facts
+  are the kept pages (entity column, the filters' presence bytes, the key's lanes), so it's checked once in a
+  tick's run and searched with no lock by every thread after (`fast` for any code), and kept across ticks while
+  nobody changes those pages.
+- **One site for every loop that makes the same index** (`ix_site_shared`, `gen.ix_shared`): found by the plan's
+  whole text (archetypes, columns, lanes, key paths), not by the loop, so two systems and a function they call
+  that search one query the same way build it once a tick between them. Their `most` and `pass` counts are the
+  site's, so shared too: any value they hold only changes which of two equal loops runs.
+- A candidate is still checked against the world's table as it is (its row, a hole, the filters) and against
+  the kept table's count, and its `previous` bindings gathered from the kept table.
+
+`tidec_previous_same` is the differential (the fixture with its indexes and built `NO_LOOP_INDEXES` print the same
+each tick); `schedule/previous.tide` pins the plans.
+
 ## Narrow plain-query reads (2026-11-07)
 
 The canonical plain traversal now narrows transient component copies to consumed

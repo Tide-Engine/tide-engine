@@ -268,6 +268,7 @@ typedef struct gen {
     bool ix_any;
     VEC(const struct stmt *) ix_loops;
     VEC(const void *) ix_variants;
+    VEC(const char *) ix_shared; // ...and, for a site of the tick's start, all its index is made from: loops with the same share it (ix_site_shared)
     VEC(const struct stmt *) ix_used;   // Loops written through their index (ix_check)
     VEC(const struct stmt *) ix_locals; // Locals whose list a loop keeps its index of (loop_index.list_local)
     VEC(const struct stmt *) ix_stamped; // ...declared, where the code is, with their stamps' C names
@@ -9868,6 +9869,7 @@ static void gen_header(gen *g)
         sb_put(o, "    struct tide_rows_cache *tide_rows_cache; // Derived selection, never copied, hashed or packed\n");
     }
     if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
+    if (prog->keeps_previous) sb_put(o, "    struct tide_previous *tide_previous; // Components as the tick started, for `previous` bindings, while its systems run: never copied, hashed or packed\n");
     sb_put(o, "} tide_world;\n\n");
     if (g->ix_any) sb_put(o, "// Lets go of the indexes indexed loops keep outside the worlds, before the game's library is unloaded\n"
                              "#define TIDE_HAS_LOOP_INDEXES 1\nvoid tide_loop_indexes_free(void);\n\n");
@@ -15134,10 +15136,19 @@ static void gen_query_fresh(gen *g, const param *q, const char *name);
 // - A sharded game's views, which read which shard they draw from their thread.
 // ...and why, for `tide schedule` (print_parallel_loops): NULL for a loop that shares its steps out. `held` is
 // the variable its steps read, for the first reason.
+static bool confirmed_copies(const decl *d);
+
 static const char *par_stays_why(const program *prog, const decl *sys, const stmt *loop, const stmt **held)
 {
     *held = NULL;
     if (sys->is_worker) return NULL; // Its captures are made its own (gen_parallel_call)
+    // A `previous` value's lists of text are copies in the scratch area of the thread that made the rows
+    for (int i = 0; loop->query && i < loop->query->query.count; i++) {
+        const param *p = &loop->query->query.items[i];
+        if (p->previous && param_binding(p) && p->type.decl && confirmed_copies(p->type.decl)) {
+            return "its rows' 'previous' values hold lists of text or of lists, which are copies on the thread that made the rows";
+        }
+    }
     if (sys->is_local && !sys->is_view) return "a local handler's loops stay on its thread";
     if (sys->is_view && prog->shard_state) return "a sharded game's views stay on the frame's thread";
     stmt_list locals = {0};
@@ -15991,6 +16002,7 @@ static bool query_reads_lane(const query_lane_read *r, const int k)
     return !r->some || (r->words[k >> 6] >> (k & 63) & 1u);
 }
 
+#include "previous_codegen.inc"
 #include "index_codegen.inc"
 
 static void gen_query_walk(gen *g, const stmt *s, const char *gather);
@@ -16096,6 +16108,10 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         narrowed |= r->some;
         for (int k = 0; k < comp_lanes(p->type.decl); k++) if (query_reads_lane(r, k)) r->columns++;
     }
+    // A `previous` binding's lanes are the kept table's (previous_codegen.inc), which nothing writes
+    bool *before = arena_alloc((size_t)(q->query.count ? q->query.count : 1) * sizeof *before);
+    bool any_before = false;
+    for (int i = 0; i < q->query.count; i++) any_before |= before[i] = canonical && query_binding_previous(q, selection, i);
     const decl *query_code = own_routine(g) ? own_routine(g) : g->code;
     const bool cache_columns = canonical && !gather && query_code && !query_code->is_local
         && !query_code->is_async && !query_code->starts_tasks && !query_code->reaches_extern && !sharded(g);
@@ -16116,7 +16132,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             line(g, o, "const tide_entity *tide_query_entities%d = NULL;", a);
             for (int i = 0; i < q->query.count; i++) {
                 const param *p = &q->query.items[i];
-                if (!param_binding(p) || query_changes_binding(g, p) || !reads[i].columns) continue;
+                if (!param_binding(p) || (!before[i] && query_changes_binding(g, p)) || !reads[i].columns) continue;
                 line(g, o, "const uint8_t *tide_query_columns%d_%d[%d] = {0};", a, i, reads[i].columns);
             }
         }
@@ -16131,6 +16147,10 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         line(g, o, "{ // query: %s", arch_label(g, a));
         g->indent++;
         line(g, o, "const tide_table *tide_qt = &%s->%s;", world, arch_name(g, a));
+        if (any_before) {
+            line(g, o, "const tide_table *tide_qp = %s;", previous_table(g, world, a));
+            line(g, o, "if (tide_qloc.row >= tide_qp->count) break; // Not there as the tick started");
+        }
         if (canonical) line(g, o, "{ const uint32_t tide_qc = tide_qloc.row >> %d;", arch_shift(g, a));
         else line(g, o, "for (uint32_t tide_qc = 0; tide_qc < tide_qt->chunks; tide_qc++) {");
         g->indent++;
@@ -16142,10 +16162,10 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             line(g, o, "tide_query_entities%d = tide_table_column(tide_qt, %s, tide_qc, 0);", a, arch_columns(g, a));
             for (int i = 0; i < q->query.count; i++) {
                 const param *p = &q->query.items[i];
-                if (!param_binding(p) || query_changes_binding(g, p)) continue;
+                if (!param_binding(p) || (!before[i] && query_changes_binding(g, p))) continue;
                 for (int k = 0, n = 0; k < comp_lanes(p->type.decl); k++) if (query_reads_lane(&reads[i], k)) {
-                    line(g, o, "tide_query_columns%d_%d[%d] = tide_table_column(tide_qt, %s, tide_qc, %d);",
-                         a, i, n++, arch_columns(g, a), arch_column(g, a, p->type.decl->index) + k);
+                    line(g, o, "tide_query_columns%d_%d[%d] = tide_table_column(%s, %s, tide_qc, %d);",
+                         a, i, n++, before[i] ? "tide_qp" : "tide_qt", arch_columns(g, a), arch_column(g, a, p->type.decl->index) + k);
                 }
             }
             g->indent--; line(g, o, "}");
@@ -16153,7 +16173,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         } else line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
         for (int i = 0; i < q->query.count; i++) {
             const param *p = &q->query.items[i];
-            if (!param_binding(p) || query_changes_binding(g, p) || !reads[i].columns) continue;
+            if (!param_binding(p) || (!before[i] && query_changes_binding(g, p)) || !reads[i].columns) continue;
             const decl *comp = p->type.decl;
             if (cache_columns) {
                 line(g, o, "const uint8_t *const *tide_qcol%d = tide_query_columns%d_%d;", i, a, i);
@@ -16163,8 +16183,8 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             sb_printf(o, "const uint8_t *const tide_qcol%d[%d] = {", i, reads[i].columns);
             for (int k = 0, n = 0; k < comp_lanes(comp); k++) {
                 if (!query_reads_lane(&reads[i], k)) continue;
-                sb_printf(o, "%s(const uint8_t *)tide_table_column(tide_qt, %s, tide_qc, %d)", n++ ? ", " : "",
-                          arch_columns(g, a), arch_column(g, a, comp->index) + k);
+                sb_printf(o, "%s(const uint8_t *)tide_table_column(%s, %s, tide_qc, %d)", n++ ? ", " : "",
+                          before[i] ? "tide_qp" : "tide_qt", arch_columns(g, a), arch_column(g, a, comp->index) + k);
             }
             sb_put(o, "};\n");
         }
@@ -16207,7 +16227,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
                 const int width = comp_width(comp);
                 for (int k = 0, n = 0; k < comp_lanes(comp); k++) {
                     if (!query_reads_lane(&reads[i], k)) continue;
-                    if (query_changes_binding(g, p)) {
+                    if ((!before[i] && query_changes_binding(g, p))) {
                         line(g, o, "memcpy((uint8_t *)&%s.%s + %d, tide_table_get(tide_qt, %s, (tide_qc << %d) + tide_qi, %d), %d);",
                              name, field_cname(value), k * width, arch_columns(g, a), arch_shift(g, a), arch_column(g, a, comp->index) + k, width);
                     } else {
@@ -16215,13 +16235,18 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
                              name, field_cname(value), k * width, i, n++, width, width);
                     }
                 }
-            } else if (query_changes_binding(g, p)) {
+            } else if ((!before[i] && query_changes_binding(g, p))) {
                 line(g, o, "tide_table_gather(tide_qt, %s, (tide_qc << %d) + tide_qi, %d, %du, %du, &%s.%s);",
                      arch_columns(g, a), arch_shift(g, a), arch_column(g, a, p->type.decl->index),
                      comp_lanes(p->type.decl), comp_width(p->type.decl), name, field_cname(value));
             } else {
                 line(g, o, "tide_gather_%s(&%s.%s, tide_qcol%d, tide_qi);", type_cname(p->type.decl), name,
                      field_cname(value), i);
+            }
+            if (before[i]) {
+                sb place = {0};
+                sb_printf(&place, "%s.%s", name, field_cname(value));
+                gen_previous_value(g, p->type.decl, place.data);
             }
         }
         if (gather) { // Onto the end of the rows a parallel loop goes through
@@ -23854,7 +23879,10 @@ static void gen_api(gen *g)
     // What each thread does before its first task: text finds the match's heap, and the pack its slots.
     sb_put(o, "static void tide_prepare(void *w)\n{\n");
     if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
-    if (prog->uses_heap) sb_put(o, "    tide_text_use(&((tide_world *)w)->heap, NULL);\n}\n\n");
+    if (prog->uses_heap) sb_put(o, "    tide_text_use(&((tide_world *)w)->heap, NULL);\n");
+    // ...and what `previous` values hold in a heap, the heaps the tick kept (previous_codegen.inc)
+    if (previous_heap(g)) sb_put(o, "    tide_text_use_verified(((tide_world *)w)->tide_previous ? &((tide_world *)w)->tide_previous->heap : NULL);\n");
+    if (prog->uses_heap) sb_put(o, "}\n\n");
     else sb_put(o, "    (void)w;\n}\n\n");
 
     sb_put(o, "void tide_world_tick(tide_world *w)\n{\n    tide_world_tick_on(w, NULL);\n}\n\n");
@@ -23876,6 +23904,7 @@ static void gen_api(gen *g)
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (rows_cache_count(g)) sb_put(o, "    tide_rows_cache_prepare(w); // Serial: publish immutable plans before worker dispatch\n");
     if (g->ix_any) sb_put(o, "    tide_index_cache_prepare(&w->tide_index_cache); // Serial: the tick's run, for the loops' indexes\n");
+    if (prog->keeps_previous) sb_put(o, "    tide_previous_keep(w); // Serial: what `previous` bindings read, as the tick starts\n");
     if (prog->systems.count) {
         sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->systems, %du, tide_system_sources);\n", prog->systems.count);
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities};\n", prog->systems.count);
@@ -23883,6 +23912,7 @@ static void gen_api(gen *g)
     } else {
         sb_put(o, "    (void)tide_prepare;\n    if (tide_p) tide_profile_count(&tide_p->systems, 0u);\n");
     }
+    if (prog->keeps_previous) sb_put(o, "    tide_previous_release(w, false); // The systems have joined: nothing reads the tick's start any more\n");
     sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     if (prog->owned_prediction) sb_put(o, "    w->tide_owned_predicting = false;\n");
     sb_put(o, "    tide_apply_commands(w);\n");
@@ -24626,6 +24656,7 @@ static void gen_world_bytes(gen *g, const bool local)
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
     if (!local && rows_cache_count(g)) sb_put(o, "    tide_rows_cache_free(w->tide_rows_cache);\n    w->tide_rows_cache = NULL;\n");
     if (g->ix_any) sb_put(o, "    tide_index_cache_free(w->tide_index_cache);\n    w->tide_index_cache = NULL;\n");
+    if (!local && g->prog->keeps_previous) sb_put(o, "    tide_previous_release(w, true);\n");
     if (local) sb_put(o, "    tide_workers_free(w->tide_workers);\n    w->tide_workers = NULL;\n");
     resident_field residents[RESIDENTS_MOST];
     const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
@@ -24694,6 +24725,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (!local && rows_cache_count(g)) sb_put(o, "    header->tide_rows_cache = NULL;\n");
     if (!local && prog->owned_prediction) sb_put(o, "    header->tide_owned_predicting = false;\n    memset(header->tide_owned_selected, 0, sizeof header->tide_owned_selected);\n");
     if (g->ix_any) sb_put(o, "    header->tide_index_cache = NULL;\n");
+    if (!local && prog->keeps_previous) sb_put(o, "    header->tide_previous = NULL;\n");
     if (local) sb_put(o, "    header->tide_io = NULL;\n    header->tide_workers = NULL;\n    header->tide_worker_jobs = NULL;\n");
     if (local && prog->command_types.count) sb_put(o, "    memset(header->tide_outgoing, 0, sizeof header->tide_outgoing);\n    header->tide_outgoing_count = 0;\n");
     // What the match sent is a frame's: none of it is the local state's to keep
@@ -24784,6 +24816,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (!local && rows_cache_count(g)) sb_put(o, "    w->tide_rows_cache = NULL; // Never trust a pointer from a raw header, including rejected input\n");
     if (!local && prog->owned_prediction) sb_put(o, "    w->tide_owned_predicting = false;\n    memset(w->tide_owned_selected, 0, sizeof w->tide_owned_selected);\n");
     if (g->ix_any) sb_put(o, "    w->tide_index_cache = NULL; // ...nor this one\n");
+    if (!local && prog->keeps_previous) sb_put(o, "    w->tide_previous = NULL;\n");
     if (local) sb_put(o, "    w->tide_io = io;\n    w->tide_workers = NULL;\n    w->tide_worker_jobs = NULL;\n");
     if (local && program_hears(prog)) sb_put(o, "    memset(&w->tide_heard, 0, sizeof w->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    w->tide_available_predicted = w->tide_available_verified = NULL;\n"
@@ -27998,6 +28031,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_columns(&g);
     gen_rows_cache_helpers(&g);
     gen_index_helpers(&g);
+    gen_previous_helpers(&g);
     gen_component_access(&g);
     gen_hierarchy(&g);
     gen_shard_early(&g);

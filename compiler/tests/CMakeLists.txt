@@ -568,6 +568,26 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_row_heaps PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_row_heaps PRIVATE TIDE_ROW_HEAPS_THREADS=1)
 endif()
+tide_e2e_test(previous) # `previous` query bindings: the tick's start whatever ran since, on threads one thread's world, no part of the world
+# ...and the same game with every loop gone through plainly (NO_LOOP_INDEXES), which prints the same tick by tick
+tide_add_game(tidec_e2e_previous_plain NO_LOOP_INDEXES SOURCES e2e/previous.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/previous_test.c")
+target_include_directories(tidec_e2e_previous_plain PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_previous_plain PRIVATE TIDE_PREVIOUS_PLAIN=1)
+add_test(NAME tidec_e2e_previous_plain COMMAND tidec_e2e_previous_plain)
+foreach(target tidec_e2e_previous tidec_e2e_previous_plain)
+    set_tests_properties(${target} PROPERTIES TIMEOUT 300)
+    if(TIDE_PLATFORM)
+        target_link_libraries(${target} PRIVATE tide_platform)
+        target_compile_definitions(${target} PRIVATE TIDE_PREVIOUS_THREADS=1)
+    endif()
+endforeach()
+string(REPLACE ";" "|" TIDE_PREVIOUS_EMULATOR "${CMAKE_CROSSCOMPILING_EMULATOR}")
+add_test(NAME tidec_previous_same
+    COMMAND "${CMAKE_COMMAND}" "-DINDEXED=$<TARGET_FILE:tidec_e2e_previous>"
+        "-DPLAIN=$<TARGET_FILE:tidec_e2e_previous_plain>" "-DEMULATOR=${TIDE_PREVIOUS_EMULATOR}"
+        -DWORD=previousloops -DLEAST=6 -P "${CMAKE_CURRENT_SOURCE_DIR}/indexed_loops_same.cmake")
+set_tests_properties(tidec_previous_same PROPERTIES TIMEOUT 600)
 tide_e2e_test(fields) # Systems on different fields of one component or singleton at once: one thread's world, in place and beside a snapshot
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_fields PRIVATE tide_platform)

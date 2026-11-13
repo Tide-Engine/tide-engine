@@ -1006,6 +1006,22 @@ static const decl *path_component(const ictx *c, const expr *path)
     return t.kind == TY_COMPONENT ? t.decl : NULL;
 }
 
+// Whether a query row's path starts at a binding the query takes `previous`.
+static bool path_previous(const ictx *c, const expr *path)
+{
+    const param *q = c->loop->query;
+    while (path && path->kind == E_MEMBER) {
+        if (path->object && path->object->kind == E_NAME && path->object->local == c->loop) break;
+        path = path->object;
+    }
+    if (!q || !path || path->kind != E_MEMBER || !path->field) return false;
+    for (int i = 0; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        if (p->previous && param_binding(p) && str_eq(p->name, path->field->name)) return true;
+    }
+    return false;
+}
+
 // The component's field a query row's path reads first: `b.body.position.x` reads Body's position.
 static const field *path_field(const ictx *c, const expr *path)
 {
@@ -1161,6 +1177,8 @@ static bool query_source_still(ictx *c, const loop_index *plan)
         because(c, c->loop->at, "its key isn't a component's field");
         return false;
     }
+    // As the tick started: nothing the code or any other system does changes it
+    if (plan->previous) return true;
     if (world_sets(c, component)) {
         because(c, c->loop->at, "the loop sets " STR_FMT " through its World, which changes rows as it goes",
                 STR_ARG(component->name));
@@ -1183,7 +1201,13 @@ static bool query_source_still(ictx *c, const loop_index *plan)
         const decl *d = c->prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || !d->body) continue;
         decl_list seen = {0};
-        const bool reaches = calls_stmt(d->body, c->code, &seen);
+        // One whose queries take the component `previous` alone hands this code the tick's start, which its own
+        // writes don't change
+        bool before = false, now = false;
+        for (int k = 0; k < d->previous_reads.count; k++) before |= d->previous_reads.items[k] == component;
+        for (int k = 0; k < d->world_uses.count; k++) now |= d->world_uses.items[k].component == component && d->world_uses.items[k].query_read;
+        now |= !before;
+        const bool reaches = now && calls_stmt(d->body, c->code, &seen);
         if (reaches && changes_own_field(d, component, f, &at)) {
             because(c, at, "'" STR_FMT "' changes " STR_FMT "%s" STR_FMT " of its own entity as it goes, and calls this "
                            "code, whose loop finds rows by it: change it in a system of its own", STR_ARG(d->name),
@@ -1341,6 +1365,7 @@ static void plan_loop(const program *prog, const decl *code, stmt *loop)
                               "distance to a place, with a value the loop doesn't change");
     } else if (choose(&found, plan)) {
         plan->component = query ? path_component(&c, plan->keys[0].path) : NULL;
+        plan->previous = query && path_previous(&c, plan->keys[0].path);
         const bool still = query ? query_source_still(&c, plan) : list_source_still(&c);
         if (still && code->is_async && stmt_waits(loop->then_stmt)) {
             because(&c, loop->at, "its body waits (await), and the index's search can't be kept across a wait");
@@ -1447,6 +1472,7 @@ const char *loop_index_summary(const stmt *loop)
         describe_path(&out, k->path);
         if (k->comp >= 0) sb_printf(&out, ".%c", "xyzw"[k->comp & 3]);
     }
+    if (plan->previous) sb_put(&out, " as the tick started: its index is made once a tick");
     return out.data;
 }
 

@@ -471,6 +471,16 @@ const cases = {
         ]],
         ['int Owned(', [['ownership', '!keyword'], ['ownership', '!keyword', 2]]],
     ],
+    "previous is a modifier before a query's binding, and a name anywhere else": [
+        ['system Sense(', [
+            ['query', 'storage.modifier.query'], ['previous', 'storage.modifier.previous'], ['Trooper', 'entity.name.type'],
+            ['other', '!storage'],
+        ]],
+        ['system Compare(', [
+            ['previous', 'storage.modifier.previous'], ['Infantry', 'entity.name.type'], ['was', '!storage'],
+        ]],
+        ['int Step(int previous, int next)', [['previous', '!storage'], ['previous', '!storage', 2], ['previous', '!storage', 3]]],
+    ],
     "verified is a modifier before a view's parameter, after with and without, and before a local handler's event": [
         ['view HealthBar(', [
             ['verified', 'storage.modifier.verified'], ['Health', 'entity.name.type', 2], ['confirmed', '!storage'],

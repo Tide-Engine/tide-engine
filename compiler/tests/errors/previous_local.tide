@@ -1,0 +1,8 @@
+// expect: 'Marker' is local, and the match can't use local state
+component Marker { int shown; }
+component Body { float3 position; }
+scene Main { }
+system Look(Body body, query (previous local Marker marker) markers)
+{
+    foreach (var m in markers) { }
+}

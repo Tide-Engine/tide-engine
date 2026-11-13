@@ -4492,6 +4492,70 @@ TIDE_TEST(lsp_ownership)
     "component Box { float3 pos; local int bakes; }\n"                         \
     "local singleton Seen { int count; }\n"
 
+// `previous` before a binding of a system's query: a keyword there, and a name anywhere else.
+TIDE_TEST(lsp_previous)
+{
+    start();
+    const char *first = complete(VERIFIED_TYPES "system Look(mut Body body, query ($) others)\n{\n}\n");
+    TIDE_CHECK(offers(first, "previous") && offers(first, "with") && offers(first, "Body"));
+    TIDE_CHECK(has(first, "As it was when this tick started: waits for no system"));
+    TIDE_CHECK(offers(complete(VERIFIED_TYPES "system Look(mut Body body, query (Dead dead, $) others)\n{\n}\n"), "previous"));
+    const char *type = complete(VERIFIED_TYPES "system Look(mut Body body, query (previous $) others)\n{\n}\n");
+    TIDE_CHECK(offers(type, "Body") && offers(type, "Dead") && !offers(type, "previous") && !offers(type, "PlayerInput"));
+    // Not a filter's, a view's, a handler's, a function's or the system's own parameter's
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Look(mut Body body, query (with $) others)\n{\n}\n"), "previous"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "view Bar(Body body, query ($) others)\n{\n}\n"), "previous"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "event(Spawned) Grow(mut Body body, query ($) others)\n{\n}\n"), "previous"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "int Count(query ($) others)\n{\n    return 0;\n}\n"), "previous"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Look(mut Body body, $)\n{\n}\n"), "previous"));
+
+    static const char program[] = VERIFIED_TYPES
+        "system Grow(mut Body body) { body.radius += 1; }\n"
+        "system Look(mut Body body, query (prev$ious Body other) others)\n{\n"
+        "    mut var pull = float2(0, 0);\n"
+        "    foreach (var o in others)\n    {\n"
+        "        if (Math.Distance(o.other.position, body.position) > 5) continue;\n"
+        "        pull += o.other.position * 0.01;\n    }\n"
+        "    body.position += pull;\n}\n"
+        "system Sum(mut Arena arena, query (previous Body b) all)\n{\n"
+        "    foreach (var row in all) arena.halfSize.x += row.b.radius;\n}\n";
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "previous Body other"));
+    TIDE_CHECK(has(hover, "The entity's `Body` as it was when this tick started"));
+    TIDE_CHECK(has(hover, "reading it never keeps its entities on one thread"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "'previous' is a keyword before a query binding's type"));
+    const char *lenses = request("textDocument/codeLens");
+    TIDE_CHECK(count(lenses, "Query: reads Body as the tick started") == 2);
+    // Look changes Body and searches every other's: across threads, after Grow over its own rows alone, and
+    // Sum waits for nobody; the loop's index is of the tick's start
+    TIDE_CHECK(count(lenses, "its entities go across threads") == 2 && !has(lenses, "on one thread"));
+    TIDE_CHECK(has(lenses, "as the tick started: its index is made once a tick"));
+    TIDE_CHECK(!has(lenses, "after Grow: it writes Body.radius") && !has(lenses, "after Look"));
+
+    // The system's hover, the query's and the binding's
+    open_document(VERIFIED_TYPES "system Lo$ok(mut Body body, query (previous Body other) others)\n{\n"
+                                 "    foreach (var o in others) body.radius += o.other.radius;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *system = request("textDocument/hover");
+    TIDE_CHECK(has(system, "system Look(mut Body body, query (previous Body other) others)"));
+    TIDE_CHECK(has(system, "reads any entity's `Body` as the tick started: it waits for no system over that"));
+    TIDE_CHECK(has(system, "Its entities can go across threads."));
+    open_document(VERIFIED_TYPES "system Look(mut Body body, query (previous Body oth$er) others)\n{\n"
+                                 "    foreach (var o in others) body.radius += o.other.radius;\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "As it was when this tick started, whatever has run since."));
+
+    // Where it can't be: the error, and the word still explained
+    open_document(VERIFIED_TYPES "view Bar(Body body, query (prev$ious Body other) others)\n{\n"
+                                 "    foreach (var o in others) { }\n}\n");
+    TIDE_CHECK(has(last_sent(), "'previous' is for a system's query"));
+    TIDE_CHECK(has(request("textDocument/hover"), "As the tick started. It goes before a binding of a system's query"));
+    // A name anywhere else
+    open_document(VERIFIED_TYPES "int Step(int previous, int next) { return previous + next; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+}
+
 // `verified` before a view's parameter, after `with` and `without`: a keyword there, and a name anywhere else.
 TIDE_TEST(lsp_verified)
 {

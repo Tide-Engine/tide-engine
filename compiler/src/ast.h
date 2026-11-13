@@ -341,6 +341,11 @@ typedef struct param {
     // confirmed, in a view; in a local handler's trigger, once the server confirmed the tick that sent the event
     bool verified;
     loc verified_at; // ...the word
+    // `query (previous Trooper other) others`: a system's query binding that reads every entity's component as it was
+    // when this tick started, whatever has run since in the tick. It waits for no system and no system waits for it
+    // (parallel.c); the tick keeps those components' pages from its start (previous_codegen.inc)
+    bool previous;
+    loc previous_at; // ...the word
     // `event(Changed<Health.value> c)`: a trigger heard when a match field changed over a tick. type_name is
     // the field's path, "Health.value", type_at its first part; the checker makes the event (check_changed)
     bool changed;
@@ -577,6 +582,7 @@ typedef struct decl {
     struct prefab_node *prefab_root;
     struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
     bool is_sparse;   // [Sparse], or a tag made sparse to keep the archetypes within the limit (sparse_fallback): a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    bool kept_previous; // A component some system's query binds `previous`: a tick keeps its pages from its start (previous_codegen.inc)
     bool sparse_fallback; // A tag Add or Remove names that would take the archetypes past the limit if it moved entities (derive_archetypes)
     bool visibility_optional; // Whole-component visibility needs an independent per-row presence byte on clients.
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
@@ -900,6 +906,9 @@ typedef struct decl {
     loc position_at;     // ...where it first reads a position in the window that way (the mouse's, a touch's)
     const char *position_what; // ...whose: "the mouse's position"
     VEC(world_use) world_uses; // Query reads and World access, by component: query declaration order, then first body use
+    // The components its queries bind `previous`: read as the tick started, from pages the tick keeps, so they're
+    // no access of the schedule's (parallel.c) and never among world_uses; tools say them apart
+    VEC(struct decl *) previous_reads;
     // A function or method that takes the World: what it reaches through it, itself and through the
     // functions it passes it on to (its world_uses, once every body is checked), says which worlds it's
     // handed in generated C: the match's (`tide_w`, which it changes if it sets), this machine's (`tide_l`)
@@ -1777,6 +1786,7 @@ typedef struct program {
     bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
+    bool keeps_previous; // Some system's query has a `previous` binding: the worlds keep those components as each tick began
     bool local_heap;     // Some local field of the match's does: the local world has a heap, whether the match has or not
     VEC(decl *) lists;   // Every List<T> type the program uses, one per element type
     VEC(decl *) gpu_lists; // ...and every GPUList<T>
@@ -1967,6 +1977,8 @@ bool world_reads_own_writes(const decl *sys);
 // "Transform and Health". `quote` wraps names, written as code in `from`'s
 // namespace writes them (qualified without one). Returns how many there are.
 int world_use_names(const decl *sys, bool writes, const char *quote, const decl *from, sb *out);
+// The components its queries bind `previous` (decl.previous_reads), named the same way: how many
+int previous_read_names(const decl *sys, const char *quote, const decl *from, sb *out);
 
 // The loops a statement holds whose steps run at once, on threads: parallel
 // loops, and foreach loops over grids that run as one.

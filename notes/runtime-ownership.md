@@ -17,6 +17,14 @@ things in the runtime changed for it:
 If the owner takes heap.c or page.c over: a key relies on every write to a page clearing `hashed` first
 (`tide_heap_write`, `tide_heap_write_shared`, `tide_heap_alloc` and the rest), and on a page read through a
 heap's table staying allocated while a system that may read that heap runs, as `tide_heap_block` does.
+## Columns and a heap kept for a tick (2026-11-13, evening)
+
+Mine, under the table and heap maintenance below (schedule-and-threads.md, top section, `previous` bindings).
+New, and called by generated code (`tide_previous_keep`, `tide_previous_release`): `tide_table_keep` and
+`tide_table_unkeep` (`tide/table.h`, `engine/src/table.c`), `tide_heaps_keep` (`tide/heap.h`,
+`engine/src/heap.c`). Generated code also gives `tide_text_use_verified` the kept heaps while a tick's systems
+run, on each of the tick's threads (`tide_prepare`): in a tick, `TIDE_IN_VERIFIED` names the heaps the tick kept,
+where in a frame it names the confirmed world's. No existing function changed.
 
 ## A gathering system's log (2026-11-13)
 

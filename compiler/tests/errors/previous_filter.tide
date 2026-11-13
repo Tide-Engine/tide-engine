@@ -1,0 +1,9 @@
+// expect: 'previous' reads a component's values as they were when the tick started
+// expect: drop 'previous' on the filter
+component Body { float3 position; }
+component Dead { }
+scene Main { }
+system Look(Body body, query (Body other, with previous Dead) others)
+{
+    foreach (var o in others) { }
+}

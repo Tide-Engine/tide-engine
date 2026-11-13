@@ -294,6 +294,18 @@ void tide_table_stale(const tide_table *t, const tide_columns *c, tide_stale_pag
 // Lets go of its pages, leaving it empty.
 void tide_table_free(tide_table *t, const tide_columns *c);
 
+// Some columns of `from` as they are now, for code that reads them later
+// while `from` goes on changing: `to` (zeroed at first, and only ever given
+// to these two) gets from's counts and holes and its pages of the `count`
+// columns named, each with a reference of its own, so whoever writes one
+// copies it first (tide/page.h). Its other columns have no page: only the
+// columns named are read, with tide_table_column and tide_table_get. What it
+// kept before goes. tide_table_unkeep lets go of the pages and keeps its
+// room for the next time, or with `all` frees it. Both only while nothing
+// else runs on either table.
+void tide_table_keep(tide_table *to, const tide_table *from, const tide_columns *c, const uint32_t *columns, uint32_t count);
+void tide_table_unkeep(tide_table *to, const tide_columns *c, bool all);
+
 // The table as bytes, for sending a world and carrying it over: its count,
 // then each column's rows in use, one column after another. Reading them back
 // into an empty table is false when the bytes aren't a table.

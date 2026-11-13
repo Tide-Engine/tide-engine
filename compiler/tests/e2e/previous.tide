@@ -1,0 +1,267 @@
+// `previous` on a query's binding reads every entity's component as it was
+// when the tick started, whatever has run since in the tick (docs/spec.md,
+// `previous` in a query). So a system that changes a component and looks at
+// everyone else's keeps its entities across threads, waits for no writer of
+// it, and no writer waits for it; a loop that starts with a guard goes through
+// an index of the tick's start, made once a tick for every system that asks.
+// On threads the world is one thread's, tick by tick.
+
+component Boid
+{
+    int id;
+    float3 position;
+    float3 velocity;
+    int team;
+    int seen;
+    float nearest;
+    int friends;
+    string name;        // What it holds in a heap is read as it was, too
+    List<int> marks;
+    List<string> notes; // ...and a list of text, whose elements are in the heap themselves
+    Map<int, int> met;
+}
+
+component Rank
+{
+    int level;
+}
+
+component Leader { }
+[Sparse] component Lost { }
+
+singleton Tally
+{
+    // What a system that runs first read of the world as it was, and what one that runs after every writer read
+    // through `previous`: the same, every tick
+    long startPlaces;
+    long beforePlaces;
+    long startNames;
+    long beforeNames;
+    long startRanks;
+    long beforeRanks;
+    long nowRanks;
+    int lost;
+    int heard;
+    long heardSum;
+    int told;
+    long toldSum;
+}
+
+event Sighted
+{
+    int id;
+    int count;
+}
+
+event Told
+{
+    int id;
+    string name;
+    List<int> marks;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 1500; i++)
+    {
+        var e = Spawn(Boid { id = i, position = float3(float(i % 53), float(i % 7), float(i % 41)), team = i % 3,
+                             name = $"boid {i}" }, Rank { level = i % 5 });
+        if (i % 4 == 0) e.Add(Leader);
+        if (i % 9 == 2) e.Add(Lost);
+    }
+}
+
+long Mix(long h, long v) { return (h * 1099511628211) ^ v; }
+
+long PlaceOf(Boid b)
+{
+    return long(b.position.x * 64) + long(b.position.y * 64) * 3 + long(b.position.z * 64) * 7 + b.seen + b.friends * 11;
+}
+
+long NameOf(Boid b)
+{
+    mut var h = long(b.name.length) + b.marks.count * 31 + b.notes.count * 131 + b.met.count * 17;
+    for (var i = 0; i < b.marks.count; i++) h = Mix(h, b.marks[i]);
+    for (var i = 0; i < b.notes.count; i++) h = Mix(h, b.notes[i].length);
+    foreach (var pair in b.met) h = Mix(h, pair.key * 3 + pair.value);
+    return h;
+}
+
+// First in the tick, reading the world as it is: everything that writes Boid or Rank waits for these
+system StartPlaces(mut Tally tally, query (Boid b) all)
+{
+    mut var sum = 0L;
+    foreach (var row in all) sum += PlaceOf(row.b) * (row.b.id % 13 + 1);
+    tally.startPlaces = sum;
+}
+
+system StartNames(mut Tally tally, query (Boid b) all)
+{
+    mut var sum = 0L;
+    foreach (var row in all) sum += NameOf(row.b) * (row.b.id % 7 + 1);
+    tally.startNames = sum;
+}
+
+system StartRanks(mut Tally tally, query (Rank rank, Boid b, with Leader) leaders)
+{
+    mut var sum = 0L;
+    foreach (var row in leaders) sum += row.rank.level * (row.b.id + 1);
+    tally.startRanks = sum;
+}
+
+// Writers, each on every boid
+system Drift(mut Boid b, Time time)
+{
+    mut var y = float(b.id + time.tick) * 0.001;
+    for (var i = 0; i < 60; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    b.velocity = float3(y, y * 0.25, -y) * 0.2;
+    b.position += b.velocity;
+}
+
+// Changes its rows' text and lists, in runs on threads
+system Rename(mut Boid b, Time time)
+{
+    if ((b.id + time.tick) % 3 == 0) b.name = $"boid {b.id} at {time.tick}";
+    if ((b.id + time.tick) % 4 == 1) b.marks.Add(time.tick * 7 + b.id);
+    if (b.marks.count > 6) b.marks.RemoveAt(0);
+    if ((b.id + time.tick) % 5 == 2) b.notes.Add($"note {time.tick} of {b.id}");
+    if (b.notes.count > 3) b.notes.RemoveAt(0);
+    if ((b.id + time.tick) % 6 == 3) b.met[time.tick % 9] = b.id;
+}
+
+system Promote(mut Rank rank, Boid b, Time time)
+{
+    if ((b.id + time.tick) % 3 == 1) rank.level = (rank.level + b.id) % 11;
+}
+
+// A function handed the query reads what the query reads: the tick's start
+float Nearest(query (Boid other) others, float3 at, int self)
+{
+    mut var best = 1000.0;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, at) > 3) continue;
+        if (o.other.id == self) continue;
+        best = Math.Min(best, Math.Distance(o.other.position, at));
+    }
+    return best;
+}
+
+// The point of it: changes Boid, and looks at every other Boid as the tick started. Its entities go across
+// threads, and its loop goes through an index of the places as they were, though it moves its own
+system Flock(mut Boid b, query (previous Boid other) others)
+{
+    mut var seen = 0;
+    mut var friends = 0;
+    mut var pull = float3(0, 0, 0);
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, b.position) > 2.5) continue;
+        if (o.other.id == b.id) continue;
+        seen++;
+        if (o.other.team == b.team) friends++;
+        pull += o.other.position - b.position;
+    }
+    b.seen = seen;
+    b.friends = friends;
+    b.nearest = Nearest(others, b.position, b.id);
+    if (seen > 0) b.position += pull * (0.01 / float(seen));
+}
+
+// The same search by another system: one index for both
+system Crowd(mut Rank rank, Boid b, query (previous Boid other) others)
+{
+    mut var close = 0;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, b.position) > 2.5) continue;
+        close++;
+    }
+    if (close > 40) rank.level = (rank.level + 1) % 11;
+}
+
+// What a row of the tick's start holds in a heap, made the world's own: text into a list, a list assigned whole,
+// and both sent in an event. The neighbour's as the tick started, whatever Rename has done to it since
+system Echo(mut Boid b, Time time, query (previous Boid other) others)
+{
+    if ((b.id + time.tick) % 23 != 4) return;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, b.position) > 2) continue;
+        if (o.other.id != b.id + 1) continue;
+        b.notes.Add(o.other.name);
+        b.marks = o.other.marks;
+        if (o.other.notes.count > 0) b.name = o.other.notes[0];
+        Send(Told { id = b.id, name = o.other.name, marks = o.other.marks });
+    }
+}
+
+event(Told t) Keep(mut Tally tally)
+{
+    tally.told++;
+    tally.toldSum = Mix(tally.toldSum, t.id + t.name.length * 1000 + t.marks.count * 100000);
+}
+
+// After every writer, in the tick's order: what was there when the tick started
+system BeforePlaces(mut Tally tally, query (previous Boid b) all)
+{
+    mut var sum = 0L;
+    foreach (var row in all) sum += PlaceOf(row.b) * (row.b.id % 13 + 1);
+    tally.beforePlaces = sum;
+}
+
+system BeforeNames(mut Tally tally, query (previous Boid b) all)
+{
+    mut var sum = 0L;
+    foreach (var row in all) sum += NameOf(row.b) * (row.b.id % 7 + 1);
+    tally.beforeNames = sum;
+}
+
+// One binding of the tick's start beside one of now, with filters: the same entities, each binding its own time
+system BeforeRanks(mut Tally tally, query (previous Rank was, Boid b, with Leader) before, query (Rank now, Boid b, with Leader) after)
+{
+    mut var was = 0L;
+    mut var now = 0L;
+    foreach (var row in before) was += row.was.level * (row.b.id + 1);
+    foreach (var row in after) now += row.now.level * (row.b.id + 1);
+    tally.beforeRanks = was;
+    tally.nowRanks = now;
+}
+
+system CountLost(mut Tally tally, query (previous Boid b, with Lost) lost)
+{
+    mut var count = 0;
+    foreach (var row in lost) count += row.b.id >= 0 ? 1 : 0;
+    tally.lost = count;
+}
+
+// A parallel loop over rows of the tick's start, sending in the rows' order
+system Report(query (previous Boid b) all)
+{
+    parallel (var row in all)
+    {
+        if (row.b.seen < 12) continue;
+        Send(Sighted { id = row.b.id, count = row.b.seen + row.b.marks.count });
+    }
+}
+
+event(Sighted s) Hear(mut Tally tally)
+{
+    tally.heard++;
+    tally.heardSum = Mix(tally.heardSum, s.id * 1000 + s.count);
+}
+
+// Entities come and go at the tick's end, so the tables the next tick starts with are others
+system Churn(Boid b, Time time)
+{
+    if ((b.id * 7 + time.tick) % 97 == 0) this.Destroy();
+    if ((b.id * 5 + time.tick) % 89 == 0)
+    {
+        Spawn(Boid { id = b.id + 10000 * (time.tick + 1), position = b.position + float3(0.5, 0, 0.5), team = b.team,
+                     name = "late" }, Rank { level = 1 });
+    }
+    if ((b.id + time.tick) % 31 == 0) this.Add(Lost);
+    if ((b.id + time.tick) % 37 == 0) this.Remove(Lost);
+}

@@ -1,5 +1,19 @@
 # ECS and simulation state
 
+## Columns and a heap kept for a tick (2026-11-13, evening)
+
+For queries' `previous` bindings (schedule-and-threads.md, top section): `tide_table_keep(to, from, columns,
+names, count)` makes `to` a table of `from`'s counts and holes with a reference to each page of the columns
+named and no page for the others, and `tide_table_unkeep(to, columns, all)` lets them go (keeping its arrays'
+room unless `all`). Only `tide_table_column`, `tide_table_get` and `tide_table_gather` of named columns read it;
+nothing else is handed one. `tide_heaps_keep(to, from, id)` copies one owner's heap, runs and all, into a set of
+nothing else. Both only while nothing else runs on the world: generated `tide_previous_keep` before a tick's
+systems and `tide_previous_release` after them. A page held this way is shared to whoever writes it, so it's
+copied or written apart first, as beside a snapshot; with a session's ring that's already so for every page.
+What's kept is beside the world (`tide_world.tide_previous`), never in a copy, a hash or packed bytes. Tests:
+`table_keeps_columns_as_they_were` and `heaps_keep_one_owners_heap` (tide_tests), and the fixture
+`tidec_e2e_previous`.
+
 ## A heap in runs (2026-11-13, later)
 
 An owner's heap is 32 heaps, one for each run of the entities of a system that changes its rows' text and lists

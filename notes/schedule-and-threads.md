@@ -1,6 +1,231 @@
 # The schedule and the tick on threads
 
+## `previous` bindings: a query that reads the tick's start (2026-11-13, evening)
+
+The owner's task, after the day's three threads on the schedule: a system that changes a component and reads
+other entities' through a query or its World stayed on one thread and waited for every writer (37 systems in the
+tree), and Mount & Rifle worked round it by copying every soldier into a singleton's list each tick. He decided
+the language: the word `previous` on a query binding, beside `verified`; explicit (unmarked queries are as they
+were); it reads every entity's component as it was when the tick started, whatever has run since. Everything
+else below is mine, Provisional in `docs/spec.md` (Read-only entity queries, `previous` on a binding).
+
+```csharp
+system BotSense(mut Bot bot, mut Trooper t, query (previous Trooper other) others)
+```
+
+### What it is
+
+- **Where** (`check_previous_binding`, `compiler/src/check.c`; the parser reads the word where it reads
+  `verified`, a name anywhere else): bindings of a system's queries. An error with the fix for a filter, a
+  system's own parameter, a view's or local handler's query, a match handler's, a function's own query
+  parameter, `mut` (either side of the word), with `verified`, and a local component. `previous Body was, Body
+  now` in one query is the existing "appears twice": a function handed a query finds its bindings by their
+  component, which must be one.
+- **Which entities**: the world's as it is. While systems run no row comes, goes or moves (spawns, destroys,
+  adds, removes and holes filled all wait for the tick's end), so the world's tables have the rows they started
+  the tick with, and a row of the world's table is the same row of the kept one. That is the whole rule for
+  mixing: one walk of the world, each binding read from its own time. A row past what was kept (trusted C that
+  spawned mid-tick) is left out, never read.
+- **Not the schedule's** (`decl.previous_reads`, apart from `world_uses`): a `previous` binding adds no
+  `world_use`, so `accesses_of` has no access for it, `find_conflicts` no wait in either direction,
+  `world_reads_own_writes` and `rows_independent` nothing that keeps a system's entities on one thread, and
+  `rows_alone` nothing against `restrict`. It needs no place in the lane masks either
+  (`system_query_bytes`): what it reads is held by a reference, never a page another system could be replacing.
+  Owned prediction's selection still counts it a read (`owned_code`): what the tick started with is what the
+  tick before's writers left, so they're wanted.
+- **`tide schedule`** says it apart: `reads any entity's Body as the tick started, through queries: no wait over
+  it` (`previous_read_names`, `put_world_access`). The editors: a lens `Query: reads Body as the tick started`,
+  the system's hover, the word's own hover and the binding's, `previous` offered in a system's query and the
+  match's components after it, a keyword's token, no rename (`OCC_PREVIOUS`, `describe_previous`,
+  `put_world_lens`, `describe_world` in `compiler/lsp/analysis.c`). `tidec --outline` marks such an access
+  `"previous": true`. Both TextMate grammars scope the word `storage.modifier.previous.tide`.
+
+### What a tick keeps (`compiler/src/previous_codegen.inc`)
+
+- **Pages, held.** A component some query binds `previous` is `decl.kept_previous`. A game with any has
+  `struct tide_previous *tide_previous` at the end of its `tide_world` (derived, as the loops' index cache is:
+  not copied by `tide_world_copy`, cleared in a pack's header and after unpack, freed with the world) holding a
+  `tide_table` for each archetype that stores a kept component. `tide_previous_keep(w)` runs serially in
+  `tide_world_tick_on`/`_once`, before `tide_run_systems`: `tide_table_keep` (new, `tide/table.h`) gives each
+  kept table the world's counts and holes and a reference to each page of the columns named (the entity column,
+  the presence bytes of every sparse component, every lane of the kept components), NULL for the rest.
+  Whoever writes one of those pages that tick sees it shared and writes a page of its own
+  (`tide_table_lanes_begin`'s `apart`, `tide_table_lanes_begin_pieces`, `tide_table_scatter`), which is what
+  every system already does beside a session's ring of snapshots. `tide_previous_release(w, false)` runs once
+  the systems have joined, before `tide_apply_commands`: the pages are the world's alone again while the tick's
+  changes apply. So nothing is kept between ticks but the kept tables' own arrays.
+- **Heaps.** Where a kept component holds text, lists, maps, sets or grids, its owner's heap is copied whole
+  for the tick (`tide_heaps_keep`, new in `tide/heap.h`: one owner's heap with its runs into a set of nothing
+  else, sharing pages as `tide_heaps_copy` does), freed at the release. A row's `previous` value has its handles
+  retagged as a `verified` value's are (`gen_confirmed_copy`: `tide_confirmed`, `TIDE_IN_VERIFIED`; a list or
+  map whose elements hold text is copied to the scratch area with that text retagged), and each of the tick's
+  threads says the kept heaps are what that names (`tide_text_use_verified`, in `tide_previous_keep` and
+  `tide_prepare`). A tick had no other use for that fourth `where`: `verified` is an error in match code, and a
+  frame sets its own before its views. Everything that changes a block finds its heap with `tide_heap_of`,
+  which the kept one never is, so nothing writes there; copying a `previous` text or list into the world copies
+  it, as a borrowed block always is.
+- **Reads** (`gen_query_walk`, `gen_indexed_query`): for a `previous` binding the lanes come from `tide_qp`,
+  the kept table of the row's archetype, in every path: the cached column pointers of a system's walk, the
+  narrowed copies (`match_query_lanes`), a candidate's gather, a parallel loop's gathered rows. Such a binding
+  never takes the path that reloads pages after a `World.Set` of its component (`query_changes_binding`): the
+  kept pages don't change. A function handed the query (`g->borrow`) reads its source's bindings' time
+  (`query_binding_previous`), each variant generated for its source as before.
+- **A reload** (hot reload carries a world to new code): the struct says which tables it holds (`plan`, a hash
+  of the kept archetypes); another build's is let go unknown (it holds no page between ticks) and made again.
+
+### The index, once a tick (`index_codegen.inc`, `indexing.c`)
+
+- **Planned whatever the system writes** (`loop_index.previous`, `path_previous`, `query_source_still`): a key
+  in a `previous` binding can't change while the code runs, so the two refusals that guard a kept index (the
+  system changes the key's field of its own entity; the loop sets the component through its World) don't apply.
+  For a loop in a function handed the query, a system whose queries take the component `previous` alone no
+  longer counts against it. This is what a flock needs: `bird.position += ...` in the system whose loop finds
+  birds by `position`.
+- **Made from the kept tables** (`ix_query.before`, `ix_table`): the site's facts and its rows are the kept
+  tables' pages, so within a tick's run the site is checked once under its lock and searched with no lock after
+  (`tide_ix_hold`'s `fast`, for any code now, not only a system's own loop), and across ticks an index of rows
+  nobody changed is kept, as before.
+- **Shared** (`ix_site_shared`): a site of the tick's start is found by all its index is made from (the
+  archetypes, columns, lanes and key paths, as text), so every loop in the game that searches the same query by
+  the same keys has one site, in a system, in another system, or in a function either hands its query to. In
+  the fixture `Flock`, `Crowd` and `Nearest` (called from `Flock`) share site 0.
+- A search that finds most rows still goes through every row, and fewer than 32 rows are gone through plainly,
+  as for any indexed loop. `tide schedule` says `indexed by o.other.position.x, ... as the tick started: its
+  index is made once a tick`.
+
+### Tests
+
+- `tidec_e2e_previous` (`compiler/tests/e2e/previous.tide`, `previous_test.c`): 1,500 boids in two archetypes
+  with a sparse tag, a component of 27 lanes holding text, a list, a list of text and a map. Three systems that
+  run first and read the world as it is, and three that run after every writer and read `previous`, fill sums
+  that must be equal every tick (places; names, lists and maps; another component through a query of two
+  bindings with a filter), with the same query unmarked giving another number. `Flock` changes the component it
+  searches by position, across threads; `Crowd` searches the same way from another system; a function is handed
+  the query; `Echo` copies a `previous` row's text and list into its own row and sends them in an event, while
+  `Rename` changes them in runs on threads; a `parallel` loop over `previous` rows sends; entities are destroyed,
+  spawned and get a sparse tag added and removed every tick. Ten ticks on a pool that's one thread saying it
+  has eight and three rounds on the platform's, in place and beside a snapshot of the tick before: hash and
+  singleton bytes equal one thread's each tick, the snapshot still hashes as it did. A copy, a pack and unpack
+  (whose `tide_previous` is NULL) and a snapshot rolled back go on tick by tick as the world does.
+  `tidec_e2e_previous_plain` is the game built `NO_LOOP_INDEXES`, and `tidec_previous_same` compares what the two
+  print each tick (`indexed_loops_same.cmake` with `WORD` and `LEAST`). With the kept tables swapped for the
+  world's own (`previous_table`), it crashes on its first tick under ASan.
+- `compiler/tests/schedule/previous.tide`: `Crowd` (unmarked) on one thread after every writer, `Flock` (the
+  same with the word) with only `both write Body.position` against `Move`, `Tally` at stage 1 with no wait,
+  one query of each kind in one system, a function, a parallel loop, and the index lines.
+- Errors: `compiler/tests/errors/previous_*.tide` (filter, `mut` before and after, own parameter, view, handler,
+  function, local, twice).
+- `lsp_previous` (`compiler/lsp/tests/lsp_test.c`): completion in and out of place, the three hovers, the
+  lenses, no rename, the error with the word still explained, a parameter named `previous`. Grammar cases in
+  `tools/tide-syntax/test`.
+
+- `table_keeps_columns_as_they_were`, `heaps_keep_one_owners_heap` (tide_tests): the two runtime functions,
+  references and all.
+
+### Measured
+
+**A flock** (`bench/flock`: one component, one system that steers each bird by the birds within 2 and moves it,
+about ten in sight; `bench_flock` with the word, `bench_flock_now` the same game without it, which is on one
+thread and can't index by the place it moves; `bench_loops --agents 0` is the workaround there was, the place and
+the velocity in two components and two systems). Release, Windows, 7900X, best of three, ms a tick; each game's
+hash is the same on 1, 5 and 12 threads, in place and beside a copy:
+
+| Birds | Unmarked, 1 thread | ...12 | `previous`, 1 thread | ...12 | ...12, beside a copy of each tick | Two components, 1 | ...12 |
+|---|---|---|---|---|---|---|---|
+| 1,000 | 7.93 | 8.40 | 0.74 | 0.18 | 0.21 | 0.80 | 0.84 |
+| 10,000 | 886 | 998 | 9.33 | 1.54 | 1.57 | 9.54 | 9.55 |
+| 100,000 | | | 144 | 17 to 19 | | | |
+
+So the word is worth the index (95 times at 10,000 on one thread) and then the threads (6 times more on twelve),
+and keeping the tick's start costs nothing that shows: beside a copy, as in a session, the pages are shared
+already. The two-component workaround got the index and stays on one thread at these sizes (tidec reckons a query
+loop as one step, so the tick isn't thought worth threads).
+
+**Mount & Rifle** (its working tree at a145828, as the sections below built it: `BATTLE_TEST`, `ARMY`, release,
+12 threads, hidden, `--host --seed 42 --frames 2400 --profile-warmup 1500`, saves in a scratch folder). Before is
+the game as it is on this checkout. After is one file changed in a scratch copy, nothing in its repository:
+`Infantry.Disperse`, `Enlist` and `Gather` (crowd.tide: the list emptied, each soldier adding himself, the grids
+made, all after `Move` and `BotAct`) made one `Gather(mut Crowd crowd, mut SceneryCollision scenery, Time time,
+query (previous Trooper t) men)` that runs before `BotSense`, `BotAct` and `Move`. Five runs each, alternating,
+each profile against its own build's `tide schedule --measured`; means, ms a tick:
+
+| | Before | After |
+|---|---|---|
+| Systems, stages deep | 122, 74 | 120, 72 |
+| Waits listed | 1,777 | 1,753 |
+| Systems one after another | 3.97 (3.58 to 4.31) | 3.93 (3.74 to 4.13) |
+| The longest chain of waits | 3.38 (3.04 to 3.67), 85% | 3.01 (2.89 to 3.12), 76% |
+| ...systems long | 93 | 91 |
+| The match's tick on the frame's thread | 4.05 (3.62 to 4.43) | 4.02 (3.79 to 4.23) |
+| `Disperse` + `Enlist` + `Gather` | 0.008 + 0.27 + 0.21 | `Gather` 0.41, off the chain |
+
+What it says: **the chain is 0.37 ms shorter** (what `Enlist` and `Gather` were on it, and their two links), and
+the gathering itself a little cheaper (a query's rows walked once, where a per-entity system pushed into a list);
+**the tick is where it was**, as the game's tick is still nearly all one chain and the thread that runs it does
+the systems one after another when nothing else is ready. What the rewrite changes in the game, which is why it's
+a measurement and not a patch: `Fly` (the rounds) read the crowd gathered after this tick's `Move`, and would now
+hit men where they stood when the tick started, a tick's worth of movement behind. The bots (`BotSense`,
+`BotAct`) read last tick's crowd already, so for them it's the same data. And the grids stay: `NearestFoes` wants
+the four nearest within 300 m, which a guard's radius can't say (most of a battle is within 300 m, so an index
+by distance would give most rows and the loop would go through all of them). A nearest-few search is its own
+feature, not designed.
+
+### Gaps
+
+- **Match handlers** take no `previous` binding. A handler runs while the tick's changes apply: rows have moved
+  between archetypes, holes are filled by spawns, so the row of the world is no longer the row of the kept
+  table. It needs the entity table as the tick started too (`tide_entities_copy`, pages shared), kept until the
+  changes are in, a lookup by entity for each row, and the rule that an entity is in the query when it's in the
+  world now and had the component then. Not built; the error says a system has it.
+- **`World` reads and a system's own parameters** have no form of it; views and local handlers don't take it.
+- **`previous Body was, Body now` in one query** is refused (two queries do it): a function handed a query
+  finds a binding by its component.
+- **Every lane of a kept component is held**, in every archetype that stores it, whatever the queries read of
+  it. Holding costs two counts a page a tick; what it costs a writer is a page of its own for each lane it
+  changes that tick, which beside a session's snapshots it pays anyway and in a host that keeps none it
+  wouldn't. The lanes some `previous` loop reads would do (`match_query_lanes`, by loop).
+- **A kept heap is its owner's whole heap**, copied (page references) every tick and its set made again.
+  Components C can write, and every component of a game with shards or hidden state, keep the match's one heap.
+- **A list or map of text in a `previous` row is copied to the scratch area for each row** whose lanes of it
+  are read (as a `verified` value's is), and a `parallel` loop over rows of such a component stays on one
+  thread whether or not its steps read them.
+- **Candidates are still sorted by identity** for each search (the walk's order), and each is looked up in the
+  world's table as well as the kept one.
+- **Nearest-few searches** (above), and a search radius that takes in most rows, gain nothing from the index.
+- A sharded game's and a hidden-state game's `previous` queries build and weren't run: no fixture has one.
+- Trusted C that spawns or destroys while systems run moves rows under a `previous` query: rows past what was
+  kept are left out, others would read another entity's values of the tick's start.
+
+Validation: the whole native sanitize suite (Windows ASan, `TIDE_HEAP_CHECKS`), 3,290 of 3,290, built without
+the private prototypes (their build stalled this machine and nothing of theirs uses the word). No pinned world
+hash moved, and a game with no `previous` binding generates the C it did (every new line is behind
+`keeps_previous` or a binding's own flag). On the web (`web-debug`, under Node, with threads):
+`tidec_e2e_previous`, `tidec_e2e_previous_plain`, `tidec_previous_same` and `tide_tests`. The grammar's tests
+(378) and the docs site's build pass. Linux, macOS, MinGW and Android are CI's; Windows ASan doesn't look for
+stack-use-after-return, which Linux's does. `bench_flock`'s two `--expect` hashes are from this machine's release
+build: another platform that disagrees has found a determinism bug, not a stale pin.
+
+## What the owner decided from the measurements (2026-11-13)
+
+Asked whether Mount & Rifle does by hand what a feature would do better (its own neighbour grid of soldiers made
+each tick, `Enlist`/`Gather`/`NearestFoes`; facts of a model worked out every frame and caches kept in a `mut`
+local singleton several views write; `if (time.tick % n != 0) return;`; `[After]`/`[Before]` on views for what's
+drawn on top), four proposals were put to him. His rulings:
+
+- **`previous` on a query binding**, the component as the tick began: built in `t3/previous-bindings`. The word and
+  that it's explicit are his; start of the tick rather than of the system, and where it's allowed, are picks.
+- **Purity is inferred, with no keyword, and used**: the same pure call made again with the same inputs in one
+  body is made once. **Remembering across calls is opt-in** (proposed `cached`; the word isn't ruled on). Built in
+  `t3/cached-functions`.
+- **No rated systems** (`[Every(n)]`, `[Spread(n)]`): "adds a lot of confusion and features that we don't need".
+  Measured first: the six systems that begin with a tick test cost 0.013 ms a tick together, and running `Roam`,
+  `Travel`, `Outfit` and `Upkeep` less often is the game's own choice to make with a guard.
+- **`[After]` and `[Before]` on views are run order**, as on systems. What's drawn on top "should be potentially a
+  graphics API thing versus when a view runs": a layer or order the draws name. Not designed; parked, as views
+  beside each other gain that game nothing yet (below).
+
 ## A system's own rows' text and lists across threads: a heap in runs (2026-11-13, later)
+
 
 The owner's task, one of three threads on the schedule that day: a per-entity system that changes its own rows'
 text, lists, maps, sets or grids ran its entities on one thread, because a heap hands out blocks in a fixed order

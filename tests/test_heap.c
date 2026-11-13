@@ -644,3 +644,45 @@ TIDE_TEST(heap_runs_copy_hash_and_pack_with_their_owner)
     fake_world *others[] = {&other, &snapshot, &back, &base, &back_base};
     end_three(others, 5);
 }
+
+// One owner's heap kept as it is (tide_heaps_keep), for reading what it held while the world's goes on: its
+// blocks read through the fourth `where` (TIDE_IN_VERIFIED), the other owners' not kept at all.
+TIDE_TEST(heaps_keep_one_owners_heap)
+{
+    start_three();
+    static fake_world kept;
+    memset(&kept, 0, sizeof kept);
+    tide_text_set(&world.name, text("cat"), IN_SEVEN);
+    tide_text_set(&world.title, text("captain"), IN_NINE);
+    tide_heaps_flush(&world.heap);
+    tide_heaps_keep(&kept.heap, &world.heap, 7u);
+    TIDE_CHECK(tide_heaps_of(&kept.heap, 7u)->used == tide_heaps_of(&world.heap, 7u)->used);
+    TIDE_CHECK(tide_heaps_of(&kept.heap, 900u)->used == 0 && tide_heaps_pages(&kept.heap) == 1u);
+    // What a value read then names is the kept heap's block, whatever the world's becomes
+    const tide_text was = {tide_confirmed(world.name.at)};
+    tide_text_use_verified(&kept.heap);
+    tide_text_set(&world.name, text("a longer cat than before"), IN_SEVEN);
+    tide_text_set(&world.title, text("admiral"), IN_NINE);
+    tide_heaps_flush(&world.heap);
+    TIDE_CHECK(reads(was, "cat") && reads(world.name, "a longer cat than before"));
+    TIDE_CHECK(strcmp(tide_text_read(&kept.heap, (tide_text){tide_handle_of(IN_SEVEN, tide_handle_offset(was.at))}).ptr, "cat") == 0);
+    // Made the world's own, it's a copy
+    tide_text copy = was;
+    tide_text_own(&copy, IN_NINE);
+    TIDE_CHECK(tide_handle_where(copy.at) == IN_NINE && reads(copy, "cat"));
+    tide_text_release(&copy, IN_NINE);
+    // Kept again, it's the heap as it is now; freed, the world's pages are its own
+    tide_heaps_keep(&kept.heap, &world.heap, 7u);
+    const tide_text now = {tide_confirmed(world.name.at)};
+    TIDE_CHECK(reads(now, "a longer cat than before"));
+    tide_text_use_verified(NULL);
+    tide_heaps_free(&kept.heap);
+    tide_text_set(&world.name, text("dog"), IN_SEVEN);
+    TIDE_CHECK(reads(world.name, "dog"));
+    // A world with no heaps yet keeps nothing
+    static fake_world empty;
+    memset(&empty, 0, sizeof empty);
+    tide_heaps_keep(&kept.heap, &empty.heap, 7u);
+    TIDE_CHECK(kept.heap.all == NULL);
+    end_three(NULL, 0);
+}

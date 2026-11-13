@@ -340,6 +340,42 @@ void tide_table_free(tide_table *t, const tide_columns *c)
     memset(t, 0, sizeof *t);
 }
 
+void tide_table_unkeep(tide_table *to, const tide_columns *c, const bool all)
+{
+    const size_t pages = (size_t)to->chunks * c->count;
+    for (size_t i = 0; i < pages; i++) {
+        if (to->pages[i]) tide_page_release(to->pages[i], 1);
+    }
+    to->count = to->chunks = to->last_room = to->holes = to->hole_from = 0;
+    if (!all) return;
+    free(to->pages);
+    free(to->chunk_holes);
+    memset(to, 0, sizeof *to);
+}
+
+void tide_table_keep(tide_table *to, const tide_table *from, const tide_columns *c, const uint32_t *columns, const uint32_t count)
+{
+    tide_table_unkeep(to, c, false);
+    make_room(to, c, from->chunks);
+    if (from->chunks) memset(to->pages, 0, (size_t)from->chunks * c->count * sizeof *to->pages);
+    for (uint32_t chunk = 0; chunk < from->chunks; chunk++) {
+        for (uint32_t i = 0; i < count; i++) {
+            if (columns[i] >= c->count) continue;
+            tide_page *p = from->pages[(size_t)chunk * c->count + columns[i]];
+            tide_page **kept = &to->pages[(size_t)chunk * c->count + columns[i]];
+            if (*kept) continue; // Named twice
+            tide_page_retain(p);
+            *kept = p;
+        }
+    }
+    if (from->chunks) memcpy(to->chunk_holes, from->chunk_holes, from->chunks * sizeof *to->chunk_holes);
+    to->holes = from->holes;
+    to->hole_from = from->hole_from;
+    to->count = from->count;
+    to->chunks = from->chunks;
+    to->last_room = from->last_room;
+}
+
 uint32_t tide_table_packed_size(const tide_table *t, const tide_columns *c)
 {
     uint64_t row = 0;

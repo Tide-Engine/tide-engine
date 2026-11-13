@@ -1,0 +1,7 @@
+// expect: 'previous' reads a component as it was when the tick started, which nothing can change: drop 'mut'
+component Body { float3 position; local int seen; }
+scene Main { }
+system Look(Body body, query (mut previous Body other) others)
+{
+    foreach (var o in others) { }
+}

@@ -23,6 +23,17 @@ thread. What keeps it safe for any game's values:
 - Tested by `tidec_e2e_pure_calls` on the sanitize preset: results with lists, text, structs of both, failures and
   `T?`, from four threads at once, across a rollback and after `tide_cached_free`. Windows ASan doesn't see a
   stack address used after return, which Linux CI does.
+## What a tick keeps for `previous` bindings (2026-11-13, evening)
+
+A query's `previous` binding reads lanes from a table the tick kept (schedule-and-threads.md, top section). What
+keeps that safe: the kept table holds a reference to every page it reads, so none is freed or written under a
+reader, whatever thread; its pages are only reached through the columns generated code named when it kept them
+(the others are NULL and never asked for: the list is written once, in `tide_previous_keep`, from the same
+`kept_previous` flags the reads go by); a row is the world's row, which while systems run is the kept table's
+too, and a row at or past the kept table's count is left out before any read (C that spawned mid-tick). Handles
+in a kept row name blocks of the kept heap, read-only (`TIDE_IN_VERIFIED`: `tide_heap_of` never gives that heap,
+so nothing writes it), and a kept row's text and lists are copied, never adopted, when they go into the world.
+The fixture runs under ASan with heap checks on one thread, a fake pool and the platform's.
 
 ## A heap in runs: what threads may do to one heap at once (2026-11-13, later)
 
