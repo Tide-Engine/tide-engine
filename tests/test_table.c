@@ -708,3 +708,49 @@ TIDE_TEST(table_queue_packs_whatever_its_pages)
     tide_queue_free(&a);
     tide_queue_free(&b);
 }
+
+// Some columns kept as they are (tide_table_keep): the kept table reads what the table held then, whatever
+// is written since, with a reference to each page it reads and none to the others.
+TIDE_TEST(table_keeps_columns_as_they_were)
+{
+    tide_table t = {0}, kept = {0};
+    tide_entities entities = {0};
+    fill(&t, &entities, 40); // Three chunks
+    static const uint32_t named[] = {0u, 1u, 1u}; // (One twice: once)
+    tide_table_keep(&kept, &t, &columns, named, 3u);
+    TIDE_CHECK(kept.count == 40 && kept.chunks == 3 && kept.last_room == t.last_room && kept.holes == 0);
+    for (uint32_t c = 0; c < 3; c++) {
+        TIDE_CHECK(kept.pages[c * 2u] == t.pages[c * 2u] && kept.pages[c * 2u + 1u] == t.pages[c * 2u + 1u]);
+        TIDE_CHECK(t.pages[c * 2u + 1u]->refs == 2u);
+    }
+    // Whoever writes a kept page copies it first: the kept table is as it was
+    float *p = tide_table_cell(&t, &columns, 20, 1);
+    p[0] = 500.0f;
+    TIDE_CHECK(kept.pages[3] != t.pages[3] && kept.pages[1] == t.pages[1]);
+    TIDE_CHECK(((const float *)tide_table_get(&kept, &columns, 20, 1))[0] == 20.0f && position(&t, 20)[0] == 500.0f);
+    float pair[2];
+    tide_table_gather(&kept, &columns, 20, 1, 1, 8, pair);
+    TIDE_CHECK(pair[0] == 20.0f && pair[1] == -20.0f);
+    // A row that comes after is none of the kept table's
+    fill(&t, &entities, 1);
+    TIDE_CHECK(t.count == 41 && kept.count == 40);
+    TIDE_CHECK(tide_entity_equal(entity_at(&kept, &columns, 39), entity_at(&t, &columns, 39)));
+
+    // Kept again: what it held goes, and the table's pages are its own again but the ones kept now
+    static const uint32_t entity_only[] = {0u, 9u}; // (A column the table hasn't is nothing)
+    tide_table_keep(&kept, &t, &columns, entity_only, 2u);
+    TIDE_CHECK(kept.count == 41 && kept.pages[0] == t.pages[0] && kept.pages[1] == NULL && kept.pages[3] == NULL);
+    TIDE_CHECK(t.pages[1]->refs == 1u && t.pages[3]->refs == 1u && t.pages[0]->refs == 2u);
+    tide_table_unkeep(&kept, &columns, false);
+    TIDE_CHECK(kept.count == 0 && kept.chunks == 0 && kept.room >= 3u && t.pages[0]->refs == 1u);
+    tide_table_keep(&kept, &t, &columns, named, 3u);
+    tide_table_unkeep(&kept, &columns, true);
+    TIDE_CHECK(kept.pages == NULL && kept.room == 0 && t.pages[1]->refs == 1u);
+    // An empty table keeps nothing
+    tide_table none = {0};
+    tide_table_keep(&kept, &none, &columns, named, 3u);
+    TIDE_CHECK(kept.count == 0 && kept.chunks == 0);
+    tide_table_unkeep(&kept, &columns, true);
+    tide_table_free(&t, &columns);
+    tide_entities_free(&entities);
+}

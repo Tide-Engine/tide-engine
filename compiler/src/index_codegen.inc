@@ -102,6 +102,20 @@ static int ix_site(gen *g, const stmt *s)
     }
     vec_push(g->ix_loops, s);
     vec_push(g->ix_variants, (const void *)g->borrow);
+    vec_push(g->ix_shared, NULL);
+    return g->ix_loops.count - 1;
+}
+
+// The same for a loop whose index is of the tick's start: one site for every loop, in whatever code, that makes
+// the same index (`plan`, all an index is made from), so it's built at most once a tick for all of them.
+static int ix_site_shared(gen *g, const stmt *s, const char *plan)
+{
+    for (int i = 0; i < g->ix_shared.count; i++) {
+        if (g->ix_shared.items[i] && strcmp(g->ix_shared.items[i], plan) == 0) return i;
+    }
+    vec_push(g->ix_loops, s);
+    vec_push(g->ix_variants, (const void *)g->borrow);
+    vec_push(g->ix_shared, plan);
     return g->ix_loops.count - 1;
 }
 
@@ -412,7 +426,19 @@ typedef struct ix_query {
     const char *world;     // The world's pointer, as C
     int binding[3];        // The query binding each key is in (its place in q->query)
     int lane_lo[3], lane_hi[3]; // ...and the lanes of its component holding it
+    // The keys are in a `previous` binding: the index is of the tables the tick kept (previous_codegen.inc), which
+    // nothing changes while its systems run, so it's checked once a tick's run and searched with no lock after
+    bool before;
 } ix_query;
+
+// The table of archetype `a` an index of the query is made from, as C.
+static const char *ix_table(const gen *g, const ix_query *x, const int a)
+{
+    if (x->before) return previous_table(g, x->world, a);
+    sb b = {0};
+    sb_printf(&b, "&%s->%s", x->world, arch_name(g, a));
+    return b.data;
+}
 
 // The binding a key's path starts with, and the bytes of its component the key is (off, size: -1 unknown).
 static int ix_key_binding(const ix_query *x, const index_key *key, int *off, int *size)
@@ -453,7 +479,7 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
         if (!query_admits(g, x->selection, a)) continue;
         line(g, o, "{ // %s", arch_label(g, a));
         g->indent++;
-        line(g, o, "const tide_table *tide_qt = &%s->%s;", x->world, arch_name(g, a));
+        line(g, o, "const tide_table *tide_qt = %s;", ix_table(g, x, a));
         line(g, o, "for (uint32_t tide_qc = 0; tide_qc < tide_qt->chunks; tide_qc++) {");
         g->indent++;
         line(g, o, "const uint32_t tide_qn = tide_table_rows(tide_qt, %d, tide_qc);", arch_shift(g, a));
@@ -530,7 +556,7 @@ static void gen_ix_query_facts(gen *g, const ix_query *x, const loop_index *plan
         if (!query_admits(g, x->selection, a)) continue;
         line(g, o, "{");
         g->indent++;
-        line(g, o, "const tide_table *tide_qt = &%s->%s;", x->world, arch_name(g, a));
+        line(g, o, "const tide_table *tide_qt = %s;", ix_table(g, x, a));
         line(g, o, "tide_ix_num(&tide_xw, tide_qt->chunks);");
         line(g, o, "for (uint32_t tide_qc = 0; tide_qc < tide_qt->chunks; tide_qc++) {");
         g->indent++;
@@ -556,10 +582,11 @@ static void gen_ix_query_facts(gen *g, const ix_query *x, const loop_index *plan
 }
 
 // The site's plan: what its code reads, which a reload that keeps the cache may have changed.
-static uint64_t ix_query_plan(const gen *g, const ix_query *x, const loop_index *plan)
+static const char *ix_query_plan_text(const gen *g, const ix_query *x, const loop_index *plan)
 {
     sb d = {0};
-    sb_printf(&d, "query %s %d", x->world, plan->count);
+    // (One of the tick's start is the same index whichever code asks: ix_site shares it)
+    sb_printf(&d, "query %s %d", x->before ? "as the tick started" : x->world, plan->count);
     for (int a = 0; a < g->prog->archetypes.count; a++) {
         if (!query_admits(g, x->selection, a)) continue;
         sb_printf(&d, " [%d %s %d %d", a, arch_name(g, a), arch_shift(g, a), arch_column_count(g, a));
@@ -575,7 +602,12 @@ static uint64_t ix_query_plan(const gen *g, const ix_query *x, const loop_index 
         }
         sb_put(&d, "]");
     }
-    return ix_hash(d.data);
+    return d.data;
+}
+
+static uint64_t ix_query_plan(const gen *g, const ix_query *x, const loop_index *plan)
+{
+    return ix_hash(ix_query_plan_text(g, x, plan));
 }
 
 static void gen_query_fresh(gen *g, const param *q, const char *name);
@@ -628,6 +660,11 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
             x.lane_hi[k] = (off + size - 1) / width;
         }
     }
+    const bool canonical = !x.selection->query_local;
+    bool *before = arena_alloc((size_t)(x.q->query.count ? x.q->query.count : 1) * sizeof *before);
+    bool any_before = false;
+    for (int i = 0; i < x.q->query.count; i++) any_before |= before[i] = canonical && query_binding_previous(x.q, x.selection, i);
+    x.before = before[x.binding[0]];
     ix_used(g, s);
     bool any = false;
     for (int a = 0; a < g->prog->archetypes.count; a++) any |= query_admits(g, x.selection, a);
@@ -637,11 +674,10 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     }
 
     sb *o = &g->c;
-    const int site = ix_site(g, s);
+    const int site = x.before ? ix_site_shared(g, s, ix_query_plan_text(g, &x, plan)) : ix_site(g, s);
     const char *name = local_cname(g, s->name);
     const char *end = made_up(g, "query_end");
     const char *hits = made_up(g, "xh");
-    const bool canonical = !x.selection->query_local;
     const decl *cause_code = g->routine ? g->routine : g->code;
     const bool causes = cause_code && (takes_cause(cause_code) || (cause_code->kind == DECL_SYSTEM && !cause_code->is_view && !cause_code->is_local));
     line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
@@ -655,7 +691,7 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     // Few rows, or a site whose searches find most of them (tide_ix_pass): the plain loop, with no search
     line(g, o, "tide_index_hits %s;", hits);
     line(g, o, "tide_index_hits_init(&%s);", hits);
-    const char *fast = ix_fast(g) && strcmp(x.world, "tide_w") == 0 ? "true" : "false";
+    const char *fast = x.before || (ix_fast(g) && strcmp(x.world, "tide_w") == 0) ? "true" : "false";
     line(g, o, "tide_ix_site *const tide_xs = tide_ix_site_at(%s->tide_index_cache, %du);", x.world, site);
     line(g, o, "bool tide_xall = tide_xrows < TIDE_IX_LEAST || tide_ix_pass(tide_xs);");
     line(g, o, "if (!tide_xall) {");
@@ -760,6 +796,10 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
         g->indent++;
         line(g, o, "const tide_table *tide_qt = &%s->%s;", x.world, arch_name(g, a));
         line(g, o, "if (tide_xr >= tide_qt->count) continue;");
+        if (any_before) {
+            line(g, o, "const tide_table *tide_qp = %s;", previous_table(g, x.world, a));
+            line(g, o, "if (tide_xr >= tide_qp->count) continue; // Not there as the tick started");
+        }
         line(g, o, "const tide_entity tide_xe = *(const tide_entity *)tide_table_get(tide_qt, %s, tide_xr, 0);", arch_columns(g, a));
         line(g, o, "if (tide_row_gone(&tide_xe)) continue;");
         for (int c = 0; c < g->prog->components.count; c++) {
@@ -783,13 +823,20 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
                 const int width = comp_width(comp);
                 for (int k = 0; k < comp_lanes(comp); k++) {
                     if (!query_reads_lane(&reads[i], k)) continue;
-                    line(g, o, "memcpy((uint8_t *)&%s.%s + %d, tide_table_get(tide_qt, %s, tide_xr, %d), %d);", name,
-                         field_cname(value), k * width, arch_columns(g, a), arch_column(g, a, comp->index) + k, width);
+                    line(g, o, "memcpy((uint8_t *)&%s.%s + %d, tide_table_get(%s, %s, tide_xr, %d), %d);", name,
+                         field_cname(value), k * width, before[i] ? "tide_qp" : "tide_qt", arch_columns(g, a),
+                         arch_column(g, a, comp->index) + k, width);
                 }
-                continue;
+            } else {
+                line(g, o, "tide_table_gather(%s, %s, tide_xr, %d, %du, %du, &%s.%s);", before[i] ? "tide_qp" : "tide_qt",
+                     arch_columns(g, a), arch_column(g, a, comp->index), comp_lanes(comp), comp_width(comp), name,
+                     field_cname(value));
             }
-            line(g, o, "tide_table_gather(tide_qt, %s, tide_xr, %d, %du, %du, &%s.%s);", arch_columns(g, a),
-                 arch_column(g, a, comp->index), comp_lanes(comp), comp_width(comp), name, field_cname(value));
+            if (before[i]) {
+                sb place = {0};
+                sb_printf(&place, "%s.%s", name, field_cname(value));
+                gen_previous_value(g, comp, place.data);
+            }
         }
         g->indent--;
     }

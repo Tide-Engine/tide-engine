@@ -347,6 +347,11 @@ view ConfirmedAcrossLines(
 }
 local event(verified Died died) ShowDeath(Body body, mut local Toast toast) { }
 local event(verified Combat.Died) CountDeath(mut local Toast toast) { }
+
+// previous: a word of its own before a query's binding; a name anywhere else.
+system Sense(mut Bot bot, query (previous Trooper other) others) { }
+system Compare(query (Body body, previous Infantry.Trooper was) all) { }
+int Step(int previous, int next) { var previous = last; return previous; }
 local event(verified) HearVerified(mut local Toast toast) { }
 // Changed<...>: a field of the match that changed over a tick
 local event(Changed<Health.value> change) Flash(mut Health health) { }

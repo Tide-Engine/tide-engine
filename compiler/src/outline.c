@@ -235,6 +235,13 @@ static void put_access(sb *out, const decl *sys)
         if (u->writes) sb_put(out, ", \"writes\": true");
         sb_put(out, ", \"every\": true}");
     }
+    // What its queries read as the tick started (`previous`): every entity's, and no wait of the schedule's
+    for (int i = 0; i < sys->previous_reads.count; i++) {
+        sb_put(out, count++ ? ", " : ", \"access\": [");
+        sb_put(out, "{\"name\": ");
+        put_name(out, sys->previous_reads.items[i]);
+        sb_put(out, ", \"every\": true, \"previous\": true}");
+    }
     if (count) sb_put(out, "]");
     // Its filters: `with` and `without` a component, a scene, or ownership
     for (int pass = 0; pass < 2; pass++) {

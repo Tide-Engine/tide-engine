@@ -683,6 +683,17 @@ int world_use_names(const decl *sys, const bool writes, const char *quote, const
     return count;
 }
 
+// The components a system's queries bind `previous`, as text: how many.
+int previous_read_names(const decl *sys, const char *quote, const decl *from, sb *out)
+{
+    const int count = sys->previous_reads.count;
+    for (int i = 0; i < count; i++) {
+        sb_put(out, i == 0 ? "" : i == count - 1 ? " and " : ", ");
+        put_decl_name(out, sys->previous_reads.items[i], quote, from);
+    }
+    return count;
+}
+
 // " (bots.tide:212)": where in the code, by the file's name alone.
 static void put_place(sb *out, const loc at)
 {
@@ -805,6 +816,10 @@ static void put_world_access(sb *out, const decl *sys, const bool writes)
         }
         if (count) sb_printf(out, "         %s any entity's %s, through %s\n", writes ? "writes" : "reads", names.data,
                              pass ? "queries" : "World");
+    }
+    sb before = {0};
+    if (!writes && previous_read_names(sys, "", NULL, &before)) {
+        sb_printf(out, "         reads any entity's %s as the tick started, through queries: no wait over it\n", before.data);
     }
 }
 

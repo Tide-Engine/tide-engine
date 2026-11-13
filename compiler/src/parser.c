@@ -2546,6 +2546,20 @@ static void parse_query_params(parser *p, decl *d)
                 prm.verified = true;
                 prm.verified_at = advance(p)->at;
             }
+            // `previous Trooper other`, in a system's query: a word of its own before a binding's type, and a name
+            // like any other everywhere else (`previous score`, a component or a field named previous)
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "previous") && peek_at(p, 1)->kind == T_MUT) {
+                diag_error(peek(p)->at, "'previous' reads a component as it was when the tick started, which nothing can "
+                                        "change: drop 'mut'");
+                suggest_replacement((str){peek(p)->text.ptr, (int)(peek_at(p, 1)->text.ptr + peek_at(p, 1)->text.len - peek(p)->text.ptr)},
+                                    "previous");
+                longjmp(p->fail, 1);
+            }
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "previous") && peek_at(p, 1)->kind == T_IDENT
+                && (filter || peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT)) {
+                prm.previous = true;
+                prm.previous_at = advance(p)->at;
+            }
             if (!prm.placement_local && at(p, T_IDENT) && str_eq_c(peek(p)->text, "local") && peek_at(p, 1)->kind == T_IDENT) {
                 prm.placement_local = true;
                 prm.placement_at = advance(p)->at;

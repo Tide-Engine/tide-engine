@@ -1,0 +1,7 @@
+// expect: 'previous' goes on a binding of a system's query, which reads other entities: this is the code's own parameter
+// expect: like 'system Name(mut Body body, query (previous Body other) others) { ... }'
+component Body { float3 position; }
+scene Main { }
+system Look(previous Body body)
+{
+}

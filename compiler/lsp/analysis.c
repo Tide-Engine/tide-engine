@@ -59,6 +59,7 @@ typedef enum occ_kind {
     OCC_SETTING,  // One of the engine's settings, tickRate in settings { ... }
     OCC_OWNERSHIP, // `ownership` after `with` or `without`, with `param` the filter
     OCC_VERIFIED, // `verified` before a parameter's or filter's type, or a trigger's event, with `param` the one it's on
+    OCC_PREVIOUS, // `previous` before a query binding's type, with `param` the binding it's on
     // `out` before a parameter's type (a declaration, with `param` the one it's on), or before an argument, with
     // `param` the parameter it's for where the game declares one, and `local` the variable the argument declares
     OCC_OUT,
@@ -1199,6 +1200,11 @@ static void walk_param(const param *p, const decl *d)
             add_occ((occurrence){.at = p->verified_at, .len = 8, .kind = OCC_VERIFIED, .param = p, .param_of = d,
                                  .name = str_from("verified")});
         }
+        // `previous Trooper other`, in a query: the word, whatever the checker then made of it
+        if (p->previous_at.line > 0) {
+            add_occ((occurrence){.at = p->previous_at, .len = 8, .kind = OCC_PREVIOUS, .param = p, .param_of = d,
+                                 .name = str_from("previous")});
+        }
         // `out Health health`, a function's or method's: the word, whatever the checker then made of it
         if (p->out_at.line > 0) {
             add_occ((occurrence){.at = p->out_at, .len = 3, .kind = OCC_OUT, .declaration = true, .param = p, .param_of = d,
@@ -1876,6 +1882,7 @@ static void format_param(const param *p, sb *out)
     case PARAM_READ: case PARAM_EVENT: case PARAM_QUERY: case PARAM_SENDER: break;
     }
     if (p->verified_at.line > 0) sb_put(out, "verified "); // As written, where the checker refused it too
+    if (p->previous_at.line > 0) sb_put(out, "previous ");
     if (p->placement_local) sb_put(out, "local ");
     if (p->changed) sb_printf(out, "Changed<" STR_FMT ">", STR_ARG(p->type_name));
     else sb_printf(out, STR_FMT, STR_ARG(p->type_name));
@@ -3207,6 +3214,11 @@ static void describe_world(const decl *d, sb *out)
     sb writes = {0};
     const int read_count = world_use_names(d, false, "`", d, &reads);
     const int write_count = world_use_names(d, true, "`", d, &writes);
+    sb before = {0};
+    if (previous_read_names(d, "`", d, &before)) {
+        sb_printf(out, "\n\nThrough its queries, it reads any entity's %s as the tick started: it waits for no system "
+                       "over that, and none waits for it.", before.data);
+    }
     if (read_count + write_count == 0) return;
     bool world = false;
     bool query = false;
@@ -3305,6 +3317,28 @@ static void describe_verified(const param *p, const decl *of, sb *out)
                                         : "The view runs for the entities it draws that are the same entity in the "
                                           "confirmed world too.");
     }
+}
+
+// `previous` where it is: before a binding of a system's query.
+static void describe_previous(const param *p, const decl *of, sb *out)
+{
+    if (!p->previous) { // Somewhere it can't be, which the error there explains
+        code_block(out, "previous");
+        sb_put(out, "\n\nAs the tick started. It goes before a binding of a system's query: `query (previous Body other) "
+                    "others` reads every entity's `Body` as it was when this tick started, whatever has run since.");
+        return;
+    }
+    sb code = {0};
+    format_param(p, &code);
+    code_block(out, code.data);
+    const str type = last_part(p->type_name);
+    sb_printf(out, "\n\nThe entity's `" STR_FMT "` as it was when this tick started: as the tick before left it, whatever "
+                   "has run since in this tick, this system's own changes too. Nothing can change what it reads, so the "
+                   "system waits for no system that changes `" STR_FMT "`, none waits for it", STR_ARG(type), STR_ARG(type));
+    if (of && of->per_entity) sb_put(out, ", and reading it never keeps its entities on one thread");
+    sb_put(out, ". A loop that starts by skipping rows by one of its numbers goes through an index made once a tick, "
+                "shared by every system that searches the same way.\n\nThe query has the entities the world has now, "
+                "which while systems run are the ones the tick started with.");
 }
 
 // What Card(number) gives, for its hover and its signature.
@@ -3504,6 +3538,9 @@ static void describe(const occurrence *o, sb *out)
     case OCC_VERIFIED:
         describe_verified(o->param, o->param_of, out);
         break;
+    case OCC_PREVIOUS:
+        describe_previous(o->param, o->param_of, out);
+        break;
     case OCC_OUT: {
         if (o->declaration) { // On a parameter: what the parameter is
             format_param(o->param, &code);
@@ -3701,6 +3738,7 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, "\n\nRead-only match data from this query row. Attached local fields use this entity's current local state.");
             if (o->param->mode == PARAM_MUT) sb_put(out, " This binding can write those local fields.");
             if (o->param->verified) sb_put(out, " As the last tick the server confirmed has it.");
+            if (o->param->previous) sb_put(out, " As it was when this tick started, whatever has run since.");
             break;
         }
         if (is_shader(of)) {
@@ -4475,7 +4513,13 @@ static bool put_world_lens(sb *title, const decl *d, const char *before)
     sb writes = {0};
     const int read_count = world_use_names(d, false, "", d, &reads);
     const int write_count = world_use_names(d, true, "", d, &writes);
-    if (read_count + write_count == 0) return false;
+    sb started = {0};
+    const int before_count = previous_read_names(d, "", d, &started);
+    if (read_count + write_count + before_count == 0) return false;
+    if (read_count + write_count == 0) { // Only the tick's start
+        sb_printf(title, "%sQuery: reads %s as the tick started", before, started.data);
+        return true;
+    }
     bool world = false;
     bool query = false;
     for (int i = 0; i < d->params.count; i++) {
@@ -4486,6 +4530,7 @@ static bool put_world_lens(sb *title, const decl *d, const char *before)
     if (read_count) sb_printf(title, "reads %s", reads.data);
     if (read_count && write_count) sb_put(title, "; ");
     if (write_count) sb_printf(title, "writes %s", writes.data);
+    if (before_count) sb_printf(title, "; reads %s as the tick started", started.data);
     return true;
 }
 
@@ -6637,6 +6682,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_DEFAULT: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_OWNERSHIP: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_VERIFIED: *type = ST_KEYWORD; *mods = 0; break;
+    case OCC_PREVIOUS: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_OUT: *type = ST_KEYWORD; *mods = 0; break; // A word only before a parameter's type and before an argument
     case OCC_REPLACE: *type = ST_KEYWORD; *mods = 0; break; // `virtual` and `override`, words only before a declaration
     }
@@ -8785,6 +8831,7 @@ static void put_param_here(sb *out, const param *p)
     sb_put(out, p->is_out ? "out " : p->mode == PARAM_MUT ? "mut " : p->mode == PARAM_WITH ? "with "
               : p->mode == PARAM_WITHOUT ? "without " : "");
     if (p->verified) sb_put(out, "verified ");
+    if (p->previous) sb_put(out, "previous ");
     if (p->ownership) sb_put(out, "ownership");
     else if (p->scene) sb_printf(out, "scene " STR_FMT, STR_ARG(p->type_name));
     else put_type_here(out, p->type, p->type_name);
@@ -10251,8 +10298,14 @@ void analysis_completion(const int line, const int character, jbuf *out)
                               && str_eq_c(DOC->toks[outer.open - 2].text, "view");
             const bool local_fields = in_view || outer.header == HEADER_ROUTINE || local_match_handler(outer.open);
             const bool confirmed = in_view && pk == T_IDENT && str_eq_c(prev->text, "verified") && last > f.open;
-            const tok_kind marked = confirmed ? DOC->toks[last - 1].kind : T_EOF;
-            if (marked == T_LPAREN || marked == T_COMMA || marked == T_WITH || marked == T_WITHOUT || marked == T_MUT) {
+            // system Sense(query (previous Body other) others): a system's query reads the tick's start too
+            const bool in_system = outer.kind == CTX_HEADER && outer.open >= 2 && DOC->toks[outer.open - 2].kind == T_SYSTEM;
+            const bool started = in_system && pk == T_IDENT && str_eq_c(prev->text, "previous") && last > f.open;
+            const tok_kind marked = confirmed || started ? DOC->toks[last - 1].kind : T_EOF;
+            if (started && (marked == T_LPAREN || marked == T_COMMA)) {
+                complete_match_types(&c, false);
+                complete_namespaces(&c, false);
+            } else if (marked == T_LPAREN || marked == T_COMMA || marked == T_WITH || marked == T_WITHOUT || marked == T_MUT) {
                 complete_match_types(&c, false);
                 complete_namespaces(&c, false);
             } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT || pk == T_MUT) {
@@ -10260,6 +10313,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                     item(&c, "with", CK_KEYWORD, "Query entities must have this component", NULL, NULL);
                     item(&c, "without", CK_KEYWORD, "Query entities must not have this component", NULL, NULL);
                     if (local_fields) item(&c, "mut", CK_KEYWORD, "Write the query binding's attached local fields", NULL, NULL);
+                }
+                if (in_system && (pk == T_LPAREN || pk == T_COMMA)) {
+                    item(&c, "previous", CK_KEYWORD, "As it was when this tick started: waits for no system", NULL, NULL);
                 }
                 if (in_view) {
                     item(&c, "verified", CK_KEYWORD,
@@ -10695,6 +10751,7 @@ static bool same_symbol(const occurrence *a, const occurrence *b)
     case OCC_DEFAULT:
     case OCC_OWNERSHIP:
     case OCC_VERIFIED:
+    case OCC_PREVIOUS:
     case OCC_OUT:
     case OCC_REPLACE: return false; // A keyword, not a symbol
     }
@@ -10778,6 +10835,8 @@ static const char *rename_target(const int line, const int character, const occu
         return "'ownership' is a keyword after 'with' and 'without', so it can't be renamed.";
     case OCC_VERIFIED:
         return "'verified' is a keyword before a parameter's type or a handler's event, so it can't be renamed.";
+    case OCC_PREVIOUS:
+        return "'previous' is a keyword before a query binding's type, so it can't be renamed.";
     case OCC_OUT:
         return "'out' is a keyword before a parameter's type or an argument, so it can't be renamed.";
     case OCC_REPLACE:

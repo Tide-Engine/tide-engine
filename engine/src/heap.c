@@ -820,6 +820,19 @@ void tide_heaps_copy(tide_heaps *to, const tide_heaps *from)
     }
 }
 
+void tide_heaps_keep(tide_heaps *to, const tide_heaps *from, const uint32_t id)
+{
+    if (to == from) return;
+    const tide_heap *theirs = slot_heap(from, 0);
+    tide_heap *ours = slot_heap(to, 0);
+    if (!theirs && !ours) return;
+    if (!ours) ours = tide_heaps_make(to);
+    const uint32_t i = tide_heap_slots[id & (TIDE_HEAP_IDS - 1u)];
+    if (theirs) tide_heap_copy(&ours[i], &theirs[i]);
+    else tide_heap_free(&ours[i]);
+    if (theirs && (theirs[i].runs || ours[i].runs)) copy_runs(&ours[i], &theirs[i]);
+}
+
 void tide_heaps_free(tide_heaps *hs)
 {
     tide_heap *all = slot_heap(hs, 0);

@@ -1,0 +1,13 @@
+// expect: a function's query is the one it's handed, and reads what that one reads: 'previous' goes on the system's query
+component Body { float3 position; }
+scene Main { }
+int Count(query (previous Body other) others)
+{
+    mut var n = 0;
+    foreach (var o in others) n++;
+    return n;
+}
+system Look(mut Body body, query (previous Body other) others)
+{
+    body.position.x = float(Count(others));
+}

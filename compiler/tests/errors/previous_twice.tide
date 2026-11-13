@@ -1,0 +1,7 @@
+// expect: 'Body' appears twice in the query
+component Body { float3 position; }
+scene Main { }
+system Look(mut Body body, query (previous Body was, Body now) others)
+{
+    foreach (var o in others) body.position = o.was.position + o.now.position;
+}

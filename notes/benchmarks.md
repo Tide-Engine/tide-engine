@@ -1,5 +1,14 @@
 # Benchmarks
 
+## A flock with `previous` (2026-11-13, evening)
+
+`bench/flock` (`bench_flock`, `bench_flock_now`; each test runs `--quick --expect <hash>`): one component and one
+system, each bird steering by the birds within 2 and moving. With the word the others are read as the tick
+started: across threads, through an index made once a tick. 10,000 birds: 886 ms a tick unmarked, 9.3 on one
+thread with the word, 1.5 on twelve. The table, the two-component workaround's numbers and Mount & Rifle's crowd
+gathered from `previous` rows (its chain of waits 3.38 ms to 3.01, its tick unchanged) are in
+schedule-and-threads.md, top section, Measured.
+
 ## A heap in runs (2026-11-13, later)
 
 schedule-and-threads.md, top section: a per-entity system that changes its own rows' text and lists goes through

@@ -1,5 +1,17 @@
 # The language server and the editors
 
+## `previous` in a query (2026-11-13)
+
+The word before a system's query binding (schedule-and-threads.md, top section) is an occurrence of its own
+(`OCC_PREVIOUS`, placed by `walk_param` wherever the parser read it): a keyword's semantic token, a hover
+(`describe_previous`: what it reads, that nothing waits, the index; a short form where the checker refused it),
+and no rename. The binding's hover ends `As it was when this tick started, whatever has run since.`; a system's
+hover and lens say `reads Body as the tick started` (`describe_world`, `put_world_lens`, from
+`previous_read_names`), apart from what it reads as it is. Completion offers `previous` at a binding's start in a
+system's query (not after `with`, not in a view's, handler's or function's) and the match's components after it.
+`format_param` and signatures print it. Both TextMate grammars scope it `storage.modifier.previous.tide` where a
+binding starts with it, and leave a name `previous` alone. Tested in `lsp_previous` and the grammar's probe.
+
 ## What keeps a system on one thread (2026-11-13)
 
 Above a per-entity system whose entities stay on one thread, a lens says what keeps them there, `on one thread: it

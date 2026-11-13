@@ -93,6 +93,8 @@ static void owned_code(const program *p, owned_uses *u, const decl *d)
         if (a->mode == PARAM_READ || a->mode == PARAM_MUT) owned_read(u, a->type.decl, a->mode == PARAM_MUT);
     }
     for (int i = 0; i < d->world_uses.count; i++) owned_read(u, d->world_uses.items[i].component, d->world_uses.items[i].writes);
+    // What a query reads of the tick's start is what the tick before left: its writers are wanted as any read's are
+    for (int i = 0; i < d->previous_reads.count; i++) owned_read(u, d->previous_reads.items[i], false);
     // Task registries are not yet partitioned by causal ownership.
     if (d->starts_tasks || d->task_access[0]) u->writes_all = true;
     owned_stmt(p, u, d->body);

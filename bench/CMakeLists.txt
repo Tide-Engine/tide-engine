@@ -72,6 +72,20 @@ if(TIDE_PLATFORM)
     endforeach()
 endif()
 
+# A flock in one component and one system: each bird steers by the birds near it and moves. bench_flock reads the
+# others as the tick started (`previous`: across threads, an index once a tick); bench_flock_now is the same
+# without the word (one thread, every bird against every bird). notes/schedule-and-threads.md has the numbers.
+if(TIDE_PLATFORM)
+    tide_add_game(bench_flock SOURCES flock/flock.tide NAME flock HOST flock/main.c)
+    tide_add_game(bench_flock_now SOURCES flock/flock_now.tide NAME flock HOST flock/main.c)
+    foreach(target bench_flock bench_flock_now)
+        target_link_libraries(${target} PRIVATE tide_platform)
+    endforeach()
+    # The same world on every platform and thread count
+    add_test(NAME bench_flock COMMAND bench_flock --quick --expect 46fdc130dc7e51fb)
+    add_test(NAME bench_flock_now COMMAND bench_flock_now --quick --expect af54b9df77ab6422)
+endif()
+
 # Presentation correction costs, without changing Transform's defaults.
 add_subdirectory(corrections)
 

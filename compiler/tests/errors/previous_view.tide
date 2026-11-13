@@ -1,0 +1,8 @@
+// expect: 'previous' is for a system's query
+// expect: a view's query reads the match as the view draws it; drop 'previous'
+component Body { float3 position; }
+scene Main { }
+view Show(query (previous Body other) others)
+{
+    foreach (var o in others) { }
+}

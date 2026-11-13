@@ -1,9 +1,18 @@
 # Runs one game built with its loops' indexes (INDEXED) and without (PLAIN), and checks that what they print as
 # `ixloops` lines (indexed_loops_test.c: their worlds' hashes and what their views drew, tick by tick) is the same,
 # and that both passed their own tests.
+# With WORD and LEAST, the lines that start with that word, at least that many of them, of another such game
+# (previous_test.c: `previousloops`).
 #
 # cmake -DINDEXED=<program> -DPLAIN=<program> -DEMULATOR=<how this platform runs one, parts split by |>
-#       -P indexed_loops_same.cmake
+#       [-DWORD=<word> -DLEAST=<lines>] -P indexed_loops_same.cmake
+
+if(NOT WORD)
+    set(WORD ixloops)
+endif()
+if(NOT LEAST)
+    set(LEAST 80)
+endif()
 
 string(REPLACE "|" ";" emulator "${EMULATOR}")
 set(lines "")
@@ -13,9 +22,9 @@ foreach(program IN ITEMS "${INDEXED}" "${PLAIN}")
         message(FATAL_ERROR "${program} failed (${result}):\n${out}\n${err}")
     endif()
     string(REPLACE "\r" "" out "${out}")
-    string(REGEX MATCHALL "ixloops [^\n]*" found "${out}")
+    string(REGEX MATCHALL "${WORD} [^\n]*" found "${out}")
     list(LENGTH found count)
-    if(count LESS 80)
+    if(count LESS ${LEAST})
         message(FATAL_ERROR "${program} printed ${count} ticks:\n${out}")
     endif()
     list(APPEND lines "${found}")

@@ -1,0 +1,65 @@
+// A flock: each bird steers by the birds within its sight and moves, one component and one system
+// (notes/schedule-and-threads.md, `previous` bindings). bench_flock reads the others as the tick started
+// (`previous`): its birds go across threads, and their search is through an index made once a tick.
+// bench_flock_now is the same game without the word (flock_now.tide): a system that changes a component and
+// reads everyone's runs its entities on one thread, and can't index by the place it moves.
+
+component Bird
+{
+    float3 position;
+    float3 velocity;
+    int seen;
+    int flock;
+}
+
+singleton Config
+{
+    int birds;
+    bool made;
+}
+
+// A number from 0 to 1 for `i`, the same everywhere
+float Spread(int i, int salt)
+{
+    var h = Math.Hash(i * 2 + salt * 7919);
+    return float(h % 100000) / 100000.0f;
+}
+
+// Spawned once the host has said how many: about ten birds within a bird's sight
+system Make(mut Config config)
+{
+    if (config.made) return;
+    config.made = true;
+    var side = Math.Pow(float(config.birds) * 3.35f, 1.0f / 3.0f) + 1.0f;
+    for (var i = 0; i < config.birds; i++)
+    {
+        Spawn(Bird { position = float3(Spread(i, 1), Spread(i, 2), Spread(i, 3)) * side,
+                     velocity = float3(Spread(i, 4) - 0.5f, Spread(i, 5) - 0.5f, Spread(i, 6) - 0.5f) * 0.1f, flock = i % 3 });
+    }
+}
+
+system Flock(mut Bird bird, query (previous Bird other) others)
+{
+    mut var center = float3(0.0f, 0.0f, 0.0f);
+    mut var heading = float3(0.0f, 0.0f, 0.0f);
+    mut var apart = float3(0.0f, 0.0f, 0.0f);
+    mut var seen = 0;
+    foreach (var o in others)
+    {
+        if (Math.DistanceSq(o.other.position, bird.position) > 4.0f) continue;
+        center += o.other.position;
+        if (o.other.flock == bird.flock) heading += o.other.velocity;
+        var away = bird.position - o.other.position;
+        var near = Math.LengthSq(away);
+        if (near > 0.0f && near < 0.25f) apart += away;
+        seen += 1;
+    }
+    bird.seen = seen;
+    if (seen > 0)
+    {
+        bird.velocity += (center / float(seen) - bird.position) * 0.001f + heading * (0.002f / float(seen)) + apart * 0.01f;
+    }
+    bird.position += bird.velocity;
+}
+
+scene Main { }

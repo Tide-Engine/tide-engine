@@ -316,6 +316,11 @@ static inline tide_heap *tide_heaps_of(tide_heaps *hs, const uint32_t id)
 // of the game is read into the heaps of the same owners.
 void tide_heaps_copy(tide_heaps *to, const tide_heaps *from);
 void tide_heaps_free(tide_heaps *hs);
+// One owner's heap of `from` as it is now, its runs too, into the same place
+// of `to` (another set, of nothing else): a copy that shares its pages, as
+// tide_heaps_copy makes of all of them. For reading that owner's blocks as
+// they were while `from` goes on changing; tide_heaps_free lets go.
+void tide_heaps_keep(tide_heaps *to, const tide_heaps *from, uint32_t id);
 void tide_heaps_flush(tide_heaps *hs);
 void tide_heaps_settle(tide_heaps *hs);
 uint64_t tide_heaps_hash(uint64_t h, const tide_heaps *hs);

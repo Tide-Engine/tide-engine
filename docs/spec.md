@@ -504,6 +504,26 @@ system Hits(query (Body body, with Fighter) fighters, Settings settings)
   - **A step that reads a variable made outside the loop holding text, a list, a map, a set or a grid keeps its loop on the thread that reached it**, in match code too: such values are that thread's scratch memory. (Before 2026-11-12 such a step on another thread read that thread's memory instead: a crash.) Fields of components and singletons are the world's and unaffected.
   - Each step's rolls are its row's: made from the code's generator and the row's place in the order, whichever thread runs it, as a list step's are its index's.
 - **Match event and command handlers take queries too** (agreed 2026-10-18). Each `foreach` reads the current match at the handler's turn in the existing tick-end queue, including earlier handlers' completed writes and structural changes already applied. Queries do not select the event's target: a handler with only queries and singletons runs once per event or command and requires no entity target. Rows remain read-only; explicit `mut World` and its existing `Set` rules can change queried entities. Such writes are visible to later query reads. A handler's own `mut` component parameter keeps the ordinary copy/write-back rule: its unfinished changes are not in the stored component a query reads, and later handlers see the component after write-back. Query traversal adds no queue flush, snapshot or scheduling phase. `Spawned` queries include the new entity and `Destroyed` queries include the entity before removal.
+- **`previous` on a binding reads the tick's start** (the owner, 2026-11-13). `query (previous Trooper other) others` reads every entity's `Trooper` as it was when this tick started, as the tick before left it, whatever has run since in the tick: other systems' changes, and the system's own. It's explicit: an unmarked binding reads the world as it is, as before. Decided: the word, that it goes on a query's binding beside `verified`, that it's explicit, and what it reads.
+
+```csharp
+system BotSense(mut Bot bot, mut Trooper t, query (previous Trooper other) others)
+{
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, t.position) > BOT_SIGHT) continue;
+        ...
+    }
+}
+```
+
+  Nothing in a tick can change what such a binding reads, so it's no part of the tick's schedule: the system doesn't wait for this tick's writers of the component, they don't wait for it, and a per-entity system that changes a component and reads everyone's `previous` keeps its entities across threads. Results are the same on one thread and many. Provisional (Claude's picks):
+  - **Where.** Bindings of a system's queries only. Each of these is an error that says what to write: a filter (`with previous X`), a system's own parameter, a view's or a local handler's query (they run between ticks, when nothing changes the match), `mut`, `previous` with `verified`, a local component, and a match handler's query. A handler runs at the tick's end, once entities have come, gone and moved between archetypes; giving it the tick's start needs the tick-start places of entities kept too, which isn't built. `World` reads (`world.Get`) have no such form. A component can't be bound both ways in one query (`previous Body was, Body now` says it appears twice); two queries can.
+  - **Which entities.** The world's as it is, filters included. While systems run those are the entities the tick started with: spawns, destroys, adds and removes wait for the tick's end, so an entity spawned this tick is in no query yet, and one destroyed this tick is still in every one, with its values of the tick's start. A query that mixes `previous` and unmarked bindings has those same entities, each binding read at its own time.
+  - **Text, lists, maps, sets and grids** of a `previous` component read as they were too. Copying one into the world (assigning it to a field, sending it in an event) copies what it was.
+  - **A function handed the query** reads what the query reads: the word goes on the system's query, never on the function's.
+  - **Loops.** An [indexed loop](#indexed-loops) whose key is in a `previous` binding is indexed whatever the system writes, the key's own field too, and its index is made at most once a tick, for every loop in the game that searches the same query by the same keys, on whatever threads. A `parallel` loop over such a query keeps its steps on one thread where a `previous` component holds a list or map of text or of lists.
+  - **What it costs.** Only components some query binds `previous` are kept, for as long as the tick's systems run, by holding the pages they started the tick in: a system that changes one of them that tick writes into a page of its own, as it does beside any snapshot. None of it is match state: a world's hash, its snapshots, a rollback and its packed bytes are what they'd be without it.
 - **Views take `query` parameters as systems do**, read-only, with the same syntax and the same filters:
 
 ```csharp
@@ -1362,6 +1382,7 @@ Provisional (Claude's picks, 2026-11-05):
 - A loop in async code whose body waits (`await`) isn't indexed: the search can't be kept across a wait.
 - **Which keys**: two or three components of one vector bounded both ways (a grid), else an equality, else one number bounded both ways, else one bounded one way.
 - An index of a world's rows lasts while the rows it was made from are unchanged, across ticks too: an index of walls that never move is made once.
+- **A key in a `previous` binding** (2026-11-13; Read-only entity queries): the loop finds rows by what they were when the tick started, which nothing changes while its systems run. So it's indexed whatever the system writes, the key's own field of its own entity too, and its index is made at most once a tick: every loop in the game that searches the same query by the same keys, in a system or in a function a system hands its query to, on whatever threads, shares one.
 - **When most rows can pass** (2026-11-12): a search of a world's query that finds more than one row in six saves nothing, so the loop then goes through every row as a plain loop does, which costs less a row, and a loop whose searches keep finding that many leaves the search out for some of its runs. So does a loop over fewer than 32 rows. The results are the same either way; only the cost differs. `indexed` still means what it meant: the loop can be indexed.
 
 ## Text
