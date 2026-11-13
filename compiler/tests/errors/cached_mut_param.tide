@@ -1,0 +1,8 @@
+// expect: 'Bump' is cached, but it isn't pure: it takes 'stats' as 'mut', which it can change for its caller
+scene Main { }
+struct Stats { int power; }
+cached int Bump(mut Stats stats)
+{
+    stats.power += 1;
+    return stats.power;
+}

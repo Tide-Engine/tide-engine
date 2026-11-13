@@ -1,0 +1,6 @@
+// expect: 'Phase' is cached, but it isn't pure: it reads Time
+scene Main { }
+cached int Phase(Time time)
+{
+    return time.tick % 4;
+}

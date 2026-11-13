@@ -1,0 +1,7 @@
+// expect: 'Dot' is cached, but it isn't pure: it draws
+scene Main { }
+cached float Dot(float2 at)
+{
+    Draw.Circle(at, 4, Color(1, 1, 1, 1));
+    return at.x;
+}

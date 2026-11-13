@@ -1,0 +1,11 @@
+// expect: 'Seen' is cached, but it isn't pure: it reads the local field 'seen', which is this machine's
+scene Main { }
+component Body
+{
+    float x;
+    local float seen;
+}
+cached float Seen(Body body)
+{
+    return body.seen + body.x;
+}

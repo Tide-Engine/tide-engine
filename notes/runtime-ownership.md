@@ -1,5 +1,23 @@
 # Runtime written by Claude for now
 
+## Cached functions' tables (2026-11-13)
+
+Generated C calls no new runtime function: a `cached` function's table, its key and its locks are helpers
+written into the game's C (`gen_cached_tables` in compiler/src/cached_codegen.inc; notes/pure-functions.md), over
+`tide_hash*`, `tide_alloc_zeroed`, `tide_heap_read`, `tide_handle_where`, `tide_pack_holds`,
+`tide_pack_generation`, `tide_text_use`, `tide_heap_run_enter`/`tide_heap_run_leave` and `tide_heaps_free`, and
+they read `tide_heap`'s `pages`, `page`, `used` and `runs` and `tide_page`'s `hash` and `hashed` directly. Two
+things in the runtime changed for it:
+
+- `tide_page_hash` (page.c) stores a page's hash and then `hashed` with a release, where it assigned both
+  plainly: a thread that reads `hashed` as set (a cached function's key, with an acquire) then reads the hash
+  that goes with it. Same values, same callers.
+- `tide_run_unload` (platform/include/tide/run.h) calls `tide_cached_free()` under `TIDE_HAS_CACHED`.
+
+If the owner takes heap.c or page.c over: a key relies on every write to a page clearing `hashed` first
+(`tide_heap_write`, `tide_heap_write_shared`, `tide_heap_alloc` and the rest), and on a page read through a
+heap's table staying allocated while a system that may read that heap runs, as `tide_heap_block` does.
+
 ## A gathering system's log (2026-11-13)
 
 Mine, under the jobs maintenance below (schedule-and-threads.md, top section, has the design and the tests). New in

@@ -1,0 +1,8 @@
+// expect: 'Nothing' is cached, but it gives no result to remember
+// expect: give it a return type, or drop 'cached'
+scene Main { }
+cached void Nothing(int n)
+{
+    var twice = n * 2;
+    Debug.Assert(twice >= n || n < 0, "twice");
+}

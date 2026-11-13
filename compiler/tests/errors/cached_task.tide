@@ -1,0 +1,12 @@
+// expect: 'Start' is cached, but it isn't pure: it starts 'Countdown', which runs as a task
+// expect: on line 10
+scene Main { }
+async void Countdown(int ticks)
+{
+    await Wait.Ticks(ticks);
+}
+cached int Start(int ticks)
+{
+    Countdown(ticks);
+    return ticks;
+}

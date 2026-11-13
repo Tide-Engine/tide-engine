@@ -1,3 +1,24 @@
+## Pure functions, merged calls and `cached` (2026-11-13)
+
+The checker works out which functions and methods are pure (`decl.pure`, with `impure_why`/`impure_at`/
+`impure_through` for the first reason one isn't), repeated calls of a pure function with the same arguments in
+one body become one hidden read-only local (`tide_same<n>`, a change to the tree made at the end of `check()`),
+and `cached` before a function (a contextual word, parsed where `build` is) makes it remember its results in a
+table of the program's own. All of it, with its contracts, tests, measurements and gaps:
+[pure-functions.md](pure-functions.md). What other compiler work has to know:
+
+- **A new expression kind, statement kind or `builtin_call` is impure until `walk_expr`/`walk_stmt` in
+  `compiler/src/purity.c` list it**, and not "stable" (never an argument of a merged call) until `stable` does.
+  Both are whitelists on purpose: a missed merge is only slower, a wrong one is a wrong result.
+- **The tree a pass sees after `infer_purity` in `check()` can have `S_VAR`s nobody wrote** and `E_NAME`s where
+  calls were (`analyze_parallelism`, everything in codegen, `tide schedule`). The editors' tree never does
+  (`asset_metadata_only`), nor one built with `tidec --no-call-merging` (`program.calls_as_written`).
+- **A node the checker shares between two places must stay one node**: the merge rewrites calls in place and
+  marks them `pure_seen`. A parameter's default, the same node at every call that leaves it out, is never
+  rewritten (`written_arg`).
+- `tidec --no-call-merging` and `--no-cached` (`NO_CALL_MERGING`, `NO_CACHED` in `tide_add_game`) are for the
+  tests and benchmarks that compare a game with and without.
+
 ## Dense Owned dependency graphs compile in the embedded compiler (2026-11-07)
 
 0.7.0-nightly.2's Owned dependency closure emitted one separate conditional per

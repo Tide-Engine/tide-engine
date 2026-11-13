@@ -1,5 +1,17 @@
 # The language server and the editors
 
+## Pure and cached functions (2026-11-13)
+
+Hover on a function or a read-only method ends with what the checker worked out (`purity_summary`,
+compiler/src/purity.h): `Pure: its result comes from its arguments alone, so repeated calls with the same
+arguments run once.`, `Pure, and cached: ...`, or `Not pure: it rolls with Random (line 12).` with the first
+reason and its line. `cached` shows in a function's signature (`format_routine`, the outline's header). It's a
+declaration word: declaration starts take it as they take `async`, the contextual words a rename checks are 16
+now, and both grammars have it among the modifiers (`local|async|worker|cached|virtual|override`). The server
+reads the tree as written: calls aren't merged for it (`asset_metadata_only`), so hover, references and rename
+on a repeated call are what they were. Tests: `lsp_pure_functions`; the grammar test's `cached functions` case
+and the probe's three lines (a parameter or local named `cached` is still a name). notes/pure-functions.md.
+
 ## What keeps a system on one thread (2026-11-13)
 
 Above a per-entity system whose entities stay on one thread, a lens says what keeps them there, `on one thread: it

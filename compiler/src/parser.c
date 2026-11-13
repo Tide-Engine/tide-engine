@@ -1084,7 +1084,7 @@ static bool is_decl_word(const str text)
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
         || str_eq_c(text, "vert") || str_eq_c(text, "compute") || str_eq_c(text, "asset") || str_eq_c(text, "audio")
         || str_eq_c(text, "worker")
-        || str_eq_c(text, "build");
+        || str_eq_c(text, "build") || str_eq_c(text, "cached");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -2379,6 +2379,15 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
             skip_statement(p);
             continue;
         }
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "cached") && at_method_from(p, 1, false)) {
+            diag_error(peek(p)->at, "a method can't be cached: a function can");
+            diag_note("write it as a function outside '" STR_FMT "' that takes the value: 'cached float Name(" STR_FMT " value) { ... }'",
+                      STR_ARG(name->text), STR_ARG(name->text));
+            suggest_replacement(word_and_space(peek(p)), "");
+            if (!p->recover) longjmp(p->fail, 1);
+            advance(p);
+            continue;
+        }
         if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "async") && (peek_at(p, 1)->kind == T_IDENT || peek_at(p, 1)->kind == T_MUT)) {
             diag_error(peek(p)->at, "methods can't be async yet; functions can");
             diag_note("write it as a function outside '" STR_FMT "' that takes the value: 'async void Name(...) { ... }'",
@@ -3031,6 +3040,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const token *virtual = NULL;
         const token *override = NULL;
         const token *build = NULL;
+        const token *cached = NULL;
         p.overriding = false;
         for (;;) {
             const tok_kind after = peek_at(&p, 1)->kind;
@@ -3043,6 +3053,9 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 worker = advance(&p);
             } else if (!build && t->kind == T_IDENT && str_eq_c(t->text, "build") && (after == T_IDENT || after == T_MUT)) {
                 build = advance(&p); // build void Outline(...): it runs while the game builds
+            } else if (!cached && t->kind == T_IDENT && str_eq_c(t->text, "cached")
+                       && (after == T_IDENT || after == T_MUT || after == T_COMPONENT || after == T_SINGLETON || after == T_SYSTEM)) {
+                cached = advance(&p); // cached float4 Eyepiece(...): it remembers its results
             } else if (!virtual && t->kind == T_IDENT && str_eq_c(t->text, "virtual") && at_replace_word(&p, false)) {
                 virtual = advance(&p);
             } else if (!override && t->kind == T_IDENT && str_eq_c(t->text, "override") && at_replace_word(&p, false)) {
@@ -3164,6 +3177,16 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 if (local) diag_error(local->at, "a build function is the build's, not a machine's: drop 'local'");
                 if (async) diag_error(async->at, "a build function runs to completion while the game builds; drop 'async'");
                 if (worker) diag_error(worker->at, "a build function runs while the game builds, not on a worker: drop 'worker'");
+            }
+        }
+        if (cached) {
+            if ((d->kind != DECL_FUNCTION && d->kind != DECL_GENERIC) || d->is_extern) {
+                diag_error(cached->at, "'cached' goes before a function, which then remembers its results: "
+                                       "'cached Box Bounds(Catalog catalog, int def) { ... }'");
+                if (d->kind == DECL_FUNCTION) diag_note("a function written in C keeps what it wants to itself, in C");
+            } else {
+                d->is_cached = true;
+                d->cached_at = cached->at;
             }
         }
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {

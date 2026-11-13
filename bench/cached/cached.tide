@@ -1,0 +1,140 @@
+// What a `cached` function costs against the function itself (notes/pure-functions.md): each probe calls one
+// function a tick, picked by Bench.mode, with one of `spread` arguments. Built as bench_cached, and with
+// `cached` meaning nothing as bench_cached_plain (main.c times both the same way).
+
+scene Main { }
+
+struct Box
+{
+    float3 lo;
+    float3 hi;
+}
+
+struct Part
+{
+    string name;
+    List<float3> corners;
+}
+
+// A few parts
+singleton Catalog
+{
+    List<Part> parts;
+}
+
+// Many: a heap of hundreds of pages, each of which a call's key reads the hash of
+singleton Big
+{
+    List<Part> parts;
+}
+
+singleton Bench
+{
+    int mode;
+    int spread = 16;    // How many arguments the probes share between them
+    int probes = 1000;  // How many to make, at the first tick
+    int made;
+}
+
+component Probe
+{
+    int index;
+    float sum;
+}
+
+// Next to nothing: a call that costs less than looking it up
+cached float Tiny(float x)
+{
+    return x * 0.5 + 1;
+}
+
+// 16 sines, and 256
+cached float Curve(float x, int steps)
+{
+    mut var sum = 0.0;
+    for (var i = 1; i <= steps; i++) sum += Math.Sin(x * i) / i;
+    return sum;
+}
+
+// A struct in
+cached float Size(Box box)
+{
+    return (box.hi.x - box.lo.x) * (box.hi.y - box.lo.y) * (box.hi.z - box.lo.z);
+}
+
+// A singleton with lists in: 64 corners gone through
+cached Box Bounds(Catalog catalog, int part)
+{
+    mut var box = Box { lo = float3(1000), hi = float3(-1000) };
+    foreach (var corner in catalog.parts[part % catalog.parts.count].corners)
+    {
+        box.lo = Math.Min(box.lo, corner);
+        box.hi = Math.Max(box.hi, corner);
+    }
+    return box;
+}
+
+// ...and one whose heap is big
+cached Box BigBounds(Big big, int part)
+{
+    mut var box = Box { lo = float3(1000), hi = float3(-1000) };
+    foreach (var corner in big.parts[part % big.parts.count].corners)
+    {
+        box.lo = Math.Min(box.lo, corner);
+        box.hi = Math.Max(box.hi, corner);
+    }
+    return box;
+}
+
+// Text in
+cached int Letters(string name)
+{
+    mut var n = 0;
+    foreach (var c in name) if (c != ' ') n++;
+    return n;
+}
+
+// A list out: each call gets a copy
+cached List<float3> Outline(Catalog catalog, int part)
+{
+    mut List<float3> scaled = [];
+    foreach (var corner in catalog.parts[part % catalog.parts.count].corners) scaled.Add(corner * 2);
+    return scaled;
+}
+
+system Fill(mut Catalog catalog, mut Big big, mut Bench bench)
+{
+    if (bench.made > 0) return;
+    bench.made = 1;
+    for (var i = 0; i < bench.probes; i++) Spawn(Probe { index = i });
+    for (var i = 0; i < 32; i++)
+    {
+        mut var part = Part { name = "part " + i };
+        for (var k = 0; k < 64; k++) part.corners.Add(float3(k * 0.5 - i, (k * 7) % 5, i - k * 0.25));
+        catalog.parts.Add(part);
+    }
+    for (var i = 0; i < 6000; i++)
+    {
+        mut var part = Part { name = "big part " + i };
+        for (var k = 0; k < 64; k++) part.corners.Add(float3(k * 0.5 - i, (k * 7) % 5, i - k * 0.25));
+        big.parts.Add(part);
+    }
+}
+
+[After(Fill)]
+system Ask(mut Probe probe, Bench bench, Catalog catalog, Big big)
+{
+    var k = probe.index % bench.spread;
+    switch (bench.mode)
+    {
+        case 1: probe.sum = Tiny(k * 0.25); break;
+        case 2: probe.sum = Curve(k * 0.25, 16); break;
+        case 3: probe.sum = Curve(k * 0.25, 256); break;
+        case 4: probe.sum = Size(Box { lo = float3(k), hi = float3(k + 2) }); break;
+        case 5: probe.sum = Bounds(catalog, k).hi.x; break;
+        case 6: probe.sum = BigBounds(big, k).hi.x; break;
+        case 7: probe.sum = Letters("part number " + k); break;
+        case 8: probe.sum = Outline(catalog, k).count; break;
+        default: probe.sum = k; break;
+    }
+}

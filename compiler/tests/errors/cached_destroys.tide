@@ -1,0 +1,7 @@
+// expect: 'Remove' is cached, but it isn't pure: it changes entities
+scene Main { }
+cached int Remove(Entity target)
+{
+    target.Destroy();
+    return 1;
+}

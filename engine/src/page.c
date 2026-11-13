@@ -372,8 +372,12 @@ tide_page *tide_page_own_copy_around(tide_page *p, const uint32_t mine, const ui
 uint64_t tide_page_hash(tide_page *p, const uint32_t bytes)
 {
     if (p->hashed != bytes) {
-        p->hash = tide_hash_wide(tide_page_data(p), bytes);
-        p->hashed = bytes;
+        // The hash, then that it's there, in that order for whoever reads them on another thread: a cached
+        // function's key takes a page's hash only once `hashed` says it has one (tidec, cached_codegen.inc)
+        const uint64_t hash = tide_hash_wide(tide_page_data(p), bytes);
+        __atomic_store_n(&p->hash, hash, __ATOMIC_RELAXED);
+        __atomic_store_n(&p->hashed, bytes, __ATOMIC_RELEASE);
+        return hash;
     }
     return p->hash;
 }

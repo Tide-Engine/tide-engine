@@ -1,0 +1,398 @@
+// Pure functions (docs/spec.md, Pure functions; notes/pure-functions.md): the compiler works out which
+// functions are pure, makes one call of the repeated calls of one with the same arguments in a body, and
+// `cached` functions remember their results. pure_calls_test.c runs this game built as it is and with neither
+// (tidec --no-call-merging --no-cached), and the test tidec_pure_calls_same compares what the two print, tick
+// by tick: the worlds' hashes and what the view drew. Each build also checks itself.
+
+scene Main { }
+
+struct Box
+{
+    float3 lo;
+    float3 hi;
+}
+
+struct Part
+{
+    string name;
+    List<float3> corners;
+    int weight;
+}
+
+// What never changes after the first tick: a cached function that takes it finds its pages as they were
+singleton Catalog
+{
+    List<Part> parts;
+    Map<string, int> byName;
+    int made;
+}
+
+// What changes every tick
+singleton Wind
+{
+    List<float> gusts;
+    float strength;
+}
+
+component Body
+{
+    float3 position;
+    int part;
+    float reach;
+}
+
+// Numbers alone: its system's entities go to threads, which all ask the same cached functions
+component Spin
+{
+    float angle;
+    float turned;
+    int larger;
+}
+
+component Tally
+{
+    float width;
+    float twice;
+    float nested;
+    float changed;
+    float guarded;
+    float looped;
+    float named;
+    int weight;
+    int steps;
+    float sum;
+    string label;
+    int found;
+}
+
+singleton Totals
+{
+    float boxes;
+    float winds;
+    float halves;
+    int listed;
+    int labels;
+    int rolled;
+    float kept;
+    int tried;
+    float tails;
+    int many;
+}
+
+local singleton Drawn
+{
+    float boxes;
+    int rows;
+    float once;
+}
+
+enum Why { Empty }
+
+// ---------------------------------------------------------------------------
+// Pure, each for a reason the compiler finds: nothing here says so
+
+// Reads a singleton it's handed and a list in it
+Box Bounds(Catalog catalog, int part)
+{
+    mut var box = Box { lo = float3(1000), hi = float3(-1000) };
+    if (part < 0 || part >= catalog.parts.count) return box;
+    foreach (var corner in catalog.parts[part].corners)
+    {
+        box.lo = Math.Min(box.lo, corner);
+        box.hi = Math.Max(box.hi, corner);
+    }
+    return box;
+}
+
+// Calls another pure function, twice with the same arguments: one call
+float Width(Catalog catalog, int part)
+{
+    return Bounds(catalog, part).hi.x - Bounds(catalog, part).lo.x;
+}
+
+// Makes a list of its own
+List<float3> Corners(Catalog catalog, int part, float scale)
+{
+    mut List<float3> scaled = [];
+    if (part < 0 || part >= catalog.parts.count) return scaled;
+    foreach (var corner in catalog.parts[part].corners) scaled.Add(corner * scale);
+    return scaled;
+}
+
+// Goes through a function's list twice: one list
+float Spread(Catalog catalog, int part, float scale)
+{
+    mut var low = 1000.0;
+    foreach (var corner in Corners(catalog, part, scale)) low = Math.Min(low, corner.x);
+    mut var high = -1000.0;
+    foreach (var corner in Corners(catalog, part, scale)) high = Math.Max(high, corner.x);
+    return high - low;
+}
+
+float Half(float x)
+{
+    return x * 0.5;
+}
+
+float Scaled(float x, float by = 2)
+{
+    return x * by;
+}
+
+// Its own generator, from a seed it's given: no roll of the match's
+int Scatter(int seed, int sides)
+{
+    mut var dice = Random(seed);
+    return dice.NextInt(sides) + dice.NextInt(sides);
+}
+
+// Text out of text
+string Label(string name, int weight)
+{
+    return name + ":" + weight;
+}
+
+// ---------------------------------------------------------------------------
+// Cached: each remembers its results by its arguments
+
+// Plain arguments, a plain result
+cached float Curve(float x, int steps)
+{
+    mut var sum = 0.0;
+    for (var i = 1; i <= steps; i++) sum += Math.Sin(x * i) / i;
+    return sum;
+}
+
+// A singleton with lists and a map: found again while its heap's pages are what they were
+cached Box PartBox(Catalog catalog, int part)
+{
+    return Bounds(catalog, part);
+}
+
+// A struct argument
+cached float BoxSize(Box box)
+{
+    return (box.hi.x - box.lo.x) * (box.hi.y - box.lo.y) * (box.hi.z - box.lo.z);
+}
+
+// Text in, a number out
+cached int PartOf(Catalog catalog, string name)
+{
+    if (catalog.byName.TryGet(name, out var part)) return part;
+    return -1;
+}
+
+// A list out: each call gets one of its own
+cached List<float3> Outline(Catalog catalog, int part)
+{
+    return Corners(catalog, part, 1);
+}
+
+// Text out
+cached string Named(Catalog catalog, int part)
+{
+    if (part < 0 || part >= catalog.parts.count) return "none";
+    return Label(catalog.parts[part].name, catalog.parts[part].weight);
+}
+
+// A struct with text and a list out
+cached Part Heaviest(Catalog catalog)
+{
+    mut var best = Part { };
+    foreach (var part in catalog.parts) if (part.weight > best.weight) best = part;
+    return best;
+}
+
+// One that can fail, and one that may give nothing
+cached int Weigh(Catalog catalog, int part) fails Why
+{
+    if (part < 0 || part >= catalog.parts.count) fail Why.Empty;
+    return catalog.parts[part].weight;
+}
+
+cached float? Tallest(Catalog catalog, int part)
+{
+    if (part < 0 || part >= catalog.parts.count) return null;
+    return Bounds(catalog, part).hi.y;
+}
+
+// A list it's handed: one of the world's is found again, one made on the spot runs the code
+cached float Total(List<float> values)
+{
+    mut var sum = 0.0;
+    foreach (var value in values) sum += value;
+    return sum;
+}
+
+// No arguments: its one result
+cached int Answer()
+{
+    mut var n = 0;
+    for (var i = 0; i < 7; i++) n += i * 2;
+    return n;
+}
+
+// Calls itself: each smaller one is remembered on the way
+cached long Climb(int n)
+{
+    if (n < 2) return n;
+    return Climb(n - 1) + Climb(n - 2);
+}
+
+// A generic one
+cached T Larger<T>(T a, T b)
+{
+    return a > b ? a : b;
+}
+
+// ---------------------------------------------------------------------------
+// Not pure: the calls stay as written
+
+int Roll(int sides)
+{
+    return Random.NextInt(sides);
+}
+
+void Grow(mut Catalog catalog, int by)
+{
+    catalog.made += by;
+}
+
+// ---------------------------------------------------------------------------
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 1536; i++)
+    {
+        Spawn(Body { position = float3(i % 8, i / 8, (i * 5) % 3), part = i % 6, reach = 0.5 + (i % 4) * 0.25 }, Tally { });
+    }
+    for (var i = 0; i < 80000; i++) Spawn(Spin { angle = (i % 37) * 0.125 });
+}
+
+system Fill(mut Catalog catalog)
+{
+    if (catalog.parts.count > 0) return;
+    for (var i = 0; i < 5; i++)
+    {
+        mut var part = Part { name = "part" + i, weight = 10 + (i * 7) % 5 };
+        for (var k = 0; k <= i + 2; k++) part.corners.Add(float3(k * 1.5 - i, (k * k) % 4, i - k * 0.5));
+        catalog.parts.Add(part);
+        catalog.byName[part.name] = i;
+    }
+    Grow(catalog, 1);
+}
+
+[After(Fill)]
+system Blow(mut Wind wind, Time time)
+{
+    wind.strength = (time.tick % 5) * 0.5;
+    if (wind.gusts.count > 6) wind.gusts.Clear();
+    wind.gusts.Add(wind.strength);
+}
+
+// Each entity's: repeated calls in one statement, across statements, inside the arguments of another call,
+// after a local changed, under a condition, in a loop, with named and left-out arguments
+[After(Blow)]
+system Measure(mut Tally tally, Body body, Catalog catalog)
+{
+    tally.width = Width(catalog, body.part) + Width(catalog, body.part);
+    tally.twice = Half(Width(catalog, body.part)) + Half(Width(catalog, body.part));
+    tally.nested = Spread(catalog, body.part, body.reach) - Spread(catalog, body.part, body.reach) * 0.25;
+
+    // A local that changes between the calls: both run
+    mut var part = body.part;
+    tally.changed = Width(catalog, part);
+    part = (part + 1) % 5;
+    tally.changed += Width(catalog, part);
+
+    // The first one may not run: the second isn't taken from it
+    tally.guarded = 0;
+    if (body.reach > 0.6 && Half(body.reach) > 0.35) tally.guarded += 1;
+    tally.guarded += Half(body.reach);
+
+    // In a loop: one call a round
+    tally.looped = 0;
+    for (var i = 0; i < 3; i++)
+    {
+        var step = float(i);
+        tally.looped += Half(step) * Half(step);
+    }
+
+    // The same arguments, however they're written
+    tally.named = Scaled(body.reach) + Scaled(body.reach, by: 2) + Scaled(by: 2, x: body.reach);
+
+    tally.steps = Scatter(body.part, 6) + Scatter(body.part, 6);
+}
+
+// Cached ones from many threads at once: a few arguments most of them share, and some of their own
+system Turn(mut Spin spin, Time time)
+{
+    spin.turned = Curve(spin.angle, 6) + Curve(spin.angle, 6) + Half(spin.angle) - Half(spin.angle) * 0.5;
+    spin.larger = Larger(int(spin.angle * 8), time.tick % 11) + int(Climb(int(spin.angle) + 10) % 97);
+}
+
+// Cached ones that take the catalog and give text
+[After(Measure)]
+system Remember(mut Tally tally, Body body, Catalog catalog)
+{
+    tally.sum = Curve(body.reach, 40) + Curve(body.reach, 40) + BoxSize(PartBox(catalog, body.part));
+    tally.label = Named(catalog, body.part);
+    tally.found = PartOf(catalog, "part" + body.part);
+    tally.weight = Weigh(catalog, body.part) ?? -1;
+}
+
+[After(Remember)]
+system Gather(mut Totals totals, Catalog catalog, Wind wind, query (Body body, Tally tally) all)
+{
+    totals.boxes = 0;
+    totals.labels = 0;
+    foreach (var row in all)
+    {
+        totals.boxes += BoxSize(PartBox(catalog, row.body.part));
+        totals.labels += row.tally.label.length + row.tally.found;
+    }
+    // A list of the world's that changes each tick, and one made here
+    totals.winds = Total(wind.gusts);
+    mut List<float> made = [];
+    made.Add(wind.strength);
+    made.Add(1);
+    totals.halves = Total(made);
+
+    // A list each call may change: the next call's is as the function made it
+    mut var outline = Outline(catalog, 2);
+    outline.Add(float3(100));
+    totals.listed = outline.count * 100 + Outline(catalog, 2).count;
+
+    // A struct with text and a list
+    mut var heaviest = Heaviest(catalog);
+    heaviest.corners.Clear();
+    totals.kept = Heaviest(catalog).corners.count + Heaviest(catalog).name.length * 10 + heaviest.corners.count;
+
+    totals.tried = 0;
+    for (var part = -1; part < 6; part++)
+    {
+        if (Weigh(catalog, part) is int weight) totals.tried += weight;
+        else totals.tried -= 1;
+        totals.tails += Tallest(catalog, part) ?? -0.5;
+    }
+    // More distinct arguments than a function keeps results for
+    totals.many = 0;
+    for (var i = 0; i < 700; i++) totals.many += int(Curve(i * 0.01, 3) * 100);
+    totals.many += Answer() + int(Climb(18) % 1000) + Larger(3, totals.tried) + int(Larger(2.5, wind.strength));
+
+    // Not pure: both run, each with a roll of its own
+    totals.rolled = Roll(6) * 10 + Roll(6);
+}
+
+// A view's, with the frame's own results
+view Show(mut Drawn drawn, Catalog catalog, query (Body body) bodies)
+{
+    drawn.boxes = 0;
+    drawn.rows = 0;
+    foreach (var row in bodies)
+    {
+        drawn.boxes += BoxSize(PartBox(catalog, row.body.part)) + Width(catalog, row.body.part);
+        drawn.rows++;
+    }
+    drawn.once = Curve(0.75, 12) + Curve(0.75, 12);
+}

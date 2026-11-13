@@ -1,0 +1,3 @@
+// expect: 'cached' goes before a function, which then remembers its results
+scene Main { }
+cached component Body { float x; }

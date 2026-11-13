@@ -1,0 +1,7 @@
+// expect: 'Loud' is cached, but it isn't pure: it writes to the log
+scene Main { }
+cached int Loud(int n)
+{
+    Debug.Log("asked for " + n);
+    return n * 2;
+}

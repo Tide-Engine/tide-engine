@@ -1,0 +1,6 @@
+// expect: 'Seeded' is cached, but it isn't pure: it reads Random.seed
+scene Main { }
+cached int Seeded(int n)
+{
+    return n + Random.seed;
+}

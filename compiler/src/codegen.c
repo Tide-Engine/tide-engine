@@ -189,6 +189,7 @@ typedef struct gen {
     bool scene_local;    // ...an entity of the local world
     gen_frame *frame;    // Inlined code being generated, or NULL for the routine's own
     bool typing_params;  // A function's definition: its typed list parameters (typed_list_param) arrive as tide_arg_<name>
+    bool cached_run;     // A cached function's code, under the name its wrapper calls it by (cached_codegen.inc)
     VEC(gen_open) containers; // The GUI containers and draw settings whose blocks are open
     VEC(gen_target) targets;
     int labels;          // Names made up so far (inlined calls, containers, switches), numbered per program
@@ -1819,6 +1820,11 @@ static void gen_as(gen *g, sb *o, expr *e, type want);
 static bool is_stored_optional(type t);
 static void gen_long_literal(sb *o, int64_t v);
 static void gen_value_of(gen *g, sb *o, expr *e, type want);
+static bool cached_routine(const gen *g, const decl *m);
+static bool cached_any(const gen *g);
+static const char *cached_name(const decl *m, const char *what);
+static void gen_cached_wrapper(gen *g, const decl *m);
+static void gen_cached_tables(gen *g);
 
 // A struct's operator applied to `l` and `r` (NULL for one operand).
 static void gen_operator_call(gen *g, sb *o, const decl *m, expr *l, expr *r)
@@ -9866,6 +9872,10 @@ static void gen_header(gen *g)
     if (g->ix_any) sb_put(o, "// Lets go of the indexes indexed loops keep outside the worlds, before the game's library is unloaded\n"
                              "#define TIDE_HAS_LOOP_INDEXES 1\nvoid tide_loop_indexes_free(void);\n\n");
     if (rows_cache_count(g)) sb_put(o, "#define TIDE_ROWS_CACHE_ABI 1 // Change with the private cache payload layout\n\n");
+    if (cached_any(g)) sb_put(o, "// Cached functions' results (notes/pure-functions.md): this program's own, let go of before the game's\n"
+                                 "// library is unloaded, and how often they were found kept and how often they ran\n"
+                                 "#define TIDE_HAS_CACHED 1\nvoid tide_cached_free(void);\n"
+                                 "void tide_cached_counts(uint64_t *hits, uint64_t *misses, uint64_t *dropped);\n\n");
 
     sb_put(o, "// How a match starts: the scene Session.Start named, with its values.\n");
     sb_put(o, "typedef struct tide_start {\n    int32_t scene; // Its place below, or -1: Main\n    union {\n");
@@ -17940,7 +17950,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         return;
     }
     sb_printf(o, "%s %s %s(", code_helper(g), m->result.kind == TY_VOID ? "void" : c_type(m->result),
-              m->borrows_queries ? borrow_cname(g->borrow) : routine_cname(m));
+              m->borrows_queries ? borrow_cname(g->borrow) : g->cached_run ? cached_name(m, "run") : routine_cname(m));
     int n = 0;
     if (m->draws) {
         sb_put(o, "tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed");
@@ -18010,8 +18020,12 @@ static void gen_routine(gen *g, const decl *m)
     if (m->owner) sb_printf(o, "// " STR_FMT "." STR_FMT "\n", STR_ARG(m->owner->qualified), STR_ARG(m->name));
     else sb_printf(o, "// " STR_FMT "\n", STR_ARG(m->qualified));
     code_start(g, m->at);
+    // A cached function's code has a name of its own: its wrapper, which has the function's, comes after it
+    const bool cached = !g->borrow && cached_routine(g, m);
     g->typing_params = true;
+    g->cached_run = cached;
     gen_routine_signature(g, o, m);
+    g->cached_run = false;
     g->typing_params = false;
     sb_put(o, "\n{\n");
     g->indent = 1;
@@ -18077,6 +18091,7 @@ static void gen_routine(gen *g, const decl *m)
     sb_put(o, "}\n");
     line_reset(g);
     sb_put(o, "\n");
+    if (cached) gen_cached_wrapper(g, m);
     gen_sort_functions(g, NULL, m);
     if (m->is_worker) {
         gen_par_steps(g, m);
@@ -18761,6 +18776,7 @@ static void gen_routines(gen *g)
 }
 
 #include "worker_codegen.inc"
+#include "cached_codegen.inc"
 #include "task_codegen.inc"
 #include "task_trace_codegen.inc"
 
@@ -28011,6 +28027,7 @@ bool codegen(program *prog, const codegen_options *opts)
         return false;
     }
     gen_task_store_helpers(&g);
+    gen_cached_tables(&g);
     gen_routines(&g);
     gen_workers(&g);
     gen_correction_math(&g);

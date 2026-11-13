@@ -1,0 +1,6 @@
+// expect: 'Wide' is cached, but it isn't pure: it uses a texture, which is this machine's
+scene Main { }
+cached int Wide(Texture image)
+{
+    return 2;
+}

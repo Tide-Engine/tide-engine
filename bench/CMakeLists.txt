@@ -72,6 +72,20 @@ if(TIDE_PLATFORM)
     endforeach()
 endif()
 
+# Cached functions: what a call costs when its result is kept, against the function itself (NO_CACHED):
+# `bench_cached` against `bench_cached_plain`, and `--spread <n>` for calls that never find theirs.
+if(TIDE_PLATFORM)
+    foreach(variant "" _plain)
+        set(no_cached "")
+        if(variant STREQUAL "_plain")
+            set(no_cached NO_CACHED)
+        endif()
+        tide_add_game(bench_cached${variant} ${no_cached} SOURCES cached/cached.tide NAME cached HOST cached/main.c)
+        target_link_libraries(bench_cached${variant} PRIVATE tide_platform)
+        add_test(NAME bench_cached${variant} COMMAND bench_cached${variant} --quick)
+    endforeach()
+endif()
+
 # Presentation correction costs, without changing Transform's defaults.
 add_subdirectory(corrections)
 

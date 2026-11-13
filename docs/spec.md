@@ -1537,6 +1537,101 @@ struct Stack<T>
 - **Editors** (tidels): hover on a generic shows its declaration with `T`, on an instantiation the arguments bound; go to definition goes to the generic from any instantiation; rename renames the generic and every instantiation; completion offers `<` after a generic's name with its parameters as placeholders; the grammar colors a type parameter as a type. Built: none of it beyond what any function has.
 - **Recursion of types.** `Pair<Pair<int>>` is fine, and `struct Node<T> { List<Node<T>> kids; }` too, as lists nest. `struct Node<T> { Node<T> next; }` isn't, as no struct holds itself.
 
+## Pure functions
+
+Agreed 2026-11-13 and built the same day. The owner asked for purity to be the compiler's to find, used to save repeated work, with remembering across calls something a function opts into. What he decided is under Decided; every other choice is the building agent's, under Provisional.
+
+```csharp
+// Pure, with nothing said: it reads what it's handed and gives a value
+Box Bounds(Catalog catalog, int part)
+{
+    mut var box = Box { lo = float3(1000), hi = float3(-1000) };
+    foreach (var corner in catalog.parts[part].corners)
+    {
+        box.lo = Math.Min(box.lo, corner);
+        box.hi = Math.Max(box.hi, corner);
+    }
+    return box;
+}
+
+// Two calls with the same arguments in one body: the function runs once
+float Width(Catalog catalog, int part)
+{
+    return Bounds(catalog, part).hi.x - Bounds(catalog, part).lo.x;
+}
+
+// Remembered from one call to the next: called again with equal arguments, it doesn't run
+cached Box PartBox(Catalog catalog, int part)
+{
+    return Bounds(catalog, part);
+}
+```
+
+### Decided
+
+- **The compiler works out which functions are pure. No keyword says it.** A function is pure when its result comes from its arguments alone and running it leaves nothing changed: it writes nothing outside itself (no `mut` or `out` parameter, no change to the world, no `Send`, `Spawn` or `Destroy`, no write to local state), rolls nothing, reads no `Time`, `Devices`, `Session` or other state that changes by itself, starts no task, and reaches no C (`extern`), in its own code and through everything it calls.
+- **Purity is used to save work** (the owner: "If it gets called multiple times with the same inputs in one system, we can cache it once and just use that cached value instead"). Within one system, view, handler or function, repeated calls of a pure function with the same arguments run once.
+- **Remembering across calls is opt-in, by a keyword on the function.** Called again with equal arguments, such a function gives the result it remembers without running. On a function that isn't pure the keyword is an error, which names the line that makes it impure.
+
+### Provisional
+
+**The word.** `cached`, before the function's type: `cached float4 Eyepiece(Catalog catalog, int def, Box box)`. The owner first floated `pure` for a keyword, then agreed that purity is inferred and remembering is what's opted into; the word itself awaits him. It's contextual, like `async`: a parameter or a local can still be named `cached`.
+
+**What is pure, in detail.**
+
+- A read-only parameter is an argument whatever its type: a number, text, a struct, a list, and a component or a singleton the caller hands over (the function reads the value it was given, not the world). `Time` and `Session` are the exception among singletons, and `Devices` among the rest: they're what the decision names as changing by themselves, so a function that takes one isn't pure.
+- A function that takes the `World`, a query, an `Action`, a function value it calls, a texture, a render target, a GPU list or another of this machine's resources isn't pure. Nor is one that reads a local field of a component it was handed, `Frame.dt`, `Random.seed`, the cursor or the screen.
+- Reading a constant or an asset is pure: they're the same for as long as the program runs (an asset changed while the game runs counts as a change, see below).
+- `Random.NextInt(6)` on the type rolls the match's or the frame's dice, so it isn't pure. A generator of the function's own, `mut var dice = Random(seed)`, is: its rolls come from a seed the function was given.
+- A function's own `mut` locals are its own: it can build a list, sort it, change a struct. A `mut` method called on one is fine, though the method itself isn't pure.
+- `Debug.Assert` is allowed (it says nothing while it holds). `Debug.Log` isn't: it's something the function does besides giving a value.
+- A function that calls only pure functions (and itself) is pure. One that calls a function that isn't, isn't, and the reason given is that function's.
+- Methods are worked out the same way; a `mut` method isn't pure, and a component's method that reads its entity isn't. Operators and property getters are methods. `async` functions, workers, `audio` declarations and `extern` functions aren't pure.
+- The rule is a list of what's known to be pure, not of what's known not to be: something added to the language later isn't pure until it's put on the list.
+
+**Repeated calls in one body.**
+
+- Two calls are the same when they're the same expression: the same function, and arguments that are the same code, however they're written (`Scaled(x)`, `Scaled(x, by: 2)` and `Scaled(by: 2, x: x)` are one, when 2 is the default).
+- The arguments must be values nothing in that body can change: constants, read-only parameters, locals that aren't `mut`, a `foreach`'s variable, fields and elements of those, arithmetic and `Math` on them, struct and list literals of them, and pure calls of them. A `mut` local, a `for`'s own variable, a `mut` parameter and a query's row aren't. In code that sets through the `World`, calls C, starts a task or has a query whose rows it can write, only numbers, text and constants are.
+- The first call is worked out into a hidden read-only local just before the statement it's in, and the later ones read it. So it runs where it would have, or a little earlier in its own statement, which changes nothing: it reads nothing the statement writes and does nothing but give its value. Evaluation order is as written for everything else (see Evaluation order).
+- A call that may not run (on the right of `&&`, `||` or `??`, in a side of `?:`, in a switch expression, in a `while`'s condition, or a single statement after `if` with no braces) is never the one the others read; it can read one that ran before it.
+- The later calls must be in the same block as the first one's statement, or in blocks inside it. A loop's body is a block: two calls in it are one a round. A call inside a loop isn't moved out of it.
+- A parallel loop's body, a loop over a query's rows or a grid's cells, and a block passed to a call (a widget's, an `Action`'s) each start over: nothing is shared with the code around them.
+- Not merged: calls of a function that `fails` or gives a `T?` (each is unwrapped where it's written), ones that give a grid or one of this machine's resources, and anything in `async` code, workers, build functions, or a function that takes an `Action`.
+- **Not in GPU code.** A frag, a vert, a kernel and every function one of them reaches are left as written: the GPU's own compilers merge what they can, and the same function's tree is read for both.
+- A debugger sees the hidden locals as `tide_same1`, `tide_same2`.
+
+**`cached`.**
+
+- Each cached function has a table of results, this program's own: in no world, snapshot, packed world or hash, and never sent. Every world in the program shares it (a server and its client, several matches of one dedicated server), which is sound because the function is pure: equal arguments give an equal result whoever asks. A match rolled back, a late joiner and a machine with an empty table all get the values the function would give.
+- Arguments are equal when their bytes are: numbers, vectors and plain structs are compared exactly (so `0.0` and `-0.0` are different arguments, which only costs a call).
+- Text is compared by two 64-bit hashes of its bytes and its length.
+- A list, a map, a set, a grid or text held in a world (a component's or a singleton's, or the whole component or singleton) is compared by its place there and a version of its owner's memory: the hashes the engine keeps of each page of it while the page doesn't change. Nothing of the list is read. Any change to that component's or singleton's lists and text, on any entity, is a new version. Until a tick ends its changed pages have no hash, and a call that reads one runs the function as if it weren't cached.
+- A list the code made on the spot (a list literal, a function's result, a `mut` local) has no version, so a call that passes one runs the function. So does a struct made on the spot that holds a list or text.
+- This machine's state has no version either: a local singleton's or a local component's lists and text are never hashed, so a call that passes one runs the function. Its numbers are compared like any.
+- Getting a version reads a number for each 16 KB the owner holds, so an argument out of a singleton that holds megabytes costs more to look up than one out of a small one.
+- An asset's list is compared by its place in the pack and the pack's generation, which changes when an asset is replaced while the game runs.
+- A table keeps up to 256 results, in 64 sets of 4 by the arguments' hash; where a set is full, the result used longest ago makes room. No setting changes it.
+- A result that holds text or a list is kept in memory of the table's own, and each call that finds it gets a copy, as a call that ran the function would have made one: changing it changes nothing the next call sees. A table of such results lets go of all of them when one of its sets is full.
+- Any thread can call a cached function; a set of results has a lock, held while a result is read or stored, never while the function runs. Two threads that ask for the same thing at once may both run it.
+- A cached function gives a value (`void` is an error) and can't give a grid. It can't take the game's input, which is two ticks' worth. It can `fail`, give a `T?`, be generic, call itself, and take no arguments (then it runs once).
+- A method can't be cached; a function that takes the value can.
+- `cached` on a function GPU code calls means nothing there: the call is a plain call.
+- Code loaded again (hot reload) starts with empty tables, so no result of the old code is given by the new.
+
+**When it loses.** Looking a result up costs about what a few dozen arithmetic operations do, more for each list-holding argument (its owner's pages are counted) and for a result that's copied out. A function cheaper than that is slower cached. The user page has the measurements.
+
+**Editors.** Hovering a function says whether it's pure, and if not, the first thing that keeps it from being and the line. `cached` shows in its signature.
+
+### Open
+
+- Merging calls that `fail` or give a `T?`, calls on a query's row, and moving a call out of a loop that's sure to run.
+- A list made on the spot as a cached function's argument: comparing what's in it.
+- Versions for this machine's state, so a cached function can take a local singleton's lists; and one number for a whole owner that says whether anything of it changed, so a big one costs no more to look up than a small one.
+- Keeping list-holding results one by one, with the one used longest ago making room, as plain results are.
+- `cached` on a method.
+- What a table holds and how often it helped, in the stats drawer or `tide schedule`.
+
 ## Arrays
 
 ### Decided

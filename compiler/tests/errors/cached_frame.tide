@@ -1,0 +1,6 @@
+// expect: 'Eased' is cached, but it isn't pure: it reads Frame.dt
+scene Main { }
+cached float Eased(float x)
+{
+    return x * Frame.dt;
+}

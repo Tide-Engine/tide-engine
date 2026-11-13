@@ -1,0 +1,7 @@
+// expect: 'Later' is cached, but it isn't pure: it runs as a task ('async')
+scene Main { }
+cached async int Later(int n)
+{
+    await Wait.Ticks(1);
+    return n;
+}

@@ -16,6 +16,7 @@
 #include "folders.h"
 #include "lexer.h"
 #include "model_metadata.h"
+#include "purity.h"
 #include "sha256.h"
 #include "types.h"
 
@@ -1967,9 +1968,9 @@ static void format_routine(const decl *m, sb *out)
                   p->get ? "get; " : "", p->set ? "set; " : "");
         return;
     }
-    sb_printf(out, "%s%s%s%s" STR_FMT " " STR_FMT "(", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
-              m->is_extern ? "extern " : "", m->is_worker ? "local worker " : m->is_async ? "async " : "", m->is_mut_method ? "mut " : "",
-              STR_ARG(m->return_type_name), STR_ARG(m->name));
+    sb_printf(out, "%s%s%s%s%s" STR_FMT " " STR_FMT "(", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
+              m->is_extern ? "extern " : "", m->is_worker ? "local worker " : m->is_async ? "async " : "", m->is_cached ? "cached " : "",
+              m->is_mut_method ? "mut " : "", STR_ARG(m->return_type_name), STR_ARG(m->name));
     for (int i = 0; i < m->params.count; i++) {
         if (i) sb_put(out, ", ");
         format_param(&m->params.items[i], out);
@@ -3870,6 +3871,9 @@ static void describe(const occurrence *o, sb *out)
                             "`await` gives its complete declared result. A discarded call continues by itself.");
             } else {
                 sb_put(out, "\n\nFunction: runs when it's called.");
+                // What the checker worked out of it (purity.h): pure, or the first thing that keeps it from being
+                const char *purity = purity_summary(m);
+                if (purity) sb_printf(out, " %s", purity);
             }
             break;
         }
@@ -3966,6 +3970,7 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nMethod of %s `" STR_FMT "`. %s", decl_keyword(o->decl->owner), STR_ARG(o->decl->owner->name),
                       o->decl->is_mut_method ? "It changes the fields, so it's called on something writable."
                                              : "It only reads the fields.");
+            if (!o->decl->is_mut_method && purity_summary(o->decl)) sb_printf(out, " %s", purity_summary(o->decl));
             break;
         }
         if (o->call == CALL_NONE && str_eq_c(o->name, "Sample")) {
@@ -8822,7 +8827,8 @@ static void complete_overrides(completion *c)
             } else if (v->kind == DECL_SHADER) {
                 sb_put(&header, v->is_frag ? "frag " : "vert ");
             } else {
-                sb_printf(&header, "%s%s", v->is_worker ? "local worker " : v->is_async ? "async " : "", v->is_mut_method ? "mut " : "");
+                sb_printf(&header, "%s%s%s", v->is_worker ? "local worker " : v->is_async ? "async " : "", v->is_cached ? "cached " : "",
+                          v->is_mut_method ? "mut " : "");
                 if (v->return_type.kind == TY_VOID) sb_put(&header, "void");
                 else put_type_here(&header, v->return_type, v->return_type_name);
                 sb_put(&header, " ");
@@ -9125,8 +9131,9 @@ static bool starts_declaration(const int i)
         && (str_eq_c(t->text, "event") || str_eq_c(t->text, "command"))) {
         return true; // event(Hit hit) TakeHit(...)
     }
-    if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_IDENT && str_eq_c(t->text, "async")) {
-        return true; // async void Countdown(), async event(...)
+    if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_IDENT
+        && (str_eq_c(t->text, "async") || str_eq_c(t->text, "cached"))) {
+        return true; // async void Countdown(), async event(...), cached float Width(...)
     }
     if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_LBRACE && str_eq_c(t->text, "settings")) {
         return true;
@@ -10897,10 +10904,10 @@ static const char *check_new_name(const occurrence *target, const str name)
     // goes, though the lexer reads them as names. The first ones only start
     // declarations, so parameters and locals can still take them.
     static const char *const contextual[] = {"input", "view", "struct", "event", "command", "enum", "scene", "local", "namespace",
-                                             "using", "extern", "const", "frag", "vert", "compute", "async", "settings",
+                                             "using", "extern", "const", "frag", "vert", "compute", "async", "cached", "settings",
                                              "operator", "virtual", "override",
                                              "fails", "in", "by", "offset", "void"};
-    enum { DECL_WORDS = 15 };
+    enum { DECL_WORDS = 16 };
     static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Visibility", "VisibilityGroup", "Audience", "Spawn", "Send", "Spawned",
                                            "Destroyed", "Shown", "Hidden", "PlayerJoined", "PlayerLeft", "Scene", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",

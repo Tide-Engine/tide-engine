@@ -17,6 +17,7 @@
 #include "tide/skinned_data.h" // [BlendShapes] keeps some of an imported model's shapes
 #include "types.h"
 #include "indexing.h"
+#include "purity.h"
 
 // Semantic analysis: resolves names and types, enforces access and mutability
 // rules, and derives the archetype list from spawn, add and remove sites.
@@ -5572,6 +5573,8 @@ static decl *generic_instance(checker *c, decl *g, const type *args, const loc a
     decl *d = parse_generic_instance(g);
     if (!d) return NULL;
     d->generic_of = g;
+    d->is_cached = g->is_cached;
+    d->cached_at = g->cached_at;
     d->generic_depth = depth;
     d->generic_at = at;
     d->generic_name = name.data;
@@ -24426,6 +24429,12 @@ bool check(program *prog)
     collect_device_uses(&c);
     check_workers(&c);
     check_build_code(&c);
+    // Which functions are pure, once what each one does through its calls is known; then, in code that
+    // builds, repeated calls of one with the same arguments become one (purity.c). After the loops' indexes
+    // are planned, from the code as written, and before the schedule, which goes by the code as it will run.
+    // An editor reads the tree as written.
+    infer_purity(prog);
+    if (diag_error_count() == 0 && !prog->asset_metadata_only && !prog->calls_as_written) merge_pure_calls(prog);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     // So does a field something snaps alone, after the rest.
     for (int i = 0; i < prog->decls.count; i++) {

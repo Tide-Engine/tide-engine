@@ -181,6 +181,28 @@ add_test(NAME tidec_indexed_loops_same
         "-DPLAIN=$<TARGET_FILE:tidec_e2e_indexed_loops_plain>" "-DEMULATOR=${TIDE_IX_EMULATOR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/indexed_loops_same.cmake")
 set_tests_properties(tidec_indexed_loops_same PROPERTIES TIMEOUT 600)
+# Pure functions: one game with its repeated pure calls merged and its cached functions remembering, and with
+# neither (NO_CALL_MERGING NO_CACHED), which print the same, tick by tick; and the calls tidec made one of
+tide_e2e_test(pure_calls)
+target_compile_definitions(tidec_e2e_pure_calls PRIVATE PURETEST_MERGED=1)
+tide_add_game(tidec_e2e_pure_calls_plain NO_CALL_MERGING NO_CACHED SOURCES e2e/pure_calls.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/pure_calls_test.c")
+target_include_directories(tidec_e2e_pure_calls_plain PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_pure_calls_plain COMMAND tidec_e2e_pure_calls_plain)
+foreach(target tidec_e2e_pure_calls tidec_e2e_pure_calls_plain)
+    set_tests_properties(${target} PROPERTIES TIMEOUT 300)
+    if(TIDE_PLATFORM)
+        target_link_libraries(${target} PRIVATE tide_platform)
+        target_compile_definitions(${target} PRIVATE TIDE_PURE_THREADS=1)
+    endif()
+endforeach()
+add_test(NAME tidec_pure_calls_same
+    COMMAND "${CMAKE_COMMAND}" "-DMERGED=$<TARGET_FILE:tidec_e2e_pure_calls>"
+        "-DPLAIN=$<TARGET_FILE:tidec_e2e_pure_calls_plain>" "-DEMULATOR=${TIDE_IX_EMULATOR}"
+        "-DMERGED_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_pure_calls/game.c"
+        "-DPLAIN_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_pure_calls_plain/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/pure_calls_same.cmake")
+set_tests_properties(tidec_pure_calls_same PROPERTIES TIMEOUT 600)
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)

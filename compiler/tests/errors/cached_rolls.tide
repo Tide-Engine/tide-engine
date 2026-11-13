@@ -1,0 +1,7 @@
+// expect: 'Roll' is cached, but it isn't pure: it rolls with Random
+// expect: on line 6
+scene Main { }
+cached int Roll(int sides)
+{
+    return Random.NextInt(sides);
+}

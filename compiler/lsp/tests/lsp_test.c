@@ -704,6 +704,41 @@ TIDE_TEST(lsp_complete_more_places)
     TIDE_CHECK(!offers(complete("struct S\n{\n    $\n}\nscene Main { }\n"), "Grid2"));
 }
 
+// Pure functions (notes/pure-functions.md): hover says what the checker worked out, and why not when it isn't
+TIDE_TEST(lsp_pure_functions)
+{
+    start();
+    open_document(GAME_TYPES "float Area(Body body)\n{\n    return body.radius * body.radius * 3.14;\n}\n"
+                             "system Grow(mut Body body)\n{\n    body.radius = Ar$ea(body) + Area(body);\n}\n");
+    const char *pure = request("textDocument/hover");
+    TIDE_CHECK(has(pure, "float Area(Body body)"));
+    TIDE_CHECK(has(pure, "Pure: its result comes from its arguments alone"));
+
+    open_document(GAME_TYPES "cached float Area(Body body)\n{\n    return body.radius * body.radius * 3.14;\n}\n"
+                             "system Grow(mut Body body)\n{\n    body.radius = Ar$ea(body);\n}\n");
+    const char *cached = request("textDocument/hover");
+    TIDE_CHECK(has(cached, "cached float Area(Body body)"));
+    TIDE_CHECK(has(cached, "Pure, and cached"));
+
+    open_document(GAME_TYPES "int Roll(int sides)\n{\n    return Random.NextInt(sides);\n}\n"
+                             "int Twice(int sides)\n{\n    return Roll(sides) * 2;\n}\n"
+                             "system Grow(mut Body body)\n{\n    body.radius = Tw$ice(6);\n}\n");
+    const char *impure = request("textDocument/hover");
+    TIDE_CHECK(has(impure, "Not pure: it calls 'Roll', which isn't pure"));
+
+    // On a cached function that isn't pure, the error says what makes it so, and the hover too
+    open_document(GAME_TYPES "cached int Ro$ll(int sides)\n{\n    return Random.NextInt(sides);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'Roll' is cached, but it isn't pure: it rolls with Random"));
+    const char *refused = request("textDocument/hover");
+    TIDE_CHECK(has(refused, "Not pure: it rolls with Random"));
+
+    // The word still names a parameter or a local, and is offered where a declaration starts
+    open_document(GAME_TYPES "float Half(float cached)\n{\n    return cached * 0.5;\n}\n"
+                             "system Grow(mut Body body)\n{\n    var cached = Half(body.radius);\n    body.radius = cac$hed;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "cached"));
+}
+
 TIDE_TEST(lsp_hover)
 {
     start();

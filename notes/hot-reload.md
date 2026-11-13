@@ -1,5 +1,13 @@
 # Hot reloading
 
+## What cached functions remember (2026-11-13)
+
+A `cached` function's table is a static of the game's generated C (notes/pure-functions.md), so a library loaded
+anew starts with every table empty: new code never gives a result the old code worked out. That holds natively
+(each build is a new library) and on the web (a new program). `tide_run_unload` calls `tide_cached_free()`
+(under `TIDE_HAS_CACHED`, as `tide_loop_indexes_free` is) so the old library's tables and their heaps go before it
+does. Nothing of a table is in a world, the local state or a layout, so nothing carries over or migrates.
+
 ## Heaps by owner and what carries over (2026-11-13)
 
 A world's packed heaps are its first as before, then the others by their owners' ids (`tide_heaps_pack`), and

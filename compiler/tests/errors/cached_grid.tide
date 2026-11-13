@@ -1,0 +1,7 @@
+// expect: 'Board' is cached, but it gives a grid, which is never copied
+scene Main { }
+cached Grid2<int> Board(int size)
+{
+    Grid2<int> cells = Grid2(size, size);
+    return cells;
+}

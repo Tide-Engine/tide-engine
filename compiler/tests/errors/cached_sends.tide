@@ -1,0 +1,8 @@
+// expect: 'Strike' is cached, but it isn't pure: it sends an event
+scene Main { }
+event Hit { int amount; }
+cached int Strike(int amount)
+{
+    Send(Hit { amount = amount });
+    return amount;
+}

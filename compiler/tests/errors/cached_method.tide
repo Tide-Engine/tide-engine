@@ -1,0 +1,11 @@
+// expect: a method can't be cached: a function can
+// expect: write it as a function outside 'Stats' that takes the value
+scene Main { }
+struct Stats
+{
+    int power;
+    cached int Doubled()
+    {
+        return power * 2;
+    }
+}

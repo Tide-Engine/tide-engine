@@ -91,6 +91,9 @@ async void Countdown() { await Wait.Seconds(1); }
 local worker List<int> Build(List<int> values) { return values; }
 worker local int Count(int value) { return value; }
 var worker = 1;
+cached float Width(Catalog catalog, int part) { return 0; }
+virtual cached Box Bounds(Catalog catalog, int part) { return Box { }; }
+var cached = 1;
 
 // fails after the parameters, or on a line of its own.
 int Parse(string text) fails ParseError

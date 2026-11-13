@@ -1,0 +1,8 @@
+// expect: 'Noise' is cached, but it isn't pure: it calls 'c_noise', which is written in C
+// expect: on line 7
+scene Main { }
+extern float c_noise(float x);
+cached float Noise(float x)
+{
+    return c_noise(x) * 2;
+}

@@ -868,6 +868,19 @@ typedef struct decl {
     struct decl *build_fn;    // An asset or a constant: the function that makes its value, or NULL
     struct decl *build_owner; // That function: the asset or constant it makes
     struct build_value *built; // An asset or a constant: what its code made, once it has run (build_code.h)
+    // Purity (compiler/src/purity.c, docs/spec.md, Pure functions): a function or method with code is pure when
+    // its result comes from its arguments alone and running it leaves nothing changed. Worked out once every
+    // body is checked (infer_purity); `impure_why` says the first thing that keeps it from being pure
+    // ("rolls with Random"), `impure_at` where, and `impure_through` the function it calls there that isn't,
+    // when that's why.
+    bool pure;
+    const char *impure_why;
+    loc impure_at;
+    const struct decl *impure_through;
+    // `cached float4 Eyepiece(...)`: called again with equal arguments, it gives the result it remembers
+    // (cached_codegen.inc). Only a pure function's can be.
+    bool is_cached;
+    loc cached_at;
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
     int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
     int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1
@@ -1192,6 +1205,7 @@ struct expr {
     bool prefab_reference;
     bool prechecked;           // Checked already, to pick what takes it: checking it again gives its type
     bool shared_place; // A property compound operation reuses this receiver path.
+    bool pure_seen;    // merge_pure_calls has been here: a node two places hold is gone through once
     prefab_instance *prefab;
     loc end; // E_SWITCH: just past its closing brace, for editor spans
     type type;
@@ -1778,6 +1792,8 @@ typedef struct program {
     decl *blend_shape, *blend_shapes; // Made the first time a program names them, so others keep their C
     decl *humanoid_rig, *humanoid_bone, *humanoid_status, *retarget_map, *retarget_error;
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
+    bool calls_merged;        // merge_pure_calls (purity.c) has gone through its code: repeated pure calls are one
+    bool calls_as_written;    // ...or is to leave it as written (tidec --no-call-merging), for comparisons
     bool editor_authoring; // Native authoring can instantiate checked prefabs without game startup.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)

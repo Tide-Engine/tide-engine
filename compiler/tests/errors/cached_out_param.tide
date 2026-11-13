@@ -1,0 +1,7 @@
+// expect: 'Half' is cached, but it isn't pure: it makes its 'out' parameter 'half'
+scene Main { }
+cached bool Half(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}

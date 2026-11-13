@@ -1,0 +1,8 @@
+// expect: 'Dust' is cached, but it isn't pure: it spawns
+scene Main { }
+component Puff { int age; }
+cached int Dust(int age)
+{
+    Spawn(Puff { age = age });
+    return age;
+}

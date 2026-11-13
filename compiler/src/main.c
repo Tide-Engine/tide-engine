@@ -265,6 +265,10 @@ int main(const int argc, char **argv)
             opts.server = opts.strip_server_assets = true;
         } else if (strcmp(argv[i], "--no-loop-indexes") == 0) { // Hidden: for differential tests and benchmarks
             opts.no_loop_indexes = true;
+        } else if (strcmp(argv[i], "--no-call-merging") == 0) { // Hidden: for differential tests and benchmarks
+            opts.no_call_merging = true;
+        } else if (strcmp(argv[i], "--no-cached") == 0) { // Hidden, the same
+            opts.no_cached = true;
         } else if (strcmp(argv[i], "--no-line") == 0) {
             opts.line_directives = false;
         } else if (strcmp(argv[i], "--visualizers") == 0) {

@@ -1,0 +1,32 @@
+// Pure and `cached` functions in code the GPU runs: each call is a plain call there, as written. The CPU's
+// repeated calls of a pure function become one and its cached functions remember; a frag's stay what they are,
+// in the frag and in the functions it calls (Ripple's two Wave calls).
+scene Main { }
+
+local singleton Look
+{
+    float shade;
+}
+
+cached float Wave(float x)
+{
+    return Math.Sin(x * 6) * 0.5 + 0.5;
+}
+
+float Ripple(float x)
+{
+    return Wave(x) * 0.5 + Wave(x) * 0.25;
+}
+
+frag Banded(Vertex corner, out Color color)
+{
+    var a = Wave(corner.position.x) + Wave(corner.position.x);
+    color = Color(a * 0.5, Ripple(corner.position.y), Ripple(corner.position.y));
+}
+
+view Picture(mut Look look)
+{
+    look.shade = Wave(0.25) + Wave(0.25) + Ripple(0.5);
+    Draw.Mesh([Vertex { position = float2(0) }, Vertex { position = float2(8, 0) },
+               Vertex { position = float2(0, 8) }], [0, 1, 2], Banded);
+}

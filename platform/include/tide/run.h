@@ -188,6 +188,9 @@ static inline void tide_run_unload(void)
 #ifdef TIDE_HAS_LOOP_INDEXES
     tide_loop_indexes_free(); // The indexes indexed loops keep outside the worlds
 #endif
+#ifdef TIDE_HAS_CACHED
+    tide_cached_free(); // What cached functions remember: the next library's code starts with none of it
+#endif
 #ifdef TIDE_HAS_ASSETS
     tide_pack_unload();
 #endif

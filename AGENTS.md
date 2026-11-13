@@ -201,6 +201,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `extern`, `out List<T>`, C systems and rows/jobs ABI | `notes/c-interop.md` |
 | Compiler lexer/parser/checker/codegen, types, evaluation order, functions, containers, diagnostics | `notes/language.md` |
 | Random runtime and CPU/GPU rolls | `notes/random.md` |
+| `compiler/src/purity.c`, `cached_codegen.inc`: which functions are pure, repeated calls made one, `cached` functions' tables | `notes/pure-functions.md` |
 | Runtime handling game values, safety fixtures and sanitizers | `notes/memory-safety.md` |
 | Entity/table/page/heap/list/map/grid/text runtime, queries, snapshots and hashes | `notes/ecs.md` |
 | Scheduler analysis, tick threads, parallel loops and temporary handles | `notes/schedule-and-threads.md` |

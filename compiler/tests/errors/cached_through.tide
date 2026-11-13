@@ -1,0 +1,18 @@
+// expect: 'Lucky' is cached, but it isn't pure: it rolls with Random
+// expect: it calls 'Twice' on line 17
+// expect: which calls 'Roll' on line 13
+// expect: which does on line 9
+// expect: a cached function's result comes from its arguments alone
+scene Main { }
+int Roll(int sides)
+{
+    return Random.NextInt(sides);
+}
+int Twice(int sides)
+{
+    return Roll(sides) + Roll(sides);
+}
+cached int Lucky(int sides)
+{
+    return Twice(sides) + 1;
+}

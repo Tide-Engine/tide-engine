@@ -1,0 +1,6 @@
+// expect: 'Jumping' is cached, but it isn't pure: it reads Devices
+scene Main { }
+cached bool Jumping(Devices devices)
+{
+    return devices.keyboard.space.pressed;
+}

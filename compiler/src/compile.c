@@ -184,6 +184,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;
+    prog->calls_as_written = opts->no_call_merging;
     compile_progress("Checking Tide", NULL, 0, 0);
     if (!check(prog)) return false;
     // What build code makes (build_code.h): found, or made by running it and then found as the game compiles again

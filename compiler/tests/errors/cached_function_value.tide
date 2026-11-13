@@ -1,0 +1,6 @@
+// expect: 'Apply' is cached, but it isn't pure
+scene Main { }
+cached float Apply(Func<float, float> shape, float x)
+{
+    return shape(x);
+}

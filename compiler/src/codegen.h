@@ -35,6 +35,8 @@ typedef struct codegen_options {
     bool strip_unused_assets; // Closed release games only: exclude assets never referenced by checked Tide code/defaults/shaders.
     bool strip_names;        // Omit diagnostic/source shader names; keep a private <name>.names map beside generated C.
     bool no_loop_indexes;    // Every loop gone through plainly, none through an index (notes/indexed-loops.md): for comparisons.
+    bool no_call_merging;    // Every call as written, a pure function's repeated ones too (notes/pure-functions.md): for comparisons.
+    bool no_cached;          // `cached` functions run every time they're called, remembering nothing: for comparisons.
     bool server; // Preserve the client compatibility identity; emit server build metadata.
     bool strip_server_assets; // Explicit closed-world promise for the simulation asset closure.
     sb *externs;             // If set, gets the C function of each extern function, a line each (for tide's checks).

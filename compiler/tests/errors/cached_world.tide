@@ -1,0 +1,7 @@
+// expect: 'HealthOf' is cached, but it isn't pure: it reads the World
+scene Main { }
+component Health { int value; }
+cached int HealthOf(World world, Entity e)
+{
+    return world.Get<Health>(e).value;
+}

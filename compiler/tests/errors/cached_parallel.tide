@@ -1,0 +1,8 @@
+// expect: 'Fill' is cached, but it isn't pure: it runs a parallel loop
+scene Main { }
+cached int Fill(int size)
+{
+    Grid2<int> cells = Grid2(size, size);
+    parallel (var at in cells) cells[at] = at.x;
+    return cells[int2(0, 0)];
+}

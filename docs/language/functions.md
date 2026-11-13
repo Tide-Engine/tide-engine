@@ -1,5 +1,5 @@
 ---
-description: "Define Tide value structs, methods and functions, with named arguments, defaults, overloads, out parameters, actions and operators."
+description: "Define Tide value structs, methods and functions, with named arguments, defaults, overloads, out parameters, pure and cached functions, actions and operators."
 ---
 
 # Structs and functions
@@ -454,6 +454,103 @@ system Count(mut Counter counter, mut Log log)
 - A read-only method's receiver follows the same copy rules as a read-only argument: if a `mut` or `out` argument changes its lists or maps during the call, the method still reads its original copy.
 - The right of `&&` and `||` and the sides of `?:` still only run when they would.
 - A list's, map's or set's change that gives a value (`items.Remove(x)`, `seen.Add(key)`) counts as a call that changes it.
+
+## Pure functions
+
+A function is pure when its result comes from its arguments alone and running it changes nothing. You don't write that anywhere: the compiler works it out, and an editor's hover says it, or says the first thing that keeps the function from being pure.
+
+```csharp
+// Pure: it reads what it's handed, builds a value, and gives it back
+Box Bounds(Catalog catalog, int part)
+{
+    mut var box = Box { lo = float3(1000), hi = float3(-1000) };
+    foreach (var corner in catalog.parts[part].corners)
+    {
+        box.lo = Math.Min(box.lo, corner);
+        box.hi = Math.Max(box.hi, corner);
+    }
+    return box;
+}
+```
+
+A function isn't pure when it, or anything it calls:
+
+- takes a `mut` or `out` parameter, or is a `mut` method;
+- sends, spawns, destroys, adds or removes;
+- rolls with `Random.NextInt` and the like (a generator of its own, `mut var dice = Random(seed)`, is fine);
+- takes `Time`, `Session`, `Devices` or the `World`, or reads `Frame.dt`;
+- draws, plays a sound, reads a file, writes to the log, or uses a texture or another of this machine's resources;
+- starts a task or is `async`;
+- calls a function written in C.
+
+A component or a singleton it takes read-only is an argument like any other: the function reads the value it was given.
+
+### Repeated calls run once
+
+Where one system, view, handler or function calls a pure function several times with the same arguments, the function runs once:
+
+```csharp
+float Width(Catalog catalog, int part)
+{
+    return Bounds(catalog, part).hi.x - Bounds(catalog, part).lo.x;  // One call of Bounds
+}
+```
+
+"The same arguments" means the same code, reading things that body can't change: constants, read-only parameters, locals that aren't `mut`, a `foreach`'s variable, and fields, arithmetic and pure calls of those. A call after a `mut` local changed runs again. So does one whose first appearance might not have run (on the right of `&&`, in a side of `?:`). Calls in a loop's body are one a round.
+
+Nothing about the code's meaning changes, so there's nothing to turn on or off. It's worth knowing mostly so you don't put a call's result in a local only to save the second call.
+
+### `cached`: remembered between calls
+
+`cached` before a function makes it remember its results. Called again with equal arguments, anywhere, on any tick or frame, it gives the result it has without running:
+
+```csharp
+cached Box PartBox(Catalog catalog, int part)
+{
+    return Bounds(catalog, part);
+}
+
+view DrawParts(Catalog catalog, Body body)
+{
+    var box = PartBox(catalog, body.part);   // Worked out once for each part, not once a frame
+    ...
+}
+```
+
+Only a pure function can be cached, which is what makes it safe: the remembered result is what the function would have given. On a function that isn't pure, `cached` is an error that says which line makes it so. What's remembered belongs to the running program, not to the match: it's never sent, saved or rolled back, and a player who joins late gets the same values by working them out.
+
+Use it for something that's expensive to work out and asked for again and again with the same few arguments: a model's bounds, a path's length, a table built from a catalog. It replaces a cache kept by hand in a `mut` singleton, and unlike one, a cached function makes no system or view wait for another, as nothing writes it.
+
+How arguments are compared:
+
+- Numbers, vectors and structs of them: by value.
+- Text: by what it says.
+- A list, a map, a set or a grid that a component or a singleton holds (or the whole component or singleton): by whether its owner's lists and text changed since. Nothing is read through, so a catalog of thousands of items costs no more than a small one to compare. If any entity's lists of that component changed, the function runs again for all of them; and during a tick that changed them, it runs every time.
+- A list the code just made (a list literal, another function's result, a `mut` local): not compared. The function runs, as if it weren't cached.
+- A list or text in a `local` singleton or a local component: not compared either, so the function runs. Pass the numbers it needs, or keep what it reads in the match.
+
+A cached function keeps up to 256 results; past that, the ones used longest ago make room. A result that holds a list or text is copied out to each caller.
+
+**When it loses.** Looking a result up isn't free. Measured on one thread (Ryzen 9 7900X, release build), a call that finds its result costs:
+
+| The function | Its own cost | Cached, result found |
+|---|---|---|
+| A few operations on a float | under 1 ns | 19 ns |
+| A few operations on a struct of two `float3` | under 1 ns | 20 ns |
+| 16 `Math.Sin` | 153 ns | 18 ns |
+| 256 `Math.Sin` | 2,450 ns | 18 ns |
+| Text in, its letters counted | 24 ns | 47 ns |
+| A singleton in, 64 of its list's `float3` gone through | 507 ns | 38 ns |
+| The same, the singleton holding 5 MB of lists | 517 ns | 1,330 ns |
+| A list of 64 `float3` made and returned | 1,430 ns | 67 ns |
+
+So `cached` pays for a function that costs more than about 20 ns, a couple of `Math.Sin`, and loses for one that's a few lines of arithmetic. It also loses when what it compares is huge: an argument out of a singleton that holds megabytes of lists costs about 4 ns for each 16 KB of them at every call, so pass such a function the part it reads (a number, a small struct) rather than the whole singleton.
+
+A function whose arguments are different every time gains nothing and pays for the lookup and the keeping on every call: 25 to 65 ns more than the function alone for plain values, 200 ns more with a singleton's lists to compare, 500 ns more to keep a list of 64.
+
+From 8 threads at once the same lookups take about half as long as from one, not an eighth: threads asking for the same few results wait for each other. It still beats running anything heavier than a few `Math.Sin`.
+
+A cached function gives a value and can't give a grid. It can fail, give a `T?`, be generic and call itself. A method can't be cached: write a function that takes the value.
 
 ## Function values
 

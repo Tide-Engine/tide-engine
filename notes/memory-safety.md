@@ -1,5 +1,29 @@
 # No Tide code can corrupt memory
 
+## What a cached function keeps and hands out (2026-11-13)
+
+A `cached` function's table (notes/pure-functions.md, cached_codegen.inc) is outside every world, used by any
+thread. What keeps it safe for any game's values:
+
+- **A kept result never names memory that goes away.** A plain result is bytes in the table. One that holds text
+  or lists is first copied whole into the scratch area (every text and list in it, pack-backed ones too, by the
+  walker workers' captures use), then made the table's heap's own; a caller that finds it gets a fresh copy in
+  its own scratch area, made while the table's lock is held. No caller holds a handle into the table's heap, so
+  letting go of the heap (when a set is full, or `tide_cached_free`) strands nothing, and what a caller does to
+  its copy changes nothing another gets.
+- **A key never trusts what it can't check.** An argument's own bytes are compared whole. A handle into the
+  scratch area isn't compared at all (the call runs). A handle into a world counts only while every page of its
+  owner's heap has a hash, which the engine clears before any write to the page; the pages are read, never
+  written, with the page table and each page loaded as `tide_heap_block` loads them.
+- **The table's heap is no system's.** A thread on a system's run leaves the runs while it reads or writes the
+  table's heap and goes back after (`tide_heap_run_enter(0)`/`tide_heap_run_leave`), so `TIDE_HEAP_CHECKS` holds
+  and no block of the table's is taken for a run's.
+- **Sizes.** A key is on the stack: 64 bytes and the arguments' own sizes, which are their C types' (a struct
+  passed by pointer above 128 bytes is still copied into the key). A table is 256 entries of key and result.
+- Tested by `tidec_e2e_pure_calls` on the sanitize preset: results with lists, text, structs of both, failures and
+  `T?`, from four threads at once, across a rollback and after `tide_cached_free`. Windows ASan doesn't see a
+  stack address used after return, which Linux CI does.
+
 ## A heap in runs: what threads may do to one heap at once (2026-11-13, later)
 
 A per-entity system that changes its rows' text and lists has its entities on several threads now

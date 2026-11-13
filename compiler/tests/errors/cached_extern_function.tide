@@ -1,0 +1,4 @@
+// expect: 'cached' goes before a function, which then remembers its results
+// expect: a function written in C keeps what it wants to itself, in C
+scene Main { }
+cached extern float c_noise(float x);
