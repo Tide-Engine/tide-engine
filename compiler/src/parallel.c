@@ -295,9 +295,8 @@ static int first_bit(const size_t word, const uint64_t bits)
 // A game has thousands of systems, so this keeps who runs after whom as bits
 // and only spells out the waits it lists: pair by pair, whether they conflict
 // is a yes or no, and what each wait is over is worked out for those.
-void analyze_parallelism(program *prog)
+static void analyze(program *prog, decl *const *items, const int n)
 {
-    const int n = prog->systems.count;
     if (n == 0) return;
     const size_t words = ((size_t)n + 63u) / 64u;
     const size_t row_size = sizeof(uint64_t) * words;
@@ -311,12 +310,12 @@ void analyze_parallelism(program *prog)
     int *followers = arena_alloc(sizeof(int) * (size_t)n);  // How many systems run after each
     memset(before, 0, row_size * (size_t)n);
     memset(followers, 0, sizeof(int) * (size_t)n);
-    for (int i = 0; i < n; i++) sets[i] = archetypes_of(prog, prog->systems.items[i]);
-    for (int i = 0; i < n; i++) uses[i] = accesses_of(prog, prog->systems.items[i]);
+    for (int i = 0; i < n; i++) sets[i] = archetypes_of(prog, items[i]);
+    for (int i = 0; i < n; i++) uses[i] = accesses_of(prog, items[i]);
 
     // The systems are in tick order, so everything a system waits for comes first.
     for (int j = 0; j < n; j++) {
-        decl *sys = prog->systems.items[j];
+        decl *sys = items[j];
         uint64_t *row = before + (size_t)j * words;
         const size_t used = ((size_t)j + 63u) / 64u; // The words earlier systems are in
         memset(waits, 0, row_size);
@@ -324,7 +323,7 @@ void analyze_parallelism(program *prog)
         sys->stage = 1;
         sys->waits_unlisted = 0;
         for (int i = 0; i < j; i++) {
-            const decl *earlier = prog->systems.items[i];
+            const decl *earlier = items[i];
             if (!contains((const decl *const *)sys->after.items, sys->after.count, earlier)
                 && !find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(&sets[i], &sets[j]), NULL)) {
                 continue;
@@ -361,12 +360,12 @@ void analyze_parallelism(program *prog)
                     sys->waits_unlisted++;
                     continue;
                 }
-                decl *earlier = prog->systems.items[i];
+                decl *earlier = items[i];
                 system_wait wait = {0};
                 wait.on = earlier;
                 find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(&sets[i], &sets[j]), &wait);
                 wait.ordered = contains((const decl *const *)sys->after.items, sys->after.count, earlier);
-                wait.through = goes_through ? prog->systems.items[through[i]] : NULL;
+                wait.through = goes_through ? items[through[i]] : NULL;
                 vec_push(sys->waits, wait);
             }
         }
@@ -374,7 +373,7 @@ void analyze_parallelism(program *prog)
 
     // A system runs alongside those it neither waits for nor is waited for by
     for (int j = 0; j < n; j++) {
-        decl *sys = prog->systems.items[j];
+        decl *sys = items[j];
         const uint64_t *row = before + (size_t)j * words;
         int earlier = 0;
         for (size_t w = 0; w < words; w++) earlier += __builtin_popcountll(row[w]);
@@ -382,9 +381,17 @@ void analyze_parallelism(program *prog)
         const int list = sys->alongside_count < SCHEDULE_LISTED ? sys->alongside_count : SCHEDULE_LISTED;
         for (int k = 0; k < n && sys->alongside.count < list; k++) {
             if (k == j || (k < j ? has_bit(row, k) : has_bit(before + (size_t)k * words, j))) continue;
-            vec_push(sys->alongside, prog->systems.items[k]);
+            vec_push(sys->alongside, items[k]);
         }
     }
+}
+
+void analyze_parallelism(program *prog)
+{
+    analyze(prog, prog->systems.items, prog->systems.count);
+    // A frame's views the same way, among themselves: what each waits for of
+    // those before it, were they run at once (the measured schedule's chain)
+    analyze(prog, prog->views.items, prog->views.count);
 }
 
 // ---------------------------------------------------------------------------
@@ -824,32 +831,15 @@ static void put_threads(sb *out, const decl *sys)
     }
 }
 
-bool print_schedule_measured(const program *prog, const char *path, sb *out)
+// One group of a report's rows (its systems, or its views) against the waits
+// among `items`: what they took one after another, the longest chain of
+// waits, and the costliest. `per` is how many ticks or frames the rows' totals
+// are over. Returns how many rows the code hasn't got.
+static int put_measured(sb *out, decl *const *items, const int count, const char *rows, const char *numbered,
+                        const double per, const char *each, const char *what)
 {
-    FILE *f = fopen(path, "rb");
-    sb text = {0};
-    if (f) {
-        char block[4096];
-        size_t got;
-        while ((got = fread(block, 1, sizeof block - 1, f)) > 0) {
-            block[got] = 0;
-            for (size_t i = 0; i < got; i++) if (!block[i]) block[i] = ' ';
-            sb_put(&text, block);
-        }
-        fclose(f);
-    }
-    const char *rows = text.data ? strstr(text.data, "\"systems\":[") : NULL;
-    const char *ticks_at = text.data ? strstr(text.data, "\"ticks\":{") : NULL;
-    if (!f || !rows || !ticks_at || !strstr(text.data, "\"schema\":\"tide.profile\"")) {
-        fprintf(stderr, "tidec: %s '%s'; --measured takes the report `tide run --profile <report.json>` writes\n",
-                f ? "no measured systems in" : "can't read", path);
-        return false;
-    }
     const char *rows_end = strstr(rows, "],\n");
-    if (!rows_end) rows_end = text.data + text.len;
-    const double ticks = profile_number(ticks_at, rows, "count", 0);
-
-    const int count = prog->systems.count;
+    if (!rows_end) rows_end = rows + strlen(rows);
     double *cost = arena_alloc(sizeof(double) * (size_t)(count + 1));
     double *finish = arena_alloc(sizeof(double) * (size_t)(count + 1));
     int *before = arena_alloc(sizeof(int) * (size_t)(count + 1));
@@ -872,29 +862,29 @@ bool print_schedule_measured(const program *prog, const char *path, sb *out)
         // By its name as the profiler has it; a build with names left out says "system <n>"
         int found = -1;
         for (int i = 0; i < count && found < 0; i++) {
-            const decl *sys = prog->systems.items[i];
+            const decl *d = items[i];
             sb own = {0};
-            put_decl_name(&own, sys, "", NULL);
-            sb numbered = {0};
-            sb_printf(&numbered, "system %d", sys->index);
-            if ((strcmp(own.data, name.data) == 0 && (line == 0 || line == sys->at.line)) || strcmp(numbered.data, name.data) == 0) found = i;
+            put_decl_name(&own, d, "", NULL);
+            sb index = {0};
+            sb_printf(&index, "%s %d", numbered, d->index);
+            if ((strcmp(own.data, name.data) == 0 && (line == 0 || line == d->at.line)) || strcmp(index.data, name.data) == 0) found = i;
         }
         if (found < 0) unknown++;
         else {
-            cost[found] += ticks > 0 ? total / ticks : 0;
+            cost[found] += per > 0 ? total / per : 0;
             measured[found] = true;
         }
     }
 
-    // Systems are in the tick's order, so what one waits for is before it
+    // They're in the order they run in, so what one waits for is before it
     double sum = 0, longest = 0;
     int last = -1, ran = 0;
     for (int i = 0; i < count; i++) {
-        const decl *sys = prog->systems.items[i];
+        const decl *d = items[i];
         finish[i] = 0;
         before[i] = -1;
-        for (int k = 0; k < sys->waits.count; k++) {
-            const int on = sys->waits.items[k].on->index;
+        for (int k = 0; k < d->waits.count; k++) {
+            const int on = d->waits.items[k].on->index;
             if (on >= 0 && on < i && (before[i] < 0 || finish[on] > finish[i])) {
                 finish[i] = finish[on];
                 before[i] = on;
@@ -908,52 +898,93 @@ bool print_schedule_measured(const program *prog, const char *path, sb *out)
             last = i;
         }
     }
-    const char *file = path;
-    for (const char *p = path; *p; p++) if (*p == '/' || *p == '\\') file = p + 1;
-    sb_printf(out, "\nMeasured (%s, %.0f tick%s, %d of %d systems ran):\n", file, ticks, ticks == 1 ? "" : "s", ran, count);
-    if (unknown) {
-        sb_printf(out, "         %d measured system%s not in this code: the report is another build's\n", unknown, unknown == 1 ? " is" : "s are");
+    sb_printf(out, "         %d of %d %ss ran\n", ran, count, numbered);
+    if (per <= 0 || sum <= 0) {
+        sb_printf(out, "         nothing to go by: no %s was measured\n", each);
+        return unknown;
     }
-    if (ticks <= 0 || sum <= 0) {
-        sb_put(out, "         nothing to go by: no tick was measured\n");
-        return true;
-    }
-    sb_printf(out, "%9.3f ms a tick, the systems one after another\n", sum);
-    sb_printf(out, "%9.3f ms, the longest chain of systems that wait for each other: no tick is shorter, on any number of threads\n", longest);
-    sb_put(out, "         A system's time is from its start to its end, with its entities on whatever threads they went to.\n");
+    sb_printf(out, "%9.3f ms a %s, the %ss one after another\n", sum, each, numbered);
+    sb_printf(out, "%9.3f ms, the longest chain of %ss that wait for each other: %s\n", longest, numbered, what);
 
-    sb_put(out, "\nThat chain, last to first (a wait that isn't on it costs the tick nothing):\n");
+    sb_printf(out, "\nThat chain, last to first (a wait that isn't on it costs the %s nothing):\n", each);
     for (int i = last; i >= 0; i = before[i]) {
-        const decl *sys = prog->systems.items[i];
+        const decl *d = items[i];
         sb_printf(out, "%9.3f ms  ", cost[i]);
-        put_decl_name(out, sys, "", NULL);
-        put_threads(out, sys);
+        put_decl_name(out, d, "", NULL);
+        if (!d->is_view) put_threads(out, d);
         sb_put(out, "\n");
-        for (int k = 0; before[i] >= 0 && k < sys->waits.count; k++) {
-            const system_wait *w = &sys->waits.items[k];
+        for (int k = 0; before[i] >= 0 && k < d->waits.count; k++) {
+            const system_wait *w = &d->waits.items[k];
             if (w->on->index != before[i]) continue;
             sb_put(out, "               after ");
             put_decl_name(out, w->on, "", NULL);
             sb_put(out, ": ");
-            describe_wait(sys, w, "", out);
+            describe_wait(d, w, "", out);
             sb_put(out, "\n");
             break;
         }
     }
 
-    sb_put(out, "\nThe costliest systems:\n");
-    for (int i = 0; i < count; i++) said[i] = false;
+    sb_printf(out, "\nThe costliest %ss:\n", numbered);
     for (int shown = 0; shown < 12; shown++) {
         int most = -1;
         for (int i = 0; i < count; i++) if (!said[i] && cost[i] > 0 && (most < 0 || cost[i] > cost[most])) most = i;
         if (most < 0) break;
         said[most] = true;
         sb_printf(out, "%9.3f ms  %2.0f%%  ", cost[most], cost[most] * 100.0 / sum);
-        put_decl_name(out, prog->systems.items[most], "", NULL);
-        put_threads(out, prog->systems.items[most]);
+        put_decl_name(out, items[most], "", NULL);
+        if (!items[most]->is_view) put_threads(out, items[most]);
         bool on_chain = false;
         for (int i = last; i >= 0; i = before[i]) on_chain |= i == most;
         sb_put(out, on_chain ? ", on the chain\n" : "\n");
+    }
+    return unknown;
+}
+
+bool print_schedule_measured(const program *prog, const char *path, sb *out)
+{
+    FILE *f = fopen(path, "rb");
+    sb text = {0};
+    if (f) {
+        char block[4096];
+        size_t got;
+        while ((got = fread(block, 1, sizeof block - 1, f)) > 0) {
+            block[got] = 0;
+            for (size_t i = 0; i < got; i++) if (!block[i]) block[i] = ' ';
+            sb_put(&text, block);
+        }
+        fclose(f);
+    }
+    const char *rows = text.data ? strstr(text.data, "\"systems\":[") : NULL;
+    const char *ticks_at = text.data ? strstr(text.data, "\"ticks\":{") : NULL;
+    if (!f || !rows || !ticks_at || !strstr(text.data, "\"schema\":\"tide.profile\"")) {
+        fprintf(stderr, "tidec: %s '%s'; --measured takes the report `tide run --profile <report.json>` writes\n",
+                f ? "no measured systems in" : "can't read", path);
+        return false;
+    }
+    const double ticks = profile_number(ticks_at, rows, "count", 0);
+    const char *file = path;
+    for (const char *p = path; *p; p++) if (*p == '/' || *p == '\\') file = p + 1;
+    sb_printf(out, "\nMeasured (%s, %.0f tick%s):\n", file, ticks, ticks == 1 ? "" : "s");
+    int unknown = put_measured(out, prog->systems.items, prog->systems.count, rows, "system", ticks, "tick",
+                               "no tick is shorter, on any number of threads");
+    sb_put(out, "         A system's time is from its start to its end, with its entities on whatever threads they went to.\n");
+
+    // The frame's views the same way: they run in order on one thread, so
+    // their chain is what running them at once would leave of them
+    const char *views = strstr(rows, "\"views\":[");
+    const char *frames_at = strstr(text.data, "\"frames\":{");
+    const double frames = frames_at ? profile_number(frames_at, frames_at + 200, "measured", 0) : 0;
+    if (views && prog->views.count && frames > 0) {
+        sb_printf(out, "\nMeasured views (%.0f frame%s; they run one after another today):\n", frames, frames == 1 ? "" : "s");
+        unknown += put_measured(out, prog->views.items, prog->views.count, views, "view", frames, "frame",
+                                "what they'd take run at once, each drawing into a list of its own");
+        sb_put(out, "         Views wait over what their parameters read and write, and over the one heap this machine's own\n"
+                    "         text and lists are in. What they draw is joined in their order, so drawing makes none wait.\n");
+    }
+    if (unknown) {
+        sb_printf(out, "\n         %d measured system%s or view%s not in this code: the report is another build's\n", unknown,
+                  unknown == 1 ? "" : "s", unknown == 1 ? " is" : "s are");
     }
     return true;
 }

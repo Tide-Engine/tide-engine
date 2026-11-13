@@ -159,6 +159,8 @@ The costliest systems:
 
 The first number is the tick on one thread. The second is what the waits alone leave of it: more threads can't go under it, so a tick gets shorter by making a system on the chain cheaper, by getting its entities across threads, or by removing one of the chain's waits. `Think` costs the most here and isn't on the chain: nothing waits for it, so it runs beside the other three. A system's time is from its start to its end, with its entities on whatever threads they went to, so one that already goes across threads counts as it ran. Systems that didn't run in the profiled ticks count as nothing.
 
+A second part does the same for the frame's views, from the same report: what they took one after another, as they run today, and the longest chain of views that wait for each other, by what their parameters read and write and the order `[After]` and `[Before]` give them.
+
 A spawn returns its final logical identity immediately; there is no temporary handle or later identity rewrite. Structural installation remains deferred. Queries executed by match/simulation code traverse ascending logical entity identity across archetypes. Presentation/view queries retain their existing traversal order. Extern systems receive contiguous runs in that same global order, while ordinary C function calls from otherwise independent parallel rows retain the game's existing determinism and thread-safety responsibility.
 
 ## Parallel loops

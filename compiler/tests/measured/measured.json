@@ -1,8 +1,9 @@
 {
 "schema":"tide.profile","version":1,
+"frames":{"total":250,"warmup_requested":50,"measured":200,"first":51,"last":250},
 "ticks":{"count":100,"systems_ms":650,"changes_events_tasks_ms":0},
 "ticks_alongside":{"count":0},
 "systems":[{"source":{"name":"Think","file":"measured.tide","line":8,"column":8},"calls":100,"frames":100,"total_ms":300,"mean_call_ms":3,"mean_frame_ms":3,"max_frame_ms":4},{"source":{"name":"Move","file":"measured.tide","line":9,"column":8},"calls":100,"frames":100,"total_ms":100,"mean_call_ms":1,"mean_frame_ms":1,"max_frame_ms":2},{"source":{"name":"Count","file":"measured.tide","line":10,"column":8},"calls":100,"frames":100,"total_ms":200,"mean_call_ms":2,"mean_frame_ms":2,"max_frame_ms":2},{"source":{"name":"Settle","file":"measured.tide","line":11,"column":8},"calls":100,"frames":100,"total_ms":50,"mean_call_ms":0.5,"mean_frame_ms":0.5,"max_frame_ms":1},{"source":{"name":"Gone","file":"measured.tide","line":30,"column":8},"calls":100,"frames":100,"total_ms":50,"mean_call_ms":0.5,"mean_frame_ms":0.5,"max_frame_ms":1}],
-"views":[],
+"views":[{"source":{"name":"Tally","file":"measured.tide","line":13,"column":6},"calls":200,"frames":200,"total_ms":100,"mean_call_ms":0.5,"mean_frame_ms":0.5,"max_frame_ms":1},{"source":{"name":"Mood","file":"measured.tide","line":14,"column":6},"calls":200,"frames":200,"total_ms":400,"mean_call_ms":2,"mean_frame_ms":2,"max_frame_ms":3},{"source":{"name":"Print","file":"measured.tide","line":15,"column":6},"calls":200,"frames":200,"total_ms":50,"mean_call_ms":0.25,"mean_frame_ms":0.25,"max_frame_ms":1}],
 "workers":[]
 }

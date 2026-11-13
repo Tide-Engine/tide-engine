@@ -68,6 +68,39 @@ tick**, in order on one thread: `OthersOnFoot` 0.67, `Present` 0.43, `HeldWeapon
 rows' text and lists 0.8 ms of it, the gathering `Enlist` 0.2), then the waits that join campaign and infantry,
 which is where field-level conflicts would be tried.
 
+**The views' chain, and what it says about parallel views (2026-11-13, later).** The owner said to do the three
+next, in threads of their own where they can be: field-level conflicts with gather-and-replay
+(`t3/schedule-field-conflicts`), systems that change their own rows' text and lists
+(`t3/schedule-row-heaps`), and parallel views here. Before building stage 1 of the views' plan (independent views
+at once, each into a draw list of its own, joined in order), the measured schedule was given the views:
+`analyze_parallelism` now runs its analysis over `prog->views` too (`analyze`, the same waits among views as
+among systems: parameters, `World`/query uses, heaps, tasks, `[After]`/`[Before]`), and `--measured` prints a
+second part from the report's `views` rows over its measured frames. Nothing else reads a view's waits: the
+outline and the editors' lenses leave views as they were. The fixture has three views.
+
+Mount & Rifle's battle (the run above): **79 views, 3.62 ms a frame one after another, and their longest chain is
+3.48.** Run at once they would save 0.14 ms. Tried, in a build not kept, what the chain would be were its waits
+taken away one kind at a time:
+
+| The views' chain, of 3.62 ms | ms |
+|---|---|
+| as analysed | 3.48 |
+| each local owner's text and lists in a heap of its own (the local world has one) | 3.33 |
+| ...and views that start tasks not ordered with those that change text | 3.09 |
+| ...and no wait at all over `Stage`, `Look`, `Land`, `PartBounds`, `FarCrowd`, `Bench` (more than field-level conflicts could give) | 3.08 |
+
+What's left is `[After]`/`[Before]` the game wrote (`Present` after `HeldWeapon`, `Bloodshed` before `Present`,
+written for the order things are drawn in, which the analysis can't tell from an order of data) and local
+singletons each written by several views (`Sheet`, `SwardStore`, `Gear.PartBounds`'s lists). The costly views are
+once-a-frame ones with several `mut` local singletons (`Present` 0.43, `HeldWeapon` 0.42, `DrawCompoundKits` 0.39,
+`DrawFlora` 0.37, `Bloodshed` 0.25, `DrawFarCrowd` 0.21) and one per-entity view that takes six `mut` singletons
+(`OthersOnFoot` 0.67): the same finding as 2026-11-04 on the route (benchmarks.md, Mount & Rifle's views), now
+from the compiler rather than a reading. **So stage 1 was not built**: for this game it is worth at most half a
+millisecond with two more engine changes under it, and 0.14 without. What its frame thread carries with
+`ticksAlongsideViews` is views + render, 4.7 ms of a 6.94 budget; the tick is beside it. What would take the
+views' own time down is inside the big views: a view's draws recorded on threads (its `parallel` loops already
+run on the pool, a game-written split), or their work made cheaper. Put to the owner.
+
 Answers given to the owner the same day, none built, the language ones his to decide:
 
 - **`world.Set` queued by default, with a `SetNow`?** Asked whether the compiler could decide instead. It can for
