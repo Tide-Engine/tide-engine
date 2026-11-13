@@ -23,6 +23,12 @@ system's query (not after `with`, not in a view's, handler's or function's) and 
 `format_param` and signatures print it. Both TextMate grammars scope it `storage.modifier.previous.tide` where a
 binding starts with it, and leave a name `previous` alone. Tested in `lsp_previous` and the grammar's probe.
 
+The World's `GetPrevious`, `HasPrevious` and `TryGetPrevious` are in `world_calls` (completion with a snippet,
+hover, signature help). The checker keeps such a call's name as `Get`, `Has` or `TryGet` with
+`expr.world_previous`, so `walk_expr` and the signature lookup put the written name back. A system that reads
+the tick's start through its World has the lens `World/query: reads Body as the tick started`, and a match
+handler's query is offered `previous` too (not a local handler's).
+
 ## What keeps a system on one thread (2026-11-13)
 
 Above a per-entity system whose entities stay on one thread, a lens says what keeps them there, `on one thread: it

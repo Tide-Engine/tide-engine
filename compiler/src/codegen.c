@@ -268,6 +268,7 @@ typedef struct gen {
     bool ix_any;
     VEC(const struct stmt *) ix_loops;
     VEC(const void *) ix_variants;
+    uint64_t *previous_lanes; // For each component, the lanes code reads of the tick's start (previous_wants): what a tick keeps
     VEC(const char *) ix_shared; // ...and, for a site of the tick's start, all its index is made from: loops with the same share it (ix_site_shared)
     VEC(const struct stmt *) ix_used;   // Loops written through their index (ix_check)
     VEC(const struct stmt *) ix_locals; // Locals whose list a loop keeps its index of (loop_index.list_local)
@@ -1931,6 +1932,7 @@ static int view_slot(gen *g, const expr *map)
 static void close_list_caches(gen *g);
 
 static void gen_expr(gen *g, sb *o, const expr *e);
+static void previous_wants(gen *g, const decl *comp, int lane); // previous_codegen.inc
 static const char *place_where(const gen *g, const expr *e);
 
 // ---------------------------------------------------------------------------
@@ -5256,6 +5258,22 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "%scmd_parent(%s, ", world_prefix(e->local_world), e->local_world ? "tide_l" : "tide_w");
             gen_expr(g, o, e->object);
             for (int i = 0; i < e->args.count; i++) { sb_put(o, ", "); gen_expr(g, o, e->args.items[i]); }
+            sb_put(o, ")");
+        } else if (e->call == CALL_WORLD && e->world_previous) {
+            // world.GetPrevious<Health>(e), HasPrevious, TryGetPrevious: the entity's as the tick started (previous_codegen.inc)
+            const bool try_get = str_eq_c(e->name, "TryGet");
+            const char *world = "tide_w";
+            if (!str_eq_c(e->name, "Has")) previous_wants(g, e->type_decl, -1); // The whole component, by the entity
+            if (str_eq_c(e->name, "Has")) sb_printf(o, "tide_previous_%s(%s, ", type_cname(e->type_decl), world);
+            else sb_printf(o, "tide_previous_%s_%s(%s, ", try_get ? "tryget" : "get", type_cname(e->type_decl), world);
+            gen_expr(g, o, e->args.items[0]);
+            if (str_eq_c(e->name, "Has")) sb_put(o, ", NULL");
+            if (try_get) {
+                const expr *value = e->args.items[1];
+                sb_put(o, ", &(");
+                gen_expr(g, o, value);
+                sb_printf(o, "), %s", place_where(g, value));
+            }
             sb_put(o, ")");
         } else if (e->call == CALL_WORLD && str_eq_c(e->name, "TryGet")) {
             // world.TryGet<Health>(e, out health): whether it has one, and into the variable, it or the default
@@ -16112,6 +16130,21 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
     bool *before = arena_alloc((size_t)(q->query.count ? q->query.count : 1) * sizeof *before);
     bool any_before = false;
     for (int i = 0; i < q->query.count; i++) any_before |= before[i] = canonical && query_binding_previous(q, selection, i);
+    // In a handler (or a function it hands the query to) rows have moved since the tick started: each entity's
+    // `previous` value is found by the entity (tide_previous_<Component>), and an entity that had none isn't a row
+    const decl *asker = borrowed ? source.owner : g->code;
+    const bool late = any_before && asker && asker->is_handler;
+    if (late) for (int i = 0; i < q->query.count; i++) {
+        if (!before[i]) continue;
+        reads[i].some = false;
+        reads[i].columns = 0;
+    }
+    for (int i = 0; i < q->query.count; i++) { // What the tick keeps for it: the lanes read, or by the entity, all
+        if (!before[i]) continue;
+        const decl *comp = q->query.items[i].type.decl;
+        if (late || !reads[i].some) previous_wants(g, comp, -1);
+        else for (int k = 0; k < comp_lanes(comp); k++) if (query_reads_lane(&reads[i], k)) previous_wants(g, comp, k);
+    }
     const decl *query_code = own_routine(g) ? own_routine(g) : g->code;
     const bool cache_columns = canonical && !gather && query_code && !query_code->is_local
         && !query_code->is_async && !query_code->starts_tasks && !query_code->reaches_extern && !sharded(g);
@@ -16132,7 +16165,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             line(g, o, "const tide_entity *tide_query_entities%d = NULL;", a);
             for (int i = 0; i < q->query.count; i++) {
                 const param *p = &q->query.items[i];
-                if (!param_binding(p) || (!before[i] && query_changes_binding(g, p)) || !reads[i].columns) continue;
+                if (!param_binding(p) || (before[i] ? late : query_changes_binding(g, p)) || !reads[i].columns) continue;
                 line(g, o, "const uint8_t *tide_query_columns%d_%d[%d] = {0};", a, i, reads[i].columns);
             }
         }
@@ -16147,7 +16180,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         line(g, o, "{ // query: %s", arch_label(g, a));
         g->indent++;
         line(g, o, "const tide_table *tide_qt = &%s->%s;", world, arch_name(g, a));
-        if (any_before) {
+        if (any_before && !late) {
             line(g, o, "const tide_table *tide_qp = %s;", previous_table(g, world, a));
             line(g, o, "if (tide_qloc.row >= tide_qp->count) break; // Not there as the tick started");
         }
@@ -16162,7 +16195,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             line(g, o, "tide_query_entities%d = tide_table_column(tide_qt, %s, tide_qc, 0);", a, arch_columns(g, a));
             for (int i = 0; i < q->query.count; i++) {
                 const param *p = &q->query.items[i];
-                if (!param_binding(p) || (!before[i] && query_changes_binding(g, p))) continue;
+                if (!param_binding(p) || (before[i] ? late : query_changes_binding(g, p))) continue;
                 for (int k = 0, n = 0; k < comp_lanes(p->type.decl); k++) if (query_reads_lane(&reads[i], k)) {
                     line(g, o, "tide_query_columns%d_%d[%d] = tide_table_column(%s, %s, tide_qc, %d);",
                          a, i, n++, before[i] ? "tide_qp" : "tide_qt", arch_columns(g, a), arch_column(g, a, p->type.decl->index) + k);
@@ -16173,7 +16206,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
         } else line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
         for (int i = 0; i < q->query.count; i++) {
             const param *p = &q->query.items[i];
-            if (!param_binding(p) || (!before[i] && query_changes_binding(g, p)) || !reads[i].columns) continue;
+            if (!param_binding(p) || (before[i] ? late : query_changes_binding(g, p)) || !reads[i].columns) continue;
             const decl *comp = p->type.decl;
             if (cache_columns) {
                 line(g, o, "const uint8_t *const *tide_qcol%d = tide_query_columns%d_%d;", i, a, i);
@@ -16222,12 +16255,17 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
             const param *p = &q->query.items[i];
             if (!param_binding(p)) continue;
             const field *value = &row->fields.items[f++];
+            if (before[i] && late) {
+                line(g, o, "if (!tide_previous_%s(%s, tide_qe[tide_qi], &%s.%s)) continue; // Not there as the tick started",
+                     type_cname(p->type.decl), world, name, field_cname(value));
+                continue;
+            }
             if (reads[i].some) {
                 const decl *comp = p->type.decl;
                 const int width = comp_width(comp);
                 for (int k = 0, n = 0; k < comp_lanes(comp); k++) {
                     if (!query_reads_lane(&reads[i], k)) continue;
-                    if ((!before[i] && query_changes_binding(g, p))) {
+                    if ((before[i] ? late : query_changes_binding(g, p))) {
                         line(g, o, "memcpy((uint8_t *)&%s.%s + %d, tide_table_get(tide_qt, %s, (tide_qc << %d) + tide_qi, %d), %d);",
                              name, field_cname(value), k * width, arch_columns(g, a), arch_shift(g, a), arch_column(g, a, comp->index) + k, width);
                     } else {
@@ -16235,7 +16273,7 @@ static void gen_query_walk(gen *g, const stmt *s, const char *gather)
                              name, field_cname(value), k * width, i, n++, width, width);
                     }
                 }
-            } else if ((!before[i] && query_changes_binding(g, p))) {
+            } else if ((before[i] ? late : query_changes_binding(g, p))) {
                 line(g, o, "tide_table_gather(tide_qt, %s, (tide_qc << %d) + tide_qi, %d, %du, %du, &%s.%s);",
                      arch_columns(g, a), arch_shift(g, a), arch_column(g, a, p->type.decl->index),
                      comp_lanes(p->type.decl), comp_width(p->type.decl), name, field_cname(value));
@@ -18730,6 +18768,20 @@ static void gen_routines(gen *g)
         if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(value, found, where);\n", name);
         else sb_put(o, "    *value = found;\n");
         sb_put(o, "    return has;\n}\n\n");
+        if (d->tried_previous) { // world.TryGetPrevious: the same of the entity as the tick started
+            sb_printf(o, "TIDE_HELPER bool tide_previous_tryget_%s(const tide_world *w, const tide_entity e, %s *value, const uint32_t where)\n{\n"
+                         "    (void)where;\n    %s was;\n    memset(&was, 0, sizeof was);\n    const bool has = tide_previous_%s(w, e, &was);\n",
+                      name, name, name, name);
+            sb_printf(o, "    const %s found = has ? ", name);
+            if (type_has_list(t)) sb_printf(o, "tide_copy_%s(was)", name);
+            else sb_put(o, "was");
+            sb_put(o, " : ");
+            gen_default(g, o, t);
+            sb_put(o, ";\n");
+            if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(value, found, where);\n", name);
+            else sb_put(o, "    *value = found;\n");
+            sb_put(o, "    return has;\n}\n\n");
+        }
         if (!g->prog->shard_state || d->is_local) continue;
         // A view's, from the world drawn that owns the entity (tide_view_world_of)
         sb_printf(o, "TIDE_SHARD_FN bool tide_view_tryget_%s(const tide_world *w, const tide_entity e, %s *value, const uint32_t where)\n{\n"
@@ -23912,10 +23964,12 @@ static void gen_api(gen *g)
     } else {
         sb_put(o, "    (void)tide_prepare;\n    if (tide_p) tide_profile_count(&tide_p->systems, 0u);\n");
     }
-    if (prog->keeps_previous) sb_put(o, "    tide_previous_release(w, false); // The systems have joined: nothing reads the tick's start any more\n");
+    // (A game whose handlers read the tick's start keeps it until the tick's changes are in, below)
+    if (prog->keeps_previous && !prog->keeps_previous_entities) sb_put(o, "    tide_previous_release(w, false); // The systems have joined: nothing reads the tick's start any more\n");
     sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     if (prog->owned_prediction) sb_put(o, "    w->tide_owned_predicting = false;\n");
     sb_put(o, "    tide_apply_commands(w);\n");
+    if (prog->keeps_previous_entities) sb_put(o, "    tide_previous_release(w, false); // The tick's handlers have run: nothing reads its start any more\n");
     if (prog->task_slots[0]) sb_put(o, "    tide_task_match_collect(w);\n");
     if (completions) sb_printf(o, "    tide_rows_finish_tick(tide_completions, %du, &w->entities);\n    w->tide_completions = NULL;\n", completions);
     if (program_watches(prog)) sb_put(o, "    if (tide_watching) tide_changes_end(w); // ...and what changed of it\n");
@@ -28102,6 +28156,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_rebind_resources(&g);
     gen_editor_preview(&g);
     gen_index_sites(&g);
+    gen_previous_keep(&g);
     if (opts->layout || opts->embed) gen_layout(&g);
     if (opts->embed) gen_embed(&g);
     if (opts->build_program) gen_build_main(&g);

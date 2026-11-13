@@ -1,0 +1,12 @@
+// expect: this loop can't be indexed: a handler finds each entity's 'previous' values by the entity
+component Body { float3 position; }
+event Hit { float3 at; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body); Send(Hit { }); }
+event(Hit hit) Heard(query (previous Body was) all)
+{
+    indexed foreach (var row in all)
+    {
+        if (Math.Distance(row.was.position, hit.at) > 2) continue;
+    }
+}

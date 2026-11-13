@@ -819,7 +819,7 @@ static void put_world_access(sb *out, const decl *sys, const bool writes)
     }
     sb before = {0};
     if (!writes && previous_read_names(sys, "", NULL, &before)) {
-        sb_printf(out, "         reads any entity's %s as the tick started, through queries: no wait over it\n", before.data);
+        sb_printf(out, "         reads any entity's %s as the tick started: no wait over it\n", before.data);
     }
 }
 

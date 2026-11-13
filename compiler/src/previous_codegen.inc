@@ -85,32 +85,57 @@ static void gen_previous_value(gen *g, const decl *comp, const char *value)
     gen_confirmed_copy(&g->c, comp, value, indent_pad(g));
 }
 
-// The struct, and keeping and letting go, once the archetypes' columns are written.
-static void gen_previous_helpers(gen *g)
+// What the struct holds, as a number: a world carried over to new code (hot reload) may come with one the code
+// before made, of other tables.
+static uint64_t previous_plan(const gen *g)
+{
+    const program *prog = g->prog;
+    sb shape = {0};
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_keeps(g, a)) sb_printf(&shape, "%s %d;", arch_name(g, a), arch_column_count(g, a));
+    }
+    sb_printf(&shape, "heap %d entities %d", previous_heap(g), prog->keeps_previous_entities);
+    uint64_t plan = 0xCBF29CE484222325ull;
+    for (const char *c = shape.data; *c; c++) plan = (plan ^ (uint8_t)*c) * 0x100000001B3ull;
+    return plan;
+}
+
+// Code being written reads lane `lane` of `comp` as the tick started (every lane, below 0): the tick keeps it.
+// Every place that writes a read of a kept table says so, or the page it reads isn't there.
+static void previous_wants(gen *g, const decl *comp, const int lane)
+{
+    const int count = g->prog->components.count;
+    if (!g->previous_lanes) {
+        g->previous_lanes = arena_alloc((size_t)count * LANE_MASK_WORDS * sizeof *g->previous_lanes);
+        memset(g->previous_lanes, 0, (size_t)count * LANE_MASK_WORDS * sizeof *g->previous_lanes);
+    }
+    uint64_t *words = g->previous_lanes + (size_t)comp->index * LANE_MASK_WORDS;
+    if (lane < 0 || lane >= LANE_MASK_WORDS * 64) {
+        memset(words, 0xFF, LANE_MASK_WORDS * sizeof *words);
+        return;
+    }
+    words[lane >> 6] |= UINT64_C(1) << (lane & 63);
+}
+
+static bool previous_wanted(const gen *g, const decl *comp, const int lane)
+{
+    if (!g->previous_lanes) return false;
+    const uint64_t *words = g->previous_lanes + (size_t)comp->index * LANE_MASK_WORDS;
+    if (lane >= LANE_MASK_WORDS * 64) return words[0] == UINT64_MAX && words[LANE_MASK_WORDS - 1] == UINT64_MAX; // Past the mask: all or none
+    return (words[lane >> 6] >> (lane & 63) & 1u) != 0;
+}
+
+// Keeping, once every loop is written and the lanes they read are known.
+static void gen_previous_keep(gen *g)
 {
     const program *prog = g->prog;
     if (!prog->keeps_previous) return;
     sb *o = &g->c;
     const bool heap = previous_heap(g);
-    // What the struct holds, as a number: a world carried over to new code (hot reload) may come with one the code
-    // before made, of other tables
-    sb shape = {0};
-    for (int a = 0; a < prog->archetypes.count; a++) {
-        if (arch_keeps(g, a)) sb_printf(&shape, "%s %d;", arch_name(g, a), arch_column_count(g, a));
-    }
-    sb_printf(&shape, "heap %d", heap);
-    uint64_t plan = 0xCBF29CE484222325ull;
-    for (const char *c = shape.data; *c; c++) plan = (plan ^ (uint8_t)*c) * 0x100000001B3ull;
-    sb_put(o, "// Components as the tick started, for queries' `previous` bindings: pages kept while the tick's systems run\n"
-              "struct tide_previous {\n    uint64_t plan; // Which tables these are\n");
-    for (int a = 0; a < prog->archetypes.count; a++) {
-        if (arch_keeps(g, a)) sb_printf(o, "    tide_table %s;\n", arch_name(g, a));
-    }
-    if (heap) sb_put(o, "    tide_heaps heap; // ...and the heaps their text and lists are in, as they were\n");
-    sb_put(o, "    bool kept;\n};\n\n");
-
+    const bool late = prog->keeps_previous_entities;
+    const uint64_t plan = previous_plan(g);
     sb_put(o, "// Serial, before the tick's systems: what they read as the tick started\n"
-              "TIDE_HELPER void tide_previous_keep(tide_world *w)\n{\n"
+              "static void tide_previous_keep(tide_world *w)\n{\n"
               "    struct tide_previous *p = w->tide_previous;\n");
     // Another build's holds no page between ticks, only its tables' room, which goes with it unknown
     sb_printf(o, "    if (p && p->plan != %lluull) {\n        free(p);\n        p = NULL;\n    }\n"
@@ -124,7 +149,10 @@ static void gen_previous_helpers(gen *g)
             const decl *d = prog->components.items[c];
             if (comp_sparse(g, c)) sb_printf(o, ", %du", arch_presence(g, a, c));
             if (!d->kept_previous) continue;
-            for (int k = 0; k < comp_lanes(d); k++) sb_printf(o, ", %du", arch_column(g, a, c) + k);
+            // The lanes some code reads of the tick's start, and no others: a lane nobody reads is nobody's to keep
+            for (int k = 0; k < comp_lanes(d); k++) {
+                if (previous_wanted(g, d, k)) sb_printf(o, ", %du", arch_column(g, a, c) + k);
+            }
         }
         sb_printf(o, "};\n        tide_table_keep(&p->%s, &w->%s, %s, tide_kept, (uint32_t)(sizeof tide_kept / sizeof *tide_kept));\n    }\n",
                   arch_name(g, a), arch_name(g, a), arch_columns(g, a));
@@ -144,7 +172,31 @@ static void gen_previous_helpers(gen *g)
         }
         sb_put(o, "    tide_text_use_verified(&p->heap);\n");
     }
+    if (late) sb_put(o, "    tide_entities_copy(&p->entities, &w->entities);\n");
     sb_put(o, "    p->kept = true;\n}\n\n");
+
+}
+
+// The struct, and keeping and letting go, once the archetypes' columns are written.
+static void gen_previous_helpers(gen *g)
+{
+    const program *prog = g->prog;
+    if (!prog->keeps_previous) return;
+    sb *o = &g->c;
+    const bool heap = previous_heap(g);
+    const bool late = prog->keeps_previous_entities;
+    const uint64_t plan = previous_plan(g);
+    sb_put(o, "// Components as the tick started, for queries' `previous` bindings: pages kept while the tick's systems run\n"
+              "struct tide_previous {\n    uint64_t plan; // Which tables these are\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_keeps(g, a)) sb_printf(o, "    tide_table %s;\n", arch_name(g, a));
+    }
+    if (heap) sb_put(o, "    tide_heaps heap; // ...and the heaps their text and lists are in, as they were\n");
+    if (late) sb_put(o, "    tide_entities entities; // ...and where each entity was: a handler finds one by it once rows have moved\n");
+    sb_put(o, "    bool kept;\n};\n\n");
+
+    // (Defined once every loop is written, when the lanes they read are known: gen_previous_keep)
+    sb_put(o, "static void tide_previous_keep(tide_world *w);\n\n");
 
     sb_put(o, "// Serial, once the systems have joined: the pages are the world's alone again\n"
               "TIDE_HELPER void tide_previous_release(tide_world *w, const bool all)\n{\n"
@@ -156,6 +208,46 @@ static void gen_previous_helpers(gen *g)
         if (arch_keeps(g, a)) sb_printf(o, "    tide_table_unkeep(&p->%s, %s, all);\n", arch_name(g, a), arch_columns(g, a));
     }
     if (heap) sb_put(o, "    if (p->kept || all) tide_heaps_free(&p->heap);\n");
+    if (late) sb_put(o, "    if (p->kept || all) tide_entities_free(&p->entities);\n");
     sb_put(o, "    p->kept = false;\n"
               "    if (all) {\n        free(p);\n        w->tide_previous = NULL;\n    }\n}\n\n");
+
+    // One entity's component as the tick started, by its handle: for World.GetPrevious, HasPrevious and
+    // TryGetPrevious, and for a handler's query, whose rows have moved since. The entity is found where it was:
+    // by the entities as the tick started where the game keeps them (a handler or a function asks), else by the
+    // world's own, which while systems run are the same places.
+    for (int c = 0; c < prog->components.count; c++) {
+        const decl *d = prog->components.items[c];
+        if (!d->kept_previous || d->is_local) continue;
+        const char *name = type_cname(d);
+        sb_printf(o, "// An entity's %s as the tick started, into *out (NULL: only whether it had one): false when it had none, or\n"
+                     "// nothing is kept (outside a tick, or once its changes are in)\n"
+                     "TIDE_HELPER bool tide_previous_%s(const tide_world *w, const tide_entity e, %s *out)\n{\n"
+                     "    const struct tide_previous *p = w->tide_previous;\n"
+                     "    if (!p || !p->kept) return false;\n"
+                     "    const tide_location at = tide_entity_location(&%s->entities, e);\n"
+                     "    switch (at.archetype) {\n", name, name, name, late ? "p" : "w");
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (arch_local(g, a) || !arch_stores(g, a, c)) continue;
+            sb_printf(o, "    case %d: {\n        const tide_table *t = &p->%s;\n        if (at.row >= t->count) return false;\n", a, arch_name(g, a));
+            if (comp_sparse(g, c)) {
+                sb_printf(o, "        if (!*(const uint8_t *)tide_table_get(t, %s, at.row, %d)) return false;\n", arch_columns(g, a),
+                          arch_presence(g, a, c));
+            }
+            if (comp_lanes(d) > 0) {
+                sb_printf(o, "        if (out) tide_table_gather(t, %s, at.row, %d, %du, %du, out);\n", arch_columns(g, a),
+                          arch_column(g, a, c), comp_lanes(d), comp_width(d));
+            }
+            sb_put(o, "        break;\n    }\n");
+        }
+        sb_put(o, "    default: return false;\n    }\n");
+        if (decl_has_text(d)) {
+            sb_put(o, "    if (out) {\n");
+            gen_confirmed_copy(o, d, "(*out)", "        ");
+            sb_put(o, "    }\n");
+        }
+        sb_put(o, "    return true;\n}\n\n");
+        sb_printf(o, "TIDE_HELPER %s tide_previous_get_%s(const tide_world *w, const tide_entity e)\n{\n    %s v;\n"
+                     "    memset(&v, 0, sizeof v);\n    (void)tide_previous_%s(w, e, &v);\n    return v;\n}\n\n", name, name, name, name);
+    }
 }

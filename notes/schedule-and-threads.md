@@ -16,8 +16,8 @@ system BotSense(mut Bot bot, mut Trooper t, query (previous Trooper other) other
 ### What it is
 
 - **Where** (`check_previous_binding`, `compiler/src/check.c`; the parser reads the word where it reads
-  `verified`, a name anywhere else): bindings of a system's queries. An error with the fix for a filter, a
-  system's own parameter, a view's or local handler's query, a match handler's, a function's own query
+  `verified`, a name anywhere else): bindings of a system's queries (and since the same night a match handler's, and the World: below). An error with the fix for a filter, a
+  system's own parameter, a view's or local handler's query, a function's own query
   parameter, `mut` (either side of the word), with `verified`, and a local component. `previous Body was, Body
   now` in one query is the existing "appears twice": a function handed a query finds its bindings by their
   component, which must be one.
@@ -122,6 +122,53 @@ system BotSense(mut Bot bot, mut Trooper t, query (previous Trooper other) other
 - `table_keeps_columns_as_they_were`, `heaps_keep_one_owners_heap` (tide_tests): the two runtime functions,
   references and all.
 
+### The World, match handlers, and only the lanes read (2026-11-13, night)
+
+The owner, of the first version's "not built" list: "lets try to gap [it]; specially the World reads ... we
+should maybe have a ReadPrevious variant of Read or whatever we have in there". Built, all three; the names and
+the rules are mine, Provisional in the spec.
+
+- **`world.GetPrevious<T>(e)`, `HasPrevious<T>(e)`, `TryGetPrevious<T>(e, out var was)`** (`check_world_call`):
+  `Get`, `Has` and `TryGet` of the entity as the tick started. The checker keeps the call's name as `Get`, `Has`
+  or `TryGet` with `expr.world_previous` set, so everything that goes by those names (what's pure, what has an
+  `out`, the copies) is as it was; the language server puts the written name back for its hover, signature and
+  tokens. No `world_use` is noted: the component joins `decl.previous_reads`, as a binding's does, so the
+  schedule has no access for it and `world_reads_own_writes` nothing to keep a system on one thread
+  (`schedule/previous.tide`'s `Chase`: `mut Body`, `world.TryGetPrevious<Body>`, across threads). A function's
+  reads reach its callers (`check_world_passing`: `previous_reads` and `previous_read_at` go up the calls, and
+  such a function is handed the match's world), where a view, a local handler or a task that calls one is an
+  error, as the direct call is.
+- **One entity by its handle** (`tide_previous_<C>(w, e, out)`, `tide_previous_get_<C>`,
+  `tide_previous_tryget_<C>`, generated): nothing kept (outside a tick, or once it let go) is false; else the
+  entity's place as the tick started, the kept table of that archetype, its presence byte for a sparse
+  component, a row below the kept count, the lanes gathered and its handles retagged. `out` NULL only asks.
+- **Match handlers** (`check_previous_binding` lets them; `program.keeps_previous_entities`): a handler runs
+  while the tick's changes apply, so the world's row is no longer the kept table's. A game where a handler has
+  a `previous` binding, or a handler or any function reads through the World, also keeps the entity table as
+  the tick started (`tide_entities_copy` into `tide_previous.entities`, pages shared) and lets go after
+  `tide_apply_commands` instead of before it. The lookup above then goes by those entities, in systems too
+  (the same places). A handler's query walks the world as it is and asks the lookup for each `previous`
+  binding of each row (`late` in `gen_query_walk` and `gen_indexed_query`, by the code the query is a
+  parameter of: a function handed a handler's query does the same): an entity that had none isn't a row. So
+  one spawned or given the component this tick is left out, one that changed archetype is found where it was,
+  and what handlers write this tick is never seen. `indexing.c` plans no index for a handler's loop keyed by
+  such a binding, and says why.
+- **Only the lanes read are kept** (`previous_wants`, `gen.previous_lanes`, `gen_previous_keep`): each place
+  that writes a read of a kept table says which lanes (a walk's and a candidate's copies by `match_query_lanes`,
+  an index's key lanes), or the whole component (a row that can escape, a parallel loop's rows, the lookup by
+  handle, a handler's binding). `tide_previous_keep` is declared with the struct and defined once every loop is
+  written, with those lanes alone; `bench_flock` keeps 7 of `Bird`'s 8. A read that didn't say so would find no
+  page: the three kinds of place are all there are, and the fixture's ASan runs go through each.
+- Tests: the fixture's `Follow` (a system that changes `Boid` and asks its friend's through all three calls),
+  `AskAll` (every entity through the World and through a function, against what `Remember`, first in the tick,
+  wrote into a `Memo`) and `Late` (a handler, after the tick's destroys, spawns, sparse tags and moves between
+  two archetypes: a query of two `previous` bindings beside a current one, and the World's three calls; a
+  spawned entity is no row, has nothing, and `HasPrevious` says so). `Tally.wrong` is 0 every tick on every
+  pool, and fewer rows reach the handler than the systems asked. Errors: `previous_world_view`,
+  `previous_world_function`, `previous_handler_indexed` (and `previous_handler` is gone: it's allowed).
+  `schedule/previous.tide` gained `Chase`, `Lead` (through a function) and a handler. `lsp_previous`: the three
+  methods offered and explained, the lens `World/query: reads Body as the tick started`, a handler's binding.
+
 ### Measured
 
 **A flock** (`bench/flock`: one component, one system that steers each bird by the birds within 2 and moves it,
@@ -172,18 +219,17 @@ feature, not designed.
 
 ### Gaps
 
-- **Match handlers** take no `previous` binding. A handler runs while the tick's changes apply: rows have moved
-  between archetypes, holes are filled by spawns, so the row of the world is no longer the row of the kept
-  table. It needs the entity table as the tick started too (`tide_entities_copy`, pages shared), kept until the
-  changes are in, a lookup by entity for each row, and the rule that an entity is in the query when it's in the
-  world now and had the component then. Not built; the error says a system has it.
-- **`World` reads and a system's own parameters** have no form of it; views and local handlers don't take it.
 - **`previous Body was, Body now` in one query** is refused (two queries do it): a function handed a query
   finds a binding by its component.
-- **Every lane of a kept component is held**, in every archetype that stores it, whatever the queries read of
-  it. Holding costs two counts a page a tick; what it costs a writer is a page of its own for each lane it
-  changes that tick, which beside a session's snapshots it pays anyway and in a host that keeps none it
-  wouldn't. The lanes some `previous` loop reads would do (`match_query_lanes`, by loop).
+- **A handler's loop keyed by a `previous` binding isn't indexed** (the tick's index is of rows as they were),
+  and each of its rows looks its entity up in the entities as the tick started; a function handed a handler's
+  query goes through every row silently. A game where a handler or a function reads the tick's start copies its
+  entity table (page references) every tick and keeps everything until the handlers have run, so the tick's
+  one-row writes copy the kept pages they touch, as beside a snapshot.
+- **Through the World a component is kept whole**, and a handler's bindings too: only a system's loops say
+  which lanes they read.
+- **No `SetPrevious`, and nothing for a system's own parameter** (`previous Body mine`): its own entity through
+  the World (`world.GetPrevious<Body>(this)`) does it. Views, local handlers and tasks take none of it.
 - **A kept heap is its owner's whole heap**, copied (page references) every tick and its set made again.
   Components C can write, and every component of a game with shards or hidden state, keep the match's one heap.
 - **A list or map of text in a `previous` row is copied to the scratch area for each row** whose lanes of it
@@ -204,6 +250,10 @@ hash moved, and a game with no `previous` binding generates the C it did (every 
 (378) and the docs site's build pass. Linux, macOS, MinGW and Android are CI's; Windows ASan doesn't look for
 stack-use-after-return, which Linux's does. `bench_flock`'s two `--expect` hashes are from this machine's release
 build: another platform that disagrees has found a determinism bug, not a stale pin.
+
+After the night's additions (the World, handlers, lanes): the whole native sanitize suite again, 3,292 of 3,292;
+on the web the fixture, its plain twin, their comparison and `tide_tests`; the docs site's build. `bench_flock`'s
+hashes are what they were.
 
 ## What the owner decided from the measurements (2026-11-13)
 

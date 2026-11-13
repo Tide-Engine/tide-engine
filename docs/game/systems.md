@@ -108,9 +108,9 @@ Every bird steers by where the others were when the tick began, not by where the
 - **Its entities go across threads.** A system that changes a component and reads everyone's through an unmarked query runs its entities one after another on one thread, as each sees what the ones before it wrote. With `previous` there is nothing of the others' to see, so the birds are shared out over every core, with the same results as on one.
 - **Its search is made once.** A loop that [starts by skipping rows](#only-the-rows-that-can-pass) by a number of a `previous` binding goes through an index of the tick's start. It's made at most once a tick, for every system that searches the same way, and the system may change the very field it searches by (`bird.position` above), which an unmarked query's loop can't.
 
-`previous` goes on a binding of a system's query, and reads the component's values: its text, lists, maps, sets and grids as they were too. The query has the same entities either way, as entities and their components come and go at the tick's end: one spawned this tick is in no query yet, and one destroyed this tick is still there with the values it started the tick with. Other bindings of the same query read the world as it is, and a [function handed the query](../language/functions.md#borrowing-a-query) reads what the query reads. Filters, a system's own parameters, views and handlers don't take it. To compare a component now with what it was, take two queries, one with the word and one without.
+`previous` goes on a binding of a system's query (or a [match handler's](./events.md#querying-other-entities)), and reads the component's values: its text, lists, maps, sets and grids as they were too. The query has the same entities either way, as entities and their components come and go at the tick's end: one spawned this tick is in no query yet, and one destroyed this tick is still there with the values it started the tick with. Other bindings of the same query read the world as it is, and a [function handed the query](../language/functions.md#borrowing-a-query) reads what the query reads. Filters, a system's own parameters, views and local handlers don't take it. To compare a component now with what it was, take two queries, one with the word and one without. For one entity by its handle, the World has the same: [`world.GetPrevious<Body>(target)`](#as-the-tick-started-by-handle).
 
-Only the components some query marks `previous` are kept, and only while the tick's systems run. This is provisional but for the word and what it reads.
+Only what code reads of the tick's start is kept, and only for the tick. This is provisional but for the word and what it reads.
 
 ### Going through the rows at once
 
@@ -217,6 +217,20 @@ system Heal(Healer healer, mut World world)
     world.Set<Health>(healer.patient, health);
 }
 ```
+
+### As the tick started, by handle
+
+`GetPrevious`, `HasPrevious` and `TryGetPrevious` are `Get`, `Has` and `TryGet` of the entity as it was when the tick started, whatever has run since:
+
+```csharp
+system Chase(mut Body body, Bot bot, World world)
+{
+    if (world.TryGetPrevious<Body>(bot.target, out var was))
+        body.velocity = Math.Normalize(was.position - body.position) * bot.speed;
+}
+```
+
+Like a [`previous` binding](#as-the-tick-started), they read nothing the tick can change: the system waits for no system that changes `Body`, none waits for it, and its entities go across threads though it changes `Body` itself, where `world.Get<Body>` would keep them on one. An entity that wasn't there when the tick started (spawned this tick) has no `Body` then: `HasPrevious` is false and `GetPrevious` gives the zero value. Systems, match handlers and the functions they hand their World to can call them; views and tasks can't.
 
 The signature doesn't say which components a system reaches this way: the engine reads it off the calls. Each counts as access to every entity's component, so the system is scheduled like one that touches them all, and one that calls `Set` runs on one thread. [The schedule](./schedule.md#through-the-world) and your editor show what each system reads and writes through its `World`. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
 

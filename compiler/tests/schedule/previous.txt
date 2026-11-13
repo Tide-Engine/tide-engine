@@ -1,4 +1,4 @@
-previous: 7 systems each tick, 4 stages deep; 7 can run alongside others.
+previous: 9 systems each tick, 5 stages deep; 9 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  Crowd  (per entity)
@@ -8,11 +8,11 @@ stage 1  Crowd  (per entity)
          alongside Tally, Shout
 stage 1  Tally  (once)
          writes Count
-         reads any entity's Body as the tick started, through queries: no wait over it
-         alongside Crowd, Move, Flock, Compare, Sense, Shout
+         reads any entity's Body as the tick started: no wait over it
+         alongside Crowd, Move, Flock, Compare, Sense, Shout, Chase, Lead
 stage 1  Shout  (once, 1 parallel loop)
-         reads any entity's Body as the tick started, through queries: no wait over it
-         alongside Crowd, Move, Flock, Tally, Compare, Sense
+         reads any entity's Body as the tick started: no wait over it
+         alongside Crowd, Move, Flock, Tally, Compare, Sense, Chase, Lead
 
 stage 2  Move  (per entity)
          writes Body
@@ -21,7 +21,7 @@ stage 2  Move  (per entity)
 
 stage 3  Flock  (per entity)
          writes Body
-         reads any entity's Body as the tick started, through queries: no wait over it
+         reads any entity's Body as the tick started: no wait over it
          after Crowd: it reads Body.position, which this writes (and through Move)
          after Move: both write Body.position
          alongside Tally, Shout
@@ -29,21 +29,34 @@ stage 3  Flock  (per entity)
 stage 4  Compare  (once)
          writes Count
          reads any entity's Body, through queries
-         reads any entity's Body as the tick started, through queries: no wait over it
+         reads any entity's Body as the tick started: no wait over it
          after Move: it writes Body.position, which this reads (and through Flock)
          after Flock: it writes Body.position, which this reads
-         alongside Tally, Sense, Shout
+         alongside Tally, Sense, Shout, Chase, Lead
 stage 4  Sense  (per entity)
          reads Body
          writes Bot
-         reads any entity's Body as the tick started, through queries: no wait over it
+         reads any entity's Body as the tick started: no wait over it
          after Move: it writes Body.position, which this reads (and through Flock)
          after Flock: it writes Body.position, which this reads
-         alongside Tally, Compare, Shout
+         alongside Tally, Compare, Shout, Chase
+stage 4  Chase  (per entity)
+         reads Bot
+         writes Body
+         reads any entity's Body as the tick started: no wait over it
+         after Move: it writes Body.position, which this reads (and through Flock)
+         after Flock: it writes Body.position, which this reads
+         alongside Tally, Compare, Sense, Shout, Lead
+
+stage 5  Lead  (per entity)
+         writes Bot
+         reads any entity's Body as the tick started: no wait over it
+         after Sense: both write Bot.alarm
+         alongside Tally, Compare, Shout, Chase
 
 Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
-         Seen: Heard
+         Seen: Heard, Recall
 
 Loops that skip rows, and whether an index finds the rest:
          Crowd, line 46: indexed by o.other.position.x, o.other.position.y, o.other.position.z
@@ -52,6 +65,7 @@ Loops that skip rows, and whether an index finds the rest:
          Compare, line 90: not indexed: its guard puts no bound on a number of the row: compare one of the row's numbers, or its distance to a place, with a value the loop doesn't change
          Nearest, line 102: indexed by o.other.position.x, o.other.position.y, o.other.position.z
          Shout, line 120: indexed by row.body.near as the tick started: its index is made once a tick
+         Recall, line 150: not indexed: its guard puts no bound on a number of the row: compare one of the row's numbers, or its distance to a place, with a value the loop doesn't change
 
 Parallel loops, and when their steps go to the threads:
          Shout, line 120: a query's rows, a step reckoned at 44: on the threads from 2273 steps in a tick that's on them, 45455 in one that isn't

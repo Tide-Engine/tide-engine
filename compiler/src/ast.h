@@ -703,6 +703,7 @@ typedef struct decl {
     struct decl *optional_of; // Structs: the T? this one keeps for a field, `int? target;`: its fields are the value and whether there is one
     struct decl *stored;      // A T?: the struct a field of it is kept as (optional_of), once a field is one
     bool tries;           // Maps: some code calls TryGet, so generated C has its helper
+    bool tried_previous;  // ...or world.TryGetPrevious of it
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
     bool world_set_used;  // Components: World.Set needs the owned-value/active-binding helper
 
@@ -909,6 +910,7 @@ typedef struct decl {
     // The components its queries bind `previous`: read as the tick started, from pages the tick keeps, so they're
     // no access of the schedule's (parallel.c) and never among world_uses; tools say them apart
     VEC(struct decl *) previous_reads;
+    loc previous_read_at; // ...and where its World first reads one (GetPrevious), itself or through a function: local code and tasks can't
     // A function or method that takes the World: what it reaches through it, itself and through the
     // functions it passes it on to (its world_uses, once every body is checked), says which worlds it's
     // handed in generated C: the match's (`tide_w`, which it changes if it sets), this machine's (`tide_l`)
@@ -1294,6 +1296,7 @@ struct expr {
     bool task_completion; // A Task.isRunning/isCompleted/isCancelled property
     comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
+    bool world_previous;  // CALL_WORLD: world.GetPrevious, TryGetPrevious, HasPrevious: `name` is Get, TryGet or Has, of the tick's start (previous_codegen.inc)
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
     bool placement_local; // `local Spawn(...)`: explicit machine-local placement
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
@@ -1786,6 +1789,9 @@ typedef struct program {
     bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
+    // ...and the entities' places as it began: a match handler reads the tick's start, or a function does through its
+    // World, once entities have come, gone and moved
+    bool keeps_previous_entities;
     bool keeps_previous; // Some system's query has a `previous` binding: the worlds keep those components as each tick began
     bool local_heap;     // Some local field of the match's does: the local world has a heap, whether the match has or not
     VEC(decl *) lists;   // Every List<T> type the program uses, one per element type
