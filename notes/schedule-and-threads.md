@@ -38,7 +38,35 @@ with a one-thread link, a row the code hasn't got); `tidec_diagnostics_frontend_
 a file that isn't one); `lsp_schedule_lenses_and_fixes` (the lens, its target, the hover's two forms);
 `tide_cli_help`. Native only: tidec, tidels and tide don't run on the web.
 
-Not done yet: Mount & Rifle's own report through it (next), and everything it's meant to choose between.
+Mount & Rifle through it (its working tree at a145828 in place, `tide_add_game` with `BATTLE_TEST` and `ARMY`
+as a scratch `TIDE_EXTERNAL_DIRS` folder, release, 12 threads, hidden, `--host --seed 42 --frames 2400
+--profile-warmup 1500`; one run on a shared machine, so to a tenth of a millisecond at best):
+
+| A frame, mean ms | |
+|---|---|
+| match (the tick, on the frame's thread) | 3.03 |
+| views | 3.72 |
+| render | 0.97 |
+| all | 7.74, against 6.94 for 144 Hz |
+
+| The tick's systems | ms |
+|---|---|
+| one after another | 2.865 |
+| the longest chain of waits | 2.647, 55 systems long |
+| ...of which Infantry's | 1.61 |
+| ...of which Campaign's | 1.03 |
+| ...of which systems on one thread | about 1.05 (`Roam` 0.32, `Enlist` 0.21, `Travel` 0.20, `FallOnField`, `Outfit`, `Upkeep` 0.07 each) |
+
+What it says: **92% of the systems' time is one chain**, so systems running alongside each other buys this game
+0.2 ms, and all it gets from threads is inside systems (`BotAct` 0.53 and `BotSense` 0.38 are already across
+them, and are the chain's two costliest). Box3D's 45 systems, which the wait count made look like the problem,
+aren't among the twelve costliest. The campaign's part and the infantry's are joined by few waits
+(`Infantry.Measure` reads the `Party` that `Campaign.Muster` writes; `Campaign.KeepInside` writes the `Trooper`
+`BotSense` reads): were they apart, the floor would be the infantry's 1.6. And **the views cost more than the
+tick**, in order on one thread: `OthersOnFoot` 0.67, `Present` 0.43, `HeldWeapon` 0.42, `DrawCompoundKits` 0.39,
+`DrawFlora` 0.37. So by the order agreed: parallel views first, then the one-thread systems on the chain (own
+rows' text and lists 0.8 ms of it, the gathering `Enlist` 0.2), then the waits that join campaign and infantry,
+which is where field-level conflicts would be tried.
 
 Answers given to the owner the same day, none built, the language ones his to decide:
 
