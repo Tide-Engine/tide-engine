@@ -7976,6 +7976,11 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
     TIDE_CHECK(has(lenses, "stage 2") && has(lenses, "after Move: both write Body"));
     TIDE_CHECK(has(lenses, "stage 3") && has(lenses, "after Look: both write Score; it writes Body, which this reads"));
     TIDE_CHECK(has(lenses, "nothing runs alongside"));
+    // Move's entities are its own; Look's and Tag's share a singleton they change, which the lens goes to
+    TIDE_CHECK(count(lenses, "its entities go across threads") == 1 && count(lenses, "on one thread: ") == 2);
+    TIDE_CHECK(has(lenses, "\"title\":\"on one thread: it changes the singleton Score\",\"command\":\"editor.action.goToLocations\","
+                           "\"arguments\":[\"file:///test.tide\",{\"line\":4,\"character\":7},[{\"uri\":\"file:///test.tide\","
+                           "\"range\":{\"start\":{\"line\":4,\"character\":"));
     TIDE_CHECK(has(lenses, "\"title\":\"after Move: both write Body\",\"command\":\"editor.action.goToLocations\","
                            "\"arguments\":[\"file:///test.tide\",{\"line\":4,\"character\":7},[{\"uri\":\"file:///test.tide\","
                            "\"range\":{\"start\":{\"line\":3,\"character\":7},\"end\":{\"line\":3,\"character\":11}}}],\"goto\"]"));
@@ -7992,6 +7997,8 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
     const char *hover = request_at("file:///test.tide", "textDocument/hover", 5, 8, "");
     TIDE_CHECK(has(hover, "**Stage 3.**") && has(hover, "`Move`: it writes `Body`, which this reads"));
     TIDE_CHECK(has(hover, "No other system can run at the same time."));
+    TIDE_CHECK(has(hover, "on one thread: it changes the singleton `Score` (line 6)."));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 3, 8, ""), "Its entities can go across threads."));
 
     const char *remove_mut = request_at("file:///test.tide", "textDocument/codeAction", 4, 0,
                                         "\"range\":{\"start\":{\"line\":4,\"character\":0},\"end\":{\"line\":4,\"character\":0}}");

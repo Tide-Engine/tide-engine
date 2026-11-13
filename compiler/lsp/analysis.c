@@ -4280,6 +4280,15 @@ static void describe_order(const decl *d, sb *out)
     sb_put(out, ".");
     if (d->is_view || d->stage == 0) return;
 
+    sb one = {0};
+    loc one_at;
+    if (system_one_thread(d, "`", d, &one, &one_at)) {
+        sb_printf(out, "\n\nIts entities go one after another, on one thread: %s", one.data);
+        if (one_at.line > 0) sb_printf(out, " (line %d)", one_at.line);
+        sb_put(out, ".");
+    } else if (system_splits(d) || system_splits_in_order(d)) {
+        sb_put(out, "\n\nIts entities can go across threads.");
+    }
     sb_printf(out, "\n\n**Stage %d.** ", d->stage);
     if (d->waits.count == 0) sb_put(out, "It doesn't wait for any system.");
     else sb_put(out, "It waits for:");
@@ -4510,7 +4519,22 @@ void analysis_code_lenses(jbuf *out)
         if (d->extern_system) sb_put(&title, " \u00B7 in C"); // Scheduled by what it declares: its code isn't read
         put_world_lens(&title, d, " \u00B7 "); // Access to every entity's, which its signature doesn't say
         if (d->alongside_count == 0 && A.prog->systems.count > 1) sb_put(&title, " \u00B7 nothing runs alongside");
+        if (system_splits(d) || system_splits_in_order(d)) sb_put(&title, " · its entities go across threads");
         write_lens(out, &written, d, title.data);
+        // What keeps a per-entity system's entities on one thread, and the place in its code
+        sb one = {0};
+        loc one_at;
+        sb_put(&one, "on one thread: ");
+        if (system_one_thread(d, "", d, &one, &one_at)) {
+            if (one_at.line <= 0) {
+                write_lens(out, &written, d, one.data);
+            } else {
+                open_lens(out, &written, d->at, d->name.len, one.data);
+                open_lens_command(out, "editor.action.goToLocations", d->at);
+                write_location(out, one_at, 1);
+                jb_put(out, "],\"goto\"]}}");
+            }
+        }
         for (int k = 0; k < d->waits.count; k++) {
             const system_wait *w = &d->waits.items[k];
             if (w->through) continue; // Shown on the system it goes through

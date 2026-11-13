@@ -866,6 +866,15 @@ foreach(source IN LISTS TIDE_SCHEDULE_TESTS)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
 endforeach()
 
+# The schedule against a run's measured times (tidec --schedule --measured): the longest chain of waits.
+add_test(NAME tidec_schedule_measured
+    COMMAND "${CMAKE_COMMAND}"
+        "-DTIDEC=${TIDEC_PATH}"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/measured/measured.tide"
+        "-DEXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/measured/measured.txt"
+        -DMEASURED=measured.json -DRELATIVE=ON
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
+
 add_test(NAME tidec_unity_folder_names
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/unity_folder_names"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/unity_folder_names.cmake")

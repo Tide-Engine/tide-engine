@@ -274,6 +274,12 @@ static const argument_help arguments[] = {
      "TideEntity objects is a Tide prefab named after its file, and Build\n"
      "Settings' first scene loads as Main starts. build and run take it for a\n"
      "server, or any build, of a game made in Unity; schedule to check one.", UNITY | BUILD | RUN | SCHEDULE},
+    {"--measured", "--measured <report.json>", "Set the schedule against a run's measured times",
+     "Takes the report tide run --profile wrote and adds what the systems\n"
+     "took one after another, the longest chain of systems that wait for\n"
+     "each other (no tick is shorter, on any number of threads), why each\n"
+     "link waits, and the costliest systems. Waits off that chain cost a\n"
+     "tick nothing. The path is relative to where tide was invoked.", SCHEDULE},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
     {"--host", "--host [port]", "Open the startup match for others to join",

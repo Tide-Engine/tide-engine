@@ -1902,6 +1902,13 @@ void analyze_parallelism(program *prog);
 bool system_splits(const decl *sys);
 bool system_splits_in_order(const decl *sys);
 
+// For a per-entity system written in Tide whose entities don't go across
+// threads: the first thing in it that keeps them in order on one, as "it
+// changes the singleton Score", and where in the code (line 0 where there's no
+// one place). False, with nothing written, for any other system. `quote` wraps
+// names, written as code in `from`'s namespace writes them (put_decl_name).
+bool system_one_thread(const decl *sys, const char *quote, const decl *from, sb *out, loc *at);
+
 // Whether a system reads through its World or a query a component it also changes
 // through a parameter: it runs on one thread, and writes its rows in place, so
 // what it reads of the rows it changed is the same on every machine.
@@ -1937,6 +1944,9 @@ void put_decl_name(sb *out, const decl *d, const char *quote, const decl *from);
 
 // The whole tick's schedule as text, for `tidec --schedule`.
 void print_schedule(const program *prog, const char *game, sb *out);
+// After it, with a run's measured times (the report `tide run --profile` writes, at `path`): what the systems took
+// one after another, the longest chain of waits and the costliest systems. False, having said why, if it can't be read.
+bool print_schedule_measured(const program *prog, const char *path, sb *out);
 // After it: each parallel loop, what a step of it is reckoned to cost and when its steps go to the threads
 void print_parallel_loops(const program *prog, sb *out);
 

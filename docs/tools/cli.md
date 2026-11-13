@@ -226,6 +226,7 @@ still performs only front-end validation, even with a preview flag.
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--ticks-alongside` | `run` only: on the machine that runs the match, ticks run on the job threads while the frame draws, as the game's `ticksAlongsideViews` [setting](../language/basics.md#settings) does, whatever it says |
+| `--measured <report.json>` | `schedule` only: sets the schedule against the report a `--profile` run wrote, and adds the tick on one thread, the [longest chain of systems that wait for each other](../game/schedule.md#which-waits-cost-time) and the costliest systems |
 | `--profile <file.json>` | `run` only, native desktop: writes a [structured profile capture](debug-views.md#profile-captures), independently of the panels. Requires `--frames`, `--script` or `--interactive` |
 | `--profile-warmup <n>` | With `--profile`: excludes the first `n` frames from measurements (default 0). They still count toward `--frames` |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |

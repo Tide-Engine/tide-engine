@@ -230,6 +230,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     }
     if (schedule) {
         print_schedule(prog, named.name, schedule);
+        if (opts->profile && !print_schedule_measured(prog, opts->profile, schedule)) return false;
         print_loop_indexes(prog, schedule);
         print_parallel_loops(prog, schedule);
         return true;

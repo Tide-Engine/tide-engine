@@ -11,7 +11,7 @@ static void usage(void)
     fprintf(stderr,
             "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--visualizers] [--layout] [--embed]\n"
             "             [--split-plumbing] [--split-code] [--define <SYMBOL>]...\n"
-            "       tidec <file.tide>... --schedule [--name <name>]\n"
+            "       tidec <file.tide>... --schedule [--name <name>] [--measured <profile.json>]\n"
             "       tidec <file.tide>... --shaders\n"
             "       tidec <file.tide>... --outline\n"
             "       tidec <file.tide>... --spirv <dir>\n"
@@ -307,6 +307,8 @@ int main(const int argc, char **argv)
             opts.editor_local = true;
         } else if (strcmp(argv[i], "--schedule") == 0) {
             schedule = true;
+        } else if (strcmp(argv[i], "--measured") == 0 && i + 1 < argc) {
+            opts.profile = argv[++i];
         } else if (strcmp(argv[i], "--shaders") == 0) {
             schedule = true;
             opts.shaders = true;

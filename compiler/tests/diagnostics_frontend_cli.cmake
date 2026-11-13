@@ -31,5 +31,8 @@ expect(2 "can't read the list of files '${OUT}/missing.list'; check that it exis
 expect(2 "can't read the source overlay replacement '${OUT}/missing.tide'; check that it exists and is readable"
     "${source}" --source-overlay "${source}" "${OUT}/missing.tide" --schedule)
 expect(1 "can't read source file '${OUT}/missing.tide'; check that it exists and is readable" "${OUT}/missing.tide" --schedule)
+expect(1 "can't read '${OUT}/missing.json'; --measured takes the report `tide run --profile <report.json>` writes"
+    "${source}" --schedule --measured "${OUT}/missing.json")
+expect(1 "no measured systems in '${source}'; --measured takes the report" "${source}" --schedule --measured "${source}")
 expect(1 "can't write dependency file '${OUT}/missing-parent/game.d'; create its parent folder and check write permissions"
     "${source}" -o "${OUT}" --depfile "${OUT}/missing-parent/game.d")

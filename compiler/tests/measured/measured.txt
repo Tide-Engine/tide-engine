@@ -1,0 +1,45 @@
+measured: 4 systems each tick, 3 stages deep; 4 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Think  (per entity)
+         writes Mind
+         alongside Move, Count, Settle
+stage 1  Move  (per entity)
+         writes Body
+         alongside Think
+
+stage 2  Count  (per entity)
+         reads Body
+         writes Score
+         on one thread: it changes the singleton Score (measured.tide:10)
+         after Move: it writes Body, which this reads
+         alongside Think
+
+stage 3  Settle  (per entity)
+         reads Score
+         writes Body
+         after Move: both write Body (and through Count)
+         after Count: it reads Body, which this writes; it writes Score, which this reads
+         alongside Think
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup
+
+Measured (measured.json, 100 ticks, 4 of 4 systems ran):
+         1 measured system is not in this code: the report is another build's
+    6.500 ms a tick, the systems one after another
+    3.500 ms, the longest chain of systems that wait for each other: no tick is shorter, on any number of threads
+         A system's time is from its start to its end, with its entities on whatever threads they went to.
+
+That chain, last to first (a wait that isn't on it costs the tick nothing):
+    0.500 ms  Settle  (across threads)
+               after Count: it reads Body, which this writes; it writes Score, which this reads
+    2.000 ms  Count  (on one thread: it changes the singleton Score (measured.tide:10))
+               after Move: it writes Body, which this reads
+    1.000 ms  Move  (across threads)
+
+The costliest systems:
+    3.000 ms  46%  Think  (across threads)
+    2.000 ms  31%  Count  (on one thread: it changes the singleton Score (measured.tide:10)), on the chain
+    1.000 ms  15%  Move  (across threads), on the chain
+    0.500 ms   8%  Settle  (across threads), on the chain

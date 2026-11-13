@@ -5780,7 +5780,8 @@ bool tide_schedule(const build_options *opts, const bool shaders)
         for (int i = 0; i < unity.count; i++) inputs[count++] = (compile_input){unity.items[i].path, unity.items[i].package, unity.items[i].text};
     }
     const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder,
-                                     .defines = opts->defines, .define_count = opts->define_count};
+                                     .defines = opts->defines, .define_count = opts->define_count,
+                                     .profile = shaders ? NULL : opts->measured};
     sb text = {0};
     const bool ok = compile_inputs(inputs, count, &codegen, &text);
     unity_sources_free(&unity);

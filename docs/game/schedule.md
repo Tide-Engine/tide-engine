@@ -55,7 +55,7 @@ Event handlers, at the end of the tick, as their events are sent:
 
 `Steer` and `Expire` are both stage 1: neither waits for another system. `Expire` only touches `Lifetime`, so it can run alongside everything else. The others all work on `Body`, so they wait for each other, in the order they're written. Stages show dependency depth; `Fire` can start when `Steer` finishes, even if `Expire` is still running.
 
-In the editors, each system shows its stage and why it waits right above it, like `stage 2 · after Move: both write Body`, and on hover.
+In the editors, each system shows its stage and why it waits right above it, like `stage 2 · after Move: both write Body`, and on hover. A system that runs for each entity also says whether its entities go across threads, or [what keeps them on one](#splitting-across-threads).
 
 Each event's handlers are listed in the order they run. A game with [local handlers](./events.md#local-handlers) of the match's events has those listed after the match's, apart, since they run on each machine at the start of a frame and not in the tick. The ones that wait for the server say `(verified)`:
 
@@ -133,6 +133,31 @@ stage 3  Tally  (per entity)
          writes Score
          on one thread: it changes the singleton Score (game.tide:42)
 ```
+
+The editors say it above the system as well: `on one thread: it changes the singleton Score`, which goes to that place when clicked, or `its entities go across threads` beside its stage. Hovering the system says the same.
+
+## Which waits cost time
+
+A wait only costs a tick time when it's on the longest run of systems that each wait for the one before. `tide schedule --measured <report.json>` takes the report a [profiled run](../tools/debug-views.md#profile-captures) wrote (`tide run --release --frames 600 --profile report.json`) and adds, after the schedule:
+
+```
+Measured (report.json, 100 ticks, 4 of 4 systems ran):
+    6.500 ms a tick, the systems one after another
+    3.500 ms, the longest chain of systems that wait for each other: no tick is shorter, on any number of threads
+
+That chain, last to first (a wait that isn't on it costs the tick nothing):
+    0.500 ms  Settle  (across threads)
+               after Count: it reads Body, which this writes; it writes Score, which this reads
+    2.000 ms  Count  (on one thread: it changes the singleton Score (game.tide:10))
+               after Move: it writes Body, which this reads
+    1.000 ms  Move  (across threads)
+
+The costliest systems:
+    3.000 ms  46%  Think  (across threads)
+    2.000 ms  31%  Count  (on one thread: it changes the singleton Score (game.tide:10)), on the chain
+```
+
+The first number is the tick on one thread. The second is what the waits alone leave of it: more threads can't go under it, so a tick gets shorter by making a system on the chain cheaper, by getting its entities across threads, or by removing one of the chain's waits. `Think` costs the most here and isn't on the chain: nothing waits for it, so it runs beside the other three. A system's time is from its start to its end, with its entities on whatever threads they went to, so one that already goes across threads counts as it ran. Systems that didn't run in the profiled ticks count as nothing.
 
 A spawn returns its final logical identity immediately; there is no temporary handle or later identity rewrite. Structural installation remains deferred. Queries executed by match/simulation code traverse ascending logical entity identity across archetypes. Presentation/view queries retain their existing traversal order. Extern systems receive contiguous runs in that same global order, while ordinary C function calls from otherwise independent parallel rows retain the game's existing determinism and thread-safety responsibility.
 

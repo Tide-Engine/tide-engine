@@ -90,7 +90,7 @@ static const char *dispatch_folder(int argc, char **argv)
         "--profile", "--profile-warmup", "--capture", "--capture-audio", "--record",
         "--script", "--microphone", "--interactive", "--frames", "--scale", "--frame-rate",
         "--latency", "--jitter", "--loss", "--players", "--seed", "--define",
-        "--scene", "--editor-cache", "--title", "-o", "--assets", "--report"
+        "--scene", "--editor-cache", "--title", "-o", "--assets", "--report", "--measured"
     };
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
@@ -500,6 +500,7 @@ static int command_main(const int argc, char **argv)
         else if (unity && strcmp(a, "--notified") == 0) opts.notified = true;
         else if (unity && strcmp(a, "--declarations") == 0) opts.declarations = once = true;
         else if ((unity || build || run || schedule) && strcmp(a, "--assets") == 0 && i + 1 < argc) opts.unity_assets = argv[++i];
+        else if (schedule && !shaders && strcmp(a, "--measured") == 0 && i + 1 < argc) opts.measured = path_absolute(argv[++i]);
         else if (a[0] != '-') opts.folder = a;
         else {
             // Recognized options with no value used to look like unknown options.

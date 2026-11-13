@@ -1,0 +1,11 @@
+// The schedule against a run's measured times: Think costs the most and waits
+// for nothing, so the longest chain is the three that pass Body and Score on.
+component Body { float2 position; float2 velocity; }
+component Mind { float anger; }
+singleton Score { int total; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body); Spawn(Mind); }
+system Think(mut Mind mind) { mind.anger += 1; }
+system Move(mut Body body) { body.position += body.velocity; }
+system Count(Body body, mut Score score) { if (body.position.x > 0) score.total += 1; }
+system Settle(mut Body body, Score score) { if (score.total > 3) body.velocity = float2(0, 0); }

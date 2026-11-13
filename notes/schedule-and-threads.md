@@ -1,5 +1,63 @@
 # The schedule and the tick on threads
 
+## The schedule against measured time, and the one-thread reason in the editors (2026-11-13)
+
+After the heaps (below), the owner asked what closes the gap further, and agreed an order: measure which waits
+cost time first, then gather-and-replay or parallel views by what that shows, field-level conflicts only for
+links on the chain, the editor line whenever.
+
+Built:
+
+- **`tidec --schedule --measured <report.json>`, `tide schedule --measured <report.json>`**
+  (`print_schedule_measured`, `compiler/src/parallel.c`; `codegen_options.profile`, `build_options.measured`). The
+  report is `tide run --profile`'s (`tide.profile`, its `systems` rows and `ticks.count`); a row is matched to a
+  system by the profiler's name for it (`tool_name`, which `put_decl_name` without a namespace also writes) and
+  its line, or by `system <index>` from a build with names left out. After the schedule it prints the systems'
+  mean time a tick summed (the tick on one thread), **the longest chain of waits** (each system's finish is its
+  own time plus the latest finish among the systems it waits for, over `decl.waits`, which lists every direct
+  wait), that chain last to first with each link's wait as `describe_wait` says it and what keeps each system on
+  one thread, and the twelve costliest systems, marked when they're on the chain. Rows of systems the code hasn't
+  got are counted and said (another build's report). Read with `strstr`/`strtod` over the report's own writer's
+  format (`engine/src/profile_report.c`), not a JSON parser: tidec has none, and the format is the engine's.
+  The name is `--measured`, not `--profile`: `tide run --profile` writes a report and the help table has one
+  entry an option. Provisional, mine.
+- What the number is and isn't: a system's time in the report is from its first task's start to its last's end,
+  so one whose entities already go across threads counts at what it took there, and one that waited for a free
+  thread counts that wait. The chain is therefore a floor for *this* machine's split of entities, not for one
+  thread's rows. Systems that didn't run in the profiled ticks count as nothing. Changes, handlers, tasks and the
+  hash aren't in it (`ticks.changes_events_tasks_ms` is beside it in the report).
+- **The editors say what keeps a system on one thread** (`analysis_code_lenses`, `describe_order`,
+  `compiler/lsp/analysis.c`): a lens `on one thread: it changes the singleton Score` above the system, which goes
+  to the place (`editor.action.goToLocations`), `its entities go across threads` on the stage lens of one that
+  splits, and both on hover. They had each system's stage, waits and what runs alongside since the schedule
+  lenses; the reason was only in `tide schedule`. One function says it for all three,
+  `system_one_thread` (`ast.h`), which `put_one_thread` now calls.
+
+Tests: `tidec_schedule_measured` (`compiler/tests/measured/`: a costliest system off the chain, a chain of three
+with a one-thread link, a row the code hasn't got); `tidec_diagnostics_frontend_cli` (a report that can't be read,
+a file that isn't one); `lsp_schedule_lenses_and_fixes` (the lens, its target, the hover's two forms);
+`tide_cli_help`. Native only: tidec, tidels and tide don't run on the web.
+
+Not done yet: Mount & Rifle's own report through it (next), and everything it's meant to choose between.
+
+Answers given to the owner the same day, none built, the language ones his to decide:
+
+- **`world.Set` queued by default, with a `SetNow`?** Asked whether the compiler could decide instead. It can for
+  a `Set` in a system that reads that component nowhere else (not its own rows', not through World or a query):
+  holding the writes until the system's done and applying them in entity order is then the same result, and the
+  system's entities could go across threads. It can't for read-then-`Set` (Mount & Rifle's `Follow`:
+  `TryGet<Party>(employer)`, take its money, `Set` it back): two rows with one employer must see each other's
+  write, and a queued `Set` would lose one silently. Recommended: no new method, the compiler queues where it's
+  unobservable; awaiting the owner.
+- **`mut ItemIds`** (Mount & Rifle: one `int next` that every new item takes its uid from, passed on as
+  `ids.next`): a row's uids depend on how many items the rows before it made, so the system's entities stay in
+  order, and any two systems that make items wait for each other. What would free it is an id that isn't counted,
+  made from the entity and the place in the code as a spawn's is; a language addition, not designed.
+- Kinds of one-thread singleton system seen in Mount & Rifle: gathering (`Enlist`: counts, a float sum and a list
+  it adds to, never read by a row), handing out numbers (`ItemIds`), reaching other rows (`Follow`). The first is
+  what gather-and-replay would take: threads run the rows and log what each adds, one thread applies the logs in
+  entity order, bit for bit what one thread makes (float sums included, as nothing is regrouped).
+
 ## A heap for each owner, and spawners that don't wait (2026-11-13)
 
 Asked: review what can run in parallel, systems and views, where "strings or lists etc" break the assumptions.

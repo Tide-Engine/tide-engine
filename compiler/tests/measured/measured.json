@@ -1,0 +1,8 @@
+{
+"schema":"tide.profile","version":1,
+"ticks":{"count":100,"systems_ms":650,"changes_events_tasks_ms":0},
+"ticks_alongside":{"count":0},
+"systems":[{"source":{"name":"Think","file":"measured.tide","line":8,"column":8},"calls":100,"frames":100,"total_ms":300,"mean_call_ms":3,"mean_frame_ms":3,"max_frame_ms":4},{"source":{"name":"Move","file":"measured.tide","line":9,"column":8},"calls":100,"frames":100,"total_ms":100,"mean_call_ms":1,"mean_frame_ms":1,"max_frame_ms":2},{"source":{"name":"Count","file":"measured.tide","line":10,"column":8},"calls":100,"frames":100,"total_ms":200,"mean_call_ms":2,"mean_frame_ms":2,"max_frame_ms":2},{"source":{"name":"Settle","file":"measured.tide","line":11,"column":8},"calls":100,"frames":100,"total_ms":50,"mean_call_ms":0.5,"mean_frame_ms":0.5,"max_frame_ms":1},{"source":{"name":"Gone","file":"measured.tide","line":30,"column":8},"calls":100,"frames":100,"total_ms":50,"mean_call_ms":0.5,"mean_frame_ms":0.5,"max_frame_ms":1}],
+"views":[],
+"workers":[]
+}

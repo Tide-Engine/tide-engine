@@ -4,8 +4,12 @@
 # a folder each, named as the package is: schedule/overrides/Mod/*.tide are
 # package Mod's files, for schedule/overrides.tide. With RELATIVE, it runs in
 # SOURCE's folder and names the files from there, for output that prints paths.
+# MEASURED is a profiling report for --measured, named from SOURCE's folder.
 if(NOT DEFINED OPTION)
     set(OPTION --schedule)
+endif()
+if(DEFINED MEASURED)
+    list(APPEND OPTION --measured "${MEASURED}") # A run's profiling report, to set the schedule against
 endif()
 string(REGEX REPLACE "\\.tide$" "" PACKAGES "${SOURCE}")
 set(package_args "")
