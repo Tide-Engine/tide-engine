@@ -7,22 +7,22 @@ stage 1  Paint  (once)
 
 stage 2  Blur  (once, 1 parallel loop)
          writes Field
-         after Paint: both change the text, lists or grids of Field; both write Field
+         after Paint: both change the text, lists or grids of Field; both write Field.cells
          alongside nothing
 
 stage 3  Fall  (once, 2 parallel loops)
          reads Time
          writes Field
-         after Paint: both change the text, lists or grids of Field; both write Field (and through Blur)
-         after Blur: both change the text, lists or grids of Field; both write Field
+         after Paint: both change the text, lists or grids of Field; both write Field.cells (and through Blur)
+         after Blur: both change the text, lists or grids of Field; both write Field.cells
          alongside nothing
 
 stage 4  Count  (once)
          reads Field
          writes Stats
-         after Paint: it writes Field, which this reads (and through Blur)
-         after Blur: it writes Field, which this reads (and through Fall)
-         after Fall: it writes Field, which this reads
+         after Paint: it writes Field.cells, which this reads (and through Blur)
+         after Blur: it writes Field.cells, which this reads (and through Fall)
+         after Fall: it writes Field.cells, which this reads
          alongside nothing
 
 Parallel loops, and when their steps go to the threads:

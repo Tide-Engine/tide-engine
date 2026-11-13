@@ -12,7 +12,7 @@
   {"kind": "handler", "name": "Pushed", "file": "game.tide", "line": 50, "column": 37, "event": "Push", "access": [{"name": "Score", "writes": true}]},
   {"kind": "view", "name": "Show", "file": "game.tide", "line": 55, "column": 6, "perEntity": true, "access": [{"name": "Spin"}]},
   {"kind": "handler", "name": "Setup", "file": "game.tide", "line": 59, "column": 16, "perEntity": true, "event": "Spawned", "with": ["Main"]},
-  {"kind": "system", "name": "Slower", "file": "game.tide", "line": 67, "column": 8, "doc": "Writes what Faster writes, so it waits for it", "perEntity": true, "access": [{"name": "Spin", "writes": true}], "stage": 2, "after": [{"name": "Spinning", "why": "it reads Spin, which this writes"}, {"name": "Faster", "why": "both write Spin"}], "alongside": ["Tally"]},
+  {"kind": "system", "name": "Slower", "file": "game.tide", "line": 67, "column": 8, "doc": "Writes what Faster writes, so it waits for it", "perEntity": true, "access": [{"name": "Spin", "writes": true}], "stage": 2, "after": [{"name": "Spinning", "why": "it reads Spin.speed, which this writes"}, {"name": "Faster", "why": "both write Spin.speed"}], "alongside": ["Tally"]},
   {"kind": "component", "name": "Combat.Marker", "file": "game.tide", "line": 74, "column": 15, "fields": [{"name": "count", "type": "int", "line": 74}]},
   {"kind": "function", "name": "Combat.Help", "file": "game.tide", "line": 76, "column": 10}
 ]}

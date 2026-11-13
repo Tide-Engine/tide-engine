@@ -1,5 +1,18 @@
 # ECS and simulation state
 
+## The lane analyses also feed the schedule (2026-11-13)
+
+`code_reads` and `code_writes` (lane_reads_codegen.inc, lane_writes_codegen.inc), with `system_param_lanes`,
+`written_lanes` and `match_query_lanes`, are now also what the schedule compares two systems by
+(schedule-and-threads.md, top section; `compiler/src/schedule_bytes_codegen.inc`). So a lane they leave out is
+one another system may be writing while this one runs: a row's copy, a query's row or an index that touched a
+lane outside its mask used to read stale bytes nothing looked at, and would now read a page being replaced.
+Anything new that reads or writes a component's lanes in a system has to be in those masks, or make
+`system_param_splits` false. The two analyses now narrow through a singleton's fields as they do a struct's or a
+component's (`writes_place_of`, `reads_place_of`): only the schedule asks them about a singleton. Their memos are
+reset by `schedule_bytes_reset` at each analysis as well as at `codegen`'s start, since the language server
+analyses programs without generating them.
+
 ## A world's heaps, one for each owner (2026-11-13)
 
 A world's text, lists, maps, sets and grids are no longer in one heap: each match component, singleton and event

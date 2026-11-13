@@ -59,7 +59,7 @@ static bool can_meet(const arch_set *sa, const arch_set *sb)
 
 static bool add_conflict(system_wait *w, const conflict_kind kind)
 {
-    const conflict c = {NULL, kind};
+    const conflict c = {NULL, kind, NULL, 0};
     if (w) vec_push(w->conflicts, c);
     return true;
 }
@@ -123,11 +123,12 @@ static bool queued_stmt(const stmt *s)
 // queue: no row reads or writes what another row writes.
 static bool rows_independent(const decl *sys)
 {
-    if (sys->is_view || !sys->per_entity || sys->writes_text || sys->extern_system) return false;
+    // (One that gathers changes its singletons, and their text and lists, from a log in its rows' order)
+    if (sys->is_view || !sys->per_entity || (sys->writes_text && !sys->gathers) || sys->extern_system) return false;
     if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT) return false;
+        if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT && !sys->gathers) return false;
     }
     // World.Set writes any entity's component; reading through World or a
     // query a component the system changes would read rows other threads change
@@ -139,7 +140,7 @@ static bool rows_independent(const decl *sys)
 
 static bool queues(const decl *sys)
 {
-    return sys->acts[0] || sys->spawns || queued_stmt(sys->body);
+    return sys->acts[0] || sys->spawns || sys->gathers || queued_stmt(sys->body);
 }
 
 bool system_splits(const decl *sys)
@@ -179,12 +180,97 @@ typedef struct access {
     const decl *data;
     bool writes;
     bool every;
+    // Where the system's code touches only some of it (system_param_bytes, system_query_bytes): the bytes of its
+    // layout, and a bit a byte for those it can read and those it can write. A size of 0: all of it.
+    int size;
+    const uint64_t *reads, *written;
 } access;
 
 typedef struct access_list {
     access *items;
     int count;
 } access_list;
+
+// An access with the bytes it touches, where those are known
+static access access_of(const decl *data, const bool writes, const bool every, const data_bytes bytes)
+{
+    access a = {data, writes, every, 0, NULL, NULL};
+    if (bytes.size <= 0 || !bytes.reads || !bytes.writes) return a;
+    const size_t words = ((size_t)bytes.size + 63u) / 64u;
+    uint64_t *reads = arena_alloc(sizeof(uint64_t) * words * 2u);
+    uint64_t *written = reads + words;
+    memset(reads, 0, sizeof(uint64_t) * words * 2u);
+    bool any = false;
+    for (int i = 0; i < bytes.size; i++) {
+        if (bytes.reads[i]) reads[i >> 6] |= (uint64_t)1 << (i & 63);
+        if (writes && bytes.writes[i]) written[i >> 6] |= (uint64_t)1 << (i & 63);
+        any |= writes && bytes.writes[i];
+    }
+    a.writes = any; // One it takes `mut` and never writes only reads it
+    a.size = bytes.size;
+    a.reads = reads;
+    a.written = written;
+    return a;
+}
+
+// The bytes an access can write and read, 64 at a time: every one where it isn't known by bytes
+static uint64_t written_word(const access *a, const size_t i)
+{
+    return a->size ? a->written[i] : a->writes ? ~(uint64_t)0 : 0;
+}
+
+static uint64_t read_word(const access *a, const size_t i)
+{
+    return a->size ? a->reads[i] : ~(uint64_t)0;
+}
+
+// Where two systems' accesses of the same data meet: the earlier's and the
+// later's, one of which writes. False where no byte one writes is read or
+// written by the other. With a `c`, what they meet over: both writing, or one
+// writing what the other reads, and in which fields when that's not all of it.
+static bool accesses_meet(const access *a, const access *b, conflict *c)
+{
+    if (!a->writes && !b->writes) return false;
+    const conflict_kind whole = a->writes && b->writes ? CONFLICT_BOTH_WRITE : a->writes ? CONFLICT_EARLIER_WRITES : CONFLICT_EARLIER_READS;
+    if ((!a->size && !b->size) || (a->size && b->size && a->size != b->size)) {
+        if (c) *c = (conflict){(decl *)a->data, whole, NULL, 0};
+        return true;
+    }
+    const int size = a->size ? a->size : b->size;
+    const size_t words = ((size_t)size + 63u) / 64u;
+    bool both = false, earlier_writes = false, earlier_reads = false;
+    for (size_t i = 0; i < words; i++) {
+        both |= (written_word(a, i) & written_word(b, i)) != 0;
+        earlier_writes |= (written_word(a, i) & read_word(b, i)) != 0;
+        earlier_reads |= (read_word(a, i) & written_word(b, i)) != 0;
+        if (!c && (both || earlier_writes || earlier_reads)) return true;
+    }
+    if (!both && !earlier_writes && !earlier_reads) return false;
+    const conflict_kind kind = both ? CONFLICT_BOTH_WRITE : earlier_writes ? CONFLICT_EARLIER_WRITES : CONFLICT_EARLIER_READS;
+    *c = (conflict){(decl *)a->data, kind, NULL, 0};
+    // The fields they meet in, by that kind
+    int fields = 0, met = 0;
+    for (int f = 0; f < a->data->fields.count; f++) {
+        const field *fd = &a->data->fields.items[f];
+        int off = 0, bytes = 0;
+        if (fd->hidden) continue;
+        if (!field_bytes(a->data, fd, &off, &bytes)) return true; // Can't say where it is: all of it
+        fields++;
+        bool meets = false;
+        for (int at = off; at < off + bytes && at < size && !meets; at++) {
+            const size_t i = (size_t)at >> 6;
+            const uint64_t word = kind == CONFLICT_BOTH_WRITE ? written_word(a, i) & written_word(b, i)
+                                : kind == CONFLICT_EARLIER_WRITES ? written_word(a, i) & read_word(b, i)
+                                : read_word(a, i) & written_word(b, i);
+            meets = (word >> (at & 63) & 1u) != 0;
+        }
+        if (!meets) continue;
+        if (!met++) c->field = fd;
+    }
+    if (met == 0 || met == fields) c->field = NULL; // Every field, or only what no field names
+    else c->more_fields = met - 1;
+    return true;
+}
 
 // In parameter order, global accesses at the first World or query parameter.
 // A system that takes its entities' input, or their devices, reads whose each
@@ -198,24 +284,24 @@ static access_list accesses_of(const program *prog, const decl *sys)
         const param *p = &sys->params.items[i];
         for (int k = 0; !any_entity && (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) && k < sys->world_uses.count; k++) {
             const world_use *u = &sys->world_uses.items[k];
-            list.items[list.count++] = (access){u->component, u->writes, true};
+            list.items[list.count++] = access_of(u->component, u->writes, true, system_query_bytes(prog, sys, u->component));
         }
         any_entity |= p->type.kind == TY_WORLD || p->type.kind == TY_QUERY;
         by_owner |= p->type.kind == TY_INPUT || p->type.kind == TY_RECORD;
         const decl *data = accessed(p);
-        if (data) list.items[list.count++] = (access){data, p->mode == PARAM_MUT, false};
+        if (data) list.items[list.count++] = access_of(data, p->mode == PARAM_MUT, false, system_param_bytes(prog, sys, i));
         takes_owner |= data && data == prog->owner;
     }
-    if (by_owner && sys->per_entity && !takes_owner && prog->owner) list.items[list.count++] = (access){prog->owner, false, false};
+    if (by_owner && sys->per_entity && !takes_owner && prog->owner) list.items[list.count++] = (access){prog->owner, false, false, 0, NULL, NULL};
     if (!any_entity && sys->preparation_reads) {
         for (int k = 0; k < sys->world_uses.count; k++) {
             const world_use *u = &sys->world_uses.items[k];
-            list.items[list.count++] = (access){u->component, u->writes, true};
+            list.items[list.count++] = (access){u->component, u->writes, true, 0, NULL, NULL};
         }
     }
     for (int side = 0; side < 2; side++) {
         if (sys->task_access[side] && prog->task_slots[side])
-            list.items[list.count++] = (access){prog->task_slots[side], (sys->task_access[side] & 2u) != 0, true};
+            list.items[list.count++] = (access){prog->task_slots[side], (sys->task_access[side] & 2u) != 0, true, 0, NULL, NULL};
     }
     return list;
 }
@@ -244,7 +330,7 @@ static bool find_conflicts(const decl *earlier, const decl *later, const access_
                 // One owner's, or two that share a heap: each said once
                 decl *const owners[2] = {a, b};
                 for (int o = 0; o < (a == b ? 1 : 2); o++) {
-                    const conflict c = {owners[o], a == b && a ? CONFLICT_TEXT : CONFLICT_SHARED_HEAP};
+                    const conflict c = {owners[o], a == b && a ? CONFLICT_TEXT : CONFLICT_SHARED_HEAP, NULL, 0};
                     bool said = false;
                     for (int n = 0; n < w->conflicts.count; n++) said |= w->conflicts.items[n].kind == c.kind && w->conflicts.items[n].data == c.data;
                     if (!said) vec_push(w->conflicts, c);
@@ -260,13 +346,18 @@ static bool find_conflicts(const decl *earlier, const decl *later, const access_
             if (b->data != a->data) continue;
             // A component only counts where both can meet the same entity; the World reaches every entity
             if (a->data->kind == DECL_COMPONENT && !same_entities && !a->every && !b->every) continue;
-            if (!a->writes && !b->writes) continue;
+            // ...and only where one writes bytes of it the other reads or writes
+            conflict c;
+            if (!accesses_meet(a, b, w ? &c : NULL)) continue;
             if (!w) return true;
-            const conflict c = {(decl *)a->data, a->writes && b->writes ? CONFLICT_BOTH_WRITE
-                                                 : a->writes            ? CONFLICT_EARLIER_WRITES
-                                                                        : CONFLICT_EARLIER_READS};
-            vec_push(w->conflicts, c);
             any = true;
+            // Said once, where a parameter and a query of one system both meet the other's
+            bool said = false;
+            for (int n = 0; n < w->conflicts.count; n++) {
+                const conflict *o = &w->conflicts.items[n];
+                said |= o->data == c.data && o->kind == c.kind && o->field == c.field && o->more_fields == c.more_fields;
+            }
+            if (!said) vec_push(w->conflicts, c);
         }
     }
     return any;
@@ -310,6 +401,10 @@ static void analyze(program *prog, decl *const *items, const int n)
     int *followers = arena_alloc(sizeof(int) * (size_t)n);  // How many systems run after each
     memset(before, 0, row_size * (size_t)n);
     memset(followers, 0, sizeof(int) * (size_t)n);
+    for (int i = 0; i < n; i++) { // (Run again for a build that copies rows whole: codegen.c)
+        items[i]->waits.count = 0;
+        items[i]->alongside.count = 0;
+    }
     for (int i = 0; i < n; i++) sets[i] = archetypes_of(prog, items[i]);
     for (int i = 0; i < n; i++) uses[i] = accesses_of(prog, items[i]);
 
@@ -388,6 +483,13 @@ static void analyze(program *prog, decl *const *items, const int n)
 
 void analyze_parallelism(program *prog)
 {
+    // What each system's code touches of what it takes, and which systems gather into their singletons
+    // (codegen.c: schedule_bytes_codegen.inc, gather_codegen.inc), worked out anew for this program
+    schedule_bytes_reset();
+    for (int i = 0; i < prog->systems.count; i++) {
+        decl *sys = prog->systems.items[i];
+        sys->gathers = system_gather_check(prog, sys, &sys->gathers_little);
+    }
     analyze(prog, prog->systems.items, prog->systems.count);
     // A frame's views the same way, among themselves: what each waits for of
     // those before it, were they run at once (the measured schedule's chain)
@@ -420,6 +522,20 @@ static bool has_order_attribute(const decl *sys, const decl *other, const char *
         }
     }
     return false;
+}
+
+// What a wait is over: "Party", or where the two meet in only some of its
+// fields, "Party.money" and how many more of them
+static void put_conflict_data(sb *out, const conflict *c, const char *quote, const decl *from)
+{
+    if (!c->field) {
+        put_decl_name(out, c->data, quote, from);
+        return;
+    }
+    sb name = {0};
+    put_decl_name(&name, c->data, "", from);
+    sb_printf(out, "%s%s." STR_FMT "%s", quote, name.data, STR_ARG(c->field->name), quote);
+    if (c->more_fields) sb_printf(out, " (and %d more of its fields)", c->more_fields);
 }
 
 void describe_wait(const decl *sys, const system_wait *w, const char *quote, sb *out)
@@ -475,7 +591,7 @@ void describe_wait(const decl *sys, const system_wait *w, const char *quote, sb 
         for (int i = 0; i < w->conflicts.count; i++) {
             if ((int)w->conflicts.items[i].kind != kind) continue;
             sb_put(out, written == 0 ? "" : written == count - 1 ? " and " : ", ");
-            put_decl_name(out, w->conflicts.items[i].data, quote, sys);
+            put_conflict_data(out, &w->conflicts.items[i], quote, sys);
             written++;
         }
         sb_put(out, endings[kind]);
@@ -563,6 +679,7 @@ bool system_one_thread(const decl *sys, const char *quote, const decl *from, sb 
     if (singleton) {
         sb_put(out, "it changes the singleton ");
         put_decl_name(out, singleton->type.decl, quote, from);
+        if (sys->gathers_little) sb_put(out, ", and adding to it is most of what its rows do");
         *at = singleton->at;
     } else if (sys->writes_text) {
         sb_put(out, "it changes text, lists or grids, which go in the order its entities do");
@@ -593,6 +710,24 @@ static void put_one_thread(sb *out, const decl *sys)
     sb_printf(out, "         on one thread: %s", why.data);
     put_place(out, at);
     sb_put(out, "\n");
+}
+
+// A system that gathers (decl.gathers): its rows are on threads, and what they change of its singletons is
+// changed after them, in their order
+static void put_gathers(sb *out, const decl *sys)
+{
+    if (!sys->gathers) return;
+    sb_put(out, "         across threads: what its entities change of ");
+    int count = 0, written = 0;
+    for (int i = 0; i < sys->params.count; i++) count += sys->params.items[i].type.kind == TY_SINGLETON && sys->params.items[i].mode == PARAM_MUT;
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind != TY_SINGLETON || p->mode != PARAM_MUT) continue;
+        sb_put(out, written == 0 ? "" : written == count - 1 ? " and " : ", ");
+        put_decl_name(out, p->type.decl, "", NULL);
+        written++;
+    }
+    sb_put(out, " is changed after them, in their order\n");
 }
 
 // What a system reads or writes beyond its outer entity, through World or queries.
@@ -667,6 +802,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         put_world_access(out, sys, true);
         if (sys->preparation_reads) sb_put(out, "         reads scene readiness\n");
         put_one_thread(out, sys);
+        put_gathers(out, sys);
         for (int k = 0; k < sys->waits.count; k++) {
             const system_wait *w = &sys->waits.items[k];
             sb_put(out, "         after ");

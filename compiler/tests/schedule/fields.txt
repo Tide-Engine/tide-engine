@@ -1,0 +1,108 @@
+fields: 18 systems each tick, 6 stages deep; 18 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  CountHits  (once)
+         writes Tally
+         alongside CountMisses, ReadSpent, CountLeft, CountRight, Drift, Grow, Move, Heat, Soak, Enter, Annotate
+stage 1  CountMisses  (once)
+         writes Tally
+         alongside CountHits, ReadSpent, ReadHits, CountLeft, CountRight, Drift, Grow, Move, Heat, Soak, Enter, Annotate
+stage 1  ReadSpent  (once)
+         reads Tally
+         writes Ledger
+         alongside CountHits, CountMisses, ReadHits, CountLeft, CountRight, Drift, Grow, Move, Heat, Soak, Enter, Annotate
+stage 1  CountLeft  (once)
+         writes Tally
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, Drift, Grow, Move, Heat, Soak, Enter, Annotate
+stage 1  Drift  (per entity)
+         writes Body
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, CountLeft, CountRight, CopyTally, SumTally, Grow, Heat, Soak, Teams, Enter, Annotate
+stage 1  Grow  (per entity)
+         writes Body
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, CountLeft, CountRight, CopyTally, SumTally, Drift, Move, Heat, Soak, Teams, Enter, Annotate
+stage 1  Heat  (per entity)
+         writes Flags
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, CountLeft, CountRight, CopyTally, SumTally, Drift, Grow, Move, Teams, Reach, Peek, Enter, Annotate
+stage 1  Enter  (once)
+         writes Ledger
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, CountLeft, CountRight, CopyTally, SumTally, Drift, Grow, Move, Heat, Soak, Teams, Reach, Peek
+
+stage 2  ReadHits  (per entity)
+         reads Tally
+         writes Flags
+         after CountHits: it writes Tally.hits, which this reads
+         alongside CountMisses, ReadSpent, CountLeft, CountRight, CopyTally, SumTally, Drift, Grow, Move, Heat, Soak, Teams, Reach, Peek, Enter, Annotate
+stage 2  CountRight  (once)
+         writes Tally
+         after CountLeft: both write Tally.sides
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, Drift, Grow, Move, Heat, Soak, Enter, Annotate
+stage 2  Move  (per entity)
+         writes Body
+         after Drift: it writes Body.velocity, which this reads
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, CountLeft, CountRight, CopyTally, SumTally, Grow, Heat, Soak, Teams, Enter, Annotate
+stage 2  Soak  (per entity)
+         writes Flags
+         after Heat: both write Flags.hot (and 3 more of its fields)
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, CountLeft, CountRight, CopyTally, SumTally, Drift, Grow, Move, Teams, Reach, Peek, Enter, Annotate
+stage 2  Annotate  (once)
+         writes Ledger
+         after Enter: both change the text, lists or grids of Ledger
+         alongside CountHits, CountMisses, ReadSpent, ReadHits, CountLeft, CountRight, CopyTally, SumTally, Drift, Grow, Move, Heat, Soak, Teams, Reach, Peek
+
+stage 3  CopyTally  (once)
+         reads Tally
+         writes Ledger
+         after CountHits: it writes Tally.hits, which this reads
+         after CountMisses: it writes Tally.misses, which this reads
+         after ReadSpent: both write Ledger.total
+         after CountLeft: it writes Tally.sides, which this reads (and through CountRight)
+         after CountRight: it writes Tally.sides, which this reads
+         alongside ReadHits, Drift, Grow, Move, Heat, Soak, Enter, Annotate
+
+stage 4  SumTally  (once)
+         reads Tally
+         writes Ledger
+         after CountHits: it writes Tally.hits, which this reads (and through CopyTally)
+         after CountMisses: it writes Tally.misses, which this reads (and through CopyTally)
+         after ReadSpent: both write Ledger.total (and through CopyTally)
+         after CountLeft: it writes Tally.sides, which this reads (and through CountRight)
+         after CountRight: it writes Tally.sides, which this reads (and through CopyTally)
+         after CopyTally: both write Ledger.total
+         alongside ReadHits, Drift, Grow, Move, Heat, Soak, Enter, Annotate
+
+stage 5  Teams  (once)
+         writes Tally
+         reads any entity's Body, through queries
+         after ReadSpent: it reads Tally.spent, which this writes (and through CopyTally)
+         after CopyTally: it reads Tally.spent, which this writes (and through SumTally)
+         after SumTally: it reads Tally.spent, which this writes
+         alongside ReadHits, Drift, Grow, Move, Heat, Soak, Reach, Peek, Enter, Annotate
+stage 5  Reach  (once)
+         writes Ledger
+         reads any entity's Body, through queries
+         after ReadSpent: both write Ledger.total (and through CopyTally)
+         after CopyTally: both write Ledger.total (and through SumTally)
+         after SumTally: both write Ledger.total
+         after Drift: it writes Body.velocity, which this reads (and through Move)
+         after Grow: it writes Body.radius, which this reads
+         after Move: it writes Body.position, which this reads
+         alongside ReadHits, Heat, Soak, Teams, Enter, Annotate
+
+stage 6  Peek  (per entity)
+         writes Ledger
+         reads any entity's Body, through World
+         on one thread: it changes the singleton Ledger (fields.tide:69)
+         after ReadSpent: both write Ledger.total (and through CopyTally)
+         after CopyTally: both write Ledger.total (and through SumTally)
+         after SumTally: both write Ledger.total (and through Reach)
+         after Drift: it writes Body.velocity, which this reads (and through Move)
+         after Grow: it writes Body.radius, which this reads (and through Reach)
+         after Move: it writes Body.position, which this reads (and through Reach)
+         after Reach: both write Ledger.total
+         alongside ReadHits, Heat, Soak, Teams, Enter, Annotate
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup
+
+Loops that skip rows, and whether an index finds the rest:
+         Teams, line 59: indexed by row.b.team

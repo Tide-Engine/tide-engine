@@ -395,3 +395,93 @@ TIDE_TEST(jobs_costly_rows_go_in_pieces_once_timed)
     tide_queue_free(&queue);
     tide_entities_free(&entities);
 }
+
+// A gathering system's log (tide/jobs.h, tide_gather): its tasks' entries reach `done` in the tasks' order,
+// whatever order the tasks ran in; there's no log where its chunks go in one piece, nor on one thread.
+static uint32_t gather_sum, gather_entries, gather_rows, gather_logs, gather_direct;
+static bool gather_ordered;
+
+static uint32_t one_heavy_chunk(const void *world, uint64_t *work)
+{
+    (void)world;
+    *work = UINT64_C(1) << 32;
+    return 1;
+}
+
+static void run_gather(void *world, const uint32_t task, const uint32_t pieces)
+{
+    (void)world;
+    (void)pieces;
+    if (!tide_task_gather) { // In one piece: the statements run where they are
+        gather_direct++;
+        return;
+    }
+    for (uint32_t row = 0; row < 3u; row++) {
+        const uint32_t value[3] = {task, row, task * 100u + row}; // An entry of 12 bytes: read back from a multiple of 8
+        tide_gather_push(1u, value, sizeof value);
+        if (row == 1u) tide_gather_push(2u, NULL, 0u); // ...and one of none
+        tide_gather_row();
+        tide_gather_row(); // A row that logged nothing ends with nothing
+    }
+}
+
+static void done_gather(void *world)
+{
+    (void)world;
+    uint32_t tasks = 0;
+    const tide_gather *logs = tide_gathered(&tasks);
+    gather_logs = tasks;
+    uint32_t expected_task = 0, expected_row = 0;
+    for (uint32_t t = 0; t < tasks; t++) {
+        for (uint32_t at = 0; at < logs[t].used;) {
+            uint32_t head[2];
+            memcpy(head, logs[t].bytes + at, sizeof head);
+            if (head[0] == 1u) {
+                uint32_t value[3];
+                memcpy(value, logs[t].bytes + at + 8u, sizeof value);
+                gather_ordered &= value[0] == expected_task && value[1] == expected_row && value[0] == t;
+                gather_sum += value[2];
+                gather_entries++;
+            } else if (head[0] == 0u) {
+                gather_rows++;
+                if (++expected_row == 3u) {
+                    expected_row = 0;
+                    expected_task++;
+                }
+            }
+            at += 8u + ((head[1] + 7u) & ~7u);
+        }
+    }
+}
+
+// Runs its work as thread 1 first, then as the caller's
+static void second_then_first(void *self, void (*work)(void *context, uint32_t thread), void *context)
+{
+    (void)self;
+    work(context, 1);
+    work(context, 0);
+}
+
+TIDE_TEST(jobs_a_gathering_systems_logs_reach_done_in_task_order)
+{
+    const tide_system_tasks systems[1] = {{.count = one_heavy_chunk, .run = run_gather, .done = done_gather, .splits = true, .name = "gather"}};
+    tide_queue queue = {0};
+    tide_entities entities = {0};
+    const tide_tick_systems tick = {systems, 1, NULL, &queue, &entities};
+    const tide_jobs eight = {.threads = 8, .run = second_then_first};
+    for (int again = 0; again < 2; again++) { // The logs are kept and start empty each tick
+        gather_sum = gather_entries = gather_rows = gather_logs = gather_direct = 0;
+        gather_ordered = true;
+        tide_run_systems(NULL, &tick, &eight);
+        TIDE_CHECK(gather_logs == 16u && gather_entries == 48u && gather_rows == 48u && gather_direct == 0u && gather_ordered);
+        TIDE_CHECK(gather_sum == 100u * 3u * (15u * 16u / 2u) + 16u * 3u);
+    }
+    uint32_t none = 7;
+    TIDE_CHECK(tide_gathered(&none) == NULL && none == 0u && tide_task_gather == NULL);
+    // On one thread there's one piece, and no log
+    gather_logs = gather_direct = 0;
+    tide_run_systems(NULL, &tick, NULL);
+    TIDE_CHECK(gather_direct == 1u && gather_logs == 0u);
+    tide_queue_free(&queue);
+    tide_entities_free(&entities);
+}

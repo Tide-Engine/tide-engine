@@ -416,6 +416,9 @@ typedef enum conflict_kind {
 typedef struct conflict {
     struct decl *data; // A component or singleton
     conflict_kind kind;
+    // Where the two meet in only some of its fields: the first of them, and how many more. NULL: all of it
+    const struct field *field;
+    int more_fields;
 } conflict;
 
 // A view's or listener's filter by whether this machine's player owns the entity (decl.ownership).
@@ -840,6 +843,11 @@ typedef struct decl {
     // match's own (assign_heaps in check.c), and whether C can write it, which keeps it there
     uint16_t heap_id;
     bool c_written;
+    // A per-entity system that changes singletons only in statements nothing of its rows reads back: its rows
+    // go to threads, and those statements run from a log in the rows' order (codegen.c, gather_codegen.inc;
+    // set by analyze_parallelism)
+    bool gathers;
+    bool gathers_little; // ...or would, but adding is most of what its rows do: it stays in order (system_one_thread says so)
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
     bool starts_tasks;   // Code that starts tasks, calling an async function without await: they're the world's, in order
     loc starts_at;       // ...where it first does
@@ -1835,6 +1843,8 @@ typedef struct program {
     decl *shard_ghost;         // The hidden sparse component a ghost (another shard's entity, read-only) has
     decl *shard_dying;         // ...and the one an entity has while its destroy waits for its Destroyed handlers to run
     decl *shard_anchor;        // ...and the one naming what an entity spawned with no position goes with: the entity whose code spawned it
+    // The schedule goes by whole components: a build for a debugger, whose rows are copied whole (codegen.c)
+    bool rows_whole;
     decl *shard_state;         // The hidden singleton of what makes a world a shard
     // Prediction near this player alone (`settings { predictionRange = 40; }`, docs/spec.md, Settings)
     double predict_range;      // predictionRange, or 0 where it isn't set: a client predicts everything
@@ -1892,6 +1902,26 @@ program *program_new(void);
 // systems keep their order in the tick, and [Before]/[After] order them too.
 // Needs the archetypes.
 void analyze_parallelism(program *prog);
+
+// The bytes of a component or singleton a system's generated code touches, a
+// byte each of the value's layout: 1 where it can read (`reads`) or write
+// (`writes`) it. A size of 0: all of it, or it can't be said. What the schedule
+// compares (codegen.c, schedule_bytes_codegen.inc, which asks what decides the
+// generated C: a component's bytes come as whole lanes).
+typedef struct data_bytes {
+    int size;
+    const uint8_t *reads, *writes;
+} data_bytes;
+// Of its parameter `param`, a component or singleton it reads or takes `mut`
+data_bytes system_param_bytes(const program *prog, const decl *sys, int param);
+// Of `component`, through the loops over its queries (never written): all of it where its World reaches it too
+data_bytes system_query_bytes(const program *prog, const decl *sys, const decl *component);
+// Where field `f` of `d` is in its layout; false where that can't be said
+bool field_bytes(const decl *d, const struct field *f, int *off, int *size);
+// Before the first of those for a program: what they worked out for the last one is gone
+void schedule_bytes_reset(void);
+// Whether a per-entity system only gathers into the singletons it takes `mut` (decl.gathers)
+bool system_gather_check(const program *prog, const decl *sys, bool *little);
 
 // Whether a system's entities are split across threads, a task per chunk of
 // them: it runs per entity, and what it changes is its entities' own, in no
