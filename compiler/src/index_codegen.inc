@@ -955,6 +955,12 @@ static bool gen_indexed_rows(gen *g, const stmt *s)
     if (plan->count < 1 || plan->count > 3) return false;
     ix_rows r;
     if (!ix_rows_of(g, s, &r)) return false;
+    // A local handler's rows are a tick's record, made again for each run: their index would be this run's alone
+    // (gen_indexed_list says why that's the plain loop's)
+    if (!r.owner->is_view && !s->indexed) {
+        ix_used(g, s);
+        return false;
+    }
     ix_used(g, s);
     sb *o = &g->c;
     const char *name = local_cname(g, s->name);
@@ -1072,9 +1078,16 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     if (!g->ix_any || !s->index || s->kind != S_FOREACH || s->value->type.kind != TY_LIST) return false;
     const loop_index *plan = s->index;
     if (plan->count < 1 || plan->count > 3) return false;
-    ix_used(g, s);
     const char *world = ix_list_world(g, s);
     const char *stamp = world ? NULL : ix_stamp_of(g, plan->list_local);
+    // No proof the list is as it was the run before: an index would be built for this run alone, a pass over
+    // every element to take its keys and a sort, where the plain loop is one pass that tests them. So the plain
+    // loop, unless the code asks for the index by name (`indexed foreach`).
+    if (!world && !stamp && !s->indexed) {
+        ix_used(g, s); // Seen to, as the plain loop
+        return false;
+    }
+    ix_used(g, s);
     sb *o = &g->c;
     const int site = ix_site(g, s);
     const bool borrows = foreach_borrows(g, s, s->type);

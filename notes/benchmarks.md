@@ -417,6 +417,10 @@ frames past 200 averaged. Its `PerfProbeMark` views bracket the views, Camera to
   call's instance count, over the run: 1-15 instances 1.15M calls 209 ms; 16-63 271K, 224 ms; 64-255 197K,
   354 ms; 256-1,023 49K, 280 ms; 1,024-4,095 9.5K, 272 ms; none bigger. About 0.42 ms a frame in all, and
   0.08 for draws of 1,024 instances or more: too little to share a draw's culling between threads.
+- `tide_sample --stacks` (2026-11-13) walks each sample's stack (dbghelp, through the unwind tables) and prints who
+  called what: the sampled function and its caller, and chains of the program's own four deep. A walk costs far
+  more than a sample: with `--main --hz 2000`. It found the per-run loop indexes (indexed-loops.md, No index for one
+  run alone). Frames it can't name show as `?`.
 - `tide_sample --after <seconds>` (2026-11-13) starts sampling that long after the program starts, to leave its
   loading out; used with `--main` and `--ticks-alongside` to see a frame thread's views by file
   (schedule-and-threads.md, How much of the views is recording draws).

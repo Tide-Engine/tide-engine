@@ -4,11 +4,14 @@
 // code spent its samples, by function and by line, through llvm-symbolizer
 // and the program's PDB (a release build has one).
 //
-//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] -- program [args...]
+//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] [--stacks] -- program [args...]
 //
 // --main samples the program's first thread alone (a game's frames and views),
 // which disturbs it far less than suspending its every thread each round.
 // --after leaves the program's first seconds out (its loading), sampling from then on.
+// --stacks walks each sample's stack too (dbghelp, through the program's unwind tables) and prints who called
+// what: the sampled function and the three of the program's own above it. A walk costs far more than a
+// sample, so use it with --main and a lower --hz.
 //
 // Samples outside the program's own image (the system's DLLs: waits, the
 // kernel's calls) are counted as "elsewhere" per DLL. A thread that's
@@ -18,6 +21,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <psapi.h>
+#include <dbghelp.h>
 #include <tlhelp32.h>
 
 #include <stdbool.h>
@@ -68,6 +72,44 @@ static void count_sample(const uint64_t address, const uint32_t module)
         table_used++;
     }
     table[h].count++;
+}
+
+// A sample's stack: where it was (0 outside the program's image) and the
+// program's own callers above it, nearest first.
+#define STACK_DEPTH 4
+typedef struct stack_count {
+    uint64_t at[STACK_DEPTH];
+    uint32_t count;
+} stack_count;
+
+static stack_count *stacks;
+static size_t stack_size, stack_used;
+
+static void count_stack(const uint64_t *at)
+{
+    if (stack_used * 2u >= stack_size) {
+        const size_t old_size = stack_size;
+        stack_count *old = stacks;
+        stack_size = stack_size ? stack_size * 2u : 65536u;
+        stacks = calloc(stack_size, sizeof *stacks);
+        if (!stacks) exit(3);
+        stack_used = 0;
+        for (size_t i = 0; i < old_size; i++) {
+            if (!old[i].count) continue;
+            size_t h = (size_t)(((old[i].at[0] ^ old[i].at[1] * 31u ^ old[i].at[2] * 131u ^ old[i].at[3] * 521u) * 0x9E3779B97F4A7C15ull) >> 20) & (stack_size - 1u);
+            while (stacks[h].count) h = (h + 1u) & (stack_size - 1u);
+            stacks[h] = old[i];
+            stack_used++;
+        }
+        free(old);
+    }
+    size_t h = (size_t)(((at[0] ^ at[1] * 31u ^ at[2] * 131u ^ at[3] * 521u) * 0x9E3779B97F4A7C15ull) >> 20) & (stack_size - 1u);
+    while (stacks[h].count && memcmp(stacks[h].at, at, sizeof stacks[h].at) != 0) h = (h + 1u) & (stack_size - 1u);
+    if (!stacks[h].count) {
+        memcpy(stacks[h].at, at, sizeof stacks[h].at);
+        stack_used++;
+    }
+    stacks[h].count++;
 }
 
 static void refresh_modules(HANDLE process)
@@ -158,7 +200,7 @@ int main(int argc, char **argv)
 {
     double hz = 5000.0, after = 0.0;
     int top = 40, lines = 40, arg = 1;
-    bool main_only = false;
+    bool main_only = false, walk = false;
     for (; arg < argc; arg++) {
         if (strcmp(argv[arg], "--") == 0) {
             arg++;
@@ -169,8 +211,9 @@ int main(int argc, char **argv)
         else if (strcmp(argv[arg], "--lines") == 0 && arg + 1 < argc) lines = atoi(argv[++arg]);
         else if (strcmp(argv[arg], "--main") == 0) main_only = true;
         else if (strcmp(argv[arg], "--after") == 0 && arg + 1 < argc) after = atof(argv[++arg]);
+        else if (strcmp(argv[arg], "--stacks") == 0) walk = true;
         else {
-            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] -- program [args...]\n");
+            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] [--stacks] -- program [args...]\n");
             return 2;
         }
     }
@@ -197,6 +240,11 @@ int main(int argc, char **argv)
     QueryPerformanceFrequency(&frequency);
     const int64_t period = (int64_t)((double)frequency.QuadPart / hz);
     if (after > 0.0) WaitForSingleObject(pi.hProcess, (DWORD)(after * 1000.0));
+    if (walk) {
+        SymSetOptions(SYMOPT_DEFERRED_LOADS);
+        if (!SymInitialize(pi.hProcess, NULL, TRUE)) walk = false;
+    }
+    uint32_t program_module = UINT32_MAX; // The program's own image, once its modules are known
     QueryPerformanceCounter(&next);
     uint64_t total = 0, rounds = 0;
     DWORD threads[256];
@@ -224,14 +272,36 @@ int main(int argc, char **argv)
             }
             if (snap != INVALID_HANDLE_VALUE) CloseHandle(snap);
             refresh_modules(pi.hProcess);
+            if (walk) SymRefreshModuleList(pi.hProcess);
+            for (uint32_t i = 0; i < module_count && program_module == UINT32_MAX; i++) {
+                if (strstr(modules[i].path, ".exe")) program_module = i;
+            }
         }
         for (uint32_t i = 0; i < thread_count; i++) {
             if (SuspendThread(handles[i]) == (DWORD)-1) continue;
-            CONTEXT c = {.ContextFlags = CONTEXT_CONTROL};
+            CONTEXT c = {.ContextFlags = walk ? CONTEXT_FULL : CONTEXT_CONTROL};
             if (GetThreadContext(handles[i], &c)) {
                 const uint32_t m = module_of(c.Rip);
                 count_sample(m == UINT32_MAX ? c.Rip : c.Rip - modules[m].base, m);
                 total++;
+                if (walk && program_module != UINT32_MAX) {
+                    uint64_t at[STACK_DEPTH] = {m == program_module ? c.Rip - modules[m].base : 0};
+                    int found = 1;
+                    STACKFRAME64 frame;
+                    memset(&frame, 0, sizeof frame);
+                    frame.AddrPC.Offset = c.Rip;
+                    frame.AddrFrame.Offset = c.Rbp;
+                    frame.AddrStack.Offset = c.Rsp;
+                    frame.AddrPC.Mode = frame.AddrFrame.Mode = frame.AddrStack.Mode = AddrModeFlat;
+                    for (int depth = 0; depth < 48 && found < STACK_DEPTH; depth++) {
+                        if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, pi.hProcess, handles[i], &frame, &c, NULL,
+                                         SymFunctionTableAccess64, SymGetModuleBase64, NULL) || !frame.AddrPC.Offset) break;
+                        if (depth == 0) continue; // The sample itself
+                        const uint64_t pc = frame.AddrPC.Offset - 1u; // Inside the call, not after it
+                        if (module_of(pc) == program_module) at[found++] = pc - modules[program_module].base;
+                    }
+                    count_stack(at);
+                }
             }
             ResumeThread(handles[i]);
         }
@@ -362,6 +432,73 @@ int main(int argc, char **argv)
     printf("\n  lines:\n");
     for (size_t i = 0; i < line_count && (int)i < lines; i++) {
         printf("  %6.2f%%  %s\n", 100.0 * (double)line_list[i].count / (double)own_total, line_list[i].name);
+    }
+    if (!walk || !stack_used) return (int)exit_code;
+
+    // Who called what: each stack's addresses named (the innermost function at
+    // each, which for inlined code is the one it was written in), then the
+    // stacks that say the same counted together
+    uint64_t *addresses = malloc(stack_used * STACK_DEPTH * sizeof *addresses + 8);
+    size_t address_count = 0;
+    for (size_t i = 0; i < stack_size; i++) {
+        for (int k = 0; stacks[i].count && k < STACK_DEPTH; k++) {
+            if (stacks[i].at[k]) addresses[address_count++] = stacks[i].at[k];
+        }
+    }
+    in = fopen(in_path, "wb");
+    for (size_t i = 0; i < address_count; i++) fprintf(in, "0x%llx\n", (unsigned long long)(base + addresses[i]));
+    fclose(in);
+    if (system(run) != 0) return (int)exit_code;
+    out = fopen(out_path, "rb");
+    if (!out) return (int)exit_code;
+    char **names = calloc(address_count + 1, sizeof *names);
+    at = 0;
+    frame = 0;
+    while (at < address_count && fgets(fn, sizeof fn, out)) {
+        fn[strcspn(fn, "\r\n")] = 0;
+        if (!fn[0]) {
+            if (!names[at]) names[at] = _strdup("?");
+            frame = 0;
+            at++;
+            continue;
+        }
+        if (!fgets(loc, sizeof loc, out)) break;
+        if (!frame++) names[at] = _strdup(fn);
+    }
+    fclose(out);
+    remove(in_path);
+    remove(out_path);
+    named *pairs = NULL, *chains = NULL;
+    size_t pair_count = 0, pair_capacity = 0, chain_count = 0, chain_capacity = 0;
+    uint64_t walked = 0;
+    size_t next_name = 0;
+    for (size_t i = 0; i < stack_size; i++) {
+        if (!stacks[i].count) continue;
+        char chain[4200] = "", pair[2100] = "";
+        for (int k = 0; k < STACK_DEPTH; k++) {
+            const char *name = stacks[i].at[k] ? (names[next_name] ? names[next_name] : "?") : k == 0 ? "(a DLL)" : NULL;
+            if (stacks[i].at[k]) next_name++;
+            if (!name) break;
+            if (k) strncat(chain, " <- ", sizeof chain - strlen(chain) - 1);
+            strncat(chain, name, sizeof chain - strlen(chain) - 1);
+            if (k < 2) {
+                if (k) strncat(pair, " <- ", sizeof pair - strlen(pair) - 1);
+                strncat(pair, name, sizeof pair - strlen(pair) - 1);
+            }
+        }
+        add_named(&chains, &chain_count, &chain_capacity, chain, stacks[i].count);
+        add_named(&pairs, &pair_count, &pair_capacity, pair, stacks[i].count);
+        walked += stacks[i].count;
+    }
+    qsort(pairs, pair_count, sizeof *pairs, by_count);
+    qsort(chains, chain_count, sizeof *chains, by_count);
+    printf("\n  called from (the sampled function <- its caller in the program), %% of %llu walked samples:\n", (unsigned long long)walked);
+    for (size_t i = 0; i < pair_count && (int)i < top; i++) {
+        printf("  %6.2f%%  %s\n", 100.0 * (double)pairs[i].count / (double)walked, pairs[i].name);
+    }
+    printf("\n  stacks (the sampled function <- callers, nearest first):\n");
+    for (size_t i = 0; i < chain_count && (int)i < top; i++) {
+        printf("  %6.2f%%  %s\n", 100.0 * (double)chains[i].count / (double)walked, chains[i].name);
     }
     return (int)exit_code;
 }

@@ -400,7 +400,7 @@ The list is one the world keeps, a component's or a singleton's, and its element
 
 ### Only the elements that can pass
 
-A `foreach` or `parallel` loop over a list that starts by skipping elements, as in `if (Math.Distance(wall.center, body.position) > reach) continue;`, visits only the elements within the bounds its condition sets, found through an index, with the same results. `indexed foreach` and `indexed parallel` promise it, and say why when they can't. It works as for a query's rows: see [Only the rows that can pass](../game/systems.md#only-the-rows-that-can-pass).
+A `foreach` or `parallel` loop over a list that starts by skipping elements, as in `if (Math.Distance(wall.center, body.position) > reach) continue;`, visits only the elements within the bounds its condition sets, found through an index, with the same results. The index is kept from one run of the loop to the next where the list can't have changed: a list of a singleton the code only reads, or one in a local nothing writes after declaring it. Any other list is gone through whole, as making an index for one run costs more than that; `tide schedule` and the editors say so. `indexed foreach` and `indexed parallel` promise it, and say why when they can't. It works as for a query's rows: see [Only the rows that can pass](../game/systems.md#only-the-rows-that-can-pass).
 
 ## Maps and sets
 

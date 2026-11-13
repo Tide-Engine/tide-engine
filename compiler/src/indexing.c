@@ -1297,6 +1297,19 @@ static const stmt *unwritten_local(const decl *code, const expr *list)
     return loop_changes(&c, local, NULL) ? NULL : local;
 }
 
+// Whether a list's index lasts beyond one run of its loop without a local's stamp: a field of a singleton
+// that a system or a view takes read-only (not this machine's own, not `verified`), which nothing changes
+// while the code runs (index_codegen.inc, ix_list_world).
+static bool list_kept(const decl *code, const expr *list)
+{
+    if (!code || code->kind != DECL_SYSTEM || code->is_handler || code->is_local || code->extern_system) return false;
+    const expr *root = list;
+    while (root && root->kind == E_MEMBER && root->object && root->field && !root->property && !root->local_field) root = root->object;
+    if (!root || root->kind != E_NAME || root->bind != BIND_PARAM) return false;
+    const param *p = root->param;
+    return p->mode == PARAM_READ && p->type.kind == TY_SINGLETON && p->type.decl && !p->type.decl->is_local && !p->verified;
+}
+
 static void plan_loop(const program *prog, const decl *code, stmt *loop)
 {
     const type source = loop->value ? loop->value->type : (type){TY_ERROR, NULL};
@@ -1334,6 +1347,15 @@ static void plan_loop(const program *prog, const decl *code, stmt *loop)
         } else if (still) {
             loop->index = plan;
             if (list && !c.list_steps) plan->list_local = unwritten_local(code, loop->value);
+            // A list nothing shows to be the same from one run to the next would get an index for each run: a
+            // pass over every element for its keys and a sort, where the plain loop is one pass that tests them.
+            // Asked for by name (`indexed foreach`), it's made all the same.
+            if (list && !c.list_steps && !loop->indexed && !plan->list_local && !list_kept(code, loop->value)) {
+                loop->index = NULL;
+                because(&c, loop->at, "its list could change between one run of the loop and the next, so its index would be "
+                                      "made again each run, which costs more than going through every element: an index is "
+                                      "kept for a list of a singleton the code only reads, or one in a local nothing writes");
+            }
         }
     } else {
         because(&c, loop->at, "its guard bounds no number of the row on either side");
