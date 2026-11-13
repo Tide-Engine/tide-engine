@@ -1,0 +1,133 @@
+// Systems that take the same component or singleton and touch different fields
+// of it run at the same time: here every system below is on the same men, each
+// with a field of its own, some reading what another wrote the tick before.
+// On threads the world is one thread's, tick by tick, written in place and
+// beside a snapshot.
+
+component Man
+{
+    int id;
+    float3 position;
+    float3 velocity;
+    float heat;
+    int wear;
+    float aim;
+    bool hot;       // Four bools in one lane: their writers wait for each other
+    bool worn;
+    bool far;
+    bool odd;
+    int team;
+}
+
+component Seen
+{
+    float nearest;
+    int count;
+}
+
+component Mounted { }
+component Scout { }
+
+singleton Tally
+{
+    long heats;
+    long wears;
+    float farthest;
+    int scouts;
+    int[2] sides;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 3000; i++)
+    {
+        var e = Spawn(Man { id = i, position = float3(float(i % 61), 0, float(i % 47)), team = i % 2 }, Seen { });
+        if (i % 3 == 0) e.Add(Mounted);
+        if (i % 150 == 7) e.Add(Scout);
+    }
+}
+
+// Work enough that a run of rows is worth a thread, where tidec counts it
+float Churn(float x)
+{
+    mut var y = x * 0.001;
+    for (var i = 0; i < 120; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    return y;
+}
+
+// Each writes lanes of its own, on every man
+system Push(mut Man m, Time time)
+{
+    mut var y = float(m.id + time.tick) * 0.001;
+    for (var i = 0; i < 120; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    m.velocity = float3(y, 0, -y) * 0.1;
+}
+
+system Warm(mut Man m)
+{
+    mut var y = (m.heat + float(m.id)) * 0.001;
+    for (var i = 0; i < 120; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    m.heat = y;
+}
+
+system Wear(mut Man m, Time time)
+{
+    mut var y = float(m.wear) * 0.001;
+    for (var i = 0; i < 120; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    m.wear += (m.id + time.tick) % 5 + (y > 0 ? 1 : 0);
+}
+
+system Aim(mut Man m)
+{
+    mut var y = (m.aim + float(m.team)) * 0.001;
+    for (var i = 0; i < 120; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    m.aim = y;
+}
+
+// Reads the velocity Push wrote this tick, so it waits for Push alone
+system Move(mut Man m)
+{
+    m.position += m.velocity;
+}
+
+// One lane of bools: Flag and Mark wait for each other, and for what they read
+system Flag(mut Man m) { m.hot = m.heat > 0; }
+system Mark(mut Man m) { m.worn = m.wear % 2 == 0; }
+
+// A singleton's fields, each from a query's rows read field by field while the
+// others' writers run
+system SumHeat(mut Tally tally, query (Man m) men)
+{
+    mut var sum = 0.0;
+    foreach (var row in men) sum += row.m.heat;
+    tally.heats += long(sum * 1000);
+}
+
+system SumWear(mut Tally tally, query (Man m) men)
+{
+    foreach (var row in men) tally.wears += row.m.wear;
+}
+
+system Farthest(mut Tally tally, query (Man m) men)
+{
+    foreach (var row in men) tally.farthest = Math.Max(tally.farthest, Math.Length(row.m.position));
+}
+
+// A few men look at everyone's place and team, through an index of the place
+system Look(mut Seen seen, Man m, with Scout, query (Man other) others)
+{
+    seen.count = 0;
+    seen.nearest = 1000;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, m.position) > 6) continue;
+        if (o.other.team == m.team) continue;
+        seen.count++;
+        seen.nearest = Math.Min(seen.nearest, Math.Distance(o.other.position, m.position));
+    }
+}
+
+system CountScouts(mut Tally tally, Seen seen, with Scout) { tally.scouts += seen.count; }
+system Sides(mut Tally tally, Time time) { tally.sides[int(time.tick % 2)] += tally.scouts; }

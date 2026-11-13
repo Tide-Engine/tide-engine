@@ -1,5 +1,16 @@
 # Debugging Tide code in native debuggers
 
+## Handles name a run's heap too (2026-11-13, later)
+
+A handle also says which run's heap of its owner its block is in, five bits from bit 54
+(schedule-and-threads.md, top section; `tide_heap.runs`). LLDB's views follow it (`_heap` in
+`compiler/src/debug_views.py`, with `TIDE_HEAP_RUN_BITS` and `TIDE_HANDLE_RUN_SHIFT` written into each game's
+file). The natvis expressions don't: choosing between an owner's first heap and `runs[run - 1]` names the heap
+twice, and the section below is why a text's `DisplayString` can't be that long. So in Visual Studio and CLion on
+Windows, text and lists made by a system in runs, in a run past the first, are not shown rightly (the page's
+place is taken from the whole handle, which is past the first heap's table; not looked at in a debugger). Not tried: a helper the views call in the
+game's process, or the first heap's table holding its runs' pages.
+
 ## Handles name a heap, and how long a natvis expression can be (2026-11-13)
 
 A world's handle is its heap's id in the low 12 bits and its block's offset from bit 8 (schedule-and-threads.md, top

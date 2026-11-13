@@ -66,7 +66,7 @@ static writes_place reads_place_of(const expr *e, const reads_root *root)
             if (lo < 0 || hi >= dims) return p;
             return (writes_place){true, p.off + lo * each, (hi - lo + 1) * each, false};
         }
-        if (!e->field || (ot.kind != TY_STRUCT && ot.kind != TY_COMPONENT) || !ot.decl) return p;
+        if (!e->field || (ot.kind != TY_STRUCT && ot.kind != TY_COMPONENT && ot.kind != TY_SINGLETON) || !ot.decl) return p;
         const int at = writes_field_offset(ot.decl, e->field);
         if (at < 0) return p;
         return (writes_place){true, p.off + at, type_layout(e->field->type).size, false};

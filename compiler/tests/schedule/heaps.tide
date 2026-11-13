@@ -17,6 +17,8 @@ event(Spawned) Setup(with Main)
     Spawn(Pack { id = 1 });
     Spawn(Pack { id = 2 }, Mark { id = 2 });
     Spawn(Trail { id = 3 });
+    Spawn(Plot { id = 4 });
+    Spawn(Wire { id = 5 });
 }
 
 // C functions handed a singleton's list: what C writes says TIDE_IN_MATCH,
@@ -51,3 +53,11 @@ system Shout(with Trail) { Send(Named { name = "trail" }); }
 // Handed to C: both in the match's own heap, one at a time
 system Native1(mut Native native) { Fill(native.cells); }
 system Native2(mut Other other) { Refill(other.cells); }
+
+// Per entity, changing their own rows' lists: Stuff and Walk above go across
+// threads, in runs. These stay in order on one: a grid's owner, and one C can
+// write, whose blocks are in the match's own heap
+component Plot { int id; Grid2<int> cells = Grid2(8, 8); List<int> marks; }
+component Wire { int id; List<int> cells; }
+system Dig(mut Plot plot) { plot.marks.Add(plot.id); }
+system Solder(mut Wire wire) { Fill(wire.cells); }

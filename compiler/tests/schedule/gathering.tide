@@ -1,0 +1,92 @@
+// A per-entity system that takes a singleton `mut` goes across threads when
+// its rows only add to it: every statement that names the singleton changes
+// it from the row's plain values, and nothing in a row reads back what rows
+// write. Anything else keeps its entities in order on one thread, and so does
+// adding being most of what a row does.
+
+singleton Score
+{
+    int total;
+    float sum;
+    int least;
+    int limit;
+    List<int> ids;
+    List<string> names;
+}
+singleton Other { int count; }
+component Unit { int id; float weight; List<int> seen; }
+event Counted { int id; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Unit { id = 1 }); }
+
+void Note(mut Score score, int id)
+{
+    score.least = Math.Min(score.least, id);
+    score.ids.Add(id);
+}
+void Tell(mut Score score, int id)
+{
+    score.total += id;
+    Send(Counted { id = id });
+}
+int Half(int id) { return id / 2; }
+
+// Counts, a float sum, a least, a list, text made of the row's values, a function handed the singleton: each
+// after work of the row's own
+system Count(Unit unit, mut Score score)
+{
+    mut var y = unit.weight;
+    for (var i = 0; i < 8; i++) y = Math.Sin(y) + Math.Cos(y);
+    score.total += unit.id + int(y);
+}
+system Sum(Unit unit, mut Score score)
+{
+    mut var y = unit.weight;
+    for (var i = 0; i < 8; i++) y = Math.Sin(y) + Math.Cos(y);
+    score.sum += y * 2;
+}
+system Keep(Unit unit, mut Score score, mut Other other)
+{
+    if (unit.id == 0) return;
+    mut var y = unit.weight;
+    for (var i = 0; i < 40; i++) y = Math.Sin(y) + Math.Cos(y);
+    Note(score, unit.id + int(y));
+    score.names.Add($"unit {unit.id}");
+    other.count++;
+}
+// It reads a field it never writes, in the row: the same there as in order
+system Under(Unit unit, mut Score score)
+{
+    mut var y = unit.weight;
+    for (var i = 0; i < 8; i++) y = Math.Sin(y) + Math.Cos(y);
+    if (unit.id < score.limit) score.total += int(y);
+}
+// It changes its own component and sends too: those are the row's
+system Weigh(mut Unit unit, mut Score score)
+{
+    for (var i = 0; i < 8; i++) unit.weight = Math.Sin(unit.weight) + 1;
+    score.sum += unit.weight;
+    Send(Counted { id = unit.id });
+}
+
+// Adding is all its rows do: nothing for a thread to take
+system Tiny(Unit unit, mut Score score) { score.total += unit.id; }
+// A row reads what rows write: in order
+system Chain(Unit unit, mut Score score) { if (score.total % 2 == 0) score.total += unit.id; }
+// ...into something of the row's
+system Rank(mut Unit unit, mut Score score)
+{
+    unit.id = score.total;
+    score.total++;
+}
+// What it takes from the row is a call of the game's, which isn't logged
+system Halve(Unit unit, mut Score score) { score.total += Half(unit.id); }
+// The function it hands the singleton to sends
+system Announce(Unit unit, mut Score score) { Tell(score, unit.id); }
+// It changes its own rows' lists as well
+system See(mut Unit unit, mut Score score)
+{
+    unit.seen.Add(1);
+    score.total++;
+}

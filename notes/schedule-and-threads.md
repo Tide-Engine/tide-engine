@@ -18,6 +18,326 @@ drawn on top), four proposals were put to him. His rulings:
 - **`[After]` and `[Before]` on views are run order**, as on systems. What's drawn on top "should be potentially a
   graphics API thing versus when a view runs": a layer or order the draws name. Not designed; parked, as views
   beside each other gain that game nothing yet (below).
+## A system's own rows' text and lists across threads: a heap in runs (2026-11-13, later)
+
+The owner's task, one of three threads on the schedule that day: a per-entity system that changes its own rows'
+text, lists, maps, sets or grids ran its entities on one thread, because a heap hands out blocks in a fixed order
+and their offsets are in handles, hashed and packed every tick (82 systems in the tree, 18 of Mount & Rifle's).
+Required: the world after the system bit-identical to one thread's on every machine and thread count.
+
+Three ways were weighed, and the third built:
+
+- *Blocks of the threads' own, renumbered at the join* and *sizes logged, offsets given at the join*: both leave
+  handles that aren't final while rows run, so the join has to find and rewrite every one (in the rows' lanes, in
+  lists of text, in queued spawns' values), one thread's work in proportion to what was allocated, and a walker
+  generated for every type that can hold one. Not built.
+- **A heap whose layout is by run of entities, not by time** (`tide/heap.h`, A heap in runs). The system's entities,
+  in the order of their identities, are cut into runs: `min(32, count)` of them (`TIDE_HEAP_RUNS`), run `r` being
+  keys `[count * r / runs, count * (r + 1) / runs)`. That depends on the world alone. Each run hands its blocks
+  out of a heap of its own within the owner's, in its rows' order, so a block's offset is the same whichever
+  thread had the run and whatever the other runs did. A task of `pieces` is runs
+  `[runs * task / pieces, runs * (task + 1) / pieces)`; one thread's single task is all of them in order, through
+  the same heaps. Nothing is rewritten and the join does next to nothing.
+
+What it is:
+
+- **An owner's heap has 32** (`tide_heap.runs`, made the first time one past the first is asked for; run 0 is the
+  owner's heap as it was, where everything that isn't a run still allocates). A block says its run: 5 bits of its
+  handle above the offset (bit 54 up, which offsets, 46 bits from bit 8, never reach) and of a `where` above the id
+  (`TIDE_WHERE_RUN_SHIFT`). `tide_heaps_of` takes the run with the id, so `tide_heap_of(tide_handle_where(at))` is
+  the block's own heap, and text.c, list.c, map.c and every inline read are as they were. Run-0 handles are the
+  bits they were: a world no system changes in runs hashes and packs as before.
+- **Which run code is on** is the thread's (`tide_heap_run_where`, set by `tide_heap_run_enter(run)` around each
+  run's rows and put back by `tide_heap_run_leave`). Generated code says `TIDE_WHERE_RUN(TIDE_IN_MATCH, id)` for
+  the memory of an owner some system changes in runs (`decl.heap_runs`, `decl_where`), which is the owner's
+  `where` with the thread's run: outside runs that's run 0.
+- **A field's own block may be in another run's heap** (the entity was in that run when it was made, or it was
+  made outside runs). `tide_handle_in(at, where)` is "the field's own" now (same world and id, any run), which
+  `own_block`, `drop_block` and `tide_text_release` use; they change and release a block through its own heap.
+  Written, cut and added to within its room, a list stays where it is. A list in chunks that needs more chunks
+  moves whole into the heap of the run that adds them (`grow_chunks`: `kept` only for the same run), as its block
+  names its chunks by offset. A list side by side that grows was copied to a new block anyway.
+- **Letting go of another run's block** (`tide_heap_release` when `tide_heap_away`): that heap's free lists are its
+  run's thread's, so the block goes on this run's `away` list, is zeroed at the row's flush on this thread (`held`),
+  and goes back to its own heap's free list in `tide_heap_runs_join`, runs in order. An asset list's lease in
+  another run's heap is given up at the join too (`tide_heap_drop_later`). Outside runs a block goes to its own
+  heap's `pending` and the owner's flush finds it (`runs_pending`).
+- **Writing in place from any thread.** A page a snapshot shares is replaced with a copy by whichever thread gets
+  there first (`write_shared_in_runs`: copied outside the heap's lock, put in the table under it, the loser's copy
+  let go). The page it replaces **keeps the heap's references until the join** (`retired`): refs are how
+  `tide_heap_write` tells a page is the heap's to write, and a thread that read the old page from the table a
+  moment before would take it for the heap's own if the snapshot's were the only ones left. The run whose heap it
+  is grows the table under the same lock. `tide_heap_write` reads the table as `tide_heap_block` does.
+- **The compiler** (`rows_independent`, `system_splits_in_order`, `system_heap_runs` in `parallel.c`): a system
+  that changes text or lists splits in order as one that queues does, unless one of its owners (`heap_owners`) is
+  in the match's one heap (C can write it, or the game has shards or hidden state: no runs there), or holds a grid,
+  or it starts tasks. `tide schedule` and the editors say which (`system_one_thread`). `gen_system` wraps the
+  ordered walk in the runs' loop, flushes the run's heap after each row, and joins in the task when it had every
+  run, else in `tide_done_<System>`, which such a system now always has.
+- **Builds that check** (`TIDE_HEAP_CHECKS`): a block asked of a run's heap by code on another run ends the program.
+- **Packed, hashed, copied**: a run's heap is another heap of the world, named by its id with the run above it
+  (`tide_heaps_pack`, `tide_heaps_hash`), numbered slot by slot in a delta, copied and settled with its owner. An
+  owner whose runs were never made costs one test (`after`).
+
+Not grids, and why: a grid's directory names its chunks by offset as a list's block does, and its loops, windows
+and caches (grid.c, about 900 lines) take one heap for the grid from a `where`. Moving a grid whole into a run's
+heap when a row first adds a chunk is the same idea as the list's; it wasn't done here, so an owner that holds a
+grid keeps its systems in order.
+
+Tests:
+- `tidec_e2e_row_heaps` (`compiler/tests/e2e/row_heaps.tide`): 900 bags in three archetypes whose system changes a
+  list, text, a list of text, a map, a set and a list that goes past a page and is cut back; a system on one thread
+  (it changes a singleton) changing the same lists between; two more in runs that spawn and send values holding
+  text and lists; entities destroyed and spawned every tick, so the ones after them change runs. Fourteen ticks on
+  a pool that's one thread saying it has eight, and five runs of fourteen on the platform's with a snapshot taken
+  every tick: the hash and **the world's packed bytes** equal one thread's every tick; a pack, a delta over an
+  unpacked base and a snapshot rolled back and run again on one thread give the same world. Every run's heap is in
+  use after four ticks on one thread, and nothing a run kept is left. With every run given run 0's heap (a line in
+  `tide_heap_run_enter`) the platform's pool crashes in it.
+- `tests/test_heap.c`, four more: a run's blocks from its own heap's start and what a handle says; another run
+  letting one go (readable until the flush, zeroed, back at the join, handed out again); a list in chunks written
+  and cut where it is and moved whole when it needs chunks; a shared page's references kept until the join; copy,
+  hash, pack and a delta with a run's heap.
+- `tidec_e2e_heaps` as it was: its two per-entity systems are in runs now.
+- Schedule goldens: `heaps` (two more systems: a grid's owner and one C can write, with the lines that say so) and
+  `text` lost their "on one thread" lines.
+- One world-hash pin moved, `rows` (`0x7c197dd64b4bb904`), and `row_lanes`'s expected call says `TIDE_WHERE_RUN`.
+
+Validation: the whole native sanitize suite (Windows ASan, `TIDE_HEAP_CHECKS`), 3,283 tests: the two above failed
+and are updated, `tide_server_smoke` failed in the full run and passes alone, `inside_out_tests` and
+`underfoot_tests` (the private prototypes) fail as before; after the last changes to the heap's inline functions,
+the 847 tests that touch heaps, rows, lists, text, the schedule, the debugger views, reload and the benchmarks
+again. Web (`web-debug`, under Node, with threads): `tide_tests`, `rows` (the same new pin), `ordered_split`,
+`heaps` and `row_heaps` pass. Linux, macOS, MinGW and Android are CI's.
+
+Measured (benchmarks.md, A heap in runs): the fixture's tick on 12 threads 7.7-8.3 ms to 1.9-2.3; Mount & Rifle's
+`Campaign.Roam` 0.33-0.36 ms to 0.18-0.20 and `Upkeep` 0.08 to 0.03.
+
+**What Mount & Rifle showed.** Of the five systems the morning's table named, only those two were kept by the heap
+alone. `Travel` sets `Campaign.Place` through its World, `Outfit` sets `Gear.Inventory`, `FallOnField` sets
+`Field.Soldier`: `system_one_thread` says the first reason it finds, and the heap came first. None of its systems
+is kept on one thread by the heap now; four are by reading through their World a component they change, the rest
+by a `mut` singleton or a `Set`. So of the 0.8 ms the chain had in "own rows' text and lists", about 0.2 came off,
+and the rest is the `Set` question the owner was asked the same morning (queue it where it's unobservable).
+
+Gaps:
+- **Grids** (above).
+- **Owners in the match's one heap**: what C can write, and every owner of a game with shards or hidden state.
+- **A run's heap costs memory**: a page for each run that ever allocated, for each owner (32 runs: half a
+  megabyte an owner at most), and 208 bytes each in a full pack. Blocks freed in one run's heap are only handed
+  out again by that run.
+- **Entities change runs** as others come and go before them; a block made in the old run is released through the
+  join, and a list in chunks is copied whole the next time it needs chunks.
+- **One thread pays a little**: the fixture's tick on one thread went from 7.5-7.7 ms to 7.9-8.1.
+- **Map lookups about 2% slower** in `versus_lookup` (a handle's `where` takes three more instructions and
+  `tide_heaps_of` a test); `versus_buckets` and `versus_churn` within their runs' spread.
+- **Windows' debugger views** (natvis) don't find a block in a heap of a run past the first: the expression that
+  would is past what its engine bears (debugging.md). LLDB's do.
+- 32 runs are the most a system's entities go in, whatever the threads: fine to 16 cores or so.
+- **A gathering system** (the section below, merged the same day) isn't in runs: what it changes in a heap is its
+  singletons', from its log on one thread, and the gather's own rule keeps out one that also changes its rows'
+  text or lists (`system_heap_runs` leaves `decl.gathers` out). Such a system stays in order; doing both would
+  be the runs' loop around the gather's rows.
+
+## The schedule by fields, and gathering systems on threads (2026-11-13)
+
+The owner's task, one of three threads on the schedule that day (the others: automatic parallel views; per-entity
+systems that change their own rows' text or lists): make the analysis go by fields so fewer systems wait, and split
+"gathering" systems across threads. Both built; what Mount & Rifle got from them is at the end, and it's little.
+
+### Fields
+
+Two systems that take the same component or singleton wait for each other only where one writes bytes the other
+reads or writes (`accesses_meet`, `find_conflicts` in `compiler/src/parallel.c`). Before, any writer of `Party`
+waited for every reader and writer of `Party`.
+
+- **What a system touches is what its generated C does**, asked of the functions that decide that C
+  (`compiler/src/schedule_bytes_codegen.inc`, `system_param_bytes` and `system_query_bytes`, declared in `ast.h`;
+  `analyze_parallelism` runs at the end of `check`, and the analyses are plain walks of the checked code). Not a
+  second analysis in the checker: the code generator already worked out, for copying fewer lanes, the bytes of a
+  parameter a system's code can read (`code_reads`, lane_reads_codegen.inc) and write (`code_writes`,
+  lane_writes_codegen.inc), through the functions a place of it is handed to, and a schedule that went by anything
+  else could let two systems at pages one of them replaces. So:
+  - **A component parameter**: reads are the lanes its rows copy (`system_param_lanes`: what the code reads, and
+    what it writes, which is copied in to be put back), writes the lanes put back (`written_lanes`). Whole lanes,
+    four bytes: a lane is a page of its own in a chunk (`t->pages[chunk * count + column]`, tide/table.h), begun,
+    replaced and hashed by itself, exactly as two components' lanes already were for two systems on one chunk.
+    Two `bool`s in one lane are one thing. Wherever a row's copy is whole (`system_param_splits` false: a
+    handler, a system in C, one that starts tasks or Sets that component through its World, a virtual one, a
+    local or sharded one, a component of one lane or of more than 1,024), so is the access.
+  - **A singleton parameter**: its bytes where it is in the world's struct, which generated code reads and writes
+    through a pointer, field by field (checked in the C: a `mut` place goes to a function by address, an array's
+    element is written alone). Rounded out to whole fields (`schedule_whole_fields`), which is as far as the
+    schedule says and leaves room for C that writes a field as one place. `code_reads` and `code_writes` didn't
+    narrow through a singleton's fields (only a struct's or a component's: nothing asked them to); they do now,
+    which only this asks. Whole for a system whose code isn't all there is (C, async, tasks, virtual, sharded).
+  - **A query's rows**: the lanes its loops copy (`match_query_lanes`, the function `gen_query_walk` asks), plus
+    the lanes an index of it is made from (`ix_key_binding`), where every use of the query in the system is a
+    `foreach` over it in the system's own code. A parallel loop (rows gathered whole), a query handed to a
+    function, or a component the World reaches too, is all of it.
+  - **The World** (`Get`, `Has`, `TryGet`, `Set`): the whole component, as before.
+- **A build for a debugger goes by whole components** (`program.rows_whole`): it copies each row whole
+  (`system_rows_plain`), which would read a page another system is replacing, and the page it took the place of is
+  freed when nothing else holds it. `codegen` runs `analyze_parallelism` again with it set when
+  `codegen_options.split_plumbing` is, so a debug build's schedule has more waits than `tide schedule` prints.
+  Singletons go by field in both.
+- **A read that's a whole copy** (`F(tally)` by value, `var copy = tally;`) reads every field by the analysis, so
+  nothing writes one meanwhile. A function handed a value it reads two fields of gets a copy whose other bytes
+  another thread may be writing: the same bytes a view's partial copy leaves as they were, never read.
+- **Text and lists are still each owner's**: two systems that change `ledger.entries` and `ledger.notes` wait for
+  each other over Ledger's heap, as before. A heap for each field wasn't needed by anything measured (below), and
+  isn't built.
+- **What it says** (`put_conflict_data`, `conflict.field` and `more_fields`): `it writes Body.velocity, which this
+  reads`, `both write Flags.hot (and 3 more of its fields)`, and the bare name where the two meet in every field or
+  neither side is known by field. The editors' lenses and hovers and `tide --outline` say the same, through
+  `describe_wait`. A wait a parameter and a query of one system both make is said once.
+- Language-visible behavior: none. Provisional, mine: the granularity (lanes for components, fields for
+  singletons), and the wording.
+
+Tests:
+- `tidec_e2e_fields` (`compiler/tests/e2e/fields.tide`): 3,000 men in three archetypes, six per-entity systems
+  each writing lanes of its own of one component, one reading what another wrote the same tick, two that share a
+  lane of `bool`s, three once-a-tick systems each filling a field of one singleton from a query's rows, and an
+  indexed query loop. Twelve ticks on a pool that's one thread saying it has eight, and four rounds on the
+  platform's, written in place and beside a snapshot of the tick before (every written lane then a page that
+  takes another's place): the world's hash and the singleton's bytes are one thread's every tick, and the
+  snapshot still hashes as it did.
+- `compiler/tests/schedule/fields.tide`: singleton fields at once, through helpers; a field read that waits for its
+  writer; two elements of one array waiting; a whole copy and a method reading every field; lanes apart and a
+  shared lane; a query's rows by field, and whole where it's handed to a function or the World reaches it; two
+  lists of one owner over its heap. `grids`, `heaps`, `indexed_loops` and `measured` name fields now, and
+  `heaps` and `indexed_loops` lost waits (a system reading `pack.id` beside one changing `pack.items`).
+
+### Gathering
+
+A per-entity system with a `mut` singleton ran its entities in order on one thread (308 systems in the tree).
+Where its rows only add to the singleton it now splits in order like a system that queues changes
+(`system_splits_in_order`, which `decl.gathers` now also makes true; `rows_independent` lets its singletons and
+their text through), and what the rows would change is logged and run after them, in their order.
+
+- **What qualifies** (`system_gather_plan`, `compiler/src/gather_codegen.inc`, whose head says it in full; `decl.gathers`
+  is set by `analyze_parallelism`). Every statement that names a singleton the system takes `mut` is an
+  assignment into it, or a call that changes it (a list's or map's method on a place of it, a function or method
+  handed a place of it `mut`), and cuts in two: the largest parts that don't name the singleton, which must be
+  plain values of the row (`gather_plain`: fields, locals, constants, `this`, operators without overloads,
+  `Math` and constructors, struct literals of those) and are worked out in the row; and the rest, run from the
+  log. Text written out or interpolated from plain values is made again from the log. A read-only singleton, or
+  a field of one, stays in the logged part as it is. A function of the game's in the logged part can't queue,
+  spawn, roll, draw, start tasks, take the World or reach C (`gather_callee`). Any other code of the system may
+  read of the singleton only fields the system never writes (`gather_free`, by the same bytes the schedule
+  has). Not: a statement that's a loop's start or step (written into the loop's line, not as a statement), a
+  parallel loop that names the singleton, a system that calls C (below), one with tasks, a World `Set`, text or
+  lists of its own rows changed too, a virtual, sharded or local one, or a debugger's build.
+- **Only where the rows keep work** (`gather_plan.little`, `decl.gathers_little`): by `step_cost`, what's left
+  to the rows is at least what's logged. Otherwise it stays in order, and `system_one_thread` says `it changes
+  the singleton Crowd, and adding to it is most of what its rows do`. Measured first without this rule, on
+  Mount & Rifle's `Enlist` (a thousand rows that each add a count, a sum and a `Spot` to a list and call a
+  function handed another singleton): 0.24 ms in order, 0.28 logged and run after, since the adding is all its
+  rows do and stays one thread's. A crude test (a call counts 30 whatever it does); nothing times it.
+- **A system that calls C doesn't gather** (`reaches_extern`). Box3D's `SynchronizeJoints` qualified otherwise,
+  and its rows make and drop joints in a C world that has been called from one thread, in entity order, for as
+  long as its `mut Physics` kept it there. C is trusted, but that trust was given under the old rule.
+- **Generated code.** In the system's function, such a statement becomes: the row's values into locals
+  (`tide_gc<n>`), then `if (tide_task_gather)` an entry pushed (`struct tide_gather_<System>_<n>`, the values),
+  else the statement itself, with those locals where the values were (the statement's copy has names in their
+  place, `expr.hoisted`, as a GUI scroll's held arguments do). After each row, `tide_gather_row()` where the
+  system's own heap flush was. `tide_replay_<System>(tide_w)` goes through the tasks' logs in order and runs
+  each entry's statement with its values, and at a row's end does what the row did (the scratch reset, the
+  owners' heaps flushed), so a block freed by one row is free for the next as on one thread. `tide_done_<System>`
+  calls it after the pieces' lanes are ended, before anything that waits for the system starts. With one piece
+  (a tick on one thread, little work) nothing is logged and the statements run where they are: that path is the
+  old code. In builds that check heaps, the replay says whose it changes (`tide_heaps_allow`). A statement that
+  wasn't written through `gen_stmt` would run on the threads: the body's end checks every one was, and says
+  "internal error" otherwise.
+- **The runtime** (`tide/jobs.h`, `engine/src/jobs.c`; runtime-ownership.md): a log for each task
+  (`tide_gather`), the running task's in `tide_task_gather` where its system goes in pieces, `tide_gather_push`,
+  `tide_gather_row`, and `tide_gathered` for `done`. What `done` takes counts in the system's time and its
+  profile row now.
+- **Owned prediction**: a gathering system's `done` has its wrapper (`tide_owned_done_`), as one that owns
+  pages does.
+- What can tell: nothing in the match. What a function handed the singleton prints comes after its rows' own
+  prints. Provisional, mine: all of what qualifies, the work rule, and the schedule's line (`across threads: what
+  its entities change of Score is changed after them, in their order`).
+
+Tests:
+- `tidec_e2e_gather` (`compiler/tests/e2e/gather.tide`): 3,000 men in several archetypes, some left out; a
+  system that changes its own component, sends, and adds to two singletons (counts by a clamped index, `float2`
+  sums, a float total in a loop, a list of structs holding `this`, a list of interpolated text, a function with
+  a least, a most and a list it adds to once, behind a guard on a field it never writes); one that changes no
+  component (its `done` is the log alone); and one that reads what rows write, which stays in order. Eight ticks
+  against a pool that's one thread saying it has eight and four rounds on the platform's, in place and beside a
+  snapshot: the hash, the singletons' bytes (their handles too: the heaps handed out the same blocks) and every
+  list's elements are one thread's each tick. Under ASan with heap checks.
+- `jobs_a_gathering_systems_logs_reach_done_in_task_order` (`tests/test_jobs.c`): sixteen tasks run as thread 1
+  first, their entries (twelve bytes, and none) and rows' ends reach `done` in task order, the logs start empty
+  the next tick, and on one thread there's no log.
+- `compiler/tests/schedule/gathering.tide`: five that gather (two of them at once, on different fields), and why
+  each of six doesn't. `methods` and `shared_names` each had one that now does, and `parallel` one that would but
+  for the work rule; `measured`'s `Count` reads its total back so its chain keeps a one-thread link.
+
+### Mount & Rifle, before and after
+
+Its working tree at a145828, built against this checkout as the section below says (`BATTLE_TEST`, `ARMY`,
+release, 12 threads, hidden, `--host --seed 42 --frames 2400 --profile-warmup 1500`, its saves folder pointed at
+a scratch one through `USERPROFILE`). Before is this checkout's compiler with both changes switched off by a
+temporary flag (not kept), which prints the schedule `dev` did: 87 stages, the same chain. Two programs, ten runs
+alternating, on a machine two other sessions were building on (earlier rounds ranged from 3.5 to 13.5 ms a tick
+for one program and aren't used); each run's profile set against its own build's schedule with
+`tide schedule --measured`. Mean of five, ms a tick:
+
+| | Before | After |
+|---|---|---|
+| Waits listed in the schedule | 1,961 | 1,737 |
+| Stages deep | 87 | 77 |
+| Systems one after another | 3.54 (3.44 to 3.67) | 3.64 (3.49 to 3.72) |
+| The longest chain of waits | 3.26 (3.17 to 3.39), 92% | 3.21 (3.06 to 3.29), 88% |
+| ...systems long | 55 | 48 |
+| The match's tick on the frame's thread | 3.68 (3.55 to 3.85) | 3.60 (3.44 to 3.68) |
+| `Enlist` | 0.247 | 0.241 (in order, by the work rule) |
+| `Measure` | 0.047 | 0.063 |
+
+On the morning's one profile (the section below) the chain is 2.647 ms before and 2.544 after.
+
+What it says: **the tick is where it was**, within what the runs vary by. Fields took 224 waits and ten stages
+out, and four points off the chain's share, but the chain is real: Campaign's part is its own rows' text and
+lists one after another on `Party` (the other thread's work), and Infantry's is data that flows
+(`BotSense` writes what `BotAct` reads, `Disperse` empties what `Enlist` fills and `Gather` and `Fly` read). The
+two waits the owner named joined them through whole components; by field they still join, through what's
+really shared: `KeepInside` writes the `Trooper.position` that `BotSense` reads, and `Measure` reads the
+`Catalog` a loading system writes. `Measure` got slower because it now runs beside other systems and waits for
+a thread, which its time counts. Gathering gives this game nothing: its one gatherer of any cost, `Enlist`, only
+adds, and `TakeField` (0.003 ms) is the only system that gathers. So a heap for each field isn't worth building
+for it either: no wait on its chain is over two lists of one owner that a field would tell apart.
+
+Gaps:
+- **The third item, a `world.Set` held until the system's end**, isn't built. The log would carry it (a `Set` of
+  a component the system reads nowhere, its entity and value logged, applied in order by `done`), and it's
+  unobservable under that condition; no system of Mount & Rifle's calls `Set`, and 16 in the tree do. Still the
+  owner's to decide.
+- **A system that changes a component and reads others' through a query** (37 in the tree) still runs on one
+  thread and writes its rows in place, even where the lanes it reads through the query aren't the ones it
+  writes (`Separate` in `schedule/indexed_loops.tide`: writes `velocity`, reads others' `position`). By lanes
+  those rows are independent; `world_reads_own_writes` and the in-place writing would both have to go by them.
+- A query handed to a function, a parallel loop over a query, and everything through the World read the whole
+  component.
+- A debugger's build goes by whole components, so its schedule isn't the one `tide schedule` prints.
+- An array's elements and a struct field's own fields are one field of a singleton.
+- What's worth gathering is tidec's reckoning of the code, which counts a call as 30 whatever it does; the
+  runtime times the system whole and can't tell the rows from the log.
+- A gathering system's captures must be plain values: a row that adds a list or text it built (other than
+  interpolated text), or a value from a function of the game's, stays in order. The value could be worked out
+  in the row and its bytes logged, were scratch values able to cross threads.
+- Systems that call C never gather, whatever the C is.
+
+Validation: the whole native sanitize suite (Windows ASan, `TIDE_HEAP_CHECKS`), 3,270 of 3,274 at its one full
+run, the four all this work's and fixed: `tidec_recompile`, `tidec_asset_usage` and `tidels_tests` read freed
+memory (the gathering systems' plans were kept from one compilation to the next, in the last one's arena:
+`gather_forget`, from `schedule_bytes_reset`, which `codegen` now calls too), and `tidec_outline_game` and the
+language server's lens tests pinned the old wording. After the fix the compiler's, language server's and
+engine's tests (2,987) pass; the packages' and games' weren't run again, as it changes no generated code. On
+the web (`web-debug`, under Node, with threads): `tidec_e2e_gather`, `tidec_e2e_fields`, `tidec_e2e_ordered_split`,
+`tidec_e2e_heaps` and `tide_tests`. The docs site builds. No pinned world hash moved: nothing here changes a
+result.
 
 ## The schedule against measured time, and the one-thread reason in the editors (2026-11-13)
 
@@ -295,10 +615,12 @@ machine then agree on.
 Gaps, what still keeps code off threads, in the order the measurements above give them:
 - **A `mut` singleton keeps a per-entity system on one thread** (308 of the tree's systems, 12 of Mount & Rifle's):
   the language's rule, as each row sees what the rows before it wrote. A system that only adds to one (a count, a
-  sum, a list it appends to) could go in runs and join them in order; not designed.
+  sum, a list it appends to) could go in runs and join them in order; not designed. (Built later that day, for
+  those whose rows keep work of their own: the top section, Gathering.)
 - **A per-entity system that changes its rows' text or lists stays on one thread** (82 and 18): a heap's blocks go
   in its entities' order. Runs on threads would each need blocks of their own that the join renumbers, or a heap
-  for each chunk; not designed.
+  for each chunk; not designed. (Built later the same day: the top section. Text, lists, maps and sets; not
+  grids.)
 - **Owners C can write share one heap**, so Box3D's and Box2D's systems wait for every other such system over it
   (they wait for each other over their singleton anyway). C would have to say an owner's `where`
   (`TIDE_WHERE_<Type>` is in the header) and the compiler be told that it does.

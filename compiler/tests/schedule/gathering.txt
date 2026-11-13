@@ -1,0 +1,99 @@
+gathering: 11 systems each tick, 8 stages deep; 7 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Count  (per entity)
+         reads Unit
+         writes Score
+         across threads: what its entities change of Score is changed after them, in their order
+         alongside Sum, Keep
+stage 1  Sum  (per entity)
+         reads Unit
+         writes Score
+         across threads: what its entities change of Score is changed after them, in their order
+         alongside Count, Keep, Under, Tiny, Chain
+stage 1  Keep  (per entity)
+         reads Unit
+         writes Score, Other
+         across threads: what its entities change of Score and Other is changed after them, in their order
+         alongside Count, Sum, Under, Tiny, Chain
+
+stage 2  Under  (per entity)
+         reads Unit
+         writes Score
+         across threads: what its entities change of Score is changed after them, in their order
+         after Count: both write Score.total
+         alongside Sum, Keep
+
+stage 3  Weigh  (per entity)
+         writes Unit, Score
+         across threads: what its entities change of Score is changed after them, in their order
+         after Count: it reads Unit.weight, which this writes (and through Under)
+         after Sum: both write Score.sum; it reads Unit.weight, which this writes
+         after Keep: it reads Unit.weight, which this writes
+         after Under: it reads Unit.weight, which this writes
+         alongside Tiny, Chain
+stage 3  Tiny  (per entity)
+         reads Unit
+         writes Score
+         on one thread: it changes the singleton Score, and adding to it is most of what its rows do (gathering.tide:74)
+         after Count: both write Score.total (and through Under)
+         after Under: both write Score.total
+         alongside Sum, Keep, Weigh
+
+stage 4  Chain  (per entity)
+         reads Unit
+         writes Score
+         on one thread: it changes the singleton Score (gathering.tide:76)
+         after Count: both write Score.total (and through Under)
+         after Under: both write Score.total (and through Tiny)
+         after Tiny: both write Score.total
+         alongside Sum, Keep, Weigh
+
+stage 5  Rank  (per entity)
+         writes Unit, Score
+         on one thread: it changes the singleton Score (gathering.tide:78)
+         after Count: both write Score.total; it reads Unit.id, which this writes (and through Under)
+         after Keep: it reads Unit.id, which this writes (and through Weigh)
+         after Under: both write Score.total; it reads Unit.id, which this writes (and through Weigh)
+         after Weigh: it reads Unit.id, which this writes
+         after Tiny: both write Score.total; it reads Unit.id, which this writes (and through Chain)
+         after Chain: both write Score.total; it reads Unit.id, which this writes
+         alongside nothing
+
+stage 6  Halve  (per entity)
+         reads Unit
+         writes Score
+         on one thread: it changes the singleton Score (gathering.tide:84)
+         after Count: both write Score.total (and through Under)
+         after Under: both write Score.total (and through Tiny)
+         after Tiny: both write Score.total (and through Chain)
+         after Chain: both write Score.total (and through Rank)
+         after Rank: both write Score.total; it writes Unit.id, which this reads
+         alongside nothing
+
+stage 7  Announce  (per entity)
+         reads Unit
+         writes Score
+         on one thread: it changes the singleton Score (gathering.tide:86)
+         after Count: both write Score.total (and through Under)
+         after Under: both write Score.total (and through Tiny)
+         after Tiny: both write Score.total (and through Chain)
+         after Chain: both write Score.total (and through Rank)
+         after Rank: both write Score.total; it writes Unit.id, which this reads (and through Halve)
+         after Halve: both write Score.total
+         alongside nothing
+
+stage 8  See  (per entity)
+         writes Unit, Score
+         on one thread: it changes the singleton Score (gathering.tide:88)
+         after Count: both write Score.total (and through Under)
+         after Under: both write Score.total (and through Tiny)
+         after Tiny: both write Score.total (and through Chain)
+         after Chain: both write Score.total (and through Rank)
+         after Rank: both write Score.total (and through Halve)
+         after Halve: both write Score.total (and through Announce)
+         after Announce: both write Score.total
+         alongside nothing
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

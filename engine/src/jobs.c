@@ -130,6 +130,7 @@ typedef struct task_context {
     tide_queue *queue;
     pending_entities *pending; // Exact final keys; registered when this system joins
     bool settles;
+    tide_gather *gather; // Its log, where its system's chunks go in pieces (tide/jobs.h); else NULL
 } task_context;
 
 // The pieces each of a system's chunks runs in, from how many there are
@@ -145,6 +146,46 @@ static uint32_t pieces_for(const uint32_t chunks, const uint64_t work, const uin
 
 static TIDE_THREAD_LOCAL task_context *running;
 TIDE_THREAD_LOCAL tide_queue *tide_task_queue;
+TIDE_THREAD_LOCAL tide_gather *tide_task_gather;
+
+// A done system's tasks' logs, while its `done` runs (tide_gathered)
+static TIDE_THREAD_LOCAL const tide_gather *gathered;
+static TIDE_THREAD_LOCAL uint32_t gathered_count;
+
+void tide_gather_push(const uint32_t tag, const void *entry, const uint32_t size)
+{
+    tide_gather *log = tide_task_gather;
+    if (!log) return;
+    const uint32_t padded = (size + 7u) & ~7u;
+    if (padded < size || padded > UINT32_MAX - 8u - log->used) tide_out_of_memory();
+    const uint32_t need = log->used + 8u + padded;
+    if (need > log->room) {
+        uint32_t room = log->room ? log->room : 1024u;
+        while (room < need) room = room > UINT32_MAX / 2u ? UINT32_MAX : room * 2u;
+        log->bytes = tide_realloc(log->bytes, log->room, room);
+        log->room = room;
+    }
+    const uint32_t head[2] = {tag, size};
+    memcpy(log->bytes + log->used, head, sizeof head);
+    if (size) memcpy(log->bytes + log->used + 8u, entry, size);
+    if (padded > size) memset(log->bytes + log->used + 8u + size, 0, padded - size);
+    log->used = need;
+    log->open += tag != 0u;
+}
+
+void tide_gather_row(void)
+{
+    tide_gather *log = tide_task_gather;
+    if (!log || !log->open) return;
+    tide_gather_push(0u, NULL, 0u);
+    log->open = 0u;
+}
+
+const tide_gather *tide_gathered(uint32_t *tasks)
+{
+    *tasks = gathered_count;
+    return gathered;
+}
 
 // Profiling (tide/profile.h): the jobs', when the host gave them one; the
 // systems' first start and last end while a tick runs on threads.
@@ -195,9 +236,11 @@ static void run_task(void *world, const tide_system_tasks *system, task_context 
     tide_memory_sync(); // Its queue's pages, which another thread may have made in an earlier tick
     running = context;
     tide_task_queue = context->queue;
+    tide_task_gather = context->gather;
     system->run(world, task, pieces);
     running = NULL;
     tide_task_queue = NULL;
+    tide_task_gather = NULL;
 }
 
 // Register exact logical identities in canonical task/source order. No Entity
@@ -279,6 +322,7 @@ typedef struct tick_run {
     uint32_t *dependents;      // The systems that wait for each: system s's from first_dependent[s] to first_dependent[s + 1]
     uint32_t *first_dependent;
     tide_queue *queues;
+    tide_gather *gathers;      // Each task's log, for systems that gather (tide/jobs.h)
     pending_entities *spawned;
     atomic_uint finished;
     // The first system that may have something left to give out: every one
@@ -328,7 +372,17 @@ static void finish_tasks(tick_run *r, const uint32_t s, const uint32_t count)
     if (atomic_fetch_add(&st->done, count) + count != st->tasks) return;
     if (st->pieces > 1u && r->tick->systems[s].done) {
         tide_memory_sync(); // The pages its pieces wrote on other threads
+        // Its tasks' logs, which a system that gathers runs here in their order; and that's its time too
+        const uint64_t began = r->profile || r->costs ? tide_time_now_ns() : 0u;
+        gathered = &r->gathers[st->first];
+        gathered_count = st->tasks;
         r->tick->systems[s].done(r->world);
+        gathered = NULL;
+        gathered_count = 0u;
+        for (uint32_t task = 0; task < st->tasks; task++) r->gathers[st->first + task].used = r->gathers[st->first + task].open = 0u;
+        const uint64_t ended = r->profile || r->costs ? tide_time_now_ns() : 0u;
+        if (r->profile) note_most(&st->ended, ended);
+        if (r->costs) atomic_fetch_add_explicit(&st->spent, ended - began, memory_order_relaxed);
     }
     if (r->tick->systems[s].settles) atomic_fetch_sub(&st->settle_waiting, 1u);
     else finish_system(r, s);
@@ -381,7 +435,8 @@ static bool work_once(tick_run *r)
         const uint64_t began = r->profile || r->costs ? tide_time_now_ns() : 0u;
         if (r->profile) note_least(&st->began, began);
         for (uint32_t task = first; task < end; task++) { // Each with its own queue and handles, as on its own
-            task_context context = {&r->queues[st->first + task], &r->spawned[st->first + task], system->settles};
+            task_context context = {&r->queues[st->first + task], &r->spawned[st->first + task], system->settles,
+                                    st->pieces > 1u ? &r->gathers[st->first + task] : NULL};
             run_task(r->world, system, &context, task, st->pieces);
         }
         const uint64_t ended = r->profile || r->costs ? tide_time_now_ns() : 0u;
@@ -788,6 +843,21 @@ void tide_ticks_settle(void)
 static TIDE_THREAD_LOCAL tide_queue *kept_queues;
 static TIDE_THREAD_LOCAL uint32_t kept_count;
 
+// ...and each task's log, its bytes kept the same way
+static TIDE_THREAD_LOCAL tide_gather *kept_gathers;
+static TIDE_THREAD_LOCAL uint32_t kept_gather_count;
+
+static tide_gather *task_gathers(const uint32_t tasks)
+{
+    if (tasks > kept_gather_count) {
+        kept_gathers = tide_realloc(kept_gathers, kept_gather_count * sizeof *kept_gathers, tasks * sizeof *kept_gathers);
+        memset(&kept_gathers[kept_gather_count], 0, (tasks - kept_gather_count) * sizeof *kept_gathers);
+        kept_gather_count = tasks;
+    }
+    for (uint32_t i = 0; i < tasks; i++) kept_gathers[i].used = kept_gathers[i].open = 0u;
+    return kept_gathers;
+}
+
 static tide_queue *task_queues(const uint32_t tasks)
 {
     if (tasks > kept_count) {
@@ -869,6 +939,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
     }
     free(filled);
     r.queues = task_queues(tasks);
+    r.gathers = task_gathers(tasks);
     r.spawned = zeroed(tasks, sizeof *r.spawned);
     atomic_init(&r.finished, 0u);
     atomic_init(&r.front, 0u);
@@ -932,7 +1003,7 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
         pending_entities *spawned = system->settles ? zeroed(tasks, sizeof *spawned) : NULL;
         const uint64_t began = profile ? tide_time_now_ns() : ended;
         for (uint32_t task = 0; task < tasks; task++) {
-            task_context context = {NULL, spawned ? &spawned[task] : NULL, system->settles};
+            task_context context = {NULL, spawned ? &spawned[task] : NULL, system->settles, NULL};
             run_task(world, system, &context, task, 1u);
         }
         if (spawned) settle_system(tick, tasks, spawned);

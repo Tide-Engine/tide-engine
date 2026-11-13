@@ -1,5 +1,58 @@
 # Benchmarks
 
+## A heap in runs (2026-11-13, later)
+
+schedule-and-threads.md, top section: a per-entity system that changes its own rows' text and lists goes through
+its entities in runs on threads, each run's blocks in a heap of its own. Release, Windows, 7900X, 12 threads, a
+shared machine (other sessions building); "before" is `dev` at 86c8daae9 built in a scratch worktree, runs
+alternating with this build's.
+
+The fixture `compiler/tests/e2e/row_heaps.tide` (900 entities whose system changes a list, text, a list of text,
+a map, a set and a long list, 400 `Math.Sin` and `Math.Cos` a row; a second in runs that spawns and sends; three
+systems on one thread). Its test times it from a release build with `TIDE_ROW_HEAPS_TIME` set
+(`row_heaps_time`): 200 ticks after 20, a snapshot and a hash every tick, mean ms a tick, three rounds:
+
+| | One thread | The pool's 12 |
+|---|---|---|
+| Before | 7.49, 7.74, 7.61 | 7.69, 8.22, 8.27 |
+| In runs | 7.90, 7.94, 8.05 | 1.93, 2.07, 2.26 |
+
+What's left on the pool is the three systems on one thread, the snapshot and the hash. One thread pays about 5%:
+the runs' heaps spread the same blocks over more pages, and a block let go in another run's heap goes back
+through the join.
+
+Mount & Rifle (its working tree at a145828, `BATTLE_TEST` and `ARMY`, built through a scratch
+`TIDE_EXTERNAL_DIRS` folder, hidden, `--host --seed 42 --frames 2400 --profile-warmup 1500`, read with
+`tidec --schedule --measured`), two runs each, mean ms a tick:
+
+| | Before | In runs |
+|---|---|---|
+| `Campaign.Roam` | 0.332, 0.357 (one thread) | 0.202, 0.181 (across threads) |
+| `Campaign.Upkeep` | 0.083, 0.081 (one thread) | 0.036, 0.030 (across threads) |
+| `Campaign.Travel` | 0.219, 0.227 | 0.268, 0.234 (one thread: it sets `Place` through its World) |
+| `Campaign.Outfit` | 0.088, 0.089 | 0.109, 0.095 (one thread: it sets `Inventory` through its World) |
+| `Infantry.FallOnField` | 0.088, 0.082 | 0.088, 0.082 (one thread: it sets `Soldier` through its World) |
+| The systems one after another | 3.477, 3.352 | 3.543, 3.274 |
+| The longest chain of waits | 3.207, 3.104 | 3.261, 3.019 |
+| `match` phase | 3.69, 3.53 | 3.82, 3.48 |
+
+Two of the five systems the heap was said to keep on one thread were kept by it alone; the other three also `Set`
+through their World. The tick as a whole moved less than one run differs from the next on this machine (the
+morning's figures for the same build were 2.865 and 2.647: other sessions were building during these).
+
+The list benchmarks (`bench/versus`, `--threads 1`, the Tide way's median ms a tick, four or five alternating
+runs; none of their systems is in runs, so this is what every heap lookup pays for the run in a handle):
+
+| | Before | After |
+|---|---|---|
+| `versus_buckets` (a list of lists) | 0.0637-0.0653 | 0.0647-0.0655 (and two runs at 0.069 and 0.073 while a build ran) |
+| `versus_lookup` (maps) | 1.185-1.212 | 1.218-1.248 |
+| `versus_churn` | 31.9, 48.3 | 32.1, 55.6 (its two runs differ by more than the builds do) |
+
+Maps came out about 2% slower. The first version was 5-6% slower on both: `tide_heaps_of` had the making of a
+run's heaps inline in every lookup. That's a call now, taken only for a run past the first, and a flush's three
+fields are side by side.
+
 ## A heap for each owner (2026-11-13)
 
 schedule-and-threads.md, top section: each component's, singleton's and event's text and lists in a heap of its

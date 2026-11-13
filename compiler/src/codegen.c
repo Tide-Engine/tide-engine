@@ -271,7 +271,18 @@ typedef struct gen {
     VEC(const struct stmt *) ix_locals; // Locals whose list a loop keeps its index of (loop_index.list_local)
     VEC(const struct stmt *) ix_stamped; // ...declared, where the code is, with their stamps' C names
     VEC(const char *) ix_stamp_names;
+    // A gathering system's code being generated: its plan, and which of its statements were written as entries
+    // of the log (gather_codegen.inc)
+    const struct gather_plan *gather;
+    uint64_t gather_hit;
 } gen;
+
+struct gather_plan;
+static int gather_index(const struct gather_plan *plan, const stmt *s);
+static void gen_gather_stmt(gen *g, const decl *sys, const struct gather_plan *plan, int index);
+static void gen_gather_types(gen *g, const decl *sys, const struct gather_plan *plan);
+static const struct gather_plan *system_gather_plan(const program *prog, const decl *sys);
+static int gather_count(const struct gather_plan *plan);
 
 static int rows_cache_count(const gen *g);
 
@@ -1225,7 +1236,9 @@ static const char *decl_where(const decl *d)
 {
     if (d->is_local || !d->heap_id) return world_where(d->is_local);
     sb b = {0};
-    sb_printf(&b, "TIDE_WHERE_%s", type_cname(d));
+    // One a system changes in runs: in the heap of the run this thread is on (tide/heap.h, A heap in runs)
+    if (d->heap_runs) sb_printf(&b, "TIDE_WHERE_RUN(TIDE_IN_MATCH, %uu)", (unsigned)d->heap_id);
+    else sb_printf(&b, "TIDE_WHERE_%s", type_cname(d));
     return b.data;
 }
 
@@ -8294,6 +8307,12 @@ static void gen_block_run(gen *g)
 static void gen_stmt_now(gen *g, const stmt *s);
 static void gen_stmt(gen *g, const stmt *s)
 {
+    // A gathering system's statement that changes its singleton: logged where the rows are on threads
+    const int gathered = g->gather && !g->routine && !g->frame ? gather_index(g->gather, s) : -1;
+    if (gathered >= 0) {
+        gen_gather_stmt(g, g->code, g->gather, gathered);
+        return;
+    }
     gen_stmt_now(g, s);
     gen_ix_stamp(g, s);
     ix_check(g, s);
@@ -16248,6 +16267,8 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
     const bool destroying = variant == BODY_DESTROYING, guard = variant == BODY_GUARD;
     sb *o = &g->c;
     const char *name = decl_cname(sys);
+    const struct gather_plan *gathering = !guard && sys->gathers ? system_gather_plan(g->prog, sys) : NULL;
+    if (gathering && variant == BODY_SYSTEM) gen_gather_types(g, sys, gathering);
     if (!guard) {
         gen_par_heads(g, sys);
         gen_sort_heads(g, sys, NULL, sys->body);
@@ -16393,6 +16414,8 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
     }
     gen_shard_system_entry(g, sys); // A sharded game's: what its shard owns, and what waits on the border
     gen_grid_caches(g);
+    g->gather = gathering;
+    g->gather_hit = 0;
     const int statements = sys->body->stmts.count - (destroying ? 1 : 0);
     for (int i = 0; i < statements; i++) {
         if (sys->preparation_cpu) gen_worker_checkpoint(g);
@@ -16424,6 +16447,14 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
         line(g, o, "return %s;", condition_text(g, tail->cond));
     }
     g->reserved_send = false;
+    // (Were one of a gathering system's statements written some other way than as a statement, it would run in
+    // the rows, on threads, out of order)
+    if (gathering && variant == BODY_SYSTEM && (gather_count(gathering) > 64
+                                                || g->gather_hit != (gather_count(gathering) == 64 ? ~UINT64_C(0) : (UINT64_C(1) << gather_count(gathering)) - 1u))) {
+        diag_error(sys->at, "internal error: system '" STR_FMT "' gathers into its singleton, and a statement that changes it wasn't "
+                   "written to its log; please report this, with the system", STR_ARG(sys->name));
+    }
+    g->gather = NULL;
     close_list_caches(g);
     g->indent = 0;
     sb_put(o, "}\n");
@@ -16720,6 +16751,8 @@ static bool filters_owner(const gen *g, const decl *sys, const int a)
 #include "lane_writes_codegen.inc"
 #include "lane_reads_codegen.inc"
 #include "row_lanes_codegen.inc"
+#include "schedule_bytes_codegen.inc"
+#include "gather_codegen.inc"
 
 static bool changes_component(const decl *sys, const int c, const bool read_only)
 {
@@ -21009,6 +21042,19 @@ static void gen_extern_filtered_call(gen *g, const decl *sys, const int a, const
 // are copied before publication, read in place, and compared only once at end.
 static void gen_canonical_live_chunk(gen *g, int a);
 
+// Once every run of a system that changes its rows' text or lists is done: what the runs kept of each other's
+// heaps goes back, for each owner it changes (tide_heap_runs_join).
+static void gen_heap_runs_join(gen *g, const decl *sys)
+{
+    bool done[TIDE_HEAP_IDS] = {false};
+    for (int i = 0; i < sys->heap_owners.count; i++) {
+        const uint32_t id = sys->heap_owners.items[i]->heap_id;
+        if (done[id]) continue;
+        done[id] = true;
+        sb_printf(&g->c, "    tide_heap_runs_join(tide_heaps_of(&tide_w->heap, %uu));\n", id);
+    }
+}
+
 static void gen_canonical_lanes(gen *g, const decl *sys, const bool done)
 {
     sb *o = &g->c;
@@ -21423,15 +21469,28 @@ static void gen_system_run(gen *g, const decl *sys)
     if (world_heap(prog, view) && text && view) sb_put(&clear_text, " tide_heaps_flush(&tide_l->heap);");
     // A system's blocks go back to the heaps of the owners it changes, which
     // are all it may touch while others run
+    // (What a gathering system's log does at each row's end, where one thread's rows would do it: tide_replay_)
+    sb replay_clear = {0};
+    if (clear_text.data) sb_put(&replay_clear, clear_text.data);
     if (world_heap(prog, false) && text && !view && sys->writes_text) {
+        sb flush = {0};
         bool done[TIDE_HEAP_IDS] = {false};
         for (int i = 0; i < sys->heap_owners.count; i++) {
             const decl *owner = sys->heap_owners.items[i];
             const uint32_t id = owner ? owner->heap_id : 0u;
             if (done[id]) continue;
             done[id] = true;
-            sb_printf(&clear_text, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu));", id);
+            // One changed in runs: the run's own heap, which has what its rows let go of
+            if (owner && owner->heap_runs) {
+                sb_printf(&flush, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu | tide_heap_run_where >> TIDE_WHERE_HEAP_SHIFT));", id);
+            } else sb_printf(&flush, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu));", id);
         }
+        // A gathering system's runs on threads change no heap: the log does, a row at a time
+        if (sys->gathers) sb_printf(&clear_text, " if (tide_task_gather) tide_gather_row(); else {%s }", flush.data ? flush.data : "");
+        else sb_put(&clear_text, flush.data ? flush.data : "");
+        sb_put(&replay_clear, flush.data ? flush.data : "");
+    } else if (sys->gathers) {
+        sb_put(&clear_text, " tide_gather_row();");
     }
     const char *clear = clear_text.data ? clear_text.data : "";
 
@@ -21606,7 +21665,8 @@ static void gen_system_run(gen *g, const decl *sys)
         const bool prepared = canonical;
         // Runs on several threads write one chunk's pages at once: begun for
         // all of them before (tide_own_<System>), ended after (tide_done_)
-        const bool around = ordered && system_owns(g, sys);
+        const bool heap_runs = ordered && system_heap_runs(sys);
+        const bool around = ordered && (system_owns(g, sys) || heap_runs);
         bool marked = false;
         for (int a = 0; prepared && a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
         if (prepared) {
@@ -21620,7 +21680,17 @@ static void gen_system_run(gen *g, const decl *sys)
             gen_canonical_system_keys(g, sys);
             if (marked) sb_put(o, "    if (!tide_busy) tide_key_count = 0u; // No row gets past its tests: no walk\n");
             // The task's run of the order: all of it, or its share of the keys
-            if (ordered) sb_put(o, "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_task / tide_pieces);\n"
+            // One that changes its rows' text or lists: the order in runs that are the same however many tasks
+            // there are, as many as there are entities up to TIDE_HEAP_RUNS, and the task's share of the runs.
+            // Each run's blocks come from its own heap (tide/heap.h, A heap in runs)
+            if (heap_runs) sb_put(o, "    const uint32_t tide_runs = tide_key_count < TIDE_HEAP_RUNS ? tide_key_count : TIDE_HEAP_RUNS;\n"
+                                     "    const uint32_t tide_run_to = (uint32_t)((uint64_t)tide_runs * (tide_task + 1u) / tide_pieces);\n"
+                                     "    const uint32_t tide_run_was = tide_heap_run_enter(0u);\n"
+                                     "    for (uint32_t tide_run = (uint32_t)((uint64_t)tide_runs * tide_task / tide_pieces); tide_run < tide_run_to; tide_run++) {\n"
+                                     "    (void)tide_heap_run_enter(tide_run);\n"
+                                     "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_run / tide_runs);\n"
+                                     "    const uint32_t tide_key_to = (uint32_t)((uint64_t)tide_key_count * (tide_run + 1u) / tide_runs);\n");
+            else if (ordered) sb_put(o, "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_task / tide_pieces);\n"
                                    "    const uint32_t tide_key_to = (uint32_t)((uint64_t)tide_key_count * (tide_task + 1u) / tide_pieces);\n");
             else sb_put(o, "    const uint32_t tide_key_from = 0u, tide_key_to = tide_key_count;\n");
         sb_put(o,
@@ -21676,8 +21746,10 @@ static void gen_system_run(gen *g, const decl *sys)
             }
         }
         if (canonical) sb_put(o, "        default: break;\n        }\n        tide_key_at = tide_key_end;\n    }\n");
+        if (heap_runs) sb_put(o, "    }\n    tide_heap_run_leave(tide_run_was);\n");
         if (prepared && around) sb_put(o, "    if (tide_pieces == 1u) {\n");
         if (prepared) gen_canonical_lanes(g, sys, true);
+        if (heap_runs) gen_heap_runs_join(g, sys); // Every run was this task's
         if (prepared && around) sb_put(o, "    }\n");
         if (marked) gen_canonical_live_done(g, sys);
         if (!any) {
@@ -21696,15 +21768,22 @@ static void gen_system_run(gen *g, const decl *sys)
     sb_put(o, "}\n\n");
     if (fast_task) gen_system_cached_task(g, sys, rows);
     if (!view && split && system_owns(g, sys)) gen_system_pieces(g, sys);
-    if (ordered && system_owns(g, sys)) {
-        for (int done = 0; done < 2; done++) {
+    if (ordered && sys->gathers) gen_gather_function(g, sys, replay_clear.data ? replay_clear.data : "");
+    if (ordered && (system_owns(g, sys) || sys->gathers || system_heap_runs(sys))) {
+        for (int done = system_owns(g, sys) ? 0 : 1; done < 2; done++) {
             sb_printf(o, "static void tide_%s_%s(void *tide_world_v)\n{\n    tide_world *tide_w = tide_world_v;\n", done ? "done" : "own", name);
-            bool marked = false;
-            for (int a = 0; a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
-            gen_canonical_live(g, sys, LIVE_WHOLE);
-            if (marked) sb_put(o, "    (void)tide_busy;\n");
-            gen_canonical_lanes(g, sys, done);
-            if (marked) gen_canonical_live_done(g, sys);
+            if (system_owns(g, sys)) {
+                bool marked = false;
+                for (int a = 0; a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
+                gen_canonical_live(g, sys, LIVE_WHOLE);
+                if (marked) sb_put(o, "    (void)tide_busy;\n");
+                gen_canonical_lanes(g, sys, done);
+                if (marked) gen_canonical_live_done(g, sys);
+            }
+            // What its runs kept of each other's heaps goes back (tide/heap.h, A heap in runs)
+            if (done && system_heap_runs(sys)) gen_heap_runs_join(g, sys);
+            // What its runs logged for its singleton, in their order (gather_codegen.inc)
+            if (done && sys->gathers) sb_printf(o, "    tide_replay_%s(tide_w);\n", name);
             sb_put(o, "    (void)tide_w;\n}\n\n");
         }
     }
@@ -23656,10 +23735,14 @@ static void gen_api(gen *g)
                          "static void tide_owned_run_%s(void *world, uint32_t task, uint32_t pieces)\n{\n"
                          "    tide_world *w = world;\n    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_task_%s(world, task, pieces);\n}\n",
                       name, i, name, name, i, name);
-            if ((system_splits(sys) || system_splits_in_order(sys)) && system_owns(g, sys)) {
+            const bool owns = (system_splits(sys) || system_splits_in_order(sys)) && system_owns(g, sys);
+            if (owns) {
                 sb_printf(o, "static void tide_owned_own_%s(void *world)\n{\n    tide_world *w = world;\n"
                              "    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_own_%s(world);\n}\n", name, i, name);
-                if (!sys->extern_system) sb_printf(o, "static void tide_owned_done_%s(void *world)\n{\n    tide_world *w = world;\n"
+            }
+            // (One that gathers has its log to run, whether or not it changes a component)
+            if ((owns && !sys->extern_system) || (system_splits_in_order(sys) && (sys->gathers || system_heap_runs(sys)))) {
+                sb_printf(o, "static void tide_owned_done_%s(void *world)\n{\n    tide_world *w = world;\n"
                              "    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_done_%s(world);\n}\n", name, i, name);
             }
         }
@@ -23730,6 +23813,7 @@ static void gen_api(gen *g)
             if (owns) sb_printf(o, "tide_%sown_%s, ", prog->owned_prediction ? "owned_" : "", name);
             else sb_put(o, "NULL, ");
             if (owns && !sys->extern_system) sb_printf(o, "tide_%sdone_%s, ", prog->owned_prediction ? "owned_" : "", name); // One written in C made them the world's own
+            else if (ordered && (sys->gathers || system_heap_runs(sys))) sb_printf(o, "tide_%sdone_%s, ", prog->owned_prediction ? "owned_" : "", name); // Its log, run in order
             else sb_put(o, "NULL, ");
             int own_waits = 0;
             for (int k = 0; k < sys->waits.count; k++) own_waits += !sys->waits.items[k].through;
@@ -27630,8 +27714,13 @@ bool codegen(program *prog, const codegen_options *opts)
     compile_progress("Generating C", NULL, 0, 0);
     // Both memo tables borrow this compilation's arena, including their backing
     // arrays. A watcher resets that arena before compiling the next program.
-    memset(&lane_memo, 0, sizeof lane_memo);
-    memset(&read_memo, 0, sizeof read_memo);
+    schedule_bytes_reset(); // (...and the gathering systems' plans, which borrow it too)
+    // A build for a debugger copies each row whole (system_rows_plain), so its schedule goes by whole components
+    if (opts->split_plumbing && !prog->rows_whole) {
+        prog->rows_whole = true;
+        analyze_parallelism(prog);
+        schedule_bytes_reset();
+    }
     // What a release leaves out, for a build's report: the assets nothing uses (said once the pack is made)
     const bool reported = build_report_current() && !opts->build_program;
     const int declared_assets = prog->assets.count;

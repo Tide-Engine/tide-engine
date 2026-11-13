@@ -12,14 +12,14 @@ stage 2  Count  (per entity)
          reads Body
          writes Score
          on one thread: it changes the singleton Score (measured.tide:10)
-         after Move: it writes Body, which this reads
+         after Move: it writes Body.position, which this reads
          alongside Think
 
 stage 3  Settle  (per entity)
          reads Score
          writes Body
-         after Move: both write Body (and through Count)
-         after Count: it reads Body, which this writes; it writes Score, which this reads
+         after Move: it reads Body.velocity, which this writes (and through Count)
+         after Count: it writes Score, which this reads
          alongside Think
 
 Views, every frame in this order (they only read, so nothing waits):
@@ -37,9 +37,9 @@ Measured (measured.json, 100 ticks):
 
 That chain, last to first (a wait that isn't on it costs the tick nothing):
     0.500 ms  Settle  (across threads)
-               after Count: it reads Body, which this writes; it writes Score, which this reads
+               after Count: it writes Score, which this reads
     2.000 ms  Count  (on one thread: it changes the singleton Score (measured.tide:10))
-               after Move: it writes Body, which this reads
+               after Move: it writes Body.position, which this reads
     1.000 ms  Move  (across threads)
 
 The costliest systems:

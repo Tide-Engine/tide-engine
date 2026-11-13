@@ -90,7 +90,9 @@ static char *view_offset(const char *at)
 // world's with the handle's id (tide_heaps_of), as an expression. Kept short,
 // as the block's below is: Windows' debugger engine gives up on a text's
 // DisplayString past some length, and never comes back from one a little
-// longer.
+// longer. A block in a heap of a run past the first (tide/heap.h, A heap in
+// runs) isn't found for that reason: its page's place below is past its
+// owner's first heap's, and reads as memory that isn't there.
 static char *view_heap(const char *at)
 {
     sb b = {0};
@@ -473,11 +475,11 @@ static void write_lldb(const gen *g, sb *o)
     sb_putn(o, (const char *)tide_debug_views_py, tide_debug_views_py_size);
     sb_printf(o, "\n# The runtime's layout of heaps and lists (tide/text.h, tide/heap.h, tide/list.h)\n"
                  "TIDE_IN_SCRATCH = %u\nTIDE_WHERE_SHIFT = %u\nTIDE_HANDLE_OFFSET = 0x%llX\nTIDE_PACK_BASE = 0x%llX\n"
-                 "TIDE_HEAP_ID_BITS = %u\n"
+                 "TIDE_HEAP_ID_BITS = %u\nTIDE_HEAP_RUN_BITS = %u\nTIDE_HANDLE_RUN_SHIFT = %u\n"
                  "TIDE_SCRATCH_SHIFT = %u\nTIDE_SCRATCH_BYTES = %u\nTIDE_HEAP_PAGE_SHIFT = %u\n"
                  "TIDE_LIST_CHUNKED = 0x%X\nTIDE_LIST_ASSET = 0x%X\nTIDE_LIST_CHUNK = %u\n",
               TIDE_IN_SCRATCH, TIDE_WHERE_SHIFT, (unsigned long long)TIDE_HANDLE_OFFSET, (unsigned long long)TIDE_PACK_BASE,
-              TIDE_HEAP_ID_BITS, TIDE_SCRATCH_SHIFT, TIDE_SCRATCH_BYTES, TIDE_HEAP_PAGE_SHIFT, TIDE_LIST_CHUNKED, TIDE_LIST_ASSET,
+              TIDE_HEAP_ID_BITS, TIDE_HEAP_RUN_BITS, TIDE_HANDLE_RUN_SHIFT, TIDE_SCRATCH_SHIFT, TIDE_SCRATCH_BYTES, TIDE_HEAP_PAGE_SHIFT, TIDE_LIST_CHUNKED, TIDE_LIST_ASSET,
               (unsigned)TIDE_LIST_CHUNK);
     sb_put(o, "\n# The game's own types: their fields that C's types don't say enough about\nTIDE_TYPES = {\n");
     const view_types types = view_collect(g);

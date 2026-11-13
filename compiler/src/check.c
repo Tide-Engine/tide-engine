@@ -23016,6 +23016,15 @@ static void assign_heaps(checker *c)
             taken[d->heap_id] = true;
         }
     }
+    // The owners a system changes in runs: what code makes in their memory goes in the heap of the run it is on
+    for (int l = 0; l < 3; l++) {
+        for (int i = 0; i < counts[l]; i++) lists[l][i]->heap_runs = false;
+    }
+    for (int i = 0; i < prog->systems.count; i++) {
+        const decl *sys = prog->systems.items[i];
+        if (!system_heap_runs(sys)) continue;
+        for (int k = 0; k < sys->heap_owners.count; k++) sys->heap_owners.items[k]->heap_runs = true;
+    }
     prog->heap_ids.count = 0;
     vec_push(prog->heap_ids, (uint16_t)0);
     for (uint32_t id = 1; id < TIDE_HEAP_IDS; id++) {

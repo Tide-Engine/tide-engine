@@ -21,13 +21,16 @@ static bool in_world(const uint32_t where)
 
 // Whether a list at `where` has a block of its own to change: in its world's
 // heap, or in the scratch area for a list that's no world's. One that doesn't
-// borrows another's, which stays as it is.
+// borrows another's, which stays as it is. A world's own block may be in the
+// heap of another run than `where` says (tide/heap.h, A heap in runs): it is
+// changed where it is, through its own heap, and what's made for it goes in
+// `where`'s.
 static bool own_block(const tide_list l, const uint32_t where)
 {
     if (tide_pack_holds(l.at)) return false;
     const tide_block *b = tide_block_at(l.at);
     if (b && b->b == TIDE_LIST_ASSET) return false;
-    return in_world(where) ? tide_handle_where(l.at) == where : tide_handle_where(l.at) == TIDE_IN_SCRATCH;
+    return in_world(where) ? tide_handle_in(l.at, where) : tide_handle_where(l.at) == TIDE_IN_SCRATCH;
 }
 
 // A list in chunks: its block lists each chunk's heap offset.
@@ -203,10 +206,14 @@ static tide_handle new_block(const uint32_t where, const uint32_t capacity, cons
 // world's others, or left in the scratch area, which goes back in one piece.
 static void drop_block(const uint32_t where, const tide_handle at)
 {
-    tide_heap *heap = tide_heap_of(where);
-    if (!heap || !at || tide_handle_where(at) != where) return;
+    if (!tide_heap_of(where) || !at || !tide_handle_in(at, where)) return;
+    tide_heap *heap = tide_heap_of(tide_handle_where(at)); // Its own: the heap of the run it was made in
     const tide_block *b = tide_heap_block(heap, OFFSET(at));
-    if (b->b == TIDE_LIST_ASSET) tide_asset_drop(heap, (const uint8_t *)(b + 1), OFFSET(at));
+    if (b->b == TIDE_LIST_ASSET) {
+        // Another run's heap's leases are that run's thread's meanwhile
+        if (tide_heap_away(heap)) tide_heap_drop_later(heap, (const uint8_t *)(b + 1), OFFSET(at));
+        else tide_asset_drop(heap, (const uint8_t *)(b + 1), OFFSET(at));
+    }
     if (b->b & TIDE_LIST_CHUNKED) {
         const uint32_t chunks = b->b & ~TIDE_LIST_CHUNKED;
         for (uint32_t k = 0; k < chunks; k++) tide_heap_release(heap, directory((tide_block *)(uintptr_t)b)[k]);
@@ -225,7 +232,9 @@ static void grow_chunks(tide_list *l, const uint32_t need, const uint32_t size, 
     const uint32_t count = b ? b->a : 0;
     const uint32_t per = TIDE_LIST_CHUNK / size;
     const uint32_t chunks = (need + per - 1u) / per;
-    const uint32_t kept = b && own && (b->b & TIDE_LIST_CHUNKED) ? b->b & ~TIDE_LIST_CHUNKED : 0u;
+    // Its chunks stay only in the heap that gives it more: a block lists its chunks by their offsets there. A
+    // list made in another run's heap moves here whole, as one that wasn't in chunks does
+    const uint32_t kept = b && own && (b->b & TIDE_LIST_CHUNKED) && tide_handle_where(l->at) == where ? b->b & ~TIDE_LIST_CHUNKED : 0u;
 
     uint64_t block = OFFSET(l->at);
     if (!kept || directory_room(b) < chunks) {
@@ -380,6 +389,7 @@ static void cut(tide_list *l, const uint32_t count, const uint32_t size, const u
         tide_block_write(l->at)->a = count;
         return;
     }
+    heap = tide_heap_of(tide_handle_where(l->at)); // Its own: the heap of the run it was made in
     tide_block *b = tide_heap_write(heap, OFFSET(l->at));
     const uint32_t had = b->a;
     if (!(b->b & TIDE_LIST_CHUNKED)) {
@@ -458,7 +468,7 @@ void tide_list_set(tide_list *to, const tide_list value, const uint32_t size, co
     const int32_t count = tide_list_count(value);
     tide_asset_data *data = tide_asset_list(value);
     if (!data) data = tide_asset_pack(value, size);
-    const tide_asset_data *kept = to->at && tide_handle_where(to->at) == where ? tide_asset_list(*to) : NULL;
+    const tide_asset_data *kept = to->at && tide_handle_in(to->at, where) ? tide_asset_list(*to) : NULL;
     if (data && kept && memcmp(data->id, kept->id, 32) == 0) return;
     if (data && (!to->at || !own_block(*to, where))) {
         tide_heap *heap = tide_heap_of(where);
@@ -476,7 +486,10 @@ void tide_list_set(tide_list *to, const tide_list value, const uint32_t size, co
     if (count == 0 || !reserve(to, (uint32_t)count, size, where)) return;
     tide_block_write(to->at)->a = (uint32_t)count;
     copy_elements(*to, value, (uint32_t)count, size);
-    if (data) tide_asset_origin_list(tide_heap_of(where), *to, data);
+    // Where its elements came from, a hint for packing it: left out for a block kept in another run's heap,
+    // whose hints are that run's thread's meanwhile
+    tide_heap *home = tide_heap_of(tide_handle_where(to->at));
+    if (data && !tide_heap_away(home)) tide_asset_origin_list(home, *to, data);
 }
 
 void tide_list_prepare_borrowed(tide_list *l, const uint32_t size, const uint32_t where)

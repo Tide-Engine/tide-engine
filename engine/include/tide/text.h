@@ -232,9 +232,12 @@ tide_str tide_str_typed(const tide_typed *typed);
 // block starts at a multiple of 16, so its offset is kept from bit 8 up and a
 // handle stays a few bytes as a varint. A `where` says the same: the world in
 // its low two bits and the heap's id above them, so TIDE_IN_MATCH alone is the
-// match's own heap, and a handle is in a field's memory when its `where` is
-// the field's. The scratch area's handles have no id: their offset is all 62
-// bits.
+// match's own heap. An owner's heap is in runs (tide/heap.h, A heap in runs):
+// a block also says which run's it is in, above its offset, and a `where`
+// which run's heap blocks made there go in, above the id. So a handle is in a
+// field's memory when its `where` is the field's but for the run
+// (tide_handle_in): a run's rows have blocks made in other runs. The scratch
+// area's handles have no id or run: their offset is all 62 bits.
 typedef uint64_t tide_handle;
 #define TIDE_WHERE_SHIFT 62u
 #define TIDE_HANDLE_OFFSET ((UINT64_C(1) << TIDE_WHERE_SHIFT) - 1u)
@@ -255,9 +258,15 @@ typedef uint64_t tide_handle;
 
 // A world's `where` for the heap with that id.
 #define TIDE_WHERE(world, id) ((uint32_t)(world) | (uint32_t)(id) << TIDE_WHERE_HEAP_SHIFT)
+// ...of an owner a system changes in runs: what this thread makes there goes
+// in the heap of the run it is on (tide/heap.h), the owner's first outside runs.
+#define TIDE_WHERE_RUN(world, id) (TIDE_WHERE(world, id) | tide_heap_run_where)
+// A `where` without its run: whose memory, whichever run's heap.
+#define TIDE_WHERE_OWNER ((1u << TIDE_WHERE_RUN_SHIFT) - 1u)
 
-// Where a handle's block is (a world and its heap's id, or TIDE_IN_SCRATCH),
-// the world alone, its offset there, and the handle of an offset there.
+// Where a handle's block is (a world, its heap's id and the run, or
+// TIDE_IN_SCRATCH), the world alone, its offset there, and the handle of an
+// offset there.
 static inline uint32_t tide_handle_world(const tide_handle at)
 {
     return (uint32_t)(at >> TIDE_WHERE_SHIFT);
@@ -265,18 +274,28 @@ static inline uint32_t tide_handle_world(const tide_handle at)
 static inline uint32_t tide_handle_where(const tide_handle at)
 {
     const uint32_t world = (uint32_t)(at >> TIDE_WHERE_SHIFT);
-    return world == TIDE_IN_SCRATCH ? world : TIDE_WHERE(world, (uint32_t)at & (TIDE_HEAP_IDS - 1u));
+    if (world == TIDE_IN_SCRATCH) return world;
+    // The run, moved from its place in a handle to its place in a `where` in one go
+    return TIDE_WHERE(world, (uint32_t)at & (TIDE_HEAP_IDS - 1u))
+         | ((uint32_t)(at >> (TIDE_HANDLE_RUN_SHIFT - TIDE_WHERE_RUN_SHIFT)) & (TIDE_HEAP_RUNS - 1u) << TIDE_WHERE_RUN_SHIFT);
 }
 static inline tide_handle tide_handle_offset(const tide_handle at)
 {
-    const tide_handle offset = at & TIDE_HANDLE_OFFSET;
-    return (uint32_t)(at >> TIDE_WHERE_SHIFT) == TIDE_IN_SCRATCH ? offset : offset >> TIDE_HEAP_ID_BITS << 4;
+    if ((uint32_t)(at >> TIDE_WHERE_SHIFT) == TIDE_IN_SCRATCH) return at & TIDE_HANDLE_OFFSET;
+    return (at & ((UINT64_C(1) << TIDE_HANDLE_RUN_SHIFT) - 1u)) >> TIDE_HEAP_ID_BITS << 4;
 }
 static inline tide_handle tide_handle_of(const uint32_t where, const tide_handle offset)
 {
     const uint32_t world = where & TIDE_WHERE_WORLD;
     if (world == TIDE_IN_SCRATCH) return (tide_handle)world << TIDE_WHERE_SHIFT | offset;
-    return (tide_handle)world << TIDE_WHERE_SHIFT | offset << TIDE_HANDLE_BLOCK_SHIFT | where >> TIDE_WHERE_HEAP_SHIFT;
+    return (tide_handle)world << TIDE_WHERE_SHIFT | (tide_handle)(where >> TIDE_WHERE_RUN_SHIFT & (TIDE_HEAP_RUNS - 1u)) << TIDE_HANDLE_RUN_SHIFT
+         | offset << TIDE_HANDLE_BLOCK_SHIFT | (where >> TIDE_WHERE_HEAP_SHIFT & (TIDE_HEAP_IDS - 1u));
+}
+// Whether a handle's block is in the memory `where` says: the same world and
+// heap, whichever run's.
+static inline bool tide_handle_in(const tide_handle at, const uint32_t where)
+{
+    return ((tide_handle_where(at) ^ where) & TIDE_WHERE_OWNER) == 0;
 }
 
 typedef struct tide_text {

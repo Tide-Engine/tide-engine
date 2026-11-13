@@ -1,5 +1,29 @@
 # ECS and simulation state
 
+## A heap in runs (2026-11-13, later)
+
+An owner's heap is 32 heaps, one for each run of the entities of a system that changes its rows' text and lists
+on threads (`tide/heap.h`, A heap in runs; `tide_heap.runs`, made when one past the first is first asked for). A
+handle and a `where` say the run above the offset and the id; run 0 is the heap there was, and its handles are
+the bits they were. A field's own block is one in its owner's memory whichever run's heap it's in
+(`tide_handle_in`), changed and released through its own heap; a list in chunks moves whole into the heap of the
+run that gives it more chunks. Packs, hashes and deltas name a run's heap by its id with the run above it, and a
+world with none hashes and packs as before. The whole of it, what was weighed, the tests and the gaps (grids
+among them) are in schedule-and-threads.md, top section.
+
+## The lane analyses also feed the schedule (2026-11-13)
+
+`code_reads` and `code_writes` (lane_reads_codegen.inc, lane_writes_codegen.inc), with `system_param_lanes`,
+`written_lanes` and `match_query_lanes`, are now also what the schedule compares two systems by
+(schedule-and-threads.md, top section; `compiler/src/schedule_bytes_codegen.inc`). So a lane they leave out is
+one another system may be writing while this one runs: a row's copy, a query's row or an index that touched a
+lane outside its mask used to read stale bytes nothing looked at, and would now read a page being replaced.
+Anything new that reads or writes a component's lanes in a system has to be in those masks, or make
+`system_param_splits` false. The two analyses now narrow through a singleton's fields as they do a struct's or a
+component's (`writes_place_of`, `reads_place_of`): only the schedule asks them about a singleton. Their memos are
+reset by `schedule_bytes_reset` at each analysis as well as at `codegen`'s start, since the language server
+analyses programs without generating them.
+
 ## A world's heaps, one for each owner (2026-11-13)
 
 A world's text, lists, maps, sets and grids are no longer in one heap: each match component, singleton and event

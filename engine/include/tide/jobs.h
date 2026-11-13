@@ -131,6 +131,31 @@ static inline tide_queue *tide_recording(tide_queue *world)
     return tide_task_queue ? tide_task_queue : world;
 }
 
+// A gathering system's log (tidec's gather_codegen.inc). A system that runs
+// for each entity and changes a singleton only in statements nothing of its
+// rows reads back (a count, a sum, a list it adds to) goes through its
+// entities in runs on threads like any that queues changes: each run logs
+// those statements instead of running them, a tag and the values they take
+// from the row, and once the runs are done one thread runs the logs in the
+// runs' order (tide_system_tasks.done), which is the entities' order. The
+// singleton is changed exactly as one thread changes it, float sums included.
+//
+// tide_task_gather is the running task's log where its system's entities go
+// in more than one piece, else NULL: the statements then run where they are.
+// tide_gather_push adds an entry (`size` bytes of `entry`, read back from 8
+// bytes on, at a multiple of 8). tide_gather_row ends a row that logged
+// anything, as an entry with tag 0 and no bytes. tide_gathered, in `done`,
+// gives the logs of the system's tasks, in order.
+typedef struct tide_gather {
+    uint8_t *bytes; // Entries: a uint32_t tag, a uint32_t size, then the size's bytes up to a multiple of 8
+    uint32_t used, room;
+    uint32_t open;  // Entries since the last row's end
+} tide_gather;
+extern TIDE_THREAD_LOCAL tide_gather *tide_task_gather;
+void tide_gather_push(uint32_t tag, const void *entry, uint32_t size);
+void tide_gather_row(void);
+const tide_gather *tide_gathered(uint32_t *tasks);
+
 // Unkeyed local/trusted-C allocation. Match code uses tide_new_entity_key.
 // Records an already-final logical identity. Split systems register their
 // keys in source order when joining; no temporary handles or rewrites exist.

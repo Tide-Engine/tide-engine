@@ -1,0 +1,141 @@
+// A per-entity system that changes a singleton only by adding to it (counts,
+// float sums, a least and a most, lists, a function handed it) runs its rows on
+// threads: each run logs those statements with the row's values, and one
+// thread runs the logs in the entities' order. The singletons, their lists and
+// their heaps come out bit for bit as on one thread.
+
+component Man
+{
+    int id;
+    float3 position;
+    float heat;
+    int team;
+    bool down;
+    int tally;
+}
+
+component Mounted { }
+component Resting { }
+
+struct Spot
+{
+    Entity id;
+    float3 at;
+    int team;
+}
+
+singleton Crowd
+{
+    List<Spot> spots;
+    int[2] standing;
+    float2[2] sum;
+    float total;        // A float sum: the order it's added in is its value
+    int limit;          // Never written by Enlist: its rows may read it
+    List<string> names; // Text made from a row's values
+}
+
+singleton Scenery
+{
+    bool ready;
+    int2 low;
+    int2 high;
+    int men;
+    List<int> kept;
+}
+
+singleton Flat
+{
+    int count;
+    float most;
+}
+
+event Seen { int id; }
+
+singleton Log { List<int> seen; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Scenery scenery, mut Crowd crowd)
+{
+    scenery.ready = true;
+    scenery.low = int2(1000, 1000);
+    scenery.high = int2(-1000, -1000);
+    crowd.limit = 2500;
+    for (var i = 0; i < 3000; i++)
+    {
+        var e = Spawn(Man { id = i, position = float3(float(i % 61) * 1.7, 0, float(i % 47) * 0.9), team = i % 2 });
+        if (i % 3 == 0) e.Add(Mounted);
+        if (i % 7 == 2) e.Add(Resting);
+    }
+}
+
+void Keep(mut Scenery scenery, int2 key)
+{
+    var packed = key.x * 1000 + key.y;
+    if (scenery.kept.count < 64 && !scenery.kept.Contains(packed)) scenery.kept.Add(packed);
+}
+
+void Stand(mut Scenery scenery, float3 at, int beat, long tick)
+{
+    if (!scenery.ready) return;
+    var key = int2(int(at.x / 8), int(at.z / 8));
+    scenery.low = Math.Min(scenery.low, key);
+    scenery.high = Math.Max(scenery.high, key);
+    scenery.men += 1;
+    if ((tick + beat) % 8 != 0) return;
+    Keep(scenery, key);
+}
+
+system Empty(mut Crowd crowd, mut Scenery scenery, mut Flat flat)
+{
+    crowd.spots.Clear();
+    crowd.names.Clear();
+    crowd.standing = [0, 0];
+    crowd.sum = [float2(0), float2(0)];
+    scenery.men = 0;
+    flat.count = 0;
+}
+
+// Work enough that a run of rows is worth a thread, then everything it adds
+[After(Empty)]
+system Enlist(mut Man m, mut Crowd crowd, mut Scenery scenery, Time time, without Resting)
+{
+    if (m.down) return;
+    mut var y = (m.heat + float(m.id + time.tick)) * 0.001;
+    for (var i = 0; i < 300; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    m.heat = y;
+    m.position.x += y * 0.01;
+    Stand(scenery, m.position, m.id, time.tick);
+    crowd.standing[Math.Clamp(m.team, 0, 1)] += 1;
+    crowd.sum[Math.Clamp(m.team, 0, 1)] += m.position.xz;
+    crowd.total += y;
+    if (m.id < crowd.limit)
+    {
+        crowd.spots.Add(Spot { id = this, at = m.position, team = m.team });
+        if (m.id % 97 == 3) crowd.names.Add($"man {m.id}");
+    }
+    for (var k = 0; k < m.id % 3; k++) crowd.total += float(k) * 0.25;
+    m.tally++;
+    if ((m.id + time.tick) % 50 == 0) Send(Seen { id = m.id });
+    if (time.tick == 3 && m.id % 11 == 4) m.down = true;
+}
+
+// One that changes no component: its log is all there is to end
+[After(Enlist)]
+system Measure(Man m, mut Flat flat)
+{
+    mut var y = m.heat * 0.001;
+    for (var i = 0; i < 300; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    flat.count++;
+    flat.most = Math.Max(flat.most, y + m.heat);
+}
+
+// Reads what the rows before it wrote: in order on one thread, as ever
+[After(Measure)]
+system Chain(Man m, mut Flat flat, with Mounted)
+{
+    if (flat.count % 2 == 0) flat.most += float(m.id) * 0.001;
+    flat.count += 1;
+}
+
+event(Seen seen) OnSeen(mut Log log) { log.seen.Add(seen.id); }

@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/list.h"
 #include "tide/text.h"
 #include "tide_test.h"
 
@@ -446,4 +447,200 @@ TIDE_TEST(heaps_deltas_carry_only_the_heaps_that_changed)
     free(same);
     fake_world *others[] = {&base, &back_base, &back};
     end_three(others, 3);
+}
+
+// ---------------------------------------------------------------------------
+// A heap in runs (tide/heap.h): a system's entities in runs, each run's blocks
+// in a heap of its own within its owner's
+
+#define SEVEN_RUN(run) (IN_SEVEN | (uint32_t)(run) << TIDE_WHERE_RUN_SHIFT)
+
+static tide_heap *seven(const uint32_t run)
+{
+    return tide_heaps_of(&world.heap, 7u | run << TIDE_HEAP_ID_BITS);
+}
+
+TIDE_TEST(heap_runs_hand_out_their_own_blocks)
+{
+    start_three();
+    // What a run's code makes in an owner's memory is in that run's heap, from its start, and says so
+    uint32_t was = tide_heap_run_enter(3u);
+    TIDE_CHECK(TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u) == SEVEN_RUN(3));
+    tide_text_set(&world.name, text("cat"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    tide_heap_run_leave(was);
+    TIDE_CHECK(TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u) == IN_SEVEN); // Outside runs: the owner's first
+    TIDE_CHECK(tide_handle_where(world.name.at) == SEVEN_RUN(3) && tide_handle_offset(world.name.at) == 16u);
+    TIDE_CHECK(tide_handle_in(world.name.at, IN_SEVEN) && !tide_handle_in(world.name.at, IN_NINE) && !tide_handle_in(world.name.at, TIDE_IN_MATCH));
+    TIDE_CHECK(seven(0)->used == 0 && seven(3)->used != 0 && seven(3)->run == 3u && seven(3)->base == seven(0));
+    tide_text_set(&world.title, text("dog"), IN_SEVEN);
+    TIDE_CHECK(tide_handle_offset(world.title.at) == 16u && world.title.at != world.name.at);
+    TIDE_CHECK(reads(world.name, "cat") && reads(world.title, "dog"));
+    const tide_handle threes = world.name.at;
+
+    // Another run's row lets go of it: run 3's heap is as it was, and run 5's keeps the block, readable until
+    // the row is done, zeroed then, and back in run 3's heap when the runs join
+    was = tide_heap_run_enter(5u);
+    const tide_text old = world.name;
+    tide_text_set(&world.name, text("a bird"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    TIDE_CHECK(tide_handle_where(world.name.at) == SEVEN_RUN(5) && reads(world.name, "a bird") && reads(old, "cat"));
+    TIDE_CHECK(seven(3)->pending == 0 && seven(3)->free[1] == 0 && seven(5)->away != 0 && seven(5)->held == 0);
+    tide_heap_flush(seven(5));
+    TIDE_CHECK(seven(5)->away == 0 && seven(5)->held != 0 && seven(3)->free[1] == 0);
+    TIDE_CHECK(tide_text_view(old).bytes == 0); // Freed memory is zero
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(seven(5)->held == 0 && seven(3)->free[1] == 16u);
+    was = tide_heap_run_enter(3u);
+    tide_text again = {0};
+    tide_text_set(&again, text("cow"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    tide_heap_run_leave(was);
+    TIDE_CHECK(again.at == threes && reads(again, "cow"));
+
+    // Outside runs, a block goes back to the heap of the run it was made in, at the owner's flush
+    tide_text_release(&again, IN_SEVEN);
+    tide_text_release(&world.name, IN_SEVEN);
+    TIDE_CHECK(again.at == 0 && world.name.at == 0 && tide_heaps_pending(&world.heap) && seven(0)->pending == 0);
+    tide_heaps_flush(&world.heap);
+    TIDE_CHECK(!tide_heaps_pending(&world.heap) && seven(3)->free[1] == 16u && seven(5)->free[1] == 16u && seven(0)->free[1] == 0);
+    TIDE_CHECK(reads(world.title, "dog"));
+    end_three(NULL, 0);
+}
+
+TIDE_TEST(heap_runs_move_a_list_in_chunks_whole)
+{
+    start_three();
+    tide_list l = {0};
+    uint32_t was = tide_heap_run_enter(1u);
+    for (int32_t i = 0; i < 6000; i++) *(int32_t *)tide_list_add(&l, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = i;
+    tide_heap_flush(seven(1));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(tide_handle_where(l.at) == SEVEN_RUN(1) && (tide_block_at(l.at)->b & TIDE_LIST_CHUNKED));
+    const uint64_t ones = seven(1)->used;
+
+    // Written and cut where it is from another run, and added to within its room
+    was = tide_heap_run_enter(2u);
+    const tide_handle at = l.at;
+    *(int32_t *)tide_list_at_mut(l, 10, sizeof(int32_t)) = -10;
+    tide_list_resize(&l, 5990, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    *(int32_t *)tide_list_add(&l, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = 5990;
+    TIDE_CHECK(l.at == at && seven(2)->used == 0);
+    // More chunks: they'd be run 2's, which a block in run 1's heap can't list. The list moves there whole
+    for (int32_t i = 5991; i < 12000; i++) *(int32_t *)tide_list_add(&l, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = i;
+    TIDE_CHECK(tide_handle_where(l.at) == SEVEN_RUN(2) && seven(1)->used == ones && seven(2)->away != 0);
+    tide_heap_flush(seven(2));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    bool same = tide_list_count(l) == 12000;
+    for (int32_t i = 0; same && i < 12000; i++) same = *(const int32_t *)tide_list_at(l, i, sizeof(int32_t)) == (i == 10 ? -10 : i);
+    TIDE_CHECK(same);
+
+    // Run 1's blocks are its own again: the same list made there takes no more of its heap
+    tide_list second = {0};
+    was = tide_heap_run_enter(1u);
+    for (int32_t i = 0; i < 6000; i++) *(int32_t *)tide_list_add(&second, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = i;
+    tide_heap_flush(seven(1));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(seven(1)->used == ones && tide_list_count(second) == 6000);
+    // Outside runs, one that needs more chunks moves to the owner's first heap
+    for (int32_t i = 6000; i < 12000; i++) *(int32_t *)tide_list_add(&second, sizeof(int32_t), IN_SEVEN) = i;
+    tide_heaps_flush(&world.heap);
+    TIDE_CHECK(tide_handle_where(second.at) == IN_SEVEN && *(const int32_t *)tide_list_at(second, 11999, sizeof(int32_t)) == 11999);
+    tide_list_release(&second, IN_SEVEN);
+    tide_list_release(&l, IN_SEVEN);
+    tide_heaps_flush(&world.heap);
+    TIDE_CHECK(!tide_heaps_pending(&world.heap));
+    end_three(NULL, 0);
+}
+
+TIDE_TEST(heap_runs_pages_keep_their_references_until_the_join)
+{
+    start_three();
+    static fake_world snapshot;
+    tide_text_set(&world.name, text("cat"), IN_SEVEN);
+    tide_text_set(&world.title, text("captain"), IN_SEVEN);
+    tide_heaps_copy(&snapshot.heap, &world.heap);
+    const uint64_t before = tide_heaps_hash(0, &snapshot.heap);
+    tide_page *shared = seven(0)->page[0];
+    const uint32_t refs = shared->refs;
+    TIDE_CHECK(refs == 2u);
+
+    // A run writes a block of the page: the heap gets a copy, and the page keeps the heap's reference, so a
+    // thread that read it from the table a moment ago still sees a page that isn't the heap's to write
+    const uint32_t was = tide_heap_run_enter(4u);
+    tide_block_write(world.name.at)->b = 3u;
+    TIDE_CHECK(seven(0)->page[0] != shared && shared->refs == refs && seven(0)->retired_count == 1u);
+    tide_block_write(world.title.at)->b = 7u; // The copy is the heap's own: written where it is
+    TIDE_CHECK(seven(0)->retired_count == 1u && seven(0)->page[0]->refs == 1u);
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(shared->refs == 1u && seven(0)->retired_count == 0u);
+    TIDE_CHECK(tide_heaps_hash(0, &snapshot.heap) == before && reads(world.name, "cat"));
+    TIDE_CHECK(tide_heaps_pages_apart(&world.heap, &snapshot.heap) == 1u);
+    fake_world *others[] = {&snapshot};
+    end_three(others, 1);
+}
+
+TIDE_TEST(heap_runs_copy_hash_and_pack_with_their_owner)
+{
+    start_three();
+    static fake_world other, snapshot, back, base, back_base;
+    uint32_t was = tide_heap_run_enter(6u);
+    tide_text_set(&world.name, text("cat"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    tide_heap_run_leave(was);
+    tide_text_set(&world.title, text("captain"), IN_NINE);
+    // The same text in the owner's first heap is another world: a handle says the run
+    tide_text_use(&other.heap, NULL);
+    tide_text_set(&other.name, text("cat"), IN_SEVEN);
+    tide_text_set(&other.title, text("captain"), IN_NINE);
+    tide_text_use(&world.heap, NULL);
+    const uint64_t hash = tide_heaps_hash(0, &world.heap);
+    TIDE_CHECK(hash != tide_heaps_hash(0, &other.heap) && tide_heaps_used(&world.heap) == tide_heaps_used(&other.heap));
+    TIDE_CHECK(tide_heaps_pages(&world.heap) == 2u);
+
+    tide_heaps_copy(&snapshot.heap, &world.heap);
+    TIDE_CHECK(tide_heaps_hash(0, &snapshot.heap) == hash && tide_heaps_pages_apart(&world.heap, &snapshot.heap) == 0);
+    TIDE_CHECK(strcmp(tide_text_read(&snapshot.heap, world.name).ptr, "cat") == 0);
+
+    const uint32_t packed = tide_heaps_packed_size(&world.heap);
+    uint8_t *bytes = malloc(packed);
+    tide_writer w = {bytes, packed, 0, false, false};
+    tide_heaps_pack(&world.heap, &w);
+    TIDE_REQUIRE(!w.overflow && w.size == packed);
+    tide_reader r = {bytes, packed, 0, false};
+    TIDE_REQUIRE(tide_heaps_unpack(&back.heap, &r) && r.at == packed);
+    TIDE_CHECK(tide_heaps_hash(0, &back.heap) == hash && strcmp(tide_text_read(&back.heap, world.name).ptr, "cat") == 0);
+    r = (tide_reader){bytes, packed, 0, false};
+    TIDE_REQUIRE(tide_heaps_unpack(&back_base.heap, &r));
+    free(bytes);
+    tide_heaps_free(&back.heap);
+
+    // A delta has the run's heap that changed, and the rest are the base's
+    tide_heaps_copy(&base.heap, &world.heap);
+    was = tide_heap_run_enter(6u);
+    tide_text_set(&world.name, text("a cat with a longer name"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    tide_heap_flush(seven(6));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    tide_delta_writer d;
+    tide_delta_begin(&d, true, NULL, 0, 42);
+    tide_heaps_pack_delta(&world.heap, &base.heap, &d);
+    uint32_t size = 0;
+    uint8_t *delta = tide_delta_end(&d, &size);
+    tide_delta_reader in;
+    uint64_t said = 0;
+    TIDE_REQUIRE(tide_delta_open(&in, delta, size, true, &said) && said == 42);
+    TIDE_REQUIRE(tide_heaps_unpack_delta(&back.heap, &back_base.heap, &in));
+    TIDE_CHECK(tide_heaps_hash(0, &back.heap) == tide_heaps_hash(0, &world.heap));
+    TIDE_CHECK(strcmp(tide_text_read(&back.heap, world.name).ptr, "a cat with a longer name") == 0);
+    TIDE_CHECK(strcmp(tide_text_read(&back.heap, world.title).ptr, "captain") == 0);
+    TIDE_CHECK(tide_heaps_pages_apart(&back.heap, &back_base.heap) == 1u); // Nine's page is the base's own
+    free(delta);
+
+    // A snapshot with no runs taken over one that has them leaves none
+    tide_heaps_copy(&snapshot.heap, &other.heap);
+    TIDE_CHECK(tide_heaps_hash(0, &snapshot.heap) == tide_heaps_hash(0, &other.heap));
+    fake_world *others[] = {&other, &snapshot, &back, &base, &back_base};
+    end_three(others, 5);
 }

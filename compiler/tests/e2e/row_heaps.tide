@@ -1,0 +1,144 @@
+// A per-entity system that changes its own rows' text, lists, maps and sets
+// goes through its entities in runs that threads take, each run's blocks in a
+// heap of its own (tide/heap.h, A heap in runs). Whatever threads run them, the
+// world is one thread's: the same handles, the same bytes in every heap, tick
+// by tick, and as bytes and deltas. Entities come and go, so they change runs;
+// lists grow past a page into chunks and are cut back; a system on one thread
+// changes the same lists between the ones in runs.
+
+component Bag
+{
+    int id;
+    List<int> items;
+    string label;
+    List<string> notes;     // Text in a list's elements: blocks of their own
+    Map<int, int> counts;
+    Set<int> marks;
+    List<float> long;       // Grows past a page: in chunks
+}
+
+component Heavy { }         // Its bags are an archetype of their own
+component Idle { }          // ...and these are left out
+
+component Echo
+{
+    int of;
+    string said;
+    List<int> heard;
+}
+
+event Told
+{
+    int id;
+    string text;
+    List<int> values;
+}
+
+singleton Tally
+{
+    int ticks;
+    int next;
+    long sum;
+    int told;
+    int echoes;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Tally tally)
+{
+    for (var i = 0; i < 900; i++)
+    {
+        var e = Spawn(Bag { id = i, label = $"bag {i}", items = [i, i + 1, i + 2] });
+        if (i % 5 == 1) e.Add(Heavy { });
+        if (i % 13 == 7) e.Add(Idle { });
+    }
+    tally.next = 900;
+}
+
+// In runs: every kind of change a row makes to its own text and lists
+system Fill(mut Bag bag, without Idle, Time time)
+{
+    var n = bag.id + time.tick;
+    mut var y = float(n) * 0.001;
+    for (var i = 0; i < 400; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    if (y > 100.0) return;
+    if (n % 2 == 0) bag.items.Add(n);
+    if (n % 7 == 3 && bag.items.count > 2) bag.items.RemoveAt(1);
+    if (n % 19 == 4) bag.items.Clear();
+    if (n % 5 == 0) bag.label = $"bag {bag.id} on tick {time.tick}, {bag.items.count} items";
+    if (n % 3 == 1) bag.notes.Add($"note {time.tick} of bag {bag.id}");
+    if (n % 4 == 2 && bag.notes.count > 0) bag.notes.RemoveAt(0);
+    if (n % 9 == 5 && bag.notes.count > 0) bag.notes[bag.notes.count - 1] = $"rewritten on {time.tick}";
+    bag.counts[n % 6] = n;
+    if (n % 8 == 3) bag.counts.Remove((n + 2) % 6);
+    if (n % 3 == 0) bag.marks.Add(n % 23);
+    if (n % 10 == 9) bag.marks.Remove((n + 5) % 23);
+    // A few bags' long lists: past a page in a couple of ticks, and cut back now and then
+    if (bag.id % 37 == 5)
+    {
+        for (var i = 0; i < 1500; i++) bag.long.Add(y + float(i));
+        if (n % 6 == 5) bag.long.Resize(700);
+        if (n % 11 == 10) bag.long.Clear();
+    }
+}
+
+// On one thread (it changes a singleton): the same lists, between the ticks' runs
+system Audit(mut Bag bag, mut Tally tally, Time time)
+{
+    tally.sum += bag.items.count + bag.notes.count + bag.counts.count + bag.long.count;
+    if ((bag.id + time.tick) % 6 == 2) bag.items.Add(-bag.id);
+    if ((bag.id + time.tick) % 14 == 9) bag.label = $"audited {bag.id}";
+    if (bag.id % 37 == 5 && time.tick % 4 == 3) bag.long.Add(1.5);
+}
+
+// In runs, and queueing: what it spawns and sends holds text and lists, made
+// the component's and the event's own on the run's thread
+system Tell(mut Bag bag, with Heavy, Time time)
+{
+    var n = bag.id * 3 + time.tick;
+    if (n % 4 == 0) bag.notes.Add($"told on {time.tick}");
+    if (n % 6 == 1) Send(Told { id = bag.id, text = $"bag {bag.id} tells on {time.tick}", values = [bag.id, n, bag.items.count] });
+    if (n % 9 == 2) Spawn(Echo { of = bag.id, said = $"echo of {bag.id} at {time.tick}", heard = [n, n + 1] });
+}
+
+// Only queues what holds text: no component of its own to change
+system Whisper(Bag bag, without Heavy, Time time)
+{
+    if ((bag.id + time.tick * 7) % 29 != 3) return;
+    Send(Told { id = -bag.id, text = $"whisper {bag.id}", values = [time.tick] });
+}
+
+system Fade(mut Echo echo, Time time)
+{
+    echo.heard.Add(time.tick);
+    echo.said = $"{echo.said}.";
+    if ((echo.of + time.tick) % 3 == 0) this.Destroy();
+}
+
+// Entities come and go: the ones after them change runs
+system Churn(Bag bag, mut Tally tally, Time time)
+{
+    if ((bag.id * 7 + time.tick) % 41 == 0)
+    {
+        this.Destroy();
+        var e = Spawn(Bag { id = tally.next, label = $"bag {tally.next}, after {bag.id}", notes = [$"born on {time.tick}"] });
+        if (tally.next % 4 == 0) e.Add(Heavy { });
+        tally.next++;
+    }
+}
+
+system Count(mut Tally tally)
+{
+    tally.ticks++;
+}
+
+event(Told told) Hear(mut Tally tally)
+{
+    tally.told += told.values.count + told.text.length;
+}
+
+system Listen(Echo echo, mut Tally tally)
+{
+    tally.echoes += echo.heard.count;
+}

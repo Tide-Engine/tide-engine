@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## A gathering system's log (2026-11-13)
+
+Mine, under the jobs maintenance below (schedule-and-threads.md, top section, has the design and the tests). New in
+`tide/jobs.h`, and called by generated code: `tide_task_gather` (a thread-local, the running task's log where its
+system's chunks go in more than one piece, else NULL), `tide_gather_push(tag, entry, size)`, `tide_gather_row()`
+and `tide_gathered(&tasks)`, which a system's `done` calls for its tasks' logs in order. `engine/src/jobs.c` keeps
+a log for each task beside its queue, kept from tick to tick by the thread that runs ticks, hands a task its own
+(`task_context.gather`), and around `done` says whose logs those are; what `done` takes now counts in the system's
+time. Nothing of a log is in a world, a snapshot or a hash. `tide_system_tasks` is as it was: a gathering system
+is one that splits, with a `done`.
+
 ## A world's heaps (2026-11-13)
 
 Mine, under the heap, text and list maintenance below (schedule-and-threads.md, top section, has the design and

@@ -1372,9 +1372,9 @@ void tide_text_own(tide_text *field, const uint32_t where)
 
 void tide_text_release(tide_text *field, const uint32_t where)
 {
-    tide_heap *heap = tide_heap_of(where);
-    if (!heap || !field->at || TEXT_WHERE(field->at) != where) return;
-    tide_heap_release(heap, TEXT_OFFSET(field->at));
+    if (!tide_heap_of(where) || !field->at || !tide_handle_in(field->at, where)) return;
+    // Its block's own heap: the one of the run it was made in (tide/heap.h, A heap in runs)
+    tide_heap_release(tide_heap_of(TEXT_WHERE(field->at)), TEXT_OFFSET(field->at));
     field->at = 0;
 }
 

@@ -8,7 +8,7 @@ stage 1  Move  (per entity)
 stage 1  Tally  (per entity)
          reads Player
          writes Score
-         on one thread: it changes the singleton Score (parallel.tide:42)
+         on one thread: it changes the singleton Score, and adding to it is most of what its rows do (parallel.tide:42)
          alongside Move, Drag, PushPlayers, PushEnemies, Report
 
 stage 2  Drag  (per entity)

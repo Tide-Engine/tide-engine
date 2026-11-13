@@ -82,7 +82,14 @@ def _heap(valobj, at):
         table = slots.GetValueAsUnsigned() if slots and slots.IsValid() else 0
         slot = _read(process, table + ident * 2, 2) if table else 0
     heaps = _pointer(process, world + set_layout[1]["all"])
-    return heaps + slot * heap_layout[0] if heaps else None
+    if not heaps:
+        return None
+    heap = heaps + slot * heap_layout[0]
+    run = (at >> TIDE_HANDLE_RUN_SHIFT) & ((1 << TIDE_HEAP_RUN_BITS) - 1)
+    if run:  # A run's heap, of its owner's (tide/heap.h, A heap in runs)
+        runs = _pointer(process, heap + heap_layout[1]["runs"])
+        return runs + (run - 1) * heap_layout[0] if runs else None
+    return heap
 
 
 def _heap_page(valobj, at, offset):
@@ -124,7 +131,8 @@ def _block(valobj, at):
             return None
         base = _pointer(process, table + (offset >> TIDE_SCRATCH_SHIFT) * process.GetAddressByteSize())
         return base + (offset & (TIDE_SCRATCH_BYTES - 1)) if base else None
-    offset = (offset >> TIDE_HEAP_ID_BITS) << 4  # A world's handle: its heap's id below its block's offset
+    # A world's handle: its heap's id below its block's offset, and the run above it
+    offset = ((offset & ((1 << TIDE_HANDLE_RUN_SHIFT) - 1)) >> TIDE_HEAP_ID_BITS) << 4
     page = _heap_page(valobj, at, offset)
     if page is None:
         return None
