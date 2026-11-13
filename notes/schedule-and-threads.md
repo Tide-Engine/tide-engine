@@ -101,6 +101,28 @@ millisecond with two more engine changes under it, and 0.14 without. What its fr
 views' own time down is inside the big views: a view's draws recorded on threads (its `parallel` loops already
 run on the pool, a game-written split), or their work made cheaper. Put to the owner.
 
+**How much of the views is recording draws (2026-11-13, later; the owner: "let's measure option 1").** Two
+measures of the same battle, neither a build of anything:
+
+- The profile's own `draw_diagnostics` (`mesh_recording_ms`: an ordinary or shaded 3D call's bounds, frustum
+  tests, LOD and instances, after its mesh is found): **0.58 ms of the views' 3.62**, 16%. By view: `DrawCompoundKits`
+  0.15 of 0.39, `Present` 0.11 of 0.43, `DrawFlora` 0.06 of 0.37, `DrawLand` 0.05 of 0.19, `DrawFarCrowd` 0.05 of
+  0.21, `OthersOnFoot` 0.04 of 0.67, `HeldWeapon` 0.02 of 0.42, `Bloodshed` 0.01 of 0.25.
+- `tide_sample --main --after 15` (the new `--after <seconds>` leaves the loading out) with `--ticks-alongside`,
+  so the frame's thread has the views, the render and what a tick's beginning and end leave on it; 7,430 samples
+  in the program, by the file each was in: draw recording (`draw.c`, `mesh.c`, `draw.h`, the culling files) about
+  15%; lists, heaps, scratch values, entity slots and query indexes (`list.c/.h`, `heap.c/.h`, `text.h`,
+  `entity.c/.h`, `index.c`) about 28%, of which some 3% is the tick's hash of heap pages; the game's own code and
+  math 18%; skinning 6%; the renderer about 10%; the mixer 8% (a hidden run mixes on this thread); hashing 4%.
+
+So recording draws on threads could take at most about half a millisecond off 3.6, and far less in practice
+(the two views with the most recording are a tenth of a millisecond each). **Not built.** The larger share is the
+views' own work reading lists and scratch values: `tide_heap_block` 2.9%, `tide_list_at` 2.3%, `tide_scratch_at`
+2.2%, `build_sorted` (a query's index) 1.8%, `tide_entity_slot_of` 1.7%, `tide_handle_offset` 0.7%,
+`tide_heaps_of` 0.5% of the thread. Whether a list's element read costs more than it must (its block found again
+at every index, the heap found by id since the heaps' change) is the next thing worth measuring, as it's the
+tick's cost too.
+
 Answers given to the owner the same day, none built, the language ones his to decide:
 
 - **`world.Set` queued by default, with a `SetNow`?** Asked whether the compiler could decide instead. It can for

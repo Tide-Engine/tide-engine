@@ -4,10 +4,11 @@
 // code spent its samples, by function and by line, through llvm-symbolizer
 // and the program's PDB (a release build has one).
 //
-//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] -- program [args...]
+//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] -- program [args...]
 //
 // --main samples the program's first thread alone (a game's frames and views),
 // which disturbs it far less than suspending its every thread each round.
+// --after leaves the program's first seconds out (its loading), sampling from then on.
 //
 // Samples outside the program's own image (the system's DLLs: waits, the
 // kernel's calls) are counted as "elsewhere" per DLL. A thread that's
@@ -155,7 +156,7 @@ static int by_address(const void *a, const void *b)
 
 int main(int argc, char **argv)
 {
-    double hz = 5000.0;
+    double hz = 5000.0, after = 0.0;
     int top = 40, lines = 40, arg = 1;
     bool main_only = false;
     for (; arg < argc; arg++) {
@@ -167,8 +168,9 @@ int main(int argc, char **argv)
         else if (strcmp(argv[arg], "--top") == 0 && arg + 1 < argc) top = atoi(argv[++arg]);
         else if (strcmp(argv[arg], "--lines") == 0 && arg + 1 < argc) lines = atoi(argv[++arg]);
         else if (strcmp(argv[arg], "--main") == 0) main_only = true;
+        else if (strcmp(argv[arg], "--after") == 0 && arg + 1 < argc) after = atof(argv[++arg]);
         else {
-            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] -- program [args...]\n");
+            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] -- program [args...]\n");
             return 2;
         }
     }
@@ -194,6 +196,7 @@ int main(int argc, char **argv)
     LARGE_INTEGER frequency, now, next;
     QueryPerformanceFrequency(&frequency);
     const int64_t period = (int64_t)((double)frequency.QuadPart / hz);
+    if (after > 0.0) WaitForSingleObject(pi.hProcess, (DWORD)(after * 1000.0));
     QueryPerformanceCounter(&next);
     uint64_t total = 0, rounds = 0;
     DWORD threads[256];
