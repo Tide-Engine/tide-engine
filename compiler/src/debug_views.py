@@ -3,8 +3,10 @@
 # (TIDE_TYPES, TIDE_ENUMS, TIDE_LOCAL_LISTS, TIDE_LOCALS, and the runtime's constants), so this
 # reads them at call time. See compiler/src/debug_views_codegen.inc.
 #
-# Text, lists and maps are handles (tide/text.h): an offset, and in its top
-# two bits which heap it's in. The heaps code runs with are thread-locals of
+# Text, lists and maps are handles (tide/text.h): in the top two bits which
+# world's memory the block is in, and for a world its block's offset over the
+# id of the heap it's in there (a world has a heap for each owner of text and
+# lists, tide/heap.h). The heaps code runs with are thread-locals of
 # the stopped thread, tide_world_heaps and tide_scratch_slots, which LLDB
 # reads on macOS and Linux (Windows' LLDB can't: use a natvis debugger there).
 
