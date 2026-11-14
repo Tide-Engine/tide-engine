@@ -239,8 +239,9 @@ twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
     `_skinning_pixels_app`, `_material_pixels_app`,
     `_shadow_batches_pixels_app` and `_pixels_app` 2 to 6 s each,
     `tide_particles_pixels_app` 2 s.
-  - 38 tests more, about 230 s of the emulator's; the 45 app tests together
-    took 305 s. Each printed its checks (the verbose run was read: every one
+  - 38 tests more, about 200 s of the emulator's; the 43 app tests together
+    took about 250 s with nothing else running (beside builds of four jobs,
+    prewarm's ten runs alone took 57 s). Each printed its checks (the verbose run was read: every one
     said `renderer: Vulkan` or its own summary, and the variants differ where
     they should: `anisotropy 1`, `depths: within a 24-bit step`, the culling the
     CPU decided).
@@ -327,7 +328,8 @@ twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
   loader). Headless runs on Android would bring the first group: not built,
   as no one has asked what a run with no window means on a phone.
 - CI: not yet run on a hosted runner; the next Build run's Android job is the
-  check, about four minutes more of its emulator if it's as fast as this one.
+  check, three or four minutes more of its emulator if it's as fast as this
+  one, and the apps' builds.
 
 CLI modes (2026-10-30): --release is optimized with symbols and debuggable APKs,
 using a default app ID if needed, and links with --gc-sections. --distribution
