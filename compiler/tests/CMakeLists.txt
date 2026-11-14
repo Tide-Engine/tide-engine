@@ -517,7 +517,7 @@ tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch e
 tide_e2e_test(strings)
 # char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
 tide_e2e_test(chars)
-target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=6535361674441007572ull)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=7239718306326553534ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
@@ -530,9 +530,9 @@ tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out`
 tide_e2e_test(generics) # Generic functions: inference, <> at calls, `has`, instantiations, a plain overload winning
 tide_e2e_test(loop_views) # Loops that keep a list's shape index it through a view: chunks, side by side, scratch, assets, snapshots
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
-target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=11445927822352450642ull)
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=4274344058269490730ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
-target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=17632594201705351794ull)
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=9457763508960445269ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(grid_values) # Grids code owns: locals, mut parameters, returns and Copy
 tide_e2e_test(parallel) # Parallel loops over grids and lists
@@ -574,6 +574,11 @@ tide_e2e_test(row_heaps) # A per-entity system that changes its rows' text and l
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_row_heaps PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_row_heaps PRIVATE TIDE_ROW_HEAPS_THREADS=1)
+endif()
+tide_e2e_test(row_grids) # ...and its rows' grids: new chunks, cells set and zeroed, grids replaced and copied, a parallel loop, one thread's world
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_row_grids PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_row_grids PRIVATE TIDE_ROW_GRIDS_THREADS=1)
 endif()
 tide_e2e_test(previous) # `previous` query bindings: the tick's start whatever ran since, on threads one thread's world, no part of the world
 # ...and the same game with every loop gone through plainly (NO_LOOP_INDEXES), which prints the same tick by tick

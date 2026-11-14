@@ -25,6 +25,12 @@ static tide_grid_dir *dir_at(tide_heap *heap, const uint64_t block)
     return (tide_grid_dir *)(void *)(tide_heap_write(heap, block) + 1);
 }
 
+// A world's grid's directory, to read, in `heap`: its own.
+static const tide_grid_dir *dir_of(const tide_heap *heap, const tide_grid g)
+{
+    return (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
+}
+
 static uint32_t dir_bytes(const uint32_t room, const uint32_t slots)
 {
     return (uint32_t)(sizeof(tide_grid_dir) + room * sizeof(tide_grid_record) + slots * sizeof(uint32_t));
@@ -116,6 +122,42 @@ static uint8_t *add_chunk(tide_grid *g, tide_heap *heap, const int32_t cx, const
     insert(d, d->records++);
     __atomic_add_fetch(&heap->moves, 1u, __ATOMIC_RELAXED); // A cache that found no chunk here is out of date
     return (uint8_t *)tide_heap_write(heap, chunk); // Making room can give the heap another page
+}
+
+// The heap a world's grid gets new blocks from (chunks, and a directory with more room): its own, where this
+// thread may hand blocks out. While a system's runs are on threads (tide/heap.h, A heap in runs), a run's rows
+// hand out blocks of their own run's heap alone, and a directory names its chunks by their offsets in its heap,
+// so a grid in another run's heap (its entity was in that run when the grid was made, or it was made outside
+// runs) moves into this run's whole first: its directory as it is, then each chunk, in its records' order. Its
+// old blocks go back to their heap as any of another run's do, through the runs' join. Outside runs a grid stays
+// where it is, whichever run's heap that is.
+static tide_heap *grid_home(tide_grid *g, const tide_grid_shape *s)
+{
+    const uint32_t was = tide_handle_where(g->at);
+    tide_heap *heap = tide_heap_of(was);
+    if (!tide_heap_away(heap)) return heap;
+    const uint32_t mine = (was & TIDE_WHERE_OWNER) | tide_heap_run_where;
+    tide_heap *to = tide_heap_of(mine);
+    const tide_grid_dir *d = dir_of(heap, *g);
+    const uint32_t bytes = dir_bytes(d->room, d->slots), records = d->records;
+    const uint64_t moved = tide_heap_alloc(to, bytes);
+    memcpy(dir_at(to, moved), dir_of(heap, *g), bytes); // Read again: another run's thread may have given its page a copy
+    const uint32_t chunk_bytes = tide_grid_chunk_bytes(s);
+    for (uint32_t i = 0; i < records; i++) {
+        const uint64_t chunk = tide_heap_alloc(to, chunk_bytes - (uint32_t)sizeof(tide_block));
+        memcpy(tide_heap_write(to, chunk), tide_grid_chunk_at(heap, tide_grid_records(dir_of(heap, *g))[i].block), chunk_bytes);
+        tide_grid_records(dir_at(to, moved))[i].block = chunk; // Making a block can give the heap another page
+    }
+    // The old ones, each chunk with its header back for the heap to take it
+    const uint32_t c = chunk_class(s);
+    for (uint32_t i = 0; i < records; i++) {
+        const uint64_t chunk = tide_grid_records(dir_of(heap, *g))[i].block;
+        *tide_heap_write(heap, chunk) = (tide_block){tide_block_link(c, 0), 0, 0};
+        tide_heap_release(heap, chunk);
+    }
+    tide_heap_release(heap, OFFSET(g->at));
+    g->at = tide_handle_of(mine, moved);
+    return to;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,14 +252,14 @@ void *tide_grid_poke_slow(tide_grid *g, const int32_t x, const int32_t y, const 
                           const bool make, const uint32_t where)
 {
     if (in_scratch(*g) || (!g->at && where == TIDE_IN_SCRATCH)) return scratch_poke(g, x, y, z, s, make);
-    tide_heap *heap = tide_heap_of(where);
-    if (!heap || (g->at && tide_handle_where(g->at) != where)) return NULL; // The scratch area's, or another world's
+    if (!tide_heap_of(where) || (g->at && !tide_handle_in(g->at, where))) return NULL; // The scratch area's, or another world's
     if (!g->at) {
         if (!make) return NULL;
         const int32_t open[3] = {0, 0, 0};
-        g->at = tide_handle_of(where, new_dir(heap, open, s));
+        g->at = tide_handle_of(where, new_dir(tide_heap_of(where), open, s));
     }
-    const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g->at)) + 1);
+    tide_heap *heap = tide_heap_of(tide_handle_where(g->at)); // Its own: the heap of the run it was made in
+    const tide_grid_dir *d = dir_of(heap, *g);
     if (!tide_grid_inside(d, x, y, s->dims == 3 ? z : 0)) return NULL;
     const int32_t cx = x >> s->shift[0];
     const int32_t cy = y >> s->shift[1];
@@ -225,7 +267,7 @@ void *tide_grid_poke_slow(tide_grid *g, const int32_t x, const int32_t y, const 
     const uint32_t i = d->records ? tide_grid_find(d, cx, cy, cz) : 0u;
     if (i) return (uint8_t *)tide_heap_write(heap, tide_grid_records(d)[i - 1u].block) + tide_grid_place(s, x, y, z);
     if (!make) return NULL;
-    return add_chunk(g, heap, cx, cy, cz, NULL, s) + tide_grid_place(s, x, y, z);
+    return add_chunk(g, grid_home(g, s), cx, cy, cz, NULL, s) + tide_grid_place(s, x, y, z);
 }
 
 tide_grid tide_grid_new(const uint32_t dims, const int32_t x, const int32_t y, const int32_t z)
@@ -259,10 +301,9 @@ void tide_grid_own(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
 
 void tide_grid_release(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
 {
-    tide_heap *heap = tide_heap_of(where);
-    if (heap && g->at && tide_handle_where(g->at) == where) {
+    if (tide_heap_of(where) && g->at && tide_handle_in(g->at, where)) {
         tide_grid_clear(g, s, where);
-        tide_heap_release(heap, OFFSET(g->at));
+        tide_heap_release(tide_heap_of(tide_handle_where(g->at)), OFFSET(g->at)); // Through its own heap, whichever run's
     }
     g->at = 0;
 }
@@ -286,8 +327,9 @@ void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t wher
         d->records = 0;
         return;
     }
-    tide_heap *heap = tide_heap_of(where);
-    if (!heap || !g->at || tide_handle_where(g->at) != where) return;
+    if (!tide_heap_of(where) || !g->at || !tide_handle_in(g->at, where)) return;
+    // Its own heap, which may be another run's: its blocks are changed and let go of there (tide/heap.h)
+    tide_heap *heap = tide_heap_of(tide_handle_where(g->at));
     tide_grid_dir *d = dir_at(heap, OFFSET(g->at));
     const uint32_t c = chunk_class(s);
     for (uint32_t i = 0; i < d->records; i++) {
@@ -342,11 +384,6 @@ static int64_t floor_div(const int64_t a, const int64_t b)
     // a shift, as a task works this out each tick and 64-bit division is slow
     if ((b & (b - 1)) == 0) return a >> __builtin_ctzll((uint64_t)b);
     return a / b - (a % b != 0 && a < 0 ? 1 : 0);
-}
-
-static const tide_grid_dir *dir_of(const tide_heap *heap, const tide_grid g)
-{
-    return (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
 }
 
 // Chunk places, 3 ints each, in order: by z, then y, then x.
@@ -409,8 +446,10 @@ void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, co
                     const int32_t offset[3])
 {
     *l = (tide_par_loop){.grid = g, .shape = s, .where = where};
-    if (!g->at || tide_handle_where(g->at) != where) return; // Not a world's: nothing to go through
-    const tide_heap *heap = tide_heap_of(where);
+    if (!g->at || !tide_handle_in(g->at, where) || !tide_heap_of(where)) return; // Not a world's: nothing to go through
+    // The grid's own heap from here on, which may be another run's than `where`'s (tide/heap.h, A heap in runs)
+    l->where = tide_handle_where(g->at);
+    const tide_heap *heap = tide_heap_of(l->where);
     const tide_grid_dir *d = dir_of(heap, *g);
     int64_t side[3];
     int32_t reach[3];
@@ -942,8 +981,13 @@ void tide_par_end(tide_par_loop *l)
         if (!same) {
             const tide_grid_dir *d = dir_of(heap, *l->grid);
             const uint32_t found = d->records ? tide_grid_find(d, c[0], c[1], c[2]) : 0u;
-            if (found) memcpy(tide_heap_write(heap, tide_grid_records(d)[found - 1u].block), buffer, bytes);
-            else add_chunk(l->grid, heap, c[0], c[1], c[2], buffer, s);
+            if (found) {
+                memcpy(tide_heap_write(heap, tide_grid_records(d)[found - 1u].block), buffer, bytes);
+            } else { // Made where this thread makes blocks: the grid may move there whole first
+                heap = grid_home(l->grid, s);
+                l->where = tide_handle_where(l->grid->at);
+                add_chunk(l->grid, heap, c[0], c[1], c[2], buffer, s);
+            }
         }
         pool_give(buffer, bytes);
     }

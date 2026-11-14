@@ -1,5 +1,16 @@
 # ECS and simulation state
 
+## Grids in runs, and runs by identity (2026-11-14)
+
+A grid's directory and chunks are in one heap, its handle's, which for an owner changed in runs is the heap of the
+run the grid was made in. Any run's rows change its cells where they are; a row that adds a chunk to a grid in
+another run's heap moves the grid whole into its own run's heap first (`grid_home`, `engine/src/grid.c`), and outside
+runs a grid adds chunks in its own heap whichever run's. Every grid function tells a field's own grid by
+`tide_handle_in` and changes and releases it through its own heap, as text.c and list.c do. And a per-entity system
+in runs whose rows queue nothing puts each entity in a run by its identity (`tide_entity_run`, generated), not by its
+share of the order, so a tick's new entities are spread over the runs and an entity's blocks stay in one run's heap.
+Design, measurements, tests and gaps: schedule-and-threads.md, top section.
+
 ## Columns and a heap kept for a tick (2026-11-13, evening)
 
 For queries' `previous` bindings (schedule-and-threads.md, top section): `tide_table_keep(to, from, columns,
@@ -23,7 +34,7 @@ the bits they were. A field's own block is one in its owner's memory whichever r
 (`tide_handle_in`), changed and released through its own heap; a list in chunks moves whole into the heap of the
 run that gives it more chunks. Packs, hashes and deltas name a run's heap by its id with the run above it, and a
 world with none hashes and packs as before. The whole of it, what was weighed, the tests and the gaps (grids
-among them) are in schedule-and-threads.md, top section.
+among them, in runs too since 2026-11-14) are in schedule-and-threads.md, top section.
 
 ## The lane analyses also feed the schedule (2026-11-13)
 

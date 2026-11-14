@@ -199,12 +199,15 @@ static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
 // ---------------------------------------------------------------------------
 // A heap in runs
 //
-// A per-entity system that changes its rows' text and lists goes through its
-// entities in runs, a fixed share of their order each, which threads take
-// (tidec's system_splits_in_order). Blocks handed out in the order threads
-// got to them would be at other offsets on every machine, so each run has a
-// heap of its own within its owner's: run 0 the owner's first, where
-// everything else that runs allocates too. A block says which run's heap it
+// A per-entity system that changes its rows' text, lists and grids goes
+// through its entities in runs, which threads take (tidec's
+// system_splits_in_order): a fixed share of their order each, or, where its
+// rows queue nothing, each entity's own run, from its identity, so an entity
+// is in the same run in every such system and tick and the newest aren't all
+// in the last (tidec's system_heap_runs_scattered). Blocks handed out in the
+// order threads got to them would be at other offsets on every machine, so
+// each run has a heap of its own within its owner's: run 0 the owner's first,
+// where everything else that runs allocates too. A block says which run's heap it
 // is in, TIDE_HEAP_RUN_BITS of its handle and of a `where` (tide/text.h), so
 // the offsets a run hands out depend on that run's rows alone, in their order,
 // whichever thread has it and whatever the others do. The runs are the same
@@ -222,9 +225,9 @@ static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
 //   whichever thread gets there first, and keeps its references until the
 //   join, so that no thread still holding it takes it for the heap's own.
 //
-// Everything a value keeps in several blocks (a list in chunks) is in one
-// run's heap, as its blocks name each other by offset: list.c moves such a
-// list whole into the heap of the run that adds to it.
+// Everything a value keeps in several blocks (a list in chunks, a grid) is in
+// one run's heap, as its blocks name each other by offset: list.c and grid.c
+// move such a value whole into the heap of the run that adds to it.
 
 // The run this thread's code is on, as the bits of a `where`: 0 outside runs,
 // which is run 0's too.

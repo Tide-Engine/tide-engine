@@ -93,6 +93,8 @@ A grid keeps its cells in chunks of 64 by 64 cells, or 16 by 16 by 16 in 3D: 16 
 
 A match is snapshotted every tick and rolled back when a guess about another player went wrong (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). Snapshots share the chunks nothing changed, and hashes cover each chunk on its own, so changing a few cells copies and hashes a few chunks, never the whole grid. A player joining gets only the chunks that exist.
 
+A grid on each of many entities (a chunk of a world, a ship's deck) is kept as well as one big grid is, and a system that runs for each entity and changes its own entity's grid goes across threads like any other (see [Splitting across threads](../game/schedule.md#splitting-across-threads)): every new chunk of a world made from its seed, or every loaded chunk stepped, on every core, with the same result as on one thread.
+
 A local's grid isn't the world's, so nothing snapshots, hashes or sends it, and it costs what's in it. Assigning it to a field copies its cells into the world. A [local worker](../game/tasks.md#local-workers) can take a read-only snapshot of a grid as an input, and reads its grid parameters without keeping a grid in a local.
 
 A `Grid2<Color>` or a `Grid2<float>` with a size is a `Texture` wherever one is wanted: a draw's texture, a frag's source, a `Texture` field or parameter (see [Textures](../game/meshes-and-textures.md#textures)). The texture is the grid, not a copy of it. GPU sampling stays on the GPU; workers read their snapshot's cells by integer position.

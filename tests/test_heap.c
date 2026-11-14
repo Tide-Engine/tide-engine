@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/grid.h"
 #include "tide/list.h"
 #include "tide/text.h"
 #include "tide_test.h"
@@ -549,6 +550,108 @@ TIDE_TEST(heap_runs_move_a_list_in_chunks_whole)
     TIDE_CHECK(tide_handle_where(second.at) == IN_SEVEN && *(const int32_t *)tide_list_at(second, 11999, sizeof(int32_t)) == 11999);
     tide_list_release(&second, IN_SEVEN);
     tide_list_release(&l, IN_SEVEN);
+    tide_heaps_flush(&world.heap);
+    TIDE_CHECK(!tide_heaps_pending(&world.heap));
+    end_three(NULL, 0);
+}
+
+// Grid2<int>: chunks of 64 by 64, a page each
+static const tide_grid_shape grid_ints = {4u, 2u, {6u, 6u, 0u}};
+
+static int32_t grid_cell(const tide_grid g, const int32_t x, const int32_t y)
+{
+    const int32_t *c = tide_grid_peek(g, x, y, 0, &grid_ints);
+    return c ? *c : 0;
+}
+
+static void grid_put(tide_grid *g, const int32_t x, const int32_t y, const int32_t v, const uint32_t where)
+{
+    int32_t *c = tide_grid_poke(g, x, y, 0, &grid_ints, v != 0, where);
+    if (c) *c = v;
+}
+
+TIDE_TEST(heap_runs_move_a_grid_whole)
+{
+    start_three();
+    tide_grid g = {0};
+    uint32_t was = tide_heap_run_enter(1u);
+    grid_put(&g, 1, 2, 12, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    grid_put(&g, 100, 3, 13, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    grid_put(&g, -5, -70, 14, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    tide_heap_flush(seven(1));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(tide_handle_where(g.at) == SEVEN_RUN(1) && tide_grid_dir_of(g)->records == 3u);
+    const uint64_t ones = seven(1)->used;
+
+    // From another run: cells of its chunks written where they are, and zero where it has none makes none
+    was = tide_heap_run_enter(2u);
+    const tide_handle at = g.at;
+    grid_put(&g, 1, 3, 15, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    grid_put(&g, 500, 500, 0, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    TIDE_CHECK(g.at == at && seven(2)->used == 0 && grid_cell(g, 1, 3) == 15 && tide_grid_dir_of(g)->records == 3u);
+    // ...through a cache too, which holds the grid's own heap
+    tide_grid_cache cache = {0};
+    *(int32_t *)tide_grid_cached_poke(&cache, &g, 2, 3, 0, &grid_ints, true, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = 16;
+    TIDE_CHECK(g.at == at && cache.heap == seven(1) && cache.write != NULL);
+    // A chunk it hasn't: run 2's rows make blocks in run 2's heap alone, and a directory names its chunks by their
+    // offsets in its own, so the grid moves there whole, every cell with it. Run 1's blocks wait for the join
+    grid_put(&g, 200, 200, 17, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    TIDE_CHECK(tide_handle_where(g.at) == SEVEN_RUN(2) && seven(1)->used == ones && seven(2)->away != 0);
+    TIDE_CHECK(tide_grid_dir_of(g)->records == 4u && grid_cell(g, 1, 2) == 12 && grid_cell(g, 100, 3) == 13);
+    TIDE_CHECK(grid_cell(g, -5, -70) == 14 && grid_cell(g, 1, 3) == 15 && grid_cell(g, 2, 3) == 16 && grid_cell(g, 200, 200) == 17);
+    TIDE_CHECK(!tide_grid_cache_holds(&cache, g.at, 0, 0, 0)); // The grid it held is gone
+    tide_heap_flush(seven(2));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(!seven(2)->away && !seven(2)->held && !seven(1)->pending);
+
+    // Run 1's blocks are its own again: the same grid made there takes no more of its heap
+    tide_grid again = {0};
+    was = tide_heap_run_enter(1u);
+    grid_put(&again, 1, 2, 1, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    grid_put(&again, 100, 3, 1, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    grid_put(&again, -5, -70, 1, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    tide_heap_flush(seven(1));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(seven(1)->used == ones && grid_cell(again, -5, -70) == 1);
+
+    // Outside runs, a chunk it hasn't is made in its own heap, whichever run's that is
+    const tide_handle twos = g.at;
+    grid_put(&g, -300, 0, 18, IN_SEVEN);
+    TIDE_CHECK(g.at == twos && grid_cell(g, -300, 0) == 18 && seven(0)->used == 0);
+
+    // A parallel loop from run 3: its steps read the grid where it is, and its end makes the chunks they wrote in
+    // run 3's heap, the grid moved there first
+    tide_grid sized = {0};
+    was = tide_heap_run_enter(1u);
+    tide_grid_set(&sized, tide_grid_new(2u, 128, 64, 0), &grid_ints, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    grid_put(&sized, 3, 4, 34, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
+    tide_heap_flush(seven(1));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+    TIDE_CHECK(tide_handle_where(sized.at) == SEVEN_RUN(1) && tide_grid_dir_of(sized)->records == 1u);
+    was = tide_heap_run_enter(3u);
+    tide_par_loop loop;
+    const int32_t block[3] = {1, 1, 1}, offset[3] = {0, 0, 0};
+    tide_par_begin(&loop, &sized, &grid_ints, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u), block, offset);
+    TIDE_CHECK(loop.tasks == 2u);
+    tide_par_cache step = {{0, 0, 0}, NULL};
+    *(int32_t *)tide_par_cell(&loop, &step, 70, 5, 0) = 75;
+    *(int32_t *)tide_par_cell(&loop, &step, 3, 5, 0) = 35;
+    tide_par_end(&loop);
+    TIDE_CHECK(tide_handle_where(sized.at) == SEVEN_RUN(3) && tide_grid_dir_of(sized)->records == 2u);
+    TIDE_CHECK(grid_cell(sized, 3, 4) == 34 && grid_cell(sized, 3, 5) == 35 && grid_cell(sized, 70, 5) == 75);
+    tide_heap_flush(seven(3));
+    tide_heap_run_leave(was);
+    tide_heap_runs_join(seven(0));
+
+    // Let go of outside runs: each through its own heap, and the owner's flush finds them
+    tide_grid_release(&g, &grid_ints, IN_SEVEN);
+    tide_grid_release(&again, &grid_ints, IN_SEVEN);
+    tide_grid_release(&sized, &grid_ints, IN_SEVEN);
+    TIDE_CHECK(!g.at && !again.at && !sized.at && tide_heaps_pending(&world.heap));
     tide_heaps_flush(&world.heap);
     TIDE_CHECK(!tide_heaps_pending(&world.heap));
     end_three(NULL, 0);

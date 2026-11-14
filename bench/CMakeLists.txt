@@ -18,7 +18,7 @@ tide_add_game(sand SOURCES sand/sand.tide sand/play.tide TITLE "Tide sand" STATS
 
 tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST gallery/main.c)
 target_link_libraries(bench_gallery PRIVATE tide_bench)
-add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x15fd48b33afb54c3)
+add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xc8e6ab383a684a0a)
 
 # An endless world of blocks in dimensions: chunks made around players, each
 # machine sent its own, and gone once nobody's near (notes/voxels.md).

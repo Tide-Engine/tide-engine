@@ -213,6 +213,8 @@ typedef struct gen {
     bool fields_found;     // In a guarded view's row: its local fields are found already, before its guard (gen_chunk)
     bool guard_call;       // ...in the arguments of its call to that guard: no copy of a component it reads nothing of
     bool row_apart;        // ...and it writes the lanes the system changes in another place than it reads them
+    bool row_runs;         // ...and each row is on its entity's own run (system_heap_runs_scattered): tide_entity_run
+    bool entity_run_made;  // tide_entity_run is defined
     bool view_frame_made;  // tide_view_frame is declared: what a view makes its queries' rows from, when it first reaches them
     bool lanes_in;         // In a loop over a chunk's rows: the lanes it changes are read as tide_in_<Component> (gen_chunk)
     const char *row_born;  // What the entity a row's local fields are made for was born as, as C; NULL: the view's world says
@@ -20256,6 +20258,8 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
                          "%stide_any = true;\n", inner.data, inner.data);
         } else {
         gen_row_copies_rest(g, sys, inner.data);
+        // Its entity's run, whose heap what the row makes goes in (system_heap_runs_scattered)
+        if (g->row_runs) sb_printf(o, "%s(void)tide_heap_run_enter(tide_entity_run(tide_ent[tide_i]));\n", inner.data);
         sb_printf(o, "%s%s", inner.data, call);
         gen_system_args(g, sys, a);
         sb_printf(o, ");%s\n", clear);
@@ -20263,6 +20267,7 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
         }
         sb_printf(o, "%s}\n", pad);
     } else {
+        if (g->row_runs && !destroying) sb_printf(o, "%s(void)tide_heap_run_enter(tide_entity_run(tide_ent[tide_i]));\n", pad);
         if (destroying) sb_printf(o, "%stide_destroy[tide_i - tide_base] = tide_update_%s(tide_w", pad, decl_cname(sys));
         else sb_printf(o, "%s%s", pad, call);
         gen_system_args(g, sys, a);
@@ -21736,6 +21741,16 @@ static void gen_system_run(gen *g, const decl *sys)
     // pages the table alone has and for pages a snapshot shares
     rows_set *rows = arena_alloc(sizeof(rows_set) * (size_t)(prog->archetypes.count + 1));
     rows_list rows_made = {0};
+    // One in runs whose rows queue nothing has each row on its entity's own run: a hash of its identity's two
+    // words, the same in every system and tick, so its blocks stay in one run's heap (system_heap_runs_scattered)
+    const bool scattered = ordered && system_heap_runs_scattered(sys);
+    if (scattered && !g->entity_run_made) {
+        g->entity_run_made = true;
+        sb_put(o, "// The run an entity's row is on in a system in runs whose rows queue nothing (tide/heap.h, A heap in runs)\n"
+                  "TIDE_HELPER uint32_t tide_entity_run(const tide_entity e)\n{\n"
+                  "    return (uint32_t)(((e.birth ^ e.lineage) * UINT64_C(0x9E3779B97F4A7C15)) >> (64u - TIDE_HEAP_RUN_BITS));\n}\n\n");
+    }
+    g->row_runs = scattered;
     for (int a = 0; !view && sys->per_entity && a < prog->archetypes.count; a++) {
         if (!runs_on(g, sys, a) || rows_batched(g, sys, a)) continue;
         const bool part = rows_part(g, sys, a), every = part && rows_filtered(g, sys, a);
@@ -21752,6 +21767,7 @@ static void gen_system_run(gen *g, const decl *sys)
         fast_task |= rows_task_fastable(g, sys, a);
         if (canonical && rows_live(g, sys, a)) gen_rows_live(g, sys, a);
     }
+    g->row_runs = false;
 
     if (view) {
         // A view with `verified` parameters is handed the world the server has confirmed too
@@ -21920,7 +21936,14 @@ static void gen_system_run(gen *g, const decl *sys)
             // One that changes its rows' text or lists: the order in runs that are the same however many tasks
             // there are, as many as there are entities up to TIDE_HEAP_RUNS, and the task's share of the runs.
             // Each run's blocks come from its own heap (tide/heap.h, A heap in runs)
-            if (heap_runs) sb_put(o, "    const uint32_t tide_runs = tide_key_count < TIDE_HEAP_RUNS ? tide_key_count : TIDE_HEAP_RUNS;\n"
+            // One whose rows queue nothing: its runs are its entities' own (tide_entity_run), and the task's share of
+            // them goes through the order for its runs' entities, each row on its entity's run (gen_rows_function)
+            if (scattered) sb_put(o, "    const uint32_t tide_runs_from = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * tide_task / tide_pieces);\n"
+                                     "    const uint32_t tide_runs_to = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * (tide_task + 1u) / tide_pieces);\n"
+                                     "    const bool tide_every_run = tide_runs_from == 0u && tide_runs_to == TIDE_HEAP_RUNS;\n"
+                                     "    const uint32_t tide_run_was = tide_heap_run_enter(0u);\n"
+                                     "    const uint32_t tide_key_from = 0u, tide_key_to = tide_runs_from < tide_runs_to ? tide_key_count : 0u;\n");
+            else if (heap_runs) sb_put(o, "    const uint32_t tide_runs = tide_key_count < TIDE_HEAP_RUNS ? tide_key_count : TIDE_HEAP_RUNS;\n"
                                      "    const uint32_t tide_run_to = (uint32_t)((uint64_t)tide_runs * (tide_task + 1u) / tide_pieces);\n"
                                      "    const uint32_t tide_run_was = tide_heap_run_enter(0u);\n"
                                      "    for (uint32_t tide_run = (uint32_t)((uint64_t)tide_runs * tide_task / tide_pieces); tide_run < tide_run_to; tide_run++) {\n"
@@ -21930,10 +21953,12 @@ static void gen_system_run(gen *g, const decl *sys)
             else if (ordered) sb_put(o, "    const uint32_t tide_key_from = (uint32_t)((uint64_t)tide_key_count * tide_task / tide_pieces);\n"
                                    "    const uint32_t tide_key_to = (uint32_t)((uint64_t)tide_key_count * (tide_task + 1u) / tide_pieces);\n");
             else sb_put(o, "    const uint32_t tide_key_from = 0u, tide_key_to = tide_key_count;\n");
-        sb_put(o,
-                      "    for (uint32_t tide_key_at = tide_key_from; tide_key_at < tide_key_to;) {\n"
-                      "        const tide_location tide_loc = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_at], tide_keys[tide_key_at]);\n"
-                      "        uint32_t tide_key_end = tide_key_at + 1u;\n        switch (tide_loc.archetype) {\n");
+        sb_put(o, "    for (uint32_t tide_key_at = tide_key_from; tide_key_at < tide_key_to;) {\n");
+        // ...where the task hasn't every run, an entity on another task's run is that task's
+        if (scattered) sb_put(o, "        if (!tide_every_run && (uint32_t)(tide_entity_run(tide_keys[tide_key_at]) - tide_runs_from) >= tide_runs_to - tide_runs_from) {\n"
+                                 "            tide_key_at++;\n            continue;\n        }\n");
+        sb_put(o, "        const tide_location tide_loc = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_at], tide_keys[tide_key_at]);\n"
+                  "        uint32_t tide_key_end = tide_key_at + 1u;\n        switch (tide_loc.archetype) {\n");
         }
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (!runs_on(g, sys, a)) continue;
@@ -21947,16 +21972,19 @@ static void gen_system_run(gen *g, const decl *sys)
                     sb_printf(o, "            if (tide_loc.row >= tide_live_rows_%d || !(tide_live_%d[tide_loc.row >> 6] >> (tide_loc.row & 63u) & 1u)) break;\n",
                               a, a);
                 }
+                // (A row of another task's run ends the rows that go together: gen_rows_function puts each on its own)
                 sb_printf(o, "            tide_table *tide_t = &tide_w->%s;\n"
                              "            const uint32_t tide_c = tide_loc.row >> %d;\n"
                              "            uint32_t tide_last_row = tide_loc.row + 1u;\n"
-                             "            while (tide_key_end < tide_key_to) {\n"
+                             "            while (tide_key_end < tide_key_to) {\n%s"
                              "                const tide_location next = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_key_end], tide_keys[tide_key_end]);\n"
                              "                if (next.archetype != %du || next.row != tide_last_row || (next.row >> %d) != tide_c) break;\n"
                              "                tide_key_end++; tide_last_row++;\n            }\n"
                              "            const uint32_t tide_canonical_from = tide_loc.row & %du;\n"
                              "            const uint32_t tide_canonical_to = tide_canonical_from + tide_key_end - tide_key_at;\n",
-                          arch_name(g, a), shift, a, shift, (1u << shift) - 1u);
+                          arch_name(g, a), shift,
+                          scattered ? "                if (!tide_every_run && (uint32_t)(tide_entity_run(tide_keys[tide_key_end]) - tide_runs_from) >= tide_runs_to - tide_runs_from) break;\n" : "",
+                          a, shift, (1u << shift) - 1u);
                 generating_canonical_range = true;
                 generating_canonical_prepared = prepared;
                 if (rows_batched(g, sys, a)) gen_chunk(g, sys, a, call.data, clear, "            ", false, false);
@@ -21983,7 +22011,8 @@ static void gen_system_run(gen *g, const decl *sys)
             }
         }
         if (canonical) sb_put(o, "        default: break;\n        }\n        tide_key_at = tide_key_end;\n    }\n");
-        if (heap_runs) sb_put(o, "    }\n    tide_heap_run_leave(tide_run_was);\n");
+        if (scattered) sb_put(o, "    tide_heap_run_leave(tide_run_was);\n");
+        else if (heap_runs) sb_put(o, "    }\n    tide_heap_run_leave(tide_run_was);\n");
         if (prepared && around) sb_put(o, "    if (tide_pieces == 1u) {\n");
         if (prepared) gen_canonical_lanes(g, sys, true);
         if (heap_runs) gen_heap_runs_join(g, sys); // Every run was this task's

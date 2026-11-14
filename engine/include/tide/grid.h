@@ -25,6 +25,13 @@
 // isn't too big, or else hashed), and each chunk's record: its position and
 // its block.
 //
+// A grid's directory and chunks are in one heap, its handle's: the heap of the
+// run it was made in, for an owner a system changes in runs (tide/heap.h, A
+// heap in runs). Any run's rows read and change its cells where they are; a
+// row that adds a chunk to a grid in another run's heap moves the grid whole
+// into its own run's heap first, as a run hands out blocks of its own heap
+// alone, and a directory names its chunks by their offsets in its heap.
+//
 // Nothing fails: outside a grid's size, reads give zero and writes do
 // nothing.
 
@@ -158,14 +165,16 @@ static inline const void *tide_grid_peek(const tide_grid g, const int32_t x, con
 // zero where there's no chunk. `g` is a field of the world at `where`, which an
 // empty grid's first chunk gives a directory, or a grid code made as it runs
 // (TIDE_IN_SCRATCH: a local's, or what a function returned), written in the
-// scratch area wherever `where` says.
+// scratch area wherever `where` says. A field's grid may be in another run's
+// heap than `where` says (tide_handle_in): changed where it is, and moved into
+// `where`'s run's heap when it needs a chunk while runs are on threads.
 void *tide_grid_poke_slow(tide_grid *g, int32_t x, int32_t y, int32_t z, const tide_grid_shape *s, bool make, uint32_t where);
 
 static inline void *tide_grid_poke(tide_grid *g, const int32_t x, const int32_t y, const int32_t z, const tide_grid_shape *s,
                                    const bool make, const uint32_t where)
 {
     const tide_grid_dir *d = tide_grid_dir_of(*g);
-    if (!d || !d->records || !tide_grid_inside(d, x, y, z) || tide_handle_where(g->at) != where || where == TIDE_IN_SCRATCH) {
+    if (!d || !d->records || !tide_grid_inside(d, x, y, z) || !tide_handle_in(g->at, where) || where == TIDE_IN_SCRATCH) {
         return tide_grid_poke_slow(g, x, y, z, s, make, where);
     }
     const uint32_t i = tide_grid_find(d, x >> s->shift[0], y >> s->shift[1], z >> s->shift[2]);
@@ -234,8 +243,9 @@ static inline void *tide_grid_cached_poke(tide_grid_cache *c, tide_grid *g, cons
         return c->write + tide_grid_place(s, x, y, z);
     }
     void *cell = tide_grid_poke(g, x, y, z, s, make, where);
-    tide_heap *heap = tide_heap_of(where);
-    if (!cell || !heap || tide_handle_where(g->at) != where) {
+    // The grid's own heap, which may be another run's than `where`'s (tide/heap.h, A heap in runs)
+    tide_heap *heap = cell && g->at && tide_handle_in(g->at, where) ? tide_heap_of(tide_handle_where(g->at)) : NULL;
+    if (!heap) {
         *c = (tide_grid_cache){0};
         return cell;
     }
