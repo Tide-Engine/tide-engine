@@ -1,5 +1,15 @@
 # Compute on the GPU
 
+## On Android (2026-11-14)
+
+`compute.c`, `kernels.tide`, `images.tide` and `cull.tide` (with `TIDE_GPU_CULLING=decide` too) run as apps in CI's
+Android job, on the emulator's lavapipe, which has no push descriptors: kernels' image and volume stores, Texture3D,
+number frag outputs, typed `[Raw(T)]` reads and the culling's kernels through descriptor sets, from Tide's generated
+code (`tide_platform_compute_app`, `_kernels_app`, `_images_app`, `_cull_app`, `_cull_app_decided`). All passed on
+this machine's emulator, compute's and the culling's through a lost device too: `notes/android-and-mingw.md`, Every
+window fixture an app.
+What the validation records below call not run on Android was so then.
+
 ## Kernels write images and volumes (2026-11-14)
 
 Owner-approved 2026-11-13: "these make sense, lets do all of these" (the image stores, Texture3D and Grid3

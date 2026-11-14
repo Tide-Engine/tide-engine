@@ -263,9 +263,44 @@ static bool intent_string(JNIEnv *env, jobject intent, jmethodID get_extra, cons
     return true;
 }
 
+// Whether the app was built to be debugged (ApplicationInfo.FLAG_DEBUGGABLE): `tide run --android`'s and the
+// tests' apps, never one built to ship.
+static bool debuggable(JNIEnv *env, const jobject activity, const jclass activity_class)
+{
+    const jmethodID get_info =
+        (*env)->GetMethodID(env, activity_class, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;");
+    const jobject info = get_info ? (*env)->CallObjectMethod(env, activity, get_info) : NULL;
+    const jfieldID flags = info ? (*env)->GetFieldID(env, (*env)->GetObjectClass(env, info), "flags", "I") : NULL;
+    const bool is = flags && ((*env)->GetIntField(env, info, flags) & 2) != 0;
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return false;
+    }
+    return is;
+}
+
+// The intent's "tide.env", a debuggable app's: Tide's settings, NAME=value words apart (as cmake/run_android.mjs
+// gives a test's), into the environment before main, as a program run from a shell has them there. A name that isn't
+// TIDE_ and capitals, digits and underscores is left out.
+static void intent_env(char *text)
+{
+    char *rest = NULL;
+    for (char *word = strtok_r(text, " ", &rest); word; word = strtok_r(NULL, " ", &rest)) {
+        char *const equals = strchr(word, '=');
+        bool named = equals && equals - word > 5 && strncmp(word, "TIDE_", 5) == 0;
+        for (const char *c = word + 5; named && c < equals; c++) {
+            named = (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '_';
+        }
+        if (!named) continue;
+        *equals = '\0';
+        setenv(word, equals + 1, 1);
+    }
+}
+
 // What the app was started with, for main: the intent's "tide.args", words
 // apart (as `tide run --android` gives --host, --join or --connect), into
-// `argv` after the program's name. Returns how many arguments that makes.
+// `argv` after the program's name, and its "tide.env" (intent_env). Returns
+// how many arguments that makes.
 static int intent_args(char *text, const size_t size, char **argv, const int max)
 {
     static char name[] = "tide";
@@ -287,6 +322,11 @@ static int intent_args(char *text, const size_t size, char **argv, const int max
             for (char *word = strtok_r(text, " ", &rest); word && argc < max - 1; word = strtok_r(NULL, " ", &rest)) {
                 argv[argc++] = word;
             }
+        }
+        static char settings[1024];
+        if (debuggable(env, activity, activity_class)
+            && intent_string(env, intent, get_extra, "tide.env", settings, sizeof settings)) {
+            intent_env(settings);
         }
     }
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
