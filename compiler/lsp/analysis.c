@@ -1555,8 +1555,9 @@ void analysis_run(const analysis_file *given, const int given_count)
     const analysis_file *files = given;
     int count = given_count;
     // ...and so are fills', for as long as it shows one
-    bool web = false, fills = false, baked = false;
+    bool web = false, fills = false, baked = false, stored = false;
     for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
+    for (int i = 0; i < given_count && !stored; i++) stored = storage_prelude_wanted(given[i].text, given[i].len);
     if (given_count > 0) {
         const char **texts = arena_alloc(sizeof(char *) * (size_t)given_count);
         size_t *lens = arena_alloc(sizeof(size_t) * (size_t)given_count);
@@ -1567,13 +1568,18 @@ void analysis_run(const analysis_file *given, const int given_count)
         fills = draw_prelude_wanted(texts, lens, given_count);
         baked = baked_prelude_wanted(texts, lens, given_count);
     }
-    if (web || fills || baked) {
-        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 3));
+    if (web || fills || baked || stored) {
+        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 4));
         if (given_count > 0) memcpy(all, given, sizeof(analysis_file) * (size_t)given_count);
         count = given_count;
         if (web) {
             analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
             prelude.text = web_prelude(&prelude.len);
+            all[count++] = prelude;
+        }
+        if (stored) {
+            analysis_file prelude = {"tide:///storage.tide", STORAGE_PRELUDE_PATH, NULL, 0, NULL};
+            prelude.text = storage_prelude(&prelude.len);
             all[count++] = prelude;
         }
         if (fills) {

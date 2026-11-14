@@ -2705,6 +2705,29 @@ bool web_prelude_wanted(const char *text, const size_t len)
         || has_text(text, len, "IOError.TimedOut");
 }
 
+// What a load of the server's store comes back as (STORAGE_PRELUDE_PATH)
+static const char storage_prelude_text[] =
+    "// What Storage.Load asked the server's store for, as it comes back in a later\n"
+    "// tick: sent to the entity the load named, or to the world. `found` is false,\n"
+    "// and `bytes` empty, where the store has nothing under the key.\n"
+    "event Loaded\n"
+    "{\n"
+    "    string key;\n"
+    "    List<byte> bytes;\n"
+    "    bool found;\n"
+    "}\n";
+
+const char *storage_prelude(size_t *len)
+{
+    *len = sizeof storage_prelude_text - 1;
+    return storage_prelude_text;
+}
+
+bool storage_prelude_wanted(const char *text, const size_t len)
+{
+    return has_text(text, len, "Storage.Load");
+}
+
 // Whether `name` (`n` bytes) is declared somewhere in the texts as a fill
 // function: "Color Name(float2 ...".
 static bool declares_fill(const char *const *texts, const size_t *lens, const int count, const char *name, const size_t n)

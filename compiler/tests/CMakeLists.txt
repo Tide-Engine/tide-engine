@@ -1186,3 +1186,4 @@ endif()
 if(TIDE_NODE)
     add_test(NAME tidec_read_target_builtin COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/read_target_builtin.mjs" "${TIDEC_PATH}" "${PROJECT_SOURCE_DIR}")
 endif()
+tide_e2e_test(storage) # The server's store from match code: saves, loads and deletes, the same on every machine

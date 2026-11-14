@@ -125,6 +125,11 @@ void tide_entity_set_location(tide_entities *t, tide_entity e, tide_location loc
 // Imports a permitted existing identity. False for null or an already alive identity.
 // Imported identities do not enter the local current-clock spawn registry.
 bool tide_entity_install(tide_entities *t, tide_entity e);
+// Takes an alive identity out leaving nothing of it: no destruction evidence
+// (tide_entity_died_here is false) and no key, so it can be installed again.
+// What a recipient's world does with an entity that left its sight, or whose
+// row it is about to take again as the server has it. False if it isn't alive.
+bool tide_entity_erase(tide_entities *t, tide_entity e);
 // Removes local data, retaining an away marker when it lives on another shard.
 void tide_entity_forget(tide_entities *t, tide_entity e, bool away);
 // Releases the matching away marker after its owner reports destruction.

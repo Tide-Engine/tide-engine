@@ -20,6 +20,11 @@ tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST galle
 target_link_libraries(bench_gallery PRIVATE tide_bench)
 add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x15fd48b33afb54c3)
 
+# An endless world of blocks in dimensions: chunks made around players, each
+# machine sent its own, and gone once nobody's near (notes/voxels.md).
+tide_add_game(bench_voxels SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
+target_link_libraries(bench_voxels PRIVATE tide_bench)
+
 # The home page's planet (examples/earth), its match as it is but for taking
 # up to 256 players rather than the page's 64, to see how far it goes. Its
 # views come too, as the input's Sample reads one of their singletons; bots

@@ -1134,7 +1134,8 @@ typedef enum builtin_call {
     CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
 } builtin_call;
 
-enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
+// (VISIBILITY_STORAGE: a call of the server's store, Storage.Save and its kin, which takes the world the same way)
+enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8, VISIBILITY_STORAGE = 16 };
 
 // What a GUI call needs besides its arguments, and which form of a draw
 // setting a call is (expr.gui).
@@ -1720,6 +1721,9 @@ typedef struct program {
     decl *prepared_players;
     decl *preparation_order;
     bool uses_prepared;
+    bool uses_storage;   // Match code uses the server's store (Storage.Save, Load or Delete)
+    bool bare_load;      // ...and some Storage.Load names no entity, at bare_load_at
+    loc bare_load_at;
     decl *destroyed;
     decl *shown;          // Local availability transitions of match entities/components
     decl *hidden;

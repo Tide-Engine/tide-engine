@@ -102,6 +102,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     for (int i = 0; i < count; i++) {
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
+    bool stored = false; // A file loads from the server's store, whose answer's event is Tide's own code too
     bool web = false, overlay_found = false; // A file names Web.Request's types, which are Tide's own code
     const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
     size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
@@ -131,6 +132,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         src->text = text;
         diag_add_source(src);
         web |= web_prelude_wanted(text, src->len);
+        stored |= storage_prelude_wanted(text, src->len);
         texts[i] = text;
         lens[i] = src->len;
 
@@ -147,6 +149,14 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         source *src = NEW(source);
         src->path = WEB_PRELUDE_PATH;
         src->text = web_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+    }
+    if (stored) {
+        source *src = NEW(source);
+        src->path = STORAGE_PRELUDE_PATH;
+        src->text = storage_prelude(&src->len);
         diag_add_source(src);
         token *toks = lex(src);
         if (!toks || !parse_file(prog, src, toks, false)) return false;
