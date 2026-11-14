@@ -1412,7 +1412,7 @@ view DrawMeadow(Meadow meadow, Models models)
 }
 ```
 
-A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, and `Sample` at a texture's own level.
+A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, `Sample` at a texture's own level and `SampleLevel` at the level it picks (see [Reading images](#reading-images)).
 
 ### Which invocation
 
@@ -1581,6 +1581,29 @@ view DrawSparks(Sparks sparks, Burst burst)
 ```
 
 A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's. Instances of such a mesh from a `List<T>` are frustum culled by the bounds [`Draw.Bounds`](./draw-settings.md) gives, a box around every vertex the kernel can make: the CPU has none of its own for them, and without them, every instance is drawn.
+
+### Reading images
+
+A kernel reads the images a frag reads, through the same fields: a `Texture`, a `DepthTexture`, a `Cubemap`, a `TextureArray` and a `DepthTextureArray`, a `Texture3D`, and the typed `[Raw(T)]` ones. A kernel has no neighbouring pixels to tell how small an image is drawn, so its `Sample` reads the image's own pixels; `SampleLevel` reads the level the kernel picks:
+
+```csharp
+local singleton Glow
+{
+    RenderTarget scene;
+    Texture image;          // scene.color
+    GPUList<Color> average; // What the whole frame comes to
+}
+
+[Group(1)]
+compute Average(Glow glow)
+{
+    glow.average[0] = glow.image.SampleLevel(float2(0.5), 10, Filter.Trilinear); // The frame's smallest image
+}
+```
+
+- **The smaller images are made of what was last drawn into the image,** before the run, as they are for a draw that reads them: a target's colors, a multisampled target's too, an array's layers and a cube's faces. A target drawn into again after the run, or written by a kernel, has them made again for the next read.
+- **A `Texture`'s own filter decides,** as in a frag: one that carries `Filter.Bilinear` (a target's color does) reads its own pixels at any level, so name `Filter.Trilinear` in the `SampleLevel`. A typed read that names no filter reads between levels.
+- **What it isn't given reads as in a frag:** a depth the far limit (and `Compare` gives 1), a cube black, an array and a texture white, and a typed image zeros. So does an image that was disposed, an image a target hasn't got, and the colors of an image of depth alone. A `TextureArray` or a target made with `Format.Depth` and read as colors is an error where the compiler can see it: read its depth through a `DepthTextureArray` or `DepthTexture` field instead.
 
 ### Writing images
 

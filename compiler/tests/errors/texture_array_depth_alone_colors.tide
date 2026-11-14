@@ -1,0 +1,9 @@
+// expect: image 'maps' is a TextureArray of depth alone (Format.Depth), which has no colors to read: keep its depth in a DepthTextureArray field holding 'maps.depth' and read that with Sample(uv, layer), or make the array with a color Format
+scene Main { }
+local singleton Lamp { TextureArray maps; List<Vertex> quad; }
+frag Lit(Vertex vertex, out Color color, Lamp lamp) { color = lamp.maps.Sample(vertex.uv, 0); }
+view Show(mut Lamp lamp)
+{
+    lamp.maps = TextureArray(64, 64, 3, 1, Format.Depth);
+    Draw.Mesh(lamp.quad, [0, 1, 2], Lit);
+}

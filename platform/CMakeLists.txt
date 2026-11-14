@@ -673,6 +673,20 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_kernels COMMAND tide_platform_kernels)
         tide_gpu_test(tide_platform_kernels)
     endif()
+    # Kernels reading every kind of image a frag reads, with no frag reading a depth, a cube or an array: what each
+    # reads where it's given none or a disposed one, an array of depth alone as colors, and smaller images for
+    # SampleLevel; and with no GPU at all on the web (gpu=none), where every fallback is still taken
+    tide_add_game(tide_platform_kernel_reads SOURCES tests/kernel_reads.tide NAME game HOST tests/kernel_reads.c)
+    target_link_libraries(tide_platform_kernel_reads PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_kernel_reads SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_kernel_reads TARGET tide_platform_kernel_reads PIXELS EXPECT "renderer: WebGPU")
+        tide_add_web_test(tide_platform_kernel_reads_none TARGET tide_platform_kernel_reads QUERY "gpu=none"
+            EXPECT "ok: with no GPU")
+    else()
+        add_test(NAME tide_platform_kernel_reads COMMAND tide_platform_kernel_reads)
+        tide_gpu_test(tide_platform_kernel_reads)
+    endif()
 endif()
 
 # Occlusion culling (tests/occlusion.tide, src/occlusion.tide): HiZFind on the CPU and the GPU against the host's

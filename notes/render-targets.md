@@ -1,3 +1,63 @@
+## Kernels read every kind of image, and multisampled targets have smaller images everywhere (2026-11-14)
+
+An audit of the renderer's paths (Vulkan and WebGPU) found kernels reading images through fallbacks only draws
+made, mipmaps kernels never had made, and gaps beside them; the owner's "make sure everything we can add or validate
+we do" covers building them. Every rule is a pick, Provisional in docs/spec.md (Compute on the GPU, what a kernel
+reads; Views and drawing, Portable filtering and A target's samples). Users: game/shaders.md, Reading images;
+game/render-targets.md, Smooth edges.
+
+- **Fallbacks for kernels.** `texture_to_read_as` worked out its `none` before looking at the texture, and the far
+  depth, the dark cube and the white/zero arrays were made only in `upload_shaded`'s loop over SHADED/BLIT steps.
+  A kernel reading a depth with no frag reading one called `target_depth(0)`: `vk.targets[-1]` on Vulkan, a
+  TypeError on WebGPU; a cube or array fallback of 0 left a Vulkan binding unwritten and kept a WebGPU run from
+  ever running. Now: `make_read_fallbacks(shader)` (the loop, factored out) also runs for every STEP_COMPUTE step,
+  before any pass; `read_fallback(read, blend)` is called only on the paths that return none (the one-pixel
+  textures made there as before, the pass-needing ones only found); `vk_target_texture`/`vk_target_depth` and
+  tide.js's `gpu_target_texture`/`gpu_target_depth` give 0 for an id that's no target's; and `run_compute` passes by
+  a run with any image 0 on every backend (it had only on WebGPU, through `texture_status`).
+- **An array of depth alone read as colors** (texture_to_read_as's array branch) is none now, as a depth-alone
+  target's color already was through `vk_target_texture`: a kernel bound the depth layers to a float, filtering
+  binding (refused by WebGPU, undefined filtering on Vulkan). Draws were already passed by (`texture_unavailable`).
+  tidec now refuses it where the constructor is seen (`check_image_sources`, shader.c): a `TextureArray` or a
+  `Texture` field, or a frag's direct source, holding Format.Depth's image read as colors, naming the
+  `DepthTextureArray`/`DepthTexture` field to read instead (`array.depth.Sample` isn't GPU code; the audit's
+  suggested message named it). `image_format_accepts(1, ...)` is unchanged: frag outputs into depth alone rely on it.
+- **Mipmaps and the format guard.** `blends_target_format` is the one rule for both: `texture_to_read_as` gives a
+  filtering read of an R32f/Rgba32f/R32i target image none, and `mipmaps_needed` makes no chain of one (WebGPU's
+  `gpu_mipmaps` drew r32sint/r32float through a filtering pipeline: validation errors every frame the target was
+  drawn). `gpu_mipmaps` returns early for those formats itself (`blendedFormat`), as a backstop.
+- **Kernels have mipmaps made.** `run_compute` calls `prepare_mipmaps` for each COLOR/CUBE/ARRAY slot it doesn't
+  write, with the slot's filter, outside a pass, as `prepare_step_mipmaps` does for draws. And a pass begun on a
+  destination after a kernel ran (without another destination chosen between) counts as drawn again
+  (`after_kernel`, `target_drawn`): before, a draw, a run that read the target's chain, and a draw into the same
+  target left `mipped == drawn`, so the next read got the chain of the first draw. A kernel writing a target image
+  whose chain exists binds its full view as storage on Vulkan, which validation accepts (stores go to the base
+  level); WebGPU binds `first`, its one-level view.
+- **Multisampled targets' chains.** WebGPU's resolve textures now carry `format` and `usage`, so `gpu_mipmaps`
+  remakes them with levels and `first` becomes level 0, which `gpu_begin` already resolves into. Vulkan had it.
+  The recorder needs nothing new: `TIDE_EMBED_RENDER_TARGET` says the target's samples in its format and names
+  its resolved color, and `TIDE_EMBED_RENDER_MIPMAPS` names that color when a read needs a chain
+  (`embed_render_multisampled_target_mipmaps` pins both, and that an R32f image read Trilinear asks for none).
+  `TideRender.cs` was left alone: making that chain there (a one-sample companion with mips, resolved into before
+  GenerateMips) is the next Unity pass's (unity.md).
+- **Tests.** `tide_platform_kernel_reads` (new: `platform/tests/kernel_reads.tide/.c`), native Vulkan with
+  validation and web-debug WebGPU, the device lost and found on the web, and `tide_platform_kernel_reads_none`
+  (web, `gpu=none`): 25 probes in a game where no frag reads a depth, cube or array: no depth, cube, array, array
+  depth, typed cube/array/image; disposed target color, depth, cube, array (colors and depth), typed image; a depth a
+  frag wrote (read and compared), a face, a layer, depth layers; a depth-alone array through `?:`; level 3 of R16f,
+  Color, an R16f layer, an R16f face, 4-sample R16f and Color targets, read at the middle of a column of 4 left of a
+  quarter's line so level 0 (0) and level 3 (1) differ; the same target drawn again after the kernel in one pass
+  run (2); an R32i image through `?:` at a level; a chain written by a kernel then read at levels 0 and 3. Without
+  the kernels' fallbacks the first 15 fail (the runs are passed by), without the kernels' mipmaps the six level
+  probes, without `after_kernel` the redraw probe. `tide_platform_images` gained a 4-sample R16f and Color target's
+  level 3 in a frag and a Trilinear read of an R32i image (white, and on WebGPU no validation error). Errors:
+  `texture_array_depth_alone_colors`, `_kernel`, `render_target_depth_alone_color`, `_source`.
+- **Validation** (Windows, Clang 23, Node 24.22.1, hidden): sanitize: 29 renderer `gpu` fixtures (draw, targets,
+  compute, images, kernels, kernel_reads, occlusion, cull, shaders, prewarm, readback, depth fallbacks and others),
+  draw units 129/129, the embed suite 29/29, the 84 related diagnostics, 73 shader goldens and texture e2es;
+  web-debug: 21 pixel fixtures on software WebGPU, `kernel_reads_none`, WASI draw units 129/129.
+- **Not run:** Unity's replay (no C# changed), Android, Metal, the optional real-GPU web lanes.
+
 ## Number images blend, have mipmaps, and make array layers and cube faces (2026-11-14)
 
 The owner asked that the first day's conservative refusals go where every backend can do the work ("make sure
@@ -58,8 +118,8 @@ Portable filtering and Number images as array layers and cube faces. Users: game
 - **Not built, and why.** Blending R32f/Rgba32f (device-dependent without the owner; a four-load shader blend is the
   alternative weighed in the spec). R32f/Rgba32f/R32i layers and faces (need non-filtering sampler bindings; a cube
   has no exact load). Blended typed Texture3D reads (typed volumes are storage formats; Rgba16f volumes could
-  blend). Mipmaps of a multisampled target on WebGPU and Unity (their resolved images have no chain, as before
-  this work, for colors too). Left out by the owner: a blend per output, a chosen mip level as a destination,
+  blend). (Mipmaps of a multisampled target on WebGPU are built since, the top of this note; Unity's replay of them
+  waits on the next Unity pass.) Left out by the owner: a blend per output, a chosen mip level as a destination,
   frag-drawn volume slices, an sRGB target format; R8/Rg8/R16f/Rg16f kernel storage isn't portable on WebGPU.
 
 ## Numeric image language surface and clears (2026-11-14)

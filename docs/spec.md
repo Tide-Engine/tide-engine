@@ -3473,7 +3473,9 @@ Constants outside [-65536,65536], slopes outside [-16,16], NaN and infinities re
 No depth-bias clamp is exposed. Vulkan uses dynamic state; WebGPU keeps at most 32 bias variants per logical
 pipeline, evicting the least recently used, with zero bias reusing the original. Logical renderer pipeline
 counts are unchanged; these device pipeline variants are additional. Occlusion tests of biased instances
-are disabled because their geometric depth is not the rasterized depth.
+are disabled because their geometric depth is not the rasterized depth. Draws under different biases never
+share a command, a culled set, a level's gathered run or a GPU call, so a decal drawn right after its base keeps
+its own (the gathering of a mesh's levels on the CPU's path didn't compare it until 2026-11-14).
 
 #### Provisional: a frag writes depth (2026-11-14)
 
@@ -3837,6 +3839,14 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
       gets no image, a Color read the white pixel and a typed one zeros. So is a kernel whose written field
       holds an image of another format than its pipeline declares, or one with no storage use: its stores go
       to a private image, with a line that says so once. Neither reaches a GPU binding of another format.
+      Nor are smaller images made of such an image for a read between them (Claude, 2026-11-14): making them
+      blends, which WebGPU's validation refused on every frame the target was drawn.
+    - **The colors of an image of depth alone are no image** (Claude, 2026-11-14): a `TextureArray` or a target
+      made with `Format.Depth`, read as colors by a frag, a vert or a kernel, is an error where the compiler sees
+      the constructor, naming the `DepthTextureArray` or `DepthTexture` field to read instead. Where it can't (a
+      `?:` of two arrays, a `mut` parameter, C), a draw is passed by with a line as before, and a kernel's read
+      is what no image reads (white, or zeros for a typed read), never the depth bound as colors, which WebGPU
+      refuses and Vulkan filters undefined.
     - **A typed read of no image is zeros,** blended or not, in a Texture, an array or a cube.
     - Ordinary Color and bare Raw textures keep their filters.
   - **Number images as array layers and cube faces** (Provisional, 2026-11-14): `TextureArray(width, height,
@@ -3874,6 +3884,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **A device with fewer draws it with what it has,** and the engine says so once, on the game's output: the most of 8, 4 and 2 that's no more than asked and that the device has for what the target holds. WebGPU has 1 and 4 and nothing else, so there 2 is 4 (more than asked, where the other choice was no smoothing at all) and 8 is 4. Nothing lets a game ask what it got.
   - **What it's for:** each of the target's pixels keeps that many colors, depths and stencils while it's drawn into, and a triangle's edge covers some of them, so the edges of 3D meshes, and of 2D ones, are smooth. A frag still runs once for a pixel a triangle covers, not once a sample. The smooth shapes and text are smooth by themselves, and are as they were.
   - **Its images are what its samples come to,** one value a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's. Color reads keep their filters; typed numeric reads follow Portable filtering, above. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
+  - **Its smaller images are any target's** (Provisional, Claude, 2026-11-14): `Filter.Trilinear`, `Filter.Anisotropic` and `SampleLevel` read a chain made of what its samples came to, when a read first needs it after more was drawn. Vulkan had it; WebGPU resolves each pass into the first level of a texture with room for the rest, and makes the rest as a one-sample target's. Unity's replay is handed what it needs to do the same (the target's samples in the packet that makes it, and a Mipmaps of its resolved color); its making of them is Unity's replay's work, still to come, and until then it reads the resolved image alone there. Weighed: refusing those reads of a multisampled target on every backend.
   - **Its depth is read as any target's** (2026-10-13; the owner asked for the engine to be fixed where a game had worked around the refusal there was, and each rule is a pick, to confirm). `target.depth` of a multisampled target is one depth a pixel: one of the pixel's samples, as they are when the draw that reads it is drawn. It's made of the samples only for a target whose depth a draw reads, and again only once more was drawn into the target, so a target nothing reads the depth of has no texture for it and pays no pass. A sample picked, not their mean or their nearest: an edge is a step, as a target's with no samples is, and the depth is one a surface there really has.
   - **A target of depth alone has none:** `Format.Depth` with `samples` above 1 is an error where both are written, and where either is only known as it runs the target has one sample, with a line that says so.
   - **The window has none.** A game that wants an antialiased frame draws it into `RenderTarget.Window(samples: 4)` and brings it to the window with `Draw.Blit`. The window's own framebuffer would take a setting that's the game's and three ways to ask for it that can each be refused (GLFW's hint before the window is made, the WebGL context's `antialias`, which a browser may ignore, and an EGL config on Android), a canvas on WebGPU has no samples of its own at all, and the GUI, the stats and the smooth shapes drawn there gain nothing from it.
@@ -4203,6 +4214,28 @@ These are implementation picks, rather than additional owner decisions.
   Like a GPU list's capacity, the CPU's size remains the requested size when a device cannot hold its image.
 - **Not there:** a Texture3D file asset declaration (a stack of PNGs was weighed, but does not specify a numeric
   volume's channel format), volume mipmaps, compressed volumes, and a renderable slice.
+
+### Provisional: what a kernel reads (Claude, 2026-11-14)
+
+The owner asked that every gap a GPU can close be closed ("make sure everything we can add or validate we do"). A
+kernel reads images as frags and verts do; these are the picks that made it so.
+
+- **What it reads where it's given none** is a frag's, whether or not any frag of the game reads that kind: a
+  `DepthTexture` or `DepthTextureArray` the far limit (a comparison with it is 1), a `Cubemap` the dark cube (black,
+  alpha one), a `TextureArray` white, a `Texture` the white pixel, and every typed (`[Raw(T)]`) read zeros. So does
+  an image that was disposed, a color image a target hasn't got, the colors of a target or an array of depth alone,
+  and an image a blending read can't blend (R32f, Rgba32f, R32i). Weighed: passing the run by with a line, as a
+  draw that samples such an image is; a run also writes lists and other images, which runs after it read, so it
+  runs with what a missing image reads instead.
+- **A run with an image that couldn't be made at all** (a fallback on a lost device) is passed by on every backend:
+  a binding left without an image reads anything on Vulkan.
+- **Smaller images:** `SampleLevel`, and `Filter.Trilinear` or `Filter.Anisotropic`, in a kernel read the chain made
+  of what was last drawn into the image, made before the run as before a draw that reads it so: a target's color
+  (multisampled too), an array's layers, a cube's faces, in every format a sampler blends. A pass that draws into
+  the target after a run, and a run that writes its image, have the chain made again before the next read.
+  Weighed: kernels reading level zero alone, as was built, which contradicted these calls running in kernels.
+- **A Color texture's own filter still decides** whether a level is read, as in a frag (Point and Bilinear keep to
+  the base image): a kernel names `Filter.Trilinear` to read a level of a `Texture` that carries Bilinear.
 
 ### Decided and provisional (2026-11-05), built the same day
 

@@ -1,5 +1,13 @@
 # Compute on the GPU
 
+## Kernels read images as frags do (2026-11-14)
+
+What a kernel reads where it's given no image (the far depth, the dark cube, the white and zero arrays, made for
+kernels too by `make_read_fallbacks`), disposed and depth-alone images, the smaller images `run_compute` now has made
+for SampleLevel and Trilinear reads, and a pass on a target after a run counting as drawn again: render-targets.md,
+Kernels read every kind of image (where the fixture `tide_platform_kernel_reads` is described). `run_compute` passes
+by a run with any image it couldn't bind on every backend now, not only where `texture_status` says so.
+
 ## Kernels write images and volumes (2026-11-14)
 
 Owner-approved 2026-11-13: "these make sense, lets do all of these" (the image stores, Texture3D and Grid3

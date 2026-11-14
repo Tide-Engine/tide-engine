@@ -7109,6 +7109,12 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
                 return false;
             }
             const int format = source ? image_target_format(source, 0, 0) : -3;
+            if (format == 1) {
+                diag_error(call->at, "the frag's source is the color of a target of depth alone (Format.Depth), which has none: "
+                           "read the target's depth through a DepthTexture field holding 'target.depth', or make the target "
+                           "with a color Format");
+                return false;
+            }
             if (format >= 0 && !image_format_accepts(format, value)) {
                 diag_error(call->at, "the frag's source reads %s, but Format." STR_FMT " takes %s: pass a source image with the matching numeric role and format",
                            type_name(value), STR_ARG(prog->format->members.items[format].name), image_format_types(format));
@@ -7132,6 +7138,19 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
         }
         if (format == -6 && value.kind != TY_COLOR && value.kind != TY_FLOAT) {
             diag_error(call->at, "a Grid3<float> volume takes [Raw(float)]: declare its numeric image role as float");
+            return false;
+        }
+        // Format.Depth's image has no colors: a target's or an array's of depth alone (its depth is read apart)
+        if (format == 1 && !t->write && t->field->type.kind == TY_TEXTURE_ARRAY && t->read != READ_DEPTH_ARRAY) {
+            diag_error(call->at, "image '" STR_FMT "' is a TextureArray of depth alone (Format.Depth), which has no colors to read: "
+                       "keep its depth in a DepthTextureArray field holding '" STR_FMT ".depth' and read that with Sample(uv, layer), "
+                       "or make the array with a color Format", STR_ARG(t->field->name), STR_ARG(t->field->name));
+            return false;
+        }
+        if (format == 1 && !t->write && t->field->type.kind == TY_TEXTURE) {
+            diag_error(call->at, "image '" STR_FMT "' holds the color of a target of depth alone (Format.Depth), which has none: "
+                       "read the target's depth through a DepthTexture field holding 'target.depth', or make the target with a "
+                       "color Format", STR_ARG(t->field->name));
             return false;
         }
         if (format >= 7 && t->read == READ_NUMBER_BLEND) {

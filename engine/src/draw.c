@@ -5271,10 +5271,12 @@ static uint32_t append_mesh(tide_draw_list *d, const tide_draw_list *from, const
 }
 
 // Whether `next` is more of the same draw as `c`, of another level of the mesh `family`: a run that follows
-// it with nothing between, drawn with the same of everything else.
+// it with nothing between, drawn with the same of everything else, its depth bias too (a decal's runs gathered into
+// its base's would draw with the base's).
 static bool level_follows(const tide_draw_list *d, const tide_draw_command *c, const tide_draw_command *next, const uint32_t family)
 {
-    if (next->kind != c->kind || next->blend != c->blend || next->depth != c->depth || next->cull != c->cull) return false;
+    if (next->kind != c->kind || next->blend != c->blend || next->depth != c->depth || next->cull != c->cull
+        || next->depth_bias.x != c->depth_bias.x || next->depth_bias.y != c->depth_bias.y) return false;
     if (c->kind == TIDE_DRAW_MESH_3D) {
         const uint32_t mesh = next->mesh3.mesh;
         if (mesh == 0 || mesh > d->mesh_count || next->mesh3.count == 0) return false;
