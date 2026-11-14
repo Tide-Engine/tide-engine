@@ -1806,6 +1806,7 @@ typedef struct program {
     VEC(decl *) local_parts; // The local parts of the match's components and singletons (decl.local_part), in their order
     VEC(decl *) start_scenes; // Scenes Session.Start starts matches in
     bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements
+    VEC(const field *) image_places; // Image fields a call made or may have changed (`out`, `mut`): what they hold isn't known
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
     // ...and the entities' places as it began: a match handler reads the tick's start, or a function does through its

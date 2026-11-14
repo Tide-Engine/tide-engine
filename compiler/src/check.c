@@ -2896,10 +2896,34 @@ static bool linear_kind(const type t)
     return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
 }
 
+static bool image_kind(const type t)
+{
+    return t.kind == TY_RENDER_TARGET || t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY
+        || t.kind == TY_CUBEMAP;
+}
+
+// Where an image field gets its value: an assignment's or a struct literal's. Format inference ([Linear] sources,
+// storage images, numeric outputs) reads every one, so a way to give a field an image that isn't recorded here
+// has to say the field's origin is unknown instead (note_image_place).
+static void note_image_origin(const field *to, const expr *value)
+{
+    if (!to || !image_kind(to->type)) return;
+    field *f = (field *)(uintptr_t)to;
+    vec_push(f->image_assignments, value);
+}
+
+// An image field a call makes ('out') or may change ('mut'): the callee's assignments are to its parameter, so
+// nothing here knows what format the field then holds.
+static void note_image_place(const checker *c, const expr *arg)
+{
+    if (!arg->field || !image_kind(arg->type) || !image_kind(arg->field->type)) return;
+    vec_push(c->prog->image_places, arg->field);
+}
+
 // Sampling copies admit RGBA8 storage only. Check every assignment, including later
 // ones, so changing a target to floating-point storage cannot evade validation.
 // Zero is compatible (including no image), one incompatible, minus one unknown.
-static int linear_source_format(const expr *e, const int color, const int depth, const char **reason)
+static int linear_source_format(const program *prog, const expr *e, const int color, const int depth, const char **reason)
 {
     if (!e || e->kind == E_DEFAULT) return 0;
     if (depth > 32) return -1;
@@ -2910,23 +2934,26 @@ static int linear_source_format(const expr *e, const int color, const int depth,
         return 1;
     }
     if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
-        return linear_source_format(e->local->value, color, depth + 1, reason);
+        return linear_source_format(prog, e->local->value, color, depth + 1, reason);
     if (e->kind == E_CONDITIONAL) {
-        const int a = linear_source_format(e->lhs, color, depth + 1, reason);
-        return a ? a : linear_source_format(e->rhs, color, depth + 1, reason);
+        const int a = linear_source_format(prog, e->lhs, color, depth + 1, reason);
+        return a ? a : linear_source_format(prog, e->rhs, color, depth + 1, reason);
     }
     if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
-        return linear_source_format(e->object, 0, depth + 1, reason);
+        return linear_source_format(prog, e->object, 0, depth + 1, reason);
     if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
         int64_t index;
         if (!fold_int(e->lhs, &index) || index < 0 || index > 3) return -1;
-        return linear_source_format(e->object->object, (int)index, depth + 1, reason);
+        return linear_source_format(prog, e->object->object, (int)index, depth + 1, reason);
     }
     if (e->field) {
         const field *f = e->field;
+        // Every image a field can hold is one of its recorded origins (note_image_origin); a place a call makes or
+        // changes holds whatever the callee gave it, which is no fixed format.
+        for (int i = 0; i < prog->image_places.count; i++) if (prog->image_places.items[i] == f) return -1;
         for (int i = -1; i < f->image_assignments.count; i++) {
             const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
-            const int got = linear_source_format(origin, color, depth + 1, reason);
+            const int got = linear_source_format(prog, origin, color, depth + 1, reason);
             if (got) return got;
         }
         return 0;
@@ -2954,13 +2981,14 @@ static void check_linear_uses(const checker *c)
     for (int i = 0; i < c->linear_sources.count; i++) {
         const expr *e = c->linear_sources.items[i];
         const char *reason = NULL;
-        const int format = linear_source_format(e, 0, 0, &reason);
+        const int format = linear_source_format(c->prog, e, 0, 0, &reason);
         if (format == 1) {
             diag_error(e->at, "[Linear] cannot read %s: this format has no sRGB counterpart", reason);
             diag_note("use Format.Rgba8 for display-encoded colors, or remove [Linear] for floating-point light and single-channel data");
         } else if (format < 0) {
             diag_error(e->at, "this [Linear] source's format is not fixed by its constructor assignments");
-            diag_note("assign a Format.Rgba8 image directly, or keep images of different formats in separate fields");
+            diag_note("assign a Format.Rgba8 image to its field directly, not through an 'out' or 'mut' argument, a list or a "
+                      "function's result, and keep images of different formats in separate fields");
         }
     }
     for (int i = 0; i < c->calls.count; i++) {
@@ -3251,6 +3279,7 @@ static type check_literal(checker *c, expr *e)
             if (str_eq(d->fields.items[j].name, init->name) && !d->fields.items[j].hidden) init->field = &d->fields.items[j];
         }
         const type value = check_field_value(c, init->value, init->field);
+        note_image_origin(init->field, init->value); // Holder { target = RenderTarget(...) }, as an assignment
         if (!init->field && local_field_of(d, init->name)) {
             diag_error(init->at, "'" STR_FMT "' is a local field of '" STR_FMT "', so a value of it doesn't have it",
                        STR_ARG(init->name), STR_ARG(d->name));
@@ -5060,6 +5089,7 @@ static void finish_out_arg(checker *c, expr *arg, const type want)
         arg->type = want;
     }
     if (holds_heap(arg->type)) c->prog->uses_text = true; // In the scratch area, until it goes somewhere
+    note_image_place(c, arg);
 }
 
 // `out` before an argument of a call that takes none: a constructor's, a
@@ -5483,6 +5513,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             continue;
         }
         const bool exact = p->type.kind == arg->type.kind && p->type.decl == arg->type.decl;
+        if (p->is_out || p->mode == PARAM_MUT) note_image_place(c, arg);
         if (!check_out_param(c, m, p, arg) || p->is_out) continue;
         if (p->mode == PARAM_MUT && arg->type.kind != TY_ERROR && p->type.kind != TY_ERROR && !exact) {
             diag_error(arg->at, "'" STR_FMT "' changes its '" STR_FMT "', which must be %s, not %s", STR_ARG(m->name),
@@ -5806,7 +5837,7 @@ static void place_generic_instance(checker *c, decl *d)
     check_method_body(&nested, d);
     if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
-    MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
+    MERGE_CHECKS(linear_sources); MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
     MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
     MERGE_CHECKS(access_warnings);
 #undef MERGE_CHECKS
@@ -14332,12 +14363,7 @@ static void check_assign(checker *c, const stmt *s)
     c->write_root = outer_root;
     s->target->raw_sampled = true; // A Raw field's destination is not an escaping read of its pixels.
     const type value = s->target->field ? check_field_value(c, s->value, s->target->field) : check_expr_want(c, s->value, target);
-    if (s->target->field && s->op == T_ASSIGN
-        && (target.kind == TY_RENDER_TARGET || target.kind == TY_TEXTURE || target.kind == TY_TEXTURE3D
-            || target.kind == TY_TEXTURE_ARRAY || target.kind == TY_CUBEMAP)) {
-        field *f = (field *)(uintptr_t)s->target->field;
-        vec_push(f->image_assignments, s->value);
-    }
+    if (s->target->field && s->op == T_ASSIGN && image_kind(target)) note_image_origin(s->target->field, s->value);
     if (target.kind == TY_ERROR) return;
     if (s->target->property) {
         if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {

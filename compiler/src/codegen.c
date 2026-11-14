@@ -23511,7 +23511,7 @@ static void build_pack(gen *g)
                 layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder, NULL);
             }
             tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
-                           (uint32_t)(v->count ? v->items[0].image.width : 0));
+                           (uint32_t)(v->count ? v->items[0].image.width : 0) | (d->sample_linear ? TIDE_PACK_LINEAR : 0u));
             continue;
         }
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
@@ -23520,7 +23520,8 @@ static void build_pack(gen *g)
             for (int k = 0; k < 6; k++) {
                 faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, d->sample_linear, &extra, prog->game_folder, NULL);
             }
-            tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
+            tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6,
+                           (uint32_t)v->items[0].image.width | (d->sample_linear ? TIDE_PACK_LINEAR : 0u));
             continue;
         }
         if (v->kind == ASSET_ANIMATIONS && t.kind == TY_STRUCT) {
@@ -23558,8 +23559,10 @@ static void build_pack(gen *g)
             uint32_t extra;
             const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder,
                                           &stored[0]);
+            // A [Linear] Texture's entry says so: its bytes are for that reading alone (TIDE_PACK_LINEAR)
             tide_pack_name(&b, qualified, kind, at,
-                           v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
+                           v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size,
+                           extra | (v->kind == ASSET_TEXTURE && d->sample_linear ? TIDE_PACK_LINEAR : 0u));
             continue;
         }
         uint64_t *offsets = malloc(sizeof(uint64_t) * (size_t)(v->count ? v->count : 1));

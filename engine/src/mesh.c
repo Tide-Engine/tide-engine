@@ -7,6 +7,7 @@
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/pack.h"
+#include "tide/transfer_bytes.h"
 #include "list_data_cache.h"
 #include "mesh_levels.h"
 
@@ -256,11 +257,12 @@ static void color_cells(const cells_writer *w, const uint8_t *cells, const int32
         const float alpha = unit(row[x].a), worked = w->raw ? 1.0f : alpha;
         out[3] = channel(1.0f, alpha);
         // Coverage is stored in a byte too. Premultiplying by that exact value prevents encoded RGB
-        // surviving where a tiny positive alpha rounded to zero.
-        const float linear_alpha = w->linear ? (float)out[3] / 255.0f : 0.0f;
-        out[0] = w->linear ? channel(tide_todisplay_f(tide_tolinear_f(row[x].r) * linear_alpha), 1.0f) : channel(row[x].r, worked);
-        out[1] = w->linear ? channel(tide_todisplay_f(tide_tolinear_f(row[x].g) * linear_alpha), 1.0f) : channel(row[x].g, worked);
-        out[2] = w->linear ? channel(tide_todisplay_f(tide_tolinear_f(row[x].b) * linear_alpha), 1.0f) : channel(row[x].b, worked);
+        // surviving where a tiny positive alpha rounded to zero. [Linear]'s bytes are
+        // byte(ToDisplay(ToLinear(c) * alpha / 255)), found with no pow for a clear cell or an opaque one and with
+        // one for the rest (tide/transfer_bytes.h), where each channel had two
+        out[0] = w->linear ? tide_transfer_premultiplied_byte(row[x].r, out[3]) : channel(row[x].r, worked);
+        out[1] = w->linear ? tide_transfer_premultiplied_byte(row[x].g, out[3]) : channel(row[x].g, worked);
+        out[2] = w->linear ? tide_transfer_premultiplied_byte(row[x].b, out[3]) : channel(row[x].b, worked);
     }
 }
 

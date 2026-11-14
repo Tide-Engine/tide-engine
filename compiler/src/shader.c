@@ -906,6 +906,7 @@ static const char *const helper_texts[H_COUNT] = {
     // return, as ANGLE's D3D11 warns of what an early one might leave unset
     [H_TRANSFER] = "float tide_tolinear1(float v) {\n"
                    "    float x = tide_saturate1(v);\n"
+                   "    if (x >= 1.0) { return 1.0; }\n"
                    "    if (x <= 0.04045) { return x / 12.92; }\n"
                    "    return pow((x + 0.055) / 1.055, 2.4);\n"
                    "}\n"
@@ -917,6 +918,7 @@ static const char *const helper_texts[H_COUNT] = {
                    "}\n"
                    "float tide_todisplay1(float v) {\n"
                    "    float x = tide_saturate1(v);\n"
+                   "    if (x >= 1.0) { return 1.0; }\n"
                    "    if (x <= 0.0031308) { return x * 12.92; }\n"
                    "    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;\n"
                    "}\n"

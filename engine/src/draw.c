@@ -2790,34 +2790,59 @@ static uint32_t pack_texture(tide_draw_list *d, const uint64_t version, const in
 // two names of one file are one texture, and a file that changed is another.
 // A name the pack has no image under (a Texture kept from another build's) is
 // no texture, as the default Texture is.
-static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture)
+// Whether the pack's image `named` is stored for the reading the code about to draw it gives it: with the
+// [Linear] mark or without. A pack and code of one build always agree; a pack of another build's (one loaded in
+// place of the game's own, or kept across a reload that changed the mark) may not, and its soft pixels would then
+// be read as the other encoding's with nothing said. Such an image isn't drawn, and why is said once.
+static bool pack_reads(const uint64_t named, const bool linear)
+{
+    bool packed;
+    if (!tide_pack_image_linear(named, &packed) || packed == linear) return true;
+    static bool said;
+    if (!said) {
+        fprintf(stderr, "tide: an image of the loaded pack was packed %s [Linear], and the code that draws it reads it %s "
+                        "the mark: its soft pixels are stored for the other reading, so it isn't drawn. Build the game "
+                        "again, so that its pack and its code are one build's\n",
+                packed ? "with" : "without", linear ? "with" : "without");
+        said = true;
+    }
+    return false;
+}
+
+static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture, const bool linear)
 {
     const uint64_t name = texture->version & TIDE_TEXTURE_NAME;
-    // The one found last, again this frame: what it found then, already noted as drawn
-    if (name && name == d->pack_named && d->pack_frame == d->frame && d->pack_slot && d->pack_slot <= d->texture_count) {
+    // The one found last, again this frame: what it found then, already noted as drawn (an unmarked reading's)
+    if (!linear && name && name == d->pack_named && d->pack_frame == d->frame && d->pack_slot && d->pack_slot <= d->texture_count) {
         return d->pack_slot;
     }
     tide_texture image;
-    if (!tide_pack_texture_find(name, &image)) return 0;
+    if (!tide_pack_texture_find(name, &image) || !pack_reads(name, linear)) return 0;
     const uint32_t slot = pack_texture(d, image.version, image.width, image.height, image.pixels);
     d->textures[slot - 1u].compressed = tide_pack_texture_blocks_find(name);
+    if (linear) return slot;
     d->pack_named = name;
     d->pack_slot = slot;
     d->pack_frame = d->frame;
     return slot;
 }
 
-uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref texture)
+static uint32_t texture_source(tide_draw_list *d, const tide_texture_ref texture, const bool linear)
 {
     if (!texture.target.id) {
         if (texture.image.pixels) return texture_slot(d, &texture.image);
         tide_grid grid;
         tide_grid_shape shape;
         if (tide_texture_grid(texture, &grid, &shape)) return tide_draw_grid_texture(d, grid, &shape);
-        return pack_slot(d, &texture.image);
+        return pack_slot(d, &texture.image, linear);
     }
     const tide_render_target target = tide_render_target_resolve(texture.target);
     return tide_draw_target_texture_sized(d, target.id, target.size);
+}
+
+uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref texture)
+{
+    return texture_source(d, texture, false);
 }
 
 // Static [Linear] captures share borrowed source storage but keep a distinct draw/GPU cache entry.
@@ -2826,20 +2851,15 @@ static uint32_t linear_source(tide_draw_list *d, const uint32_t source)
     if (!source || source > d->texture_count) return 0;
     tide_draw_texture copy = d->textures[source - 1u];
     if (copy.linear) return source;
-    for (uint32_t i = 0; i < d->texture_count; i++) {
-        tide_draw_texture *t = &d->textures[i];
-        if (!t->linear || t->space != copy.space || t->id != copy.id) continue;
-        copy.linear = true;
-        copy.capacity = 0;
-        copy.changes = NULL;
-        *t = copy;
-        return i + 1u;
-    }
     copy.linear = true;
     copy.capacity = 0;
     copy.changes = NULL;
-    tide_draw_texture *added = add_texture(d, copy);
-    return (uint32_t)(added - d->textures) + 1u;
+    // Through the index, as every other lookup: a scan of the list here was every texture, for each marked
+    // texture of each shaded draw. The first place with this space, id and role, as the scan found.
+    tide_draw_texture *twin = find_texture_role(d, copy.space, copy.id, true);
+    if (twin) *twin = copy;
+    else twin = add_texture(d, copy);
+    return (uint32_t)(twin - d->textures) + 1u;
 }
 
 uint32_t tide_draw_texture_source_linear(tide_draw_list *d, const tide_texture_ref texture)
@@ -2847,7 +2867,7 @@ uint32_t tide_draw_texture_source_linear(tide_draw_list *d, const tide_texture_r
     tide_grid grid;
     tide_grid_shape shape;
     if (tide_texture_grid(texture, &grid, &shape)) return tide_draw_grid_texture_linear(d, grid, &shape);
-    return linear_source(d, tide_draw_texture_source(d, texture));
+    return linear_source(d, texture_source(d, texture, true));
 }
 
 uint32_t tide_draw_depth_source(tide_draw_list *d, const tide_depth_ref depth)
@@ -2889,7 +2909,7 @@ static uint32_t pack_array(tide_draw_list *d, const uint64_t version, const int3
     return (uint32_t)(t - d->textures) + 1u;
 }
 
-uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref array)
+static uint32_t array_source(tide_draw_list *d, const tide_texture_array_ref array, const bool linear)
 {
     tide_grid grid;
     tide_grid_shape shape;
@@ -2901,7 +2921,8 @@ uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref 
         uint32_t layers;
         uint64_t version;
         const uint8_t *const *pixels;
-        if (!tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)) return 0;
+        if (!tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)
+            || !pack_reads(array.named, linear)) return 0;
         return pack_array(d, version, width, height, layers, pixels, tide_pack_texture_array_blocks(array.named));
     }
     const tide_render_target target = tide_render_target_resolve(array.target);
@@ -2913,12 +2934,17 @@ uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref 
     return at;
 }
 
+uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref array)
+{
+    return array_source(d, array, false);
+}
+
 uint32_t tide_draw_array_source_linear(tide_draw_list *d, const tide_texture_array_ref array)
 {
     tide_grid grid;
     tide_grid_shape shape;
     if (tide_texture_array_grid(array, &grid, &shape)) return tide_draw_grid_array_texture_linear(d, grid, &shape);
-    return linear_source(d, tide_draw_array_source(d, array));
+    return linear_source(d, array_source(d, array, true));
 }
 
 uint32_t tide_draw_volume_source(tide_draw_list *d, const tide_texture3d_ref volume)
@@ -2936,13 +2962,13 @@ uint32_t tide_draw_volume_source(tide_draw_list *d, const tide_texture3d_ref vol
     return at;
 }
 
-uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
+static uint32_t cube_source(tide_draw_list *d, const tide_cubemap_ref cube, const bool linear)
 {
     if (!cube.target.id) {
         int32_t size;
         uint64_t version;
         const uint8_t *const *faces;
-        if (!tide_pack_cubemap_find(cube.named, &size, &version, &faces)) return 0;
+        if (!tide_pack_cubemap_find(cube.named, &size, &version, &faces) || !pack_reads(cube.named, linear)) return 0;
         return pack_cube(d, version, size, faces);
     }
     const tide_render_target target = tide_render_target_resolve(cube.target);
@@ -2951,9 +2977,14 @@ uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
     return target_texture_version(d, TIDE_PIXELS_TARGET_CUBE, id, target.size, tide_render_target_version(id));
 }
 
+uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
+{
+    return cube_source(d, cube, false);
+}
+
 uint32_t tide_draw_cube_source_linear(tide_draw_list *d, const tide_cubemap_ref cube)
 {
-    return linear_source(d, tide_draw_cube_source(d, cube));
+    return linear_source(d, cube_source(d, cube, true));
 }
 
 // A mesh's corners as the tint and the transform leave them: apart from

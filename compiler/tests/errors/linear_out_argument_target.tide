@@ -1,0 +1,5 @@
+// expect: this [Linear] source's format is not fixed by its constructor assignments
+scene Main { }
+local singleton Art { RenderTarget rt; [Linear] Texture lit; }
+void Make(out RenderTarget t) { t = RenderTarget(64, 64, Format.R32i); }
+view V(mut Art s) { Make(out s.rt); s.lit = s.rt.color; }
