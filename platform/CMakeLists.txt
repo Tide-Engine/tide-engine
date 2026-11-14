@@ -1440,13 +1440,16 @@ endif()
 # shaders' checks are.
 if(TIDE_PLATFORM AND TIDE_ANDROID)
     tide_add_game(tide_platform_readback_app SOURCES tests/readback.tide NAME game HOST tests/readback.c WINDOW)
-    target_include_directories(tide_platform_readback_app PRIVATE src)
+    target_include_directories(tide_platform_readback_app PRIVATE src third_party) # Vulkan's headers, for src/gpu_vk.h
     tide_android_app_test(tide_platform_readback_app GPU)
     tide_android_app_test(tide_platform_readback_app GPU NAME tide_platform_readback_app_depth_fallback
         ENVIRONMENT TIDE_TEST_DEPTH_FALLBACK=1)
 elseif(TIDE_PLATFORM)
     tide_add_game(tide_platform_readback SOURCES tests/readback.tide NAME game HOST tests/readback.c)
     target_include_directories(tide_platform_readback PRIVATE src)
+    if(NOT TIDE_WEB)
+        target_include_directories(tide_platform_readback PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
+    endif()
     target_link_libraries(tide_platform_readback PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_readback SHELL web/test_shell.html)

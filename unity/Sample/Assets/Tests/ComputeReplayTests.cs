@@ -89,7 +89,7 @@ public sealed unsafe class ComputeReplayTests
         public void LinearCopy(uint id) => Pipeline(id, 0xc0de0015, 16, 3, new uint[] { 0 }, true);
 
         public void PixelRead(uint id) {
-            Pipeline(id, 0xc0de0014, 16, 3, new uint[] { 0 }, true);
+            Pipeline(id, 0xc0de0014, 48, 3, new uint[] { 0 }, true);
             Add(Op.PipelineStorage, id, 1, 3, 1);
         }
 
@@ -1073,13 +1073,15 @@ public sealed unsafe class ComputeReplayTests
         var words = new uint[4 + count * 4]; words[0] = words[1] = count;
         c.Buffer(1, (uint)words.Length * 4, words);
         c.Buffer(2, 16, new uint[4]);
-        c.Buffer(3, 32, new uint[] { 64, 1, 1, count, count, 1, 1, 0 });
+        // One band of the whole image: a run a pixel, x along a row and y the row (cull.tide's ReadTargetPixels: the
+        // part's width, the band's rows and its first, the part's first pixel, the image's size, then the list's table)
+        c.Buffer(3, 32, new uint[] { 1, 64, 1, count, 64, 64, 1, 0 });
         c.PixelRead(32);
         c.Add(Op.ComputeBegin); c.Add(Op.Use, 32);
-        c.Add(Op.Uniforms, 16, 64, 64, 0, count);
+        c.Add(Op.Uniforms, 48, 64, 64, 0, 0, 0, 64, 64, 0, count, 0, 0, 0);
         c.Add(Op.Image, 0, 11); c.Add(Op.Sampler, 0, 0, 0);
         c.Add(Op.Storage, 0, 1); c.Add(Op.Storage, 1, 2); c.Add(Op.Storage, 2, 3);
-        c.Add(Op.Dispatch, 64, 1, 1); c.Add(Op.ComputeEnd);
+        c.Add(Op.Dispatch, 1, 64, 1); c.Add(Op.ComputeEnd);
         c.Add(Op.BufferRead, 1, 1, 16, count * 16);
         Replay(c);
         yield return Answers(1);
@@ -1113,7 +1115,7 @@ public sealed unsafe class ComputeReplayTests
     {
         answers.Clear();
         var count = width * height;
-        var groups = (uint)((count + 63) / 64);
+        var groups = (uint)((width + 63) / 64); // Along a row; a group a row, rows from the top (one band of them all)
         var pool = new uint[4 + count * words];
         pool[0] = pool[1] = (uint)count;
         var ints = key == ReadInt;
@@ -1121,18 +1123,20 @@ public sealed unsafe class ComputeReplayTests
         var c = new Commands();
         c.Buffer(990, (uint)pool.Length * 4, pool);
         c.Buffer(991, (uint)pool.Length * 4, pool);
-        c.Buffer(992, 32, new uint[] { groups, 1, 1, (uint)count, (uint)count, 1, 1, 0 });
-        c.ReadKernel(id, key, part < 0 ? 16u : 32u, read, sampled, ints);
+        c.Buffer(992, 32, new uint[] { groups, (uint)height, 1, (uint)count, (uint)width, (uint)height, 1, 0 });
+        c.ReadKernel(id, key, 48u, read, sampled, ints);
         c.Add(Op.ComputeBegin);
         c.Add(Op.Use, id);
-        if (part < 0) c.Add(Op.Uniforms, 16, (uint)width, (uint)height, 0, (uint)count);
-        else c.Add(Op.Uniforms, 32, (uint)width, (uint)height, (uint)part, 0, (uint)count, 0, 0, 0);
+        // The part's width, the band's rows and its first, the part's first pixel, the image's size, [a face or a
+        // layer,] then the list's table: its first word and its room
+        if (part < 0) c.Add(Op.Uniforms, 48, (uint)width, (uint)height, 0, 0, 0, (uint)width, (uint)height, 0, (uint)count, 0, 0, 0);
+        else c.Add(Op.Uniforms, 48, (uint)width, (uint)height, 0, 0, 0, (uint)width, (uint)height, (uint)part, 0, (uint)count, 0, 0);
         c.Add(Op.Image, 0, image);
         if (sampled) c.Add(Op.Sampler, 0, 0, 0);
         c.Add(Op.Storage, 0, 990);
         c.Add(Op.Storage, 1, 991);
         c.Add(Op.Storage, 2, 992);
-        c.Add(Op.Dispatch, groups, 1, 1);
+        c.Add(Op.Dispatch, groups, (uint)height, 1);
         c.Add(Op.ComputeEnd);
         c.Add(Op.BufferRead, 1, ints ? 991u : 990u, 16, (uint)(count * words * 4));
         Replay(c);

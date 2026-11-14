@@ -2189,10 +2189,11 @@ enum { TIDE_GPU_READS = 64 };
 typedef struct tide_gpu_read_result {
     bool ok;
     int32_t count;
-    int32_t width, height; // Pixel reads
+    int32_t width, height; // Pixel reads: the part read, rows from the top
     uint32_t stride;
     uint32_t step; // Pixel reads: the words from one pixel to the next, `stride` or more
     const uint32_t *words;
+    int32_t depth; // A volume's read: its cells along z (`count` is width * height * depth); 1 for an image's
 } tide_gpu_read_result;
 // `await target.Read...()`: which of a target's images a read is of, and as what. A color image is read as the
 // type its format holds: TIDE_TARGET_READ_COLOR for RGBA8 and RGBA16F (straight alpha), FLOAT for R8, R16F and
@@ -2228,8 +2229,14 @@ static inline bool tide_target_read_fits(const uint32_t format, const uint32_t k
     }
 }
 uint32_t tide_render_target_read_begin(tide_render_target target); // Its first color image, as TIDE_TARGET_READ_COLOR
-uint32_t tide_render_target_read_begin_as(tide_render_target target, int32_t image, uint32_t kind);
-// The grid of a read that's done: `shape`'s cells are the read's pixels (as many bytes each), or it's no grid.
+uint32_t tide_render_target_read_begin_as(tide_render_target target, int32_t image, uint32_t kind); // ...all of it
+// A part of it: `from` its first pixel (x right, y down, and a Texture3D's z, 0 for an image), `size` how many along
+// each axis (1 deep for an image), clamped to what the image has as the read begins; one with none of it there fails.
+// A Texture3D (its target, TIDE_RENDER_VOLUME) is read the same way, a box of its cells, image 0.
+uint32_t tide_render_target_read_begin_part(tide_render_target target, int32_t image, uint32_t kind, const int32_t from[3],
+                                            const int32_t size[3]);
+// The grid of a read that's done: `shape`'s cells are the read's pixels (as many bytes each), of two dimensions for an
+// image's and three for a volume's, or it's no grid.
 tide_grid tide_render_target_read_grid(tide_gpu_read_result result, const tide_grid_shape *shape);
 uint32_t tide_gpu_list_read_begin(tide_gpu_list list, bool count_only);
 bool tide_gpu_list_read_poll(uint32_t ticket, tide_gpu_read_result *out);
@@ -2253,6 +2260,9 @@ typedef struct tide_gpu_read_request {
     uint8_t image;  // A target's read: which color image, from 0
     uint8_t kind;   // ...and as what (tide_target_read)
     uint32_t age;   // Frames since it was done (tide_gpu_reads_frame)
+    int32_t from[3]; // A target's read: the part asked for, its first pixel (a volume's cell), and
+    int32_t size[3]; // ...how many along each axis, which the renderer clamps to the image (`width` and `height`)
+    int32_t depth;   // ...and a volume's cells along z it read, as `width` and `height` are along x and y
 } tide_gpu_read_request;
 // The requests and the serial their tickets go by. Each copy of the engine has one, and a host that loads the game
 // as a library hands its own to each library it loads (tide_gpu_reads_share, through tide_host_game.gpu_reads_share),

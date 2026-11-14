@@ -432,12 +432,14 @@ float2 tidehl_unpack2x16float(uint u) { return float2(f16tof32(u & 0xFFFFu), f16
 struct tide_uniforms {
     int4 tide_v0;
     int4 tide_v1;
+    int4 tide_v2;
 };
 
 static const bool tide_reversed_depth = true;
 cbuffer TideUniforms {
     int4 tidehl_u_tide_v0;
     int4 tidehl_u_tide_v1;
+    int4 tidehl_u_tide_v2;
 };
 Texture2DArray<float> _TideTexture0;
 SamplerState sampler_TideTexture0;
@@ -463,6 +465,7 @@ int tide_count0();
 int tide_capacity0();
 float tide_get0(int tide_i);
 void tide_put0(int tide_i, float tide_v);
+float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down);
 void ts_ReadTargetLayerDepth();
 void compute(uint3 tide_gid, uint3 tide_lid, uint tide_lix, uint3 tide_wid, uint3 tide_groups);
 
@@ -473,7 +476,7 @@ float tide_depth(float d)
 
 uint tide_base0()
 {
-    return ((uint)(tidehl_u_tide_v0.w));
+    return ((uint)(tidehl_u_tide_v2.x));
 }
 
 uint tide_word0(uint tide_k)
@@ -483,12 +486,12 @@ uint tide_word0(uint tide_k)
 
 int tide_count0()
 {
-    return ((int)(min(tide_word0(0u), ((uint)(tidehl_u_tide_v1.x)))));
+    return ((int)(min(tide_word0(0u), ((uint)(tidehl_u_tide_v2.y)))));
 }
 
 int tide_capacity0()
 {
-    return ((int)(min(tide_word0(1u), ((uint)(tidehl_u_tide_v1.x)))));
+    return ((int)(min(tide_word0(1u), ((uint)(tidehl_u_tide_v2.y)))));
 }
 
 float tide_get0(int tide_i)
@@ -513,12 +516,17 @@ void tide_put0(int tide_i, float tide_v)
     }
 }
 
+float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down)
+{
+    return ((float2(((float)(t_x)), ((float)(t_y))) + ((float2)(0.5))) / float2(((float)(t_across)), ((float)(t_down))));
+}
+
 void ts_ReadTargetLayerDepth()
 {
-    if ((tide_inv_at.x >= (tidehl_u_tide_v0.x * tidehl_u_tide_v0.y))) {
+    if (((tide_inv_at.x >= tidehl_u_tide_v0.x) || (tide_inv_at.y >= tidehl_u_tide_v0.y))) {
         return;
     } else {
-        tide_put0(tide_inv_at.x, tide_depth(tidehl_depth(_TideTexture0, sampler_TideTexture0, float3(((float2(((float)(tidehl_rem(tide_inv_at.x, tidehl_u_tide_v0.x))), ((float)(tidehl_div(tide_inv_at.x, tidehl_u_tide_v0.x)))) + ((float2)(0.5))) / float2(((float)(tidehl_u_tide_v0.x)), ((float)(tidehl_u_tide_v0.y)))), float(clamp(tidehl_u_tide_v0.z, 0, (((int)(tidehl_layers(_TideTexture0))) - 1)))))));
+        tide_put0(((tide_inv_at.y * tidehl_u_tide_v0.x) + tide_inv_at.x), tide_depth(tidehl_depth(_TideTexture0, sampler_TideTexture0, float3(tf_ReadUv((tidehl_u_tide_v0.w + tide_inv_at.x), ((tidehl_u_tide_v1.x + tidehl_u_tide_v0.z) + tide_inv_at.y), tidehl_u_tide_v1.y, tidehl_u_tide_v1.z), float(clamp(tidehl_u_tide_v1.w, 0, (((int)(tidehl_layers(_TideTexture0))) - 1)))))));
     }
 }
 

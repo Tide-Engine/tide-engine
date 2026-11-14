@@ -1,7 +1,8 @@
 // Every form of a render target's read back: which image and as what each asks the engine for, and the grid its
 // answer becomes (target_reads_test.c stands in for the renderer).
 scene Main { }
-const int Normals = 2;
+const int Base = 1;
+const int Normals = Base + 1; // A constant of other constants and operators names an image too
 local singleton Reads
 {
     RenderTarget plain;   // One Rgba8 image
@@ -34,6 +35,11 @@ local singleton Reads
     Grid2<Color> layer;
     Grid2<float> layerDepth;
     Grid2<Color> given;
+    LocalTask capture;  // A read's task, cancelled while it waits
+    bool captureNow;
+    bool cancelNow;
+    int captured;
+    Grid3<float> box;   // A volume's read's grid (target_reads_of_parts_and_volumes)
 }
 
 // A target whose formats aren't known here is still read as Color, and checked as it runs
@@ -82,6 +88,17 @@ async void ReadAll(mut Reads reads)
     if (await reads.flows.layers[1].Read<float2>() is Grid2<float2> flow) reads.flow = flow.Copy(); else reads.failed += 1;
     reads.stage += 1;
     ReadGiven(reads.plain, reads);
+}
+
+// A read let go of with its task: cancelled, or gone with the local world
+async void Capture(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> pixels) reads.captured += pixels.size.x;
+}
+view Captures(mut Reads reads)
+{
+    if (reads.captureNow) { reads.captureNow = false; reads.capture = Capture(reads); }
+    if (reads.cancelNow) { reads.cancelNow = false; reads.capture.Cancel(); }
 }
 
 view Start(mut Reads reads)

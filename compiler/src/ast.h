@@ -1302,7 +1302,8 @@ struct expr {
     // await target.Read<T>(image), await target.ReadDepth() (GPU_TARGET_READ): which color image, from 0, and as what
     // (tide/draw.h's tide_target_read: 0 Color, 1 float, 2 float2, 3 float4, 4 int, 5 the depth)
     uint8_t read_image, read_kind;
-
+    // ...of a part (its last two arguments: the first pixel, and how many along each axis), and of a Texture3D's cells
+    bool read_part, read_volume;
 
     // E_CALL, E_METHOD
     VEC(expr *) args;
