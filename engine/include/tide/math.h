@@ -204,6 +204,19 @@ float tide_log2_f(float x);
 float tide_log10_f(float x);
 float tide_pow_f(float x, float y);
 
+// sRGB transfer functions. RGB is bounded to [0,1]; NaN maps to zero.
+static inline float tide_tolinear_f(const float value)
+{
+    const float x = tide_saturate_f(value);
+    return x <= 0.04045f ? x / 12.92f : tide_pow_f((x + 0.055f) / 1.055f, 2.4f);
+}
+static inline float tide_todisplay_f(const float value)
+{
+    const float x = tide_saturate_f(value);
+    return x <= 0.0031308f ? x * 12.92f : 1.055f * tide_pow_f(x, 1.0f / 2.4f) - 0.055f;
+}
+
+
 // ---------------------------------------------------------------------------
 // Scalars: double. The same operation order, with IEEE binary64 precision.
 
@@ -941,6 +954,16 @@ static inline tide_float3 tide_rotate_q(const tide_quaternion q, const tide_floa
 static inline tide_float3 tide_forward_q(const tide_quaternion q) { return tide_rotate_q(q, tide_f3(0.0f, 0.0f, 1.0f)); }
 static inline tide_float3 tide_up_q(const tide_quaternion q) { return tide_rotate_q(q, tide_f3(0.0f, 1.0f, 0.0f)); }
 static inline tide_float3 tide_right_q(const tide_quaternion q) { return tide_rotate_q(q, tide_f3(1.0f, 0.0f, 0.0f)); }
+
+
+static inline tide_float3 tide_tolinear_f3(const tide_float3 v)
+{
+    return tide_f3(tide_tolinear_f(v.x), tide_tolinear_f(v.y), tide_tolinear_f(v.z));
+}
+static inline tide_float3 tide_todisplay_f3(const tide_float3 v)
+{
+    return tide_f3(tide_todisplay_f(v.x), tide_todisplay_f(v.y), tide_todisplay_f(v.z));
+}
 
 // Rotation of `angle` radians around a normalized axis.
 static inline tide_quaternion tide_axisangle_q(const tide_float3 axis, const float angle)

@@ -75,6 +75,7 @@ enum {
     H_RECIPROCAL, H_INVERSE2, H_INVERSE3, H_INVERSE4,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
+    H_TRANSFER,
     H_EASE, // tide_ease(t, kind): Math.EaseIn and the rest, as tide/math.h's
     // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
     H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
@@ -885,6 +886,28 @@ static const char *const helper_texts[H_COUNT] = {
     // pixel's color counts for nothing). Code reads the color itself. A pixel with no alpha has none
     // tide/math.h's tide_ease_*_f, in the same order: kind 0 in, 1 out, 2 in-out, 3 in-back, 4 out-back. One
     // return, as ANGLE's D3D11 warns of what an early one might leave unset
+    [H_TRANSFER] = "float tide_tolinear1(float v) {\n"
+                   "    float x = tide_saturate1(v);\n"
+                   "    if (x <= 0.04045) { return x / 12.92; }\n"
+                   "    return pow((x + 0.055) / 1.055, 2.4);\n"
+                   "}\n"
+                   "vec3 tide_tolinear3(vec3 v) {\n"
+                   "    return vec3(tide_tolinear1(v.x), tide_tolinear1(v.y), tide_tolinear1(v.z));\n"
+                   "}\n"
+                   "vec4 tide_tolinear4(vec4 v) {\n"
+                   "    return vec4(tide_tolinear3(v.rgb), v.a);\n"
+                   "}\n"
+                   "float tide_todisplay1(float v) {\n"
+                   "    float x = tide_saturate1(v);\n"
+                   "    if (x <= 0.0031308) { return x * 12.92; }\n"
+                   "    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;\n"
+                   "}\n"
+                   "vec3 tide_todisplay3(vec3 v) {\n"
+                   "    return vec3(tide_todisplay1(v.x), tide_todisplay1(v.y), tide_todisplay1(v.z));\n"
+                   "}\n"
+                   "vec4 tide_todisplay4(vec4 v) {\n"
+                   "    return vec4(tide_todisplay3(v.rgb), v.a);\n"
+                   "}\n",
     [H_EASE] = "float tide_ease(float x, int kind) {\n"
                "    float t = tide_saturate1(x);\n"
                "    float u = 1.0 - t;\n"
@@ -1612,6 +1635,7 @@ static void need(emit *em, const int h)
         return;
     }
     switch (h) {
+    case H_TRANSFER:
     case H_EASE:
         need(em, family_helper(FAMILY_SATURATE, 1));
         break;
@@ -3246,7 +3270,11 @@ static void ex_math(emit *em, const expr *e)
         em->defuse--;
         return;
     }
-    if ((str_eq_c(e->name, "Min") || str_eq_c(e->name, "Max")) && floats) { // With one NaN, the other, as on the CPU
+    if (str_eq_c(e->name, "ToLinear") || str_eq_c(e->name, "ToDisplay")) {
+        char name[32];
+        snprintf(name, sizeof name, "tide_%s%d", str_eq_c(e->name, "ToLinear") ? "tolinear" : "todisplay", dim);
+        put_helper_call(em, e, H_TRANSFER, name);
+    } else if ((str_eq_c(e->name, "Min") || str_eq_c(e->name, "Max")) && floats) { // With one NaN, the other, as on the CPU
         put_family_call(em, e, str_eq_c(e->name, "Min") ? FAMILY_MIN : FAMILY_MAX, dim);
     } else if (str_eq_c(e->name, "Clamp") && floats) {
         put_family_call(em, e, FAMILY_CLAMP, dim);

@@ -126,3 +126,13 @@ TIDE_COLOR_MAP3(smoothstep)
 #undef TIDE_COLOR_MAP1
 #undef TIDE_COLOR_MAP2
 #undef TIDE_COLOR_MAP3
+
+// Transfer RGB only: alpha is coverage, never display encoded.
+static inline tide_color tide_tolinear_c(const tide_color c)
+{
+    return (tide_color){tide_tolinear_f(c.r), tide_tolinear_f(c.g), tide_tolinear_f(c.b), c.a};
+}
+static inline tide_color tide_todisplay_c(const tide_color c)
+{
+    return (tide_color){tide_todisplay_f(c.r), tide_todisplay_f(c.g), tide_todisplay_f(c.b), c.a};
+}

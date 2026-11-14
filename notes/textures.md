@@ -1,3 +1,21 @@
+## Linear texture task: transfer helpers (2026-11-14, incomplete)
+
+The owner approved [Linear] images and Math.ToLinear/ToDisplay on 2026-11-14.
+Only the Math portion has been implemented in this worktree so far; [Linear],
+asset preparation, runtime marking, sRGB backend formats, editor attribute support,
+mark diagnostics, marked-image pixels and Unity recorder coverage remain unimplemented.
+Do not infer completion of the texture task from these helpers.
+
+Provisional overload/range picks are in spec.md: float, float3, Color; bounded RGB,
+NaN zero, alpha unchanged. Runtime helpers use existing deterministic Pow; WGSL
+uses the same piecewise formula. Existing screen and output semantics are unchanged.
+Math builtins expose signatures, completion and hover through the fixed-signature table.
+The math shader fixture covers scalar, vector and color calls through WGSL, SPIR-V
+and HLSL. The platform Sink fixture compares GPU calls with CPU-computed singleton
+defaults. Native ASan CPU, Vulkan pixels, golden, spirv-val and FXC checks pass.
+Web-debug WASI CPU and SwiftShader WebGPU pixel checks also pass, including
+CPU/GPU transfer agreement. No [Linear] implementation has been merged.
+
 # Explicit mip reads (2026-11-14)
 
 Owner-approved 2026-11-13, "these make sense, lets do all of these": SampleLevel on Texture, Cubemap and

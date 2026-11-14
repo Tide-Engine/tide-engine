@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "tide/math.h"
+#include "tide/color.h"
 #include "tide_test.h"
 
 // Accuracy is measured against the C library in double precision. That's fine
@@ -625,4 +626,22 @@ TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
     const tide_float2 feature = tide_f2(5.0f + (float)(h & 32767) * 0.000030518509f,
                                         7.0f + (float)((h >> 15) & 32767) * 0.000030518509f);
     TIDE_CHECK(tide_cellular_f2(feature, 0).x < 0.0001f);
+}
+
+TIDE_TEST(math_srgb_transfer)
+{
+    TIDE_CHECK(tide_tolinear_f(0.0f) == 0.0f);
+    TIDE_CHECK(fabsf(tide_tolinear_f(0.5f) - 0.21404114f) < 0.000001f);
+    TIDE_CHECK(fabsf(tide_todisplay_f(0.5f) - 0.73535698f) < 0.000001f);
+    TIDE_CHECK(tide_tolinear_f(NAN) == 0.0f);
+    TIDE_CHECK(tide_todisplay_f(-1.0f) == 0.0f);
+    TIDE_CHECK(fabsf(tide_todisplay_f(INFINITY) - 1.0f) < 0.000001f);
+    for (int i = 0; i <= 255; i++) {
+        const float x = (float)i / 255.0f;
+        TIDE_CHECK(fabsf(tide_todisplay_f(tide_tolinear_f(x)) - x) < 0.000002f);
+    }
+    const tide_color c = tide_tolinear_c((tide_color){0.5f, 0.04045f, 1.0f, 0.37f});
+    TIDE_CHECK(c.a == 0.37f && c.r == tide_tolinear_f(0.5f));
+    const tide_float3 v = tide_todisplay_f3(tide_f3(0.0f, 0.5f, 1.0f));
+    TIDE_CHECK(v.x == 0.0f && v.y == tide_todisplay_f(0.5f));
 }
