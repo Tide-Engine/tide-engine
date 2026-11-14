@@ -11,6 +11,7 @@ singleton Vault
 {
     int found;      // Loads that found their key
     int missing;    // ...and that found nothing
+    int failed;     // ...and whose files couldn't be read
     int sum;        // Every byte loaded, added up
     int crates;     // Crates the answers' handlers spawned
     string last;    // The last key answered
@@ -39,6 +40,9 @@ system Work(Time time)
         Storage.Save("a b/../c", Bytes(10, 2));     // Any key is one: its bytes are written out where a file's name can't have them
         Storage.Save("big", Bytes(0, 5000));        // Past what a frame carries inline: by download
         Storage.Save("gone", Bytes(9, 1));
+        Storage.Save("con", Bytes(20, 1));          // A Windows device's name: its file is another
+        Storage.Save("a", Bytes(30, 1));            // ...and a file "a.bin" and a folder "a.bin" are two keys' places
+        Storage.Save("a.bin/x", Bytes(40, 1));
     }
     if (time.tick == 8)
     {
@@ -46,6 +50,10 @@ system Work(Time time)
         Storage.Load("boxes/7");                    // Asked twice in a tick, answered once
         Storage.Load("a b/../c");
         Storage.Load("boxes/none");
+        Storage.Load("con");
+        Storage.Load("a");
+        Storage.Load("a.bin/x");
+        Storage.Load("locked");                     // The host's files say it can't be read
         Storage.Delete("gone");
     }
     if (time.tick == 12)
@@ -61,6 +69,11 @@ system Work(Time time)
 event(Loaded loaded) Take(mut Vault vault)
 {
     vault.last = loaded.key;
+    if (loaded.failed)
+    {
+        vault.failed += 1;
+        return;
+    }
     if (!loaded.found)
     {
         vault.missing += 1;

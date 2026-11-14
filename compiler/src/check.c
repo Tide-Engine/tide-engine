@@ -21578,6 +21578,12 @@ static void check_sends(const checker *c)
                    STR_ARG(event->needs_target->name), STR_ARG(event->name));
         diag_note("send it to an entity: 'entity.Send(" STR_FMT " { ... })'", STR_ARG(event->name));
     }
+    // The store, and the answers on their way, are the hosting machine's: a match can't move to another with them
+    if (c->prog->uses_storage && c->prog->host_migration) {
+        diag_error(c->prog->storage_at, "a match that uses the server's store can't change hands (hostMigration = true)");
+        diag_note("what the store keeps, and the loads on their way, are on the machine that runs the match; take out "
+                  "hostMigration, or run the match on a dedicated server, which stays");
+    }
     // A load's Loaded goes to the entity the load names, and a handler that takes components needs one
     const decl *loaded = storage_loaded(c->prog);
     if (c->prog->bare_load && loaded && loaded->needs_target) {

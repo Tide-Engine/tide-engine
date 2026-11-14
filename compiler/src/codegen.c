@@ -12925,16 +12925,18 @@ static void gen_storage(gen *g)
     const char *name = type_cname(loaded);
     sb_put(o, "static bool tide_game_stored(void *world, const uint8_t *data, uint32_t size)\n{\n"
               "    tide_world *w = world;\n    tide_entity target;\n    uint64_t number;\n    const char *key;\n"
-              "    uint32_t key_size, held_size;\n    const uint8_t *held;\n    bool found;\n"
-              "    if (!tide_stored_read(data, size, &target, &number, &key, &key_size, &held, &held_size, &found)) return false;\n"
+              "    uint32_t key_size, held_size;\n    const uint8_t *held;\n    uint8_t outcome;\n"
+              "    if (!tide_stored_read(data, size, &target, &number, &key, &key_size, &held, &held_size, &outcome)) return false;\n"
               "    const uint64_t mark = tide_scratch_mark();\n    tide_text_use(&w->heap, NULL);\n"
               "    int32_t chars = 0;\n    for (uint32_t i = 0; i < key_size; i++) chars += ((uint8_t)key[i] & 0xC0u) != 0x80u;\n"
               "    tide_list bytes = {0};\n"
               "    if (held_size) {\n"
               "        tide_block *block = tide_scratch_block(held_size, \"loaded bytes\", &bytes.at);\n"
               "        block->a = block->b = held_size;\n        memcpy(block + 1, held, held_size);\n    }\n");
-    sb_printf(o, "    const %s value = {.%s = tide_text_temp((tide_str){key, (int32_t)key_size, chars}), .%s = bytes, .%s = found};\n",
-              name, field_cname(&loaded->fields.items[0]), field_cname(&loaded->fields.items[1]), field_cname(&loaded->fields.items[2]));
+    sb_printf(o, "    const %s value = {.%s = tide_text_temp((tide_str){key, (int32_t)key_size, chars}), .%s = bytes,\n"
+                 "                      .%s = outcome == TIDE_STORED_FOUND, .%s = outcome == TIDE_STORED_FAILED};\n",
+              name, field_cname(&loaded->fields.items[0]), field_cname(&loaded->fields.items[1]), field_cname(&loaded->fields.items[2]),
+              field_cname(&loaded->fields.items[3]));
     sb_printf(o, "    tide_cmd_send_%s_cause(w, target, value, tide_causal_mix(tide_causal_entity(UINT64_C(%llu), target), number));\n"
                  "    tide_scratch_reset(mark);\n    return true;\n}\n\n", name, (unsigned long long)causal_code(loaded));
 }

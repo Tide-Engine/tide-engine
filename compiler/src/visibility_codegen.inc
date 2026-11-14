@@ -143,7 +143,7 @@ static void gen_visibility(gen *g)
     // The same for a walk over an archetype's rows, which knows where each entity is: nothing is looked up by its
     // handle but a scene's root, once for the rows of one scene that come together. `base` is who may have the
     // entity, and tide_visibility_denied_at who may have one of its components, of that.
-    sb_put(o, "typedef struct tide_visibility_walk { tide_entity scene; Audience audience; tide_map_view groups; } tide_visibility_walk;\n\n"
+    sb_put(o, "typedef struct tide_visibility_walk { tide_entity scene; Audience audience; int64_t scene_group; tide_map_view groups; } tide_visibility_walk;\n\n"
               "TIDE_HELPER tide_entity tide_visibility_scene_at(const tide_world *w, const tide_location loc)\n{\n"
               "    (void)w;\n    switch (loc.archetype) {\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
@@ -151,19 +151,24 @@ static void gen_visibility(gen *g)
         sb_printf(o, "    case %d: return *%s;\n", a, arch_cell(g, "w", a, 1, "tide_entity", "loc.row", false));
     }
     sb_put(o, "    default: return (tide_entity){0};\n    }\n}\n\n"
+              "// (`groups`: its own group and its scene's, 0 for none, which its audience goes by)\n"
               "TIDE_HELPER Audience tide_visibility_base_at(const tide_world *w, const tide_entity e, const tide_location loc,\n"
-              "                                             Visibility *visibility, bool *has, tide_visibility_walk *walk)\n{\n"
+              "                                             Visibility *visibility, bool *has, tide_visibility_walk *walk, int64_t *groups)\n{\n"
+              "    groups[0] = groups[1] = 0;\n"
               "    const tide_entity scene = tide_visibility_scene_at(w, loc);\n"
               "    Audience audience = TIDE_AUDIENCE_ALL;\n"
               "    if (!tide_entity_is_null(scene) && !tide_entity_equal(scene, e)) {\n"
               "        if (!tide_entity_equal(scene, walk->scene)) {\n"
               "            Visibility root = {0};\n            walk->scene = scene;\n"
-              "            walk->audience = tide_load_Visibility(w, scene, &root)\n"
+              "            const bool rooted = tide_load_Visibility(w, scene, &root);\n"
+              "            walk->scene_group = rooted ? root.group.id : 0;\n"
+              "            walk->audience = rooted\n"
               "                ? tide_audience_intersect(TIDE_AUDIENCE_ALL, tide_visibility_group_audience(w, root.group)) : TIDE_AUDIENCE_ALL;\n"
-              "        }\n        audience = walk->audience;\n    }\n"
+              "        }\n        audience = walk->audience;\n        groups[1] = walk->scene_group;\n    }\n"
               "    *has = tide_load_Visibility_at(w, loc, visibility);\n"
               "    // Its group's audience through the walk's view of the directory, found once for every row\n");
-    sb_printf(o, "    if (*has && visibility->group.id) {\n"
+    sb_printf(o, "    if (*has) groups[0] = visibility->group.id;\n"
+                 "    if (*has && visibility->group.id) {\n"
                  "        audience = tide_audience_intersect(audience, visibility->group.id > 0\n"
                  "            ? tide_map%d_cget(&walk->groups, w->tide_visibility_state.groups, visibility->group.id) : (Audience){0});\n"
                  "    }\n    return audience;\n}\n\n", groups);
@@ -175,6 +180,14 @@ static void gen_visibility(gen *g)
                  "        const tide_visibility_policy policy = tide_map%d_get(visibility->overrides, key);\n"
                  "        base = tide_audience_intersect(base, policy.direct ? policy.audience : tide_visibility_group_audience(w, policy.group));\n"
                  "    }\n    return base;\n}\n\n", overrides, overrides);
+    sb_printf(o, "// Whether a Visibility restricts one of its components to a group, whose audience it then goes by\n"
+                 "TIDE_HELPER bool tide_visibility_by_groups(const Visibility *v)\n{\n"
+                 "    if (!v->overrides.live) return false;\n"
+                 "    int64_t order = 0;\n    int32_t next = 0, i;\n"
+                 "    while ((i = tide_map_next(v->overrides, &tide_map%d_kind, &order, &next)) >= 0) {\n"
+                 "        const tide_map%d_entry *entry = tide_map_entry(v->overrides, i, &tide_map%d_kind);\n"
+                 "        if (!entry->value.direct) return true;\n    }\n"
+                 "    return false;\n}\n\n", overrides, overrides, overrides);
     // A client's world holds what it was sent, which it sees, and what its own
     // ticks made. Of those, what it put in a group hidden from it (above) is
     // the server's alone: not in what it says its world is (client_state, its

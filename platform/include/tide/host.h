@@ -1104,7 +1104,6 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
 {
     char fallback[512];
     const char *id = tide_run_name_game(game, fallback, sizeof fallback);
-    if (!game->set_io && !game->game->stored) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;
     if (directory && tide_platform_players() > 1u) {
@@ -1115,7 +1114,9 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
     }
     const tide_io *io = tide_platform_io_init(id, directory);
     if (game->set_io) game->set_io(local, io);
-    tide_run_store = game->game->stored ? io : NULL;
+    // ...and the matches this machine runs keep their store there (Storage.Save in match code), whichever build first
+    // uses it: a session made now hands its servers this provider, which stays the same across reloads
+    tide_run_store = io;
     free(player_directory);
 }
 

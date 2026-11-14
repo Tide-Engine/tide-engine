@@ -18,7 +18,7 @@ typedef struct kept_file {
 } kept_file;
 
 static kept_file files[16];
-static uint32_t file_count, writes, removes, folders;
+static uint32_t file_count, writes, removes, folders, moves;
 
 static kept_file *find_file(const char *path)
 {
@@ -45,6 +45,7 @@ static tide_io_error io_create(void *user, const char *path, const bool director
 static tide_io_error io_read(void *user, const char *path, uint8_t **data, uint32_t *size)
 {
     (void)user;
+    if (strstr(path, "locked")) return TIDE_IO_ACCESS_DENIED;
     const kept_file *f = find_file(path);
     if (!f) return TIDE_IO_NOT_FOUND;
     *data = malloc(f->size ? f->size : 1u);
@@ -85,12 +86,33 @@ static tide_io_error io_remove(void *user, const char *path, const bool director
     return TIDE_IO_NONE;
 }
 
-static const tide_io io = {.exists = io_exists, .create = io_create, .read = io_read, .write = io_write, .remove = io_remove};
+// A save goes through a file of its own, moved over the key's once whole
+static tide_io_error io_move(void *user, const char *source, const char *destination, const bool overwrite, const bool directory)
+{
+    (void)user;
+    (void)directory;
+    kept_file *from = find_file(source);
+    if (!from) return TIDE_IO_NOT_FOUND;
+    kept_file *to = find_file(destination);
+    if (to && !overwrite) return TIDE_IO_ALREADY_EXISTS;
+    if (strlen(destination) >= sizeof from->path) return TIDE_IO_FAILED;
+    if (to) {
+        free(to->data);
+        *to = *from;
+        strcpy(to->path, destination);
+        *from = files[--file_count];
+    } else strcpy(from->path, destination);
+    moves++;
+    return TIDE_IO_NONE;
+}
+
+static const tide_io io = {.exists = io_exists, .create = io_create, .read = io_read, .write = io_write, .move = io_move,
+                           .remove = io_remove};
 
 static void forget_files(void)
 {
     for (uint32_t i = 0; i < file_count; i++) free(files[i].data);
-    file_count = writes = removes = folders = 0;
+    file_count = writes = removes = folders = moves = 0;
 }
 
 static void sample(void *user, const uint32_t tick, void *input)
@@ -136,16 +158,19 @@ TIDE_TEST(storage_saves_loads_and_deletes_the_same_on_every_machine)
     TIDE_CHECK(joined.client.state == TIDE_SESSION_CONNECTED && joined.client.resyncs == 0);
     const tide_world *server = tide_session_server_world(host);
     TIDE_REQUIRE(server != NULL && server->Time.tick > 60);
-    // boxes/7 and "a b/../c" at tick 8 (the second load of boxes/7 was the first's), big at 12, boxes/7 again at 16
-    TIDE_CHECK(server->Vault.found == 4);
+    // boxes/7, "a b/../c", con, a and a.bin/x at tick 8 (the second load of boxes/7 was the first's), big at 12,
+    // boxes/7 again at 16
+    TIDE_CHECK(server->Vault.found == 7);
     TIDE_CHECK(server->Vault.missing == 2); // boxes/none, and gone once it was deleted
+    TIDE_CHECK(server->Vault.failed == 1);  // locked: not the same as nothing there
     int big = 0;
     for (int i = 0; i < 5000; i++) big += (uint8_t)i;
-    TIDE_CHECK(server->Vault.sum == (1 + 2 + 3) + (10 + 11) + big + 4);
-    TIDE_CHECK(server->Vault.crates == 4 && crates(server) == 4);
+    TIDE_CHECK(server->Vault.sum == (1 + 2 + 3) + (10 + 11) + 20 + 30 + 40 + big + 4);
+    TIDE_CHECK(server->Vault.crates == 7 && crates(server) == 7);
 
-    // The files: each key's own, none outside the folder, the last save's bytes
-    TIDE_CHECK(file_count == 3 && writes == 5 && removes == 1 && folders >= 1);
+    // The files: each key's own, none outside the folder, the last save's bytes, each written beside and moved over
+    TIDE_CHECK(file_count == 6 && writes == 8 && moves == 8 && removes == 1 && folders >= 1);
+    TIDE_CHECK(find_file("saved/%63on.bin") && find_file("saved/a.bin") && find_file("saved/a%2Ebin/x.bin"));
     const kept_file *box = find_file("saved/boxes/7.bin");
     TIDE_CHECK(box && box->size == 1 && box->data[0] == 4);
     const kept_file *odd = find_file("saved/a%20b/%2E%2E/c.bin");
@@ -157,8 +182,8 @@ TIDE_TEST(storage_saves_loads_and_deletes_the_same_on_every_machine)
     const tide_view_worlds seen = tide_session_view(guest);
     TIDE_REQUIRE(seen.verified != NULL);
     const tide_world *theirs = seen.verified;
-    TIDE_CHECK(theirs->Vault.found == 4 && theirs->Vault.missing == 2 && theirs->Vault.sum == server->Vault.sum);
-    TIDE_CHECK(crates(theirs) == 4);
+    TIDE_CHECK(theirs->Vault.found == 7 && theirs->Vault.missing == 2 && theirs->Vault.failed == 1);
+    TIDE_CHECK(theirs->Vault.sum == server->Vault.sum && crates(theirs) == 7);
     tide_session_destroy(guest);
     tide_session_destroy(host);
     tide_loopback_destroy(net);
@@ -178,7 +203,7 @@ TIDE_TEST(storage_without_files_finds_nothing)
     }
     const tide_world *server = tide_session_server_world(alone);
     TIDE_REQUIRE(server != NULL);
-    TIDE_CHECK(server->Vault.found == 0 && server->Vault.missing == 6 && server->Vault.crates == 0);
+    TIDE_CHECK(server->Vault.found == 0 && server->Vault.missing == 10 && server->Vault.failed == 0 && server->Vault.crates == 0);
     TIDE_CHECK(file_count == 0);
     tide_session_destroy(alone);
 }
@@ -192,6 +217,21 @@ TIDE_TEST(storage_paths_stay_in_their_folder)
     TIDE_CHECK(tide_storage_path("/a//b/", 6, path, sizeof path) && strcmp(path, "saved/%2Fa%2F%2Fb%2F.bin") == 0);
     TIDE_CHECK(tide_storage_path("C:\\x", 4, path, sizeof path) && strcmp(path, "saved/%43%3A%5Cx.bin") == 0);
     TIDE_CHECK(tide_storage_path("a.b", 3, path, sizeof path) && strcmp(path, "saved/a.b.bin") == 0);
+    // A folder has no '.': none ends in one (which Windows drops), none is another key's file
+    TIDE_CHECK(tide_storage_path("a.bin/x", 7, path, sizeof path) && strcmp(path, "saved/a%2Ebin/x.bin") == 0);
+    TIDE_CHECK(tide_storage_path("a./b", 4, path, sizeof path) && strcmp(path, "saved/a%2E/b.bin") == 0);
+    // Windows devices, in any case, with an extension or as a folder
+    TIDE_CHECK(tide_storage_path("con", 3, path, sizeof path) && strcmp(path, "saved/%63on.bin") == 0);
+    TIDE_CHECK(tide_storage_path("com1.x", 6, path, sizeof path) && strcmp(path, "saved/%63om1.x.bin") == 0);
+    TIDE_CHECK(tide_storage_path("lpt9/a", 6, path, sizeof path) && strcmp(path, "saved/%6Cpt9/a.bin") == 0);
+    TIDE_CHECK(tide_storage_path("console", 7, path, sizeof path) && strcmp(path, "saved/console.bin") == 0);
+    // A part too long for a file's name: the key's hash, in a folder no other key's path has
+    char long_key[120];
+    memset(long_key, 'Q', sizeof long_key); // Capitals: three bytes each written out, 360 in all
+    TIDE_CHECK(tide_storage_path(long_key, sizeof long_key, path, sizeof path) == 9u + 64u + 4u && strncmp(path, "saved/%%/", 9) == 0);
+    char other[TIDE_STORAGE_PATH_MOST + 1u];
+    long_key[0] = 'R';
+    TIDE_CHECK(tide_storage_path(long_key, sizeof long_key, other, sizeof other) && strcmp(path, other) != 0);
     TIDE_CHECK(tide_storage_path(".", 1, path, sizeof path) && strcmp(path, "saved/%2E.bin") == 0);
     TIDE_CHECK(!tide_storage_path("", 0, path, sizeof path));
     char most[TIDE_STORAGE_KEY_MOST + 1u];

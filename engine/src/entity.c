@@ -883,7 +883,10 @@ static bool rebuild_index(tide_entities *t)
         {
             if (s->archetype != TIDE_ARCHETYPE_NONE || s->row > t->next_unused || s->snaps)
                 return false;
-            if (tide_entity_is_null(s->entity) || index_get(t->index, s->entity) != UINT32_MAX)
+            // A slot tide_entity_erase freed has no key at all: nothing of what was in it is known
+            if (tide_entity_is_null(s->entity))
+                continue;
+            if (index_get(t->index, s->entity) != UINT32_MAX)
                 return false;
             index_put(&t->index, s->entity, at);
             continue;

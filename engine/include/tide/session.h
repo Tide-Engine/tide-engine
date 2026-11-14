@@ -560,10 +560,11 @@ bool tide_server_banned(const tide_server *s, tide_player_id player);
 // sharded, the message is bigger than TIDE_SHARD_MESSAGE_LIMIT, or there's no
 // memory for it.
 bool tide_server_inject(tide_server *s, const uint8_t *data, uint32_t size);
-// How many handed messages are still waiting for a tick.
+// How many handed shard messages are still waiting for a tick: not the
+// answers of the match's store (tide/storage.h) waiting with them.
 uint32_t tide_server_injected(const tide_server *s);
-// The `i`th of them, from the first to be applied: its bytes and size, NULL
-// past the last.
+// The `i`th message waiting, shard message or store answer, from the first to
+// be applied: its bytes and size, NULL past the last.
 const uint8_t *tide_server_injected_message(const tide_server *s, uint32_t i, uint32_t *size);
 // Drops those of a kind (their first byte, tide_shard_kind) still
 // waiting, and says how many: a reloaded sharded world drops its ghosts on

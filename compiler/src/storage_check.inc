@@ -46,7 +46,7 @@ static type check_storage_static(checker *c, expr *e)
         return T_ERR;
     }
     if (inherits(c)) {
-        note_act(c, false, e->at, "uses the server's store", false, false);
+        note_act(c, false, e->at, "uses the server's store", false, true);
     } else if (in_async_function(c)) {
         if (!note_task_side(c, TASK_MATCH, e->at)) return T_ERR;
     } else if (c->method || local_code(c)) {
@@ -58,6 +58,11 @@ static type check_storage_static(checker *c, expr *e)
     }
     decl *code = reading_code(c);
     if (code) code->calls_c = true; // What it asks keeps its order, as calls of C do
+    // ...on one thread, in its rows' order, and after (or before) every other system that asks, as the world's one
+    // list of requests is changed as a write to the match's own heap is: a system that writes that heap keeps its
+    // rows in order, and two that do wait for each other
+    note_text_write(c, true, e->at, NULL, true);
+    if (!prog->uses_storage) prog->storage_at = e->at;
     prog->uses_storage = true;
     e->c_callee = save ? "tide_storage_save" : !load ? "tide_storage_delete" : e->args.count == 2 ? "tide_storage_load_to"
                                                                                                  : "tide_storage_load";
@@ -66,7 +71,9 @@ static type check_storage_static(checker *c, expr *e)
     if (load) {
         decl *loaded = storage_loaded(prog);
         if (!loaded) {
-            diag_error(e->at, "Storage.Load is written 'Storage.Load(' with nothing between its words");
+            // Tide declares Loaded where a file's code has the words Storage, '.' and Load (storage_prelude_wanted)
+            diag_error(e->at, "write 'Storage.Load' without a comment between its words: Tide declares the Loaded event "
+                              "for code it finds them in");
             return T_ERR;
         }
         // The engine sends Loaded for it: a handler of Loaded has a sender, and one that takes components needs

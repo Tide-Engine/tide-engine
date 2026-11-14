@@ -10,6 +10,11 @@ bool tide_preparation_update(tide_preparation **state, const tide_game *game,
                              void *world, const tide_jobs *jobs, tide_event_log *events);
 bool tide_preparation_update_clients(tide_preparation **state, const tide_game *game,
                                      void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *events);
+// The server's: the same, and what preparation asks of the match's store goes into `store` with the world it made,
+// after what's there (the requests of the ticks before, which come first)
+struct tide_storage;
+bool tide_preparation_update_server(tide_preparation **state, const tide_game *game, void *world, const tide_jobs *jobs,
+                                    tide_event_log *per_player, tide_event_log *events, struct tide_storage *store);
 void tide_preparation_free(tide_preparation *state);
 // Compiler safe points publish completed preparation statements for local views.
 // The published endpoint is observational only and never drives match ticks.

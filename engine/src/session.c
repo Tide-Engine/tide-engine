@@ -14,6 +14,7 @@
 #include "tide/shards.h"
 #include "tide/preparation.h"
 #include "tide/storage.h"
+#include "tide/time.h"
 #include "recipient_delta.h"
 #include "recipient_needs.h"
 
@@ -475,8 +476,9 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
                                 uint32_t *destroyed_count, tide_event_log *events, const void *loaded,
                                 const uint8_t *loaded_bytes, uint32_t loaded_size,
                                 uint8_t **kept_bytes, uint32_t *kept_size,
-                                const uint8_t *candidate, uint32_t candidate_size)
+                                const uint8_t *candidate, uint32_t candidate_size, bool *by_changes)
 {
+    *by_changes = false;
     tide_delta_reader d;
     uint64_t hash;
     if (!tide_delta_open(&d, data, size, base != NULL, &hash)) return false;
@@ -528,6 +530,7 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
         free(now);
         free(was);
         changes = true;
+        *by_changes = true;
     } else if (ok && codec == 1u) {
         uint32_t decoded = 0;
         ok = tide_recipient_patch_apply(candidate, candidate_size, packed, packed_size, &bytes, &decoded)
@@ -1539,7 +1542,8 @@ static void drop_connection(tide_server *s, connection *c)
 // Whether its players take the match over when it goes (see tide_session_take_over).
 static bool hands_over(const tide_server *s)
 {
-    return !s->game->client_state && s->game->host_migration && s->room_key[0] && s->room_code[0];
+    // (Not a game with a store: what it keeps, and the answers on their way, are the hosting machine's)
+    return !s->game->client_state && !s->game->stored && s->game->host_migration && s->room_key[0] && s->room_code[0];
 }
 
 static void send_bye(tide_server *s, const uint32_t transport, const tide_address to, const uint64_t cookie,
@@ -2476,7 +2480,10 @@ static bool inject(tide_server *s, const uint8_t *data, const uint32_t size)
 
 uint32_t tide_server_injected(const tide_server *s)
 {
-    return s->injected_count;
+    // Shard messages alone: what loads of the store found is this shard's own input, not traffic between shards
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < s->injected_count; i++) count += s->injected[i].data[0] != TIDE_STORED_MESSAGE;
+    return count;
 }
 
 const uint8_t *tide_server_injected_message(const tide_server *s, const uint32_t i, uint32_t *size)
@@ -3567,7 +3574,13 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
         s->seed &= 0x7FFFFFFFu;
     }
     if (desc->world) g->copy_world(s->world, desc->world);
-    else g->start(s->world, dt, desc->start, s->seed);
+    else {
+        // What the match's start asks of the store (its Spawned handlers) is the first tick's to carry out, before
+        // what that tick asks
+        if (g->stored) tide_storage_bind(s->world, &s->storage);
+        g->start(s->world, dt, desc->start, s->seed);
+        if (g->stored) tide_storage_unbind(s->world);
+    }
     s->dt = dt;
     s->start_kind = desc->world ? START_UNKNOWN : desc->start ? START_GIVEN : START_MAIN;
     if (s->start_kind == START_GIVEN) {
@@ -3768,8 +3781,9 @@ void tide_server_update(tide_server *s, const double now)
     if (s->ended) discard_preparation(s);
     if (!s->ended && !s->preparation_journals && s->game->tick_client_events && s->game->prepare_pending
         && s->game->prepare_pending(s->world)) s->preparation_journals = tide_alloc_zeroed(s->players, sizeof *s->preparation_journals);
-    const bool prepared = s->ended || tide_preparation_update_clients(&s->preparation, s->game, s->world,
-                                                          s->desc.jobs, s->preparation_journals, &s->preparation_events);
+    const bool prepared = s->ended || tide_preparation_update_server(&s->preparation, s->game, s->world,
+                                                          s->desc.jobs, s->preparation_journals, &s->preparation_events,
+                                                          &s->storage);
     if (!prepared) { s->clock_base = s->tick; s->clock_start = now; }
     // The last tick that's due runs beside the session's frame where it can: it's begun once everything below
     // has gone out, as nothing reads the server while it runs
@@ -5918,13 +5932,14 @@ static void load_snapshot(tide_client *c)
     tide_event_log journal = {0};
     uint8_t *kept_bytes = NULL;
     uint32_t kept_size = 0;
+    bool by_changes = false;
     const tide_server *mirror = c->mirror && c->mirror->game == g ? c->mirror : NULL; // Its world is the server's
     if (world && mirror) g->copy_world(world, mirror->world);
     bool ok = world && (mirror ? !repair : g->client_state
         ? unpack_client_state(g, world, repair && c->loaded ? world_at(c, c->verified) : NULL,
             tide_player_from_index(c->player), c->verified, c->snapshot, c->snapshot_size, &destroyed, &destroyed_count, &journal,
             c->taken_world, c->taken_bytes, c->taken_size, &kept_bytes, &kept_size,
-            c->repair_candidate, c->repair_candidate_size)
+            c->repair_candidate, c->repair_candidate_size, &by_changes)
         : g->unpack_delta(world, base, c->snapshot, c->snapshot_size));
     for (uint32_t at = 0; ok && repair && at < journal.size;) {
         const tide_heard *heard = (const tide_heard *)(journal.bytes + at);
@@ -5964,6 +5979,7 @@ static void load_snapshot(tide_client *c)
             free(kept_bytes);
             return;
         }
+        if (by_changes) drop_taken(c); // What it was loaded from is no longer the world it has: nothing to reload over
         if (kept_bytes) {
             if (!c->taken_world) c->taken_world = tide_alloc_zeroed(1, g->world_size);
             g->copy_world(c->taken_world, world);
@@ -7602,7 +7618,7 @@ void tide_session_join(tide_session *s, const tide_transport network, const tide
 // over: the server said where to meet, and it went, or stopped answering.
 static bool can_migrate(const tide_client *c)
 {
-    return !c->game->client_state && c->loaded && c->handover.version && c->handover.key[0]
+    return !c->game->client_state && !c->game->stored && c->loaded && c->handover.version && c->handover.key[0]
         && (c->reason == TIDE_DISCONNECT_TIMED_OUT || (c->reason == TIDE_DISCONNECT_SERVER_LEFT && c->handed_over));
 }
 
@@ -7894,7 +7910,7 @@ bool tide_session_migrating(const tide_session *s, char code[TIDE_ROOM_CODE_LENG
 
 void tide_session_take_over(tide_session *s, const tide_transport network, const double now)
 {
-    if (!s->migrating || s->desc.game->client_state || (s->stale && s->stale->game->client_state)) {
+    if (!s->migrating || s->desc.game->client_state || s->desc.game->stored || (s->stale && (s->stale->game->client_state || s->stale->game->stored))) {
         if (network.close) network.close(network.self);
         return;
     }
@@ -8179,6 +8195,8 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
         c->repair_gap = c->repair_streamed = 0;
     }
     free_published(s);
+    // Messages still waiting to be published go again under the new build: their bytes aren't its layout's
+    for (uint32_t i = 0; i < s->injected_count; i++) s->injected[i].published = 0;
     free_world(s->game, s->world);
     free(s->world);
     free(s->frame);
@@ -8427,6 +8445,10 @@ bool tide_session_rewind(tide_session *s, const void *world)
         g->copy_world(kept, server->world);
     }
     g->copy_world(server->world, world);
+    // What loads of the ticks let go found isn't the rewound world's to take: it asks again as it gets there. (A
+    // load the rewound world asked before and whose answer was still on its way is dropped with them.)
+    (void)tide_server_drop_injected(server, TIDE_STORED_MESSAGE);
+    tide_storage_clear(&server->storage);
     if (kept) {
         g->keep_commands(server->world, kept);
         free_world(g, kept);
