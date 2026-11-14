@@ -1,3 +1,41 @@
+## [Linear] texture replay: embed ABI 24 (2026-11-14)
+
+The owner approved opt-in sRGB sampling on 2026-11-14. Static compiler roles and importer storage are in
+textures.md. Recorder packets retain their shape: pixel format 8 is SRGBA8, internal attachment color 10 is
+sRGB, and bit 0x100 of an immutable block format selects its sRGB variant. Block support/strides use the base
+format; BC1/BC3/RGBA8 payload bytes and authored levels are retained exactly. TideRender creates
+R8G8B8A8_SRGB, RGBA_DXT1_SRGB and RGBA_DXT5_SRGB resources. Internal sRGB targets are sampling copies;
+no public Format member or ordinary render target, fragment output or presentation behavior changes.
+TIDE_EMBED_ABI and TideLibrary.Abi advance together from 23 to 24 so older replays cannot silently treat the
+new format values as ordinary bytes. The C recorder's embed_render_srgb_images_retain_encoding_formats
+pins unmodified upload bytes, host BC support, marked block descriptors and RGBA-array fallback descriptors.
+
+**Provisional Unity prerequisite:** Player Color Space must be Linear for [Linear] resources. This is a real
+Unity constraint: in a Gamma scratch Sample, explicit GraphicsFormat SRGB Texture2D, Texture2DArray and
+Cubemap constructors returned UNorm, and marked gray128 sampled as128 rather than linear55. The replay
+refuses marked images/arrays/cubes/internal targets and reports once, naming Project Settings > Player >
+Other Settings > Color Space > Linear. It never changes the project's setting, and unmarked Gamma resources
+continue normally. Refused internal targets and their faces/layers cannot fall through into camera drawing.
+The package README and language/user docs state this prerequisite.
+
+**Mips:** even in a Linear project, Unity Texture.Apply(true) and RenderTexture GenerateMips averaged sRGB
+bytes (gray128 + white255 produced191 rather than the correct encoded linear mean205). The replay therefore
+uses Resources/TideSrgbMip.shader to sample the previous level through its sRGB format, draw into a separate
+sRGB attachment, and copy the encoded result back. One 2D scratch render texture is retained while its shape
+matches; a shape change defers the old one with other renderer resources, and reset releases scratch/material.
+Arrays are processed by layer, cubes by face. CPU upload mirrors retain the base as stored; GPU mips are
+regenerated after changed uploads. Immutable prepared block chains bypass this operation and keep their levels.
+There is no per-pixel CPU conversion in a frame's mip path.
+
+**Actual Unity checks:** hidden/noAudio Unity6000.6.0f1 scratch Sample, automatic Tide builds disabled.
+Linear D3D11 and Vulkan ComputeReplayTests pass14/14 applicable (Gamma-only witness skipped): known marked
+and unmarked point/midpoint pixels; GPU mip bytes for 2D, both array layers and all six cube faces; sRGB block
+formats and mip counts; production linear_texture_wgsl replay converting soft-alpha premultiplied target
+pixels while retaining the original byte-for-byte; all existing compute/image/order cases. The source of
+00000000c0de0015.shader is the production linear_texture_wgsl from linear_wgsl.h, translated by this checkout's
+tide_wgsl_translate. Gamma D3D11 passes12/12 applicable, including the explicit actionable refusal, with the
+supported-only sRGB witnesses skipped. Other graphics APIs are being checked; Metal requires a Mac.
+
 ## Depth-write descriptor flag: ABI 23 (2026-11-14)
 
 The follow-up writes_depth flag keeps explicit Draw.Bounds from re-enabling geometric occlusion testing for

@@ -15,6 +15,8 @@
 #define WGSL(source) NULL
 #endif
 
+#include "linear_wgsl.h"
+
 // Shapes: each instance's quad covers its shape in window pixels, which the
 // camera already applied, and `screen` takes to the target.
 //
@@ -678,6 +680,9 @@ static const char *const hiz_wgsl = WGSL(
     X(quad, quad_wgsl, NULL)                                                                                           \
     X(text_quad, text_quad_wgsl, NULL)                                                                                 \
     X(mesh_3d, mesh_3d_wgsl, NULL)                                                                                     \
+    X(linear_texture, linear_texture_wgsl, NULL) \
+    X(linear_array, linear_array_wgsl, NULL) \
+    X(linear_cube, linear_cube_wgsl, NULL) \
     X(clear, clear_wgsl, NULL)                                                                                         \
     X(clear_all, clear_all_wgsl, NULL)                                                                                 \
     X(run_size, run_size_wgsl, NULL)                                                                                   \

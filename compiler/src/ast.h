@@ -785,6 +785,7 @@ typedef struct decl {
     // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
     // only code the GPU runs reads, by its name (declared_raw)
     bool sample_raw;
+    bool sample_linear; // [Linear]: sRGB storage read as linear light.
     // [Lossless] before a Texture asset: its pixels are packed exactly, never block-compressed (pack_item)
     bool lossless;
     // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
@@ -2077,6 +2078,8 @@ void declared_sampling(const expr *texture, int *filter, int *wrap);
 // Whether a texture's declaration says [Raw]: an asset by its name, or a grid's field.
 bool declared_raw(const expr *texture);
 bool field_is_raw(const field *f);
+bool declared_linear(const expr *texture);
+bool field_is_linear(const field *f);
 // A field's key in JSON: what its [Json("key")] says, as written between the quotes, or its name.
 str json_field_key(const field *f);
 

@@ -41,13 +41,14 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GP
 // are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
 // of any kind, a float's as its bits. Every backend has it with nothing asked.
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I,
-    TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I
+    TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I,
+    TIDE_GPU_SRGBA8 // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
 } tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
+    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
          : format == TIDE_GPU_RGBA16F ? 8 : format == TIDE_GPU_R16F ? 2
          : format == TIDE_GPU_RGBA32I || format == TIDE_GPU_RGBA32F ? 16 : 1;
 }
@@ -59,6 +60,7 @@ typedef enum tide_gpu_color {
     TIDE_GPU_COLOR_NONE, TIDE_GPU_COLOR_BYTES, TIDE_GPU_COLOR_FLOAT,
     TIDE_GPU_COLOR_R8, TIDE_GPU_COLOR_RG8, TIDE_GPU_COLOR_R16F, TIDE_GPU_COLOR_RG16F,
     TIDE_GPU_COLOR_R32F, TIDE_GPU_COLOR_RGBA32F, TIDE_GPU_COLOR_R32I,
+    TIDE_GPU_COLOR_SRGB, // Private converted-image attachments; no public Tide Format member.
 } tide_gpu_color;
 
 // Attachment storage, independent of the shader's output type. Invalid kinds
@@ -66,7 +68,7 @@ typedef enum tide_gpu_color {
 static inline uint32_t tide_gpu_color_bytes(const tide_gpu_color color)
 {
     switch (color) {
-    case TIDE_GPU_COLOR_BYTES: case TIDE_GPU_COLOR_R32F: case TIDE_GPU_COLOR_R32I: return 4;
+    case TIDE_GPU_COLOR_SRGB: case TIDE_GPU_COLOR_BYTES: case TIDE_GPU_COLOR_R32F: case TIDE_GPU_COLOR_R32I: return 4;
     case TIDE_GPU_COLOR_FLOAT: return 8;
     case TIDE_GPU_COLOR_R8: return 1;
     case TIDE_GPU_COLOR_RG8: case TIDE_GPU_COLOR_R16F: return 2;
@@ -127,7 +129,7 @@ static inline tide_gpu_target_format tide_gpu_target_sampled(const tide_gpu_targ
 static inline tide_gpu_color tide_gpu_target_color(const tide_gpu_target_format format, const uint32_t color)
 {
     const uint32_t held = color < TIDE_GPU_MAX_COLORS ? format >> (4u * color) & 15u : 0u;
-    return held <= TIDE_GPU_COLOR_R32I ? (tide_gpu_color)held : TIDE_GPU_COLOR_NONE;
+    return held <= TIDE_GPU_COLOR_SRGB ? (tide_gpu_color)held : TIDE_GPU_COLOR_NONE;
 }
 
 // How many color images it has.

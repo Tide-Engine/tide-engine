@@ -13319,3 +13319,19 @@ TIDE_TEST(lsp_double_types_swizzles_parsing_and_signatures)
     open_document("singleton Data { float value = 1d; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "field 'value' is float, not double") && has(last_sent(), "float(x) converts explicitly"));
 }
+
+TIDE_TEST(lsp_linear_textures)
+{
+    start();
+    const char *names = complete("local singleton Art { [$] Texture image; }\nscene Main { }\n");
+    TIDE_CHECK(offers(names, "Linear") && has(names, "sRGB storage sampled in linear light"));
+    names = complete("[$] asset Texture image = \"image.png\";\nscene Main { }\n");
+    TIDE_CHECK(offers(names, "Linear"));
+    open_document("local singleton Art\n{\n    [Linear] Texture image;\n}\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = hover_at(2, 6);
+    TIDE_CHECK(has(hover, "[Linear]") && has(hover, "GPU reads return linear light"));
+    TIDE_CHECK(has(hover, "Alpha stays coverage") || has(hover, "alpha stays coverage"));
+    open_document("scene Main { }\nview V() { [Linear] Texture image; }\n");
+    TIDE_CHECK(has(last_sent(), "marks assets and resource fields, not parameters or locals"));
+}

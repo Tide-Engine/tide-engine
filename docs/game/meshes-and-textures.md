@@ -39,6 +39,12 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
+Use [`[Linear]`](./shaders.md#linear-light-color) on Texture, TextureArray and Cubemap assets
+and fields that hold display-encoded color for lighting. The GPU converts RGB to linear
+light before filtering. Unmarked images keep their current behavior; neither the mark nor
+`Math.ToLinear`/`Math.ToDisplay` changes alpha, frag output semantics or screen presentation.
+
+
 ### Volumes
 
 `Texture3D` is a continuous volume, made in local code with a size in texels:

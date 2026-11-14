@@ -1190,6 +1190,7 @@ typedef struct tide_draw_texture {
     uint32_t held;     // Nonzero: kept by frames that don't draw with it (a page of listed regions, tide/mesh.h)
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
     uint32_t capacity; // Bytes `pixels` has room for: 0 where they aren't the list's own
+    bool linear;      // sRGB storage, hardware decoded when read; independent of source identity.
     uint32_t layers;   // An array's: how many images of `width` by `height` (TIDE_PIXELS_*_ARRAY)
     // An array of the pack's: each layer's blocks where it keeps them (tide_pack_texture_array_blocks), where `pixels`
     // has NULL for a layer kept as blocks alone
@@ -2279,7 +2280,14 @@ static inline uint32_t tide_draw_target_depth(tide_draw_list *d, const uint64_t 
 }
 
 // A CPU image or target color, copied or referenced as its source requires.
+// Internal color-grid capture with a distinct static interpretation and cache entry.
+uint32_t tide_draw_texture_edit_linear(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version,
+                                       int32_t width, int32_t height, uint64_t kind, uint8_t **pixels, bool *kept);
+
 uint32_t tide_draw_texture_source(tide_draw_list *d, tide_texture_ref texture);
+uint32_t tide_draw_texture_source_linear(tide_draw_list *d, tide_texture_ref texture);
+uint32_t tide_draw_array_source_linear(tide_draw_list *d, tide_texture_array_ref array);
+uint32_t tide_draw_cube_source_linear(tide_draw_list *d, tide_cubemap_ref cube);
 
 // A target's depth: 0, no texture, for one that's no target's.
 uint32_t tide_draw_depth_source(tide_draw_list *d, tide_depth_ref depth);
@@ -2724,7 +2732,7 @@ static inline __attribute__((always_inline)) bool tide_draw_same_image(const tid
     const tide_draw_texture *t = &d->textures[last->mesh.texture - 1u];
     return t->id == (uint64_t)(uintptr_t)texture->pixels && t->space == TIDE_PIXELS_MEMORY && t->frame == d->frame
         && t->version == texture->version && t->width == texture->width && t->height == texture->height
-        && t->format == TIDE_TEXELS_BYTES;
+        && t->format == TIDE_TEXELS_BYTES && !t->linear;
 }
 
 // The same, with what uvs past 0 and 1 read: `wrap`.

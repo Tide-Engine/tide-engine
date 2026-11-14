@@ -1,3 +1,15 @@
+## Linear-light image sources (2026-11-14)
+
+[Linear] is static source metadata on singular Texture/TextureArray/Cubemap assets and fields, preserved
+through the existing GPU-helper specialization. Generated capture uses *_source_linear; WGSL texture reads
+remain ordinary hardware samples, so Sample, SampleGrad and SampleLevel share the sRGB image-format path.
+Sample keeps its existing unpremultiplication after hardware decoding/filtering. No manual per-Sample gamma
+conversion or additional sampler binding is generated. Marked storage-image writes are refused with an
+original-target/frag fix. Rendering to a marked cube's face or array's layer still writes the original target.
+The sampled copy conversion, backend formats, alpha representation, API picks and validation are recorded in
+textures.md (top section) and rendering.md. linear_textures pins helper forwarding plus texture/array/cube
+reads through WGSL golden, SPIR-V validation and FXC.
+
 ## Reversed depth at the final boundary (2026-11-14)
 
 The owner-approved implementation leaves tide_project, public this.clip, explicit out float4, camera records

@@ -3582,6 +3582,21 @@ bool declared_raw(const expr *texture)
            && field_is_raw(texture->field);
 }
 
+bool field_is_linear(const field *f)
+{
+    for (int i = 0; f && i < f->attributes.count; i++) {
+        if (str_eq_c(f->attributes.items[i].name, "Linear")) return true;
+    }
+    return false;
+}
+
+bool declared_linear(const expr *texture)
+{
+    if (!texture) return false;
+    if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_linear;
+    return texture->field && field_is_linear(texture->field);
+}
+
 void declared_sampling(const expr *texture, int *filter, int *wrap)
 {
     *filter = *wrap = -1;

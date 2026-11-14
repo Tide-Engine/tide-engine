@@ -7,6 +7,10 @@ audio and is where you author.
 Early: the owner is testing it. What's built and what isn't is in the Tide
 repository's `notes/unity.md`.
 
+Tide `[Linear]` textures need Unity's **Project Settings > Player > Other Settings > Color Space** set to **Linear**.
+Unity's Gamma mode disables sRGB image formats; Tide reports the required setting and refuses marked resources.
+Unmarked images keep their existing behavior in either color space. Tide never changes this project setting.
+
 ## Install
 
 1. In Unity, Window > Package Manager > + > Add package from git URL. A

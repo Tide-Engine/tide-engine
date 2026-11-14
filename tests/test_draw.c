@@ -2341,3 +2341,29 @@ TIDE_TEST(draw_shaded_instances_merge_by_shader_id)
     tide_draw_free(&d);
     tide_scratch_reset(mark);
 }
+
+TIDE_TEST(draw_linear_grid_captures_keep_roles_and_alpha)
+{
+    static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
+    tide_heaps heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_grid grid = {0};
+    tide_grid_set(&grid, tide_grid_new(2, 2, 1, 0), &colors, TIDE_IN_LOCAL);
+    *(tide_color *)tide_grid_poke(&grid, 0, 0, 0, &colors, true, TIDE_IN_LOCAL) = (tide_color){1, 1, 1, 0.5f};
+    *(tide_color *)tide_grid_poke(&grid, 1, 0, 0, &colors, true, TIDE_IN_LOCAL) = (tide_color){1, 0, 1, 0.001f};
+    tide_draw_list d = {0};
+    const tide_texture_ref image = tide_texture_of_grid(grid, &colors, 0u);
+    const uint32_t display = tide_draw_texture_source(&d, image);
+    const uint32_t linear = tide_draw_texture_source_linear(&d, image);
+    TIDE_REQUIRE(display && linear && display != linear);
+    TIDE_CHECK(!d.textures[display - 1u].linear && d.textures[linear - 1u].linear);
+    TIDE_CHECK(d.textures[display - 1u].pixels[0] == 128);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[0] == 188);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[3] == 128);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[7] == 0);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[4] == 0 && d.textures[linear - 1u].pixels[6] == 0);
+    TIDE_CHECK(tide_draw_texture_source_linear(&d, image) == linear);
+    tide_draw_free(&d);
+    tide_text_use(NULL, NULL);
+    tide_heaps_free(&heap);
+}

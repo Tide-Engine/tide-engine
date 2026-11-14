@@ -3679,6 +3679,10 @@ static void describe(const occurrence *o, sb *out)
             for (int a = 0; a < o->decl->attributes.count; a++) {
                 if (str_eq_c(o->decl->attributes.items[a].name, "Retarget")) sb_put(out, "\n\n" RETARGET_ATTRIBUTE_DOC);
             }
+            if (o->decl->sample_linear) {
+                sb_put(out, "\n\nIt's `[Linear]`: sRGB color storage, sampled and filtered in linear light. "
+                            "Alpha is unchanged. Keep it in `[Linear]` fields or borrow its source in a read-only GPU helper.");
+            }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them. It can initialize "
                             "`[Raw] Texture` fields and be borrowed by GPU sampling and metadata helpers, preserving the "
@@ -4209,6 +4213,12 @@ static void describe(const occurrence *o, sb *out)
              "This field's key in JSON, where it isn't the field's name: `[Json(\"max_players\")] int maxPlayers;`. "
              "`Json.Read` fills the field from that key and `Json.Write` writes it under it. It goes before a struct's "
              "field, and no two fields of a struct have one key."},
+            {"Linear", "[Linear]",
+             "This Texture, TextureArray or Cubemap stores sRGB color and GPU reads return linear light. Filtering and "
+             "mipmaps operate in linear light; alpha stays coverage. It goes before one asset or a resource field, "
+             "not parameters or locals. Keep values in [Linear] fields, or borrow their source in a read-only GPU "
+             "helper. Color grids and RGBA8 runtime images can initialize marked fields. Float, single-channel, "
+             "depth and numeric formats have no sRGB counterpart. [Raw] and [Linear] cannot be combined."},
             {"Raw", "[Raw]",
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
              "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
@@ -10277,6 +10287,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Linear", CK_FUNCTION, "[Linear]",
+                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
+                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "Marks Texture or Grid2<Color> assets and fields as numeric data. [Raw] Texture fields keep their Raw role; "
                  "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
@@ -10316,6 +10329,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Linear", CK_FUNCTION, "[Linear]",
+                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
+                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "Marks Texture fields or Grid2<Color> fields as numeric data. [Raw] Texture fields accept Raw Texture or "
                  "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "

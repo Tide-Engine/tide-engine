@@ -5377,3 +5377,85 @@ view BiasedDepths(Art art) {
 }
 
 frag BiasColor(Corner3 vertex, out Color color) { color = vertex.color; }
+
+// Display-encoded images, sampled by sRGB hardware (pass 33).
+asset Texture displayPair = "linear/pair.png";
+[Linear] asset Texture lightPair = "linear/pair.png";
+[Linear] asset Texture lightBlocks = "linear/compressed.png";
+[Linear] asset Texture lightAlphaBlocks = "linear/alpha_blocks.png";
+[Linear, Lossless] asset Texture lightLossless = "linear/compressed.png";
+[Linear] asset TextureArray lightBlockLayers = ["linear/compressed.png", "linear/alpha_blocks.png"];
+[Linear] asset TextureArray lightLayers = ["linear/pair.png", "linear/pair.png"];
+[Linear] asset Cubemap lightSky = "linear/cube_??.png";
+local singleton LinearImages
+{
+    int which;
+    bool made;
+    float paint = 0.5;
+    RenderTarget target;
+    Grid2<Color> cells = Grid2(2, 2);
+    Grid3<Color> layers = Grid3(2, 2, 2);
+    [Linear] Texture gridImage;
+    [Linear] Texture targetImage;
+    Texture originalTarget;
+    [Linear] Texture keptAsset = lightPair;
+    [Linear] Cubemap cube;
+    [Linear] TextureArray array;
+    [Linear] TextureArray gridArray;
+}
+Color BorrowLight(Texture image, float2 uv) { return image.Sample(uv, .Point); }
+frag LinearReads(Vertex vertex, out Color color, LinearImages images)
+{
+    mut Color c = Color.black;
+    if (images.which == 0) c = displayPair.Sample(float2(0.75, 0.25), .Point);
+    if (images.which == 1) c = lightPair.Sample(float2(0.75, 0.25), .Point);
+    if (images.which == 2) c = displayPair.Sample(float2(0.5, 0.25), .Bilinear);
+    if (images.which == 3) c = lightPair.Sample(float2(0.5, 0.25), .Bilinear);
+    if (images.which == 4) c = lightPair.Sample(float2(0.5, 0.75), .Bilinear);
+    if (images.which == 5) c = images.gridImage.Sample(float2(0.75, 0.25), .Point);
+    if (images.which == 6) c = images.targetImage.Sample(float2(0.5), .Point);
+    if (images.which == 7) c = images.cube.Sample(float3(1, 0, 0), .Point);
+    if (images.which == 8) c = images.array.Sample(float2(0.5), 1, .Point);
+    if (images.which == 9) c = lightLayers.Sample(float2(0.75, 0.25), 0, .Point);
+    if (images.which == 10) c = lightSky.Sample(float3(1, 0.5, -0.5), .Point);
+    if (images.which == 11) c = lightBlocks.SampleLevel(float2(0.5), 7, .Trilinear);
+    if (images.which == 12) c = images.targetImage.SampleLevel(float2(0.5), 2, .Trilinear);
+    if (images.which == 13) c = lightPair.SampleGrad(float2(0.5, 0.25), float2(0.001, 0), float2(0, 0.001), .Trilinear);
+    if (images.which == 14) c = images.gridArray.Sample(float2(0.75, 0.25), 1, .Point);
+    if (images.which == 15) c = BorrowLight(images.keptAsset, float2(0.75, 0.25));
+    if (images.which == 16) c = lightAlphaBlocks.SampleLevel(float2(0.5), 7, .Trilinear);
+    if (images.which == 17) c = lightBlockLayers.Sample(float2(0.5), 1, .Bilinear);
+    if (images.which == 18) c = lightLossless.SampleLevel(float2(0.5), 7, .Trilinear);
+    if (images.which == 19) c = images.originalTarget.Sample(float2(0.5), .Point);
+    color = Color(c.r, c.g, c.b); // Inspect straight RGB independently of coverage.
+}
+[After(BiasedDepths)]
+view LinearSampling(Art art, mut LinearImages images)
+{
+    if (art.targetPass != 33) return;
+    if (!images.made)
+    {
+        images.target = RenderTarget(4, 4, 1);
+        images.cube = Cubemap(4);
+        images.array = TextureArray(4, 4, 2, 1);
+        images.cells[0, 0] = Color.black;
+        images.cells[1, 0] = Color(128 / 255.0, 128 / 255.0, 128 / 255.0);
+        images.gridImage = images.cells;
+        images.layers[1, 0, 1] = images.cells[1, 0];
+        images.gridArray = images.layers;
+        images.targetImage = images.target.color;
+        images.originalTarget = images.target.color;
+        images.made = true;
+    }
+    Color paint = Color(images.paint, images.paint, images.paint, 0.5);
+    images.target.SetScreen(); images.target.Clear(paint);
+    for (int i = 0; i < 6; i++) { images.cube.faces[i].SetScreen(); images.cube.faces[i].Clear(paint); }
+    for (int i = 0; i < 2; i++) { images.array.layers[i].SetScreen(); images.array.layers[i].Clear(paint); }
+    Draw.SetScreen(); Draw.SetClip(); Draw.SetDepth(.None); Draw.Clear(Color.black);
+    List<Vertex> quad = [Vertex {}, Vertex { position = float2(16, 0) }, Vertex { position = float2(16) }, Vertex { position = float2(0, 16) }];
+    for (int i = 0; i < 20; i++)
+    {
+        images.which = i;
+        Draw.Transform(float2((i % 8) * 32, (i / 8) * 32)) { Draw.Mesh(quad, art.faces, LinearReads); }
+    }
+}

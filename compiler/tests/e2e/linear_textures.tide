@@ -1,0 +1,29 @@
+using Image = Texture;
+[Linear] asset Image image = "assets/hero.png";
+scene Main { }
+local singleton Art
+{
+    [Linear] Image initial = image;
+    [Linear] Image kept;
+    [Linear] Image cells;
+    Grid2<Color> pixels = Grid2(2, 1);
+    List<Vertex> vertices = [Vertex {}, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    List<int> indices = [0, 1, 2];
+    bool ready;
+}
+Color Borrow(Texture source, float2 uv) { return source.SampleLevel(uv, 0); }
+frag Read(Vertex vertex, out Color color, Art art)
+{
+    color = Borrow(art.initial, vertex.uv) + art.kept.Sample(vertex.uv) + art.cells.Sample(vertex.uv);
+}
+[Before(Show)] view Fill(mut Art art)
+{
+    if (!art.ready) {
+        art.ready = true;
+        art.kept = art.initial;
+        art.pixels[0, 0] = Color(0.5, 0.25, 1, 0.5);
+        art.pixels[1, 0] = Color(1, 0, 0, 0);
+        art.cells = art.pixels;
+    }
+}
+view Show(Art art) { Draw.Mesh(art.vertices, art.indices, Read); }

@@ -31,7 +31,8 @@ public sealed unsafe class ComputeReplayTests
         Storage, ComputeBegin, ComputeEnd,
         Dispatch, DispatchIndirect, DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount,
         Target = 12, Image = 21, Draw = 24, Sampler = 37, Volume = 44, VolumeWrite, PipelineImages,
-        Cube = 8, CubeFace = 9, Array = 38, ArrayLayer = 39,
+        Texture = 4, Mipmaps = 6, Cube = 8, CubeFace = 9, Array = 38, ArrayLayer = 39,
+        ArrayOf = 40, TextureBlocks = 42, ArrayBlocks = 43,
     }
 
     // tide_embed_render's commands: an op, its byte count, its words
@@ -77,6 +78,8 @@ public sealed unsafe class ComputeReplayTests
                 Add(Op.PipelineImages, id, 3, 2, format, format);
             }
         }
+
+        public void LinearCopy(uint id) => Pipeline(id, 0xc0de0015, 16, 3, new uint[] { 0 }, true);
 
         public void PixelRead(uint id) {
             Pipeline(id, 0xc0de0014, 16, 3, new uint[] { 0 }, true);
@@ -359,13 +362,13 @@ public sealed unsafe class ComputeReplayTests
     }
 
     static void ImageQuad(Commands c, uint target, uint x, uint y, uint width, uint height,
-                          float u, float v, float w, float kind, Color color, uint filter = 1, uint wrap = 0)
+                          float u, float v, float w, float kind, Color color, uint filter = 1, uint wrap = 0, uint source = 11)
     {
         c.Add(Op.Begin, target, 0);
         c.Add(Op.Scissor, x, y, width, height);
         c.Add(Op.Use, 31);
         ImageValues(c, u, v, w, kind, color);
-        c.Add(Op.Image, 0, target == 10 ? 0u : 11u);
+        c.Add(Op.Image, 0, target == 10 ? 0u : source);
         c.Add(Op.Image, 1, 20);
         c.Add(Op.Sampler, 0, filter, wrap);
         c.Add(Op.Draw, 0, 3, 1);
@@ -410,6 +413,155 @@ public sealed unsafe class ComputeReplayTests
             | System.Reflection.BindingFlags.NonPublic).GetValue(render);
         var image = images[id];
         return (Texture)image.GetType().GetField("texture").GetValue(image);
+    }
+
+    [UnityTest]
+    public IEnumerator SrgbImagesDecodeBeforeFilteringAndKeepFormatAcrossUploads()
+    {
+        if (QualitySettings.activeColorSpace != ColorSpace.Linear) Assert.Ignore("Unity disables sRGB texture views in Gamma projects; the refusal is tested separately.");
+        var camera = new GameObject("Tide sRGB camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = ImageObjects();
+            c.Add(Op.Texture, 40, 0, 2, 1, 1, 0xff808080, 0xffffffff);
+            c.Add(Op.Texture, 41, 8, 2, 1, 1, 0xff808080, 0xffffffff);
+            c.Add(Op.Array, 42, 10, 2, 1, 2, 1, 0, 0xff808080, 0xffffffff, 0xff808080, 0xff808080);
+            var faces = new List<uint> { 43, 10, 2, 1 };
+            for (var i = 0; i < 6; i++) faces.AddRange(new uint[] { 0xff808080, 0xffffffff, 0xff808080, 0xffffffff });
+            c.Add(Op.Cube, faces.ToArray());
+            ImageQuad(c, 0, 0, 0, 16, 64, 0.25f, 0.5f, 0, 0, Color.black, 0, source: 40);
+            ImageQuad(c, 0, 16, 0, 16, 64, 0.25f, 0.5f, 0, 0, Color.black, 0, source: 41);
+            ImageQuad(c, 0, 32, 0, 16, 64, 0.5f, 0.5f, 0, 0, Color.black, source: 40);
+            ImageQuad(c, 0, 48, 0, 16, 64, 0.5f, 0.5f, 0, 0, Color.black, source: 41);
+            Replay(c, camera);
+            Assert.AreEqual(UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_SRGB, ImageTexture(41).graphicsFormat, "marked texture actual format");
+            pixels = Pixels(camera, target);
+            Filtered(new Color32(128, 128, 128, 255), (Color32)pixels.GetPixel(8, 32), "unmarked point reads stored numbers");
+            Filtered(new Color32(55, 55, 55, 255), (Color32)pixels.GetPixel(24, 32), "marked point decodes sRGB");
+            Filtered(new Color32(192, 192, 192, 255), (Color32)pixels.GetPixel(40, 32), "unmarked midpoint filters stored numbers");
+            Filtered(new Color32(155, 155, 155, 255), (Color32)pixels.GetPixel(56, 32), "marked midpoint filters linear light");
+            Assert.AreEqual(UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_SRGB, ImageTexture(41).graphicsFormat);
+            c = new Commands();
+            c.Add(Op.Mipmaps, 41);
+            c.Add(Op.Mipmaps, 43);
+            Replay(c);
+            var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(41), 1);
+            while (!read.done) yield return null;
+            Assert.IsFalse(read.hasError, "marked mip readback");
+            var mip = read.GetData<byte>();
+            Assert.That((int)mip[0], Is.InRange(204, 206), "marked mip is encoded from the mean linear light");
+            Assert.AreEqual(255, mip[3], "alpha never follows the color transfer curve");
+            var arrayRead = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(42), 1);
+            var cubeRead = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(43), 1);
+            while (!arrayRead.done || !cubeRead.done) yield return null;
+            Assert.IsFalse(arrayRead.hasError || cubeRead.hasError, "layered sRGB mip readback");
+            Assert.That((int)arrayRead.GetData<byte>(0)[0], Is.InRange(204, 206), "array mip uses linear light");
+            Assert.That((int)arrayRead.GetData<byte>(1)[0], Is.InRange(127, 129), "other array layer stays independent");
+            for (var face = 0; face < 6; face++)
+                Assert.That((int)cubeRead.GetData<byte>(face)[0], Is.InRange(204, 206), "cube face mip " + face);
+            yield return null;
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
+    }
+
+    [Test]
+    public void SrgbLayeredAndBlockImagesKeepTheirStorageFormatsAndMipCounts()
+    {
+        if (QualitySettings.activeColorSpace != ColorSpace.Linear) Assert.Ignore("Unity disables sRGB texture views in Gamma projects; the refusal is tested separately.");
+        var c = new Commands();
+        c.Add(Op.Cube, 40, 10, 1, 1, 0xff808080, 0xff808080, 0xff808080, 0xff808080, 0xff808080, 0xff808080);
+        c.Add(Op.Array, 41, 10, 1, 1, 2, 1, 0, 0xff808080, 0xffffffff);
+        c.Add(Op.ArrayOf, 42, 8, 2, 2, 2);
+        var rgba = new List<uint> { 43, 4, 4, 0x104, 3, 84 };
+        for (var i = 0; i < 21; i++) rgba.Add(0xff808080);
+        c.Add(Op.TextureBlocks, rgba.ToArray());
+        rgba = new List<uint> { 44, 4, 4, 1, 0x104, 3, 84 };
+        for (var i = 0; i < 21; i++) rgba.Add(0xff808080);
+        c.Add(Op.ArrayBlocks, rgba.ToArray());
+        var bc1 = SystemInfo.SupportsTextureFormat(TextureFormat.DXT1);
+        var bc3 = SystemInfo.SupportsTextureFormat(TextureFormat.DXT5);
+        if (bc1) c.Add(Op.TextureBlocks, 45, 4, 4, 0x101, 3, 24, 0x84108410, 0, 0x84108410, 0, 0x84108410, 0);
+        if (bc3) c.Add(Op.ArrayBlocks, 46, 4, 4, 1, 0x103, 3, 48,
+            0xffff, 0, 0x84108410, 0, 0xffff, 0, 0x84108410, 0, 0xffff, 0, 0x84108410, 0);
+        Replay(c);
+        foreach (var id in new uint[] { 40, 41, 42, 43, 44 })
+            Assert.AreEqual(UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_SRGB, ImageTexture(id).graphicsFormat, "sRGB image " + id);
+        Assert.AreEqual(3, ImageTexture(43).mipmapCount, "RGBA8 chain levels retained");
+        Assert.AreEqual(3, ImageTexture(44).mipmapCount, "array chain levels retained");
+        if (bc1) Assert.AreEqual(UnityEngine.Experimental.Rendering.GraphicsFormat.RGBA_DXT1_SRGB, ImageTexture(45).graphicsFormat);
+        if (bc3) Assert.AreEqual(UnityEngine.Experimental.Rendering.GraphicsFormat.RGBA_DXT5_SRGB, ImageTexture(46).graphicsFormat);
+    }
+
+    [Test]
+    public void GammaProjectsExplainMarkedImagesAndKeepUnmarkedImages()
+    {
+        if (QualitySettings.activeColorSpace != ColorSpace.Gamma) Assert.Ignore("This witness needs a Gamma project.");
+        var c = new Commands();
+        c.Add(Op.Texture, 40, 0, 1, 1, 1, 0xff808080);
+        c.Add(Op.Texture, 41, 8, 1, 1, 1, 0xff808080);
+        c.Add(Op.ArrayOf, 42, 8, 1, 1, 1); // The same reason is reported just once per renderer.
+        LogAssert.Expect(LogType.Error, "Tide: [Linear] textures require Unity's Linear color space. Set Project Settings > Player > Other Settings > Color Space to Linear; Unity's Gamma mode disables sRGB image formats.");
+        Replay(c);
+        Assert.AreEqual(UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm, ImageTexture(40).graphicsFormat);
+        var images = (System.Collections.IDictionary)typeof(TideRender).GetField("images", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic).GetValue(render);
+        Assert.IsFalse(images.Contains(41u), "marked image was refused");
+        Assert.IsFalse(images.Contains(42u), "marked array was refused");
+    }
+
+    [UnityTest]
+    public IEnumerator MarkedTargetSamplingCopyConvertsPremultipliedColorAndKeepsTheOriginal()
+    {
+        if (QualitySettings.activeColorSpace != ColorSpace.Linear) Assert.Ignore("Unity disables sRGB texture views in Gamma projects.");
+        var c = ImageObjects();
+        // Hand-written GPU shaders output premultiplied channels: straight (.5,.25,1), alpha .5.
+        ImageQuad(c, 10, 0, 0, 64, 64, 0, 0, 0, -1, new Color(0.25f, 0.125f, 0.5f, 0.5f));
+        Replay(c);
+        var beforeRead = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(11), 0);
+        while (!beforeRead.done) yield return null;
+        Assert.IsFalse(beforeRead.hasError);
+        var before = beforeRead.GetData<byte>().ToArray();
+        c = new Commands();
+        c.Add(Op.Target, 50, 10, 64, 64, 51, 0, 0, 0, 52);
+        c.LinearCopy(60);
+        c.Add(Op.Begin, 50, 0);
+        c.Add(Op.Scissor, 0, 0, 64, 64);
+        c.Add(Op.Use, 60);
+        c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+        c.Add(Op.Image, 0, 11);
+        c.Add(Op.Sampler, 0, 0, 0);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.End);
+        Replay(c);
+        var source = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(11), 0);
+        var sampled = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(51), 0);
+        while (!source.done || !sampled.done) yield return null;
+        Assert.IsFalse(source.hasError || sampled.hasError, "target copy readback");
+        var original = source.GetData<byte>();
+        var converted = sampled.GetData<byte>();
+        CollectionAssert.AreEqual(before, original.ToArray(), "sampling conversion never changes the original target");
+        for (var i = 0; i < original.Length; i += 4)
+        {
+            Assert.That((int)original[i], Is.InRange(63, 65), "original red remains display-premultiplied");
+            Assert.That((int)original[i + 1], Is.InRange(31, 33), "original green remains display-premultiplied");
+            Assert.That((int)original[i + 2], Is.InRange(127, 129), "original blue remains display-premultiplied");
+            Assert.That((int)converted[i], Is.InRange(91, 94), "linear-premultiplied red encoded for sampling");
+            Assert.That((int)converted[i + 1], Is.InRange(43, 46), "linear-premultiplied green encoded for sampling");
+            Assert.That((int)converted[i + 2], Is.InRange(187, 190), "linear-premultiplied blue encoded for sampling");
+            Assert.AreEqual(original[i + 3], converted[i + 3], "alpha is unchanged");
+        }
     }
 
     [UnityTest]

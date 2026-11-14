@@ -1101,15 +1101,20 @@ static void reindex_textures(tide_draw_list *d)
     for (uint32_t i = 0; i < d->texture_count; i++) index_texture(d, i);
 }
 
-static tide_draw_texture *find_texture(const tide_draw_list *d, const uint32_t space, const uint64_t id)
+static tide_draw_texture *find_texture_role(const tide_draw_list *d, const uint32_t space, const uint64_t id, const bool linear)
 {
     if (!d->texture_index_capacity) return NULL;
     const uint32_t mask = d->texture_index_capacity - 1u;
     for (uint32_t i = texture_hash(space, id) & mask; d->texture_index[i]; i = (i + 1u) & mask) {
         tide_draw_texture *t = &d->textures[d->texture_index[i] - 1u];
-        if (t->space == space && t->id == id) return t;
+        if (t->space == space && t->id == id && t->linear == linear) return t;
     }
     return NULL;
+}
+
+static tide_draw_texture *find_texture(const tide_draw_list *d, const uint32_t space, const uint64_t id)
+{
+    return find_texture_role(d, space, id, false);
 }
 
 static tide_draw_texture *add_texture(tide_draw_list *d, const tide_draw_texture texture)
@@ -2472,17 +2477,17 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, const uint32_t space, const u
 // else leaves nothing known of what changed.
 static uint32_t texture_place(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
                               const int32_t width, const int32_t height, const uint32_t format, const uint64_t kind,
-                              uint8_t **pixels, bool *kept)
+                              uint8_t **pixels, bool *kept, const bool linear)
 {
     *pixels = NULL;
     if (kept) *kept = false;
     if (width <= 0 || height <= 0) return 0;
     const uint64_t bytes = (uint64_t)width * (uint64_t)height * tide_texels_bytes(format);
     if (bytes > UINT32_MAX) tide_out_of_memory();
-    tide_draw_texture *t = find_texture(d, space, id);
+    tide_draw_texture *t = find_texture_role(d, space, id, linear);
     bool same = false; // Its pixels are there, in this shape
     if (!t) {
-        t = add_texture(d, (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch});
+        t = add_texture(d, (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch, .linear = linear});
     } else if (t->width == width && t->height == height && t->format == format) {
         if (t->version == version) { // The same pixels, whoever wrote them
             t->frame = d->frame;
@@ -2523,14 +2528,21 @@ static uint32_t texture_place(tide_draw_list *d, const uint32_t space, const uin
 uint32_t tide_draw_texture_slot_as(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
                                    const int32_t width, const int32_t height, const uint32_t format, uint8_t **pixels)
 {
-    return texture_place(d, space, id, version, width, height, format, 0, pixels, NULL);
+    return texture_place(d, space, id, version, width, height, format, 0, pixels, NULL, false);
 }
 
 uint32_t tide_draw_texture_edit(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
                                 const int32_t width, const int32_t height, const uint32_t format, const uint64_t kind,
                                 uint8_t **pixels, bool *kept)
 {
-    return texture_place(d, space, id, version, width, height, format, kind ? kind : 1u, pixels, kept);
+    return texture_place(d, space, id, version, width, height, format, kind ? kind : 1u, pixels, kept, false);
+}
+
+uint32_t tide_draw_texture_edit_linear(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
+                                       const int32_t width, const int32_t height, const uint64_t kind,
+                                       uint8_t **pixels, bool *kept)
+{
+    return texture_place(d, space, id, version, width, height, TIDE_TEXELS_BYTES, kind, pixels, kept, true);
 }
 
 static tide_draw_texture_changes *changes_of(tide_draw_list *d, const uint32_t texture)
@@ -2637,7 +2649,7 @@ static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
             const tide_draw_texture *t = &d->textures[last->mesh.texture - 1u];
             if (t->id == (uint64_t)(uintptr_t)texture->pixels && t->space == TIDE_PIXELS_MEMORY && t->frame == d->frame
                 && t->version == texture->version && t->width == texture->width && t->height == texture->height
-                && t->format == TIDE_TEXELS_BYTES) {
+                && t->format == TIDE_TEXELS_BYTES && !t->linear) {
                 return last->mesh.texture;
             }
         }
@@ -2715,6 +2727,36 @@ uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref text
     return tide_draw_target_texture_sized(d, target.id, target.size);
 }
 
+// Static [Linear] captures share borrowed source storage but keep a distinct draw/GPU cache entry.
+static uint32_t linear_source(tide_draw_list *d, const uint32_t source)
+{
+    if (!source || source > d->texture_count) return 0;
+    tide_draw_texture copy = d->textures[source - 1u];
+    if (copy.linear) return source;
+    for (uint32_t i = 0; i < d->texture_count; i++) {
+        tide_draw_texture *t = &d->textures[i];
+        if (!t->linear || t->space != copy.space || t->id != copy.id) continue;
+        copy.linear = true;
+        copy.capacity = 0;
+        copy.changes = NULL;
+        *t = copy;
+        return i + 1u;
+    }
+    copy.linear = true;
+    copy.capacity = 0;
+    copy.changes = NULL;
+    tide_draw_texture *added = add_texture(d, copy);
+    return (uint32_t)(added - d->textures) + 1u;
+}
+
+uint32_t tide_draw_texture_source_linear(tide_draw_list *d, const tide_texture_ref texture)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_grid(texture, &grid, &shape)) return tide_draw_grid_texture_linear(d, grid, &shape);
+    return linear_source(d, tide_draw_texture_source(d, texture));
+}
+
 uint32_t tide_draw_depth_source(tide_draw_list *d, const tide_depth_ref depth)
 {
     if (!depth.target.id) return 0;
@@ -2778,6 +2820,14 @@ uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref 
     return at;
 }
 
+uint32_t tide_draw_array_source_linear(tide_draw_list *d, const tide_texture_array_ref array)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_array_grid(array, &grid, &shape)) return tide_draw_grid_array_texture_linear(d, grid, &shape);
+    return linear_source(d, tide_draw_array_source(d, array));
+}
+
 uint32_t tide_draw_volume_source(tide_draw_list *d, const tide_texture3d_ref volume)
 {
     tide_grid grid;
@@ -2806,6 +2856,11 @@ uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
     if (!tide_render_target_cubic(target.id)) return 0;
     const uint64_t id = tide_render_target_cube_of(target.id);
     return target_texture_version(d, TIDE_PIXELS_TARGET_CUBE, id, target.size, tide_render_target_version(id));
+}
+
+uint32_t tide_draw_cube_source_linear(tide_draw_list *d, const tide_cubemap_ref cube)
+{
+    return linear_source(d, tide_draw_cube_source(d, cube));
 }
 
 // A mesh's corners as the tint and the transform leave them: apart from
@@ -4954,7 +5009,7 @@ void tide_draw_mesh_3d_placed(tide_draw_list *d, const tide_mesh *mesh, const ti
 // One list after another
 
 // The texture of `from`'s mesh command, as `d` has it.
-static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, const uint32_t texture)
+static uint32_t append_texture_plain(tide_draw_list *d, const tide_draw_list *from, const uint32_t texture)
 {
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
@@ -4982,14 +5037,13 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     }
     // What `from` knows changed since the pixels `d` has is all that's copied, and `d` knows it of its own then.
     // The kind is a copy's, of that writer's: the writer itself, on `d`, would find none of its own numbers here
-    const tide_draw_texture *mine = find_texture(d, t->space, id);
+    const tide_draw_texture *mine = find_texture_role(d, t->space, id, t->linear);
     const uint64_t had = mine ? mine->version : 0;
     const uint64_t kind = t->changes && t->changes->kind ? ~t->changes->kind : 0;
     uint8_t *pixels;
     bool kept;
-    const uint32_t slot = kind ? tide_draw_texture_edit(d, t->space, id, t->version, t->width, t->height, t->format, kind,
-                                                        &pixels, &kept)
-                               : texture_place(d, t->space, id, t->version, t->width, t->height, t->format, 0, &pixels, &kept);
+    const uint32_t slot = texture_place(d, t->space, id, t->version, t->width, t->height, t->format, kind,
+                                         &pixels, &kept, t->linear);
     if (slot) d->textures[slot - 1u].layers = t->layers; // A grid's array's
     if (!pixels) return slot;
     const size_t pixel = tide_texels_bytes(t->format), row = (size_t)t->width * pixel;
@@ -5009,6 +5063,12 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
         tide_draw_texture_changed(d, slot, a->x, a->y, a->width, a->height);
     }
     return slot;
+}
+
+static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, const uint32_t texture)
+{
+    const uint32_t slot = append_texture_plain(d, from, texture);
+    return texture && from->textures[texture - 1u].linear ? linear_source(d, slot) : slot;
 }
 
 // `from`'s 2D camera `camera` (1 + its place, or 0), as `d` has it.

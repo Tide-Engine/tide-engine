@@ -690,6 +690,44 @@ TIDE_TEST(embed_render_blocks_where_the_other_program_samples_them)
     tide_gpu_record_reset();
 }
 
+// sRGB is part of an image's format, while its stored bytes and packet layout stay intact.
+TIDE_TEST(embed_render_srgb_images_retain_encoding_formats)
+{
+    const uint8_t pixels[8] = {128, 64, 32, 128, 255, 255, 255, 255};
+    tide_gpu_record_begin();
+    const tide_gpu_id texture = tide_gpu_record.texture(TIDE_GPU_SRGBA8, 2, 1, pixels);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(texture && size == 36u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_TEXTURE && u32_at(packet, 4) == 28u);
+    TIDE_CHECK(u32_at(packet, 12) == TIDE_GPU_SRGBA8);
+    TIDE_CHECK(memcmp(packet + 28u, pixels, sizeof pixels) == 0);
+
+    uint8_t chain[24] = {0}; // A complete BC1 4x4, 2x2, 1x1 chain.
+    const tide_texture_blocks blocks = {chain, TIDE_BLOCKS_BC1 | TIDE_BLOCKS_SRGB, 3, sizeof chain};
+    tide_gpu_record_block_formats(0);
+    tide_gpu_record_begin();
+    TIDE_CHECK(tide_gpu_record.texture_blocks(4, 4, blocks) == 0);
+    (void)tide_gpu_record_end(&size);
+    TIDE_CHECK(size == 0u);
+    tide_gpu_record_block_formats(1u << TIDE_BLOCKS_BC1);
+    tide_gpu_record_begin();
+    TIDE_CHECK(tide_gpu_record.texture_blocks(4, 4, blocks) != 0);
+    packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 56u);
+    TIDE_CHECK(u32_at(packet, 20) == (TIDE_BLOCKS_BC1 | TIDE_BLOCKS_SRGB));
+    TIDE_CHECK(memcmp(packet + 32u, chain, sizeof chain) == 0);
+    uint8_t rgba[84] = {0}; // The same complete chain in RGBA8; always supported.
+    tide_gpu_record_block_formats(0);
+    tide_gpu_record_begin();
+    TIDE_CHECK(tide_gpu_record.array_blocks(4, 4, 1,
+        (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8 | TIDE_BLOCKS_SRGB, 3, sizeof rgba}) != 0);
+    packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 120u);
+    TIDE_CHECK(u32_at(packet, 24) == (TIDE_BLOCKS_RGBA8 | TIDE_BLOCKS_SRGB));
+    tide_gpu_record_reset();
+}
+
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds
 // of storage, a compute pass, direct and indirect dispatches and draws, a draw of records as many as a count says, a
 // copy, and a read back the other program answers (tide_embed_render_read) for buffer_read_done to give, once. The

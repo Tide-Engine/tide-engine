@@ -1,3 +1,12 @@
+## Linear image role and replaced assets (2026-11-14)
+
+[Linear] resource fields retain ordinary reference layouts. Generated header comments select migration when
+the mark changes, and private layout field types [Linear] Texture/TextureArray/Cubemap prevent a mark flip from
+silently reinterpreting old storage. Compatible fields retain their references; replacing a loaded pack resolves
+the new image through the existing declaration identity. linear_textures E2E serializes marked local references,
+loads a different pack under the same asset name, and checks the retained field captures the replacement with
+its Linear role. Runtime sampled-copy/device invalidation details are in rendering.md; no migration ABI changes.
+
 # Hot reloading
 
 ## What cached functions remember (2026-11-13)

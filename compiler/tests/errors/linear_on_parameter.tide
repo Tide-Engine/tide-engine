@@ -1,0 +1,3 @@
+// expect: [Linear] marks assets and resource fields, not parameters or locals
+scene Main { }
+int2 Size([Linear] Texture image) { return image.size; }

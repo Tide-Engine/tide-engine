@@ -2561,6 +2561,7 @@ typedef struct gpu_texture {
     uint32_t held;  // 1 + the frame its list held it in, though it didn't draw with it (tide_draw_texture.held)
     bool mipped;    // Its smaller images are of these pixels: made when a draw first reads it between them (prepare_mipmaps)
     bool compressed;
+    bool linear;
     bool protected; // Referenced by a later step of the current list
 } gpu_texture;
 
@@ -3215,6 +3216,8 @@ void tide_platform_background_pipelines(const bool on)
     background_pipelines = on;
 }
 
+static void forget_linear_targets(bool lost);
+static void linear_copy_forget(bool lost);
 static void forget_compute(void);
 static void forget_culling(void);
 static void cull_warm(void);
@@ -3235,6 +3238,8 @@ static bool gpu_ready(void)
     target_most = gpu->target_limit();
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     spare_buffer_count = 0; // The device they were on went with them
+    forget_linear_targets(true);
+    linear_copy_forget(true);
     gpu_texture_count = 0;
     if (gpu_texture_index) memset(gpu_texture_index, 0, (size_t)gpu_texture_index_capacity * sizeof(uint32_t));
     spare_data_count = 0; // A lost device took these objects too.
@@ -4464,13 +4469,13 @@ static void reindex_gpu_textures(void)
     for (uint32_t i = 0; i < gpu_texture_count; i++) index_gpu_texture(i);
 }
 
-static gpu_texture *find_gpu_texture(const uint32_t space, const uint64_t id)
+static gpu_texture *find_gpu_texture(const uint32_t space, const uint64_t id, const bool linear)
 {
     if (gpu_texture_index_capacity) {
         const uint32_t mask = gpu_texture_index_capacity - 1u;
         for (uint32_t i = gpu_texture_hash(space, id) & mask; gpu_texture_index[i]; i = (i + 1u) & mask) {
             gpu_texture *found = &gpu_textures[gpu_texture_index[i] - 1u];
-            if (found->id == id && found->space == space) return found;
+            if (found->id == id && found->space == space && found->linear == linear) return found;
         }
     }
     return NULL;
@@ -4495,7 +4500,7 @@ static void prepare_data_textures(const tide_draw_list *list)
             const uint32_t slot = r->textures[k];
             if (gpu_read(r->shader, k) != TIDE_GPU_READ_DATA || !slot || slot > list->texture_count) continue;
             const tide_draw_texture *t = &list->textures[slot - 1u];
-            gpu_texture *g = find_gpu_texture(t->space, t->id);
+            gpu_texture *g = find_gpu_texture(t->space, t->id, t->linear);
             if (g) g->protected = true;
         }
     }
@@ -4510,7 +4515,7 @@ static void prepare_data_textures(const tide_draw_list *list)
             const bool data = k == run->shader->texture_count || gpu_read(run->shader, k) == TIDE_GPU_READ_DATA;
             if (!data || !slot || slot > list->texture_count) continue;
             const tide_draw_texture *t = &list->textures[slot - 1u];
-            gpu_texture *g = find_gpu_texture(t->space, t->id);
+            gpu_texture *g = find_gpu_texture(t->space, t->id, t->linear);
             if (g) g->protected = true;
         }
     }
@@ -4583,7 +4588,7 @@ static void grid_volume_texture(const tide_draw_texture *t, gpu_texture *g, bool
 
 static gpu_texture *texture_for(const tide_draw_texture *t)
 {
-    gpu_texture *g = find_gpu_texture(t->space, t->id);
+    gpu_texture *g = find_gpu_texture(t->space, t->id, t->linear);
     if (!g) {
         if (gpu_texture_count == gpu_texture_capacity) {
             const uint32_t capacity = gpu_texture_capacity ? gpu_texture_capacity * 2u : 8u;
@@ -4592,7 +4597,7 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
             gpu_texture_capacity = capacity;
         }
         g = &gpu_textures[gpu_texture_count++];
-        *g = (gpu_texture){.id = t->id, .space = t->space};
+        *g = (gpu_texture){.id = t->id, .space = t->space, .linear = t->linear};
         if (gpu_texture_count >= gpu_texture_index_capacity / 2u) reindex_gpu_textures();
         else index_gpu_texture(gpu_texture_count - 1u);
     }
@@ -4606,7 +4611,7 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     bool resident_mips = false;
     if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
         if (g->texture) free_texture(g->texture);
-        g->texture = made_cube(TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
+        g->texture = made_cube(t->linear ? TIDE_GPU_COLOR_SRGB : TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
     } else if (t->space == TIDE_PIXELS_PACK_ARRAY) { // An array of the pack's: its layers, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = pack_array_texture(t, &resident_mips);
@@ -4627,7 +4632,7 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         if (g->texture) free_texture(g->texture);
         g->texture = t->compressed.pixels && gpu->texture_blocks
             && (!tide_texture_force_rgba || t->compressed.format == TIDE_BLOCKS_RGBA8)
-            ? gpu->texture_blocks(t->width, t->height, t->compressed) : 0;
+            ? gpu->texture_blocks(t->width, t->height, (tide_texture_blocks){t->compressed.pixels, t->compressed.format | (t->linear ? TIDE_BLOCKS_SRGB : 0u), t->compressed.levels, t->compressed.bytes}) : 0;
         if (g->texture) {
             hold(held(&held_textures, &held_texture_count, g->texture), t->compressed.bytes);
             gpu_written += t->compressed.bytes;
@@ -4649,7 +4654,7 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
                     if (h > 1u) h /= 2u;
                 }
                 if (decoded) g->texture = gpu->texture_blocks(t->width, t->height,
-                    (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8, levels, bytes});
+                    (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8 | (t->linear ? TIDE_BLOCKS_SRGB : 0u), levels, bytes});
                 free(rgba);
                 if (g->texture) {
                     hold(held(&held_textures, &held_texture_count, g->texture), bytes);
@@ -4670,13 +4675,14 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         else if (!g->texture) {
             // A grid of floats' cells are one float of 16 bits a pixel
             g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
-                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, pixels);
+                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : t->linear ? TIDE_GPU_SRGBA8 : TIDE_GPU_RGBA8, t->width, t->height, pixels);
         }
         free(decoded);
         if (!resident_mips) gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     }
     if (count) g->mipped = resident_mips; // Uploaded blocks already contain every mip.
     if (count) g->compressed = resident_mips;
+    g->linear = t->linear;
     g->format = t->format;
     g->version = t->version;
     g->width = t->width;
@@ -4708,7 +4714,7 @@ static void hold_textures(const tide_draw_list *list)
     for (uint32_t i = 0; i < list->texture_count; i++) {
         const tide_draw_texture *t = &list->textures[i];
         if (!t->held) continue;
-        gpu_texture *g = find_gpu_texture(t->space, t->id);
+        gpu_texture *g = find_gpu_texture(t->space, t->id, t->linear);
         if (g) g->held = gpu_frame + 1u;
     }
 }
@@ -4782,6 +4788,126 @@ static texture_check *texture_checks;
 static uint32_t texture_check_capacity;
 static uint32_t check_list;   // Goes up for each list drawn (overlays too)
 static uint32_t source_epoch;
+
+// Private sRGB copies leave the public render target's stored bytes and Read contract alone.
+typedef struct linear_target_copy {
+    uint64_t id;
+    uint32_t space, stamp;
+    tide_gpu_id source, texture;
+    tide_gpu_id *targets;
+    int width, height;
+    uint32_t layers;
+    bool mipped;
+} linear_target_copy;
+static linear_target_copy *linear_targets;
+static uint32_t linear_target_count, linear_target_capacity;
+
+static void release_linear_target(linear_target_copy *c, const bool lost)
+{
+    if (!lost) {
+        for (uint32_t i = 0; i < c->layers; i++) if (c->targets[i]) free_target(c->targets[i]);
+        if (c->space != TIDE_PIXELS_TARGET && c->texture) free_texture(c->texture);
+    }
+    free(c->targets);
+    *c = (linear_target_copy){0};
+}
+
+static void forget_linear_targets(const bool lost)
+{
+    for (uint32_t i = 0; i < linear_target_count; i++) release_linear_target(&linear_targets[i], lost);
+    linear_target_count = 0;
+}
+
+static void forget_disposed_linear_targets(void)
+{
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < linear_target_count; i++) {
+        if (!tide_render_target_live(linear_targets[i].id)) release_linear_target(&linear_targets[i], false);
+        else linear_targets[kept++] = linear_targets[i];
+    }
+    linear_target_count = kept;
+}
+
+static linear_target_copy *find_linear_target(const tide_draw_texture *t)
+{
+    for (uint32_t i = 0; i < linear_target_count; i++) {
+        linear_target_copy *c = &linear_targets[i];
+        if (c->id == t->id && c->space == t->space) return c;
+    }
+    return NULL;
+}
+
+static bool linear_target_source(const tide_draw_texture *t)
+{
+    return t->linear && (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_CUBE
+                        || t->space == TIDE_PIXELS_TARGET_ARRAY);
+}
+
+#include "linear_textures.h"
+
+static bool prepare_linear_target(const tide_draw_texture *t, const bool check)
+{
+    if (!linear_target_source(t)) return false;
+    tide_gpu_id source = 0;
+    int width = 0, height = 0;
+    uint32_t layers = 1;
+    uint32_t read = TIDE_GPU_READ_COLOR;
+    if (t->space == TIDE_PIXELS_TARGET_CUBE) {
+        const gpu_cube *c = find_cube(t->id);
+        if (c) { source = c->texture; width = height = c->size; }
+        layers = 6;
+        read = TIDE_GPU_READ_CUBE;
+    } else if (t->space == TIDE_PIXELS_TARGET_ARRAY) {
+        const gpu_array *a = find_array(tide_render_target_array_of(t->id));
+        if (a) { source = a->texture; width = a->width; height = a->height; layers = a->layers; }
+        read = TIDE_GPU_READ_ARRAY;
+    } else {
+        const gpu_target *g = find_target(tide_render_target_whole(t->id));
+        if (g && g->target) {
+            source = gpu->target_texture(g->target, tide_render_target_image(t->id));
+            width = g->width; height = g->height;
+        }
+    }
+    if (!source || width <= 0 || height <= 0 || layers == 0 || layers > TIDE_GPU_MAX_LAYERS) return false;
+    linear_target_copy *c = find_linear_target(t);
+    bool complete = c && c->texture && c->targets;
+    for (uint32_t i = 0; complete && i < c->layers; i++) complete = c->targets[i] != 0;
+    if (complete && c->source == source && c->width == width && c->height == height && c->layers == layers
+        && c->stamp == source_epoch + 1u) return false;
+    if (check) return true;
+    if (!c) {
+        if (linear_target_count == linear_target_capacity) {
+            if (linear_target_capacity > UINT32_MAX / 2u) tide_out_of_memory();
+            const uint32_t n = linear_target_capacity ? linear_target_capacity * 2u : 8u;
+            if ((uint64_t)n * sizeof *linear_targets > SIZE_MAX) tide_out_of_memory();
+            linear_targets = tide_realloc(linear_targets, (size_t)linear_target_capacity * sizeof *linear_targets,
+                                         (size_t)n * sizeof *linear_targets);
+            linear_target_capacity = n;
+        }
+        c = &linear_targets[linear_target_count++];
+        *c = (linear_target_copy){0};
+    }
+    if (!complete || c->source != source || c->width != width || c->height != height || c->layers != layers) {
+        release_linear_target(c, false);
+        c->id = t->id; c->space = t->space; c->source = source; c->width = width; c->height = height; c->layers = layers;
+        c->targets = tide_alloc_zeroed(layers, sizeof *c->targets);
+        if (read == TIDE_GPU_READ_CUBE) {
+            c->texture = made_cube(TIDE_GPU_COLOR_SRGB, width, NULL);
+            for (uint32_t i = 0; c->texture && i < layers; i++) c->targets[i] = made_face(c->texture, i, width);
+        } else if (read == TIDE_GPU_READ_ARRAY) {
+            c->texture = made_array(TIDE_GPU_COLOR_SRGB, width, height, layers, NULL);
+            for (uint32_t i = 0; c->texture && i < layers; i++) c->targets[i] = made_layer(c->texture, i);
+        } else {
+            c->targets[0] = made_target(TIDE_GPU_COLOR_SRGB, width, height);
+            c->texture = c->targets[0] ? gpu->target_texture(c->targets[0], 0) : 0;
+        }
+    }
+    for (uint32_t i = 0; i < layers; i++) if (c->targets[i]) linear_copy_into(c->targets[i], source, read, (int)i);
+    c->stamp = source_epoch + 2u; // prepare_source_target increments source_epoch after this copy.
+    c->mipped = false;
+    return true;
+}
+
 
 static void checks_begin(const tide_draw_list *list)
 {
@@ -4868,6 +4994,10 @@ static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t te
                            : array ? gpu_state.blank : depth_array ? gpu->array_depth(gpu_state.far_array) : gpu_state.white;
     if (texture == 0 || texture > list->texture_count) return none;
     const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (linear_target_source(t)) {
+        const linear_target_copy *copy = find_linear_target(t);
+        return copy && copy->texture ? copy->texture : none;
+    }
     if (t->space == TIDE_PIXELS_TARGET_VOLUME || t->space == TIDE_PIXELS_GRID_VOLUME) return none;
     // An array's colors, or its depth, only for a read of that kind
     if ((array || depth_array) != of_array(t)) return none;
@@ -4982,7 +5112,8 @@ static bool prepare_source_target(const tide_draw_list *list, const uint32_t tex
     if (!texture || texture > list->texture_count) return false;
     texture_check *c = texture_check_of(texture);
     if (check && c->ready == source_epoch + 1u) return false;
-    const bool needed = source_target_needs(list, texture, check);
+    bool needed = source_target_needs(list, texture, check);
+    if (!check || !needed) needed |= prepare_linear_target(&list->textures[texture - 1u], check);
     if (!check) source_epoch++; // What it made, any of it
     else if (!needed) texture_check_of(texture)->ready = source_epoch + 1u;
     return needed;
@@ -5084,6 +5215,17 @@ static bool prepare_mipmaps(const tide_draw_list *list, const uint32_t texture, 
 static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, const bool check)
 {
     const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (linear_target_source(t)) {
+        linear_target_copy *copy = find_linear_target(t);
+        if (!copy || !copy->texture || copy->mipped) return false;
+        if (!check) {
+            if (copy->space == TIDE_PIXELS_TARGET) made_target_mipmaps(copy->targets[0], 0, copy->texture,
+                                                                    TIDE_GPU_COLOR_SRGB, copy->width, copy->height);
+            else made_mipmaps(copy->texture);
+            copy->mipped = true;
+        }
+        return true;
+    }
     if (t->space == TIDE_PIXELS_TARGET_VOLUME || t->space == TIDE_PIXELS_GRID_VOLUME) return false;
     if (t->space == TIDE_PIXELS_TARGET_DEPTH) return false;
     if (t->space == TIDE_PIXELS_TARGET_ARRAY) { // Once more passes have drawn into its layers, every layer's
@@ -5263,7 +5405,7 @@ static void grid_array_texture(const tide_draw_texture *t, gpu_texture *g, const
     if (since) (void)tide_draw_texture_since(t, g->version, &areas, &count);
     else {
         if (g->texture) free_texture(g->texture);
-        g->texture = gpu->array_of(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : TIDE_GPU_RGBA8, t->width, high, layers);
+        g->texture = gpu->array_of(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : t->linear ? TIDE_GPU_SRGBA8 : TIDE_GPU_RGBA8, t->width, high, layers);
         if (!g->texture) return;
         hold(held(&held_textures, &held_texture_count, g->texture), layer_bytes * layers);
     }
@@ -5311,7 +5453,7 @@ static tide_gpu_id pack_array_texture(const tide_draw_texture *t, bool *mipped)
                 if (blocks[i].format == format) memcpy(to, blocks[i].pixels, bytes);
                 else tide_texture_blocks_bc1_to_bc3(blocks[i].pixels, blocks[i].bytes, to); // Its alpha whole
             }
-            tide_gpu_id id = gpu->array_blocks(t->width, t->height, layers, (tide_texture_blocks){chain, format, levels, bytes});
+            tide_gpu_id id = gpu->array_blocks(t->width, t->height, layers, (tide_texture_blocks){chain, format | (t->linear ? TIDE_BLOCKS_SRGB : 0u), levels, bytes});
             free(chain);
             uint32_t rgba_levels, rgba_bytes;
             if (!id && bc && tide_texture_blocks_size(t->width, t->height, TIDE_BLOCKS_RGBA8, &rgba_levels, &rgba_bytes)) {
@@ -5333,7 +5475,7 @@ static tide_gpu_id pack_array_texture(const tide_draw_texture *t, bool *mipped)
                 }
                 if (decoded) {
                     id = gpu->array_blocks(t->width, t->height, layers,
-                                           (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8, rgba_levels, rgba_bytes});
+                                           (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8 | (t->linear ? TIDE_BLOCKS_SRGB : 0u), rgba_levels, rgba_bytes});
                     bytes = rgba_bytes;
                 }
                 free(rgba);
@@ -5355,7 +5497,7 @@ static tide_gpu_id pack_array_texture(const tide_draw_texture *t, bool *mipped)
         if (blocks && blocks[i].pixels) tide_texture_blocks_decode(blocks[i], t->width, t->height, to);
         each[i] = to;
     }
-    const tide_gpu_id id = made_array(TIDE_GPU_TARGET_COLOR, t->width, t->height, layers, each);
+    const tide_gpu_id id = made_array(t->linear ? TIDE_GPU_COLOR_SRGB : TIDE_GPU_TARGET_COLOR, t->width, t->height, layers, each);
     free(decoded);
     free(each);
     return id;
@@ -5734,6 +5876,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     const tide_gpu_id target = to.gpu;
     root = to;
     if (!over && target_epoch != list->epoch) {
+        forget_linear_targets(false);
         for (uint32_t i = 0; i < gpu_target_count; i++) {
             if (gpu_targets[i].target) free_target(gpu_targets[i].target);
         }
@@ -5748,7 +5891,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         gpu_array_count = 0;
         target_epoch = list->epoch;
     }
-    if (!over) forget_disposed_targets();
+    if (!over) { forget_disposed_targets(); forget_disposed_linear_targets(); }
     const uint32_t targets = list->target_count + 1u;
     if (targets + 1u > frame_target_capacity) {
         frame_targets = tide_realloc(frame_targets, frame_target_capacity * sizeof(frame_target),

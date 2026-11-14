@@ -131,7 +131,7 @@ Each frame starts black, with the camera at the origin and one world unit per pi
 
 Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`. `Math`'s component-by-component functions take them the same way: `Math.Lerp(a, b, t)` blends two colors, in a view or in a frag.
 
-A color's numbers are the display's own: `Color(0.5, 0.5, 0.5)` is the middle gray a paint program shows for 128, a PNG's pixels are drawn as the file has them, and colors blend and add as those numbers. Nothing is converted on the way in or out, and the screen performs no automatic color-space conversion. It's what sprites and UI want. It isn't how light adds up: two lamps of half don't make white's brightness, and a half-clear white over black is darker than half the light. A game that wants that works in light itself, in a float target:
+A color's numbers are the display's own: `Color(0.5, 0.5, 0.5)` is the middle gray a paint program shows for 128, a PNG's pixels are drawn as the file has them, and colors blend and add as those numbers. Nothing is converted on the way in or out, and the screen performs no automatic color-space conversion. It's what sprites and UI want. It isn't how light adds up: two lamps of half don't make white's brightness, and a half-clear white over black is darker than half the light. A game that wants that uses [Linear image sampling](./shaders.md#linear-light-color) for its color textures and works in light in a float target. For unmarked inputs, explicit conversion is also available:
 
 ```csharp
 // Colors and textures to light as they're read, in the frags that draw the scene

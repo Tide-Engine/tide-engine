@@ -87,6 +87,15 @@ static _Noreturn void fail_at(parser *p, const token *t, const char *what)
     longjmp(p->fail, 1);
 }
 
+static void refuse_linear_placement(parser *p)
+{
+    if (at(p, T_LBRACKET) && str_eq_c(peek_at(p, 1)->text, "Linear")) {
+        diag_error(peek(p)->at, "[Linear] marks assets and resource fields, not parameters or locals");
+        diag_note("keep the image in a [Linear] field; a read-only GPU helper borrows its source with an ordinary Texture parameter");
+        longjmp(p->fail, 1);
+    }
+}
+
 static token *expect(parser *p, const tok_kind kind, const char *what)
 {
     if (!at(p, kind)) fail_at(p, peek(p), what);
@@ -1430,6 +1439,7 @@ static stmt *parse_for(parser *p)
 
 static stmt *parse_stmt(parser *p)
 {
+    refuse_linear_placement(p);
     const token *t = peek(p);
     switch (t->kind) {
     case T_LBRACE:
@@ -1677,6 +1687,7 @@ static void parse_sample(parser *p, decl *d, const token *name)
     expect(p, T_LPAREN, "'('");
     if (!at(p, T_RPAREN)) {
         do {
+            refuse_linear_placement(p);
             param prm = {0};
             prm.at = peek(p)->at;
             prm.type_at = peek(p)->at;
@@ -1865,6 +1876,7 @@ static void parse_routine_params(parser *p, decl *m)
     expect(p, T_LPAREN, "'('");
     if (!at(p, T_RPAREN)) {
         do {
+            refuse_linear_placement(p);
             param prm = {0};
             prm.at = peek(p)->at;
             if ((at(p, T_MUT) || (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out")))
@@ -2447,6 +2459,7 @@ static void parse_query_params(parser *p, decl *d)
     expect(p, T_LPAREN, "'('");
     if (!at(p, T_RPAREN)) {
         do {
+            refuse_linear_placement(p);
             param prm = {0};
             prm.at = peek(p)->at;
             const char *what = "parameter type";

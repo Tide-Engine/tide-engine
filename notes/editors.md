@@ -1,3 +1,12 @@
+## Linear image annotation (2026-11-14)
+
+Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB
+sampling, unchanged alpha, supported image types/formats and source-preserving GPU helpers. Asset hover
+reports its Linear sampling role. Math's ToLinear/ToDisplay signatures expose scalar, float3 and Color
+through the existing builtin table. lsp_linear_textures passes: both completion contexts, attribute hover,
+valid marked fields and an actionable local-placement diagnostic. No new keyword or grammar token is needed:
+Linear is an ordinary attribute identifier, highlighted by the existing brackets rule.
+
 # The language server and the editors
 
 ## Texture3D (2026-11-14)

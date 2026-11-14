@@ -1,0 +1,3 @@
+// expect: [Linear] converts display-encoded color, while [Raw] promises independent stored numbers; remove one mark
+[Raw, Linear] asset Texture image = "../e2e/assets/hero.png";
+scene Main { }

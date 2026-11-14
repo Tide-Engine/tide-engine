@@ -1,3 +1,16 @@
+## [Linear] image captures (2026-11-14)
+
+Within the owner-approved [Linear] task, agents maintain `tide_draw_texture_source_linear`,
+`tide_draw_array_source_linear`, `tide_draw_cube_source_linear` (same arguments as their ordinary captures),
+`tide_draw_grid_texture_linear`, `tide_draw_grid_array_texture_linear`, and the internal
+`tide_draw_texture_edit_linear` grid writer. Generated shade wrappers call the source capture matching the
+static declaration role. No resource-reference layout changes. `tide_draw_texture.linear` selects upload
+interpretation and a distinct GPU-cache entry, while append preserves the role and pixel ownership.
+Runtime Color-grid captures clamp/decode/premultiply/encode RGB using the quantized stored alpha byte
+as coverage, so coverage rounded to zero cannot leave encoded RGB; arbitrary
+grid shapes remain validated through the existing bounded grid-image path. Backend private target copies,
+formats, lifetimes and validation are recorded in rendering.md and web.md.
+
 # Pixel readback (2026-11-14)
 
 Within the owner-approved rendering task, agents maintain tide_render_target_read_begin and

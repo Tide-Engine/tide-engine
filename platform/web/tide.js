@@ -1757,7 +1757,7 @@
     // which a pipeline is made for too. A change to either enum goes here.
     const samplesOf = into => (into >> 16 & 15) > 1 ? 4 : 1;
     const attachmentFormats = [null, null, 'rgba16float', 'r8unorm', 'rg8unorm', 'r16float', 'rg16float',
-        'r32float', 'rgba32float', 'r32sint']; // tide_gpu_color; slot 1 is the canvas format
+        'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb']; // tide_gpu_color; slot 1 is the canvas format
     const colorFormat = (color, window = false) => color === 1 ? (window ? gpuFormat : 'rgba8unorm') : attachmentFormats[color];
     const colorFormats = into => {
         const formats = [];
@@ -2037,8 +2037,8 @@
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-            const row = width * [4, 1, 2, 16][format];
-            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint'][format];
+            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb'][format];
             const texture = device.createTexture({ size: [width, height], format, usage });
             const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
@@ -2052,10 +2052,12 @@
                 [t.width, t.height]);
         },
         gpu_texture_blocks(width, height, format, levels, ptr) {
+            const srgb = !!(format & 0x100);
+            format &= ~0x100;
             const rgba = format === 4;
             if (!rgba && (config.textureCompression === false || !device.features.has('texture-compression-bc'))) return 0;
             const block = format === 1 ? 8 : 16;
-            format = rgba ? 'rgba8unorm' : format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            format = rgba ? (srgb ? 'rgba8unorm-srgb' : 'rgba8unorm') : format === 1 ? (srgb ? 'bc1-rgba-unorm-srgb' : 'bc1-rgba-unorm') : (srgb ? 'bc3-rgba-unorm-srgb' : 'bc3-rgba-unorm');
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
             const texture = device.createTexture({ size: [width, height], format, mipLevelCount: levels, usage });
             let w = width, h = height, offset = ptr;
@@ -2086,7 +2088,7 @@
             // those from the start: the samplers that read none of them keep to its own pixels. A change to
             // tide_gpu_color goes here
             // One that's drawn into has the canvas's own bytes, as a target's image has: the pipelines into it are made for those
-            const format = color === 2 ? 'rgba16float' : 'rgba8unorm';
+            const format = color === 10 ? 'rgba8unorm-srgb' : color === 2 ? 'rgba16float' : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(size));
             const texture = device.createTexture({ size: [size, size, 6], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2125,7 +2127,7 @@
                 return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array', aspect: 'depth-only' }),
                     depthLayers: whole, width, height, row: 0, groups: new Set() });
             }
-            const format = (into & 15) === 2 ? 'rgba16float' : 'rgba8unorm';
+            const format = (into & 15) === 10 ? 'rgba8unorm-srgb' : (into & 15) === 2 ? 'rgba16float' : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2155,10 +2157,12 @@
         },
         // An array of blocks: each layer's whole chain, `bytes` each, one after another (gpu_texture_blocks's, in layers)
         gpu_array_blocks(width, height, layers, format, levels, bytes, ptr) {
+            const srgb = !!(format & 0x100);
+            format &= ~0x100;
             const rgba = format === 4;
             if (!rgba && (config.textureCompression === false || !device.features.has('texture-compression-bc'))) return 0;
             const block = format === 1 ? 8 : 16;
-            const kind = rgba ? 'rgba8unorm' : format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            const kind = rgba ? (srgb ? 'rgba8unorm-srgb' : 'rgba8unorm') : format === 1 ? (srgb ? 'bc1-rgba-unorm-srgb' : 'bc1-rgba-unorm') : (srgb ? 'bc3-rgba-unorm-srgb' : 'bc3-rgba-unorm');
             const texture = device.createTexture({ size: [width, height, layers], format: kind, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
             for (let layer = 0; layer < layers; layer++) {
@@ -2179,8 +2183,8 @@
         },
         // An array of a format (tide_gpu_format's numbers), zeros, with room for its smaller images, written a part at a time
         gpu_array_of(format, width, height, layers) {
-            const pixel = [4, 1, 2, 16][format];
-            const kind = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint'][format];
+            const pixel = [4, 1, 2, 16, 8, 4, 16, 4, 4][format];
+            const kind = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb'][format];
             const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format: kind, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });

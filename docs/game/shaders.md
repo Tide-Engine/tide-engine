@@ -602,6 +602,41 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 
 ## Textures
 
+### Linear-light color
+
+Mark color images used by lighting with `[Linear]`. Their stored RGB is display-encoded sRGB;
+GPU reads decode it to linear light before filtering, including `SampleGrad` and `SampleLevel`.
+Alpha stays coverage. Leave normal maps, masks and other numeric images unmarked or `[Raw]`.
+
+```csharp
+[Linear] asset Texture wood = "art/wood.png";
+
+frag Lit(Vertex vertex, out Color color)
+{
+    Color surface = wood.Sample(vertex.uv);
+    color = surface * Color(0.5, 0.5, 0.5); // Lighting uses linear values
+}
+```
+
+Keep copied references in `[Linear] Texture`, `[Linear] TextureArray` or `[Linear] Cubemap`
+fields. Sample these by their field or asset name. Read-only GPU helpers can borrow their
+source with an ordinary resource parameter. An unmarked local/field/CPU parameter or a
+draw's own texture argument would lose the mark, so the compiler refuses those escapes.
+`[Raw, Linear]` is an error.
+
+A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
+TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
+field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
+The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
+and `target.Read()` keep their values. It does not convert a frag's output or the screen.
+For a final display pass, tone-map linear light first and use `Math.ToDisplay`; for an
+unmarked input that needs explicit conversion, use `Math.ToLinear`. Both take `float`,
+`float3` and `Color`; Color alpha is preserved.
+
+In Unity, marked images require **Project Settings > Player > Other Settings > Color Space > Linear**.
+Tide reports a clear error in a Gamma project and leaves its settings and unmarked images alone.
+
+
 `Sample` reads a [texture](./meshes-and-textures.md#textures) at a `uv`, and gives its color there. A frag samples the textures it can name three ways:
 
 ```csharp

@@ -1,3 +1,14 @@
+## Linear sampled-image roles (2026-11-14)
+
+[Linear] is a static source role for Texture/TextureArray/Cubemap fields and singular assets, preserved by
+GPU helper source specialization. check_linear_uses rejects unannotated CPU escapes; field/default checks
+consume marked sources or permit Color grids/known runtime RGBA8 images. Deferred source-format validation
+follows constructor assignments, including later target changes. Typed references and their sizes are unchanged.
+Header role comments and [Linear] layout field names make role changes migrate to destination defaults.
+Parser diagnostics explicitly reject local/parameter attributes. The shader capture wrapper selects the
+*_source_linear entry point; WGSL itself performs no manual transfer conversion for a marked read.
+Contracts, Provisional picks, importer/cache/alpha details and validation: textures.md top section and spec.md.
+
 ## Awaited render-target pixels (2026-11-14)
 
 RenderTarget.Read is local async, failable Grid2<Color>, lowered through the existing GPU ticket frame field.

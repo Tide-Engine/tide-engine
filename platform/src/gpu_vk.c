@@ -1490,6 +1490,7 @@ static void vk_buffer_free(const tide_gpu_id id)
 static VkFormat format_of(const tide_gpu_format format)
 {
     switch (format) {
+    case TIDE_GPU_SRGBA8: return VK_FORMAT_R8G8B8A8_SRGB;
     case TIDE_GPU_R8: return VK_FORMAT_R8_UNORM;
     case TIDE_GPU_R16F: return VK_FORMAT_R16_SFLOAT;
     case TIDE_GPU_RGBA32I: return VK_FORMAT_R32G32B32A32_SINT;
@@ -1654,12 +1655,14 @@ static void vk_texture_write_part(const tide_gpu_id id, const void *pixels, cons
 static tide_gpu_id vk_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
 {
     uint32_t levels, total;
-    const bool rgba = blocks.format == TIDE_BLOCKS_RGBA8;
+    const bool srgb = (blocks.format & TIDE_BLOCKS_SRGB) != 0;
+    const uint32_t base = blocks.format & ~TIDE_BLOCKS_SRGB;
+    const bool rgba = base == TIDE_BLOCKS_RGBA8;
     if (vk.lost || (!rgba && !vk.compression) || !blocks.pixels
         || !tide_texture_blocks_size(width, height, blocks.format, &levels, &total)
         || blocks.levels != levels || blocks.bytes != total) return 0;
-    const bool bc1 = blocks.format == TIDE_BLOCKS_BC1;
-    const tide_gpu_id id = make_texture(rgba ? VK_FORMAT_R8G8B8A8_UNORM : bc1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK, width, height,
+    const bool bc1 = base == TIDE_BLOCKS_BC1;
+    const tide_gpu_id id = make_texture(rgba ? (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM) : bc1 ? (srgb ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK : VK_FORMAT_BC1_RGBA_UNORM_BLOCK) : (srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK), width, height,
                                         blocks.levels, false, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false);
     vk_texture *t = &vk.textures[id - 1u];
@@ -1769,7 +1772,7 @@ static void vk_mipmaps(const tide_gpu_id id)
 static tide_gpu_id vk_cube(const tide_gpu_color color, const int size, const void *const *faces)
 {
     if (vk.lost) return 0;
-    const VkFormat format = color == TIDE_GPU_COLOR_FLOAT ? VK_FORMAT_R16G16B16A16_SFLOAT
+    const VkFormat format = color == TIDE_GPU_COLOR_SRGB ? VK_FORMAT_R8G8B8A8_SRGB : color == TIDE_GPU_COLOR_FLOAT ? VK_FORMAT_R16G16B16A16_SFLOAT
                           : VK_FORMAT_R8G8B8A8_UNORM;
     const tide_gpu_id id = make_texture(format, size, size, levels_for(size, size), true,
                                         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
@@ -1796,6 +1799,7 @@ static VkFormat color_format(const tide_gpu_color color)
     case TIDE_GPU_COLOR_RG16F: return VK_FORMAT_R16G16_SFLOAT;
     case TIDE_GPU_COLOR_R32F: return VK_FORMAT_R32_SFLOAT;
     case TIDE_GPU_COLOR_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case TIDE_GPU_COLOR_SRGB: return VK_FORMAT_R8G8B8A8_SRGB;
     case TIDE_GPU_COLOR_R32I: return VK_FORMAT_R32_SINT;
     default: return VK_FORMAT_R8G8B8A8_UNORM;
     }
@@ -1818,7 +1822,7 @@ static tide_gpu_id vk_array(const tide_gpu_target_format format, const int width
     if (!pixels && !tide_gpu_target_colors(format)) {
         return make_layers(vk.depth_format, width, height, 1, layers, depth_usage, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     }
-    const VkFormat color = pixels ? VK_FORMAT_R8G8B8A8_UNORM : color_format(tide_gpu_target_color(format, 0));
+    const VkFormat color = color_format(tide_gpu_target_color(format, 0));
     const uint32_t levels = blits(color) ? levels_for(width, height) : 1u;
     const tide_gpu_id id = make_layers(color, width, height, levels, layers,
                                        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
@@ -1840,13 +1844,16 @@ static tide_gpu_id vk_array(const tide_gpu_target_format format, const int width
 static tide_gpu_id vk_array_blocks(const int width, const int height, const uint32_t layers, const tide_texture_blocks blocks)
 {
     uint32_t levels, total;
-    const bool rgba = blocks.format == TIDE_BLOCKS_RGBA8;
+    const bool srgb = (blocks.format & TIDE_BLOCKS_SRGB) != 0;
+    const uint32_t base = blocks.format & ~TIDE_BLOCKS_SRGB;
+    const bool rgba = base == TIDE_BLOCKS_RGBA8;
     if (vk.lost || (!rgba && !vk.compression) || !blocks.pixels || layers == 0 || layers > TIDE_GPU_MAX_LAYERS
         || layers > vk.properties.limits.maxImageArrayLayers
         || !tide_texture_blocks_size(width, height, blocks.format, &levels, &total) || blocks.levels != levels
         || blocks.bytes != total) return 0;
-    const VkFormat format = rgba ? VK_FORMAT_R8G8B8A8_UNORM : blocks.format == TIDE_BLOCKS_BC1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK
-                                                                                                : VK_FORMAT_BC3_UNORM_BLOCK;
+    const VkFormat format = rgba ? (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM)
+        : base == TIDE_BLOCKS_BC1 ? (srgb ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK : VK_FORMAT_BC1_RGBA_UNORM_BLOCK)
+        : (srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK);
     const tide_gpu_id id = texture_place();
     vk_texture *t = &vk.textures[id - 1u];
     const VkImageCreateInfo info = {
@@ -1992,7 +1999,7 @@ static tide_gpu_id vk_array_layer(const tide_gpu_id array, const uint32_t layer)
                      .face = true, .cube = array, .layer = layer, .array = true,
                      .depth_layers = depth_alone ? array : a->depth_array, .bytes = !depth_alone && !floats,
                      .format = depth_alone ? TIDE_GPU_TARGET_DEPTH
-                             : tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, floats ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES)};
+                             : tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, a->format == VK_FORMAT_R8G8B8A8_SRGB ? TIDE_GPU_COLOR_SRGB : floats ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES)};
     return id;
 }
 
@@ -2111,13 +2118,14 @@ static tide_gpu_id vk_cube_face(const tide_gpu_id cube, const uint32_t face)
     const vk_texture *c = texture_of(cube);
     if (!c) return 0;
     const int size = c->width;
+    const bool srgb = c->format == VK_FORMAT_R8G8B8A8_SRGB;
     const bool floats = c->format == VK_FORMAT_R16G16B16A16_SFLOAT;
     const tide_gpu_id depth = depth_texture(size, size);
     const tide_gpu_id id = target_place();
     vk_target *t = &vk.targets[id - 1u];
     *t = (vk_target){.used = true, .width = size, .height = size, .color_count = 1, .samples = 1, .face = true, .cube = cube,
                      .layer = face < TIDE_GPU_CUBE_FACES ? face : 0u, .bytes = !floats, .depth = depth,
-                     .format = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, floats ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES)};
+                     .format = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, srgb ? TIDE_GPU_COLOR_SRGB : floats ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES)};
     vk.textures[depth - 1u].owned = true;
     return id;
 }

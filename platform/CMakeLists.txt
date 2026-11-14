@@ -10,7 +10,7 @@ else()
     set(TIDE_SPIRV_C "${CMAKE_CURRENT_BINARY_DIR}/shaders_spirv.c")
     add_custom_command(OUTPUT "${TIDE_SPIRV_C}"
         COMMAND "${TIDE_SPIRV_SHADERS_PATH}" "${TIDE_SPIRV_C}"
-        DEPENDS ${TIDE_SPIRV_SHADERS_DEPENDS} src/shaders.h
+        DEPENDS ${TIDE_SPIRV_SHADERS_DEPENDS} src/shaders.h src/linear_wgsl.h
         COMMENT "The renderer's shaders as SPIR-V"
         VERBATIM)
     list(APPEND TIDE_PLATFORM_SOURCES "${TIDE_SPIRV_C}")

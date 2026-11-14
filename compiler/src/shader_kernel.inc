@@ -284,6 +284,11 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
     for (int i = 0; i < sh->textures.count; i++) {
         shader_texture *t = &sh->textures.items[i];
         if (!t->write) continue;
+        if (field_is_linear(t->field)) {
+            diag_error(call->at, "a kernel cannot write a [Linear] sampled image: sRGB formats have no storage-write form");
+            diag_note("write an unmarked Format.Rgba8 target, then assign its color image to a [Linear] field for sampling");
+            return NULL;
+        }
         image_writes++;
         expr source = {0};
         source.field = (field *)(uintptr_t)t->field;

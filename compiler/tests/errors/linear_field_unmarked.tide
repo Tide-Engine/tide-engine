@@ -1,0 +1,4 @@
+// expect: a [Linear] field takes a [Linear] image or a Color grid, not an unmarked image
+asset Texture image = "../e2e/assets/hero.png";
+local singleton Art { [Linear] Texture kept = image; }
+scene Main { }
