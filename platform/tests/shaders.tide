@@ -5262,3 +5262,34 @@ view TriangleSides(Art art)
         }
     }
 }
+
+struct FlatMark { int which; int2 pair; bool positive; }
+vert FlatMarks(mut Corner3 vertex, out FlatMark mark)
+{
+    mark.which = vertex.kind;
+    mark.pair = int2(vertex.kind, -vertex.kind);
+    mark.positive = vertex.kind > 0;
+}
+frag FlatRead(Corner3 vertex, FlatMark mark, out Color color)
+{
+    if (mark.pair.x != mark.which || mark.pair.y != -mark.which || mark.positive != (mark.which > 0)) color = Color.white;
+    else if (mark.which == 16777217) color = Color.red;
+    else if (mark.which == -2147483647) color = Color.green;
+    else color = Color.blue;
+}
+[After(TriangleSides)]
+view FlatCorners(Art art)
+{
+    if (art.targetPass != 29) return;
+    Draw.Clear(Color.black);
+    Draw.SetClip();
+    Draw.SetDepth(.None);
+    Draw.SetCull(.None);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(256, 256, 0.1, 100));
+    List<Corner3> corners = [Corner3 { position = float3(-12, -12, 0), kind = 16777217 },
+                             Corner3 { position = float3(12, -12, 0), kind = -2147483647 },
+                             Corner3 { position = float3(0, 12, 0), kind = 7 }];
+    Draw.Mesh(corners, [0, 1, 2], float4x4.Translate(Cell(0, 0)), FlatMarks, FlatRead);
+    Draw.Mesh(corners, [1, 2, 0], float4x4.Translate(Cell(1, 0)), FlatMarks, FlatRead);
+    Draw.Mesh(corners, [2, 0, 1], float4x4.Translate(Cell(2, 0)), FlatMarks, FlatRead);
+}

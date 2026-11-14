@@ -3250,6 +3250,12 @@ view Sparks(Spark spark, Hud hud)
 }
 ```
 
+#### Integral values from vert to frag (decided 2026-11-13)
+
+Owner: "these make sense, lets do all of these". A struct a vert hands its frag may
+hold ints and int vectors, carried unblended from the triangle's first corner. A float
+field stays blended, and all read fields count toward the existing 15 carried values.
+
 #### Triangle side (decided 2026-11-13)
 
 Owner: "these make sense, lets do all of these". A frag reads `this.front`, a read-only bool:
@@ -3273,6 +3279,13 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 
 ### Provisional
 
+- Integral handed fields (built 2026-11-14): bytes, bools and enums use the same flat
+  path as ints and int vectors. Bools travel as integer 0/1. The first corner is the
+  first index of each triangle. Unity OpenGL Core is the exception: it uses the last
+  corner; the replay has no provoking-vertex control. Direct3D 11/12, Vulkan and
+  Metal use the first. Floats have no flat annotation. Ordinary mesh vertex int
+  fields remain unreadable directly by a frag: hand them through the vert's out struct.
+
 - Triangle side (built 2026-11-14): in 3D, the GPU's side is corrected by the signs of the
   instance and camera determinants, even when `Cull.None` mixes mirrored instances in one draw.
   This costs one flat varying, included in the existing 15-value limit. In 2D, `this.front`
@@ -3291,7 +3304,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - What a frag and a vert write, where the agreed rules leave a choice (built 2026-10-07, to confirm):
   - **By type.** A vert's struct and the frag's parameter are matched by type, as a system finds a component: `out FromLamp lamp` in the vert, `FromLamp lamp` in the frag, whatever each names it. So a frag and a vert each take a struct type once.
   - **A vert can write several structs,** each its own `out` parameter, and a frag take any of them: nothing limits it to one but the 15 values a GPU carries from a mesh's corners to its pixels, which the draw checks. Only the fields a frag reads are carried, each one value: a field no frag reads costs nothing, and neither does a struct the draw's frag doesn't take, or a draw with no frag.
-  - **What the struct holds** is what blends across a triangle: floats, their vectors and colors. A struct with an int, a bool, an enum, a matrix, a quaternion or a struct in it is an error where the vert takes it as `out`. A vertex's ints can't be read by a frag for the same reason, but a vertex can have them, as a vert reads them; a struct only a frag reads has no use for one. Passing an int unblended (the value of one of the triangle's corners) was left out: which corner differs between GPUs.
+  - **What the struct holds:** floats, their vectors and colors blend; ints, int vectors, bytes, bools and enums are flat (decided 2026-11-13, details above). Matrices, quaternions and nested structs remain errors at the vert's `out` parameter. Ordinary vertex ints can be read by a vert and explicitly handed to its frag through this struct.
   - **The vert writes all of it:** each field, on every path that ends, a field at a time or the whole struct at once, before reading it (see Out parameters). `lamp = default;` fills it where there's nothing to give.
   - **A path that ends in `this.Discard()` owes the frag's color nothing,** as `fail` owes an `out` parameter nothing: no pixel is drawn.
   - **A frag's struct is the vert's or the instances'** (or, since, the draw's values: below). A frag's read-only struct was an element of the list `Instanced` draws; it's now that, or what the draw's vert writes, by its type, and a frag can take one of each. A draw whose vert writes a struct of the type its instances are is an error at the draw, as a frag couldn't tell them apart. A vert's read-only struct is an instance's or the draw's values.

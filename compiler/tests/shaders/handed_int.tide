@@ -1,0 +1,22 @@
+scene Main { }
+struct Corner { float3 position; }
+enum Kind { First, Second }
+struct Mark { int which; int2 pair; int3 triple; int4 four; bool on; Kind kind; byte small; float blended; }
+local singleton Art { List<Corner> vertices; List<int> indices; }
+vert Marked(mut Corner vertex, out Mark mark)
+{
+    mark.which = int(vertex.position.x);
+    mark.pair = int2(mark.which, 2);
+    mark.triple = int3(1, 2, 3);
+    mark.four = int4(1, 2, 3, 4);
+    mark.on = mark.which > 0;
+    mark.kind = .Second;
+    mark.small = 255;
+    mark.blended = vertex.position.y;
+}
+frag Read(Corner vertex, Mark mark, out Color color)
+{
+    color = Color(float(mark.which + mark.pair.x + mark.triple.z + mark.four.w), mark.on ? 1 : 0,
+                  mark.kind == .Second ? float(mark.small) + mark.blended : 0);
+}
+view Show(Art art) { Draw.Mesh(art.vertices, art.indices, float4x4.identity, Marked, Read); }

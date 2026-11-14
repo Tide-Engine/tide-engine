@@ -1,3 +1,20 @@
+## Integral handed fields and provoking corners (2026-11-14)
+
+Generated HLSL carries integer varyings with nointerpolation; bool handed fields
+use an integer wire representation and enums i32. No C# or replay packet changes.
+Direct3D 11/12 and Vulkan take the first corner, as Metal's flat interpolation
+does. OpenGL Core uses the last by default: the permitted exception in the spec.
+The replay's CommandBuffer.DrawProcedural path exposes no provoking-vertex switch;
+it does not issue glProvokingVertex or install a native graphics plugin to do so.
+Do not silently rotate triangle indices: that would change which corner is first
+for the other APIs. For portable per-triangle data in this one exception, assign
+the same integral value to all three corners.
+
+References: [OpenGL provoking vertex](https://wikis.khronos.org/opengl/Provoking_Vertex),
+[Apple's render command guide](https://developer.apple.com/library/archive/documentation/Miscellaneous/Conceptual/MetalProgrammingGuide/Render-Ctx/Render-Ctx.html).
+This is a source/API convention audit; no new Unity graphics replay run is claimed.
+Metal runtime validation requires a Mac.
+
 ## Triangle side (2026-11-14)
 
 `this.front` uses the translator's existing front_facing / SV_IsFrontFace path;

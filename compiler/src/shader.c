@@ -2975,7 +2975,7 @@ static void ex_member(emit *em, const expr *e)
     // A field of the frag's or vert's own vertex: which ones it reads decides what the mesh's corners pass on
     if (em->checking && em->code == em->root && obj->kind == E_NAME && obj->bind == BIND_PARAM && e->field && obj->param->reads) {
         em->root->params.items[param_index(em->root, obj->param)].reads[field_index(obj->param->type.decl, e->field)] = true;
-        if (em->root->is_frag && type_is_int_based(e->type)) {
+        if (em->root->is_frag && param_index(em->root, obj->param) == 0 && type_is_int_based(e->type)) {
             refuse(em, e->at, "'" STR_FMT "' is made of ints, which don't blend across a triangle, so a frag can't read it",
                    STR_ARG(e->member));
             diag_note("a vert can read it; for the pixels, keep it as a float in the vertex");
@@ -5960,8 +5960,10 @@ static void put_varyings(emit *em, sb *o)
         const shader_handed *handed = &sh->handed.items[h];
         for (int i = 0; i < handed->type->fields.count; i++) {
             if (!handed->fields[i]) continue;
-            const char *t = ty(em, as_float(handed->type->fields.items[i].type));
-            sb_printf(o, "    @location(%d) tide_h%d_%d: %s,\n", location++, h, i, t);
+            const type t = handed->type->fields.items[i].type;
+            const bool flat = type_is_int_based(t) || t.kind == TY_BOOL || t.kind == TY_ENUM;
+            sb_printf(o, "    @location(%d) %stide_h%d_%d: %s,\n", location++, flat ? "@interpolate(flat) " : "",
+                      h, i, ty(em, t.kind == TY_BOOL ? (type){TY_INT, NULL} : t));
         }
     }
     if (sh->frag_front && sh->dims == 3) sb_printf(o, "    @location(%d) @interpolate(flat) tide_mirror: i32,\n", location++);
@@ -6150,7 +6152,9 @@ static void put_vertex_main(emit *em, sb *o)
         const shader_handed *handed = &sh->handed.items[h];
         for (int i = 0; i < handed->type->fields.count; i++) {
             if (!handed->fields[i]) continue;
-            sb_printf(o, "    %stide_h%d_%d = tide_handed%d.%s;\n", out, h, i, h, field_name(&handed->type->fields.items[i]));
+            const field *f = &handed->type->fields.items[i];
+            sb_printf(o, f->type.kind == TY_BOOL ? "    %stide_h%d_%d = select(0, 1, tide_handed%d.%s);\n"
+                                               : "    %stide_h%d_%d = tide_handed%d.%s;\n", out, h, i, h, field_name(f));
         }
     }
     if (sh->frag_front && sh->dims == 3) {
@@ -6252,7 +6256,8 @@ static void put_fragment_main(emit *em, sb *o)
                     if (f->hidden) continue;
                     if (!first) sb_put(o, ", ");
                     first = false;
-                    if (handed->fields[k]) sb_printf(o, "%stide_h%d_%d", in, (int)(handed - sh->handed.items), k);
+                    if (handed->fields[k]) sb_printf(o, f->type.kind == TY_BOOL ? "(%stide_h%d_%d != 0)" : "%stide_h%d_%d",
+                                                   in, (int)(handed - sh->handed.items), k);
                     else put_zero(em, f->type);
                 }
                 sb_put(o, ")");

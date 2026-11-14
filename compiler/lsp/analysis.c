@@ -3186,13 +3186,13 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     }
     if (p->is_out && p->type.kind == TY_STRUCT) {
         sb_printf(out, "\n\nWhat the vert writes for the frag it's drawn with. It starts with no value: the vert writes each "
-                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads it blended across the "
+                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads its floats blended and its integral fields flat across the "
                        "triangle from its three corners, and only the fields it reads go from the corners to the pixels.",
                   STR_ARG(t->name));
         return;
     }
     if (handed_param(d, p)) {
-        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, blended "
+        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, floats blended and integral fields flat "
                     "across the triangle from its three corners. A draw whose vert writes none is an error at the draw.");
         if (planned) put_reads(p, "", true, &fields);
         if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);

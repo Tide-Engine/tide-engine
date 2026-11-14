@@ -18029,9 +18029,7 @@ static void refuse_shader_value(const decl *d, const param *p)
               word, word, STR_ARG(d->name));
 }
 
-// What a vert hands its frag: a struct of floats, their vectors and colors,
-// each of which the GPU blends across the triangle. Ints don't blend, and which
-// corner's a pixel would get instead differs between GPUs.
+// A vert's handed fields: floating values blend; integral values are flat.
 static void check_handed_struct(const decl *vert, const param *p, const decl *t)
 {
     int fields = 0;
@@ -18040,14 +18038,10 @@ static void check_handed_struct(const decl *vert, const param *p, const decl *t)
         if (f->hidden || f->type.kind == TY_ERROR) continue;
         fields++;
         const bool blends = (type_dim(f->type) > 0 && type_is_float_based(f->type)) || f->type.kind == TY_COLOR;
-        if (blends) continue;
+        if (blends || type_is_int_based(f->type) || f->type.kind == TY_BOOL || f->type.kind == TY_ENUM) continue;
         diag_error(p->type_at.line ? p->type_at : p->at, "'" STR_FMT "' can't go from a vert to its frag: its '" STR_FMT "' is %s",
                    STR_ARG(t->name), STR_ARG(f->name), type_name(f->type));
-        if (type_is_int_based(f->type) || f->type.kind == TY_BOOL || f->type.kind == TY_ENUM) {
-            diag_note("the GPU blends what a vert hands on across the triangle, and ints don't blend: keep it as a float");
-        } else {
-            diag_note("what a vert hands its frag is floats, their vectors and colors, which the GPU blends across the triangle");
-        }
+        diag_note("use floats, their vectors, colors, ints, int vectors, bools or enums in the handed struct");
         return;
     }
     if (fields == 0) {

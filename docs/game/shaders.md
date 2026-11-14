@@ -183,7 +183,7 @@ view DrawRoom(Models models)
 
 - **The draw pairs them.** A vert and a frag stay declarations of their own, and one vert can be drawn with several frags. A frag's struct is found by its type among what the draw's vert writes: a frag that reads a `FromLamp` in a draw whose vert writes none, or that names no vert, is an error at the draw.
 - **The vert writes all of it.** The struct starts with no value: each field is written on every path, a field at a time or all at once (`lamp = FromLamp { ... };`), before it's read.
-- **Its fields are what blends**: floats, their vectors and colors. Ints don't blend across a triangle, so a struct with one can't be handed on: keep it as a float.
+- **Floats, their vectors and colors blend.** Ints, int vectors, bytes, bools and enums are carried unchanged from the triangle's first corner, counted in the index list's order. Unity's OpenGL Core replay uses its last corner instead. Each read field still counts as one of the 15 carried values. There is no annotation for making floats flat.
 - **Only what the frag reads is carried.** A field no frag reads costs nothing between the two, and a vert drawn with no frag, or with one that takes none of its structs, just doesn't hand them on. A GPU carries 15 values from a mesh's corners to its pixels: each field read of the vertex or of such a struct is one.
 - A vert can write several structs, and a frag take any of them, each by its type. A frag can also take what its vert wrote beside an [instance's struct](#instances-from-a-list), as long as the two are different types.
 

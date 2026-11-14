@@ -1,3 +1,22 @@
+## Integral handed fields (2026-11-14)
+
+Owner approved 2026-11-13: ints and int vectors in a vert's `out` struct go to
+its frag from the triangle's first indexed corner, without blending. Bytes,
+bools and enums follow the same path (Provisional); bools travel as i32 0/1.
+Floats still blend; there is no flat-float annotation. Only read fields are sent,
+one location each, under the existing 15-location check. Ordinary vertex int
+fields still require explicit handing through an out struct. Matrices, nested
+structs, quaternions and 64-bit ints remain rejected, with the supported types
+named in the fix. WGSL interpolate(flat) translates through the existing SPIR-V
+Flat and HLSL nointerpolation paths. No runtime, GPU API or recorder changes.
+
+Tests: handed_int pins int/int2/int3/int4, byte, bool, enum and mixed float WGSL,
+validated with spirv-val and FXC. vert_out_long_field replaces the former int
+rejection. Platform shaders pass 29 cycles each of three distinct corners into
+the first index: 16777217 and -2147483647 prove no float conversion, with int2
+and bool checked at two pixels per triangle, also prewarmed. Native ASan Vulkan
+passes; existing WGSL goldens and shader LSP cases pass. Web-debug SwiftShader WebGPU passes; docs build is checked before merging. Unity's OpenGL Core exception is in unity.md and spec.
+
 # Triangle side (2026-11-14)
 
 Owner-approved 2026-11-13: `this.front`, a frag's read-only bool. WGSL uses

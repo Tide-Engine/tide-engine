@@ -1,5 +1,5 @@
 // expect: 'Placed' can't go from a vert to its frag: its 'frame' is float4x4
-// expect: what a vert hands its frag is floats, their vectors and colors, which the GPU blends across the triangle
+// expect: use floats, their vectors, colors, ints, int vectors, bools or enums in the handed struct
 scene Main { }
 struct Corner { float2 position; }
 struct Placed { float4x4 frame; }

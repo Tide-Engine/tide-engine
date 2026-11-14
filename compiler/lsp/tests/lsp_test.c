@@ -1615,6 +1615,9 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw") && !offers(value, "null"));
     TIDE_CHECK(!offers(complete(IN_FRAG("mut $")), "Entity") && offers(complete(IN_FRAG("mut $")), "float3"));
 
+    const char *flat = complete(SHADER_TYPES "struct Flat { int kind; int2 pair; bool on; }\n"
+                               "frag Read(BoxVertex vertex, Flat mark, out Color color) { var x = mark.$; }\n");
+    TIDE_CHECK(offers(flat, "kind") && offers(flat, "pair") && offers(flat, "on"));
     const char *pixel = complete(IN_FRAG("var x = this.$"));
     TIDE_CHECK(offers(pixel, "position") && offers(pixel, "depth") && offers(pixel, "world") && offers(pixel, "Discard"));
     TIDE_CHECK(offers(pixel, "front") && offers(pixel, "Fwidth") && offers(pixel, "Ddx") && offers(pixel, "Cutout") && offers(pixel, "Coverage"));
