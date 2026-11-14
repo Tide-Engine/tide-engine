@@ -11350,17 +11350,81 @@ static void gen_show_helpers(gen *g)
 // each calling those of the types in it, then the functions the calls
 // themselves are (program.json_roots). A game that calls neither has none.
 
+// A vector's, a quaternion's or a color's numbers, as JSON has them (an
+// array, in this order): how many, each one's place in the C value, and their
+// kind, 'f' float, 'd' double or 'i' int. 0 for any other type.
+static int json_vector_parts(const type t, const char *const **places, char *kind)
+{
+    static const char *const xyzw[] = {"x", "y", "z", "w"};
+    static const char *const quaternion[] = {"value.x", "value.y", "value.z", "value.w"};
+    static const char *const rgba[] = {"r", "g", "b", "a"};
+    *places = xyzw;
+    *kind = 'f';
+    switch (t.kind) {
+    case TY_FLOAT2: return 2;
+    case TY_FLOAT3: return 3;
+    case TY_FLOAT4: return 4;
+    case TY_DOUBLE2: *kind = 'd'; return 2;
+    case TY_DOUBLE3: *kind = 'd'; return 3;
+    case TY_DOUBLE4: *kind = 'd'; return 4;
+    case TY_INT2: *kind = 'i'; return 2;
+    case TY_INT3: *kind = 'i'; return 3;
+    case TY_INT4: *kind = 'i'; return 4;
+    case TY_QUATERNION: *places = quaternion; return 4;
+    case TY_COLOR: *places = rgba; return 4;
+    default: return 0;
+    }
+}
+
 // The function that reads (tide_json_get_...) or writes (tide_json_put_...)
-// a struct, an enum, a list, a map or an array.
+// a struct, an enum, a list, a set, a map, an array, or a vector, a
+// quaternion or a color (by its C type's name, which no game's type has).
 static const char *json_helper(const type t, const bool reads)
 {
     sb b = {0};
+    const char *const *places;
+    char kind;
     sb_printf(&b, "tide_json_%s_", reads ? "get" : "put");
     if (t.kind == TY_LIST) sb_printf(&b, "list%d", t.decl->index);
     else if (t.kind == TY_MAP) sb_printf(&b, "map%d", t.decl->index);
+    else if (t.kind == TY_SET) sb_printf(&b, "set%d", t.decl->index);
     else if (t.kind == TY_ARRAY) sb_printf(&b, "array%d", t.decl->index);
+    else if (json_vector_parts(t, &places, &kind)) sb_put(&b, c_type(t));
     else sb_put(&b, type_cname(t.decl));
     return b.data;
+}
+
+// A vector's reader or writer: an array of exactly its numbers, a color's
+// of three (alpha 1) or four. A `null` number leaves that one as it was, the
+// place's default, as a field's `null` does.
+static void gen_json_vector(sb *o, const type t, const bool reads)
+{
+    const char *const *places;
+    char kind;
+    const int n = json_vector_parts(t, &places, &kind);
+    const char *number = kind == 'f' ? "float" : kind == 'd' ? "double" : "int32_t";
+    if (reads) {
+        sb_printf(o, "    %s *const parts[] = {", number);
+        for (int i = 0; i < n; i++) sb_printf(o, "%s&v->%s", i ? ", " : "", places[i]);
+        sb_printf(o, "};\n    int32_t n = 0;\n    if (!tide_json_array(j)) return false;\n    while (tide_json_item(j, 0)) {\n"
+                     "        if (n == %d) return false;\n", n);
+        if (kind == 'i') {
+            sb_put(o, "        if (!tide_json_null(j)) {\n            int64_t i;\n"
+                      "            if (!tide_json_int(j, INT32_MIN, INT32_MAX, &i)) return false;\n            *parts[n] = (int32_t)i;\n        }\n");
+        } else {
+            sb_printf(o, "        if (!tide_json_null(j) && !tide_json_%s(j, parts[n])) return false;\n", number);
+        }
+        sb_put(o, "        n++;\n    }\n");
+        if (t.kind == TY_COLOR) sb_put(o, "    if (n == 3) v->a = 1.0f;\n    return !j->failed && n >= 3;\n}\n\n");
+        else sb_printf(o, "    return !j->failed && n == %d;\n}\n\n", n);
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\");\n", i ? "," : "[");
+        if (kind == 'i') sb_printf(o, "    a = tide_str_add_int(a, v.%s, 0);\n", places[i]);
+        else sb_printf(o, "    a = tide_json_add_%s(a, v.%s);\n", number, places[i]);
+    }
+    sb_put(o, "    return tide_str_add_cstr(a, \"]\");\n}\n\n");
 }
 
 // What reads a value of type `t` from the reader `j` into `place`, C for
@@ -11444,6 +11508,13 @@ static void gen_json_helpers(gen *g)
     for (int pass = 0; pass < 2; pass++) { // Declared first: a struct can hold a list of itself
         const char *end = pass ? "\n{\n" : ";\n";
         for (int reads = 0; reads < 2; reads++) {
+            // Vectors, quaternions and colors: an array of their numbers
+            for (int kind = 0; kind < 64; kind++) {
+                if (!((reads ? prog->json_vector_reads : prog->json_vector_writes) >> kind & 1u)) continue;
+                const type t = {(type_kind)kind, NULL};
+                gen_json_prototype(o, t, c_type(t), reads, true, end);
+                if (pass) gen_json_vector(o, t, reads);
+            }
             // Enums: a member's name, or the number of a value no member has
             for (int i = 0; i < prog->decls.count; i++) {
                 const decl *d = prog->decls.items[i];
@@ -11590,31 +11661,112 @@ static void gen_json_helpers(gen *g)
                     sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
                 }
             }
-            // Maps by text: an object, an entry for each key, the last one of a key written twice
+            // Maps: an object, an entry for each key, the last one of a key written twice. A key is text: a string's
+            // own, a number's digits ("3", "-12"), an enum's member's name (or a number that fits it)
             for (int k = 0; k < prog->maps.count; k++) {
                 const decl *d = prog->maps.items[k];
-                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                if (d->is_set || !(reads ? d->json_reads : d->json_writes)) continue;
                 const type t = {TY_MAP, (decl *)d};
+                const type key = d->fields.items[0].type;
                 const type value = d->fields.items[1].type;
                 gen_json_prototype(o, t, "tide_map", reads, true, end);
                 if (!pass) continue;
+                const decl *named = key.kind == TY_ENUM ? key.decl : NULL;
                 if (reads) {
+                    if (named && named->members.count > 0) {
+                        sb_put(o, "    static const char *const names[] = {");
+                        for (int m = 0; m < named->members.count; m++) sb_printf(o, "%s\"" STR_FMT "\"", m ? ", " : "", STR_ARG(named->members.items[m].name));
+                        sb_put(o, "};\n    static const int64_t numbers[] = {");
+                        for (int m = 0; m < named->members.count; m++) sb_printf(o, "%s%lld", m ? ", " : "", (long long)named->members.items[m].number);
+                        sb_put(o, "};\n");
+                    }
                     sb_put(o, "    *v = (tide_map){0};\n    if (!tide_json_object(j)) return false;\n    tide_text key;\n");
-                    sb_printf(o, "    while (tide_json_key(j, &key, sizeof(tide_map%d_entry))) {\n        %s value = ", k, elem_ctype(value));
+                    sb_printf(o, "    while (tide_json_key(j, &key, sizeof(tide_map%d_entry))) {\n", k);
+                    if (key.kind != TY_STRING) { // Its text as the number or the member it names
+                        const int width = named ? named->width : 0;
+                        const char *least = key.kind == TY_BYTE || width == 1 || width == 2 ? "0" : key.kind == TY_LONG ? "INT64_MIN" : "INT32_MIN";
+                        const char *most = key.kind == TY_BYTE || width == 1 ? "255" : width == 2 ? "65535" : key.kind == TY_LONG ? "INT64_MAX" : "INT32_MAX";
+                        sb_put(o, "        const tide_str text = tide_text_view(key);\n        int64_t n;\n");
+                        if (named) {
+                            sb_put(o, "        if (!tide_str_parse_long(text, &n)) {\n");
+                            if (named->members.count > 0) {
+                                sb_printf(o, "            int32_t m = 0;\n            while (m < %d && !tide_str_eq(text, tide_str_from_cstr(names[m]))) m++;\n"
+                                             "            if (m == %d) return false;\n            n = numbers[m];\n",
+                                          named->members.count, named->members.count);
+                            } else {
+                                sb_put(o, "            return false;\n");
+                            }
+                            sb_printf(o, "        } else if (n < %s || n > %s) {\n            return false;\n        }\n", least, most);
+                        } else if (key.kind == TY_LONG) { // Every long's digits parse, and nothing else's
+                            sb_put(o, "        if (!tide_str_parse_long(text, &n)) return false;\n");
+                        } else {
+                            sb_printf(o, "        if (!tide_str_parse_long(text, &n) || n < %s || n > %s) return false;\n", least, most);
+                        }
+                    }
+                    sb_printf(o, "        %s value = ", elem_ctype(value));
                     gen_json_default(g, o, value);
                     sb_put(o, ";\n");
                     gen_json_read_part(o, value, "value", "        ");
-                    sb_printf(o, "        tide_map%d_set(v, tide_text_view(key), %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", k,
-                              value.kind == TY_STRING ? "tide_text_view(value)" : "value");
+                    sb_printf(o, "        tide_map%d_set(v, ", k);
+                    if (key.kind == TY_STRING) sb_put(o, "tide_text_view(key)");
+                    else sb_printf(o, "(%s)n", c_type(key));
+                    sb_printf(o, ", %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", value.kind == TY_STRING ? "tide_text_view(value)" : "value");
                 } else {
                     sb_put(o, "    bool first = true;\n    a = tide_str_add_cstr(a, \"{\");\n");
                     sb_printf(o, "    for (int32_t i = 0; i < tide_map_entries(v); i++) {\n"
                                  "        const tide_map%d_entry *e = tide_map_entry(v, i, &tide_map%d_kind);\n"
                                  "        if (!tide_map_live(e)) continue;\n        if (!first) a = tide_str_add_cstr(a, \",\");\n"
-                                 "        first = false;\n        a = tide_json_add_text(a, tide_text_view(e->key));\n"
-                                 "        a = tide_str_add_cstr(a, \":\");\n", k, k);
+                                 "        first = false;\n", k, k);
+                    if (key.kind == TY_STRING) {
+                        sb_put(o, "        a = tide_json_add_text(a, tide_text_view(e->key));\n        a = tide_str_add_cstr(a, \":\");\n");
+                    } else {
+                        sb_put(o, "        a = tide_str_add_cstr(a, \"\\\"\");\n");
+                        const char *in = "        ";
+                        if (named) { // The first name a number has, or the number
+                            bool any = false;
+                            for (int m = 0; m < named->members.count; m++) {
+                                bool earlier = false;
+                                for (int before = 0; before < m; before++) earlier |= named->members.items[before].number == named->members.items[m].number;
+                                if (earlier) continue;
+                                sb_printf(o, "        %sif ((int64_t)e->key == %lldLL) a = tide_str_add_cstr(a, \"" STR_FMT "\");\n", any ? "else " : "",
+                                          (long long)named->members.items[m].number, STR_ARG(named->members.items[m].name));
+                                any = true;
+                            }
+                            if (any) {
+                                sb_put(o, "        else ");
+                                in = "";
+                            }
+                        }
+                        sb_printf(o, "%sa = tide_str_add_long(a, (int64_t)e->key, 0);\n        a = tide_str_add_cstr(a, \"\\\":\");\n", in);
+                    }
                     gen_json_write_part(o, value, "e->value", "        ");
                     sb_put(o, "    }\n    return tide_str_add_cstr(a, \"}\");\n}\n\n");
+                }
+            }
+            // Sets: an array of their keys, in the order they were added; one read twice is there once
+            for (int k = 0; k < prog->maps.count; k++) {
+                const decl *d = prog->maps.items[k];
+                if (!d->is_set || !(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_SET, (decl *)d};
+                const type key = d->fields.items[0].type;
+                gen_json_prototype(o, t, "tide_map", reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    *v = (tide_map){0};\n    if (!tide_json_array(j)) return false;\n");
+                    sb_printf(o, "    while (tide_json_item(j, sizeof(tide_map%d_entry))) {\n        %s key = ", k, elem_ctype(key));
+                    gen_json_default(g, o, key);
+                    sb_put(o, ";\n");
+                    gen_json_read_part(o, key, "key", "        ");
+                    sb_printf(o, "        (void)tide_map%d_add(v, %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", k,
+                              key.kind == TY_STRING ? "tide_text_view(key)" : "key");
+                } else {
+                    sb_put(o, "    bool first = true;\n    a = tide_str_add_cstr(a, \"[\");\n");
+                    sb_printf(o, "    for (int32_t i = 0; i < tide_map_entries(v); i++) {\n"
+                                 "        const tide_map%d_entry *e = tide_map_entry(v, i, &tide_map%d_kind);\n"
+                                 "        if (!tide_map_live(e)) continue;\n        if (!first) a = tide_str_add_cstr(a, \",\");\n"
+                                 "        first = false;\n", k, k);
+                    gen_json_write_part(o, key, "e->key", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
                 }
             }
             // Arrays: an array, whose values go to the elements in order; the ones past its length are skipped
@@ -11644,7 +11796,7 @@ static void gen_json_helpers(gen *g)
     // The calls: a T? that's nothing unless the whole text was one value of the type, and a value's text
     for (int i = 0; i < prog->json_roots.count; i++) {
         const json_root *r = &prog->json_roots.items[i];
-        const char *stored = r->type.kind == TY_LIST ? "tide_list" : r->type.kind == TY_MAP ? "tide_map" : c_type(r->type);
+        const char *stored = r->type.kind == TY_LIST ? "tide_list" : r->type.kind == TY_MAP || r->type.kind == TY_SET ? "tide_map" : c_type(r->type);
         for (int bytes = 0; bytes < 2; bytes++) {
             if (!(bytes ? r->reads_bytes : r->reads_text)) continue;
             const char *result = c_type(r->result);

@@ -8786,17 +8786,44 @@ static void check_json_attribute(const decl *d, const field *f, const attribute 
     }
 }
 
+// Whether `t` is a vector, a quaternion or a color: in JSON an array of its
+// components' numbers ([x, y, z]; a color's [r, g, b, a]).
+static bool json_vector(const type t)
+{
+    switch (t.kind) {
+    case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3:
+    case TY_DOUBLE4: case TY_QUATERNION: case TY_COLOR:
+        return true;
+    default: return false;
+    }
+}
+
+// Whether a set's key, or a map's when `map`, has something in JSON: text, a
+// whole number or an enum, and for a set (an array of them) a char too. A
+// map's key is an object's, so always text: a number's digits, an enum's name.
+static bool json_key(const type t, const bool map)
+{
+    return t.kind == TY_STRING || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM || (!map && t.kind == TY_CHAR);
+}
+
 // Whether JSON has something for a value of type `t`, and for everything in
 // it: a bool, a number, a char or text (a string), an enum (its member's
-// name), a struct (an object), a list or an array (an array) and a map by
-// text (an object). `*why` is the type it has nothing for, and `*in` and
+// name), a vector, a quaternion or a color (an array of numbers), a struct (an
+// object), a list, a set or an array (an array) and a map by text, an int or
+// an enum (an object). `*why` is the type it has nothing for, and `*in` and
 // `*at` the struct and the field that hold it, if one does. `outer` is the
 // structs being looked into, so one with a list of itself ends.
 static bool json_holds(const type t, type *why, const decl **in, const field **at, const decl **outer, const int depth)
 {
     switch (t.kind) {
+    case TY_ERROR: // Said where it's declared: once is enough
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_DOUBLE: case TY_FLOAT: case TY_STRING: case TY_ENUM:
+    case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3:
+    case TY_DOUBLE4: case TY_QUATERNION: case TY_COLOR:
         return true;
+    case TY_SET: // An array of its keys
+        if (json_key(t.decl->fields.items[0].type, false)) return true;
+        break;
     case TY_STRUCT:
         // A T? field: what its value is, or `null` and a key left out for none
         if (t.decl->optional_of) return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth);
@@ -8823,7 +8850,7 @@ static bool json_holds(const type t, type *why, const decl **in, const field **a
         outer[depth] = NULL;
         return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth + 1);
     case TY_MAP:
-        if (map_key(t).kind != TY_STRING || depth == JSON_TYPE_DEPTH) break;
+        if (!json_key(map_key(t), true) || depth == JSON_TYPE_DEPTH) break;
         outer[depth] = NULL;
         return json_holds(map_value(t), why, in, at, outer, depth + 1);
     default: break;
@@ -8833,27 +8860,35 @@ static bool json_holds(const type t, type *why, const decl **in, const field **a
     return false;
 }
 
+_Static_assert(TY_INT2 < 64 && TY_INT3 < 64 && TY_INT4 < 64 && TY_FLOAT2 < 64 && TY_FLOAT3 < 64 && TY_FLOAT4 < 64 && TY_DOUBLE2 < 64
+                   && TY_DOUBLE3 < 64 && TY_DOUBLE4 < 64 && TY_QUATERNION < 64 && TY_COLOR < 64,
+               "program.json_vector_reads keeps a bit for each of these kinds");
+
 // `t` and the types in it are read, or written: codegen writes their readers, or their writers.
-static void mark_json(const type t, const bool reads)
+static void mark_json(program *prog, const type t, const bool reads)
 {
-    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP) return;
+    if (json_vector(t)) { // No declaration of its own: which ones have a reader and a writer is the program's to say
+        *(reads ? &prog->json_vector_reads : &prog->json_vector_writes) |= 1ull << t.kind;
+        return;
+    }
+    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP && t.kind != TY_SET) return;
     bool *marked = reads ? &t.decl->json_reads : &t.decl->json_writes;
     if (*marked) return;
     *marked = true;
     if (t.kind == TY_ENUM) return;
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (!t.decl->fields.items[i].hidden) mark_json(t.decl->fields.items[i].type, reads);
+        if (!t.decl->fields.items[i].hidden) mark_json(prog, t.decl->fields.items[i].type, reads);
     }
 }
 
 // Whether `call` (Json.Read or Json.Write) takes a value of type `t`: a
-// struct, a list or a map by text, of what JSON holds. Says what's in the way.
+// struct, a list, a set or a map, of what JSON holds. Says what's in the way.
 static bool json_takes(const type t, const loc at, const char *call)
 {
     if (t.kind == TY_ERROR) return false;
     const bool reads = strcmp(call, "Json.Read") == 0;
-    if (t.kind != TY_STRUCT && t.kind != TY_LIST && !(t.kind == TY_MAP && map_key(t).kind == TY_STRING)) {
-        diag_error(at, "%s %s a struct, a List<T> or a Map<string, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET) {
+        diag_error(at, "%s %s a struct, a List<T>, a Set<T> or a Map<K, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
         if (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT || t.kind == TY_INPUT) {
             diag_note("copy what the JSON has of it %s a struct, which is a value of its own", reads ? "from" : "into");
         } else {
@@ -8872,9 +8907,19 @@ static bool json_takes(const type t, const loc at, const char *call)
     } else {
         diag_error(at, "JSON has nothing for %s", type_name(why));
     }
-    if (why.kind == TY_MAP) diag_note("an object's keys are text: a map JSON holds is a Map<string, T>");
-    else if (why.kind == TY_SET) diag_note("JSON has arrays: keep the keys in a List<T>");
-    else diag_note("JSON holds bool, the integers, float, char, string, enums, structs of these, List<T>, arrays and Map<string, T>");
+    if (why.kind == TY_MAP) {
+        diag_note("an object's keys are text: a map JSON holds is by a string, or by a byte, an int, a long or an enum, written as "
+                  "its digits or its member's name. Keep this one as a List<T> of structs with the key in a field");
+    } else if (why.kind == TY_SET) {
+        diag_note("a set JSON holds is an array of strings, chars, ints, longs or enums: keep these in a List<T>");
+    } else if (why.kind == TY_FLOAT2X2 || why.kind == TY_FLOAT3X3 || why.kind == TY_FLOAT4X4 || why.kind == TY_DOUBLE2X2
+               || why.kind == TY_DOUBLE3X3 || why.kind == TY_DOUBLE4X4) {
+        diag_note("a vector is an array of numbers in JSON, and a matrix has nothing: keep its columns in vector fields, or what "
+                  "it's made from (a position, a rotation and a scale)");
+    } else {
+        diag_note("JSON holds bool, the integers, float, double, char, string, enums, vectors, quaternions and colors, structs of "
+                  "these, List<T>, Set<T>, arrays and maps by a string, an int or an enum");
+    }
     return false;
 }
 
@@ -8950,7 +8995,7 @@ static type check_json_call(checker *c, expr *e)
     r->reads_text |= reads && !bytes;
     r->reads_bytes |= bytes;
     r->writes |= !reads;
-    if (builds(c->prog)) mark_json(t, reads);
+    if (builds(c->prog)) mark_json(c->prog, t, reads);
     sb callee = {0};
     sb_printf(&callee, "tide_json_%s%d", !reads ? "write" : bytes ? "read_bytes" : "read", root);
     e->call = CALL_JSON;

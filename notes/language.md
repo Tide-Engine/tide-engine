@@ -1,3 +1,41 @@
+## Vectors, colors, quaternions, sets and maps by a number in JSON (2026-11-14)
+
+The owner approved arrays for vectors, colors and quaternions ("go with your recommendations"); the rules are my
+picks, Provisional in spec.md (JSON). Mount & Rifle kept float[3] fields and twin structs for its saves and gear
+catalog only because JSON refused vectors. Sets as arrays and maps by a byte, an int, a long or an enum came out
+of the same code for about 80 generated-C lines, so they're built too; a map by a `char` is not (Open).
+
+- **Checker** (`check.c`, the JSON block): `json_holds` takes the eleven vector kinds, a set whose key `json_key`
+  allows (string, char, int, long, enum; a set has no byte key), a map whose key it allows (string, byte, int,
+  long, enum), and `TY_ERROR` (said where it's declared, so no second "JSON has nothing for <error>").
+  `json_takes` takes a struct, a list, a set or any map as `T`. `mark_json` gives a vector no declaration: the
+  program keeps a bit per kind (`program.json_vector_reads/writes`, `1 << kind`, a `_Static_assert` that each
+  kind is under 64). The notes after "JSON has nothing for" say what a map's key, a set's key and a matrix can be.
+- **Codegen** (`gen_json_helpers`): `json_vector_parts` says a vector's numbers (count, C place, float/double/int),
+  `gen_json_vector` writes `tide_json_get_<C type>` (`tide_json_get_tide_float3`: no game type has a `tide_`
+  name) and its writer. The reader fills the place's numbers in turn through a table of pointers, refuses the
+  item past the count before writing it, gives false unless the count is exact (a color's 3 or 4, alpha 1.0f for
+  3), and a `null` number writes nothing. Sets are their own loop over `prog->maps` (`is_set`): an array of keys,
+  each read into a local of its stored type and added with `tide_map<n>_add(..., TIDE_IN_SCRATCH)`, written over
+  live entries. A map by a number reads its key's text with `tide_str_parse_long` and a range check (none for a
+  long), by an enum a static table of names then `tide_str_eq`, digits that fit the storage otherwise; writing
+  quotes `tide_str_add_long`'s digits or the first name a number has. No runtime function was added: everything
+  is generated over `tide/json.h` and `tide/text.h` as they were.
+- **A game with no vector, set or numbered map in JSON generates the C it did** (by construction, not diffed over
+  every game): the new loops emit nothing without a bit or a marked set, and a map by text writes the same text.
+- **Tests:** `compiler/tests/e2e/json_vectors` (46 checks: every kind, defaults and `null` numbers, NaN as `null`
+  back to the default's number, wrong lengths, non-arrays, ints that aren't whole or don't fit, vectors in lists,
+  maps, arrays and a `T?`, sets of int/string/enum/char with repeats, maps by int/long/byte/enum and an enum
+  `: byte`, keys that aren't numbers or members, roots that are a list, a set and maps; in C, the bits of 0.1,
+  -0, 0.70710677 and 0.30000000000000004, the written text, and `JSON_VECTORS_HASH`, shared by native sanitize
+  and web-debug). `compiler/tests/safety/json` gained `shapes` (131,073 numbers for a vector and a color, a set
+  of them, 2,000 keys of 1,000 numbers, a key of 131,072 digits and one of 64 letters, and 1,320 spoiled bytes of
+  a pose). Error fixtures: `json_map_key` (now `Map<char, string>`), `json_set` (now `Set<Entity>`),
+  `json_field_nested` (now `float4x4`, the matrix note), `json_set_float` (one error, no follow-up),
+  `json_field_entity`, `json_read_value`, `json_write_singleton` (their new wording). Hover docs for
+  `Json.Read`/`Json.Write` in `compiler/lsp/analysis.c`; `tidels_tests json` passes.
+- **Not built:** maps by a `char`; matrices (refused, as before); a way to say a vector's array may be short.
+
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 
 Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is
@@ -4842,7 +4880,7 @@ macOS, MinGW, Android and the sanitizers were not run here, and no workflow
 was dispatched.
 
 **Not built**: a dynamic JSON value; `T?` fields (built since: see T? fields, above);
-vectors, colors, sets and maps by an int or an enum; telling why a read gave
+vectors, colors, sets and maps by an int or an enum (built 2026-11-14, the section at the top); telling why a read gave
 nothing; indented output or leaving out defaults; `Join`, `byte.TryParse`, a
 `Parse` that fails; `TryParse` in the GUI's own number fields.
 ## AnimationCatalog and bool/out lookup, 2026-10-11

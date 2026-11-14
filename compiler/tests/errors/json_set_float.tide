@@ -1,0 +1,6 @@
+// expect: a set's key is an int, a long, a char, an enum, an Entity, a PlayerID or text, not float
+// expect: floats that look equal can differ in a bit
+scene Main { }
+singleton Seen { string text; int count; }
+struct Picks { Set<float> taken; }
+system Run(mut Seen seen) { seen.text = Json.Write(Picks { }); }
