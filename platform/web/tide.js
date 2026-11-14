@@ -2160,7 +2160,8 @@
                 base: texture.createView({ dimension: '2d-array', mipLevelCount: 1 }), width, height, row: width * 4, format,
                 layered: each, bytes: format === 'rgba8unorm' || format === 'rgba8unorm-srgb', groups: new Set(), depthArray: 0 };
             const id = gpuAdd('texture', made);
-            if (!pixelsPtr) made.depthArray = platform.gpu_array(0, width, height, layers, 0);
+            // ...but a [Linear] read's copy, whose layers are drawn with neither depth nor stencil (gpu.h)
+            if (!pixelsPtr && format !== 'rgba8unorm-srgb') made.depthArray = platform.gpu_array(0, width, height, layers, 0);
             return id;
         },
         // An array of blocks: each layer's whole chain, `bytes` each, one after another (gpu_texture_blocks's, in layers)
@@ -2302,7 +2303,7 @@
                 colors.push(gpuAdd('texture', { texture: of.texture, view, first: view, layer, width: of.width,
                     height: of.height, row: of.width * 4, groups: new Set() }));
             }
-            const depth = gpuAdd('texture', { texture: depthArray.texture, view: depthArray.depthLayers[layer],
+            const depth = !depthArray ? 0 : gpuAdd('texture', { texture: depthArray.texture, view: depthArray.depthLayers[layer],
                 whole: depthArray.depthLayers[layer], width: of.width, height: of.height, row: 0, groups: new Set() });
             return gpuAdd('target', { colors, bytes: !!of.layered && of.bytes, depth, width: of.width, height: of.height,
                 canvas: null, context: null, face: true, layerOf: true });
@@ -2313,8 +2314,9 @@
             const view = of.layered[face < 6 ? face : 0][0];
             const color = gpuAdd('texture', { texture: of.texture, view, first: view, layer: face, width: of.width,
                 height: of.height, row: of.width * 4, groups: new Set() });
-            const texture = depthFor(of.width, of.height, true);
-            const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+            // A depth of its own, but for a [Linear] read's copy, which is drawn with none (gpu.h)
+            const texture = of.format === 'rgba8unorm-srgb' ? null : depthFor(of.width, of.height, true);
+            const depth = !texture ? 0 : gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width: of.width, height: of.height, row: 0, groups: new Set() });
             return gpuAdd('target', { colors: [color], bytes: of.bytes, depth, width: of.width, height: of.height, canvas: null,
                 context: null, face: true });
@@ -2461,7 +2463,8 @@
                 // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several
                 multisample: { count: b.samples, alphaToCoverageEnabled: b.coverage && b.samples > 1 },
                 // Either side of a triangle tests stencil the same way, against all 8 bits
-                depthStencil: { format: depthFormat(), ...depths[b.depth], depthCompare: depths[b.depth].depthCompare === 'less-equal' && reversedDepth() ? 'greater-equal' : depths[b.depth].depthCompare, stencilFront: b.stencil, stencilBack: b.stencil,
+                // ...and none of either into a [Linear] read's copy, a target with neither (gpu.h)
+                depthStencil: b.into[0] === 'rgba8unorm-srgb' ? undefined : { format: depthFormat(), ...depths[b.depth], depthCompare: depths[b.depth].depthCompare === 'less-equal' && reversedDepth() ? 'greater-equal' : depths[b.depth].depthCompare, stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
             };
             return addPipeline(b, layout, described, false);
@@ -2502,9 +2505,10 @@
                 return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, format, usage,
                     groups: new Set() });
             });
-            // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole
-            const texture = depthFor(width, height, true);
-            const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+            // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole. A [Linear]
+            // read's copy has none (gpu.h)
+            const texture = formats[0] === 'rgba8unorm-srgb' ? null : depthFor(width, height, true);
+            const depth = !texture ? 0 : gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width, height, row: 0, groups: new Set() });
             // Only bytes are read back: the first color image, where it's that
             return gpuAdd('target', { colors, bytes: formats[0] === 'rgba8unorm' || formats[0] === 'bgra8unorm', depth, width, height, canvas: null, context: null });
@@ -2583,6 +2587,8 @@
                     for (const key of gpuTables.texture[t.samples].groups) bindGroups.delete(key);
                     gpuRemove('texture', t.samples);
                 }
+            } else if (!t.depth) {
+                // A [Linear] read's copy: no depth to free
             } else if (t.layerOf) { // An array's layer's depth is that layer of the array's, which stays
                 for (const key of gpuTables.texture[t.depth].groups) bindGroups.delete(key);
                 gpuRemove('texture', t.depth);
@@ -2632,7 +2638,8 @@
                 colorAttachments: views.map((view, i) => ({ view: many ? many[i].view : view,
                     resolveTarget: many ? view : undefined, loadOp: load, storeOp: 'store',
                     clearValue: { r: 0, g: 0, b: 0, a: 1 } })),
-                depthStencilAttachment: { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
+                // None for a [Linear] read's copy, the one target with no depth (gpu.h)
+                depthStencilAttachment: id && !many && !t.depth ? undefined : { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
                     depthLoadOp: load, depthStoreOp: 'store', depthClearValue: reversedDepth() ? 0 : 1,
                     stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 },
             };
@@ -2673,7 +2680,7 @@
             const entry = drawing.pipeline;
             const [constant, slope] = drawing.bias || [0, 0];
             let pipeline = entry.pipeline;
-            if (constant || slope) {
+            if ((constant || slope) && entry.described.depthStencil) {
                 const key = `${constant},${slope}`;
                 entry.biases ||= new Map();
                 pipeline = entry.biases.get(key);

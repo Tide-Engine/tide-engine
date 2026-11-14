@@ -997,7 +997,7 @@ float2 flat = trs.localPosition.xz;
 **Functions**
 
 - Component-wise, on numbers, vectors and colors: `Abs`, `Sign`, `Min`, `Max`, `Clamp` (ints too); `Floor`, `Ceil`, `Round` (ties to even), `Trunc`, `Frac`, `Sqrt`, `Rsqrt`, `Saturate`, `Radians`, `Degrees`, `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `Exp`, `Exp2`, `Log`, `Log2`, `Log10`, `Pow`, `Step`, `Lerp`, `Unlerp`, `SmoothStep`. A `Color` goes through them channel by channel, alpha too, with colors and with numbers (a number is that number in every channel), and gives a `Color`: `Math.Lerp(a, b, 0.5)`. A color and a vector in one call are an error. (That colors are taken is agreed, 2026-10-08: "Color is essentially a float4 anyways"; that it's every component-wise function, and that vectors don't mix in, are Provisional.)
-- **Provisional (2026-11-14):** `Math.ToLinear` and `Math.ToDisplay` take `float`, `float3` or `Color`, converting between sRGB display-encoded RGB and linear light using the standard piecewise transfer curve (decode threshold 0.04045, encode threshold 0.0031308). RGB clamps to [0,1], NaN maps to zero; Color alpha is unchanged, including alpha outside [0,1]. CPU uses Tide's deterministic `Pow`; GPU follows the same formula with the GPU rounding tolerance of the other Math functions. No double or float2/float4 overload is supplied: use float3 for RGB or Color to carry alpha.
+- **Provisional (2026-11-14):** `Math.ToLinear` and `Math.ToDisplay` take `float`, `float3` or `Color`, converting between sRGB display-encoded RGB and linear light using the standard piecewise transfer curve (decode threshold 0.04045, encode threshold 0.0031308). RGB clamps to [0,1], NaN maps to zero; Color alpha is unchanged, including alpha outside [0,1]. CPU uses Tide's deterministic `Pow`; GPU follows the same formula with the GPU rounding tolerance of the other Math functions. Both ends are exact on the CPU and the GPU: 0 gives 0 and 1 (and anything above) gives exactly 1 from either function, so white is white through both. No double or float2/float4 overload is supplied: use float3 for RGB or Color to carry alpha.
 
 - Vectors: `Dot`, `Cross`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize` (zero for a vector too short to normalize, never NaN), `Reflect`, `Csum`, `Cmin`, `Cmax`.
 - Quaternions: `Mul` (two rotations, or a rotation and a `float3`, which it rotates), `Rotate`, `Inverse`, `Conjugate`, `Normalize` (the identity for a quaternion too short to normalize, like a field nothing set), `Dot`, `Slerp`, `Nlerp`, `Forward`, `Up`, `Right`, `Angle`.
@@ -2066,12 +2066,12 @@ Picks made as `Texture` assets were built (2026-10-07), awaiting the owner. That
 - **Provisional picks for `[Linear]` (2026-11-14):**
   - The name is provisional (the owner's "fine for now"). Placement is before one asset or a resource field, including aliases and attached local fields. It takes no arguments and appears once. It is refused on parameters, locals, grid declarations, lists/maps of assets, Texture3D, depth and other data types. A singular declaration keeps the source's role known while a shader is specialized.
   - A marked field accepts a marked asset/field of its type, a Color grid conversion (`Grid2<Color>` for Texture, `Grid3<Color>` for TextureArray), a direct compatible RGBA8 constructor or target-color expression, or `default`. Marked/unmarked texture assignment is refused in either direction. Whole structs containing declared fields retain those fields' roles. A marked source cannot escape into an ordinary CPU parameter, local, return or direct draw texture. Read-only GPU helpers borrow it with an ordinary Texture/TextureArray/Cubemap parameter and retain the original source's mark; mutable/out resource borrowing is refused. CPU size/count and owned resource lifetime/destination operations remain available. A conditional, switch or getter does not invent a mark: select a declared field using ordinary control flow.
-  - Only the RGBA8 color format has an sRGB counterpart among Tide's uncompressed image formats. The compiler follows constructor assignments, including later assignments to a target, and refuses float, single-channel, depth and numeric formats with the reason and a Format.Rgba8/remove-mark fix. An unknown or varying format is refused rather than selected at runtime. Marked storage-image writes are refused: write the original target with a frag, then sample its marked view.
+  - Only the RGBA8 color format has an sRGB counterpart among Tide's uncompressed image formats. The compiler follows constructor assignments, including later assignments to a target, and refuses float, single-channel, depth and numeric formats with the reason and a Format.Rgba8/remove-mark fix. An unknown or varying format is refused rather than selected at runtime: the origins followed are assignments and struct-literal initializers of the field, in generic functions as in others, and a target field given as an `out` or `mut` argument has no known format (the callee assigns its parameter), so reading it under the mark is an error that says to assign the image to its field directly. Whatever the compiler could not see is refused where it is drawn: a marked read of an image that is not RGBA8 draws nothing, binds nothing and reports why. Marked storage-image writes are refused: write the original target with a frag, then sample its marked view.
   - Alpha is coverage and is never transfer-converted. Marked color storage is `sRGBEncode(sRGBDecode(straightRGB) * alphaByte / 255)`: coverage is rounded to its stored byte first, so a byte-zero alpha cannot retain nonzero light. The GPU decodes before filtering; the existing Sample unpremultiplication then gives a straight linear Color and correct soft edges. `[Raw, Linear]` is refused: Raw's independent stored numbers and Linear's color conversion have incompatible promises. `[Lossless]` remains independent of the sampling role.
-  - Runtime Color grids keep their CPU cells as written and generate this representation only for the marked sampled image. A marked reference to a rendered RGBA8 image uses a converted sampled copy, leaving its original attachment, fragment output and CPU readback unchanged. This copy is rebuilt when the source is drawn or recreated; copies of references still share the original resource lifetime.
+  - Runtime Color grids keep their CPU cells as written and generate this representation only for the marked sampled image. A marked reference to a rendered RGBA8 image uses a converted sampled copy, leaving its original attachment, fragment output and CPU readback unchanged. This copy is rebuilt only when the source has been drawn into or recreated since it was made, so an image drawn once and read every frame is copied once; it holds color alone, with no depth of its own. Copies of references still share the original resource lifetime.
   - Compressed marked assets use the sRGB BC1/BC3 format where supported and keep the same linear-filtered levels when decoded for an unsupported device. Opaque and alpha marked/unmarked images retain distinct sampling identities even when their stored base bytes coincide. Small/lossless images generate mips through the sRGB GPU format. Marked DDS assets rebuild their chain from the base image in linear light, rather than trust authored levels whose filtering space is unknown; unmarked DDS chains remain as authored.
   - CPU reads never apply the mark. Grid cells and `grid.Decode` remain stored straight display values, and `target.Read()` reads the original target's straight values. Texture has no CPU pixel-read/Decode operation. Convert explicitly with Math.ToLinear/ToDisplay when CPU code needs the other space.
-  - A field's Linear role participates in hot-reload layout identity. Compatible fields retain references, including across asset replacement; changing the role resets that field to its destination default rather than reinterpreting its old image.
+  - A field's Linear role participates in hot-reload layout identity. Compatible fields retain references, including across asset replacement; changing the role resets that field to its destination default rather than reinterpreting its old image. A pack records, for each Texture, TextureArray and Cubemap asset, whether it was packed for the mark; an image packed for the other reading (a pack that is not the code's own build's) is not drawn, and the mismatch is reported once with the fix (build again), rather than read with the wrong encoding.
   - Unity replay of marked images requires Player Color Space **Linear**. A Gamma project gives one actionable error naming Project Settings > Player > Other Settings > Color Space > Linear; Tide does not change project settings or unmarked-image behavior. Unity can silently replace requested sRGB GPU storage with UNORM in Gamma mode, so accepting it would violate the mark.
 
 
@@ -3333,6 +3333,9 @@ Colors are straight Color values, as Sample returns, rather than multiplied by a
 The grid `is` names is a local's grid, which lasts until the task next waits, so an `await` while it is in scope
 is a compile error that says to copy what's kept into a component or singleton first (Provisional, Claude,
 2026-11-14: the alternative, carrying the grid across waits as a task carries its lists, is not built).
+A target's other color images, images of numbers as their own types, its depth, a cube's faces and an array's
+layers are read too since 2026-11-14 (`Read(image)`, `Read<T>()`, `ReadDepth()`), and `target.colors.count`
+says how many images it holds: their rules are picks, under Provisional (which image a read is of, and as what).
 
 #### Depth bias (decided 2026-11-13)
 
@@ -3377,8 +3380,8 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 
 #### Provisional: pixel readback (2026-11-14)
 
-Read takes no arguments and reads color image zero, including its resolved image for multisampling. An image
-index was considered; the first-image form keeps the basic call small, with other images left for a later API.
+`Read()` reads color image zero, including its resolved image for multisampling; the other reads are below
+(Which image and as what, 2026-11-14).
 RGBA8 preserves its stored quantization; RGBA16f preserves HDR values above one. Transparent pixels give zero.
 Grid dimensions are physical pixels, with x right and y down. A copied grid uses `.Copy()` under ordinary grid
 ownership rules; a directly awaited return is fresh. `is Grid2<Color> pixels` can unwrap this failable result.
@@ -3386,12 +3389,76 @@ There are 64 read slots shared with list reads, at most 4,000,000 pixels per ima
 pixel results. Exceeding the image/byte limit fails; occupied slots wait, as list reads do. Headless native runs
 wait at the next frame's start. Hidden fixed-size web test frames wait between WASM frames for pending mappings,
 so scripted frame counts agree without blocking the browser thread. Ordinary resizable web games remain async.
-No window, depth, cube-face or array-layer read is provided; use an ordinary color RenderTarget. Unsupported
-formats fail before binding a shader. Read accepts Rgba8/Rgba16f as Color; other numeric formats give a
-diagnostic directing the game to typed Sample or a kernel writing a GPU list. A numeric Grid2 result and a
-conversion kernel were considered; keeping this Color readback avoids an implicit conversion that loses
-integer bits. Rgba16f Read always unpremultiplies as Color; its format alone does not record a numeric role.
-Use a `[Raw(float4)]` shader read to preserve the four independent channels of a numeric Rgba16f image.
+Unsupported formats fail before binding a shader. `Read()` accepts Rgba8/Rgba16f as Color and always
+unpremultiplies; an Rgba16f image's format alone does not record a numeric role.
+
+#### Provisional: which image a read is of, and as what (2026-11-14)
+
+The owner asked that every read that can work does (2026-11-14: "make sure everything we can add or validate
+we do"). What was built, each a pick with what it was weighed against:
+
+- **`await target.Read(image)` reads color image `image`,** counted from 0 as `target.colors[image]` is. It is a
+  constant int (a literal or a `const`), from 0 to 3: the image is part of what the read gives, which the
+  compiler has to know. An index that's only known as the game runs was weighed and refused for that reason,
+  not left to fail as it runs; `target.colors[i].Read()` was weighed too, and would have made every `Texture`
+  look readable where only a target's image is.
+- **An image of numbers is read as its own type, written at the read:** `Read<float>()` for R8, R16f and R32f,
+  `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f, `Read<int>()` for R32i, each giving a
+  `Grid2` of that type, `fails IOError`; `Read<Color>()` is `Read()`. R32f, Rgba32f and R32i come back bit for
+  bit, R16f and Rg16f as the half float stored, R8 and Rg8 as the stored byte over 255. Nothing is clamped,
+  multiplied by an alpha or divided by one. `Read<float4>()` also reads an Rgba16f image, as its four stored
+  numbers (what a `float4` output wrote), where `Read()` gives the same image as a Color.
+  - **How the type is known:** the game writes it, and the compiler holds it against the format the target was
+    made with, by the same record of constructor assignments that checks a numeric frag's outputs and a typed
+    clear. A mismatch is an error that names the image's format and the read that fits it. A format that isn't
+    fixed (a `RenderTarget` parameter, a field made with one format here and another there, a format that's a
+    variable) is an error for a number read, with the fix: make the target one way wherever it's assigned and
+    read the field or local it's kept in. Inferring the grid's type from the format, with nothing written, was
+    weighed: a field's formats are settled only once every body is checked, so an expression's type would
+    depend on distant assignments, and change with them silently. One `Read()` returning a tagged value was
+    weighed and refused: every use would have to ask what it got.
+  - **A Color read of a target whose formats aren't known** (`Read()` of a parameter) still compiles, as it
+    did: it's checked as it runs, and fails with `IOError` where the image isn't an Rgba8 or Rgba16f one.
+  - The engine checks every read again as it's asked and as it begins: an image the target hasn't got, a kind
+    that isn't the image's, a target disposed meanwhile, and a result of another size than its grid's cells
+    all fail the read and write nothing.
+- **`await target.ReadDepth()` gives a `Grid2<float>` of the target's depth,** in the forward terms `this.depth`
+  and `DepthTexture.Sample` use (0 near, 1 far), under reversed float storage and under the forward 24-bit
+  fallback alike: the read converts as a depth's `Sample` does. A target of depth alone is read this way, and
+  a multisampled target gives one depth a pixel, by the resolve a frag's read of it gets (A target's samples).
+  Under float storage a depth a frag wrote with `WriteDepth` comes back exactly where `1 - depth` is exact
+  (every multiple of 2^-24 is); under 24 bits, to the nearest step. `target.depth.Read()` was weighed, and
+  `Read<float>()` of a `Format.Depth` target: a method beside `ClearDepth` says what's read for every target,
+  with color beside it or not, and keeps `DepthTexture` a GPU reference with no CPU read of its own. A raw or
+  linear depth read isn't offered, as none is to a frag.
+- **A cube's face and an array's layer are read as the targets they are:** `await cube.faces[i].Read()`,
+  `await array.layers[i].Read()` and `ReadDepth()` of either, rows from the top as they were drawn. Each holds
+  one image, of the format its cube or array was made with, so an image number is an error there, and the read's
+  type is checked against that format as a target's is: `Read()` for Rgba8 and Rgba16f, `Read<float>()` for R8
+  and R16f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for an Rgba16f one's stored numbers (Number
+  images as array layers and cube faces, below; they hold no R32f, Rgba32f or R32i). A face's and a layer's
+  numbers are read as all four channels and the grid keeps its type's: one kernel for faces and one for layers,
+  at four words a pixel while the read is pending, was picked over a kernel for each type. A layer past
+  the array's fails as it runs, and an asset's cube or array has no faces or layers to read. A whole cube or array in one
+  read (a `Grid3`, or six grids) was weighed: one face is the unit they're drawn in, and a whole array can pass
+  the pixel limit that a layer doesn't.
+- **`target.colors.count` is how many color images a target holds:** 0 for a target of depth alone, for a
+  default one and for a disposed one, 1 for a face or a color layer. `target.colors` is otherwise still read one at a
+  time. `target.colorCount` was weighed: `colors.count` is what a list's is called, and needs no new name.
+- **The window can't be read,** and that's a compile error as before (`Draw.window.Read()`, `ReadDepth()`). It
+  isn't the same path: a read runs a kernel that samples the image, and the window's image is the swapchain's
+  (Vulkan) or the canvas's (WebGPU), which Tide makes as an attachment only. Vulkan surfaces needn't offer
+  sampled swapchain images, a canvas texture is gone once the frame is presented, the window's format is the
+  display's (BGRA on many), and under Unity the window is Unity's camera target, which Tide never holds. Reading
+  it would mean drawing every frame of any game that might read into a target of Tide's first and copying that
+  to the display, a cost for all frames to serve one. A game that wants its frame draws into
+  `RenderTarget.Window()`, reads that, and `Draw.Blit`s it to the window.
+- **Limits are the Color read's:** 64 read slots shared with list reads, 4,000,000 pixels an image, 128 MiB of
+  outstanding results (a float or int image is 4 bytes a pixel of it, a float2 one 8, the others 16, and so is any read of a
+  face or a layer).
+- **Not there:** reading a part of an image (a rectangle); a `Texture3D`'s cells or a `Texture` asset's pixels
+  back (a kernel writing a GPU list reads either); a number read of a target whose format is only known as the
+  game runs.
 
 #### Provisional: depth bias (2026-11-14)
 
@@ -3714,12 +3781,12 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **A draw into a target that reads that target's depth is passed by,** with a line that says so, when it's drawn: what a frag reads comes through a field, which the compiler can't follow to a target. It's what a draw that samples its own destination's color through a field gets, where `Draw.Blit(target.color, target, frag)` is refused as it's written. So is a draw that samples the `color` of a target of depth alone, which has none.
   - A depth is 24 bits, with the 8 bits of stencil beside it, in every target and in the window.
   - A depth a frag reads is one of the draw's 16 textures, however it's read: one it both samples and compares counts once, and is read through two of its samplers (Provisional, 2026-11-05: it counted twice before).
-  - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; writing a pixel's depth from a frag; reading a depth back into Tide; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
+  - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
   - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): through the target's camera as a matrix, `target.WorldToClip()` (see The cameras as matrices, above: the projection, after z turned around, after the camera's transform undone, which a game spelled out itself until that was built); then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective.
 - **Several colors and float images** (built 2026-10-07; a format for each color image after a target's size, four at the most, `target.colors[i]`, a frag's outputs to them by their order with the rest of either dropped or left, and floats where a GPU draws into them with bytes and a line where one doesn't, are decided, above; everything here is a pick, to confirm):
   - **`Format.Rgba16f`** is the enum's third member, and the original float format: four floats of 16 bits a pixel, each any number to three digits or so (up to about 65,000, in steps of a thousandth near 1). It's the one every backend that has float images draws into, blends and reads blended between pixels, so a `Format.Rgba16f` image behaves as a `Format.Rgba8` one does but for what it keeps. It takes twice the memory. The numeric formats and their matching rules follow below.
   - **Where the formats are written:** after the size and, where it's said, the pixels per unit, `RenderTarget(width, height, pixelsPerUnit, Format.Rgba8, Format.Rgba16f)`, and after a screen's factor. A fifth is an error, and so is `Format.Depth` written among several: every target has depth, so it's said alone. A format is a value like any enum's, so one that's only known as it runs, and isn't a color's among several, is a `Format.Rgba8` image, with a line that says so.
-  - **`target.colors` is only read one at a time,** `target.colors[1]`, with an int that's any expression. It's no list: `target.colors` by itself, its `count`, and a loop over it are errors that say to read one. A literal index past 3 is an error; any other image a target hasn't got is found out when a draw samples it, which is passed by with a line that says so, as a draw that samples the color of a target of depth alone is. `Draw.window` has none, like its `color`.
+  - **`target.colors` is only read one at a time,** `target.colors[1]`, with an int that's any expression. It's no list: `target.colors` by itself and a loop over it are errors that say to read one. (`target.colors.count`, how many it holds, is read since 2026-11-14.) A literal index past 3 is an error; any other image a target hasn't got is found out when a draw samples it, which is passed by with a line that says so, as a draw that samples the color of a target of depth alone is. `Draw.window` has none, like its `color`.
   - **`target.color`, `target.colors[i]` and `target.depth` can't be assigned:** they're the target's own images. (The first and the last compiled before, to C that didn't.)
   - **What the engine draws itself has one color,** which goes into a target's first color image and leaves the others: shapes, text, 2D and 3D meshes drawn with no frag, and so the GUI's widgets, were they drawn there.
   - **A clear fills each image** with its corresponding typed value and sets depth back; numeric float values can exceed one. The existing one-Color clear still broadcasts to ordinary color targets (Numeric images and outputs, below).
@@ -3729,7 +3796,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **`Draw.Blit`** replaces as many of its destination's color images as its frag has outputs, and leaves the others. Its source is one `Texture`, as ever: a frag that reads several images of a target takes the others through `Texture` fields of a singleton.
   - **A draw into a target samples none of that target's color images,** the second no more than the first, whichever of them it writes: it's passed by, with the line a draw that samples its own color gets.
   - **Every GPU Tide draws with draws into floats** since the GL backends went (2026-11-05); the decided fallback for one that couldn't (bytes, and a line on the game's output) went with them.
-  - **Not there:** reading how many images a target has; a blend for each output; a target's color image as another target's (each target owns its images).
+  - **Not there:** a blend for each output; a target's color image as another target's (each target owns its images). (How many images a target has is read since: `target.colors.count`, under Which image a read is of, above.)
 - **Numeric images and outputs** (built 2026-11-14; the output types, formats, typed reads and per-image clears are
   decided 2026-11-13 above; the following are implementation picks, Provisional):
   - **Type matching:** R8, R16f and R32f take `float`; Rg8 and Rg16f take `float2`; R32i takes `int`;

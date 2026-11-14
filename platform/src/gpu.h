@@ -147,6 +147,16 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
     return count < TIDE_GPU_MAX_COLORS ? format | (uint32_t)color << (4u * count) : format;
 }
 
+// A target whose first color image is TIDE_GPU_COLOR_SRGB is the renderer's own copy of an image for a [Linear]
+// read: drawn into whole, by a pipeline that neither tests nor writes depth (TIDE_GPU_DEPTH_NONE) and uses no
+// stencil. It has no depth and no stencil (target_depth is 0, and it holds its colors' bytes alone), and so do the
+// faces of a cube and the layers of an array made of that color with no pixels (array_depth is 0). Every other
+// target has both.
+static inline bool tide_gpu_target_depthless(const tide_gpu_target_format format)
+{
+    return tide_gpu_target_color(format, 0) == TIDE_GPU_COLOR_SRGB;
+}
+
 // How a pipeline reads one of its textures. A color is read as it is. A
 // target's depth is read as a number, 0 at the near plane to 1 at the far
 // limit, the nearest pixel's; or compared with a number of the shader's,

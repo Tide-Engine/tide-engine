@@ -42,7 +42,8 @@ For a constant angle, add lowercase `deg` to a decimal number: `quaternion.Euler
 `Math.ToLinear(value)` decodes sRGB RGB to linear light; `Math.ToDisplay(value)` encodes
 linear RGB for display. They take `float`, `float3` or `Color` in CPU and GPU code. RGB
 clamps to [0, 1], NaN maps to zero, and a Color's alpha is copied unchanged. GPU results
-have the same rounding limits as other Math functions. Tone-map HDR light before encoding.
+have the same rounding limits as other Math functions. Both ends are exact everywhere: 0
+gives 0 and 1 gives 1, so `Math.ToDisplay(Math.ToLinear(Color.white)) == Color.white`. Tone-map HDR light before encoding.
 For color textures, prefer [`[Linear]`](../game/shaders.md#linear-light-color), which also
 makes filtering and mipmaps operate in linear light.
 

@@ -104,6 +104,7 @@ singleton Marks
     float line = 144;  // A window pixel's y
     Mode mode = Mode.Bright;
     float transferInput = 0.5;
+    float transferOne = 1; // A number the GPU works with, not one tidec folds
     float transferLinear = Math.ToLinear(0.5);
     float3 transferDisplay = Math.ToDisplay(float3(0.0031308, 0.5, 1));
     Color transferColor = Math.ToLinear(Color(0.04045, 0.5, 1, 0.37));
@@ -501,6 +502,15 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     if (Math.Length(Math.ToDisplay(float3(0.0031308, marks.transferInput, 1)) - marks.transferDisplay) > 0.00001) ok = false;
     if (!SameColor(Math.ToLinear(Color(0.04045, marks.transferInput, 1, 0.37)), marks.transferColor)) ok = false;
     if (!Near(Math.ToDisplay(Math.ToLinear(marks.transferInput)), marks.transferInput)) ok = false;
+    // Both ends exactly, as on the CPU: white is white through either function and through both, whatever a
+    // GPU's pow makes of 1
+    if (Math.ToDisplay(marks.transferOne) != 1 || Math.ToLinear(marks.transferOne) != 1) ok = false;
+    if (Math.ToDisplay(marks.transferOne * 2) != 1 || Math.ToLinear(marks.transferOne * 2) != 1) ok = false;
+    if (Math.ToDisplay(marks.transferOne - 1) != 0 || Math.ToLinear(marks.transferOne - 1) != 0) ok = false;
+    float3 whiteAgain = Math.ToDisplay(Math.ToLinear(float3(marks.transferOne)));
+    if (whiteAgain.x != 1 || whiteAgain.y != 1 || whiteAgain.z != 1) ok = false;
+    Color whiteColor = Math.ToDisplay(Math.ToLinear(Color(marks.transferOne, marks.transferOne, marks.transferOne, 1)));
+    if (whiteColor.r != 1 || whiteColor.g != 1 || whiteColor.b != 1 || whiteColor.a != 1) ok = false;
 
     // A value on its way to another, and angles: the GPU's against the CPU's, and a color's rgb.
     float half = marks.transferInput;

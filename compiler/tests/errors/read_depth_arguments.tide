@@ -1,0 +1,4 @@
+// expect: ReadDepth takes no arguments and finishes later
+scene Main {}
+local singleton State { RenderTarget target; }
+async void Read(State state) { var depths = await state.target.ReadDepth(0); }

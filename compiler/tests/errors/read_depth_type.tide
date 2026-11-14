@@ -1,0 +1,4 @@
+// expect: ReadDepth takes no type in '<>': a depth is a float
+scene Main {}
+local singleton State { RenderTarget target; }
+async void Read(State state) { var depths = await state.target.ReadDepth<float>(); }

@@ -1,3 +1,18 @@
+## The pack says which images are [Linear]; marked import without a pow a channel (2026-11-14)
+
+- `TIDE_PACK_LINEAR` (0x80000000 in `tide_pack_entry.extra`) is set in a Texture's, a Cubemap's and a
+  TextureArray's entry when its declaration is `[Linear]` (`build_pack`'s three `tide_pack_name` calls,
+  `codegen.c`). The loader keeps it beside the image, the cube and the array (`packed_texture.linear` and its
+  two siblings, `pack_load.c`), `tide_pack_image_linear(named, &linear)` says it, and the draw list refuses an
+  image stored for the other reading with one message (`pack_reads`, `engine/src/draw.c`). No other bit of
+  `extra` is read for these kinds, the pack's version is unchanged, and a glob's list or map has no mark (the
+  checker refuses `[Linear]` on one). A game's `.simulation` and pack digest move for a game with a marked
+  asset, as they do for any change to its pack.
+- Marked import (`texture_make_linear`, `texture_compress_linear`) finds its bytes through
+  `tide/transfer_bytes.h`: the same bytes as before for every input, about four times faster for a 2048 by 2048
+  image through tidec. The proof, the numbers and the test that guards the tables are in notes/textures.md, top
+  section, finding 5.
+
 ## Linear color import (2026-11-14)
 
 Marked Texture/TextureArray/Cubemap assets prepare RGB as encode(decode(straightRGB)*alphaByte/255), with

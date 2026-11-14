@@ -1,0 +1,6 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't read a RenderTarget
+// How many images a target holds is the view's to read: 'target.colors.count'
+scene Main { }
+local singleton Maps { RenderTarget scene; }
+frag Count(Vertex vertex, out Color color, Maps maps) { color = Color(maps.scene.colors.count, 0, 0, 1); }
+view Show(Maps maps) { List<Vertex> quad = [Vertex {}]; Draw.Mesh(quad, [0, 0, 0], Count); }

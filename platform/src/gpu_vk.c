@@ -1848,6 +1848,7 @@ static tide_gpu_id vk_array(const tide_gpu_target_format format, const int width
         for (uint32_t layer = 0; layer < layers; layer++) write_pixels(t, pixels[layer], 0, 0, width, height, width, layer);
         return id;
     }
+    if (tide_gpu_target_depthless(format)) return id; // A [Linear] read's copy: its layers are drawn with no depth
     const tide_gpu_id depth = make_layers(vk.depth_format, width, height, 1, layers, depth_usage,
                                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     vk.textures[id - 1u].depth_array = depth;
@@ -2115,7 +2116,7 @@ static tide_gpu_id vk_target_make(const tide_gpu_target_format format, const int
         vkCmdClearDepthStencilImage(cb, t->many_depth, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &whole);
         turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    } else {
+    } else if (!tide_gpu_target_depthless(format)) {
         const tide_gpu_id depth = depth_texture(width, height);
         t = &vk.targets[id - 1u];
         t->depth = depth;
@@ -2132,13 +2133,14 @@ static tide_gpu_id vk_cube_face(const tide_gpu_id cube, const uint32_t face)
     if (!c) return 0;
     const int size = c->width;
     const tide_gpu_color held = color_of(c->format);
-    const tide_gpu_id depth = depth_texture(size, size);
+    // A depth of its own, but for a [Linear] read's copy, which is drawn with none (gpu.h)
+    const tide_gpu_id depth = held == TIDE_GPU_COLOR_SRGB ? 0u : depth_texture(size, size);
     const tide_gpu_id id = target_place();
     vk_target *t = &vk.targets[id - 1u];
     *t = (vk_target){.used = true, .width = size, .height = size, .color_count = 1, .samples = 1, .face = true, .cube = cube,
                      .layer = face < TIDE_GPU_CUBE_FACES ? face : 0u, .bytes = held == TIDE_GPU_COLOR_BYTES || held == TIDE_GPU_COLOR_SRGB, .depth = depth,
                      .format = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, held)};
-    vk.textures[depth - 1u].owned = true;
+    if (depth) vk.textures[depth - 1u].owned = true;
     return id;
 }
 
@@ -2728,8 +2730,10 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
                                                        VK_LOGIC_OP_COPY, colors, blends, {0}};
     static const VkDynamicState dynamic[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_DEPTH_BIAS};
     m->dynamics = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, NULL, 0, 4, dynamic};
+    // Into a [Linear] read's copy, which has neither depth nor stencil (gpu.h): the pipeline says none
+    const VkFormat deep = tide_gpu_target_depthless(desc->into) ? VK_FORMAT_UNDEFINED : vk.depth_format;
     m->rendering = (VkPipelineRenderingCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, NULL, 0, colors, formats,
-                                                     vk.depth_format, vk.depth_format};
+                                                     deep, deep};
     m->info = (VkGraphicsPipelineCreateInfo){
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &m->rendering, .stageCount = 2, .pStages = m->stages,
         .pVertexInputState = &m->input, .pInputAssemblyState = &m->assembly, .pViewportState = &m->viewport,
@@ -3050,7 +3054,8 @@ static void replay(const VkCommandBuffer cb, const vk_deferred *d)
             const pc_rendering *r = op;
             const VkRenderingInfo info = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = r->area, .layerCount = 1,
                                           .colorAttachmentCount = r->color_count, .pColorAttachments = r->colors,
-                                          .pDepthAttachment = &r->depth, .pStencilAttachment = &r->depth};
+                                          .pDepthAttachment = r->depth.imageView ? &r->depth : NULL,
+                                          .pStencilAttachment = r->depth.imageView ? &r->depth : NULL};
             vkCmdBeginRendering(cb, &info);
             break;
         }
@@ -3335,6 +3340,8 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
         color_count = t->color_count;
         if (t->samples > 1u) {
             depth.imageView = t->many_depth_view;
+        } else if (tide_gpu_target_depthless(t->format)) {
+            depth.imageView = VK_NULL_HANDLE; // A [Linear] read's copy has neither depth nor stencil (gpu.h)
         } else if (t->array) { // That layer of its array's depth
             const vk_texture *d = texture_of(t->depth_layers);
             turn_for_pass(d->image, d->format, t->layer, d->rest, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);

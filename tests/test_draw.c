@@ -2368,6 +2368,51 @@ TIDE_TEST(draw_linear_grid_captures_keep_roles_and_alpha)
     tide_heaps_free(&heap);
 }
 
+// A [Linear] source's place is found through the list's index (it was a scan of every texture, at each marked
+// texture of each shaded draw): the same place however many textures the list holds and however often it's asked,
+// following its source's pixels, apart from the source's own place, and still found after a frame's pruning.
+TIDE_TEST(draw_linear_twins_are_found_through_the_index)
+{
+    enum { images = 300, marked = 3 };
+    static uint8_t pixels[images][4];
+    tide_draw_list d = {0};
+    uint32_t plain[images], twins[marked];
+    for (uint32_t i = 0; i < images; i++) {
+        memset(pixels[i], (int)(i & 255u), 4);
+        plain[i] = tide_draw_texture_source(&d, (tide_texture_ref){.image = {pixels[i], 1, 1, 7}});
+        TIDE_REQUIRE(plain[i] == i + 1u);
+    }
+    for (uint32_t k = 0; k < marked; k++) {
+        twins[k] = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[k * 100u], 1, 1, 7}});
+        TIDE_REQUIRE(twins[k] == images + k + 1u);
+        const tide_draw_texture *twin = &d.textures[twins[k] - 1u], *source = &d.textures[plain[k * 100u] - 1u];
+        TIDE_CHECK(twin->linear && !source->linear && twin->space == source->space && twin->id == source->id);
+        TIDE_CHECK(twin->pixels == source->pixels && twin->capacity == 0 && !twin->changes); // Borrowed: the source's to free
+    }
+    for (uint32_t draw = 0; draw < 2000u; draw++) { // As many shaded draws of the three: no place more, each its own
+        for (uint32_t k = 0; k < marked; k++) {
+            const tide_texture_ref image = {.image = {pixels[k * 100u], 1, 1, 7}};
+            if (tide_draw_texture_source_linear(&d, image) != twins[k]) TIDE_REQUIRE(false);
+        }
+    }
+    TIDE_CHECK(d.texture_count == images + marked);
+    // The source's pixels at another version: the same two places, and the twin has what the source now has
+    pixels[100][0] = 99;
+    TIDE_CHECK(tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[100], 1, 1, 8}}) == twins[1]);
+    TIDE_CHECK(d.textures[twins[1] - 1u].version == 8 && d.textures[plain[100] - 1u].version == 8);
+    TIDE_CHECK(d.textures[twins[1] - 1u].pixels == d.textures[plain[100] - 1u].pixels && d.textures[twins[1] - 1u].pixels[0] == 39); // 99 under an alpha of 100
+    TIDE_CHECK(d.texture_count == images + marked);
+    // A frame that draws only one marked image keeps its two places, compacted, and finds them again
+    tide_draw_reset(&d);
+    const uint32_t kept = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}});
+    tide_draw_reset(&d);
+    TIDE_REQUIRE(d.texture_count == 2u && kept);
+    const uint32_t again = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}});
+    TIDE_REQUIRE(again == 2u && d.textures[1].linear && !d.textures[0].linear && d.texture_count == 2u);
+    TIDE_CHECK(tide_draw_texture_source(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}}) == 1u);
+    tide_draw_free(&d);
+}
+
 TIDE_TEST(draw_numeric_target_formats_keep_images_samples_and_reload)
 {
     for (int f = TIDE_TARGET_R8; f <= TIDE_TARGET_R32I; f++) {

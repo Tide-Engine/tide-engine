@@ -2,7 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include "tide/math.h"
+#include "tide/transfer_bytes.h"
 
 #define STB_DXT_IMPLEMENTATION
 #include "stb_dxt.h"
@@ -21,6 +21,8 @@ tide_texture_blocks texture_compress_linear(const uint8_t *rgba, const int32_t w
     uint8_t *blocks = malloc(result.bytes), *mip = malloc(rgba_bytes);
     if (!blocks || !mip) abort();
     memcpy(mip, rgba, rgba_bytes);
+    tide_transfer_table decoded = {{0}};
+    if (linear) tide_transfer_table_make(&decoded); // 256 pows an image, where each mip's every sample had one
     uint32_t w = (uint32_t)width, h = (uint32_t)height, offset = 0;
     for (uint32_t level = 0; level < result.levels; level++) {
         for (uint32_t y = 0; y < h; y += 4u) {
@@ -49,10 +51,11 @@ tide_texture_blocks texture_compress_linear(const uint8_t *rgba, const int32_t w
                     for (uint32_t dy = 0; dy < 2u; dy++) for (uint32_t dx = 0; dx < 2u; dx++) {
                         const uint8_t value = mip[((size_t)(sy + (h > 1u ? dy : 0u)) * w + sx + (w > 1u ? dx : 0u)) * 4u + c];
                         sum += value;
-                        if (linear && c < 3u) light += tide_tolinear_f((float)value / 255.0f);
+                        if (linear && c < 3u) light += decoded.linear[value]; // tide_tolinear_f(value / 255.0f)
                     }
+                    // byte(tide_todisplay_f(light * 0.25f)), with no pow (tide/transfer_bytes.h)
                     mip[((size_t)y * next_w + x) * 4u + c] = linear && c < 3u
-                        ? (uint8_t)(tide_todisplay_f(light * 0.25f) * 255.0f + 0.5f) : (uint8_t)((sum + 2u) / 4u);
+                        ? tide_transfer_display_byte(light * 0.25f) : (uint8_t)((sum + 2u) / 4u);
                 }
             }
         }

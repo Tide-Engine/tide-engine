@@ -1,3 +1,3 @@
-// expect: Read returns Grid2<Color> from a Color image
+// expect: Read gives a Grid2<Color>, but this target's image 0 is Format.R32i, which holds int: write 'await target.Read<int>()'
 scene Main { }
 async void Read() { var target=RenderTarget(8,8,Format.R32i); var pixels=await target.Read(); }

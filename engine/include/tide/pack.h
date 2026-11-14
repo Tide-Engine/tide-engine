@@ -94,6 +94,13 @@ typedef struct tide_skinned_lists {
     tide_list data, vertices, indices;
 } tide_skinned_lists;
 
+// In `extra` of a Texture's, a Cubemap's and a TextureArray's entry (whose other bits no loader reads): the
+// declaration is [Linear], so its image's RGB is stored for that reading, encode(decode(straight) * alpha), which
+// is other bytes than an unmarked image's wherever alpha is neither 0 nor 255. The code that draws an image is
+// built for one reading or the other, and a pack of another build's may not be: tide_pack_image_linear says which
+// the loaded pack's is, and the draw list draws none that's stored for the other (tide_draw_texture_source).
+#define TIDE_PACK_LINEAR 0x80000000u
+
 typedef struct tide_pack_entry {
     uint8_t name[32]; // SHA-256 of the declaration's qualified name
     uint32_t kind;    // TIDE_PACK_*
@@ -312,6 +319,9 @@ tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e);
 // them there (TIDE_PIXELS_PACK), with no copy of its own: a list that drew
 // with one isn't rendered after its pack went.
 bool tide_pack_texture_find(uint64_t named, tide_texture *image);
+// Whether the loaded pack has an image, a cube or an array under that name, and in `linear` whether its entry
+// says it was packed for a [Linear] reading (TIDE_PACK_LINEAR).
+bool tide_pack_image_linear(uint64_t named, bool *linear);
 // Optional borrowed blocks for the current pack, with the same lifetime as
 // texture_find's pixels. Malformed/missing metadata gives no blocks.
 tide_texture_blocks tide_pack_texture_blocks_find(uint64_t named);

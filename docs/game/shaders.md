@@ -718,6 +718,11 @@ draw's own texture argument would lose the mark, so the compiler refuses those e
 A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
 TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
 field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
+The compiler follows where the target comes from, so assign it to its field directly (an
+assignment or a struct's `{ target = RenderTarget(...) }`): a target field that a function
+fills through an `out` or `mut` parameter has no format the compiler can see, and is an
+error. A marked read of an image that turns out not to be RGBA8 draws nothing and says so.
+A rendered image is copied for its marked reads when it has been drawn into, not every frame.
 The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
 and `target.Read()` keep their values. It does not convert a frag's output or the screen.
 For a final display pass, tone-map linear light first and use `Math.ToDisplay`; for an

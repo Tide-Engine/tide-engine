@@ -1287,6 +1287,9 @@ struct expr {
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
                            // ...and cube.faces: a Cubemap's faces, of which an index is one as a RenderTarget (cube.faces[2])
+    // await target.Read<T>(image), await target.ReadDepth() (GPU_TARGET_READ): which color image, from 0, and as what
+    // (tide/draw.h's tide_target_read: 0 Color, 1 float, 2 float2, 3 float4, 4 int, 5 the depth)
+    uint8_t read_image, read_kind;
 
 
     // E_CALL, E_METHOD
@@ -1811,6 +1814,7 @@ typedef struct program {
     VEC(decl *) local_parts; // The local parts of the match's components and singletons (decl.local_part), in their order
     VEC(decl *) start_scenes; // Scenes Session.Start starts matches in
     bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements
+    VEC(const field *) image_places; // Image fields a call made or may have changed (`out`, `mut`): what they hold isn't known
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
     // ...and the entities' places as it began: a match handler reads the tick's start, or a function does through its

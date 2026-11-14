@@ -34,6 +34,7 @@ typedef struct packed_texture {
     int32_t width, height; // An image's; a clip's (`clip`) has its file's size in `width`
     bool clip;
     bool blocks_only; // An image of GPU blocks with no RGBA beside them (texture_at)
+    bool linear;      // Its entry says it was packed for a [Linear] reading (TIDE_PACK_LINEAR): a declaration's own image
 } packed_texture;
 
 // An entry of a map from text to clips, as generated code lays it out.
@@ -70,6 +71,7 @@ typedef struct packed_cube {
     uint64_t version; // What's in its six faces
     int32_t size;
     const uint8_t *faces[TIDE_CUBE_FACES];
+    bool linear; // TIDE_PACK_LINEAR
 } packed_cube;
 
 // A texture array as a declaration names it: its layers' pixels, where the region has them.
@@ -80,6 +82,7 @@ typedef struct packed_array {
     uint32_t layers;
     const uint8_t **pixels;      // Its own allocation: a pointer for each layer, NULL for one kept as blocks alone
     tide_texture_blocks *blocks; // ...and each layer's blocks, none for one kept as RGBA alone
+    bool linear;                 // TIDE_PACK_LINEAR
 } packed_array;
 
 static tide_texture_blocks blocks_at(const packed_texture *t);
@@ -635,7 +638,8 @@ static void lay_textures(const uint64_t file)
     for (uint32_t i = 0; i < pack.entry_count; i++) {
         tide_pack_entry *e = &pack.entries[i];
         if (e->kind == TIDE_PACK_TEXTURE) {
-            note_texture(texture_name(e->name, ALONE, NULL, 0), e->offset, file);
+            const uint64_t named = texture_name(e->name, ALONE, NULL, 0);
+            if (note_texture(named, e->offset, file).image.version) texture_place(named)->linear = (e->extra & TIDE_PACK_LINEAR) != 0;
         } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
             const uint32_t count = count_at(pack.region, file, e->offset, sizeof(tide_handle));
             const uint64_t at = lay_block(count, (uint64_t)count * sizeof(tide_texture_ref));
@@ -722,7 +726,7 @@ static void note_cubes(void)
         if (e->kind != TIDE_PACK_CUBEMAP || count_at(pack.region, pack.size, e->offset, sizeof(tide_handle)) != TIDE_CUBE_FACES) continue;
         tide_handle handles[TIDE_CUBE_FACES];
         memcpy(handles, pack.region + e->offset + sizeof(tide_block), sizeof handles);
-        packed_cube cube = {.named = texture_name(e->name, ALONE, NULL, 0)};
+        packed_cube cube = {.named = texture_name(e->name, ALONE, NULL, 0), .linear = (e->extra & TIDE_PACK_LINEAR) != 0};
         tide_sha256 s;
         tide_sha256_init(&s);
         bool whole = true;
@@ -757,7 +761,8 @@ static void note_arrays(void)
         if (e->kind != TIDE_PACK_TEXTURE_ARRAY) continue;
         const uint64_t count = count_at(pack.region, pack.size, e->offset, sizeof(tide_handle));
         if (count == 0 || count > TIDE_TEXTURE_ARRAY_LAYERS) continue;
-        packed_array array = {.named = texture_name(e->name, ALONE, NULL, 0), .layers = (uint32_t)count};
+        packed_array array = {.named = texture_name(e->name, ALONE, NULL, 0), .layers = (uint32_t)count,
+                              .linear = (e->extra & TIDE_PACK_LINEAR) != 0};
         array.pixels = tide_alloc_zeroed(count, sizeof *array.pixels);
         array.blocks = tide_alloc_zeroed(count, sizeof *array.blocks);
         tide_sha256 s;
@@ -1241,6 +1246,30 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
     *image = (tide_texture){.pixels = t->blocks_only ? NULL : pack.region + t->offset + sizeof(tide_block) + 2u * sizeof(int32_t),
                             .width = t->width, .height = t->height, .version = t->version};
     return true;
+}
+
+bool tide_pack_image_linear(const uint64_t named, bool *linear)
+{
+    *linear = false;
+    if (!named) return false;
+    if (pack.texture_places) {
+        const packed_texture *t = texture_place(named);
+        if (t->named == named && !t->clip) {
+            *linear = t->linear;
+            return true;
+        }
+    }
+    for (uint32_t i = 0; i < pack.array_count; i++) {
+        if (pack.arrays[i].named != named) continue;
+        *linear = pack.arrays[i].linear;
+        return true;
+    }
+    for (uint32_t i = 0; i < pack.cube_count; i++) {
+        if (pack.cubes[i].named != named) continue;
+        *linear = pack.cubes[i].linear;
+        return true;
+    }
+    return false;
 }
 
 // The blocks an image of the pack's keeps (its trailer's), or none.

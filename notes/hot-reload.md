@@ -6,6 +6,10 @@ silently reinterpreting old storage. Compatible fields retain their references; 
 the new image through the existing declaration identity. linear_textures E2E serializes marked local references,
 loads a different pack under the same asset name, and checks the retained field captures the replacement with
 its Linear role. Runtime sampled-copy/device invalidation details are in rendering.md; no migration ABI changes.
+Since the same day the pack's entry says whether its image was packed for the mark (TIDE_PACK_LINEAR,
+notes/assets-and-files.md, top section): a replacement pack whose image was packed for the other reading isn't
+drawn through the field, and says so once, where it was read as the wrong encoding before. The e2e's replacement
+pack sets the bit, and loads one without it to see the refusal.
 
 # Hot reloading
 

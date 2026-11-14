@@ -204,16 +204,18 @@ float tide_log2_f(float x);
 float tide_log10_f(float x);
 float tide_pow_f(float x, float y);
 
-// sRGB transfer functions. RGB is bounded to [0,1]; NaN maps to zero.
+// sRGB transfer functions. RGB is bounded to [0,1]; NaN maps to zero. Both ends are exact: 0 gives 0 and 1 gives
+// 1, said outright for 1, as 1.055f * 1 - 0.055f rounds to the float under it (and a GPU's pow of 1 needn't be 1:
+// the shader helper says the same), so white stays white through either function and through both.
 static inline float tide_tolinear_f(const float value)
 {
     const float x = tide_saturate_f(value);
-    return x <= 0.04045f ? x / 12.92f : tide_pow_f((x + 0.055f) / 1.055f, 2.4f);
+    return x >= 1.0f ? 1.0f : x <= 0.04045f ? x / 12.92f : tide_pow_f((x + 0.055f) / 1.055f, 2.4f);
 }
 static inline float tide_todisplay_f(const float value)
 {
     const float x = tide_saturate_f(value);
-    return x <= 0.0031308f ? x * 12.92f : 1.055f * tide_pow_f(x, 1.0f / 2.4f) - 0.055f;
+    return x >= 1.0f ? 1.0f : x <= 0.0031308f ? x * 12.92f : 1.055f * tide_pow_f(x, 1.0f / 2.4f) - 0.055f;
 }
 
 // Math.MoveTowards: `current` a step of at most `step` closer to `target`, never past it. A step that isn't

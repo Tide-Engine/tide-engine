@@ -4928,6 +4928,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_INT && e->object->kind == E_MEMBER
+            && e->object->target_colors) { // target.colors.count
+            sb_put(o, "tide_render_target_color_count((");
+            gen_expr(g, o, e->object->object);
+            sb_put(o, ").id)");
+            break;
+        }
         if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_LONG) {
             sb_put(o, "tide_render_target_content_revision(");
             gen_expr(g, o, e->object);
@@ -6326,10 +6333,11 @@ static void gen_await(gen *g, expr *e, const char *name)
         line(g, o, "tide_gpu_resume%d:;", k);
         indent(g, o);
         sb_put(o, call->gpu == GPU_TARGET_READ
-            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin("
+            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_as("
             : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
         gen_expr(g, o, call->object);
-        if (call->gpu == GPU_TARGET_READ) sb_put(o, ");\n");
+        // Which image and as what (tide_target_read): the grid below is of that kind's cells
+        if (call->gpu == GPU_TARGET_READ) sb_printf(o, ", %d, %uu);\n", (int)call->read_image, (unsigned)call->read_kind);
         else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
         line(g, o, "tide_gpu_read_result tide_read%d;", k);
         line(g, o, "if (!tide_gpu_list_read_poll((uint32_t)tide_f->tide_gpu_ticket, &tide_read%d)) {", k);
@@ -23549,7 +23557,7 @@ static void build_pack(gen *g)
                 layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder, NULL);
             }
             tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
-                           (uint32_t)(v->count ? v->items[0].image.width : 0));
+                           (uint32_t)(v->count ? v->items[0].image.width : 0) | (d->sample_linear ? TIDE_PACK_LINEAR : 0u));
             continue;
         }
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
@@ -23558,7 +23566,8 @@ static void build_pack(gen *g)
             for (int k = 0; k < 6; k++) {
                 faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, d->sample_linear, &extra, prog->game_folder, NULL);
             }
-            tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
+            tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6,
+                           (uint32_t)v->items[0].image.width | (d->sample_linear ? TIDE_PACK_LINEAR : 0u));
             continue;
         }
         if (v->kind == ASSET_ANIMATIONS && t.kind == TY_STRUCT) {
@@ -23596,8 +23605,10 @@ static void build_pack(gen *g)
             uint32_t extra;
             const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder,
                                           &stored[0]);
+            // A [Linear] Texture's entry says so: its bytes are for that reading alone (TIDE_PACK_LINEAR)
             tide_pack_name(&b, qualified, kind, at,
-                           v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
+                           v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size,
+                           extra | (v->kind == ASSET_TEXTURE && d->sample_linear ? TIDE_PACK_LINEAR : 0u));
             continue;
         }
         uint64_t *offsets = malloc(sizeof(uint64_t) * (size_t)(v->count ? v->count : 1));

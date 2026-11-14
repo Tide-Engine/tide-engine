@@ -1,5 +1,13 @@
 static bool target_read_prepare(tide_gpu_read_request *request);
-static tide_gpu_id pixel_read_pipeline;
+// The renderer's kernels that read a target's image into a range (cull.tide, ReadTarget...): the first five are
+// tide_target_read's color kinds, in its order.
+enum { PIXEL_READ_COLOR, PIXEL_READ_FLOAT, PIXEL_READ_FLOAT2, PIXEL_READ_FLOAT4, PIXEL_READ_INT, PIXEL_READ_DEPTH,
+       PIXEL_READ_FACE, PIXEL_READ_LAYER, PIXEL_READ_FACE_NUMBERS, PIXEL_READ_LAYER_NUMBERS, PIXEL_READ_LAYER_DEPTH,
+       PIXEL_READS };
+_Static_assert(PIXEL_READ_COLOR == (int)TIDE_TARGET_READ_COLOR && PIXEL_READ_FLOAT == (int)TIDE_TARGET_READ_FLOAT
+               && PIXEL_READ_FLOAT2 == (int)TIDE_TARGET_READ_FLOAT2 && PIXEL_READ_FLOAT4 == (int)TIDE_TARGET_READ_FLOAT4
+               && PIXEL_READ_INT == (int)TIDE_TARGET_READ_INT, "a color read's kernel is its kind's");
+static tide_gpu_id pixel_read_pipelines[PIXEL_READS];
 // Compute in the renderer (notes/compute.md): GPU lists' ranges in two pools, kernels' runs and the engine's own
 // kernels around them (shaders.h: a run over a GPU list's count, ordered Add's offsets and scatter, and a range
 // zeroed), list operations in frame order, indirect draws, and reads back. Included by platform.c, which turns the
@@ -225,7 +233,7 @@ static void forget_compute(void)
     scratch_count = scratch_used = 0;
     kernel_pipeline_count = 0;
     run_size_pipeline = add_offsets_pipeline = add_scatter_pipeline = zero_words_pipeline = 0;
-    pixel_read_pipeline = 0;
+    memset(pixel_read_pipelines, 0, sizeof pixel_read_pipelines);
     memset(pixel_read_ranges, 0, sizeof pixel_read_ranges);
     forget_culling();
     tide_gpu_read_request *reads = tide_gpu_read_requests();

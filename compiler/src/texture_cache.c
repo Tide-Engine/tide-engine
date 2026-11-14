@@ -6,6 +6,7 @@
 #include "image_files.h"
 #include "texture_compress.h"
 #include "tide/sha256.h"
+#include "tide/transfer_bytes.h"
 
 void texture_cache_key_linear(uint8_t key[32], const uint8_t source[32], const char *name, const bool raw, const bool compress, const bool linear)
 {
@@ -101,6 +102,19 @@ static uint8_t channel_byte(const float v, const float alpha)
     return (uint8_t)(c * a * 255.0f + 0.5f);
 }
 
+// A [Linear] image's channel under `alpha` of 255 (tide_transfer_premultiplied_byte). A soft pixel's costs a pow,
+// so one whose value is a byte's (an 8-bit file's every one) is kept in `memo`, 256 by 256 of them, 0 for not yet.
+static uint8_t marked_byte(uint16_t *memo, const float straight, const uint8_t alpha)
+{
+    if (alpha == 0u || alpha == 255u) return tide_transfer_premultiplied_byte(straight, alpha);
+    const float x = tide_saturate_f(straight);
+    const uint32_t byte = (uint32_t)(x * 255.0f + 0.5f);
+    if ((float)byte / 255.0f != x) return tide_transfer_premultiplied_byte(x, alpha);
+    uint16_t *kept = &memo[(size_t)alpha * 256u + byte];
+    if (!*kept) *kept = (uint16_t)(0x100u | tide_transfer_premultiplied_byte(x, alpha));
+    return (uint8_t)*kept;
+}
+
 bool texture_make_linear(const asset_match *item, const bool raw, const bool compress, const bool linear, texture_made *out, char why[256])
 {
     asset_match decoded;
@@ -114,20 +128,24 @@ bool texture_make_linear(const asset_match *item, const bool raw, const bool com
     const size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
     uint8_t *rgba = malloc(pixels ? pixels * 4u : 1u);
     if (!rgba) abort();
+    // [Linear]: each soft pixel's channel under its alpha, worked out once for an 8-bit file's 256 values
+    uint16_t *memo = linear ? calloc(256u * 256u, sizeof *memo) : NULL;
+    if (linear && !memo) abort();
     for (size_t i = 0; i < pixels; i++) {
-        tide_color c = item->image.pixels[i];
+        const tide_color c = item->image.pixels[i];
         const uint8_t alpha = channel_byte(1.0f, c.a);
         if (linear) {
-            // Quantize coverage first: an alpha byte of zero must store no light.
-            const float coverage = (float)alpha / 255.0f;
-            c.r = tide_todisplay_f(tide_tolinear_f(c.r) * coverage);
-            c.g = tide_todisplay_f(tide_tolinear_f(c.g) * coverage);
-            c.b = tide_todisplay_f(tide_tolinear_f(c.b) * coverage);
+            // Coverage is quantized first: an alpha byte of zero must store no light. The bytes are
+            // byte(ToDisplay(ToLinear(c) * alpha / 255)), found without a pow where they can be (tide/transfer_bytes.h)
+            rgba[i * 4u] = marked_byte(memo, c.r, alpha), rgba[i * 4u + 1u] = marked_byte(memo, c.g, alpha);
+            rgba[i * 4u + 2u] = marked_byte(memo, c.b, alpha), rgba[i * 4u + 3u] = alpha;
+            continue;
         }
-        const float worked = raw || linear ? 1.0f : c.a; // [Raw]: numbers, as the file has them
+        const float worked = raw ? 1.0f : c.a; // [Raw]: numbers, as the file has them
         rgba[i * 4u] = channel_byte(c.r, worked), rgba[i * 4u + 1u] = channel_byte(c.g, worked);
         rgba[i * 4u + 2u] = channel_byte(c.b, worked), rgba[i * 4u + 3u] = alpha;
     }
+    free(memo);
     tide_texture_blocks compressed = {0};
     if (item->image_mips.pixels && !linear) {
         // Authored mip levels (DDS) retain their alpha coverage and raw

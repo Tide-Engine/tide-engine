@@ -2896,10 +2896,34 @@ static bool linear_kind(const type t)
     return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
 }
 
+static bool image_kind(const type t)
+{
+    return t.kind == TY_RENDER_TARGET || t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY
+        || t.kind == TY_CUBEMAP;
+}
+
+// Where an image field gets its value: an assignment's or a struct literal's. Format inference ([Linear] sources,
+// storage images, numeric outputs) reads every one, so a way to give a field an image that isn't recorded here
+// has to say the field's origin is unknown instead (note_image_place).
+static void note_image_origin(const field *to, const expr *value)
+{
+    if (!to || !image_kind(to->type)) return;
+    field *f = (field *)(uintptr_t)to;
+    vec_push(f->image_assignments, value);
+}
+
+// An image field a call makes ('out') or may change ('mut'): the callee's assignments are to its parameter, so
+// nothing here knows what format the field then holds.
+static void note_image_place(const checker *c, const expr *arg)
+{
+    if (!arg->field || !image_kind(arg->type) || !image_kind(arg->field->type)) return;
+    vec_push(c->prog->image_places, arg->field);
+}
+
 // Sampling copies admit RGBA8 storage only. Check every assignment, including later
 // ones, so changing a target to floating-point storage cannot evade validation.
 // Zero is compatible (including no image), one incompatible, minus one unknown.
-static int linear_source_format(const expr *e, const int color, const int depth, const char **reason)
+static int linear_source_format(const program *prog, const expr *e, const int color, const int depth, const char **reason)
 {
     if (!e || e->kind == E_DEFAULT) return 0;
     if (depth > 32) return -1;
@@ -2910,23 +2934,26 @@ static int linear_source_format(const expr *e, const int color, const int depth,
         return 1;
     }
     if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
-        return linear_source_format(e->local->value, color, depth + 1, reason);
+        return linear_source_format(prog, e->local->value, color, depth + 1, reason);
     if (e->kind == E_CONDITIONAL) {
-        const int a = linear_source_format(e->lhs, color, depth + 1, reason);
-        return a ? a : linear_source_format(e->rhs, color, depth + 1, reason);
+        const int a = linear_source_format(prog, e->lhs, color, depth + 1, reason);
+        return a ? a : linear_source_format(prog, e->rhs, color, depth + 1, reason);
     }
     if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
-        return linear_source_format(e->object, 0, depth + 1, reason);
+        return linear_source_format(prog, e->object, 0, depth + 1, reason);
     if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
         int64_t index;
         if (!fold_int(e->lhs, &index) || index < 0 || index > 3) return -1;
-        return linear_source_format(e->object->object, (int)index, depth + 1, reason);
+        return linear_source_format(prog, e->object->object, (int)index, depth + 1, reason);
     }
     if (e->field) {
         const field *f = e->field;
+        // Every image a field can hold is one of its recorded origins (note_image_origin); a place a call makes or
+        // changes holds whatever the callee gave it, which is no fixed format.
+        for (int i = 0; i < prog->image_places.count; i++) if (prog->image_places.items[i] == f) return -1;
         for (int i = -1; i < f->image_assignments.count; i++) {
             const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
-            const int got = linear_source_format(origin, color, depth + 1, reason);
+            const int got = linear_source_format(prog, origin, color, depth + 1, reason);
             if (got) return got;
         }
         return 0;
@@ -2954,13 +2981,14 @@ static void check_linear_uses(const checker *c)
     for (int i = 0; i < c->linear_sources.count; i++) {
         const expr *e = c->linear_sources.items[i];
         const char *reason = NULL;
-        const int format = linear_source_format(e, 0, 0, &reason);
+        const int format = linear_source_format(c->prog, e, 0, 0, &reason);
         if (format == 1) {
             diag_error(e->at, "[Linear] cannot read %s: this format has no sRGB counterpart", reason);
             diag_note("use Format.Rgba8 for display-encoded colors, or remove [Linear] for floating-point light and single-channel data");
         } else if (format < 0) {
             diag_error(e->at, "this [Linear] source's format is not fixed by its constructor assignments");
-            diag_note("assign a Format.Rgba8 image directly, or keep images of different formats in separate fields");
+            diag_note("assign a Format.Rgba8 image to its field directly, not through an 'out' or 'mut' argument, a list or a "
+                      "function's result, and keep images of different formats in separate fields");
         }
     }
     for (int i = 0; i < c->calls.count; i++) {
@@ -3251,6 +3279,7 @@ static type check_literal(checker *c, expr *e)
             if (str_eq(d->fields.items[j].name, init->name) && !d->fields.items[j].hidden) init->field = &d->fields.items[j];
         }
         const type value = check_field_value(c, init->value, init->field);
+        note_image_origin(init->field, init->value); // Holder { target = RenderTarget(...) }, as an assignment
         if (!init->field && local_field_of(d, init->name)) {
             diag_error(init->at, "'" STR_FMT "' is a local field of '" STR_FMT "', so a value of it doesn't have it",
                        STR_ARG(init->name), STR_ARG(d->name));
@@ -5060,6 +5089,7 @@ static void finish_out_arg(checker *c, expr *arg, const type want)
         arg->type = want;
     }
     if (holds_heap(arg->type)) c->prog->uses_text = true; // In the scratch area, until it goes somewhere
+    note_image_place(c, arg);
 }
 
 // `out` before an argument of a call that takes none: a constructor's, a
@@ -5483,6 +5513,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             continue;
         }
         const bool exact = p->type.kind == arg->type.kind && p->type.decl == arg->type.decl;
+        if (p->is_out || p->mode == PARAM_MUT) note_image_place(c, arg);
         if (!check_out_param(c, m, p, arg) || p->is_out) continue;
         if (p->mode == PARAM_MUT && arg->type.kind != TY_ERROR && p->type.kind != TY_ERROR && !exact) {
             diag_error(arg->at, "'" STR_FMT "' changes its '" STR_FMT "', which must be %s, not %s", STR_ARG(m->name),
@@ -5806,7 +5837,7 @@ static void place_generic_instance(checker *c, decl *d)
     check_method_body(&nested, d);
     if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
-    MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
+    MERGE_CHECKS(linear_sources); MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
     MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
     MERGE_CHECKS(access_warnings);
 #undef MERGE_CHECKS
@@ -9130,8 +9161,11 @@ static type check_method(checker *c, expr *e)
             && !(c->method && find_property(c->method->owner, e->object->name))) world = component_world(c, e->object->at);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
     }
-    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads
-    if (e->type_arg.len > 0 && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
+    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads, and target.Read<float>(), which is
+    // known for a render target's once its receiver is checked
+    const bool read_typed = e->type_arg.len > 0 && (str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadDepth"))
+                         && !names_builtin_owner(c, e->object) && !names_wait(c, e->object);
+    if (e->type_arg.len > 0 && !read_typed && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
         && !((str_eq_c(e->name, "Set") || str_eq_c(e->name, "Reset"))
              && visibility_typed_receiver(c, e->object))) {
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
@@ -9310,6 +9344,10 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
+    if (read_typed && obj.kind != TY_RENDER_TARGET && obj.kind != TY_ERROR) { // Left for its receiver's type, above
+        diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
+        diag_note("a render target's read does, for an image of numbers: 'await target.Read<float>()'");
+    }
     if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!str_eq_c(e->name, "Cancel") || e->args.count) {
@@ -9529,15 +9567,60 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_RENDER_TARGET) {
-        if (str_eq_c(e->name, "Read")) {
+        if (str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadDepth")) {
+            // await target.Read(), Read(image), Read<T>(), Read<T>(image) and ReadDepth(): an owned grid of one of
+            // its images, a frame or more later. The cell type is written here, and plan_shaders holds it against
+            // the formats the target was made with (check_target_read), which are known once every body is checked
+            const bool depth = str_eq_c(e->name, "ReadDepth");
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            if (e->args.count || c->awaiting != e) {
-                diag_error(e->at, "Read takes no arguments and finishes later: 'var pixels = await target.Read();' in local async code");
+            if (c->awaiting != e || e->args.count > (depth ? 0 : 1)) {
+                diag_error(e->at, depth ? "ReadDepth takes no arguments and finishes later: 'var depths = await target.ReadDepth();' "
+                                          "in local async code"
+                                        : "Read takes the color image's number, or nothing for the first, and finishes later: "
+                                          "'var pixels = await target.Read();' in local async code");
                 return T_ERR;
             }
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
                 return T_ERR;
+            }
+            type cell = depth ? T_FLOAT_ : (type){TY_COLOR, NULL};
+            if (e->type_arg.len > 0) {
+                if (depth) {
+                    diag_error(e->type_arg_qual_at, "ReadDepth takes no type in '<>': a depth is a float, 'await target.ReadDepth()'");
+                    return T_ERR;
+                }
+                cell = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+                if (cell.kind == TY_ERROR) return T_ERR;
+                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT2 && cell.kind != TY_FLOAT4
+                    && cell.kind != TY_INT) {
+                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a color image holds: Color, float, float2, float4 or int, "
+                                                    "not %s", type_name(cell));
+                    diag_note("'Read<float>()' reads Format.R8, R16f and R32f, 'Read<float2>()' Rg8 and Rg16f, 'Read<float4>()' "
+                              "Rgba16f and Rgba32f, 'Read<int>()' R32i, and 'Read()' a Color image");
+                    return T_ERR;
+                }
+            }
+            e->read_kind = (uint8_t)(depth ? 5 : cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
+                                     : cell.kind == TY_INT ? 4 : 0);
+            e->read_image = 0;
+            if (e->args.count) {
+                // Which image is part of the read's type, so it's a number the compiler knows
+                const expr *image = e->args.items[0];
+                if (image->type.kind == TY_ERROR) return T_ERR;
+                for (int i = 0; image->constant && i < 32; i++) image = image->constant->value;
+                if (!type_assignable(T_INT_, e->args.items[0]->type) || image->kind != E_INT) {
+                    diag_error(e->args.items[0]->at, "Read takes which color image as a constant int, counted from 0: 'await "
+                                                     "target.Read(1)' reads 'target.colors[1]'");
+                    diag_note("what a read gives depends on the image's format, so the compiler has to know which image it is");
+                    return T_ERR;
+                }
+                if (image->int_value < 0 || image->int_value >= TARGET_COLORS) {
+                    diag_error(e->args.items[0]->at, "a render target holds %d color images at the most: 'Read(0)' to 'Read(%d)'",
+                               TARGET_COLORS, TARGET_COLORS - 1);
+                    return T_ERR;
+                }
+                e->read_image = (uint8_t)image->int_value;
             }
             if (in_async_function(c)) {
                 if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
@@ -9549,7 +9632,7 @@ static type check_method(checker *c, expr *e)
             if (code) code->uses_gpu_read = true;
             e->gpu = GPU_TARGET_READ;
             vec_push(c->prog->mesh_draws, ((mesh_draw){.in = reading_code(c), .call = e}));
-            return result_of(c->prog, grid_of(c->prog, (type){TY_COLOR, NULL}, 2), (type){TY_ENUM, c->prog->io_error}, false);
+            return result_of(c->prog, grid_of(c->prog, cell, 2), (type){TY_ENUM, c->prog->io_error}, false);
         }
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
             const bool resize = str_eq_c(e->name, "Resize");
@@ -10651,8 +10734,11 @@ static type check_member(checker *c, expr *e)
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && str_eq_c(e->member, "window")
-            && c->awaiting && str_eq_c(c->awaiting->name, "Read") && c->awaiting->object == e) {
+            && c->awaiting && (str_eq_c(c->awaiting->name, "Read") || str_eq_c(c->awaiting->name, "ReadDepth"))
+            && c->awaiting->object == e) {
             diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
+            diag_note("the window's image is the display's, which no GPU hands back to a kernel: 'RenderTarget.Window()' is a "
+                      "target of its size to draw into, read, and 'Draw.Blit' to the window");
             return T_ERR;
         }
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
@@ -10699,8 +10785,17 @@ static type check_member(checker *c, expr *e)
     c->device_whole_ok = e->object; // devices.gamepad reads what it names, not all of devices
     c->in_place_ok = e->object;     // state.tail reads its field where the state is
     c->member_object = e->object;
+    // target.colors.count: how many color images it holds. `colors` is otherwise read one at a time
+    const bool counts_colors = str_eq_c(e->member, "count") && e->object->kind == E_MEMBER && str_eq_c(e->object->member, "colors");
+    const expr *colors_indexed = c->colors_indexed;
+    if (counts_colors) c->colors_indexed = e->object;
     const type obj = check_expr(c, e->object);
+    if (counts_colors) c->colors_indexed = colors_indexed;
     if (obj.kind == TY_ERROR) return T_ERR;
+    if (counts_colors && obj.kind == TY_RENDER_TARGET && e->object->target_colors) {
+        if (gpu_refuses(c, e->at, "count a RenderTarget's color images", "the view owns the target")) return T_ERR;
+        return T_INT_;
+    }
 
     if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
         if (!str_eq_c(e->member, "isRunning") && !str_eq_c(e->member, "isCompleted") && !str_eq_c(e->member, "isCancelled")) {
@@ -11524,12 +11619,13 @@ static type check_index(checker *c, expr *e)
 {
     c->device_whole_ok = e->object; // devices.touchscreen.touches[0] reads the one it names
     c->in_place_ok = e->object;     // tail[i] reads its element where the array is
+    const expr *outer_colors = c->colors_indexed; // cube.faces[0].colors.count: the count's own, around this index
     c->colors_indexed = e->object;  // target.colors[1] reads the one it names
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
     c->asset_value = previous_asset;
-    c->colors_indexed = NULL;
+    c->colors_indexed = outer_colors;
     bool skin_handled;
     const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
@@ -14417,12 +14513,7 @@ static void check_assign(checker *c, const stmt *s)
     c->write_root = outer_root;
     s->target->raw_sampled = true; // A Raw field's destination is not an escaping read of its pixels.
     const type value = s->target->field ? check_field_value(c, s->value, s->target->field) : check_expr_want(c, s->value, target);
-    if (s->target->field && s->op == T_ASSIGN
-        && (target.kind == TY_RENDER_TARGET || target.kind == TY_TEXTURE || target.kind == TY_TEXTURE3D
-            || target.kind == TY_TEXTURE_ARRAY || target.kind == TY_CUBEMAP)) {
-        field *f = (field *)(uintptr_t)s->target->field;
-        vec_push(f->image_assignments, s->value);
-    }
+    if (s->target->field && s->op == T_ASSIGN && image_kind(target)) note_image_origin(s->target->field, s->value);
     if (target.kind == TY_ERROR) return;
     if (s->target->property) {
         if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {

@@ -70,6 +70,16 @@ shaders.md; resource encoding, clears and reload contracts are in render-targets
 headers and packs retain their identities apart from compiler-source simulation IDs when none of the new
 features is used (the five-fixture plain/layout comparison is recorded with compiler validation).
 
+## Reads of any target image (2026-11-14)
+
+`await target.Read(image)`, `Read<T>(image)` and `ReadDepth()` give `Grid2<Color/float/float2/float4/int>`;
+`target.colors.count` is an int. The cell type is written at the call and checked after every body against the
+target's constructor formats (`check_target_read` beside the numeric output and clear checks, shader_kernel.inc):
+it can't be inferred while a body is checked, as a field's assignments elsewhere aren't known yet. `<T>` on a
+method named Read is decided by its receiver's type. `expr.read_kind`/`read_image` carry the request to codegen,
+which calls `tide_render_target_read_begin_as`. Picks are Provisional in the spec (which image a read is of, and
+as what); contracts and tests are in render-targets.md, Readback of every image.
+
 ## Awaited render-target pixels (2026-11-14)
 
 RenderTarget.Read is local async, failable Grid2<Color>, lowered through the existing GPU ticket frame field.

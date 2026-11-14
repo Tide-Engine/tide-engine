@@ -137,6 +137,19 @@ The follow-up writes_depth flag keeps explicit Draw.Bounds from re-enabling geom
 frags that replace depth. Generated C and the renderer rebuild together; TideLibrary.Abi and embed.h are 23.
 No recorder opcode, shader text or replay behavior changed. Details and focused tests: shaders.md.
 
+## Pixel readback kernels for every image (2026-11-14)
+
+`await target.Read<T>(image)` and `ReadDepth()` (render-targets.md, Readback of every image) add ten renderer
+kernels beside ReadTargetPixels: number images by `textureLoad` (float, float2, float4, int), depth, a cube's face,
+an array's layer and its depth, and a face's and a layer's numbers. They record as the first did: a compute pipeline, a sampled image, the pools and
+a buffer read, so there is no new packet and no ABI change. `tide unity` writes a compute asset for each from
+`platform/src/read_pixels_wgsl.h`, which is now generated (`compiler/tests/read_target_builtin.mjs --write`) and
+compared byte for byte with what tidec writes: the first copy was only checked as a substring and had gone stale
+when kernels gained the reversed-depth preamble. Their HLSL compiles with fxc as cs_5_0 under TideWarnings
+(`tide_hlsl_shaders_valid`), and `unity_shaders_written` counts 17 computes. **Not run in Unity:** no replay
+test of the ten new kernels was added or run in an editor; the Sample's ComputeReplayTests still cover only
+the Color kernel, through a hand-keyed asset.
+
 ## Pixel readback kernel (2026-11-14)
 
 Embed ABI 22 extends the host-shared read table, with no new GPU command. The engine's pixel-read kernel uses
