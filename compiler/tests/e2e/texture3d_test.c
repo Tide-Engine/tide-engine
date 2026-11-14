@@ -4,7 +4,7 @@
 
 TIDE_TEST(texture3d_pack_resolves_shared_resized_dimensions)
 {
-    tide_world world;
+    static tide_world world; // Zeroed: starting a world frees the one that was there
     tide_world_init(&world, 1.0f);
     tide_local local = {0};
     tide_local_init(&local);
