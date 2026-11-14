@@ -9149,6 +9149,35 @@ static type check_method(checker *c, expr *e)
             return T_INT_;
         }
     }
+    // Phase.Values(): every declared member once, in the order they're declared, as an array of Count() of them.
+    // A member whose number an earlier one has (an alias) is there at its own place, so its number is there twice
+    if (str_eq_c(e->name, "Values")) {
+        decl *d = named_enum(c, e->object);
+        if (d) {
+            e->call = CALL_ENUM_VALUES;
+            e->type_decl = d;
+            e->object->bind = BIND_TYPE;
+            e->object->type_decl = d;
+            e->object->type = (type){TY_ENUM, d};
+            if (e->object->kind == E_MEMBER) mark_namespaces(e->object->object);
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            if (e->args.count || e->type_arg.len) {
+                diag_error(e->at, "%s.Values() takes no arguments or type arguments", type_name(e->object->type));
+                return T_ERR;
+            }
+            if (d->members.count == 0) return T_ERR; // Said at the declaration: an enum needs a member
+            if (d->members.count > TIDE_ARRAY_MOST) {
+                diag_error(e->at, "%s has %d members, and an array holds at most %d", type_name(e->object->type),
+                           d->members.count, TIDE_ARRAY_MOST);
+                diag_note("go through its numbers instead: 'for (int i = 0; i < " STR_FMT ".Count(); i++)'", STR_ARG(d->name));
+                return T_ERR;
+            }
+            const type values = array_of(c->prog, (type){TY_ENUM, d}, d->members.count, e->at);
+            if (!c->prog->quiet_names) values.decl->named = true; // Generated C has the array's type
+            e->int_value = d->members.count;
+            return values;
+        }
+    }
     bool static_skin_handled = false;
     const type static_skin = check_skinned_static(c, e, &static_skin_handled);
     if (static_skin_handled) return static_skin;
@@ -10145,6 +10174,22 @@ static void note_vector_comparison(const tok_kind op, const type l, const type r
     }
 }
 
+// After a comparison's error with an enum in it: values compare with values of their own enum, by their numbers.
+static void note_enum_comparison(const tok_kind op, const type l, const type r)
+{
+    if (op != T_EQ && op != T_NE && op != T_LT && op != T_LE && op != T_GT && op != T_GE) return;
+    const type e = l.kind == TY_ENUM ? l : r;
+    const type other = l.kind == TY_ENUM ? r : l;
+    if (other.kind == TY_ENUM) {
+        diag_note("an enum's values compare with values of the same enum; to compare two enums' numbers, write "
+                  "'int(a) %s int(b)'", op_symbol(op));
+    } else if (is_scalar_number(other)) {
+        diag_note("compare it with a member, like 'x %s %s." STR_FMT "', or its number with a number: 'int(x) %s n'",
+                  op_symbol(op), type_name(e), STR_ARG(e.decl->members.count ? e.decl->members.items[0].name : str_from("Member")),
+                  op_symbol(op));
+    }
+}
+
 static bool text_shows_value(const type t)
 {
     switch (t.kind) {
@@ -10424,6 +10469,8 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     case T_GT:
     case T_GE:
         if (is_scalar_number(l) && is_scalar_number(r)) return T_BOOL_;
+        // Two values of one enum, by their numbers: Phase.Warmup < Phase.Playing as 0 < 5
+        if (l.kind == TY_ENUM && same_type(l, r)) return T_BOOL_;
         break;
     case T_EQ:
     case T_NE:
@@ -10446,6 +10493,7 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     }
     diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
     if (l.kind == TY_STRUCT || r.kind == TY_STRUCT) note_missing_operator(op, l, r, false);
+    else if (l.kind == TY_ENUM || r.kind == TY_ENUM) note_enum_comparison(op, l, r);
     else note_vector_comparison(op, l, r);
     return T_ERR;
 }
@@ -13226,7 +13274,9 @@ static type check_expr_any_raw(checker *c, expr *e)
             diag_error(dflt->at, "'default' can't be used with operator %s", op_str(e->op));
             diag_note("it's only compared, with == and !=; write the value itself here");
         }
-        const bool infer_left = compared && e->lhs->enum_shorthand && !e->rhs->enum_shorthand;
+        // `.Member` takes the other side's enum in a comparison: `phase == .Over`, and `phase < .Over`
+        const bool ordered = e->op == T_LT || e->op == T_LE || e->op == T_GT || e->op == T_GE;
+        const bool infer_left = (compared || ordered) && e->lhs->enum_shorthand && !e->rhs->enum_shorthand;
         const expr *previous_input = c->input_value;
         c->input_value = e->lhs; // Formatting and comparisons inspect input without retaining its context.
         type l = e->lhs == dflt || infer_left ? T_ERR : check_expr(c, e->lhs);
@@ -13237,7 +13287,7 @@ static type check_expr_any_raw(checker *c, expr *e)
         }
         c->input_value = e->rhs;
         type r = e->rhs == dflt ? T_ERR
-            : compared && (e->rhs->enum_shorthand || (l.kind == TY_STRUCT && l.decl->asset_ref_of))
+            : ((compared || ordered) && e->rhs->enum_shorthand) || (compared && l.kind == TY_STRUCT && l.decl->asset_ref_of)
                 ? check_expr_want(c, e->rhs, l) : check_expr(c, e->rhs);
         c->input_value = previous_input;
         if (infer_left) l = check_expr_want(c, e->lhs, r);
@@ -14079,7 +14129,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     if (e->io_operation || e->storage_flush || e->web_fetch) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
-    case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
+    case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT: case CALL_ENUM_COUNT: case CALL_ENUM_VALUES:
     case CALL_ROLL: // A step rolls for its own cell, whichever thread runs it
         break;
     case CALL_VISIBILITY:
@@ -15811,7 +15861,7 @@ static bool is_constant(const checker *c, const expr *e)
                 || (authored_alias(c, e->name, e->at) && resolve_alias_type(c, authored_alias(c, e->name, e->at)).kind == TY_GRID))
             && all_constant(c, e);
     case E_METHOD: // Math.Max(...), and Combat.Stance(2)
-        if (str_eq_c(e->name, "Count") && named_enum(c, e->object)) return all_constant(c, e);
+        if ((str_eq_c(e->name, "Count") || str_eq_c(e->name, "Values")) && named_enum(c, e->object)) return all_constant(c, e);
         return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)
                 || constant_alias_call(c, e)) && all_constant(c, e);
     case E_MEMBER: // Checking tells a member of an enum or a constant from anything else

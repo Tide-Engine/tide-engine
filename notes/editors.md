@@ -1,3 +1,10 @@
+## Enum.Values() (2026-11-14)
+
+Completion after `EnumType.` offers `Values()` beside `Count()` (not after `case`); hover and signature help show
+`E.Values() -> E[N]` through `CALL_ENUM_VALUES`, which also makes the call an OCC_METHOD occurrence. The grammar
+needs nothing: `Values` is an ordinary method name. `lsp_enum_values_and_order` checks completion, hover,
+signature help and a clean foreach that orders with `>` and `<= .South`. Language rules: language.md, same date.
+
 ## Linear image annotation (2026-11-14)
 
 Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB

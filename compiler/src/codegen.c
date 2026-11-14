@@ -5203,6 +5203,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             gen_visibility_call(g, o, e);
         } else if (e->call == CALL_ENUM_COUNT) {
             sb_printf(o, "%lld", (long long)e->int_value);
+        } else if (e->call == CALL_ENUM_VALUES) { // Every member, in declaration order: an array C works out while compiling
+            const decl *d = e->type_decl;
+            sb_printf(o, "((%s){{", c_type(e->type));
+            for (int i = 0; i < d->members.count; i++) sb_printf(o, "%s%s", i ? ", " : "", enum_member_cname(d, &d->members.items[i]));
+            sb_put(o, "}})");
         } else if (e->call == CALL_LOAD) {
             sb_put(o, e->hoisted); // Already ran, before the statement
         } else if (e->call == CALL_IS_PREPARED) {

@@ -997,7 +997,7 @@ static void walk_value(const expr *e)
             o.decl = e->type_alias ? e->type_alias : e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE
+        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_ENUM_VALUES || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE
                    || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
                                                  || e->object->type.kind == TY_TEXTURE_ARRAY))) {
             o.kind = OCC_METHOD;
@@ -4090,6 +4090,14 @@ static void describe(const occurrence *o, sb *out)
             code_block(out, code.data);
             sb_printf(out, "\n\nNumber of declared members, including members with the same numeric value. Compile-time constant: %d.",
                       o->object_type.decl->members.count);
+            break;
+        }
+        if (o->call == CALL_ENUM_VALUES) {
+            sb_printf(&code, "%s.Values() -> %s[%d]", name_for(o->object_type.decl), name_for(o->object_type.decl),
+                      o->object_type.decl->members.count);
+            code_block(out, code.data);
+            sb_put(out, "\n\nEvery declared member once, in the order they're declared, as an array of `Count()` of them: "
+                        "`foreach (var value in E.Values())`. A member with another's number is there at its own place.");
             break;
         }
         if (is_routine(o->decl)) {
@@ -8078,6 +8086,10 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             if (ids[n - 1] == 0 || DOC->toks[ids[n - 1] - 1].kind != T_CASE) {
                 item(c, "Count()", CK_METHOD, "Count() -> int",
                      "Number of declared members, including members with the same numeric value. A compile-time constant.", "Count()");
+                if (d->members.count > 0) {
+                    item(c, "Values()", CK_METHOD, "Values() -> array",
+                         "Every declared member once, in declaration order: an array of Count() of them, for 'foreach'.", "Values()");
+                }
             }
             return;
         }
@@ -12862,6 +12874,10 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, "%s.Count() -> int", name_for(t.decl));
             add_signature(&s, label.data,
                           "Number of declared members, including members with the same numeric value. A compile-time constant.");
+        } else if (called && called->call == CALL_ENUM_VALUES) {
+            sb label = {0};
+            sb_printf(&label, "%s.Values() -> %s[%d]", name_for(t.decl), name_for(t.decl), t.decl->members.count);
+            add_signature(&s, label.data, "Every declared member once, in declaration order: an array of Count() of them.");
         } else if (t.kind == TY_STRING) {
             builtin_signatures(str_from("string"), name, visit_signature, &s);
         } else if (t.kind == TY_STRUCT && t.decl == A.prog->random) {

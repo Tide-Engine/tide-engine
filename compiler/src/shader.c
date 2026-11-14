@@ -4739,6 +4739,15 @@ static void ex_call(emit *em, const expr *e)
     case CALL_ENUM_COUNT:
         sb_printf(em->o, "%lld", (long long)e->int_value);
         return;
+    case CALL_ENUM_VALUES: // Every member's number, in declaration order, as an array of ints
+        if (!type_fits(em, e->type, e->at)) return;
+        sb_printf(em->o, "%s(", ty(em, e->type));
+        for (int i = 0; i < e->type_decl->members.count; i++) {
+            if (i) sb_put(em->o, ", ");
+            put_int(em, (long long)e->type_decl->members.items[i].number);
+        }
+        sb_put(em->o, ")");
+        return;
     case CALL_SKINNED:
         refuse(em, e->at, "skeleton lookup and animation sampling run on the CPU, before Draw.SkinnedMesh");
         return;

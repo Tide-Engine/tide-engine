@@ -216,6 +216,7 @@ static void walk_expr(pctx *c, const expr *e)
     switch (e->call) {
     case CALL_CONSTRUCT:
     case CALL_ENUM_COUNT:
+    case CALL_ENUM_VALUES:
     case CALL_TEXT:
     case CALL_LIST:  // A list, a map, a set or a grid it could change is a `mut` local of its own
     case CALL_MAP:

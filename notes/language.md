@@ -1,3 +1,29 @@
+## Enum ordering and `Enum.Values()` (2026-11-14)
+
+Owner approved the recommendation ("go with your recommendations"); the rules are picks, Provisional in spec.md
+(Enums and switch), moved out of its Open list.
+
+- **Ordering:** `binary_result`'s `< <= > >=` take two values of one enum (`same_type`), by their numbers. C compares
+  the stored values (`uint8_t`/`uint16_t` for byte/ushort enums, so `Voxel(-1)` is 255); WGSL the i32 the enum is
+  there. `fold_bool` already folded enum members through `fold_int`, so constant orderings fold. Enum shorthand
+  takes the other operand's enum for ordering too (`ordered` beside `compared` in E_BINARY checking). Errors:
+  `note_enum_comparison` after the operator error, for two enums (`int(a) < int(b)`) and an enum beside a number (a
+  member, or `int(x) < n`). Indexed loops already bound scalar keys by `<`; enum keys go through it unchanged.
+- **`Values()`:** `CALL_ENUM_VALUES` (appended to `builtin_call`, so no other call's number moves), checked in
+  `check_method` beside `Count()` (`named_enum`, so a member named `Values` and a value's `.Values()` keep their
+  meanings). Its type is `array_of(enum, Count())`, marked named. An alias (a member with an earlier one's number) is
+  at its own place, so `Values().count == Count()`. Over `TIDE_ARRAY_MOST` members is an error naming a `for` over
+  `Count()`; an empty enum already fails at its declaration. `is_constant` takes it as it takes `Count()`.
+  C: `((tide_arrayN){{Phase_Warmup, ...}})` (`enum_member_cname`); WGSL: `array<i32, N>(0, 5, 6)`; purity.c,
+  shader_prep_codegen.inc and `own_cell_only_expr` list it (and `Count()`, which the last didn't) as a constant.
+- **Editors:** completion offers `Values()` after `EnumType.` (not after `case`), hover and signature help show
+  `E.Values() -> E[N]` (analysis.c, `lsp_enum_values_and_order`).
+- Tests: `tidec_e2e_enums` (`enums_order_by_their_numbers`, `enum_values_are_every_member_in_order`: gaps, aliases,
+  byte wrap, shorthand, a field default, passing the array to a function, constants), `shaders/enum_values`
+  (golden, spirv-val, FXC), `platform/tests/shaders.tide` Sink checks against CPU Marks, errors
+  `enum_order_other_enum`, `enum_order_int`, `enum_values_arguments`, `enum_values_instance`,
+  `enum_values_wrong_length`; the LSP case above.
+
 ## `==` and `!=` on vectors and colors (2026-11-14)
 
 Owner approved the recommendation ("go with your recommendations"); every rule is a pick, Provisional in spec.md

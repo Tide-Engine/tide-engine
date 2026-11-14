@@ -2705,6 +2705,24 @@ TIDE_TEST(lsp_enum_count_and_cast_diagnostic)
 #undef COUNT_GAME
 }
 
+TIDE_TEST(lsp_enum_values_and_order)
+{
+    start();
+#define VALUES_GAME "enum Direction { North, East = 10, South }\nsingleton Match { int n; Direction d; }\nscene Main { }\n"
+    const char *completion = complete(VALUES_GAME "system S(mut Match match) { match.n = Direction.$; }\n");
+    TIDE_CHECK(offers(completion, "Values()"));
+    TIDE_CHECK(has(completion, "Values() -> array"));
+    open_document(VALUES_GAME "system S(mut Match match)\n{\n    foreach (var d in Direction.Val$ues())\n"
+                              "    {\n        if (d > match.d && d <= .South) match.n++;\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Direction.Values() -> Direction[3]"));
+    TIDE_CHECK(has(hover, "declaration order") || has(hover, "order they're declared"));
+    open_document(VALUES_GAME "system S(mut Match match) { var all = Direction.Values($); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Direction.Values() -> Direction[3]"));
+#undef VALUES_GAME
+}
+
 TIDE_TEST(lsp_scheduling_phases)
 {
     start();

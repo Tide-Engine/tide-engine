@@ -121,6 +121,10 @@ singleton Marks
     bool cellsDiffer = int2(3, 4) != int2(3, 5);
     Color tintMark = Color(1, 0.5, 0.25, 0.5);
     bool tintsSame = Color(1, 0.5, 0.25, 0.5) == Color(1, 0.5, 0.25);
+    // Enums in order and their members, as the CPU has them
+    bool shadesInOrder = Shade.Light < Shade.Mid && Shade.Dark >= Shade.Mid;
+    bool wrappedAfter = Shade(-1) > Shade.Dark; // 255, a byte's low bits
+    Shade[3] shades = Shade.Values();
 }
 
 local singleton Art
@@ -564,6 +568,18 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     if (Mode(number) != Mode.Bright || Mode(number - 1) != Mode.Plain) ok = false;
     if (Shade(number + 257) != Shade.Dark || int(Shade(number + 511)) != 0 || int(Shade(number - 2)) != 255) ok = false;
     if (Mode.Count() != 2 || Shade.Count() != 3 || Mode((number + 1) % Mode.Count()) != Mode.Plain) ok = false;
+    // ...in order by their numbers, and every member through Values(), as the CPU has them
+    if ((Shade(number) < Shade(number + 1) && Shade(number + 1) <= .Dark) != marks.shadesInOrder) ok = false;
+    if ((Shade(number - 2) > Shade.Dark) != marks.wrappedAfter || !(mode > Mode.Plain) || mode < .Bright) ok = false;
+    mut int after = 0;
+    mut int place = 0;
+    foreach (var shade in Shade.Values())
+    {
+        if (shade > Shade.Light) after += int(shade);
+        if (shade != marks.shades[place]) ok = false;
+        place++;
+    }
+    if (after != 3 || place != Shade.Count() || Mode.Values()[number] != Mode.Bright) ok = false;
 
     // Colors
     Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;

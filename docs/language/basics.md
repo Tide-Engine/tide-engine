@@ -277,7 +277,7 @@ system Advance(mut Match match)
 - A member without a value is one more than the one before it, and the first is 0. A value is an int, which can come from constants: `Playing = FIRST_LEVEL + 1`.
 - Write a member with its enum, `Phase.Playing`, or use `.Playing` when the expected enum type is clear: `match.phase = .Playing;`. Typed declarations, field defaults, function arguments and returns, container elements and `case .Warmup:` inside an enum switch supply that type. Comparisons can use it too: `match.phase == .Playing`. A typed conditional can use shorthand in both branches: `Phase next = ready ? .Playing : .Warmup;`.
 - Without an expected enum type, keep the qualified spelling: `var phase = Phase.Playing;`. If overloads could take different enums, qualify the argument; the compiler does not pick an enum by searching for its member name.
-- `==` and `!=` compare two values of the same enum.
+- `==` and `!=` compare two values of the same enum, and `<`, `<=`, `>` and `>=` put two in order by their numbers: `Phase.Warmup < Phase.Playing` because 0 is less than 5. The order is the numbers', not where members are written; shorthand works here too, `match.phase >= .Playing`. An enum doesn't compare with a number or another enum: `int(phase) < 3` compares numbers.
 - An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
 - Write conversions as `int(phase)`, not `(int)phase`. The compiler explains the replacement when it encounters a parenthesized cast.
 - `Phase.Count()` is the number of declared members, as a compile-time `int`. The `Phase` above has three members despite its numeric gaps. Members sharing the same numeric value each count. The call takes no arguments; a member you declare named `Count` remains `Phase.Count`.
@@ -335,6 +335,24 @@ Direction Next(Direction direction)
 ```
 
 This assumes the starting value is a declared member. Member count is not a numeric range: this formula does not cycle through enums with gaps, negative values or duplicate numeric values. `Count()` works in shaders and constant expressions too.
+
+### Every member
+
+`Phase.Values()` is every declared member once, in the order they're declared, as an array of `Phase.Count()` of them, so it goes through any enum, gaps and all:
+
+```csharp
+enum TreeKind { Pine, Oak = 4, Birch }
+
+foreach (var kind in TreeKind.Values()) // Pine, Oak, Birch
+{
+    Plant(kind);
+}
+TreeKind second = TreeKind.Values()[1]; // Oak
+```
+
+- It's an array, `TreeKind[3]` here: index it, read its `.count`, keep it in a field (`TreeKind[3] kinds = TreeKind.Values();`). It's made while compiling, so it costs nothing, and works in match code, views, workers, frags and verts alike.
+- A member declared with another's number is there at its own place: in `enum Size { Small = 1, Little = 1, Big }`, `Size.Values()` is `Small, Little, Big`, whose first two are one value. Go through `Count()` places, as `Count()` counts both.
+- It takes no arguments; a member you declare named `Values` stays `Phase.Values`.
 
 ## Comments and attributes
 

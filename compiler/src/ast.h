@@ -1138,6 +1138,7 @@ typedef enum builtin_call {
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
     CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
+    CALL_ENUM_VALUES, // Enum.Values(): an array of every declared member, in declaration order; its type is that array
 } builtin_call;
 
 enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
