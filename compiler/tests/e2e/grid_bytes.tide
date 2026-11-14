@@ -4,6 +4,8 @@
 // The C test pins the bytes by their hash, the same on every platform, and measures the built-in against the loops
 // bench/voxels used to write (Pack and Unpack, below).
 
+asset Grid2<Color> hero = "assets/hero.png";
+
 enum Block : byte
 {
     Air,
@@ -344,6 +346,17 @@ system Check(mut Results results, mut Kept kept, Time time)
     mut Grid3<Tile> written = Grid3(2, 1, 1);
     written[1, 0, 0] = Tile { heat = 1.5, block = Block.Dirt, lit = true, mark = 'A', owner = 5 };
     Expect(t, SameBytes(repaired.ToBytes(), written.ToBytes()));
+
+    // An asset's grid, which is the pack's: its colors back as they are
+    Grid2<Color> heroBack = Grid2<Color>.FromBytes(hero.ToBytes())!;
+    mut var heroSame = heroBack.size.x == hero.size.x && heroBack.size.y == hero.size.y && hero.size.x > 0;
+    foreach (var at in hero)
+    {
+        var a = hero[at];
+        var b = heroBack[at];
+        if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) heroSame = false;
+    }
+    Expect(t, heroSame);
 
     // Entities and players are what they are, whatever the bytes
     var made = Spawn();

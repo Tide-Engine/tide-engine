@@ -9,6 +9,17 @@
 
 static tide_world world;
 
+extern const unsigned char tide_game_pack[];
+extern const size_t tide_game_pack_size;
+
+// The pack (an asset's grid is the pack's), then the world, two ticks in: the checks run in the first
+static void start(void)
+{
+    TIDE_CHECK(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    tide_world_init(&world, 1.0f / 60.0f);
+    for (int i = 0; i < 2; i++) tide_world_tick(&world);
+}
+
 // FNV-1a over a list's bytes, as the world keeps them
 static uint64_t hash_bytes(uint64_t h, const tide_world *w, const tide_list l)
 {
@@ -32,11 +43,10 @@ static bool bytes_are(const tide_world *w, const tide_list l, const uint8_t *exp
 
 TIDE_TEST(grid_bytes_all_checks_pass)
 {
-    tide_world_init(&world, 1.0f / 60.0f);
-    for (int i = 0; i < 2; i++) tide_world_tick(&world);
+    start();
     const Tally *t = &world.Results.tally;
-    if (t->firstFailure || t->checks != 44) printf("    %d checks, check %d failed\n", (int)t->checks, (int)t->firstFailure);
-    TIDE_CHECK(t->checks == 44);
+    if (t->firstFailure || t->checks != 45) printf("    %d checks, check %d failed\n", (int)t->checks, (int)t->firstFailure);
+    TIDE_CHECK(t->checks == 45);
     TIDE_CHECK(t->passed == t->checks);
     TIDE_CHECK(tide_scratch_mark() == 0); // What the calls made was the scratch area's, gone with the system
     tide_world_free(&world);
@@ -47,8 +57,7 @@ TIDE_TEST(grid_bytes_all_checks_pass)
 // a changed format: say so in the spec, and pin the new one.
 TIDE_TEST(grid_bytes_are_the_same_everywhere)
 {
-    tide_world_init(&world, 1.0f / 60.0f);
-    for (int i = 0; i < 2; i++) tide_world_tick(&world);
+    start();
     const Kept *k = &world.Kept;
     static const uint8_t empty[] = {0x47, 0x13, 1, 16, 16, 16, 0};
     static const uint8_t stone[] = {0x47, 0x13, 1, 16, 16, 16, 1, 0, 0, 0, 0xFF, 0x3F, 1};
@@ -86,8 +95,7 @@ TIDE_TEST(grid_bytes_are_the_same_everywhere)
 
 TIDE_TEST(grid_bytes_in_views)
 {
-    tide_world_init(&world, 1.0f / 60.0f);
-    for (int i = 0; i < 2; i++) tide_world_tick(&world);
+    start();
     tide_local local;
     tide_local_init(&local);
     tide_draw_list draw = {0};
@@ -106,8 +114,7 @@ TIDE_TEST(grid_bytes_in_views)
 // of the times: they're the machine's)
 TIDE_TEST(grid_bytes_measure)
 {
-    tide_world_init(&world, 1.0f / 60.0f);
-    for (int i = 0; i < 2; i++) tide_world_tick(&world);
+    start();
     static const char *const names[] = {"", "Pack (Tide loops)", "Unpack (Tide loops)", "ToBytes", "FromBytes"};
     static const char *const chunks[] = {"mixed", "ground"};
     const int rounds = 400;

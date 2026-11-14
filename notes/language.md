@@ -45,32 +45,34 @@ chunk or past the bytes fails), repairs, zeros what's outside the size and keeps
 the table by `insert_read`, which refuses a slot more than 256 past its hash's (places chosen to collide). Any failure drops the
 grid; what was made is the scratch area's, gone at its mark.
 
-**Tests.** `tidec_e2e_grid_bytes` (`e2e/grid_bytes.tide`, `_test.c`): 44 checks: a 16-cube of air (7 bytes, its size back),
-cells set and set back, one of stone (13 bytes), sparse, dense, the dense one into a field and through `try`, `is` and `!`,
-the same cells set backwards are the same bytes, the old loops' `Pack` and `Unpack` (kept as the measurement's baseline)
-agree, `Block(200)` written as Air, an open `Grid2<int>` at the ints' four corners, a `Grid3<Wide>` open sideways (an int
-enum with members apart) and bytes made by hand with a number that's no member, a struct cell (float, byte enum, bool,
-char, `int?`) round trip and bytes made by hand with a NaN, a block of 200, a bool of 7, padding, half a UTF-16 pair and an
-`ok` of 9, entities and players, every cut of two encodings and a byte more refused, each byte of the dense one spoiled
-(3,361 of 3,480 still read), bytes made by hand for each refusal the spec lists, a chunk of zeros and a run written as two
-(taken). In C: two
+**Tests.** `tidec_e2e_grid_bytes` (`e2e/grid_bytes.tide`, `_test.c`): 45 checks: a 16-cube of air (7 bytes, its size
+back), cells set and set back, one of stone (13 bytes), sparse, dense, the dense one into a field and through `try`,
+`is` and `!`, the same cells set backwards are the same bytes, the old loops' `Pack` and `Unpack` (kept as the
+measurement's baseline) agree, `Block(200)` written as Air, an open `Grid2<int>` at the ints' four corners, a
+`Grid3<Wide>` open sideways (an int enum with members apart) and bytes made by hand with a number that's no member, a
+struct cell (float, byte enum, bool, char, `int?`) round trip and bytes made by hand with a NaN, a block of 200, a bool
+of 7, padding, half a UTF-16 pair and an `ok` of 9, an asset's `Grid2<Color>` (the pack's grid) round trip, entities and
+players, every cut of two encodings and a byte more refused, each byte of the dense one spoiled (3,361 of 3,480 still
+read), bytes made by hand for each refusal the spec lists, a chunk of zeros and a run written as two (taken). In C: two
 encodings whole, all eight by an FNV hash pinned in CMake (`GRID_BYTES_HASH`, `GRID_BYTES_SPOILED`), the fields' cells
 read by a host, a copy and the world as bytes, a view's round trip and a local worker's `ToBytes` of a match grid's
-snapshot (the same count as the view's), and `grid_bytes_measure`. `tidec_safety_grid_bytes`: the
-world's grids through bytes and back every tick under the host's snapshots and packing (a 16-cube, an open grid at the
-ints' corners, a 2-billion-cell grid hashed by place, struct cells), cuts every 7 bytes, every byte spoiled (4,096 read,
-into the world), 65,537 chunks refused with the log's line, a NaN, a bool of 9 and a block of 7 repaired.
-`tests/test_grid_bytes.c` (in `tide_tests`), every read from an allocation the bytes' own size: a round trip of 3,000 cells
-across sized and open axes, every cut and three flips of every byte of 40 chunks at the ints' edges (none cut reads; what
-reads writes bytes that read back as the same bytes), 6,000 random inputs of which 2,000 are made as the format has them
-(each reads) and the rest spoiled or of no format, places at `INT32_MIN >> 6` and `INT32_MAX >> 6` read and one past them
-refused, cells past a 20-wide side zeroed in the chunk, a 20-byte struct's repairs, the two counts past what bytes hold,
-and places made by inverting the directory's hash so they share a slot (200 read, 300 refused).
-Errors: `grid_bytes_on_value`, `_bare`, `_argument`, `_to_bytes_arguments`, `_static_name`, `_gpu`, `_unwrapped`.
+snapshot (the same count as the view's), and `grid_bytes_measure`. `tidec_safety_grid_bytes`: the world's grids through
+bytes and back every tick under the host's snapshots and packing (a 16-cube, an open grid at the ints' corners, a
+2-billion-cell grid hashed by place, struct cells), cuts every 7 bytes, every byte spoiled (4,096 read, into the world),
+65,537 chunks refused with the log's line, a NaN, a bool of 9 and a block of 7 repaired. `tests/test_grid_bytes.c` (in
+`tide_tests`), every read from an allocation the bytes' own size: a round trip of 3,000 cells across sized and open
+axes, every cut and three flips of every byte of 40 chunks at the ints' edges (none cut reads; what reads writes bytes
+that read back as the same bytes), 6,000 random inputs of which 2,000 are made as the format has them (each reads) and
+the rest spoiled or of no format, places at `INT32_MIN >> 6` and `INT32_MAX >> 6` read and one past them refused, cells
+past a 20-wide side zeroed in the chunk, a 20-byte struct's repairs, the two counts past what bytes hold, and places
+made by inverting the directory's hash so they share a slot (200 read, 300 refused). Errors: `grid_bytes_on_value`,
+`_bare`, `_argument`, `_to_bytes_arguments`, `_static_name`, `_gpu`, `_unwrapped`.
 `lsp_grid_bytes_completes_hovers_and_checks` (notes/editors.md). Release: those, `bench_voxels*`, `tidels_tests` (280),
-and the grid, decode, mesh decode, JSON, worker grid, parallel and fails fixtures; sanitize (Windows ASan): `tide_tests grid`,
-`tidec_e2e_grid_bytes`, `tidec_safety_grid_bytes`, `tidec_safety_grid_values`, `tidec_e2e_grid_values`, `bench_voxels`.
-Web wasn't run here: the e2e's hash is meant to be the web's too.
+every `tidec_error_*` and `tidec_warning_*` (2,566), every safety fixture (27), and the grid, decode, mesh decode, JSON,
+worker grid, local worker, parallel, fails, optional field, pure call and storage fixtures; sanitize (Windows ASan): `tide_tests
+grid`, `tidec_e2e_grid_bytes`, `tidec_safety_grid_bytes`, `tidec_safety_grid_values`, `tidec_e2e_grid_values`,
+`bench_voxels`, `bench_voxels_checked`. Web and the docs site's build weren't run here: the e2e's hash is meant to be the
+web's too.
 
 **Gaps.** Bytes of another chunk geometry aren't read (a future format would say so), and the bytes don't name the cell's
 type, only its size. A field given what FromBytes made copies it from the scratch area (a read straight into a world's heap
