@@ -15,7 +15,10 @@ validated with spirv-val and FXC. vert_out_long_field replaces the former int
 rejection. Platform shaders pass 29 cycles each of three distinct corners into
 the first index: 16777217 and -2147483647 prove no float conversion, with int2
 and bool checked at two pixels per triangle, also prewarmed. Native ASan Vulkan
-passes; existing WGSL goldens and shader LSP cases pass. Web-debug SwiftShader WebGPU passes; docs build is checked before merging. Unity's OpenGL Core exception is in unity.md and spec.
+passes; existing WGSL goldens and shader LSP cases pass. Web-debug SwiftShader WebGPU and the docs build pass. After merging the numeric
+attachment catalogue from dev, rebuilt shader and target fixtures pass on native
+ASan Vulkan and web-debug WebGPU. Shader LSP cases pass 10/10, with the new
+integer-field completion case checked as well. Unity's OpenGL Core exception is in unity.md and spec.
 
 # Triangle side (2026-11-14)
 
