@@ -1,4 +1,6 @@
-// expect: command handler 'Rename' doesn't name its sender, so nothing it does can depend on who sent it
+// expect: command handler 'Rename' must name the player who sent its command, after the command
+// expect: write 'command(SetName set, PlayerID sender)', and check what that player may do before acting
+// expect: or take 'with ownership', which runs it only for an entity the sender owns, and leave the sender out
 component Name { string value; }
 command SetName { string text; }
 scene Main { }

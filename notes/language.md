@@ -32,10 +32,23 @@ Commands, Provisional).
   component; inside a parallel step or a comparison; `await` inside (check_await, as `edits.count`); the
   binding read from a parallel step or comparison started inside the block (check_name, by the scope's
   recorded parallel/compare; lambdas already refuse capturing a component); the binding handed to a task's
-  component parameter (task_ref: "own" excludes it); `Edit<T>(this, ...)` where the code takes T as a
-  parameter, or in T's own method; Get/TryGet/Set/Edit of T inside the block whose handle is the Edit's as
-  written (`same_handle_written`: `this`, one read-only local or parameter, or the same fields of one;
-  GetPrevious is exempt). A binding nothing names warns ("never used, so the Edit changes nothing").
+  component parameter (task_ref: "own" excludes it); `Edit<T>(this, ...)` where the code takes T as a `mut`
+  parameter, or in T's own method (beside a read-only T it's allowed, and is what a Set is there: the read
+  parameter's copy, lists too, is the system's `keeps_read_copy`, as `world_sets_component` is true);
+  Get/TryGet/Set/Edit of T inside the block whose handle is the Edit's as written (`same_handle_written`:
+  `this`, one read-only local or parameter, or the same fields of one; GetPrevious is exempt). Warnings, once
+  every body is checked (`warn_unused_edits`, over `checker.edit_bindings`, as a function's `mut` parameter
+  being written is known only then): a binding nothing names ("never used, so the Edit changes nothing"),
+  and one only read ("never changed, so the Edit only reads it", pointing at TryGet: the Edit still counts
+  as a write of every entity's T). `world->written` stays set for a read-only Edit, so the `mut World`
+  warning comes after the TryGet change, not beside the Edit's.
+- **Wrong calls say one thing** (`check_world_args`, `edit_shaped`): a World call that's wrong already (no
+  `<T>`, an unknown or non-component type, the wrong world, a misspelled method, a refused Edit) and reads
+  as an Edit (a block, a bare name second that's new) checks its block through `check_edit_block(c, e,
+  NULL)` with a binding of `T_ERR`, after its own error: uses of the name resolve quietly, `check_name`'s
+  parallel/comparison refusal and `edit_conflict` skip an error binding, and only the call's error is said.
+  A refused `World` parameter (an async function's) makes any call on it quiet the same way.
+  `tests/edit_errors_alone.cmake` pins each path's first and only error.
 - **Codegen** (`gen_world_edit`; `tide_world_edit_<C>` in gen_component_access, behind
   `decl.world_edit_used`). The entity once into a temporary; `T *name = tide_world_edit_T(world,
   tide_bindings, e, &row)`: the active binding tide_bound_component finds (the code's own `mut` parameter of
@@ -46,7 +59,10 @@ Commands, Provisional).
   their entity and world (gen_component_owner, component_owner_world). The store, `tide_store_T` (lanes that
   differ, tide_table_scatter; preparation state kept), is pushed as a `gen_open` cleanup, so `closing()`
   emits it before every `return`, `break`, `continue`, `try` and `fail` leaving the block, as a GUI container
-  is closed. The binding E_NAME is `(*name)`/`name->` (is_pointer_param), `place_where` gives the
+  is closed. A task's own `return`, `fail` and `try` go through `gen_task_leave`, which closes the containers
+  its code opened before `return TIDE_TASK_DONE;`, the result already spilled to the frame (before review a
+  task's `return` in an Edit skipped the store: the change was lost, and as `tide_text_set`/`tide_assign`
+  had released the stored row's old text and lists, the stored row kept released handles). The binding E_NAME is `(*name)`/`name->` (is_pointer_param), `place_where` gives the
   component's heap, so list/text/grid writes go to its own memory with no copy; `call_operands` skips the
   name argument. Borrowing: with lanes there's no row in memory to point at, so a copy of the lanes is
   unavoidable; everything else is borrowed (the containers, an active binding).
@@ -55,6 +71,13 @@ Commands, Provisional).
   where Set would have discarded the unfinished 10); two Edits of one entity are one component. A Set of the
   edited entity inside the block (through a helper) replaces the binding whole, as for a `mut` parameter. Get
   and queries of it inside the block read what's stored.
+- **A read parameter's copy behind a guard** (`gen_row_copies`, `gen_row_copies_rest`): a read parameter
+  beside a World Set or Edit of its component with lists is copied (`tide_copy_T`, scratch) so the Set can't
+  change it. In a guarded system that copy was made before the guard and its scratch reset only for rows the
+  guard let through, so every skipped row's copy stayed in scratch past the tick (the Set path had it too;
+  `e2e/world_edit`'s Settle, gated by mode, found it as `tide_scratch_mark() != 0`). The copy is now made
+  after the guard, for the rows it lets through; the guard reads the gathered value, as nothing has changed
+  it yet.
 - **Schedule**: a World Set, whole component (`world_use.writes`), one thread for a per-entity system. Field
   granularity was weighed and not built: Edit's load and store would have to touch only lane masks the lane
   analyses compute for the binding (they're per system parameter, `code_reads(sys, i)`), and `world_use`
@@ -72,7 +95,10 @@ Commands, Provisional).
 - **Checker** (`check_ownership`): `command` (a non-local handler of a command) passes both of its
   refusals; `with` adds Owner to `need_mask` as for views. The sender is optional in the parser now
   (`parse_handler`: none when `)` follows the trigger); a handler with neither a named sender nor an
-  ownership filter is an error at the check of its parameters. Three printers that took params[1] as the
+  ownership filter is an error at the check of its parameters, worded as the requirement it is ("must name
+  the player who sent its command"; a named sender that's never read is accepted, as before). Its note
+  offers `with ownership` only to a per-entity handler (`sys->per_entity`): a global one has no entity, and
+  the filter would make every global Send of it an error. Three printers that took params[1] as the
   sender (put_override_start, the language server's two headers) check its mode.
 - **Codegen**: nothing new but `tide_me`. The dispatcher's per-entity case already ran `gen_chunk_columns`
   and `gen_row_filter`, which filter by `tide_owner.player == tide_me`; for a command handler `tide_me` is
@@ -89,20 +115,35 @@ out of the block and a function's `return p.gold`; a gone entity and one without
 own binding through a helper and two Edits of one entity; a Bag's list grown into chunks, text and a map,
 then a Set of the same entity through a helper inside the block; a grid's cells a chunk apart; an event
 handler, an async handler before and after its wait, a command handler, and a view's Edit of a local
-component; `Self()` on the binding is the edited entity), `e2e/command_ownership` (three counters, player
+component; `Self()` on the binding is the edited entity; a `try` passing an error on and a `fail` out of
+the block, with text and a list; an async handler's `return` out of the block before its wait, with 3,000
+list elements and long text, and after it, its blocks checked again a tick later; comma-listed Edits of two
+entities and of one entity twice, both changes landing, and a `return` out of the shared block; `Edit(this)`
+beside a read-only Party in a guarded system: the parameter, its list and text keep their values, Get reads
+the stored one, scratch is back to its mark), `e2e/command_ownership` (three counters, player
 0's, player 1's and nobody's; pokes and steals from both players with and without the filter and the
-sender's name: run, dropped, sequence consumed, resend refused, replay equal), `schedule/world_edit`,
-eighteen error fixtures (seventeen `world_edit_*`, `command_unnamed_sender`), the warning fixture
-`world_edit_unused`, LSP `lsp_world_edit`, `lsp_command_ownership`; `world_unknown_method` lists Edit.
+sender's name: run, dropped, sequence consumed, resend refused, replay equal), `schedule/world_edit` (which
+says "it edits"), eighteen error fixtures (seventeen `world_edit_*`, `command_unnamed_sender` with its
+note), `edit_errors_alone` (eight wrong Edits and a global command handler without its sender, each with one
+error, the global one not offered `with ownership`), the warning fixture `world_edit_unused`
+(never used, only read, and the six ways a binding is changed), LSP `lsp_world_edit` (with a comma-listed
+Edit left as written by the formatter), `lsp_command_ownership`; `world_unknown_method` lists Edit.
 
-Gaps: no `else`; schedule by fields for an Edit's binding (above); Edit of the code's own entity is refused
-where knowable rather than aliased (aliasing does happen through helpers); an Edit's binding read inside a
+Gaps: no `else`; schedule by fields for an Edit's binding (above); Edit of the code's own entity beside a
+`mut` parameter of it is refused where knowable rather than aliased (aliasing does happen through helpers);
+the task paths of `try` and `fail` out of an Edit can't be reached yet (an async function can't take the
+World), but go through `gen_task_leave` like `return`; an Edit's binding read inside a
 parallel step or comparison is refused rather than captured; Mount & Rifle and bannerlord-duel weren't
 changed to use either (read-only references).
 
 Validation: native sanitize (Windows ASan, heap checks): the two e2e targets, world/world_set_*/
 world_functions/commands/ownership/ownership_events/handler_queries e2e, all 2,607 error, warning and
 schedule fixtures, `tidels_tests`; web-debug: the two e2e targets. Linux/macOS/MinGW/Android are CI's.
+After review (native sanitize only, at the owner's request that suites run in Actions): `e2e/world_edit`,
+`command_ownership`, `world_set_read`/`_own`/`_mut`, `row_lanes`, `view_reads`, `component_loads` and their
+codegen checks, `edit_errors_alone`, the 182 World/async/task/command/owner error and warning fixtures,
+`schedule/world_edit`, `world`, `world_functions`, `queries`, `tidels_tests`. The docs build and web runs
+are left to the Build workflow.
 
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 

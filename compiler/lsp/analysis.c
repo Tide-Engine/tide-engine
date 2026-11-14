@@ -2761,10 +2761,10 @@ static const method_form world_calls[] = {
     {"Set", "Set<T>(Entity entity, T value)",
      "Puts the component back on the entity, right away; nothing happens when the entity has none. It needs "
      "`mut World`, counts as writing every entity's, and keeps a system on one thread."},
-    {"Edit", "Edit<T>(Entity entity, T value) { ... }",
-     "Changes the entity's component where it is: in the block, the name is the component itself, as a `mut` "
-     "parameter is, and what the block changes is put back on the entity as the block ends, however it's left "
-     "(`return`, `break`, `continue`). An entity that's gone, or has none, skips the block: "
+    {"Edit", "Edit<T>(Entity entity, name) { ... }",
+     "Changes the entity's component where it is: `name` is new, declared by the call, and in the block it's the "
+     "component itself, as a `mut` parameter is. What the block changes is put back on the entity as the block ends, "
+     "however it's left (`return`, `break`, `continue`, `try`, `fail`). An entity that's gone, or has none, skips the block: "
      "`world.Edit<Health>(target, health) { health.value -= 5; }`. Like `Set`, it needs `mut World`, counts as "
      "writing every entity's, and keeps a system on one thread."},
 };
@@ -7826,7 +7826,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb snippet = {0};
             if (strcmp(forms[i].name, "TryGet") == 0) sb_put(&snippet, "TryGet<${1:Component}>(${2:entity}, out var ${3:value})");
             else if (strcmp(forms[i].name, "TryGetPrevious") == 0) sb_put(&snippet, "TryGetPrevious<${1:Component}>(${2:entity}, out var ${3:value})");
-            else if (strcmp(forms[i].name, "Edit") == 0) sb_put(&snippet, "Edit<${1:Component}>(${2:entity}, ${3:value})\n{\n\t$0\n}");
+            else if (strcmp(forms[i].name, "Edit") == 0) sb_put(&snippet, "Edit<${1:Component}>(${2:entity}, ${3:name})\n{\n\t$0\n}");
             else sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
             item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
         }

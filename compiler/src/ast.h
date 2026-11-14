@@ -458,6 +458,7 @@ typedef struct world_use {
     loc write_at; // ...and the first Set
     bool query_read; // A query parameter also reads this component's candidate rows
     bool through_world; // Some World call names it
+    bool write_edits;   // The first Set is an Edit, for what's said of it
 } world_use;
 
 typedef struct system_wait {

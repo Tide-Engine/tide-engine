@@ -222,9 +222,10 @@ system Heal(Healer healer, mut World world)
 ```
 
 - In the block, `health` is the entity's `Health` itself, as a `mut` parameter is the component of the entity a system runs for: its fields change where they are, its lists and text too, with nothing copied, and a function's `mut` parameter can take it. The name is new, and only the block has it.
-- It's put back however the block is left: at its end, or by a `return`, or a `break` or `continue` of a loop the `Edit` is in. There's no `Set` to forget on an early `return`.
+- It's put back however the block is left: at its end, or by a `return`, or a `break` or `continue` of a loop the `Edit` is in, or a `try` or `fail` in a function that can fail, in an async handler as anywhere. There's no `Set` to forget on an early `return`.
 - An entity that's gone, or has no `Health`, skips the block, as `Set` does nothing then. Check `world.Has<Health>(e)` first for what to do instead.
-- It needs `mut World`, like `Set`, and the schedule counts it as `Set`: it reads and writes every entity's `Health`, and keeps the system on one thread.
+- It needs `mut World`, like `Set`, and the schedule counts it as `Set`: it reads and writes every entity's `Health`, and keeps the system on one thread. So an `Edit` whose block never changes its name is a warning: read with `TryGet` instead.
+- `this` can be edited beside a read-only parameter of the same component, as it can be `Set`: the stored component changes, and the parameter keeps what it read. Beside a `mut` parameter of it, change the parameter.
 - Inside the block, read and change `health`, not `world.Get<Health>` of the same entity: the compiler says so where it can tell they're the same, and a task can't `await` there.
 - `world.Edit<Purse>(from, a), world.Edit<Purse>(to, b) { ... }` edits two entities in one block, as other calls that take a block are listed. If they turn out to be one entity, `a` and `b` are the same component, and both changes land.
 

@@ -8548,7 +8548,7 @@ TIDE_TEST(lsp_world)
     open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
                              "    if (world.Has<Health>(healer.patient)) return;\n}\n"
                              "system Idle(Healer healer, World world)\n{\n    if (healer.patient == this) return;\n}\n");
-    TIDE_CHECK(has(last_sent(), "'world' is declared mut but never calls Set") && has(last_sent(), "'world' is never used"));
+    TIDE_CHECK(has(last_sent(), "'world' is declared mut but never calls Set or Edit") && has(last_sent(), "'world' is never used"));
     TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2);
     const char *remove_mut = actions_at(5);
     TIDE_CHECK(has(remove_mut, "Remove 'mut' from 'world'") && has(remove_mut, "\"newText\":\"\""));
@@ -10085,12 +10085,13 @@ TIDE_TEST(lsp_world_edit)
     open_document(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
                                  "    world.Edit<Health>(healer.patient, health) { health.value += 1; }\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(hover_at(10, 11), "Edit<Health>(Entity entity, Health value) { ... }"));
+    TIDE_CHECK(has(hover_at(10, 11), "Edit<Health>(Entity entity, name) { ... }")); // The name is new: no type of its own
+    TIDE_CHECK(has(hover_at(10, 11), "`name` is new, declared by the call"));
     TIDE_CHECK(has(hover_at(10, 11), "is put back on the entity as the block ends"));
     TIDE_CHECK(has(hover_at(10, 50), "Health health")); // The block's name: the entity's component
     const char *members = complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world) { world.$ }\n");
     TIDE_CHECK(offers(members, "Edit"));
-    TIDE_CHECK(has(members, "Edit<${1:Component}>(${2:entity}, ${3:value})"));
+    TIDE_CHECK(has(members, "Edit<${1:Component}>(${2:entity}, ${3:name})"));
     // In its block, the name's fields
     TIDE_CHECK(offers(complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
                                               "    world.Edit<Health>(healer.patient, health) { health.$ }\n}\n"), "value"));
@@ -10098,6 +10099,11 @@ TIDE_TEST(lsp_world_edit)
     TIDE_CHECK(has(format_reply(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
                                                "    world.Edit<Health>(healer.patient, health)\n    {\n"
                                                "        health.value += 1;\n    }\n}\n"), "\"result\":[]"));
+    // ...and Edits listed with commas, a call a line
+    TIDE_CHECK(has(format_reply(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                               "    world.Edit<Health>(healer.patient, health),\n"
+                                               "    world.Edit<Health>(this, own)\n    {\n"
+                                               "        health.value += own.value;\n    }\n}\n"), "\"result\":[]"));
 }
 
 TIDE_TEST(lsp_command_ownership)

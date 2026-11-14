@@ -70,7 +70,7 @@ command(Steal steal, PlayerID sender) Take(mut Purse purse, without ownership)
 }
 ```
 
-It's the word a [view](./views-and-the-match.md) filters with, where it means this machine's player; in a command handler, the player is the one who sent the command. A handler that filters this way can leave its sender out of the first parentheses, or name it to read it. One that does neither is an error, since nothing it did could depend on who sent it. Systems and event handlers can't filter by ownership: nothing there is a player's, so write `with Owner` for entities any player owns.
+It's the word a [view](./views-and-the-match.md) filters with, where it means this machine's player; in a command handler, the player is the one who sent the command. A handler that filters this way can leave its sender out of the first parentheses, or name it to read it. One that does neither is an error: a command handler names the player who sent it, so it can check what that player may do. Systems and event handlers can't filter by ownership: nothing there is a player's, so write `with Owner` for entities any player owns.
 
 Below are two machines in one match, each with a badge its player owns. Click the name's field in a frame, type one, and press **Rename my badge**: the command goes to the server, which picks its tick, and both machines run the handler. **Rename theirs** sends the same command for the other player's badge. Nothing stops a machine from sending it, so the handler looks at who did, refuses, and counts.
 
@@ -82,7 +82,7 @@ Below are two machines in one match, each with a badge its player owns. Click th
 
 A handler is void. Guard clauses end processing, and writes take effect normally, just as in a system or event handler. There is no acceptance call, return status, or transaction that undoes earlier changes. Each command can have at most one handler. The handler can send ordinary events when other parts of the game should react.
 
-Components and `this` refer to the target entity, as in an event handler. A handler taking no components runs once for the command. The compiler requires an entity target if the handler needs one. A target that no longer exists, or no longer matches the handler, has no effect.
+Components and `this` refer to the target entity, as in an event handler. A handler that takes components, or [filters by ownership](#only-the-sender-s-own-entities), runs for the entity the command is sent to, and the compiler requires an entity target for it. A handler with neither runs once for the command. A target that no longer exists, or no longer matches the handler, has no effect.
 
 Synchronous command handlers also take read-only `query` parameters, using the same [query rules as match events](./events.md#querying-other-entities). A query selects a separate set of entities, so a handler taking only queries and singletons requires no entity target. It reads the current match at the command's turn in the tick-end queue; recorded events and structural changes remain deferred. Check the authenticated sender's permissions before acting on queried entities, as with any command target.
 

@@ -4,14 +4,14 @@ A system starts once everything it runs after is done.
 stage 1  Heal  (per entity)
          reads Healer
          writes any entity's Health, through World
-         on one thread: it sets Health through its World, on any entity (world_edit.tide:42)
+         on one thread: it edits Health through its World, on any entity (world_edit.tide:42)
          alongside Rust, Tax, Count, Share
 stage 1  Rust  (per entity)
          writes Armor
          alongside Heal, Drain, Tax, Count, Share
 stage 1  Tax  (per entity)
          writes any entity's Gold, through World
-         on one thread: it sets Gold through its World, on any entity (world_edit.tide:65)
+         on one thread: it edits Gold through its World, on any entity (world_edit.tide:65)
          alongside Heal, Drain, Rust
 
 stage 2  Drain  (per entity)
@@ -26,7 +26,7 @@ stage 2  Count  (per entity)
 stage 3  Share  (per entity)
          writes Gold
          writes any entity's Gold, through World
-         on one thread: it sets Gold through its World, on any entity (world_edit.tide:75)
+         on one thread: it edits Gold through its World, on any entity (world_edit.tide:75)
          after Tax: both write Gold (and through Count)
          after Count: it reads Gold.value, which this writes
          alongside Heal, Drain, Rust

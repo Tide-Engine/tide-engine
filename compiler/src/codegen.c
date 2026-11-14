@@ -7587,6 +7587,17 @@ static const char *closing(const gen *g, const int from)
     return out.len ? out.data : NULL;
 }
 
+// A task's end where its code says so (`return`, `fail`, a `try` passing an
+// error on), with its result in its frame already: the containers its own code
+// opened close first, as a function's do (an Edit's block puts its component
+// back), then the task is done.
+static void gen_task_leave(gen *g)
+{
+    const char *close = closing(g, 0);
+    if (close) line(g, &g->c, "%s", close);
+    line(g, &g->c, "return TIDE_TASK_DONE;");
+}
+
 // Leaves the function being generated with `value`, C text of its result type,
 // closing the containers its own code opened first. For `try`, which is
 // never in a copy of a function that takes an Action.
@@ -7619,7 +7630,7 @@ static void hoist_unwrap(gen *g, expr *e)
             sb error = {0};
             sb_printf(&error, "%s.error", r);
             gen_spill(g, "tide_f->tide_result_error", error.data, g->routine->fails, world_where(g->task->local));
-            line(g, o, "return TIDE_TASK_DONE;");
+            gen_task_leave(g);
         } else {
             sb leave = {0};
             sb_printf(&leave, "(%s){.error = %s.error}", c_type(g->routine->result), r);
@@ -8826,7 +8837,7 @@ static void gen_stmt_now(gen *g, const stmt *s)
                           world_where(g->task->local));
             }
             if (failable) line(g, o, "tide_f->tide_result_ok = true;");
-            line(g, o, "return TIDE_TASK_DONE;");
+            gen_task_leave(g);
             break;
         }
         // Containers the code opened close first. In copied code, return goes
@@ -8861,7 +8872,7 @@ static void gen_stmt_now(gen *g, const stmt *s)
             sb error = {0};
             gen_value_of(g, &error, s->value, g->routine->fails);
             gen_spill(g, "tide_f->tide_result_error", error.data, g->routine->fails, world_where(g->task->local));
-            line(g, o, "return TIDE_TASK_DONE;");
+            gen_task_leave(g);
             break;
         }
         const char *close = closing(g, 0);
@@ -17253,20 +17264,29 @@ static void gen_row_fields(gen *g, const param *p, const int i, const char *pad)
 // changes for every row, and the rest for the rows it runs for.
 typedef enum { COPIES_ALL, COPIES_CHANGED, COPIES_READ } row_copies;
 
+// A read parameter whose stored component the code can change through its
+// World: a copy of its own, its lists too (gen_row_copies)
+static bool keeps_read_copy(const decl *sys, const param *p)
+{
+    return p->mode == PARAM_READ && world_sets_component(sys, p->type.decl) && type_has_list(p->type);
+}
+
 // For the rows a system's guard lets through (g->row_guarded): the lanes of its copies the guard's tests
-// didn't need (row_lanes_codegen.inc)
+// didn't need (row_lanes_codegen.inc), and a read parameter's own copy (keeps_read_copy)
 static void gen_row_copies_rest(gen *g, const decl *sys, const char *pad)
 {
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT) || joined(sys, p)) continue;
-        const row_lanes lanes = system_row_lanes(g, sys, i, true, g->row_apart);
-        if (lane_none(&lanes.rest)) continue;
         const char *c = type_cname(p->type.decl);
-        sb value = {0}, from = {0};
-        sb_printf(&value, "tide_v%d", i);
-        sb_printf(&from, "tide_%s_%s", g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
-        gen_gather_lanes(&g->c, pad, p->type.decl, value.data, from.data, &lanes.rest);
+        const row_lanes lanes = system_row_lanes(g, sys, i, true, g->row_apart);
+        if (!lane_none(&lanes.rest)) {
+            sb value = {0}, from = {0};
+            sb_printf(&value, "tide_v%d", i);
+            sb_printf(&from, "tide_%s_%s", g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
+            gen_gather_lanes(&g->c, pad, p->type.decl, value.data, from.data, &lanes.rest);
+        }
+        if (keeps_read_copy(sys, p)) sb_printf(&g->c, "%stide_v%d = tide_copy_%s(tide_v%d);\n", pad, i, c, i);
     }
 }
 
@@ -17314,9 +17334,9 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                   i, g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
         // Set may reuse a stored container's allocation, including this row's.
         // Its read parameter keeps an ordinary value copy until it returns.
-        if (p->mode == PARAM_READ && world_sets_component(sys, p->type.decl) && type_has_list(p->type)) {
-            sb_printf(o, "%stide_v%d = tide_copy_%s(tide_v%d);\n", pad, i, c, i);
-        }
+        // Behind a guard, only for the rows it lets through (gen_row_copies_rest),
+        // as the scratch the copy takes goes back only where the system ran.
+        if (keeps_read_copy(sys, p) && !g->row_guarded) sb_printf(o, "%stide_v%d = tide_copy_%s(tide_v%d);\n", pad, i, c, i);
         const bool drawn = sys->is_view;
         if (drawn && param_blends(p)) {
             if (!p->verified && far_blends(g, p->type.decl)) {

@@ -1,14 +1,31 @@
-// warnings: 1
+// warnings: 2
 // expect: 'other' is never used, so the Edit changes nothing
 // expect: change it in the block, or remove the Edit
-component Health { int value; Entity target; }
+// expect: 'seen' is never changed, so the Edit only reads it
+// expect: read it with 'if (world.TryGet<Health>(entity, out var seen)) { ... }': an Edit counts as writing every entity's Health, which systems that use it wait for
+component Health
+{
+    int value;
+    Entity target;
+    List<int> marks;
+
+    mut void Heal() { value++; }
+}
 singleton Tally { int edits; }
 scene Main { }
 
 event(Spawned) Setup(with Main) { Spawn(Health); }
 
+void Wound(mut Health health) { health.value--; }
+
+// Changed in each of the ways a mut parameter is: none of these warns
 system Hurt(Health health, mut Tally tally, mut World world)
 {
     world.Edit<Health>(health.target, other) { tally.edits++; }
+    world.Edit<Health>(health.target, seen) { tally.edits += seen.value; }
     world.Edit<Health>(health.target, used) { used.value -= 1; }
+    world.Edit<Health>(health.target, passed) { Wound(passed); }
+    world.Edit<Health>(health.target, listed) { listed.marks.Add(tally.edits); }
+    world.Edit<Health>(health.target, healed) { healed.Heal(); }
+    world.Edit<Health>(health.target, whole) { whole = Health { value = tally.edits }; }
 }

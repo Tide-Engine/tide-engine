@@ -960,6 +960,9 @@ add_test(NAME tidec_prefab_error_once
 add_test(NAME tidec_scene_startup
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/scene_startup"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/scene_startup.cmake")
+add_test(NAME tidec_edit_errors_alone
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/edit_errors_alone"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/edit_errors_alone.cmake")
 
 # Outline tests: `tidec --outline` on outline/<name>.tide, run in its folder so the paths it prints are the
 # file's name, must print outline/<name>.json exactly.

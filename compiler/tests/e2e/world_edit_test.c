@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -111,6 +112,107 @@ TIDE_TEST(world_edit_puts_changes_back_on_continue_break_and_return_and_skips_mi
     TIDE_CHECK(!tide_has_Party(&world, world.Roster.gone) && !tide_has_Party(&world, world.Roster.lonely));
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_world_free(&world);
+}
+
+static bool text_is(tide_world *w, const tide_text text, const char *want)
+{
+    return strcmp(tide_str_c(tide_text_read(&w->heap, text)), want) == 0;
+}
+
+static const char *const early_name = "a name long enough that it needs a block of the heap of its own";
+
+// The task's early Edit, as its return out of the block left it
+static void check_early(tide_world *w)
+{
+    const Party early = tide_get_Party(w, party_at(w, 5));
+    TIDE_REQUIRE(early.gold == 1 && tide_list_count(early.log) == 3000);
+    for (int k = 0; k < 3000; k += 499) TIDE_REQUIRE(element(w, early.log, k) == k);
+    TIDE_REQUIRE(text_is(w, early.name, early_name));
+}
+
+TIDE_TEST(world_edit_puts_changes_back_on_try_fail_and_a_tasks_return)
+{
+    start(&world, Mode_Leaving);
+    tide_world_tick(&world); // Spend and Refuse fail out of their blocks; Leave's tasks start
+    world.Settings.mode = Mode_None;
+    // A try that passed its error on, and a fail: what the block changed before is on the entity
+    const Party spent = tide_get_Party(&world, party_at(&world, 9));
+    TIDE_CHECK(spent.gold == 2000 && world.Results.spent == -1);
+    TIDE_CHECK(text_is(&world, spent.name, "spent, and long enough to need a block of the heap of its own"));
+    const Party refused = tide_get_Party(&world, party_at(&world, 10));
+    TIDE_CHECK(refused.gold == 5 && world.Results.refused == -1);
+    TIDE_CHECK(tide_list_count(refused.log) == 1 && element(&world, refused.log, 0) == 5);
+    // A task's return out of the block before its first wait, and one waiting to
+    check_early(&world);
+    TIDE_CHECK(tide_get_Party(&world, party_at(&world, 6)).gold == 0);
+    tide_world_copy(&kept, &world);
+    tide_world_tick(&world); // LeaveLate goes on, and returns out of its block
+    const Party late = tide_get_Party(&world, party_at(&world, 6));
+    TIDE_CHECK(late.gold == 1 && tide_list_count(late.log) == 1 && element(&world, late.log, 0) == 6);
+    TIDE_CHECK(text_is(&world, late.name, "late"));
+    check_early(&world); // Its blocks are its own still, with others made since
+    tide_world_copy(&replay, &kept);
+    tide_world_tick(&replay);
+    TIDE_CHECK(tide_world_hash(&replay) == tide_world_hash(&world));
+    TIDE_CHECK(tide_scratch_mark() == 0);
+    tide_world_free(&world);
+    tide_world_free(&kept);
+    tide_world_free(&replay);
+}
+
+TIDE_TEST(world_edit_listed_with_commas_of_two_entities_and_of_one_twice)
+{
+    start(&world, Mode_Stacked);
+    for (int tick = 1; tick <= 3; tick++) {
+        tide_world_copy(&kept, &world);
+        const uint64_t before = tide_world_hash(&kept);
+        tide_world_tick(&world);
+        // Each tick: 100 in; 7 moved across; 5 from it to itself, which is one component, so both changes land;
+        // and a move it's too poor for, which returns out of the block with only the counts changed
+        const Party from = tide_get_Party(&world, party_at(&world, 11));
+        const Party to = tide_get_Party(&world, party_at(&world, 12));
+        TIDE_REQUIRE(from.gold == 93 * tick && to.gold == 7 * tick);
+        TIDE_REQUIRE(from.given == 4 * tick && to.given == 2 * tick);
+        TIDE_REQUIRE((int)tide_list_count(from.log) == 3 * tick && (int)tide_list_count(to.log) == tick);
+        for (int k = 0; k < tick; k++) {
+            TIDE_REQUIRE(element(&world, from.log, 3 * k) == -7);
+            TIDE_REQUIRE(element(&world, from.log, 3 * k + 1) == -5 && element(&world, from.log, 3 * k + 2) == 5);
+            TIDE_REQUIRE(element(&world, to.log, k) == 7);
+        }
+        TIDE_REQUIRE(tide_world_hash(&kept) == before && tide_scratch_mark() == 0);
+    }
+    tide_world_copy(&replay, &kept);
+    tide_world_tick(&replay);
+    TIDE_CHECK(tide_world_hash(&replay) == tide_world_hash(&world));
+    tide_world_free(&world);
+    tide_world_free(&kept);
+    tide_world_free(&replay);
+}
+
+TIDE_TEST(world_edit_of_its_own_entity_beside_a_read_only_parameter)
+{
+    start(&world, Mode_Own);
+    for (int tick = 1; tick <= 3; tick++) {
+        tide_world_copy(&kept, &world);
+        const uint64_t before = tide_world_hash(&kept);
+        tide_world_tick(&world);
+        TIDE_REQUIRE(world.Results.failures == 0); // The parameter kept its value; Get read the stored one
+        char want[32];
+        snprintf(want, sizeof want, "settled at %d", 3 * tick);
+        for (int i = 0; i < PARTIES; i++) {
+            const Party party = tide_get_Party(&world, party_at(&world, i));
+            TIDE_REQUIRE(party.gold == 3 * tick && (int)tide_list_count(party.log) == tick);
+            for (int k = 0; k < tick; k++) TIDE_REQUIRE(element(&world, party.log, k) == 3 * k);
+            TIDE_REQUIRE(text_is(&world, party.name, want));
+        }
+        TIDE_REQUIRE(tide_world_hash(&kept) == before && tide_scratch_mark() == 0);
+    }
+    tide_world_copy(&replay, &kept);
+    tide_world_tick(&replay);
+    TIDE_CHECK(tide_world_hash(&replay) == tide_world_hash(&world));
+    tide_world_free(&world);
+    tide_world_free(&kept);
+    tide_world_free(&replay);
 }
 
 TIDE_TEST(world_edit_of_the_codes_own_binding_and_of_one_entity_twice)
