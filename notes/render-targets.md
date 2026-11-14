@@ -29,6 +29,9 @@ this commit lands, but must not assume the Tide Format enum has landed.
   its CTest passes on software WebGPU (muted headless browser). All 174 existing shader golden, SPIR-V
   validation and HLSL/FXC CTests pass unchanged. Docs production build passes. Unity's C#
   changes have not been compiled in a Unity editor. Release web runtime regenerated with Node 24.22.1.
+- Integration: merged origin/dev's `this.front` work without conflicts. Rebuilt native and web targets and shaders;
+  both platform CTests pass on Vulkan ASan and software WebGPU. The new triangle-side golden, spirv-val and
+  FXC checks also pass.
 - Outstanding work for the requested feature: managed target format encoding and Tide Format members;
   typed frag outputs, matching at draws, typed texture roles and Sample; per-image clears; blending and
   filtering enforcement, mipmap rules, language-server support, compiler/golden and exact readback fixtures,
