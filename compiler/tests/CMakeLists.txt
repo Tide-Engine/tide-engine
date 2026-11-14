@@ -387,6 +387,7 @@ tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with st
 # Its echo keeps a delay line of 384 KB, which nothing may copy: a function of the generated C that had one on
 # its stack, on the audio thread's, doesn't build
 target_compile_options(tidec_e2e_effects PRIVATE -Wframe-larger-than=65536)
+tide_e2e_test(number_grids) # Grids of float2s, float4s, ints and bytes as textures through typed [Raw(T)] roles, and what changed of them
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(texture_compression)
 tide_e2e_test(linear_textures LAYOUT)

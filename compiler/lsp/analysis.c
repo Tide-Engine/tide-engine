@@ -2447,7 +2447,7 @@ static const method_form texture_calls[] = {
      "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
      "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
-    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = the texture's, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = the texture's, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, of smaller images made of what was last drawn into the image. Trilinear blends adjacent levels; Point and Bilinear keep to the first image, so name Filter.Trilinear where the image carries Bilinear (a target's color does). Levels clamp to the available images."},
 };
 
 static const method_form depth_calls[] = {
@@ -2476,7 +2476,7 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
-    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Bilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Bilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, of smaller images made of what was last drawn into the image. Trilinear blends adjacent levels; Point and Bilinear keep to the first image, so name Filter.Trilinear where the image carries Bilinear (a target's color does). Levels clamp to the available images."},
 };
 
 static const method_form volume_calls[] = {
@@ -2503,7 +2503,7 @@ static const method_form array_calls[] = {
     {"Dispose", "Dispose()",
      "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
      "it then names no array."},
-    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = the array's, Wrap wrap = the array's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = the array's, Wrap wrap = the array's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, of smaller images made of what was last drawn into the image. Trilinear blends adjacent levels; Point and Bilinear keep to the first image, so name Filter.Trilinear where the image carries Bilinear (a target's color does). Levels clamp to the available images."},
 };
 
 static const method_form depth_array_calls[] = {
@@ -3060,16 +3060,14 @@ static bool shader_planned(const decl *d)
 // The fields of its parameter `p` a frag or vert reads, each in backquotes
 // with `prefix` before it, onto the list `out`: the match's, then the local
 // ones of a match component or singleton, which this machine keeps beside
-// them. Grids aren't read: they're sampled (put_samples). Of a frag's vertex,
-// `blended`, ints aren't either: they don't blend across a triangle, so its
-// corners pass none on.
-static void put_reads(const param *p, const char *prefix, const bool blended, sb *out)
+// them. Grids aren't read: they're sampled (put_samples). Of a frag's vertex
+// and of what its vert hands it, the corners pass on ints too, flat.
+static void put_reads(const param *p, const char *prefix, sb *out)
 {
     const decl *t = p->type.decl;
     for (int k = 0; t && k < t->fields.count; k++) {
         const field *f = &t->fields.items[k];
         if (f->hidden || f->type.kind == TY_GRID || !(p->whole || (p->reads && p->reads[k]))) continue;
-        if (blended && type_is_int_based(f->type)) continue;
         sb_printf(out, "%s`%s" STR_FMT "`", out->len ? ", " : "", prefix, STR_ARG(f->name));
     }
     const decl *part = t && p->local_reads ? t->local_part : NULL;
@@ -3170,7 +3168,7 @@ static void describe_shader(const decl *d, sb *out)
                               : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw.%s(..., "
                                 STR_FMT ")`, a %s one. It changes the vertex in place, before its triangles are drawn.",
               instanced ? "Instanced" : "Mesh", STR_ARG(d->name), three_d ? "3D" : "2D");
-    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle.");
+    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads: floats blended across the triangle, integral fields flat from its first corner.");
     if (d->place) {
         sb_printf(out, " It puts its vertex itself, where it writes `" STR_FMT "`, in the place of the draw's transform and "
                        "the camera.", STR_ARG(d->place->name));
@@ -3187,12 +3185,12 @@ static void describe_shader(const decl *d, sb *out)
     for (int i = 0; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
         if (i == 0) { // A vert has its whole vertex
-            if (d->is_frag) put_reads(p, "", true, &vertex);
+            if (d->is_frag) put_reads(p, "", &vertex);
             continue;
         }
         if (p->type.kind == TY_STRUCT && p->is_out) continue; // What a vert writes for its frag: nothing sends it
         if (handed_param(d, p)) { // ...and what the frag reads of it comes from the mesh's corners
-            put_reads(p, type_prefix(p), true, &handed);
+            put_reads(p, type_prefix(p), &handed);
             continue;
         }
         const bool component = p->type.kind == TY_COMPONENT;
@@ -3200,7 +3198,7 @@ static void describe_shader(const decl *d, sb *out)
         const bool values = values_param(d, p); // The draw's own, once for the draw, as a singleton's
         const bool data = p->type.kind == TY_STRUCT && !values;
         if (!component && !transform && !data && !values && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
-        put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
+        put_reads(p, type_prefix(p), component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
     if (!instance.len && !draw.len && !textures.len && !vertex.len && !handed.len) {
@@ -3211,8 +3209,8 @@ static void describe_shader(const decl *d, sb *out)
     if (instance.len) sb_printf(out, "\n- for each instance: %s", instance.data);
     if (draw.len) sb_printf(out, "\n- for each draw: %s", draw.data);
     if (textures.len) sb_printf(out, "\n- as textures: %s", textures.data);
-    if (vertex.len) sb_printf(out, "\n- of its vertex, blended across the triangle: %s", vertex.data);
-    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, blended across the triangle: %s", handed.data);
+    if (vertex.len) sb_printf(out, "\n- of its vertex, floats blended across the triangle and integral fields flat from its first corner: %s", vertex.data);
+    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, floats blended across the triangle and integral fields flat from its first corner: %s", handed.data);
 }
 
 // A frag's or vert's parameter: what it is to the GPU, and for a component
@@ -3225,8 +3223,8 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     sb fields = {0};
     sb grids = {0};
     if (index == 0 && d->is_frag) {
-        sb_put(out, "\n\nThe vertex, blended across the triangle from its three corners. A frag reads it.");
-        if (planned) put_reads(p, "", true, &fields);
+        sb_put(out, "\n\nThe vertex, its floats blended across the triangle from its three corners and its integral fields flat from its first corner. A frag reads it.");
+        if (planned) put_reads(p, "", &fields);
         if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
@@ -3271,15 +3269,15 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     }
     if (p->is_out && p->type.kind == TY_STRUCT) {
         sb_printf(out, "\n\nWhat the vert writes for the frag it's drawn with. It starts with no value: the vert writes each "
-                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads its floats blended and its integral fields flat across the "
-                       "triangle from its three corners, and only the fields it reads go from the corners to the pixels.",
+                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads its floats blended across the "
+                       "triangle from its three corners and its integral fields flat from its first corner, and only the fields it reads go from the corners to the pixels.",
                   STR_ARG(t->name));
         return;
     }
     if (handed_param(d, p)) {
-        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, floats blended and integral fields flat "
-                    "across the triangle from its three corners. A draw whose vert writes none is an error at the draw.");
-        if (planned) put_reads(p, "", true, &fields);
+        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, floats blended "
+                    "across the triangle from its three corners and integral fields flat from its first corner. A draw whose vert writes none is an error at the draw.");
+        if (planned) put_reads(p, "", &fields);
         if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
@@ -3301,7 +3299,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         sb_put(out, " Which of its fields this code reads is worked out once the game has no errors.");
         return;
     }
-    put_reads(p, "", false, &fields);
+    put_reads(p, "", &fields);
     put_samples(d, index, "", &grids);
     if (fields.len) sb_printf(out, " Fields this code reads, the only ones sent: %s.", fields.data);
     if (grids.len) sb_printf(out, " Grids it samples, sent as textures: %s.", grids.data);
@@ -4332,7 +4330,10 @@ static void describe(const occurrence *o, sb *out)
              "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
              "the image's numeric Sample result; a TextureArray or Cubemap takes the three float roles. Typed images read "
              "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
-             "every device, 32-bit float and int images are nearest only. The role must fit their format."},
+             "every device, 32-bit float and int images are nearest only. The role must fit their format. A grid of numbers is "
+             "a Texture of its role alone: a Grid2<float> takes [Raw(float)] (or none), a Grid2<float2> [Raw(float2)], a "
+             "Grid2<float4> [Raw(float4)], a Grid2<int> or Grid2<byte> [Raw(int)], as a field's value, a typed helper's "
+             "argument or a typed frag's source, and each is sampled by its own name as those numbers."},
             {"Lossless", "[Lossless]",
              "Keeps this `Texture` asset's pixels exact in the pack, a byte a channel. Without it, an image whose sides are "
              "powers of two and at least 128 pixels is block-compressed as the game is built (BC1, or BC3 with alpha), "
@@ -7912,6 +7913,13 @@ static bool changes_match(const scope *sc)
         && !sc->decl->is_interpolate && !sc->decl->is_audio;
 }
 
+// What a field's image is read as: a grid of numbers' cells (Grid2<float2>...), or its [Raw(T)] role's T.
+static type field_image_role(const field *f)
+{
+    const type numbers = type_number_grid_role(f->type);
+    return numbers.kind != TY_ERROR ? numbers : raw_sample_type(f);
+}
+
 // A half-written Sample can have no expression tree yet. Recover its declared image role from the
 // receiver's field chain, so signature help and member completion do not turn numeric images into colors.
 static type numeric_receiver(const int dot, const loc at)
@@ -7919,7 +7927,7 @@ static type numeric_receiver(const int dot, const loc at)
     const type color = {TY_COLOR, NULL};
     if (dot < 1 || DOC->toks[dot - 1].kind != T_IDENT) return color;
     const occurrence *o = occurrence_at(DOC->toks[dot - 1].at);
-    if (o && o->field) return raw_sample_type(o->field);
+    if (o && o->field) return field_image_role(o->field);
     if (o && o->param && o->param->sample_role.len) {
         return numeric_role(o->param->sample_role);
     }
@@ -7938,7 +7946,7 @@ static type numeric_receiver(const int dot, const loc at)
         }
         owner = member_type(owner, DOC->toks[k].text);
     }
-    return image ? raw_sample_type(image) : color;
+    return image ? field_image_role(image) : color;
 }
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
@@ -10552,7 +10560,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values. "
                  "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture/Texture3D fields or read-only GPU helper parameters declare "
                  "numeric Sample results; TextureArray and Cubemap fields take the float roles. Reads are nearest unless a filter is "
-                 "named; 32-bit float and int images are nearest only.", "Raw");
+                 "named; 32-bit float and int images are nearest only. A Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> "
+                 "is a Texture where its role (float2, float4, int) takes it.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");

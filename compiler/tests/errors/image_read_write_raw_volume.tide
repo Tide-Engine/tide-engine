@@ -1,0 +1,5 @@
+// expect: a kernel can't read and write the same image in one run
+local singleton Art { [Raw(float)] Texture3D v; }
+compute Step(Art art) { art.v[this.at] = art.v[this.at] + 1.0; }
+view Make(mut Art art) { art.v = Texture3D(int3(4), Format.R32f); GPU.Run(Step, int3(4)); }
+scene Main { }

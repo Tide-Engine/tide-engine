@@ -1,0 +1,5 @@
+// expect: an int image reads its nearest pixel: a GPU blends no integers
+scene Main { }
+local singleton Art { Grid2<int> ids = Grid2(4, 4); }
+frag Read(Vertex vertex, out Color color, Art art) { color = Color(float(art.ids.Sample(vertex.uv, Filter.Bilinear)), 0, 0, 1); }
+view Show(Art art) { Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Read); }

@@ -1,0 +1,6 @@
+// expect: a kernel can't read and write the same image in one run
+local singleton Art { RenderTarget heights; [Raw(float)] Texture t; }
+float Height([Raw(float)] Texture image, float2 uv) { return image.Sample(uv); }
+compute Step(Art art) { art.t[this.at.xy] = Height(art.t, float2(0.5)) + 1.0; }
+view Make(mut Art art) { art.heights = RenderTarget(8, 8, Format.R32f); art.t = art.heights.color; GPU.Run(Step, int3(8, 8, 1)); }
+scene Main { }

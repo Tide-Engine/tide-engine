@@ -1,0 +1,6 @@
+// expect: a grid's Texture is a sampled view of its CPU cells
+scene Main { }
+local singleton Art { Grid2<float4> vectors = Grid2(4, 4); [Raw(float4)] Texture v; }
+[Group(2, 2, 1)]
+compute Fill(Art art) { art.v[this.at.xy] = float4(1); }
+view Show(mut Art art) { art.v = art.vectors; GPU.Run(Fill, int3(4, 4, 1)); }

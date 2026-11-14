@@ -1,0 +1,7 @@
+// expect: image 'volume' is read as Color, but Format.R32i takes int: declare its numeric role with [Raw(int)]
+scene Main { }
+local singleton Fog { Texture3D volume; }
+void Make(out Texture3D v) { v = Texture3D(int3(2), Format.R32i); }
+[Group(2, 2, 2)]
+compute Fill(Fog fog) { fog.volume[this.at] = Color(1, 0, 0, 1); }
+view V(mut Fog fog) { Make(out fog.volume); GPU.Run(Fill, int3(2)); }

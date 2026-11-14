@@ -135,7 +135,7 @@ test('program failure keeps its exit code and does not overwrite the host fixtur
 
 // --app: an app installed, started and waited for, its end as Zygote saw it,
 // and the fatal lines of its process in the log.
-function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false, slow = false, needs = false } = {}) {
+function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false, slow = false, needs = false, asks = [] } = {}) {
     const before = { argv: process.argv, android: process.env.ANDROID_HOME };
     const root = mkdtempSync(join(tmpdir(), 'tide-android-app-'));
     const sdk = join(root, 'sdk');
@@ -143,7 +143,7 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
     writeFileSync(join(sdk, 'platform-tools', platform() === 'win32' ? 'adb.exe' : 'adb'), '');
     process.env.ANDROID_HOME = sdk;
     const calls = [], messages = [], printed = [];
-    let polls = 0, installs = 0, stopped = false;
+    let polls = 0, looks = 0, installs = 0, stopped = false;
     const line = (pid, level, tag, message) => `11-05 11:11:08.781  ${pid}  ${pid + 18} ${level} ${tag}: ${message}`;
     t.mock.method(console, 'error', message => messages.push(message));
     t.mock.method(process, 'exit', code => { throw new Exit(code); });
@@ -156,7 +156,7 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
             }
             return { ...ok, stdout: 'Success' };
         }
-        if (args[0] === 'uninstall') return ok;
+        if (args[0] === 'uninstall' || (args[0] === 'shell' && args[1] === 'pm clear dev.tide.game')) return ok;
         if (args[0] === 'shell' && args[1] === 'am force-stop dev.tide.game') {
             stopped = true;
             return ok;
@@ -166,14 +166,23 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
             return { ...ok, stdout: 'Status: ok\nComplete\n' };
         }
         if (args[0] === 'shell' && args[1] === 'input keyevent KEYCODE_BACK') return ok;
+        if (args[0] === 'shell' && args[1] === 'input keyevent KEYCODE_HOME') return ok;
+        if (args[0] === 'shell' && args[1] === 'settings get system accelerometer_rotation') return { ...ok, stdout: '1\n' };
+        if (args[0] === 'shell' && args[1] === 'settings get system user_rotation') return { ...ok, stdout: 'null\n' };
+        if (args[0] === 'shell' && /^settings (put|delete) system /.test(args[1])) return ok;
         if (args[0] === 'logcat' && args[3] === '1793873769.783') {
             if (args.length > 4) { // The activity manager's, Zygote's and the app's
                 const lines = [line(689, 'I', 'ActivityManager', 'Start proc 2500:dev.tide.game/u0a156 for next-top-activity')];
+                // What it asks for comes a line a look, as a frame's output would, and it ends after the last
+                looks++;
+                for (const what of asks.slice(0, looks)) lines.push(line(2500, 'I', 'tide    ', `step: ${what}`));
+                lines.push(line(2600, 'I', 'tide    ', 'step: home')); // Another app's, left alone
                 if (needs) {
                     lines.push(line(2600, 'I', 'tide    ', 'tide: This game needs Vulkan 1.3 to draw (another app)'));
                     lines.push(line(2500, 'I', 'tide    ', 'tide: This game needs Vulkan 1.3 to draw, and this device has none.'));
                 }
-                if ((!slow && !needs) || ++polls > 1) lines.push(line(479, 'I', 'Zygote  ', `Process 2500 exited ${exited}`));
+                const done = asks.length ? looks > asks.length : (!slow && !needs) || ++polls > 1;
+                if (done) lines.push(line(479, 'I', 'Zygote  ', `Process 2500 exited ${exited}`));
                 return { ...ok, stdout: lines.join('\n') };
             }
             return { ...ok, stdout: [
@@ -196,8 +205,9 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
         rmSync(root, { recursive: true, force: true });
     });
     const state = { calls, messages, printed, stopped: () => stopped };
-    state.invoke = async (...options) => {
-        process.argv = [process.execPath, 'run_android.mjs', '--app', 'dev.tide.game', ...options, 'game.apk', '--frames', '5'];
+    state.invoke = (...options) => state.invokeWith(options, ['--frames', '5']);
+    state.invokeWith = async (options, rest) => {
+        process.argv = [process.execPath, 'run_android.mjs', '--app', 'dev.tide.game', ...options, 'game.apk', ...rest];
         // What it prints, but only while it runs: the test runner reports through stdout too. It writes to the
         // descriptor and waits (a write left to the stream is cut at a pipe's 64 KiB as the process exits), here a
         // piece at a time, as a full pipe takes it
@@ -269,4 +279,60 @@ test('--vulkan stops and fails an app at once when it says it needs Vulkan 1.3',
     assert.equal(await screen.invoke('--back'), 1);
     assert.equal(screen.stopped(), false);
     assert.deepEqual(screen.messages, []);
+});
+
+test("--env gives the app Tide's settings, and refuses anything else", async t => {
+    const d = appDevice(t);
+    assert.equal(await d.invoke('--env', 'TIDE_TEST_DEPTH_FALLBACK=1', '--env', 'TIDE_GPU_CULLING=decide'), 0);
+    assert.ok(d.calls.some(args => args[1] === 'am start -W -n dev.tide.game/android.app.NativeActivity '
+        + "--es tide.args '--frames 5' --es tide.env 'TIDE_TEST_DEPTH_FALLBACK=1 TIDE_GPU_CULLING=decide'"));
+    for (const wrong of ['PATH=/tmp', 'TIDE_RELAY=a b', 'tide_hidden=1', 'TIDE_X']) {
+        const refused = appDevice(t);
+        assert.equal(await refused.invoke('--env', wrong), 2);
+        assert.match(refused.messages[0], /--env takes a setting of Tide's, as TIDE_NAME=value/);
+        assert.equal(refused.calls.some(args => args[0] === 'install'), false);
+    }
+});
+
+test('--steps does what the app asks, once each, in order, and puts the screen back as it was', async t => {
+    const d = appDevice(t, { asks: ['turn', 'upright', 'home', 'front'] });
+    assert.equal(await d.invoke('--steps'), 0);
+    const shell = d.calls.filter(args => args[0] === 'shell').map(args => args[1]);
+    const after = shell.slice(shell.findIndex(command => command.startsWith('am start')) + 1);
+    assert.deepEqual(after.filter(command => !command.startsWith('date')), [
+        'settings get system accelerometer_rotation', 'settings get system user_rotation',
+        'settings put system accelerometer_rotation 0 && settings put system user_rotation 1',
+        'settings put system accelerometer_rotation 0 && settings put system user_rotation 0',
+        'input keyevent KEYCODE_HOME',
+        'am start -W -n dev.tide.game/android.app.NativeActivity',
+        // As it was: never said, and turning with the device
+        'settings delete system user_rotation && settings put system accelerometer_rotation 1',
+    ]);
+    assert.deepEqual(d.calls.at(-1), ['uninstall', 'dev.tide.game']);
+    // Without --steps its lines are only output; a step there's none of stops it
+    const plain = appDevice(t, { asks: ['turn'] });
+    assert.equal(await plain.invoke(), 0);
+    assert.equal(plain.calls.some(args => args[1]?.startsWith('settings')), false);
+    const wrong = appDevice(t, { asks: ['shake'] });
+    assert.equal(await wrong.invoke('--steps'), 1);
+    assert.ok(wrong.stopped());
+    assert.match(wrong.messages[0], /asked for a step there's none of: shake/);
+});
+
+test('--run starts the app once for each, in order, installed once, and stops at a run that fails', async t => {
+    const d = appDevice(t, { slow: true });
+    assert.equal(await d.invokeWith(['--run', 'fresh', '--run', 'warm', '--run', 'corrupt'], []), 0);
+    const starts = d.calls.filter(args => args[1]?.startsWith('am start')).map(args => args[1].replace(/^.*NativeActivity/, ''));
+    assert.deepEqual(starts, [" --es tide.args 'fresh'", " --es tide.args 'warm'", " --es tide.args 'corrupt'"]);
+    assert.equal(d.calls.filter(args => args[0] === 'install').length, 1);
+    const clear = d.calls.findIndex(args => args[1] === 'pm clear dev.tide.game');
+    assert.ok(clear > 0 && clear < d.calls.findIndex(args => args[1]?.startsWith('am start')), 'kept files go first');
+    assert.deepEqual(d.calls.at(-1), ['uninstall', 'dev.tide.game']);
+    assert.deepEqual(d.printed.filter(text => text.startsWith('---')), ['--- fresh\n', '--- warm\n', '--- corrupt\n']);
+    const failing = appDevice(t, { exited: 'cleanly (3)' });
+    assert.equal(await failing.invokeWith(['--run', 'fresh', '--run', 'warm'], []), 3);
+    assert.equal(failing.calls.filter(args => args[1]?.startsWith('am start')).length, 1);
+    const both = appDevice(t);
+    assert.equal(await both.invokeWith(['--run', 'fresh'], ['warm']), 2);
+    assert.match(both.messages[0], /either each --run's or after the APK, not both/);
 });

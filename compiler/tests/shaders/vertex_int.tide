@@ -1,0 +1,17 @@
+scene Main { }
+struct Corner { float3 position; int material; int2 cell; float shade; }
+local singleton Art { List<Corner> vertices; List<int> indices; }
+frag Read(Corner corner, out Color color)
+{
+    color = Color(float(corner.material) / 4, float(corner.cell.x + corner.cell.y), corner.shade);
+}
+frag Whole(Corner corner, out Color color)
+{
+    var copy = corner;
+    color = Color(float(copy.material), 0, 0);
+}
+view Show(Art art)
+{
+    Draw.Mesh(art.vertices, art.indices, float4x4.identity, Read);
+    Draw.Mesh(art.vertices, art.indices, float4x4.identity, Whole);
+}

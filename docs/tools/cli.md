@@ -447,6 +447,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 - To sign with another key (a build server's, or one you already have), set `TIDE_ANDROID_KEY` to its file: PEM, the private key (RSA, 2048 bits or more) and then its certificate. `openssl pkcs12 -in upload.p12 -nodes -out key.pem` makes one from a keystore; a `.jks` keystore becomes a `.p12` first with `keytool -importkeystore -srckeystore upload.jks -destkeystore upload.p12 -deststoretype PKCS12`.
 - Each build's version code, which Android only updates an app to a higher one of, is the minutes since 2020 began, so every build is newer than the last. Where `SOURCE_DATE_EPOCH` is set, it stands in for now. The version people see is the game's `version` setting, like `1.2.0`, or else 1.0.
 - The back button comes to the game as Escape, as in Unity.
+- An app that isn't built with `--distribution` takes Tide's settings, like `TIDE_GPU_CULLING=0`, from how it's started, as a desktop run takes them from its environment: `adb shell am start -n <appId>/android.app.NativeActivity --es tide.env "TIDE_GPU_CULLING=0"`, several apart by spaces. An app built to ship takes none: any app on the phone can start another with such words.
 - With `tide run --android`, saving a `.tide` or C file builds the app again, installs it and starts it over: a phone can't swap code into a running app, so the match starts over too. Type `r` and press Enter to start it over yourself; closing the app ends the run.
 
 ### Google Play
