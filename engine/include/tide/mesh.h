@@ -96,6 +96,23 @@ uint32_t tide_draw_grid_array_texture(tide_draw_list *d, tide_grid grid, const t
 // Its size, and its layers: zeros for one that's none.
 tide_int3 tide_grid_array_extent(tide_grid grid, const tide_grid_shape *shape);
 
+static inline tide_texture3d_ref tide_texture3d_of_grid(const tide_grid grid, const tide_grid_shape *shape, const bool raw)
+{
+    const tide_texture_array_ref a = tide_texture_array_of_grid(grid, shape, raw);
+    return (tide_texture3d_ref){.named = a.named, .depth = a.layers, .reserved = a.reserved};
+}
+static inline bool tide_texture3d_grid(const tide_texture3d_ref volume, tide_grid *grid, tide_grid_shape *shape)
+{
+    return tide_texture_array_grid((tide_texture_array_ref){.target = volume.target, .named = volume.named,
+                                                          .layers = volume.depth, .reserved = volume.reserved}, grid, shape);
+}
+static inline bool tide_texture3d_grid_raw(const tide_texture3d_ref volume)
+{
+    return volume.reserved == TIDE_TEXTURE_ARRAY_GRID && (volume.depth & 255u) == 3u;
+}
+tide_int3 tide_grid_volume_extent(tide_grid grid, const tide_grid_shape *shape);
+uint32_t tide_draw_grid_volume_texture(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, bool raw);
+
 // The grid a texture names, with its cells' shape: false for a texture that's
 // no grid's.
 static inline bool tide_texture_grid(const tide_texture_ref texture, tide_grid *grid, tide_grid_shape *shape)

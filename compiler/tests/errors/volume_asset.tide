@@ -1,0 +1,3 @@
+// expect: Texture3D assets aren't built
+asset Texture3D volume = "art/volume.png";
+scene Main { }

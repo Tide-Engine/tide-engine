@@ -50,6 +50,7 @@ extern int Write(out List<byte> bytes, Buffer out);
 extern void DrawUI(DrawList list);
 extern system MoveInC(mut Stats stats, Time time, without Frozen);
 RenderTarget scene; Texture image;
+Texture3D volume;
 Draw.Blit(scene.color, Draw.window, Blur);
 const List<int> NONE = [];
 const int MAX_HEALTH = 100;

@@ -1,3 +1,32 @@
+## Storage images and Texture3D (2026-11-14)
+
+Backend contracts and validation are in rendering.md, Storage images and volumes. `tide.js` creates `dimension:'3d'`
+textures with one mip level and three-axis sampler wrap. `gpu_volume_write` reads a checked box from the whole
+volume's rows/slices. Invalid dimensions, device-limit extents and more than 128 MiB are refused before allocation.
+Volumes additionally use validation and out-of-memory error scopes: optional `texture_status(id)` reports pending
+(0), ready (1), or failed (-1), and the renderer exposes no pending/failed image to a binding. Pending CPU uploads
+keep only a packed copy of their box until the scopes succeed, so heap growth, game writes, device replacement or
+resource release cannot turn them into borrowed/stale bytes. Failure discards them. Ordinary textures report ready.
+`gpu_web.c` preserves the existing three-bit read banks, overriding a volume's read through
+`gpu_pipeline_image_read(slot,8)`; `gpu_pipeline_images(writes,formatsLow,formatsHigh)` carries storage formats as
+nibbles. Layout keys include storage formats and dimensions, and sampled/storage views reuse binding `1+2i`.
+Storage-image bindings are write-only and have no sampler. The existing queue submissions preserve pass/dispatch
+order. Offscreen RGBA8 and preferred-format window pipelines are distinguished by the internal WINDOW target bit.
+
+`cmake/web_runtime.test.mjs` adds storage-image format/dimension/layout checks and allocation/partial-upload bounds
+checks (including mocked OOM, pending state and owned upload bytes); all 15 tests pass on Node 24.22.1. The release runtime and source manifest are regenerated. The web-debug
+compute page passes through device loss; targets, kernels and shaders pass, followed by draw and images after the
+window stand-in kind was corrected. Prewarm's expected new variant is documented in rendering.md. Real-GPU web
+lanes, other operating systems and Android remain separate validation.
+
+Final current-source validation (after the HDR round-trip witness was moved inside the frag, preserving exact
+sample comparisons without depending on UNORM half rounding): the web-debug `tide_platform_images`,
+`tidec_e2e_texture3d` and `tide_tests` targets build without warnings. All 30 focused CTests pass: the image and
+volume diagnostics, WGSL golden, SPIR-V validation, reload/resource E2E and WebGPU image fixture. Node 24.22.1
+WASI passes all 117 `tide_tests draw_` cases, including volume size/lifetime/recreation and Grid3 depth/change
+coverage. The WebGPU fixture includes conditional initialization by contentRevision, runtime image-alias rejection,
+RGBA16F 2D writes, exact image ordering, volume filtering, and device loss. HLSL/FXC validation is native coverage.
+
 ## Shared modules and host readiness (2026-11-07)
 
 `tide.js` now shares a `GPUShaderModule` by exact WGSL source among live

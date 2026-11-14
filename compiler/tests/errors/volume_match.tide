@@ -1,0 +1,3 @@
+// expect: can't hold rendering resources in match state
+singleton Match { Texture3D volume; }
+scene Main { }

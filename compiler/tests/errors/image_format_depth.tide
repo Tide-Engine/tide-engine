@@ -1,0 +1,5 @@
+// expect: this image's format isn't a portable storage format
+local singleton Fog { Texture image; RenderTarget target; }
+compute Fill(Fog fog) { fog.image[this.at.xy] = Color.white; }
+view Make(mut Fog fog) { fog.target = RenderTarget(4, 4, 1, Format.Depth); fog.image = fog.target.color; GPU.Run(Fill, int2(4)); }
+scene Main { }

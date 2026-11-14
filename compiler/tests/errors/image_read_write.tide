@@ -1,0 +1,5 @@
+// expect: a kernel can't read and write the same image in one run
+local singleton Fog { Texture3D volume; }
+compute Update(Fog fog) { fog.volume[this.at] = fog.volume.Sample(float3(0.5)); }
+view Make(mut Fog fog) { fog.volume = Texture3D(int3(4)); GPU.Run(Update, int3(4)); }
+scene Main { }

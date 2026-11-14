@@ -1442,6 +1442,41 @@ view DrawSparks(Sparks sparks, Burst burst)
 
 A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's. Instances of such a mesh from a `List<T>` are frustum culled by the bounds [`Draw.Bounds`](./draw-settings.md) gives, a box around every vertex the kernel can make: the CPU has none of its own for them, and without them, every instance is drawn.
 
+### Writing images
+
+A kernel writes a render target's image or a [`Texture3D`](./meshes-and-textures.md#volumes) by cell:
+
+```csharp
+local singleton Fog
+{
+    Texture3D density;
+}
+
+[Group(4, 4, 4)]
+compute FillFog(Fog fog)
+{
+    float height = float(this.at.y) / float(this.count.y);
+    fog.density[this.at] = Color(height, 0, 0, 1);
+}
+
+view UpdateFog(mut Fog fog)
+{
+    if (fog.density.contentRevision == 0)
+        fog.density = Texture3D(int3(32), Format.Rgba16f);
+    GPU.Run(FillFog, fog.density.size);
+}
+```
+
+For a target, write `target.color[at]` or `target.colors[i][at]` with an `int2` place, or put that image in a `Texture` field.
+No `mut` is needed to write through either handle. An out-of-range store does nothing; tidec checks the coordinates.
+A Color is written as it is, with its alpha: Tide handles premultiplication internally, as it does for a frag.
+
+A kernel that writes an image cannot sample or load that same image. Write into a second image, then alternate
+them between runs. Rgba8 and Rgba16f are writable. Tidec must know the destination's format from its constructor
+assignments; it diagnoses unknown or ambiguous formats and formats that core WebGPU cannot store into.
+A kernel writes at most four images; split larger work into separate runs.
+Written targets use a single sample: make the destination without MSAA, then draw its result into a multisampled target.
+
 ### Order in a frame
 
 A frame's GPU work happens as if in the order it was recorded: a draw after a run sees what it wrote, and one before it doesn't, as do runs after runs, and `Set`, `Clear` and `SetCount` among them. A run that no draw before it depends on is done before them, so it costs the draws around it nothing: write runs where they read best.

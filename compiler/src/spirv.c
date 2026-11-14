@@ -164,7 +164,7 @@ enum {
     OP_STORE = 62, OP_ACCESS_CHAIN = 65, OP_ARRAY_LENGTH = 68, OP_DECORATE = 71, OP_MEMBER_DECORATE = 72, OP_VECTOR_EXTRACT_DYNAMIC = 77,
     OP_VECTOR_SHUFFLE = 79, OP_COMPOSITE_CONSTRUCT = 80, OP_COMPOSITE_EXTRACT = 81, OP_TRANSPOSE = 84,
     OP_SAMPLED_IMAGE = 86, OP_IMAGE_SAMPLE_IMPLICIT_LOD = 87, OP_IMAGE_SAMPLE_EXPLICIT_LOD = 88,
-    OP_IMAGE_SAMPLE_DREF_IMPLICIT_LOD = 89, OP_IMAGE_SAMPLE_DREF_EXPLICIT_LOD = 90, OP_IMAGE_FETCH = 95,
+    OP_IMAGE_SAMPLE_DREF_IMPLICIT_LOD = 89, OP_IMAGE_SAMPLE_DREF_EXPLICIT_LOD = 90, OP_IMAGE_FETCH = 95, OP_IMAGE_WRITE = 99,
     OP_IMAGE_QUERY_SIZE_LOD = 103, OP_IMAGE_QUERY_SIZE = 104, OP_IMAGE_QUERY_LEVELS = 106,
     OP_IMAGE_QUERY_SAMPLES = 107, OP_CONVERT_F_TO_U = 109, OP_CONVERT_F_TO_S = 110, OP_CONVERT_S_TO_F = 111,
     OP_CONVERT_U_TO_F = 112, OP_QUANTIZE_TO_F16 = 116, OP_BITCAST = 124, OP_S_NEGATE = 126, OP_F_NEGATE = 127,
@@ -420,8 +420,8 @@ static uint32_t spv_type(translation *x, const int t)
     case K_TEXTURE: {
         const uint32_t sampled = spv_type(x, ty.elem);
         id = new_id(x);
-        INS(&x->globals_words, OP_TYPE_IMAGE, id, sampled, ty.dim == DIM_CUBE ? 3u : 1u, ty.depth ? 1u : 0u,
-            ty.arrayed ? 1u : 0u, ty.multisampled ? 1u : 0u, 1u, 0u);
+        INS(&x->globals_words, OP_TYPE_IMAGE, id, sampled, ty.dim == DIM_CUBE ? 3u : ty.dim == DIM_3D ? 2u : 1u, ty.depth ? 1u : 0u,
+            ty.arrayed ? 1u : 0u, ty.multisampled ? 1u : 0u, ty.image_format ? 2u : 1u, ty.image_format);
         break;
     }
     default:
@@ -1956,17 +1956,24 @@ static val texture_call(translation *x, const expr *e)
     const val image = handle(x, e->args[0], K_TEXTURE);
     const type tex = *T(x, image.t);
     const int f32 = t_simple(x, K_F32);
-    const int coords = t_vec(x, f32, tex.dim == DIM_CUBE ? 3 : 2);
+    const int coords = t_vec(x, f32, tex.dim == DIM_CUBE || tex.dim == DIM_3D ? 3 : 2);
     const int result = tex.depth ? f32 : t_vec(x, tex.elem, 4);
     const int vec4 = t_vec(x, tex.depth ? f32 : tex.elem, 4);
     const bool sample = same(n, len, "textureSample"), level = same(n, len, "textureSampleLevel");
     const bool grad = same(n, len, "textureSampleGrad"), bias = same(n, len, "textureSampleBias");
     const bool compare = same(n, len, "textureSampleCompare"), compare_level = same(n, len, "textureSampleCompareLevel");
     const int arrayed = tex.arrayed ? 1 : 0; // The layer is the argument after the coordinates
+    if (same(n, len, "textureStore")) {
+        if (!tex.image_format || count != 3) fail(x, line, col, "textureStore takes a write-only storage texture, where and a texel");
+        const val at = int_value(x, e->args[1], tex.dim == DIM_3D ? 3 : 2);
+        const val value = float_value(x, e->args[2], vec4);
+        INS(&x->fn->body, OP_IMAGE_WRITE, image.id, at.id, value.id);
+        return (val){.t = t_simple(x, K_VOID)};
+    }
     if (sample || level || grad || bias || compare || compare_level) {
         const int wanted = (sample || compare || compare_level ? (compare || compare_level ? 4 : 3) : grad ? 5 : 4) + arrayed;
         if (count != wanted) fail(x, line, col, "'%.*s' takes %d arguments here", len, n, wanted);
-        if (tex.multisampled) fail(x, line, col, "a multisampled texture is loaded, not sampled");
+        if (tex.multisampled || tex.image_format) fail(x, line, col, "this texture is loaded or written, not sampled");
         const val s = handle(x, e->args[1], K_SAMPLER);
         // Everything worked out before the sampled image, which is in the block that samples it
         const val where = float_value(x, e->args[2], coords);
@@ -2000,7 +2007,7 @@ static val texture_call(translation *x, const expr *e)
                                        : "textureLoad takes a texture, where and a level or sample");
         }
         if (tex.dim == DIM_CUBE) fail(x, line, col, "a cube isn't loaded");
-        const val at = int_value(x, e->args[1], 2);
+        const val at = int_value(x, e->args[1], tex.dim == DIM_3D ? 3 : 2);
         const uint32_t where = arrayed ? with_layer(x, at, e->args[2], false) : at.id;
         const val third = int_value(x, e->args[2 + arrayed], 1);
         uint32_t id = EMIT(x, OP_IMAGE_FETCH, vec4, image.id, where, tex.multisampled ? IMAGE_SAMPLE : IMAGE_LOD, third.id);
@@ -2010,8 +2017,8 @@ static val texture_call(translation *x, const expr *e)
     x->cap_image_query = true;
     const int u32 = t_simple(x, K_U32);
     if (same(n, len, "textureDimensions")) {
-        const int t = t_vec(x, u32, 2);
-        if (tex.multisampled) {
+        const int t = t_vec(x, u32, tex.dim == DIM_3D ? 3 : 2);
+        if (tex.multisampled || tex.image_format) {
             if (count != 1) fail(x, line, col, "a multisampled texture has one size");
             return (val){.t = t, .id = EMIT(x, OP_IMAGE_QUERY_SIZE, t, image.id)};
         }

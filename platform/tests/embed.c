@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_ARRAY_BLOCKS + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_PIPELINE_IMAGES + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_ARRAY_BLOCKS) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_PIPELINE_IMAGES) {
             r.whole = false;
             break;
         }
@@ -585,6 +585,56 @@ TIDE_TEST(embed_render_array_written_in_parts)
     uint16_t part[6];
     memcpy(part, packet + 60, sizeof part);
     TIDE_CHECK(part[0] == 11 && part[2] == 13 && part[3] == 21 && part[5] == 23);
+}
+
+// A volume's box is cut from all three dimensions' pitches, packed by row and then slice. Bad boxes emit nothing.
+TIDE_TEST(embed_render_volume_written_in_parts)
+{
+    tide_gpu_record_begin();
+    const tide_gpu_id volume = tide_gpu_record.volume(TIDE_GPU_R16F, 4, 3, 4);
+    TIDE_REQUIRE(volume != 0);
+    uint16_t cells[4][3][4];
+    for (uint16_t z = 0; z < 4; z++)
+        for (uint16_t y = 0; y < 3; y++)
+            for (uint16_t x = 0; x < 4; x++) cells[z][y][x] = (uint16_t)(z * 100u + y * 10u + x);
+    tide_gpu_record.volume_write(volume, cells, 1, 1, 1, 3, 2, 2);
+    tide_gpu_record.volume_write(volume, cells, -1, 1, 1, 3, 2, 2);
+    tide_gpu_record.volume_write(volume, cells, 1, 1, INT32_MAX, 3, 2, 2);
+    tide_gpu_record.volume_write(volume, cells, 1, 1, 1, INT32_MAX, 2, 2);
+    TIDE_CHECK(tide_gpu_record.volume(TIDE_GPU_RGBA8, -1, 3, 4) == 0);
+    TIDE_CHECK(tide_gpu_record.volume(TIDE_GPU_RGBA8, INT32_MAX, 3, 4) == 0);
+    TIDE_CHECK(tide_gpu_record.volume(TIDE_GPU_RGBA32F, 2048, 2048, 2048) == 0);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 28u + 8u + 28u + 24u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_VOLUME && u32_at(packet, 4) == 20u);
+    TIDE_CHECK(u32_at(packet, 8) == volume && u32_at(packet, 12) == TIDE_GPU_R16F && u32_at(packet, 16) == 4u
+               && u32_at(packet, 20) == 3u && u32_at(packet, 24) == 4u);
+    TIDE_CHECK(u32_at(packet, 28) == TIDE_EMBED_RENDER_VOLUME_WRITE && u32_at(packet, 32) == 52u);
+    const uint32_t box[] = {volume, 1, 1, 1, 3, 2, 2};
+    TIDE_CHECK(memcmp(packet + 36, box, sizeof box) == 0);
+    const uint16_t expected[] = {111, 112, 113, 121, 122, 123, 211, 212, 213, 221, 222, 223};
+    TIDE_CHECK(memcmp(packet + 64, expected, sizeof expected) == 0);
+    tide_gpu_record.texture_free(volume);
+}
+
+TIDE_TEST(embed_render_pipeline_writes_images)
+{
+    tide_gpu_pipeline_desc desc = {.name = "images", .compute = true, .texture_count = 2, .image_writes = 2};
+    desc.reads[0] = TIDE_GPU_READ_COLOR;
+    desc.reads[1] = TIDE_GPU_READ_VOLUME;
+    desc.image_formats[1] = TIDE_GPU_RGBA16F;
+    tide_gpu_record_begin();
+    const tide_gpu_id pipeline = tide_gpu_record.pipeline(&desc);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    uint32_t at = 8u + u32_at(packet, 4);
+    TIDE_REQUIRE(at + 24u <= size && u32_at(packet, at) == TIDE_EMBED_RENDER_PIPELINE_STORAGE);
+    at += 8u + u32_at(packet, at + 4u);
+    TIDE_REQUIRE(at + 28u == size);
+    TIDE_CHECK(u32_at(packet, at) == TIDE_EMBED_RENDER_PIPELINE_IMAGES && u32_at(packet, at + 4u) == 20u);
+    TIDE_CHECK(u32_at(packet, at + 8u) == pipeline && u32_at(packet, at + 12u) == 2u && u32_at(packet, at + 16u) == 2u);
+    TIDE_CHECK(u32_at(packet, at + 24u) == TIDE_GPU_RGBA16F);
 }
 
 // A pack's blocks go to the other program as they are where it said it samples their format, else not (the renderer

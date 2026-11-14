@@ -12026,6 +12026,32 @@ TIDE_TEST(lsp_cubemaps)
 }
 
 // Texture arrays: the types, an asset of a glob's images, an array a view draws into, what a frag reads.
+TIDE_TEST(lsp_texture3d)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_volume");
+    static const char source[] = "local singleton Fog\n{\n    Texture3D volume;\n}\n"
+        "view V(mut Fog fog)\n{\n    fog.volume = Texture3D(int3(2));\n    fog.volume.Resize(int3(3));\n}\nscene Main { }\n";
+    write_file("lsp_volume/main.tide", source);
+    char root[700], uri[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_volume", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_volume/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri, source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at(uri, "textDocument/hover", 2, 6, "");
+    TIDE_CHECK(has(hover, "machine-local volume") && has(hover, "contentRevision"));
+    const char *complete = request_at(uri, "textDocument/completion", 7, 15, "");
+    TIDE_CHECK(has(complete, "Resize") && has(complete, "Dispose") && has(complete, "contentRevision") && has(complete, "size"));
+    const char *signature = request_at(uri, "textDocument/signatureHelp", 6, 27, "");
+    TIDE_CHECK(has(signature, "Texture3D(int3 size)"));
+    remove_game_file("lsp_volume/main.tide");
+    remove_folder("lsp_volume");
+    clear_sent();
+    lsp_free(&server);
+}
+
 TIDE_TEST(lsp_texture_arrays)
 {
     if (!find_game_dir()) return;

@@ -39,6 +39,41 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
+### Volumes
+
+`Texture3D` is a continuous volume, made in local code with a size in texels:
+
+```csharp
+local singleton Fog
+{
+    Texture3D density;
+}
+
+view MakeFog(mut Fog fog)
+{
+    if (fog.density.contentRevision == 0)
+        fog.density = Texture3D(int3(32, 16, 32), Format.Rgba16f);
+}
+```
+
+Fill it with a [compute kernel](./shaders.md#writing-images). In GPU code,
+`density.Sample(float3(x, y, z))` blends the eight neighboring cells on all three axes.
+Coordinates are normalized from 0 to 1; `Filter.Point` picks the nearest cell, and an optional
+`Wrap.Clamp`, `Wrap.Repeat` or `Wrap.Mirror` applies on all axes. The defaults are Bilinear and Clamp.
+There are no volume mipmaps, so Trilinear, Anisotropic and SampleLevel are unavailable.
+`density[int3(x, y, z)]` reads an exact cell, with zeros outside.
+
+`Grid3<Color>` and `Grid3<float>` convert to `Texture3D` where one is wanted. A float grid supplies its value
+as red, with green and blue zero and alpha one. Changes upload only the changed regions, as a two-dimensional
+grid's texture does. A `TextureArray` keeps its layers separate; a volume blends along z too.
+Grid conversions are sampled views of CPU data. To write on the GPU, create an owned `Texture3D`.
+
+Copies share the volume. `Resize(int3)` replaces it with an empty image; `Dispose()` releases it;
+`size` is an `int3`, and `contentRevision` changes when pixels are discarded, including device loss or hot reload.
+Refill when that revision changes. Volumes are machine-local and cannot be match state.
+Each axis is at most 2048 and the image at most 128 MiB, subject to the device's limits; one that cannot fit is
+empty and reports the problem once. There is no volume file-asset declaration or drawing into a volume slice.
+
 A color `Texture` is what you draw with. It comes from an asset, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), from a render target, `target.color` (see [Targets](./render-targets.md)), or from a grid you paint: an ordinary `Grid2<Color>` or a `Grid2<float>` with a size (see [Grids](../language/grids.md)) is a `Texture` wherever one is wanted. Numeric [`[Raw]` sources](./shaders.md#textures-that-are-numbers) use Raw fields and shader sampling instead of ordinary color draws.
 
 `Draw.Mesh` takes one after its indices. With no frag, each pixel is the triangle's color times the texture's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.

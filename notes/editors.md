@@ -1,5 +1,14 @@
 # The language server and the editors
 
+## Texture3D (2026-11-14)
+
+The language server recognizes Texture3D as a local volume. Type hover describes creation, sharing,
+GPU sampling/indexing/writes, size, revision, resizing and disposal. GPU completion offers Sample and
+size; CPU completion offers Resize, Dispose, size and contentRevision. Chained metadata resolves to
+int3/long, and method signature help uses volume_calls. lsp_texture3d passes on sanitize (diagnostics,
+hover, members). Both shipped TextMate grammars and Vim's builtin type list include Texture3D; the
+syntax probe pins its primitive-type token. Node 24.22.1 runs tools/tide-syntax/test/grammar.test.mjs.
+
 ## Pure and cached functions (2026-11-13)
 
 Hover on a function or a read-only method ends with what the checker worked out (`purity_summary`,

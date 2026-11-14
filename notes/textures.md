@@ -1,5 +1,41 @@
 # Textures and how they are sampled
 
+## Texture3D volumes (2026-11-14)
+
+The owner approved a machine-local Texture3D with kernel stores and conversion from Grid3<Color>/Grid3<float>
+on 2026-11-13. The constructor and other details are Provisional in docs/spec.md (Compute on the GPU), with the
+alternatives weighed. User docs: docs/game/meshes-and-textures.md, Volumes; docs/game/shaders.md, Writing images.
+
+- `tide_texture3d_ref` is 40 bytes, like a TextureArray reference: a target, a grid name, depth/shape and a tag.
+  An owned volume shares a managed render-target state (`volume` and `layers` as depth), with bit 62 of its id
+  (`TIDE_RENDER_VOLUME`); that bit is masked before following a state pointer. A volume has no per-slice targets.
+  Make/default, Resize, Dispose, size, contentRevision, resolve and recreate are the `tide_texture3d_*` API.
+- Sizes are fixed texels (`int3`), at most 2048 each axis and 128 MiB. Widened multiplication follows positive
+  bounds checks. Invalid creation is empty; invalid resize leaves the old image. GPU limits/allocation failures
+  produce an empty resource and report once. Copies share resize/disposal; tombstones live until unload.
+- Grid references reuse TextureArray's validated cell/shape encoding. `tide_texture3d_of_grid`, `_grid` and
+  `_grid_raw` are in tide/mesh.h. `see_grid_image` shares array validation, with the volume's limits replacing
+  the array's 256-layer cap. `tide_grid_volume_extent` and `tide_draw_grid_volume_texture` use the existing
+  chunk hashes, premultiplication, partial row comparison and changed-area recording. Color cells use RGBA8;
+  float cells use sampled R16F (not writable core storage). The draw list flattens slices vertically and the
+  renderer uploads changed boxes into the proper z slices. A GPU cache's shape includes depth separately, so
+  changing height/depth with the same flattened height still reallocates the image correctly.
+- `TIDE_PIXELS_TARGET_VOLUME` and `_GRID_VOLUME` distinguish volumes from layered arrays. Managed volumes reuse
+  the renderer's image registry and its device-loss/reload cleanup, without making layer destinations. New and
+  resized images are zero. contentRevision observes discarded contents; ordinary stores leave it unchanged.
+- Sample has Point/Bilinear with Clamp/Repeat/Mirror across all axes and no mipmaps. Exact-cell reads are checked
+  and give zero outside. There are no volume file assets or frag-renderable slices.
+- Tests: `draw_volumes_share_resize_dispose_and_bound_sizes` (shared aliases, resize, disposal, revision, resource
+  recording, recreation) and `draw_grid_volumes_keep_depth_and_changed_cells` (300 slices and a changed final cell)
+  in tests/test_draw.c; compiler and platform image fixtures (notes/compute.md). Backend-specific tests and
+  Unity replay contracts are in notes/rendering.md, notes/web.md and notes/unity.md.
+
+The native ASan and Node WASI draw groups pass 117/117. The actual native/WebGPU volume, changed-grid and
+device-loss witnesses pass; shader goldens, SPIR-V, FXC, reload E2E and diagnostics pass (compute.md). Resized
+volumes are resolved in an independent local-state copy before serialization, preserving current depth through
+nested containers and full web reload while leaving const source references untouched. Public numeric Format
+connections still await their parallel task's members; exact remaining work is listed in compute.md.
+
 ## `Filter.Anisotropic` (2026-11-10)
 
 The owner asked for it as an engine gap from Mount & Rifle (its ground of scanned photographs, seen at 5 to 15

@@ -1,0 +1,126 @@
+// Show on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_3d<f32>;
+@group(0) @binding(2) var sampler0: sampler;
+@group(0) @binding(3) var pixels1: texture_3d<f32>;
+@group(0) @binding(4) var sampler1: sampler;
+@group(0) @binding(6) var sampler2: sampler;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
+fn tf_Read_40(t_at: vec3f) -> vec4f {
+    return tide_straight(textureSampleLevel(pixels0, sampler0, t_at, 0.0));
+}
+
+fn tide_image_get0(at: vec3i) -> vec4f {
+    if (all(at >= vec3i(0)) && all(at < vec3i(textureDimensions(pixels0)))) {
+        return tide_straight(textureLoad(pixels0, at, 0));
+    }
+    return vec4f(0.0);
+}
+fn ts_Show(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    (*t_color) = ((tf_Read_40(vec3f(t_vertex.m_uv, 0.5)) + tide_image_get0(vec3i(0))) + textureSampleLevel(pixels1, sampler2, vec3f(0.5), 0.0));
+    (*t_color).r = ((*t_color).r + f32(tide_block.tide_v0.xyz.z));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Show(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// compute Fill: WGSL
+struct tide_uniforms {
+    tide_none: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(3) var pixels1: texture_storage_3d<rgba8unorm, write>;
+@group(0) @binding(5) var pixels2: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(7) var pixels3: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(35) var<storage, read> tide_run: array<u32>;
+var<private> tide_inv_index: i32;
+var<private> tide_inv_at: vec3i;
+var<private> tide_inv_local: vec3i;
+var<private> tide_inv_group: vec3i;
+var<private> tide_inv_count: vec3i;
+fn tide_image_put0(at: vec2i, value: vec4f) {
+    if (all(at >= vec2i(0)) && all(at < vec2i(textureDimensions(pixels0)))) {
+        textureStore(pixels0, at, vec4f(value.rgb * value.a, value.a));
+    }
+}
+fn tide_image_put1(at: vec3i, value: vec4f) {
+    if (all(at >= vec3i(0)) && all(at < vec3i(textureDimensions(pixels1)))) {
+        textureStore(pixels1, at, vec4f(value.rgb * value.a, value.a));
+    }
+}
+fn tf_Put_41(t_at: vec3i, t_color: vec4f) {
+    tide_image_put1(t_at, t_color);
+}
+
+fn tide_image_put2(at: vec3i, value: vec4f) {
+    if (all(at >= vec3i(0)) && all(at < vec3i(textureDimensions(pixels2)))) {
+        textureStore(pixels2, at, value);
+    }
+}
+fn tf_Put_42(t_at: vec3i, t_color: vec4f) {
+    tide_image_put2(t_at, t_color);
+}
+
+fn tide_image_put3(at: vec2i, value: vec4f) {
+    if (all(at >= vec2i(0)) && all(at < vec2i(textureDimensions(pixels3)))) {
+        textureStore(pixels3, at, vec4f(value.rgb * value.a, value.a));
+    }
+}
+fn ts_Fill() {
+    tide_image_put0(tide_inv_at.xy, vec4f(1.0, 0.5, 0.25, 0.5));
+    tf_Put_41(tide_inv_at, vec4f(vec3f(tide_inv_at), 1.0));
+    tf_Put_42(tide_inv_at, vec4f(1.0, 0.5, 0.25, 0.0));
+    tide_image_put3(tide_inv_at.xy, vec4f(0.0, 0.0, 1.0, 1.0));
+}
+
+@compute @workgroup_size(2, 2, 2) fn compute(@builtin(global_invocation_id) tide_gid: vec3u, @builtin(local_invocation_id) tide_lid: vec3u, @builtin(local_invocation_index) tide_lix: u32, @builtin(workgroup_id) tide_wid: vec3u, @builtin(num_workgroups) tide_groups: vec3u) {
+    let tide_size = vec3u(tide_run[4], tide_run[5], tide_run[6]);
+    tide_inv_at = vec3i(tide_gid);
+    tide_inv_local = vec3i(tide_lid);
+    tide_inv_group = vec3i(tide_wid);
+    tide_inv_count = vec3i(tide_size);
+    tide_inv_index = i32(tide_gid.x + tide_size.x * (tide_gid.y + tide_size.y * tide_gid.z));
+    if (all(tide_gid < tide_size)) {
+        ts_Fill();
+    }
+}
+

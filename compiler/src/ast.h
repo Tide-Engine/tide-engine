@@ -172,6 +172,7 @@ typedef enum type_kind {
     TY_DOUBLE4X4,
     TY_FONT,      // Font: a local reference to a font of this machine's registry (tide/font.h): Font.Regular, Font.Bold, an asset's or a decoded one
     TY_GPU_LIST,  // GPUList<T>: a list that lives on the GPU, this machine's (tide_gpu_list); decl's one field is its element
+    TY_TEXTURE3D, // Texture3D: machine-local volume, sampled continuously on all three axes
 } type_kind;
 
 typedef struct type {
@@ -294,6 +295,7 @@ typedef struct field {
     // `since.Snap()` somewhere: it counts its own snaps in a hidden int after the fields, tide_snaps_<name>,
     // and views draw it as it is between two ticks whose counts differ
     bool snap_counted;
+    VEC(const expr *) image_assignments; // Resource origins, for portable storage-image format inference
 } field;
 
 typedef enum param_mode {
@@ -498,7 +500,8 @@ typedef enum decl_kind {
 // READ_ARRAY is a TextureArray's colors, READ_DEPTH_ARRAY its depth read as a number and READ_COMPARE_ARRAY compared
 // (a compiler-only kind: the runtime's texture read is DEPTH_ARRAY, its sampler's COMPARE).
 typedef enum shader_read {
-    READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE, READ_ARRAY, READ_DEPTH_ARRAY, READ_COMPARE_ARRAY
+    READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE, READ_ARRAY, READ_DEPTH_ARRAY, READ_COMPARE_ARRAY,
+    READ_VOLUME
 } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
@@ -515,6 +518,8 @@ typedef struct shader_sample {
     // (declared_sampling). A Texture's that isn't (a frag's own Texture parameter, a Texture field) is read as
     // the Texture it's given says, which each draw's run carries (tide_draw_run.sampling)
     bool filter_said, wrap_said;
+    bool write; // A kernel's image store; the same source may not be sampled in that run
+    int image_color; // A bound RenderTarget's selected color image
 } shader_sample;
 
 // A texture a function or method samples, in code the GPU runs: its own
@@ -529,6 +534,7 @@ typedef struct function_sample {
     bool gradients;          // SampleGrad supplies its derivatives, including through helper chains
     loc at;                   // The Sample
     bool warned, refused;     // That it can't read between a texture's smaller images there was said, once each way
+    bool write;
 } function_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
@@ -1072,6 +1078,7 @@ typedef enum gpu_op {
     GPU_SHARED_ATOMIC, // ...on an element of a kernel's `shared int[N]`
     GPU_RUN,         // GPU.Run(kernel, over[, values])
     GPU_BARRIER,     // GPU.Barrier()
+    GPU_IMAGE_INDEX, // A sampled volume's exact cell, or a kernel's image-store place
 } gpu_op;
 
 typedef enum builtin_call {
@@ -1542,6 +1549,9 @@ typedef struct shader_texture {
     shader_read read;
     int count_at; // A list's (READ_DATA): the word of the uniforms' ints that says how many elements it has
     int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
+    bool write;
+    unsigned image_format; // tide_gpu_format, determined from every assignment's constructor origin
+    int image_color;
 } shader_texture;
 
 // The uniform ints a size (shader.sizes) takes: a texture's two, its width and height, and an array's three, its

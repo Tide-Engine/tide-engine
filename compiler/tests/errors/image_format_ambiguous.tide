@@ -1,0 +1,5 @@
+// expect: this image's writable format isn't fixed
+local singleton Fog { Texture3D volume; }
+scene Main { }
+compute Fill(Fog fog) { fog.volume[this.at] = Color.white; }
+view Make(mut Fog fog) { fog.volume = Texture3D(int3(4)); fog.volume = Texture3D(int3(4), Format.Rgba16f); GPU.Run(Fill, int3(4)); }

@@ -11,6 +11,70 @@
 
 static tide_draw_list list;
 
+TIDE_TEST(draw_volumes_share_resize_dispose_and_bound_sizes)
+{
+    TIDE_CHECK(!tide_texture3d_extent_valid(tide_i3(-1, 2, 3), 4));
+    TIDE_CHECK(!tide_texture3d_extent_valid(tide_i3(0, 2, 3), 4));
+    TIDE_CHECK(!tide_texture3d_extent_valid(tide_i3(INT32_MAX, INT32_MAX, INT32_MAX), 16));
+    TIDE_CHECK(!tide_texture3d_extent_valid(tide_i3(2048, 2048, 2048), 4));
+    const tide_texture3d_ref volume = tide_texture3d_make(tide_i3(2, 3, 4), TIDE_TARGET_RGBA16F);
+    const tide_texture3d_ref alias = volume;
+    TIDE_CHECK(tide_texture3d_size(alias).z == 4);
+    TIDE_CHECK(tide_render_target_formats(volume.target.id).color[0] == TIDE_TARGET_RGBA16F);
+    const int64_t revision = tide_texture3d_content_revision(volume);
+    tide_texture3d_resize(volume, tide_i3(4, 5, 6));
+    TIDE_CHECK(tide_texture3d_size(alias).x == 4 && tide_texture3d_size(alias).z == 6);
+    TIDE_CHECK(tide_texture3d_resolve(alias).depth == 6);
+    TIDE_CHECK(tide_texture3d_content_revision(alias) != revision);
+    tide_draw_list first = {0};
+    const uint32_t slot = tide_draw_volume_source(&first, alias);
+    TIDE_CHECK(slot && first.textures[slot - 1u].space == TIDE_PIXELS_TARGET_VOLUME);
+    TIDE_CHECK(first.textures[slot - 1u].layers == 6);
+    const tide_texture3d_ref snapshot = tide_texture3d_resolve(alias);
+    const tide_texture3d_ref recreated = tide_texture3d_recreate(snapshot);
+    const tide_texture3d_ref recreated_alias = tide_texture3d_recreate(snapshot);
+    TIDE_CHECK(recreated.target.id != volume.target.id && recreated_alias.target.id == recreated.target.id);
+    TIDE_CHECK(tide_texture3d_size(recreated).x == 4 && tide_texture3d_size(recreated).z == 6);
+    tide_texture3d_dispose(recreated);
+    tide_render_targets_recreated();
+    // A copied local reference has the same tombstone after disposal, rather than a dangling allocation.
+    tide_texture3d_dispose(volume);
+    TIDE_CHECK(tide_texture3d_size(alias).x == 0 && tide_texture3d_content_revision(alias) == 0);
+    TIDE_CHECK(tide_draw_volume_source(&first, alias) == 0);
+    tide_draw_free(&first);
+}
+
+TIDE_TEST(draw_grid_volumes_keep_depth_and_changed_cells)
+{
+    const tide_grid_shape colors = {sizeof(tide_color), 3u, {2u, 2u, 2u}};
+    tide_heaps heap = {0};
+    tide_text_use(NULL, &heap);
+    const uint64_t mark = tide_scratch_mark();
+    tide_grid grid = {0};
+    tide_grid_set(&grid, tide_grid_new(3, 2, 2, 300), &colors, TIDE_IN_LOCAL);
+    *(tide_color *)tide_grid_poke(&grid, 1, 1, 299, &colors, true, TIDE_IN_LOCAL) = TIDE_COLOR_RED;
+    tide_draw_list d = {0};
+    tide_texture3d_ref volume = tide_texture3d_of_grid(grid, &colors, false);
+    TIDE_CHECK(tide_texture3d_size(volume).z == 300);
+    uint32_t at = tide_draw_volume_source(&d, volume);
+    TIDE_REQUIRE(at && d.textures[at - 1].layers == 300 && d.textures[at - 1].height == 600);
+    const uint8_t *last = d.textures[at - 1].pixels + (2 * 2 * 300 - 1) * 4;
+    TIDE_CHECK(last[0] == 255 && last[1] == 0 && last[2] == 0 && last[3] == 255);
+    const uint64_t before = d.textures[at - 1].version;
+    tide_draw_reset(&d);
+    *(tide_color *)tide_grid_poke(&grid, 1, 1, 299, &colors, true, TIDE_IN_LOCAL) = TIDE_COLOR_BLUE;
+    volume = tide_texture3d_of_grid(grid, &colors, false);
+    at = tide_draw_volume_source(&d, volume);
+    TIDE_REQUIRE(at);
+    last = d.textures[at - 1].pixels + (2 * 2 * 300 - 1) * 4;
+    TIDE_CHECK(last[0] == 0 && last[2] == 255 && d.textures[at - 1].version != before);
+    tide_draw_free(&d);
+    tide_grid_release(&grid, &colors, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heaps_free(&heap);
+}
+
 TIDE_TEST(draw_sampling_banks_keep_every_slot_independent)
 {
     uint64_t sampling = 0;

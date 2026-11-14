@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Image-writing kernels and Texture3D (2026-11-14)
+
+Within the owner's approved image/volume task (2026-11-13, "these make sense, lets do all of these"), agents
+maintain the added `tide_texture3d_*` resource API in draw.h/draw.c/mesh.c, `tide_draw_volume_source`,
+`tide_texture3d_of_grid`, `_grid`, `_grid_raw`, `tide_grid_volume_extent` and `tide_draw_grid_volume_texture`.
+Generated C calls these for construction, lifetime, metadata, reload and Grid3 conversion. `tide_shader` gains
+`image_writes` and `image_formats`, its new read is `TIDE_SHADER_READ_VOLUME`, and the draw list has
+`TIDE_PIXELS_TARGET_VOLUME`/`_GRID_VOLUME`. The managed target's volume bit is 62 and is removed from pointers.
+Contracts, bounds, tests and backend ownership are in notes/compute.md and notes/textures.md. Hosts and generated
+games rebuild together for the shader/state layout; the Unity recorder's ABI is recorded in notes/unity.md.
+
 ## Cached functions' tables (2026-11-13)
 
 Generated C calls no new runtime function: a `cached` function's table, its key and its locks are helpers

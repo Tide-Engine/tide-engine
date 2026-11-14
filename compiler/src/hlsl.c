@@ -251,7 +251,8 @@ static void put_type(translation *x, hs *o, int t)
     case K_TEXTURE: {
         const char *texel = ty.depth ? "float" : T(x, ty.elem)->kind == K_I32 ? "int4" : T(x, ty.elem)->kind == K_U32 ? "uint4" : "float4";
         hprintf(o, "%s<%s>",
-                ty.dim == DIM_CUBE ? "TextureCube" : ty.multisampled ? "Texture2DMS" : ty.arrayed ? "Texture2DArray" : "Texture2D",
+                ty.image_format ? (ty.dim == DIM_3D ? "RWTexture3D" : "RWTexture2D") : ty.dim == DIM_3D ? "Texture3D"
+                : ty.dim == DIM_CUBE ? "TextureCube" : ty.multisampled ? "Texture2DMS" : ty.arrayed ? "Texture2DArray" : "Texture2D",
                 texel);
         return;
     }
@@ -1105,7 +1106,11 @@ static int texture_call(translation *x, const expr *e, hs *o)
     }
     const char *at = where.s;
     const int next = 3 + arrayed;
-    if (same(n, len, "textureSample") || same(n, len, "textureSampleLevel") || same(n, len, "textureSampleBias")
+    if (same(n, len, "textureStore")) {
+        if (!tex.image_format || a.n != 3) fail(x, line, col, "textureStore takes a write-only storage texture, where and a texel");
+        hprintf(o, "(%s[%s] = %s)", a.text[0], a.text[1], a.text[2]);
+        t = t_simple(x, K_VOID);
+    } else if (same(n, len, "textureSample") || same(n, len, "textureSampleLevel") || same(n, len, "textureSampleBias")
         || same(n, len, "textureSampleGrad")) {
         if (tex.depth) {
             hprintf(o, "tidehl_depth(%s, %s, %s)", a.text[0], own, at);
@@ -1131,14 +1136,14 @@ static int texture_call(translation *x, const expr *e, hs *o)
                                        : "textureLoad takes a texture, where and a level or sample");
         }
         if (arrayed) hprintf(o, "tidehl_load(%s, int2(%s), int(%s), int(%s))", a.text[0], a.text[1], a.text[2], a.text[3]);
-        else hprintf(o, "tidehl_load(%s, int2(%s), int(%s))", a.text[0], a.text[1], a.text[2]);
+        else hprintf(o, "tidehl_load(%s, int%d(%s), int(%s))", a.text[0], tex.dim == DIM_3D ? 3 : 2, a.text[1], a.text[2]);
     } else if (same(n, len, "textureNumLayers")) {
         if (!arrayed || a.n != 1) fail(x, line, col, "textureNumLayers takes an array texture");
         t = u32;
         hprintf(o, "tidehl_layers(%s)", a.text[0]);
     } else if (same(n, len, "textureDimensions")) {
-        t = t_vec(x, u32, 2);
-        if (tex.multisampled) hprintf(o, "tidehl_size(%s)", a.text[0]);
+        t = t_vec(x, u32, tex.dim == DIM_3D ? 3 : 2);
+        if (tex.multisampled || tex.image_format) hprintf(o, "tidehl_size(%s)", a.text[0]);
         else hprintf(o, "tidehl_size(%s, uint(%s))", a.text[0], a.n > 1 ? a.text[1] : "0");
     } else if (same(n, len, "textureNumLevels")) {
         t = u32;
@@ -3008,6 +3013,60 @@ static void translate(translation *x, hs *out)
     if (vertex) entry_points(x, vertex, fragment, &entries);
     if (compute) compute_entry(x, compute, &entries);
     for (int i = 0; prelude[i]; i++) hput(out, prelude[i]);
+    bool volumes = false, images = false;
+    for (int i = 1; i < x->ntypes; i++) {
+        volumes |= T(x, i)->kind == K_TEXTURE && T(x, i)->dim == DIM_3D;
+        images |= T(x, i)->kind == K_TEXTURE && T(x, i)->image_format;
+    }
+    if (volumes) {
+        hput(out,
+            "float4 tidehl_load(Texture3D<float4> t, int3 at, int level) { return t.Load(int4(at, level)); }\n"
+            "int4 tidehl_load(Texture3D<int4> t, int3 at, int level) { return t.Load(int4(at, level)); }\n"
+            "uint4 tidehl_load(Texture3D<uint4> t, int3 at, int level) { return t.Load(int4(at, level)); }\n"
+            "uint3 tidehl_size(Texture3D<float4> t, uint level) { uint w,h,d,n; t.GetDimensions(level,w,h,d,n); return uint3(w,h,d); }\n"
+            "uint3 tidehl_size(Texture3D<int4> t, uint level) { uint w,h,d,n; t.GetDimensions(level,w,h,d,n); return uint3(w,h,d); }\n"
+            "uint3 tidehl_size(Texture3D<uint4> t, uint level) { uint w,h,d,n; t.GetDimensions(level,w,h,d,n); return uint3(w,h,d); }\n"
+            "#if TIDEHL_OWN_SAMPLERS\n"
+            "float4 tidehl_volume_texel(Texture3D<float4> t, int3 p, int3 n, uint wrap) {\n"
+            "    return t.Load(int4(tidehl_wrapped(p.x,n.x,wrap), tidehl_wrapped(p.y,n.y,wrap), tidehl_wrapped(p.z,n.z,wrap), 0));\n"
+            "}\n"
+            "float4 tidehl_volume_filtered(Texture3D<float4> t, uint mode, float3 at) {\n"
+            "    int3 n = int3(tidehl_size(t, 0u)); uint wrap = (mode >> 2) & 3u;\n"
+            "    if (wrap == 1u) at = frac(at);\n"
+            "    else if (wrap == 2u) at = 1.0 - abs(frac(at * 0.5) * 2.0 - 1.0);\n"
+            "    else at = saturate(at);\n"
+            "    if ((mode & 3u) == 0u) return tidehl_volume_texel(t, int3(floor(at * float3(n))), n, wrap);\n"
+            "    float3 f = at * float3(n) - 0.5, k = f - floor(f); int3 p = int3(floor(f));\n"
+            "    float4 a = lerp(tidehl_volume_texel(t,p,n,wrap), tidehl_volume_texel(t,p+int3(1,0,0),n,wrap), k.x);\n"
+            "    float4 b = lerp(tidehl_volume_texel(t,p+int3(0,1,0),n,wrap), tidehl_volume_texel(t,p+int3(1,1,0),n,wrap), k.x);\n"
+            "    float4 c = lerp(tidehl_volume_texel(t,p+int3(0,0,1),n,wrap), tidehl_volume_texel(t,p+int3(1,0,1),n,wrap), k.x);\n"
+            "    float4 d = lerp(tidehl_volume_texel(t,p+int3(0,1,1),n,wrap), tidehl_volume_texel(t,p+int3(1,1,1),n,wrap), k.x);\n"
+            "    return lerp(lerp(a,b,k.y), lerp(c,d,k.y), k.z);\n"
+            "}\n"
+            "#endif\n"
+            "float4 tidehl_sample_level(Texture3D<float4> t, SamplerState own, uint mode, float3 at, float level) {\n"
+            "#if TIDEHL_OWN_SAMPLERS\n"
+            "    if (tidehl_emulates(mode, 15u)) return tidehl_volume_filtered(t, mode, at);\n"
+            "    return t.SampleLevel(own, at, level);\n"
+            "#else\n"
+            "    if ((mode & 3u) == 0u) {\n"
+            "        if (((mode >> 2) & 3u) == 1u) return t.SampleLevel(tidehl_point_repeat_sampler, at, 0.0);\n"
+            "        if (((mode >> 2) & 3u) == 2u) return t.SampleLevel(tidehl_point_mirror_sampler, at, 0.0);\n"
+            "        return t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0);\n"
+            "    }\n"
+            "    if (((mode >> 2) & 3u) == 1u) return t.SampleLevel(tidehl_linear_repeat_sampler, at, level);\n"
+            "    if (((mode >> 2) & 3u) == 2u) return t.SampleLevel(tidehl_linear_mirror_sampler, at, level);\n"
+            "    return t.SampleLevel(tidehl_linear_clamp_sampler, at, level);\n"
+            "#endif\n"
+            "}\n");
+    }
+    if (images) {
+        hput(out,
+            "uint2 tidehl_size(RWTexture2D<float4> t) { uint w,h; t.GetDimensions(w,h); return uint2(w,h); }\n"
+            "uint2 tidehl_size(RWTexture2D<int4> t) { uint w,h; t.GetDimensions(w,h); return uint2(w,h); }\n"
+            "uint3 tidehl_size(RWTexture3D<float4> t) { uint w,h,d; t.GetDimensions(w,h,d); return uint3(w,h,d); }\n"
+            "uint3 tidehl_size(RWTexture3D<int4> t) { uint w,h,d; t.GetDimensions(w,h,d); return uint3(w,h,d); }\n");
+    }
     if (x->decls.s) hput(out, x->decls.s);
     hput(out, "\n");
     if (globals.s) hput(out, globals.s);

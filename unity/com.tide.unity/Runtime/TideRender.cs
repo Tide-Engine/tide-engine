@@ -21,7 +21,7 @@ namespace Tide
     // show the frame's 3D through their own cameras (tide_embed_render_view).
     //
     // A frame's commands are read once (Prepare): objects are made and written
-    // then, and what draws is kept, each draw with the objects it reads, to be
+    // then, and camera-own drawing is kept, each draw with the objects it reads, to be
     // recorded into a camera's commands when it renders. An object written after
     // a draw of this frame read it is a new one from there (as a driver renames a
     // buffer), so the draws already kept read it as it was.
@@ -32,8 +32,8 @@ namespace Tide
     // storage buffer a kernel or a copy writes after a kept draw read it is
     // renamed as any written buffer is, so each draw reads the buffers as they
     // were where it is in the frame, and an indirect call reads its numbers
-    // from a copy made where it is. A kernel samples a render target as the
-    // last frame's passes left it: this frame's run as the camera renders.
+    // from a copy made where it is. Offscreen passes run in that same stream,
+    // once, so kernels see earlier draws and later draws see their writes.
     [DisallowMultipleComponent]
     public sealed unsafe class TideRender : MonoBehaviour
     {
@@ -43,7 +43,7 @@ namespace Tide
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Image, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
             DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler, Array, ArrayLayer,
-            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks,
+            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks, Volume, VolumeWrite, PipelineImages,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -68,6 +68,7 @@ namespace Tide
             public RenderTextureSubElement element = RenderTextureSubElement.Default;
             public byte[] pixels; // A Texture2D's, which a part is written into
             public int format, pixelBytes, width, height, layers; // An array written a part at a time: its layers
+            public int depth; // A volume's cells along z; zero for a 2D image or an array
             public bool mips;  // Its smaller images are made
             public bool owned; // Destroyed when it's freed: a target's go with the target
             public RenderTexture arrayDepth; // An array drawn into: its depth array, freed with it...
@@ -102,6 +103,9 @@ namespace Tide
             public bool alphaToCoverage; // A cut-out's into a target with samples: its alpha is the share it covers
             public int storageCount;     // The storage buffers it binds (_TideStorage<i>), and which of them it writes
             public uint storageWrites;
+            public uint imageWrites; // Written image slots (the existing _TideTexture<i> namespace)
+            public readonly int[] imageFormats = new int[16];
+            public readonly uint[] imageReads = new uint[16];
             public bool compute;         // A kernel's: its .compute's tidehl_compute, not a shader's pass
             public ComputeShader kernelShader;
             public int kernel = -1;      // ...found once it's there; -2 for one this GPU can't run
@@ -174,12 +178,13 @@ namespace Tide
         NativeArray<uint> groupWords; // A direct dispatch's TideGroups
         GraphicsBuffer none; // What an unused vertex slot reads
         Texture2D white;
+        Texture3D emptyVolume;
         Material resolveDepth;
         bool fresh = true; // Nothing made yet: Tide's renderer makes everything again first
         bool ownSamplers;  // OpenGL Core's: each texture's own sampler, set as each draw asks (see hlsl.h)
         bool pipelineSaid; // A scriptable pipeline Tide doesn't draw in was said to be one
 
-        // Compute's: the work the commands ask for, which runs once, as they're read (Flush); the copy kernel
+        // Offscreen targets and compute: work runs once, as commands are read (Flush); the copy kernel
         // (Resources/TideCompute.compute); and indirect calls' numbers, each copied where it's asked for into buffers
         // of pools taken in turn each frame
         CommandBuffer work;
@@ -206,6 +211,9 @@ namespace Tide
         int uniformAt, uniformSize;
         int stencil;
         bool inPass, flipped, inCompute;
+        bool offscreenPass;
+        int passStart;
+        bool volumeSaid;
         const int MaxStorage = 4; // gpu.h's TIDE_GPU_MAX_STORAGE
         readonly uint[] storageBound = new uint[MaxStorage];
 
@@ -278,9 +286,13 @@ namespace Tide
             white = new Texture2D(1, 1, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None) { hideFlags = HideFlags.HideAndDontSave };
             white.SetPixelData(new byte[] { 255, 255, 255, 255 }, 0);
             white.Apply(false, false);
+            emptyVolume = new Texture3D(1, 1, 1, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None)
+            { hideFlags = HideFlags.HideAndDontSave };
+            emptyVolume.SetPixelData(new byte[4], 0);
+            emptyVolume.Apply(false, true);
             var resolve = Resources.Load<Shader>("TideResolveDepth");
             if (resolve != null && resolve.isSupported) resolveDepth = new Material(resolve) { hideFlags = HideFlags.HideAndDontSave };
-            work = new CommandBuffer { name = "Tide compute" };
+            work = new CommandBuffer { name = "Tide targets and compute" };
             copier = Resources.Load<ComputeShader>("TideCompute");
             copyKernel = copier != null && copier.HasKernel("TideCopy") ? copier.FindKernel("TideCopy") : -1;
             if (copyKernel >= 0 && !copier.IsSupported(copyKernel)) copyKernel = -1;
@@ -314,6 +326,7 @@ namespace Tide
             none?.Release();
             none = null;
             if (white != null) DestroyImmediate(white);
+            if (emptyVolume != null) DestroyImmediate(emptyVolume);
             if (resolveDepth != null) DestroyImmediate(resolveDepth);
             Release(frame);
             foreach (var view in views.Values) Release(view);
@@ -345,6 +358,7 @@ namespace Tide
             foreach (var i in images.Values)
             {
                 if (i.owned && i.texture != null) DestroyImmediate(i.texture);
+                if (i.owned && i.arrayDepth != null && i.arrayDepth != i.texture) DestroyImmediate(i.arrayDepth);
             }
             images.Clear();
             foreach (var t in targets.Values) Release(t);
@@ -546,7 +560,7 @@ namespace Tide
                 Run(op, stream + at, length);
                 at += length;
             }
-            if (inPass) r.commands.Add(new Command { kind = Kind.End });
+            if (inPass) End();
             inCompute = false;
             Flush();
             if (r.uniformBuffer != null && r.uniformBytes.IsCreated) r.uniformBuffer.SetData(r.uniformBytes);
@@ -627,6 +641,10 @@ namespace Tide
                     Flush(); // After the work before it, which may sample it
                     WriteArray(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), (int)W(5), p + 24);
                     break;
+                case Op.Volume: MakeVolume(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4)); break;
+                case Op.VolumeWrite:
+                    WriteVolume(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), (int)W(5), (int)W(6), p + 28);
+                    break;
                 case Op.Cube: MakeCube(W(0), (int)W(1), (int)W(2), W(3) != 0 ? p + 16 : null); break;
                 case Op.CubeFace: MakeCubeFace(W(0), W(1), (int)W(2), W(3)); break;
                 case Op.Pipeline: MakePipeline(p); break;
@@ -651,8 +669,7 @@ namespace Tide
                 case Op.ResolveDepth: ResolveDepth(W(0), W(1)); break;
                 case Op.Begin: Begin(W(0), W(1) != 0); break;
                 case Op.End:
-                    into.commands.Add(new Command { kind = Kind.End });
-                    inPass = false;
+                    End();
                     break;
                 case Op.Scissor:
                     into.commands.Add(new Command { kind = Kind.Scissor, x = (int)W(0), y = (int)W(1), width = (int)W(2), height = (int)W(3) });
@@ -704,6 +721,13 @@ namespace Tide
                             storing.shader = null;
                             storing.kernelShader = Loaded<ComputeShader>(storing.key);
                         }
+                    }
+                    break;
+                case Op.PipelineImages:
+                    if (pipelines.TryGetValue(W(0), out var writing))
+                    {
+                        writing.imageWrites = W(1);
+                        for (var i = 0; i < Math.Min((int)W(2), MaxTextures); i++) writing.imageFormats[i] = (int)W(3 + i);
                     }
                     break;
                 case Op.Storage:
@@ -811,10 +835,144 @@ namespace Tide
             1 => GraphicsFormat.R8_UNorm,
             2 => GraphicsFormat.R16_SFloat,
             3 => GraphicsFormat.R32G32B32A32_SInt,
+            4 => GraphicsFormat.R16G16B16A16_SFloat,
+            5 => GraphicsFormat.R32_SFloat,
+            6 => GraphicsFormat.R32G32B32A32_SFloat,
+            7 => GraphicsFormat.R32_SInt,
             _ => GraphicsFormat.R8G8B8A8_UNorm,
         };
 
-        static int PixelBytes(int format) => format == 1 ? 1 : format == 2 ? 2 : format == 3 ? 16 : 4;
+        static int PixelBytes(int format) => format == 1 ? 1 : format == 2 ? 2 : format == 4 ? 8 : format == 3 || format == 6 ? 16 : 4;
+
+        static bool IntegerImage(int format) => format == 3 || format == 7;
+
+        static bool WritableImage(int format) => format == 0 || format >= 4 && format <= 7;
+
+        static int AttachmentPixelFormat(int color) => color switch
+        {
+            1 => 0, 2 => 4, 3 => 1, 5 => 2, 7 => 5, 8 => 6, 9 => 7, _ => -1,
+        };
+
+        void VolumeUnavailable()
+        {
+            if (volumeSaid) return;
+            volumeSaid = true;
+            Debug.LogWarning("Tide: a volume exceeds this GPU's limits or memory, or its format isn't supported: it reads zero and writes nothing. Use a smaller Texture3D or a supported format.");
+        }
+
+        // Volumes use GPU box uploads where the device can store their format. This includes half-float grids on
+        // desktop Unity; a device without that internal store path keeps a CPU mirror. Public kernel bindings still
+        // accept only WritableImage's portable formats. All are actual 3D images, without mipmaps.
+        void MakeVolume(uint id, int format, int width, int height, int depth)
+        {
+            if (width <= 0 || height <= 0 || depth <= 0 || width > SystemInfo.maxTexture3DSize || height > SystemInfo.maxTexture3DSize
+                || depth > SystemInfo.maxTexture3DSize || format < 0 || format > 7
+                || (long)width * height * depth > 128L * 1024 * 1024 / PixelBytes(format) || !SystemInfo.supports3DTextures
+                || !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.Sample)
+                || (WritableImage(format) && !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.LoadStore)))
+            {
+                VolumeUnavailable();
+                images[id] = new Image();
+                return;
+            }
+            var image = new Image { format = format, pixelBytes = PixelBytes(format), width = width, height = height, depth = depth, owned = true };
+            try
+            {
+                if (SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.LoadStore))
+                {
+                    var rt = new RenderTexture(new RenderTextureDescriptor(width, height)
+                    {
+                        graphicsFormat = TextureFormat(format), depthStencilFormat = GraphicsFormat.None,
+                        dimension = TextureDimension.Tex3D, volumeDepth = depth, msaaSamples = 1,
+                        enableRandomWrite = true, useMipMap = false, autoGenerateMips = false,
+                    }) { hideFlags = HideFlags.HideAndDontSave };
+                    image.texture = rt;
+                    if (!rt.Create())
+                    {
+                        DestroyImmediate(rt);
+                        VolumeUnavailable();
+                        images[id] = new Image();
+                        return;
+                    }
+                    var kernel = copier != null ? copier.FindKernel(IntegerImage(format) ? "TideVolumeClearInt" : "TideVolumeClear") : -1;
+                    if (kernel < 0)
+                    {
+                        DestroyImmediate(rt);
+                        VolumeUnavailable();
+                        images[id] = new Image();
+                        return;
+                    }
+                    var cb = Work();
+                    cb.SetComputeTextureParam(copier, kernel, IntegerImage(format) ? "_TideVolumeToInt" : "_TideVolumeTo", rt);
+                    cb.DispatchCompute(copier, kernel, (width + 7) / 8, (height + 7) / 8, (depth + 3) / 4);
+                }
+                else
+                {
+                    image.pixels = new byte[width * height * depth * image.pixelBytes];
+                    var texture = new Texture3D(width, height, depth, TextureFormat(format), TextureCreationFlags.None)
+                    { hideFlags = HideFlags.HideAndDontSave };
+                    image.texture = texture;
+                    texture.SetPixelData(image.pixels, 0);
+                    texture.Apply(false, false);
+                }
+            }
+            catch (OutOfMemoryException) { VolumeUnavailable(); Doom(image.texture); image = new Image(); }
+            catch (UnityException) { VolumeUnavailable(); Doom(image.texture); image = new Image(); }
+            if (images.TryGetValue(id, out var had) && had.owned) Doom(had.texture);
+            images[id] = image;
+        }
+
+        void WriteVolume(uint id, int x, int y, int z, int width, int height, int depth, byte* pixels)
+        {
+            try { WriteVolumePixels(id, x, y, z, width, height, depth, pixels); }
+            catch (OutOfMemoryException) { VolumeUnavailable(); }
+            catch (UnityException) { VolumeUnavailable(); }
+        }
+
+        void WriteVolumePixels(uint id, int x, int y, int z, int width, int height, int depth, byte* pixels)
+        {
+            if (!images.TryGetValue(id, out var image) || image.texture == null || x < 0 || y < 0 || z < 0 || width <= 0 || height <= 0
+                || depth <= 0 || x > image.width || y > image.height || z > image.depth || width > image.width - x
+                || height > image.height - y || depth > image.depth - z) return;
+            var bytes = width * height * depth * image.pixelBytes;
+            if (image.texture is RenderTexture)
+            {
+                var destination = Written(image);
+                if (destination == null || copier == null) return;
+                var uploaded = new byte[bytes];
+                Marshal.Copy((IntPtr)pixels, uploaded, 0, bytes);
+                var upload = new Texture3D(width, height, depth, TextureFormat(image.format), TextureCreationFlags.None)
+                { hideFlags = HideFlags.HideAndDontSave };
+                Doom(upload); // Also released if an upload or binding fails below
+                upload.SetPixelData(uploaded, 0);
+                upload.Apply(false, true);
+                var integer = IntegerImage(image.format);
+                var kernel = copier.FindKernel(integer ? "TideVolumeCopyInt" : "TideVolumeCopy");
+                var cb = Work();
+                cb.SetComputeTextureParam(copier, kernel, integer ? "_TideVolumeFromInt" : "_TideVolumeFrom", upload);
+                cb.SetComputeTextureParam(copier, kernel, integer ? "_TideVolumeToInt" : "_TideVolumeTo", destination);
+                cb.SetComputeIntParams(copier, "_TideVolumeOrigin", x, y, z, 0);
+                cb.DispatchCompute(copier, kernel, (width + 7) / 8, (height + 7) / 8, (depth + 3) / 4);
+                return;
+            }
+            Flush();
+            var row = width * image.pixelBytes;
+            for (var slice = 0; slice < depth; slice++)
+                for (var r = 0; r < height; r++)
+                    Marshal.Copy((IntPtr)(pixels + (slice * height + r) * row), image.pixels,
+                        (((z + slice) * image.height + y + r) * image.width + x) * image.pixelBytes, row);
+            var texture = image.texture as Texture3D;
+            if (image.used == Time.frameCount)
+            {
+                Doom(texture);
+                texture = new Texture3D(image.width, image.height, image.depth, TextureFormat(image.format), TextureCreationFlags.None)
+                { hideFlags = HideFlags.HideAndDontSave };
+                image.texture = texture;
+                image.used = -1;
+            }
+            texture.SetPixelData(image.pixels, 0);
+            texture.Apply(false, false);
+        }
 
         static Texture2D NewTexture(int format, int width, int height)
         {
@@ -864,7 +1022,7 @@ namespace Tide
             if (image.texture is Texture2D texture && texture.mipmapCount > 1) texture.Apply(true, false);
             else if (image.texture is Texture2DArray array && array.mipmapCount > 1) array.Apply(true, false);
             else if (image.texture is Cubemap cube) cube.Apply(true, false);
-            else if (image.texture is RenderTexture rt && rt.useMipMap) into.commands.Add(new Command { kind = Kind.Mipmaps, mipmapped = rt });
+            else if (image.texture is RenderTexture rt && rt.useMipMap) Work().GenerateMips(rt);
             else return;
             image.mips = true;
         }
@@ -1098,13 +1256,15 @@ namespace Tide
             {
                 var held = format >> (4 * i) & 15;
                 if (held == 0) break;
+                var pixelFormat = AttachmentPixelFormat((int)held);
                 var rt = new RenderTexture(width, height, AttachmentFormat((int)held), GraphicsFormat.None)
                 {
-                    antiAliasing = samples, useMipMap = samples == 1, autoGenerateMips = false, hideFlags = HideFlags.HideAndDontSave,
+                    antiAliasing = samples, useMipMap = samples == 1, autoGenerateMips = false,
+                    enableRandomWrite = samples == 1 && WritableImage(pixelFormat), hideFlags = HideFlags.HideAndDontSave,
                 };
                 rt.Create();
                 colors.Add(rt);
-                images[W(4 + i)] = new Image { texture = rt, width = width, height = height };
+                images[W(4 + i)] = new Image { texture = rt, width = width, height = height, format = pixelFormat };
                 ids.Add(W(4 + i));
             }
             var depth = DepthTexture(width, height, samples);
@@ -1132,7 +1292,13 @@ namespace Tide
             {
                 images[depthId] = new Image { texture = t.resolved, element = RenderTextureSubElement.Depth, width = t.width, height = t.height };
             }
-            into.commands.Add(new Command { kind = Kind.ResolveDepth, target = t });
+            if (resolveDepth != null)
+            {
+                var cb = Work();
+                cb.SetRenderTarget(new RenderTargetIdentifier(t.resolved));
+                cb.SetGlobalTexture(DepthMS, new RenderTargetIdentifier(t.depth), RenderTextureSubElement.Depth);
+                cb.DrawProcedural(Matrix4x4.identity, resolveDepth, 0, MeshTopology.Triangles, 3, 1);
+            }
         }
 
         void MakePipeline(byte* p)
@@ -1146,7 +1312,7 @@ namespace Tide
             for (var i = 0; i < 16; i++, at += 3) made.attributes[i] = new Vector4(W(at), W(at + 2), W(at + 1), 0); // slot, offset, format
             made.uniformSize = (int)W(at++);
             made.textureCount = (int)W(at++);
-            at += made.textureCount; // One read kind per texture...
+            for (var i = 0; i < made.textureCount; i++) made.imageReads[Math.Min(i, MaxTextures - 1)] = W(at++);
             made.samplerCount = Math.Min((int)W(at++), MaxTextures);
             at += made.samplerCount; // ...and per sampler (its shader declares which kind)
             for (var i = 0; i < made.textureCount; i++) made.textureSamplers[Math.Min(i, MaxTextures - 1)] = W(at++);
@@ -1193,6 +1359,8 @@ namespace Tide
         {
             inPass = true;
             stencil = 0;
+            passStart = into.commands.Count;
+            offscreenPass = false;
             if (target == 0 || !targets.TryGetValue(target, out var t))
             {
                 // The camera's own: never cleared, Unity's scene is under what Tide draws
@@ -1200,9 +1368,32 @@ namespace Tide
                 into.commands.Add(new Command { kind = Kind.Begin });
                 return;
             }
+            offscreenPass = true;
+            // Earlier camera draws retain the image they sampled. This pass writes a fresh image when needed,
+            // preserving what it already holds with a copy ordered after the preceding work.
+            foreach (var id in t.imageIds)
+                if (images.TryGetValue(id, out var image)) Written(image);
+            // A cube face or array layer attaches its owner's image, which deliberately has no per-target image
+            // id. Preserve earlier camera reads of the whole cube/array before changing this face or layer too.
+            WrittenAttachment(t.cube);
+            WrittenAttachment(t.layers);
+            WrittenAttachment(t.layersDepth);
             // A target's rows from the top, as Tide samples them: where Unity's go from the bottom (OpenGL), upside down
             flipped = !SystemInfo.graphicsUVStartsAtTop;
             into.commands.Add(new Command { kind = Kind.Begin, target = t, clear = clear, flipped = flipped, height = t.height });
+        }
+
+        void End()
+        {
+            into.commands.Add(new Command { kind = Kind.End });
+            if (offscreenPass)
+            {
+                // Targets are independent of Unity's camera and run once, in the same stream as compute. Keeping
+                // only camera-own draws also means a second camera never repeats the frame's image writes.
+                Record(into, Work(), null, default, default, passStart, into.commands.Count);
+                into.commands.RemoveRange(passStart, into.commands.Count - passStart);
+            }
+            inPass = offscreenPass = false;
         }
 
         Material MaterialFor(Pipeline p)
@@ -1309,7 +1500,7 @@ namespace Tide
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
-                Texture texture = white;
+                Texture texture = pipeline.imageReads[i] == 8 ? emptyVolume : (Texture)white;
                 var element = RenderTextureSubElement.Default;
                 if (images.TryGetValue(sampled[i], out var image) && image.texture != null)
                 {
@@ -1355,6 +1546,62 @@ namespace Tide
                 b.used = -1;
             }
             return b.raw;
+        }
+
+        // A camera-own draw can still be pending when later work changes an image. Rename it by actual texture
+        // identity, updating every alias and destination; the draw kept the previous object. Offscreen passes have
+        // already entered Work(), so the copy is after their writes and before this write.
+        RenderTexture Written(Image image)
+        {
+            if (!(image.texture is RenderTexture texture)) return null;
+            var used = image.used == Time.frameCount;
+            foreach (var alias in images.Values) if (alias.texture == texture && alias.used == Time.frameCount) used = true;
+            if (!used) return texture;
+            RenderTexture next = null;
+            try
+            {
+                next = new RenderTexture(texture.descriptor) { hideFlags = HideFlags.HideAndDontSave };
+                if (!next.Create())
+                {
+                    DestroyImmediate(next);
+                    VolumeUnavailable();
+                    return null;
+                }
+            }
+            catch (OutOfMemoryException) { Doom(next); VolumeUnavailable(); return null; }
+            catch (UnityException) { Doom(next); VolumeUnavailable(); return null; }
+            Work().CopyTexture(texture, next);
+            foreach (var alias in images.Values)
+            {
+                if (alias.arrayDepth == texture) alias.arrayDepth = next;
+                if (alias.texture != texture) continue;
+                alias.texture = next;
+                alias.used = -1;
+                alias.own = 15;
+            }
+            foreach (var target in targets.Values)
+            {
+                if (target.colors != null)
+                    for (var i = 0; i < target.colors.Length; i++) if (target.colors[i] == texture) target.colors[i] = next;
+                if (target.cube == texture) target.cube = next;
+                if (target.layers == texture) target.layers = next;
+                if (target.depth == texture) target.depth = next;
+                if (target.resolved == texture) target.resolved = next;
+                if (target.layersDepth == texture) target.layersDepth = next;
+            }
+            Doom(texture);
+            return next;
+        }
+
+        void WrittenAttachment(RenderTexture attachment)
+        {
+            if (attachment == null) return;
+            foreach (var image in images.Values)
+            {
+                if (image.texture != attachment) continue;
+                Written(image);
+                return;
+            }
         }
 
         CommandBuffer Work()
@@ -1463,6 +1710,18 @@ namespace Tide
             var cs = KernelOf(pipeline);
             if (cs == null) return;
             var kernel = pipeline.kernel;
+            // The same image may arrive through different fields. No backend permits a writable storage image to
+            // alias a sampled image in this dispatch; refuse the run rather than submit an invalid binding set.
+            for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
+            {
+                if ((pipeline.imageWrites >> i & 1) == 0) continue;
+                if (!images.TryGetValue(sampled[i], out var image) || !(image.texture is RenderTexture rt) || !rt.enableRandomWrite
+                    || !WritableImage(image.format) || image.format != pipeline.imageFormats[i]) return;
+                for (var j = 0; j < pipeline.textureCount && j < MaxTextures; j++)
+                    if (i != j && images.TryGetValue(sampled[j], out var other) && other.texture == image.texture) return;
+            }
+            for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
+                if ((pipeline.imageWrites >> i & 1) != 0 && Written(images[sampled[i]]) == null) return;
             var groupsBuffer = Pooled(groups, groupsUsed++, GraphicsBuffer.Target.Constant | GraphicsBuffer.Target.CopyDestination, 2, 16);
             GraphicsBuffer numbers = null;
             if (indirect)
@@ -1489,7 +1748,7 @@ namespace Tide
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
-                Texture texture = white;
+                Texture texture = pipeline.imageReads[i] == 8 ? emptyVolume : (Texture)white;
                 var element = RenderTextureSubElement.Default;
                 if (images.TryGetValue(sampled[i], out var image) && image.texture != null)
                 {
@@ -1497,7 +1756,7 @@ namespace Tide
                     texture = image.texture;
                     element = image.element;
                     if (ownSamplers && element == RenderTextureSubElement.Default) owns = OwnBits(owns, i, Own(image, OwnMode(pipeline, i, image.mips)));
-                    image.used = Time.frameCount;
+                    if ((pipeline.imageWrites >> i & 1) != 0) image.mips = false;
                 }
                 if (element == RenderTextureSubElement.Depth)
                     cb.SetComputeTextureParam(cs, kernel, Textures[i], new RenderTargetIdentifier(texture), 0, RenderTextureSubElement.Depth);
@@ -1598,11 +1857,14 @@ namespace Tide
         }
 
         // A recording into a camera's commands, onto `color` and `depth`, the camera's own.
-        void Record(Recording r, CommandBuffer cb, Camera camera, RenderTargetIdentifier color, RenderTargetIdentifier depth)
+        void Record(Recording r, CommandBuffer cb, Camera camera, RenderTargetIdentifier color, RenderTargetIdentifier depth,
+                    int start = 0, int end = -1)
         {
-            var passHeight = camera.pixelHeight;
-            foreach (var c in r.commands)
+            var passHeight = camera != null ? camera.pixelHeight : 1;
+            if (end < 0) end = r.commands.Count;
+            for (var at = start; at < end; at++)
             {
+                var c = r.commands[at];
                 switch (c.kind)
                 {
                     case Kind.Begin:
@@ -1610,7 +1872,7 @@ namespace Tide
                         {
                             // Its rows go as Unity's projection says (_ProjectionParams.x), its colors as Unity's color space has them
                             cb.SetRenderTarget(color, depth);
-                            passHeight = camera.pixelHeight;
+                            passHeight = camera != null ? camera.pixelHeight : 1;
                             cb.SetGlobalFloat(Flip, 0f);
                             cb.SetGlobalFloat(Linear, r.linear ? 1f : 0f);
                         }

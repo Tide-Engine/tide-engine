@@ -1440,7 +1440,7 @@ typedef struct resource_outer {
 static bool holds_render_resource_in(const type t, const resource_outer *outer, const bool fonts)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D
         || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
@@ -1536,7 +1536,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -1622,7 +1622,7 @@ static type mesh_of(program *prog, const type vertex)
     sb name = {0};
     sb_printf(&name, "Mesh<%s>", type_name(vertex));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(d->fields, item);
     d->index = prog->meshes.count;
     vec_push(prog->meshes, d);
@@ -1765,10 +1765,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1995,7 +1995,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
     case TY_STRUCT:
-    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: case TY_DEPTH_TEXTURE_ARRAY:
+    case TY_TEXTURE3D: case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: case TY_DEPTH_TEXTURE_ARRAY:
         return true;
     case TY_TEXTURE_ARRAY:
         if (asset) {
@@ -2052,7 +2052,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -2585,7 +2585,7 @@ static type array_of(program *prog, const type element, const int n, const loc a
     sb name = {0};
     sb_printf(&name, "%s[%d]", type_name(element), n);
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(d->fields, item);
     d->index = prog->arrays.count;
     vec_push(prog->arrays, d);
@@ -2637,7 +2637,7 @@ static bool array_element_ok(const type t, const loc at)
         return true;
     case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
     case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
-    case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: return true;
+    case TY_TEXTURE3D: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
@@ -2819,12 +2819,12 @@ static bool fold_int(const expr *e, int64_t *out);
 // A type a [Raw] role goes with: a Texture, a TextureArray or a Cubemap, each of numbers
 static bool raw_kind(const type t)
 {
-    return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
+    return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
 }
 
 static const char *raw_kind_name(const type t)
 {
-    return t.kind == TY_TEXTURE_ARRAY ? "TextureArray" : t.kind == TY_CUBEMAP ? "Cubemap" : "Texture";
+    return t.kind == TY_TEXTURE3D ? "Texture3D" : t.kind == TY_TEXTURE_ARRAY ? "TextureArray" : t.kind == TY_CUBEMAP ? "Cubemap" : "Texture";
 }
 
 static void raw_note(void)
@@ -2982,6 +2982,8 @@ static type check_expr_want(checker *c, expr *e, const type want)
 static type check_raw_field_value(expr *e, const type t)
 {
     if (t.kind == TY_ERROR || e->kind == E_DEFAULT) return t;
+    if (t.kind == TY_TEXTURE3D && e->resource_operation && e->c_callee
+        && (strcmp(e->c_callee, "tide_texture3d_make") == 0 || strcmp(e->c_callee, "tide_texture3d_make_default") == 0)) return t;
     if (!declared_raw(e)) {
         const char *kind = raw_kind_name(t);
         diag_error(e->at, "a [Raw] %s field takes a [Raw] %s asset, field or grid, not a color texture", kind, kind);
@@ -3642,6 +3644,8 @@ static int target_formats(const checker *c, const expr *e, const int tail, const
 
 static type check_cube_target(checker *c, expr *e);
 static type check_array_target(checker *c, expr *e);
+static type check_volume_target(checker *c, expr *e);
+static type check_volume_sample(const checker *c, expr *e);
 static type check_array_sample(const checker *c, expr *e);
 static type check_depth_array_read(const checker *c, expr *e);
 
@@ -3704,6 +3708,7 @@ static type check_construct(checker *c, expr *e, const type target)
     if (target.kind == TY_CUBEMAP) return check_cube_target(c, e);
     // TextureArray(1024, 1024, 4), TextureArray(2048, 2048, 3, 1, Format.Depth): layers drawn into one at a time
     if (target.kind == TY_TEXTURE_ARRAY) return check_array_target(c, e);
+    if (target.kind == TY_TEXTURE3D) return check_volume_target(c, e);
     if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_DEPTH_TEXTURE_ARRAY) {
         diag_error(e->at, "%s has no constructor", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
@@ -8231,6 +8236,33 @@ static type check_cube_target(checker *c, expr *e)
 
 // TextureArray(width, height, layers[, pixelsPerUnit][, format]): layers of one size drawn into a layer at a time,
 // each a target of logical pixels as a RenderTarget's are, holding one color image or depth alone, with a depth array.
+static type check_volume_target(checker *c, expr *e)
+{
+    if (gpu_refuses(c, e->at, "create a Texture3D", "local code creates the volume before running its kernel")) return T_ERR;
+    if (!reading_code(c)) {
+        diag_error(e->at, "a Texture3D is created in local code: leave the field at default and create it in a view or local handler");
+        return T_ERR;
+    }
+    const int n = e->args.count;
+    if (n < 1 || n > 2 || e->args.items[0]->type.kind != TY_INT3
+        || (n == 2 && (e->args.items[1]->type.kind != TY_ENUM || e->args.items[1]->type.decl != c->prog->format))) {
+        diag_error(e->at, "Texture3D takes a size in texels, an int3, and optionally a Format: 'Texture3D(int3(32), Format.Rgba16f)'");
+        return T_ERR;
+    }
+    for (int i = 0; i < n; i++) {
+        if (arg_name(e, i).len) {
+            diag_error(e->args.items[i]->at, "a Texture3D's arguments aren't named: 'Texture3D(int3(32), Format.Rgba16f)'");
+            return T_ERR;
+        }
+        vec_push(e->arg_want, e->args.items[i]->type);
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = n == 2 ? "tide_texture3d_make" : "tide_texture3d_make_default";
+    e->resource_operation = true;
+    reading_code(c)->calls_c = true;
+    return (type){TY_TEXTURE3D, NULL};
+}
+
 static type check_array_target(checker *c, expr *e)
 {
     if (gpu_refuses(c, e->at, "create a TextureArray", "the view creates it, and the frag reads it where it's a field")) return T_ERR;
@@ -9117,6 +9149,31 @@ static type check_method(checker *c, expr *e)
         if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) return check_depth_array_read(c, e);
         diag_error(e->at, "a DepthTextureArray has Sample(uv, layer) and Compare(uv, layer, value), not '" STR_FMT "'", STR_ARG(e->name));
         return T_ERR;
+    }
+    if (obj.kind == TY_TEXTURE3D) {
+        e->object->raw_sampled = true;
+        if (str_eq_c(e->name, "Sample")) {
+            check_sample_args(c, e, false);
+            return check_volume_sample(c, e);
+        }
+        const bool resize = str_eq_c(e->name, "Resize"), dispose = str_eq_c(e->name, "Dispose");
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (!resize && !dispose) {
+            diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Resize(int3) and Dispose(), not '" STR_FMT "'", STR_ARG(e->name));
+            return T_ERR;
+        }
+        if (gpu_refuses(c, e->at, resize ? "resize a Texture3D" : "dispose a Texture3D", "local code owns the volume")) return T_ERR;
+        if (e->args.count != (resize ? 1 : 0) || (resize && e->args.items[0]->type.kind != TY_INT3)) {
+            diag_error(e->at, resize ? "Resize takes a size in texels: 'volume.Resize(int3(32))'" : "Dispose takes no arguments: 'volume.Dispose()'");
+            return T_ERR;
+        }
+        if (resize) vec_push(e->arg_want, ((type){TY_INT3, NULL}));
+        e->call = CALL_BUILTIN;
+        e->c_callee = resize ? "tide_texture3d_resize" : "tide_texture3d_dispose";
+        e->resource_operation = true;
+        decl *code = reading_code(c);
+        if (code) code->calls_c = true;
+        return T_VOID_;
     }
     if (obj.kind == TY_TEXTURE_ARRAY) {
         const bool resize = str_eq_c(e->name, "Resize");
@@ -10396,7 +10453,7 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
     if (obj.kind == TY_RENDER_TARGET) {
-        if (gpu_code(c)) {
+        if (gpu_code(c) && !(gpu_code(c)->is_compute && (str_eq_c(e->member, "color") || str_eq_c(e->member, "colors")))) {
             gpu_refuses(c, e->at, "read a RenderTarget",
                         str_eq_c(e->member, "depth") ? "the view keeps its depth in a DepthTexture field of a component or singleton "
                                                        "this takes, 'lamp.shadow = lamp.map.depth;', which it reads there"
@@ -10445,6 +10502,24 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
 
+    if (obj.kind == TY_TEXTURE3D) {
+        e->object->raw_sampled = true;
+        if (str_eq_c(e->member, "size")) {
+            c->prog->uses_texture_size = true;
+            decl *code = reading_code(c);
+            if (code) code->calls_c = code->reads_texture_size = true;
+            return (type){TY_INT3, NULL};
+        }
+        if (str_eq_c(e->member, "contentRevision")) {
+            if (gpu_refuses(c, e->at, "read a Texture3D's contentRevision", "a view reads it to know when to fill the volume again")) return T_ERR;
+            c->prog->uses_texture_size = true;
+            decl *code = reading_code(c);
+            if (code) code->calls_c = code->reads_texture_size = true;
+            return T_LONG_;
+        }
+        diag_error(e->at, "a Texture3D has 'size' and 'contentRevision', not '" STR_FMT "'", STR_ARG(e->member));
+        return T_ERR;
+    }
     if (obj.kind == TY_TEXTURE_ARRAY || obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
         const bool depths = obj.kind == TY_DEPTH_TEXTURE_ARRAY;
         const bool metadata = str_eq_c(e->member, "size") || str_eq_c(e->member, "count");
@@ -11138,6 +11213,27 @@ static type check_index(checker *c, expr *e)
     const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
     if (obj.kind == TY_GPU_LIST) return check_gpu_list_index(c, e, obj);
+    if (obj.kind == TY_TEXTURE3D || (obj.kind == TY_TEXTURE && c->property_target == e)) {
+        e->object->raw_sampled = true;
+        const type at = check_expr(c, e->lhs);
+        if (at.kind != TY_ERROR && at.kind != (obj.kind == TY_TEXTURE3D ? TY_INT3 : TY_INT2)) {
+            diag_error(e->lhs->at, "an image's cell is at an %s: use image[%s]", obj.kind == TY_TEXTURE3D ? "int3" : "int2",
+                       obj.kind == TY_TEXTURE3D ? "int3(x, y, z)" : "int2(x, y)");
+            return T_ERR;
+        }
+        if (!gpu_code(c) && !gpu_function(c)) {
+            diag_error(e->at, "image cells are read and written on the GPU: use a kernel, or sample a Texture3D in a frag");
+            return T_ERR;
+        }
+        if (!gpu_code(c)) {
+            decl *fn = gpu_function(c);
+            fn->gpu_only = true;
+            fn->gpu_only_at = e->at;
+            fn->gpu_only_reads = obj.kind;
+        }
+        e->gpu = GPU_IMAGE_INDEX;
+        return (type){TY_COLOR, NULL};
+    }
     if (obj.kind == TY_RENDER_TARGET && e->object->kind == E_MEMBER && e->object->target_colors) {
         // target.colors[1]: one of its color images, as a Texture. Which ones it has is the target's to say, when
         // it's made, so one it hasn't got is found out as it's sampled: that draw is passed by, and says so
@@ -11950,6 +12046,38 @@ static type check_depth_read(const checker *c, expr *e)
 // component or singleton the code takes, where a view put one; in a function they call, a parameter of its own. The
 // filter and the wrap are written there, as a Cubemap's filter is: an array carries no sampling of its own, and one
 // that says none is its declaration's (an asset's [Filter] and [Wrap]), or blended and clamped.
+static type check_volume_sample(const checker *c, expr *e)
+{
+    const decl *shader = gpu_code(c);
+    decl *function = shader ? NULL : gpu_function(c);
+    const expr *of = e->object;
+    if (!shader && !function) {
+        diag_error(e->at, "Sample reads a Texture3D on the GPU: use it in a frag, vert or kernel");
+        return T_ERR;
+    }
+    if (function) {
+        if (!function_samples(function, e, of, TY_TEXTURE3D, false)) return T_ERR;
+    } else if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM) {
+        diag_error(of->at, "sample a Texture3D field of a component or singleton this takes: 'fog.volume.Sample(uvw)'");
+        return T_ERR;
+    }
+    if (!order_named_args(e, "uvw, filter, wrap", 1)) return T_ERR;
+    const int n = e->args.count;
+    bool fits = n >= 1 && n <= 3 && e->args.items[0]->type.kind == TY_FLOAT3;
+    if (fits && n > 1) fits = e->args.items[1]->type.decl == c->prog->filter && e->args.items[1]->enum_member;
+    if (fits && n > 2) fits = e->args.items[2]->type.decl == c->prog->wrap && e->args.items[2]->enum_member;
+    if (!fits) {
+        diag_error(e->at, "a Texture3D's Sample takes a float3, then fixed Filter and Wrap members: 'volume.Sample(uvw, Filter.Bilinear, Wrap.Clamp)'");
+        return T_ERR;
+    }
+    if (n > 1 && e->args.items[1]->enum_member->number >= 2) {
+        diag_error(e->args.items[1]->at, "a Texture3D has no mipmaps: use Filter.Point or Filter.Bilinear, which blends all three axes");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    return (type){TY_COLOR, NULL};
+}
+
 static type check_array_sample(const checker *c, expr *e)
 {
     const bool grad = str_eq_c(e->name, "SampleGrad");
@@ -12841,6 +12969,12 @@ static bool check_compare_write(checker *c, const expr *target)
 static bool check_writable(checker *c, expr *target, const decl *called, const param *arg_of)
 {
     for (const expr *part = target; part; part = (part->kind == E_MEMBER || part->kind == E_INDEX) ? part->object : NULL) {
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_TEXTURE3D
+            && (str_eq_c(part->member, "size") || str_eq_c(part->member, "contentRevision"))) {
+            diag_error(target->at, "can't assign to a Texture3D's %s: it is read-only; use Resize(int3) to change the size and refill after contentRevision changes",
+                       str_eq_c(part->member, "size") ? "size" : "contentRevision");
+            return false;
+        }
         if (part->property) {
             diag_error(target->at, "a property returns a value, not a writable field");
             diag_note("assign the property whole; to change a member, copy its value into a 'mut var' and assign it back");
@@ -13891,6 +14025,11 @@ static void check_assign(checker *c, const stmt *s)
     c->write_root = outer_root;
     s->target->raw_sampled = true; // A Raw field's destination is not an escaping read of its pixels.
     const type value = s->target->field ? check_field_value(c, s->value, s->target->field) : check_expr_want(c, s->value, target);
+    if (s->target->field && s->op == T_ASSIGN
+        && (target.kind == TY_RENDER_TARGET || target.kind == TY_TEXTURE || target.kind == TY_TEXTURE3D)) {
+        field *f = (field *)(uintptr_t)s->target->field;
+        vec_push(f->image_assignments, s->value);
+    }
     if (target.kind == TY_ERROR) return;
     if (s->target->property) {
         if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {
@@ -13977,6 +14116,26 @@ static void check_assign(checker *c, const stmt *s)
         return;
     }
     if (check_gpu_list_write(c, s)) return; // list[i] = v, in a kernel: no 'mut', as it's a handle
+    for (const expr *part = s->target; part && (part->kind == E_MEMBER || part->kind == E_INDEX); part = part->object) {
+        if (part->gpu == GPU_IMAGE_INDEX && part != s->target) {
+            diag_error(s->at, "a kernel writes a whole image cell: read a second image's cell, edit that Color, and write it back with '='");
+            return;
+        }
+    }
+    if (s->target->gpu == GPU_IMAGE_INDEX) {
+        const decl *shader = gpu_code(c);
+        if ((!shader || !shader->is_compute) && !gpu_function(c)) {
+            diag_error(s->at, "only a kernel writes images: run a compute declaration with GPU.Run before drawing");
+            return;
+        }
+        if (s->op != T_ASSIGN) {
+            diag_error(s->at, "an image written in a kernel is write-only: use '=' and read a second image for the previous value");
+            return;
+        }
+        if (value.kind != TY_ERROR && !type_assignable(target, value))
+            diag_error(s->value->at, "an image store takes a Color: convert %s to Color before writing it", type_name(value));
+        return;
+    }
     // name[0] = 'x': said by check_writable, as for a mut argument
     if (s->target->kind == E_INDEX && s->target->object->type.kind == TY_STRING) {
         check_writable(c, s->target, NULL, NULL);
@@ -15783,6 +15942,10 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     if (inner.kind == TY_STRING) *kind = ASSET_TEXT;
     else if (inner.kind == TY_LIST && list_element(inner).kind == TY_BYTE) *kind = ASSET_BYTES;
     else if (inner.kind == TY_GRID && inner.decl->dims == 2 && grid_cell(inner).kind == TY_COLOR) *kind = ASSET_GRID;
+    else if (inner.kind == TY_TEXTURE3D) {
+        diag_error(at, "Texture3D assets aren't built: create a Texture3D in local code and fill it with a kernel, or convert a Grid3<Color> or Grid3<float>");
+        return false;
+    }
     else if (inner.kind == TY_TEXTURE) *kind = ASSET_TEXTURE;
     else if (inner.kind == TY_CLIP) *kind = ASSET_CLIP;
     else if (inner.kind == TY_STRUCT && inner.decl == c->prog->clip_data) {
@@ -16520,7 +16683,7 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
     const char *name = filter ? "Filter" : "Wrap";
     if (f->type.kind == TY_ERROR) return;
     const bool made_here = type_is_texture_grid(f->type) || f->type.kind == TY_RENDER_TARGET;
-    if (f->type.kind == TY_TEXTURE_ARRAY) {
+    if (f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_TEXTURE3D) {
         diag_error(a->at, "a TextureArray field holds whichever array it's given: '" STR_FMT "' takes no [%s]", STR_ARG(f->name), name);
         diag_note("say it at the Sample, 'layers.Sample(uv, layer, Filter.Point)', or on an asset's declaration");
         return;
@@ -19699,12 +19862,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     field rewind_field = {0};
@@ -19807,7 +19970,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -20040,7 +20203,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -20060,7 +20223,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -20078,7 +20241,7 @@ static void add_builtins(program *prog)
         {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
     for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
         const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
         vec_push(shape->fields, f);
     }
     expr *none = NEW(expr);
@@ -20432,7 +20595,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -20441,7 +20604,7 @@ static void add_builtins(program *prog)
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
     const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
-                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
     // going, for local handlers to let go of what they hold (see check_forgotten).
@@ -20514,7 +20677,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false, {0}};
     vec_push(d->fields, f);
 }
 
@@ -22489,7 +22652,7 @@ static void check_gpu_only_calls(const checker *c)
                          site->to->gpu_only_at.line);
             continue;
         }
-        if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP && reads != TY_TEXTURE_ARRAY
+        if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP && reads != TY_TEXTURE3D && reads != TY_TEXTURE_ARRAY
             && reads != TY_DEPTH_TEXTURE_ARRAY) {
             diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which shader code and local workers can call",
                        STR_ARG(site->to->name));

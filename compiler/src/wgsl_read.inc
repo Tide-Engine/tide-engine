@@ -218,7 +218,7 @@ static bool takes_template(const char *name, const int len)
     static const char *const names[] = {
         "vec2", "vec3", "vec4", "mat2x2", "mat2x3", "mat2x4", "mat3x2", "mat3x3", "mat3x4", "mat4x2", "mat4x3",
         "mat4x4", "array", "ptr", "bitcast", "texture_2d", "texture_cube", "texture_multisampled_2d",
-        "texture_2d_array", "atomic",
+        "texture_2d_array", "texture_3d", "texture_storage_2d", "texture_storage_3d", "atomic",
     };
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (same(name, len, names[i])) return true;
@@ -914,7 +914,7 @@ static int add_type(translation *x, const type t)
     for (int i = 1; i < x->ntypes; i++) {
         const type *o = &x->types[i];
         if (o->kind == t.kind && o->elem == t.elem && o->n == t.n && o->sc == t.sc && o->s == t.s && o->dim == t.dim
-            && o->depth == t.depth && o->multisampled == t.multisampled && o->arrayed == t.arrayed) {
+            && o->depth == t.depth && o->multisampled == t.multisampled && o->arrayed == t.arrayed && o->image_format == t.image_format) {
             return i;
         }
     }
@@ -1194,11 +1194,24 @@ static int resolve_maybe(translation *x, const tnode *n)
     }
     if (same(s, len, "sampler")) return t_simple(x, K_SAMPLER);
     if (same(s, len, "sampler_comparison")) return t_simple(x, K_SAMPLER_CMP);
-    if (same(s, len, "texture_2d") || same(s, len, "texture_cube") || same(s, len, "texture_multisampled_2d")
+    if (same(s, len, "texture_storage_2d") || same(s, len, "texture_storage_3d")) {
+        if (n->nargs != 2 || !n->args[0]->name || !n->args[1]->name
+            || !same(n->args[1]->name, n->args[1]->len, "write")) {
+            fail(x, n->line, n->col, "a storage texture says a portable format and write access");
+        }
+        const tnode *f = n->args[0];
+        unsigned format = same(f->name, f->len, "rgba8unorm") ? 4u : same(f->name, f->len, "rgba16float") ? 2u
+                        : same(f->name, f->len, "r32float") ? 3u : same(f->name, f->len, "rgba32float") ? 1u
+                        : same(f->name, f->len, "r32sint") ? 24u : 0u;
+        if (!format) fail(x, f->line, f->col, "this storage format isn't portable; use rgba8unorm, rgba16float, r32float, rgba32float or r32sint");
+        return add_type(x, (type){.kind = K_TEXTURE, .elem = t_simple(x, format == 24u ? K_I32 : K_F32),
+                                  .dim = same(s, len, "texture_storage_3d") ? DIM_3D : DIM_2D, .image_format = format});
+    }
+    if (same(s, len, "texture_2d") || same(s, len, "texture_cube") || same(s, len, "texture_multisampled_2d") || same(s, len, "texture_3d")
         || same(s, len, "texture_2d_array")) {
         const int sampled = resolve_scalar_arg(x, n, 0);
         if (T(x, sampled)->kind == K_BOOL) fail(x, n->line, n->col, "a texture holds numbers");
-        return add_type(x, (type){.kind = K_TEXTURE, .elem = sampled, .dim = same(s, len, "texture_cube") ? DIM_CUBE : DIM_2D,
+        return add_type(x, (type){.kind = K_TEXTURE, .elem = sampled, .dim = same(s, len, "texture_cube") ? DIM_CUBE : same(s, len, "texture_3d") ? DIM_3D : DIM_2D,
                                   .multisampled = same(s, len, "texture_multisampled_2d"),
                                   .arrayed = same(s, len, "texture_2d_array")});
     }

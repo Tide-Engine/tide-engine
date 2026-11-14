@@ -1545,12 +1545,19 @@ static void check_stencil(void)
     // without stencil would let the second draw through everywhere.
     int wide, high;
     tide_window_pixel_size(&wide, &high);
+    tide_gpu_pipeline_desc window_desc = {.name = "window stencil", .wgsl = wgsl, .uniform_size = 16,
+        .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .stencil_op = TIDE_GPU_STENCIL_REPLACE,
+        .into = gpu->window_format ? gpu->window_format() : TIDE_GPU_TARGET_COLOR};
+    const tide_gpu_id window_store = gpu->pipeline(&window_desc);
+    window_desc.stencil_op = TIDE_GPU_STENCIL_KEEP;
+    window_desc.stencil_test = TIDE_GPU_STENCIL_EQUAL;
+    const tide_gpu_id window_test = gpu->pipeline(&window_desc);
     gpu->begin(0, true);
     gpu->scissor(0, 0, wide / 2, high);
     gpu->stencil(3);
-    copy(gpu, stores[TIDE_GPU_STENCIL_REPLACE], dark, 0);
+    copy(gpu, window_store, dark, 0);
     gpu->scissor(0, 0, wide, high);
-    copy(gpu, tests[TIDE_GPU_STENCIL_EQUAL], bright, 0);
+    copy(gpu, window_test, bright, 0);
     gpu->end();
     if (!tide_web_eval("(() => { const c = document.getElementById('canvas');"
                        " const r = new OffscreenCanvas(c.width, c.height).getContext('2d'); r.drawImage(c, 0, 0);"
@@ -1561,6 +1568,8 @@ static void check_stencil(void)
         failures++;
         fprintf(stderr, "the window's own stencil: a draw that passes only on the left half isn't only there\n");
     }
+    gpu->pipeline_free(window_store);
+    gpu->pipeline_free(window_test);
 #endif
 
     gpu->target_free(shadow);

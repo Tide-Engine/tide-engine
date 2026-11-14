@@ -1,0 +1,4 @@
+// expect: a kernel writes a whole image cell
+local singleton Fog { Texture3D volume; }
+scene Main { }
+compute F(Fog fog) { fog.volume[this.at].r = 1; }

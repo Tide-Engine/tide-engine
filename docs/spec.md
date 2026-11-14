@@ -3282,7 +3282,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - Built since: a frag's color as `out Color color` and a vert's struct for its frag, which are in the rules above (Code the GPU runs), which side of a triangle draws, which is among the Draw settings, above (`Draw.Cull`), and stencil, which is among them too (`Draw.Stencil`). Their picks are under Provisional.
 - Built since: mipmaps, as a filter, `Filter.Trilinear`, with the level's derivatives asked as a frag starts so that code still samples in any branch. What was picked to build it is under Provisional (Mipmaps).
 - Built since: cube maps, as a type of their own, `Cubemap`: an asset's six files, or six faces a view draws into, read by a direction. It was item 9 of the drawing surface's reshaping, the last. What was picked to build it is under Provisional (Cubemaps).
-- Left for later: 3D textures, a depth bias as state (a frag subtracts one where it compares), and reading a target's pixels back into Tide.
+- Left for later: a depth bias as state (a frag subtracts one where it compares), and reading a target's pixels back into Tide.
 - Open: a `shader Name { ... }` block that groups a vert and a frag under one name, maybe with the two unnamed inside. It would only add a name for a pair that's checked already, so it can come once naming two at a draw gets tedious.
 
 ### Provisional
@@ -3536,6 +3536,9 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **On Unity** it's a `Texture2DArray` or a `RenderTexture` of `Tex2DArray`, read as `Texture2DArray`; an asset's compressed layers stay BC1 or BC3 where Unity's GPU samples them (Assets, Automatic GPU compression).
     - **On Unity's OpenGL Core** (2026-11-05), where a texture samples itself, a texture's filter and wrap for a frame are what the frame's first draw of it asks, and a read another way is filtered and wrapped by the shader from the texture's pixels, fetched at their centers: exact for a texture or an array; a cube's filter is emulated on the face the direction points at, its edges its own last pixels rather than the next face's.
     - Not there: cube arrays (WebGPU's core has none), a layer as a `Texture` of its own, an array of several color images or samples, and an array as a draw's own texture. `[Raw]` arrays were built later the same day (see `[Raw]`).
+  - **Volumes:** `Texture3D` blends continuously on all three axes and accepts Grid3<Color>/Grid3<float> conversions.
+    It is local, made with a size and format, and written by kernels. The owner decisions dated 2026-11-13 and
+    all Provisional constructor, sampling, lifetime and storage rules are under Compute on the GPU.
   - **`Draw.Transform`** takes `(offset)`, `(offset, rotation)`, `(offset, rotation, scale)` with a `float` or a `float2` scale, or a `float3x3` matrix. `offset` is a `float2` in the units the calls are in, `rotation` is in radians from `+x` towards `+y`, as shapes' are, and the draws are scaled, then turned, then moved, all about (0, 0). The matrix's first two columns are where (1, 0) and (0, 1) go, and its third where (0, 0) does. **`Draw.Transform`** takes a `float4x4`, which each mesh's own transform goes through on its way to the world.
   - A transform is no part of the conversions: `Draw.WorldToScreen` and the others are the camera's alone. `Draw.MeasureText` is in the units the transform takes, so inside one, text measures as it's drawn.
   - **Shapes under a transform** stay shapes. Moved, turned, mirrored and scaled as much each way, they're exactly that, and rects that are only moved and scaled still fill whole pixels, so tiles under one leave no seams. A transform that stretches (more one way than the other) or skews gives the nearest shape: a circle or an ellipse is the ellipse it becomes, a rect's sides follow its own axes, and what has no direction (a corner's radius, an outline's width, how far an edge fades, a ring's radius) is scaled by the transform's mean. A `WireRect` or `WireCircle` that's turned or stretched keeps an outline a pixel wide. Meshes go through any transform as they are, corner by corner.
@@ -3856,6 +3859,67 @@ view DrawHud(Arena arena)
 
 ## Compute on the GPU
 
+### Decided: image writes and volumes (2026-11-13)
+
+The owner approved these rules: "these make sense, lets do all of these".
+
+- A kernel writes an image with `image[at] = value`, as it writes a GPU list. `image` is a render target's image
+  with an `int2` place, or a `Texture3D` with an `int3` place. Writing needs no `mut`. A write outside the image goes nowhere.
+- `Texture3D` is made in local code with a size and a format. It is machine-local, never match state, as
+  `RenderTarget` and `GPUList` are. `Sample` takes a `float3` and blends on all three axes. Kernels write it.
+- A `Grid3<Color>` or `Grid3<float>` converts to a `Texture3D` wherever its two-dimensional counterpart converts to a `Texture`.
+- **Not there:** a frag drawing into a slice of a volume.
+
+### Provisional: image writes and volumes
+
+These are implementation picks, rather than additional owner decisions.
+
+- **Making and owning:** `Texture3D(int3 size[, Format format])`, default `Format.Rgba8`; `Resize(int3 size)`,
+  `Dispose()`, `size` (`int3`) and `contentRevision` (`long`). Size is in texels, independent of display scale.
+  Copies share the resource and follow resize and disposal. An `int3` was chosen over three scalar dimensions
+  to match dispatch and grid sizes; explicit texels over a render target's logical pixels because a volume has no display scale.
+- **Sampling:** `Sample(float3 uv[, Filter filter[, Wrap wrap]])`, Bilinear and Clamp by default. Bilinear blends
+  the eight neighboring cells, with Point for an exact nearest cell. Clamp, Repeat and Mirror apply on all axes.
+  There are no volume mipmaps, and no `SampleLevel`, Trilinear or Anisotropic volume filtering: a full chain and
+  its three-dimensional downsampling were weighed against a predictable base-level image for simulation and lookup data.
+- **Exact cells:** `volume[int3 at]` reads a `Color` in GPU code, zeros outside. It accompanies continuous
+  `Sample` rather than forcing callers to reconstruct cell-center normalized coordinates. A float grid's volume
+  reads its value as red, zero green and blue and alpha one.
+- **Portable access:** a kernel that writes an image cannot sample or load it in that run. Use a second image
+  and alternate them between runs. Read-write storage, even on a format that offers it, was rejected because
+  the core formats supporting it differ across targets. Runtime aliases through different fields are checked too.
+- **Formats:** writes initially accept Rgba8 and Rgba16f. The format of a written field must be inferred
+  unambiguously from its constructor assignments; an unknown or ambiguous origin is an error with fixed-constructor
+  guidance. Runtime shader variants were weighed and rejected in favor of compile-time format diagnostics.
+  A Grid3<float>'s sampled R16f image cannot be a storage destination, because core WebGPU has no R16f storage texture.
+  Grid conversions are sampled views of CPU data; use an owned Texture3D for writes. Writing their cached GPU
+  copies was rejected because CPU grid hashes and residency could then silently replace the kernel's contents.
+  At most four storage images are written in a run; larger work is split into separate runs. Written target
+  images must be single-sample: use a target without MSAA. Updating only a multisampled target's resolved image
+  was rejected because the next resolve would overwrite it with the old samples; replicating every store into
+  samples would require another pass.
+  Four was chosen over requiring raised device limits, retaining the portable baseline.
+- **Alpha:** a Color store premultiplies internally, and sampling or an exact color read reverses it as for a
+  render target. A game never multiplies. A color at alpha zero is lost, and byte formats quantize nearly clear
+  colors, as existing textures do. Raw numeric sources retain their channels instead.
+  Straight-alpha storage was rejected because it would break ordinary sampling and target composition.
+- **Order:** image writes, draws and runs behave as if serial in recording order. An image-writing run stays
+  at its recorded position; moving it across independent draws was weighed against the extra alias analysis.
+  Target mipmaps become stale after a kernel writes their base image. Volumes have no smaller images.
+- **Lifetime:** new and resized volumes start zeroed. Device loss and hot reload may discard their pixels;
+  `contentRevision` changes so local code can refill them. A normal write does not change the revision.
+  An asynchronous allocation becoming ready also changes the revision, allowing code that fills only when it
+  changes to retry after the image becomes usable.
+  A run deferred by allocation or pipeline readiness advances its written resources' revisions to request a retry;
+  retaining old command payloads across frames was rejected to keep draw-list lifetimes bounded.
+- **Limits:** each axis is at most 2048 and the image at most 128 MiB, further limited by the device. Sizes are
+  checked before multiplying or allocating; a volume that cannot be held is empty and says so once. Invalid
+  resize requests leave the existing volume. This fixed ceiling was chosen over allowing unchecked device-sized
+  allocations to keep resource requests bounded on every backend.
+  Like a GPU list's capacity, the CPU's size remains the requested size when a device cannot hold its image.
+- **Not there:** a Texture3D file asset declaration (a stack of PNGs was weighed, but does not specify a numeric
+  volume's channel format), volume mipmaps, compressed volumes, and a renderable slice.
+
 ### Decided and provisional (2026-11-05), built the same day
 
 Claude proposed this after the Mount & Rifle performance pass, and the owner answered it the same day.
@@ -3979,7 +4043,7 @@ view DrawMeadow(Meadow meadow, Models models)
   - The renderer knows each command's GPU-list reads and writes from the compiler, and places exactly the barriers they need.
   - It may move a run earlier, out of the render pass it fell in, when nothing between them writes what the run reads or reads what it writes. A render pass is never split for a run that doesn't need it. (Built 2026-11-05: Built, above.)
   - Parallel views keep recording order, as for draws.
-- **Kernels write GPU lists only.** Writing a texture (storage textures) is open: a Hi-Z pyramid can be built with `Blit` into float targets, so culling doesn't need it.
+- **Kernels write GPU lists and images.** Image writes and volumes follow the dated decisions and provisional rules above.
 
 #### Results in local code
 

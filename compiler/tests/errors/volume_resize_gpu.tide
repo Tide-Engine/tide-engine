@@ -1,0 +1,4 @@
+// expect: resize a Texture3D
+local singleton Fog { Texture3D volume; }
+scene Main { }
+compute F(Fog fog) { fog.volume.Resize(int3(3)); }

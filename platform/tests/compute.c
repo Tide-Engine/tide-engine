@@ -145,6 +145,55 @@ static const char count_draw_wgsl[] =
     "    return vec4<f32>(f32(c & 255u), f32((c >> 8u) & 255u), f32((c >> 16u) & 255u), 255.0) / 255.0;\n"
     "}\n";
 
+// Storage images share the sampled image's binding. Guards deliberately exercise an oversized
+// dispatch: a write past either end goes nowhere, rather than clamping onto the edge texel.
+static const char fill_image_wgsl[] =
+    "@group(0) @binding(0) var<uniform> color: vec4f;\n"
+    "@group(0) @binding(1) var image: texture_storage_2d<rgba8unorm, write>;\n"
+    "@compute @workgroup_size(4, 4) fn compute(@builtin(global_invocation_id) at: vec3u) {\n"
+    "    if (all(at.xy < textureDimensions(image))) { textureStore(image, vec2i(at.xy), color); }\n"
+    "}\n";
+
+static const char fill_volume_wgsl[] =
+    "@group(0) @binding(0) var<uniform> u: vec4f;\n"
+    "@group(0) @binding(1) var image: texture_storage_3d<rgba8unorm, write>;\n"
+    "@compute @workgroup_size(2, 2, 2) fn compute(@builtin(global_invocation_id) at: vec3u) {\n"
+    "    if (all(at < textureDimensions(image))) { textureStore(image, vec3i(at), vec4f(vec3f(at), 1.0)); }\n"
+    "}\n";
+
+static const char fill_volume16_wgsl[] =
+    "@group(0) @binding(0) var<uniform> u: vec4f;\n"
+    "@group(0) @binding(1) var image: texture_storage_3d<rgba16float, write>;\n"
+    "@compute @workgroup_size(2, 2, 2) fn compute(@builtin(global_invocation_id) at: vec3u) {\n"
+    "    if (all(at < textureDimensions(image))) { textureStore(image, vec3i(at), vec4f(vec3f(at) * 2.0 - vec3f(0.5), 1.0)); }\n"
+    "}\n";
+
+static const char sample_volume_wgsl[] =
+    "@group(0) @binding(0) var<uniform> u: vec4f;\n"
+    "@group(0) @binding(1) var volume: texture_3d<f32>;\n"
+    "@group(0) @binding(2) var between: sampler;\n"
+    "@group(0) @binding(3) var uploaded: texture_3d<f32>;\n"
+    "@group(0) @binding(5) var floats: texture_3d<f32>;\n"
+    "@group(0) @binding(33) var<storage, read_write> result: array<vec4f>;\n"
+    "@compute @workgroup_size(1) fn compute() {\n"
+    "    result[0] = textureSampleLevel(volume, between, vec3f(0.5, 0.25, 0.25), 0.0);\n"
+    "    result[1] = textureSampleLevel(volume, between, vec3f(0.25, 0.5, 0.25), 0.0);\n"
+    "    result[2] = textureSampleLevel(volume, between, vec3f(0.25, 0.25, 0.5), 0.0);\n"
+    "    result[3] = textureLoad(volume, vec3i(1), 0);\n"
+    "    result[4] = textureLoad(uploaded, vec3i(1), 0);\n"
+    "    result[5] = textureLoad(uploaded, vec3i(0), 0);\n"
+    "    result[6] = textureSampleLevel(floats, between, vec3f(0.25, 0.25, 0.5), 0.0);\n"
+    "    result[7] = textureLoad(floats, vec3i(1), 0);\n"
+    "}\n";
+
+static const char image_draw_wgsl[] =
+    "@group(0) @binding(0) var<uniform> u: vec4f;\n"
+    "@group(0) @binding(1) var image: texture_2d<f32>;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0.5, 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> @location(0) vec4f { return textureLoad(image, vec2i(0), 0); }\n";
+
 static tide_gpu_id compute_pipeline(const tide_gpu *gpu, const char *name, const char *wgsl, const uint32_t uniforms,
                                     const uint32_t storage, const bool *writes)
 {
@@ -203,18 +252,55 @@ static bool reads_landed(const tide_gpu *gpu)
 static uint32_t given[COUNT], squared[COUNT], reversed[COUNT], tally[8], copied[COUNT];
 static int32_t signed_tally[2];
 static uint32_t marks[65];
-static uint8_t pixels[5][SIDE * SIDE * 4];
+static uint8_t pixels[7][SIDE * SIDE * 4];
 
 static tide_gpu_id given_buffer, squared_buffer, reversed_buffer, tally_buffer, signed_buffer, copy_buffer;
 static tide_gpu_id sizes_buffer, corners_buffer, colors_buffer, marks_buffer;
 static tide_gpu_id records_buffer, counts_buffer, indices_buffer;
 static tide_gpu_id targets[5];
+static tide_gpu_id filled_image, written_volume, uploaded_volume, image_output[2], image_result;
+static tide_gpu_id fill_image, fill_volume, sample_volume, image_draw;
+static float image_values[8][4];
+static tide_gpu_id written_volume16, fill_volume16;
 static tide_gpu_id square, shared, setup, marking, storage_draw, vertex_draw, count_draw;
 static uint32_t indirect_can; // gpu.h's TIDE_GPU_INDIRECT_* bits, as the device has them
 
 // The buffers and pipelines, which a backend that makes pipelines in the background may not have made yet.
 static void make(const tide_gpu *gpu)
 {
+    filled_image = gpu->target(TIDE_GPU_TARGET_COLOR, SIDE, SIDE);
+    for (int i = 0; i < 2; i++) image_output[i] = gpu->target(TIDE_GPU_TARGET_COLOR, SIDE, SIDE);
+    written_volume = gpu->volume(TIDE_GPU_RGBA8, 2, 2, 2);
+    uploaded_volume = gpu->volume(TIDE_GPU_RGBA8, 2, 2, 2);
+    written_volume16 = gpu->volume(TIDE_GPU_RGBA16F, 2, 2, 2);
+    uint8_t upload[32] = {0};
+    upload[28] = 51, upload[29] = 102, upload[30] = 204, upload[31] = 255;
+    gpu->volume_write(uploaded_volume, upload, 1, 1, 1, 1, 1, 1);
+    // Invalid sizes and boxes never reach an allocation or pointer arithmetic.
+    if (gpu->volume(TIDE_GPU_RGBA8, -1, 2, 2) || gpu->volume(TIDE_GPU_RGBA8, 0, 2, 2)
+        || gpu->volume(TIDE_GPU_RGBA8, 2147483647, 2147483647, 2147483647)
+        || gpu->volume(TIDE_GPU_RGBA32F, 2048, 2048, 2048)) fail("invalid volume allocated", 0, 1, 0);
+    gpu->volume_write(uploaded_volume, upload, 2147483647, 0, 0, 1, 1, 1);
+    gpu->volume_write(uploaded_volume, upload, -1, 0, 0, 1, 1, 1);
+    image_result = gpu->buffer(TIDE_GPU_STORAGE, sizeof image_values, NULL);
+    fill_image = gpu->pipeline(&(tide_gpu_pipeline_desc){.name = "fill image", .wgsl = fill_image_wgsl,
+        .uniform_size = 16, .compute = true, .texture_count = 1, .image_writes = 1, .image_formats = {TIDE_GPU_RGBA8}});
+    fill_volume = gpu->pipeline(&(tide_gpu_pipeline_desc){.name = "fill volume", .wgsl = fill_volume_wgsl,
+        .uniform_size = 16, .compute = true, .texture_count = 1, .reads = {TIDE_GPU_READ_VOLUME},
+        .image_writes = 1, .image_formats = {TIDE_GPU_RGBA8}});
+    fill_volume16 = gpu->pipeline(&(tide_gpu_pipeline_desc){.name = "fill float volume", .wgsl = fill_volume16_wgsl,
+        .uniform_size = 16, .compute = true, .texture_count = 1, .reads = {TIDE_GPU_READ_VOLUME},
+        .image_writes = 1, .image_formats = {TIDE_GPU_RGBA16F}});
+    sample_volume = gpu->pipeline(&(tide_gpu_pipeline_desc){.name = "sample volume", .wgsl = sample_volume_wgsl,
+        .uniform_size = 16, .compute = true, .texture_count = 3,
+        .reads = {TIDE_GPU_READ_VOLUME, TIDE_GPU_READ_VOLUME, TIDE_GPU_READ_VOLUME},
+        .sampler_count = 1, .sampler_reads = {TIDE_GPU_READ_COLOR}, .texture_samplers = {1, 1, 1},
+        .storage_count = 1, .storage_writes = {true}});
+    image_draw = gpu->pipeline(&(tide_gpu_pipeline_desc){.name = "draw image", .wgsl = image_draw_wgsl,
+        .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_COLOR},
+        .sampler_count = 1, .sampler_reads = {TIDE_GPU_READ_DATA}, .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR});
+    if (!filled_image || !written_volume || !uploaded_volume || !fill_image || !fill_volume || !sample_volume || !image_draw || !written_volume16 || !fill_volume16)
+        fail("image resources made", 0, 0, 1);
     for (uint32_t i = 0; i < COUNT; i++) given[i] = i * 7u + 3u;
     given_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof given, given);
     squared_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof squared, NULL);
@@ -271,8 +357,15 @@ static void make(const tide_gpu *gpu)
 
 static bool made(const tide_gpu *gpu)
 {
+    if (gpu->texture_status) {
+        const int written = gpu->texture_status(written_volume), uploaded = gpu->texture_status(uploaded_volume);
+        const int floats = gpu->texture_status(written_volume16);
+        if (written < 0 || uploaded < 0 || floats < 0) fail("a volume allocation failed", 0, 0, 1);
+        if (written != 1 || uploaded != 1 || floats != 1) return false;
+    }
     if (!gpu->pipeline_ready) return true;
-    const tide_gpu_id all[] = {square, shared, setup, marking, storage_draw, vertex_draw, count_draw};
+    const tide_gpu_id all[] = {square, shared, setup, marking, storage_draw, vertex_draw, count_draw,
+                                fill_image, fill_volume, sample_volume, image_draw, fill_volume16};
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
         if (!gpu->pipeline_ready(all[i])) return false;
     }
@@ -281,6 +374,45 @@ static bool made(const tide_gpu *gpu)
 
 static void record(const tide_gpu *gpu)
 {
+    gpu->compute_begin();
+    gpu->use(fill_volume);
+    gpu->uniforms((const float[4]){0}, 16);
+    gpu->image(0, written_volume);
+    gpu->dispatch(2, 2, 2); // Two texels per axis, four invocations: the rest are dropped
+    gpu->use(fill_volume16);
+    gpu->uniforms((const float[4]){0}, 16);
+    gpu->image(0, written_volume16);
+    gpu->dispatch(2, 2, 2);
+    gpu->use(sample_volume);
+    gpu->uniforms((const float[4]){0}, 16);
+    gpu->image(0, written_volume);
+    gpu->image(1, uploaded_volume);
+    gpu->image(2, written_volume16);
+    gpu->sampler(0, TIDE_GPU_FILTER_LINEAR, TIDE_GPU_WRAP_CLAMP);
+    gpu->storage(0, image_result);
+    gpu->dispatch(1, 1, 1); // Reads what the preceding dispatch wrote in the same compute pass
+    gpu->compute_end();
+    for (int i = 0; i < 2; i++) {
+        gpu->compute_begin();
+        gpu->use(fill_image);
+        gpu->uniforms((const float[4]){i == 0 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, 0, 1}, 16);
+        gpu->image(0, gpu->target_texture(filled_image, 0));
+        gpu->dispatch(2, 2, 1); // Beyond the 4x4 image too
+        gpu->compute_end();
+        gpu->begin(image_output[i], true);
+        gpu->use(image_draw);
+        gpu->uniforms((const float[4]){0}, 16);
+        gpu->image(0, gpu->target_texture(filled_image, 0));
+        gpu->draw(0, 3, 1);
+        gpu->end();
+    }
+    read_back(gpu, image_result, sizeof image_values, image_values, "volume samples");
+    for (int i = 0; i < 2; i++) gpu->target_read(image_output[i], pixels[5 + i]);
+    gpu->pipeline_free(fill_image);
+    gpu->pipeline_free(fill_volume);
+    gpu->pipeline_free(fill_volume16);
+    gpu->pipeline_free(sample_volume);
+    gpu->pipeline_free(image_draw);
 
     gpu->compute_begin();
     gpu->use(square);
@@ -382,6 +514,17 @@ static void expect_pixels(const int which, const uint8_t r, const uint8_t g, con
 
 static void check(void)
 {
+    const float wanted_images[8][4] = {{0.5f, 0, 0, 1}, {0, 0.5f, 0, 1}, {0, 0, 0.5f, 1}, {1, 1, 1, 1},
+                                      {0.2f, 0.4f, 0.8f, 1}, {0, 0, 0, 0}, {-0.5f, -0.5f, 0.5f, 1}, {1.5f, 1.5f, 1.5f, 1}};
+    for (uint32_t i = 0; i < 8; i++) for (uint32_t k = 0; k < 4; k++) {
+        const float delta = image_values[i][k] - wanted_images[i][k];
+        if (!(delta >= -0.002f && delta <= 0.002f)) {
+            if (failures++ < 40) fprintf(stderr, "volume read[%u]: %.9g, wanted %.9g\n",
+                (unsigned)(i * 4 + k), (double)image_values[i][k], (double)wanted_images[i][k]);
+        }
+    }
+    expect_pixels(5, 255, 0, 0, "draw before image rewrite");
+    expect_pixels(6, 0, 255, 0, "draw after image rewrite");
     uint32_t odd = 0, greatest = 0;
     int32_t least = 1000000;
     for (uint32_t i = 0; i < COUNT; i++) {

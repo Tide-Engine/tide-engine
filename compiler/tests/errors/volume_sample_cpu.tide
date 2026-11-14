@@ -1,0 +1,4 @@
+// expect: Sample reads a Texture3D on the GPU
+local singleton Fog { Texture3D volume; }
+view DrawFog(Fog fog) { var color = fog.volume.Sample(float3(0.5)); }
+scene Main { }

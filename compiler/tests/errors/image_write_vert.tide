@@ -1,0 +1,4 @@
+// expect: only a kernel writes images
+local singleton Fog { Texture3D volume; }
+scene Main { }
+vert V(mut Vertex vertex, Fog fog) { fog.volume[int3(0)] = Color.white; }

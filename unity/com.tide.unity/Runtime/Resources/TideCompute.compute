@@ -3,6 +3,10 @@
 // copy an indirect call's numbers out of a storage buffer, where it is in the
 // frame. Words past either buffer's end are left out.
 #pragma kernel TideCopy
+#pragma kernel TideVolumeClear
+#pragma kernel TideVolumeClearInt
+#pragma kernel TideVolumeCopy
+#pragma kernel TideVolumeCopyInt
 
 ByteAddressBuffer _TideFrom;
 RWByteAddressBuffer _TideTo;
@@ -17,4 +21,52 @@ void TideCopy(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
     _TideTo.GetDimensions(to);
     uint read = _TideCopy.x + 4u * i, written = _TideCopy.y + 4u * i;
     if (i < _TideCopy.z && read + 4u <= from && written + 4u <= to) _TideTo.Store(written, _TideFrom.Load(read));
+}
+
+// Volumes have no renderable slices. These internal kernels clear their initial contents and upload a box of CPU
+// pixels without overwriting cells outside it. Separate integer bindings preserve exact R32i values.
+Texture3D<float4> _TideVolumeFrom;
+RWTexture3D<float4> _TideVolumeTo;
+Texture3D<int4> _TideVolumeFromInt;
+RWTexture3D<int4> _TideVolumeToInt;
+uint4 _TideVolumeOrigin;
+
+[numthreads(8, 8, 4)]
+void TideVolumeClear(uint3 at : SV_DispatchThreadID)
+{
+    uint width, height, depth;
+    _TideVolumeTo.GetDimensions(width, height, depth);
+    if (all(at < uint3(width, height, depth))) _TideVolumeTo[at] = 0;
+}
+
+[numthreads(8, 8, 4)]
+void TideVolumeClearInt(uint3 at : SV_DispatchThreadID)
+{
+    uint width, height, depth;
+    _TideVolumeToInt.GetDimensions(width, height, depth);
+    if (all(at < uint3(width, height, depth))) _TideVolumeToInt[at] = 0;
+}
+
+[numthreads(8, 8, 4)]
+void TideVolumeCopy(uint3 at : SV_DispatchThreadID)
+{
+    uint width, height, depth, levels;
+    _TideVolumeFrom.GetDimensions(0, width, height, depth, levels);
+    uint3 written = _TideVolumeOrigin.xyz + at;
+    uint x, y, z;
+    _TideVolumeTo.GetDimensions(x, y, z);
+    if (all(at < uint3(width, height, depth)) && all(written < uint3(x, y, z)))
+        _TideVolumeTo[written] = _TideVolumeFrom.Load(int4(at, 0));
+}
+
+[numthreads(8, 8, 4)]
+void TideVolumeCopyInt(uint3 at : SV_DispatchThreadID)
+{
+    uint width, height, depth, levels;
+    _TideVolumeFromInt.GetDimensions(0, width, height, depth, levels);
+    uint3 written = _TideVolumeOrigin.xyz + at;
+    uint x, y, z;
+    _TideVolumeToInt.GetDimensions(x, y, z);
+    if (all(at < uint3(width, height, depth)) && all(written < uint3(x, y, z)))
+        _TideVolumeToInt[written] = _TideVolumeFromInt.Load(int4(at, 0));
 }

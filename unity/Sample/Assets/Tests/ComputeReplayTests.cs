@@ -30,6 +30,8 @@ public sealed unsafe class ComputeReplayTests
         Buffer = 1, BufferWrite = 2, Pipeline = 10, Begin = 15, End, Scissor, Use, Uniforms = 20, Indices = 23, PipelineStorage = 26,
         Storage, ComputeBegin, ComputeEnd,
         Dispatch, DispatchIndirect, DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount,
+        Target = 12, Image = 21, Draw = 24, Sampler = 37, Volume = 44, VolumeWrite, PipelineImages,
+        Cube = 8, CubeFace = 9, Array = 38, ArrayLayer = 39,
     }
 
     // tide_embed_render's commands: an op, its byte count, its words
@@ -66,16 +68,32 @@ public sealed unsafe class ComputeReplayTests
             Add(Op.PipelineStorage, id, 0, storage, 0);
         }
 
-        void Pipeline(uint id, ulong key, uint uniforms, uint blend)
+        public void Images(uint id, ulong key, bool compute, uint format = 0)
+        {
+            Pipeline(id, key, 32, 3, new uint[] { 0, 8 }, !compute);
+            if (compute)
+            {
+                Add(Op.PipelineStorage, id, 1, 0, 0);
+                Add(Op.PipelineImages, id, 3, 2, format, format);
+            }
+        }
+
+        public void DepthImage(uint id, uint depth) => Pipeline(id, 0xc0de0012, 32, 3, new uint[] { 1 }, true, depth);
+        public void LayeredImage(uint id) => Pipeline(id, 0xc0de0013, 32, 3, new uint[] { 3, 6 }, true);
+
+        void Pipeline(uint id, ulong key, uint uniforms, uint blend, uint[] reads = null, bool sampled = false, uint depth = 0)
         {
             var w = new List<uint> { id, (uint)key, (uint)(key >> 32), 0 };
             for (var i = 0; i < 3; i++) w.AddRange(new uint[] { 0, 0 });
             w.Add(0);
             for (var i = 0; i < 16; i++) w.AddRange(new uint[] { 0, 0, 0 });
             w.Add(uniforms);
-            w.Add(0); // Textures
-            w.Add(0); // Samplers
-            w.AddRange(new uint[] { blend, 0, 0, 0, 0, 0, 1, 0 }); // Blend, depth (none), cull, stencil, into, outputs, alpha_to_coverage
+            w.Add((uint)(reads?.Length ?? 0));
+            if (reads != null) w.AddRange(reads);
+            w.Add(sampled ? 1u : 0u);
+            if (sampled) w.Add(0); // One shared color sampler at binding 2
+            if (reads != null) foreach (var _ in reads) w.Add(sampled ? 1u : 0u);
+            w.AddRange(new uint[] { blend, depth, 0, 0, 0, 0, 1, 0 }); // Blend, depth, cull, stencil, into, outputs, alpha_to_coverage
             w.Add(4);
             w.Add(0x74736574); // "test"
             Add(Op.Pipeline, w.ToArray());
@@ -315,5 +333,349 @@ public sealed unsafe class ComputeReplayTests
         Replay(c);
         yield return Answers(2);
         CollectionAssert.AreEqual(new[] { 0u, 42u }, answers[2]);
+    }
+
+    // The WGSL sources beside these shaders exercise the same translator as a game's kernels and frags.
+    const ulong ImageKernel = 0xc0de0010, ImageDraw = 0xc0de0011;
+
+    static Commands ImageObjects(uint volumeFormat = 0, uint targetFormat = 1, uint storageFormat = 0)
+    {
+        var c = new Commands();
+        c.Add(Op.Target, 10, targetFormat, 64, 64, 11, 0, 0, 0, 12);
+        c.Add(Op.Volume, 20, volumeFormat, 2, 2, 2);
+        c.Images(30, ImageKernel, true, storageFormat);
+        c.Images(31, ImageDraw, false);
+        return c;
+    }
+
+    static void ImageValues(Commands c, float x, float y, float z, float kind, Color color)
+    {
+        c.Add(Op.Uniforms, 32, Bits(x), Bits(y), Bits(z), Bits(kind), Bits(color.r), Bits(color.g), Bits(color.b), Bits(color.a));
+    }
+
+    static void ImageQuad(Commands c, uint target, uint x, uint y, uint width, uint height,
+                          float u, float v, float w, float kind, Color color, uint filter = 1, uint wrap = 0)
+    {
+        c.Add(Op.Begin, target, 0);
+        c.Add(Op.Scissor, x, y, width, height);
+        c.Add(Op.Use, 31);
+        ImageValues(c, u, v, w, kind, color);
+        c.Add(Op.Image, 0, target == 10 ? 0u : 11u);
+        c.Add(Op.Image, 1, 20);
+        c.Add(Op.Sampler, 0, filter, wrap);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.End);
+    }
+
+    static void FillImages(Commands c)
+    {
+        c.Add(Op.ComputeBegin);
+        c.Add(Op.Use, 30);
+        // Green in the image, the invocation's xyz gradient in the volume
+        ImageValues(c, 0, 1, 0, 1, new Color(1, 0, 0, 0));
+        c.Add(Op.Image, 0, 11);
+        c.Add(Op.Image, 1, 20);
+        c.Add(Op.Dispatch, 16, 16, 1);
+        c.Add(Op.ComputeEnd);
+    }
+
+    static Texture2D Pixels(Camera camera, RenderTexture target)
+    {
+        camera.Render();
+        var pixels = new Texture2D(64, 64, TextureFormat.RGBA32, false);
+        RenderTexture.active = target;
+        pixels.ReadPixels(new Rect(0, 0, 64, 64), 0, 0);
+        RenderTexture.active = null;
+        return pixels;
+    }
+
+    static void Filtered(Color32 expected, Color32 actual, string why)
+    {
+        // Filtering and UNorm conversion may round a half-byte either way. This still rejects nearest-cell reads
+        // or blending only two of the axes; the images' unfiltered order witnesses above remain byte-exact.
+        Assert.That((int)actual.r, Is.InRange(Math.Max(0, expected.r - 1), Math.Min(255, expected.r + 1)), why + " red");
+        Assert.That((int)actual.g, Is.InRange(Math.Max(0, expected.g - 1), Math.Min(255, expected.g + 1)), why + " green");
+        Assert.That((int)actual.b, Is.InRange(Math.Max(0, expected.b - 1), Math.Min(255, expected.b + 1)), why + " blue");
+        Assert.AreEqual(expected.a, actual.a, why + " alpha");
+    }
+
+    Texture ImageTexture(uint id)
+    {
+        var images = (System.Collections.IDictionary)typeof(TideRender).GetField("images", System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic).GetValue(render);
+        var image = images[id];
+        return (Texture)image.GetType().GetField("texture").GetValue(image);
+    }
+
+    [UnityTest]
+    public IEnumerator ImagesRespectDrawAndRunOrder()
+    {
+        var camera = new GameObject("Tide image order camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = ImageObjects();
+            ImageQuad(c, 10, 0, 0, 64, 64, 0, 0, 0, -1, Color.red);
+            ImageQuad(c, 0, 0, 0, 20, 64, 0.5f, 0.5f, 0, 0, Color.black);
+            FillImages(c);
+            ImageQuad(c, 0, 20, 0, 20, 64, 0.5f, 0.5f, 0, 0, Color.black);
+            ImageQuad(c, 10, 0, 0, 64, 64, 0, 0, 0, -1, Color.blue);
+            ImageQuad(c, 0, 40, 0, 24, 64, 0.5f, 0.5f, 0, 0, Color.black);
+            Replay(c, camera);
+            pixels = Pixels(camera, target);
+            Assert.AreEqual(new Color32(255, 0, 0, 255), (Color32)pixels.GetPixel(10, 32), "draw before the kernel sees the earlier target draw");
+            Assert.AreEqual(new Color32(0, 255, 0, 255), (Color32)pixels.GetPixel(30, 32), "draw after the kernel retains its image");
+            Assert.AreEqual(new Color32(0, 0, 255, 255), (Color32)pixels.GetPixel(52, 32), "later target draw overwrites the kernel");
+            yield return null;
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
+    }
+
+    [UnityTest]
+    public IEnumerator VolumesBlendEveryAxisAndUploadOnlyTheBox()
+    {
+        var camera = new GameObject("Tide volume camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = ImageObjects();
+            FillImages(c);
+            ImageQuad(c, 0, 0, 0, 32, 32, 0.5f, 0.25f, 0.25f, 1, Color.black);
+            ImageQuad(c, 0, 32, 0, 32, 32, 0.25f, 0.5f, 0.25f, 1, Color.black);
+            ImageQuad(c, 0, 0, 32, 32, 32, 0.25f, 0.25f, 0.5f, 1, Color.black);
+            ImageQuad(c, 0, 32, 32, 32, 32, 0.5f, 0.5f, 0.5f, 1, Color.black);
+            Replay(c, camera);
+            pixels = Pixels(camera, target);
+            Filtered(new Color32(128, 0, 0, 255), (Color32)pixels.GetPixel(16, 48), "x blends between cells");
+            Filtered(new Color32(0, 128, 0, 255), (Color32)pixels.GetPixel(48, 48), "y blends between cells");
+            Filtered(new Color32(0, 0, 128, 255), (Color32)pixels.GetPixel(16, 16), "z blends between cells");
+            Filtered(new Color32(128, 128, 128, 255), (Color32)pixels.GetPixel(48, 16), "all axes blend together");
+            c = new Commands();
+            c.Add(Op.VolumeWrite, 20, 1, 1, 1, 1, 1, 1, 0xffff00ff);
+            Replay(c);
+            var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(20));
+            while (!read.done) yield return null;
+            Assert.IsFalse(read.hasError, "volume readback");
+            Assert.AreEqual(2, read.layerCount, "volume slices read back");
+            for (var z = 0; z < 2; z++)
+            {
+                var data = read.GetData<byte>(z);
+                Assert.AreEqual(16, data.Length);
+                for (var y = 0; y < 2; y++)
+                    for (var x = 0; x < 2; x++)
+                    {
+                        var at = (y * 2 + x) * 4;
+                        var color = new Color32(data[at], data[at + 1], data[at + 2], data[at + 3]);
+                        Assert.AreEqual(x == 1 && y == 1 && z == 1 ? new Color32(255, 0, 255, 255)
+                            : new Color32((byte)(x * 255), (byte)(y * 255), (byte)(z * 255), 255), color, $"cell {x},{y},{z}");
+                    }
+            }
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
+    }
+
+    // Grid3<float>'s volume is R16F, sampled without a writable storage binding. A single occupied far corner
+    // distinguishes a 3D filter (one eighth in the middle) from an array of independently filtered 2D layers.
+    [UnityTest]
+    public IEnumerator HalfFloatGridVolumesBlendAcrossLayers()
+    {
+        var camera = new GameObject("Tide grid volume camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = ImageObjects(2);
+            c.Add(Op.VolumeWrite, 20, 0, 0, 0, 2, 2, 2, 0, 0, 0, 0x3c000000);
+            ImageQuad(c, 0, 0, 0, 32, 32, 0.5f, 0.75f, 0.75f, 1, Color.black);
+            ImageQuad(c, 0, 32, 0, 32, 32, 0.75f, 0.5f, 0.75f, 1, Color.black);
+            ImageQuad(c, 0, 0, 32, 32, 32, 0.75f, 0.75f, 0.5f, 1, Color.black);
+            ImageQuad(c, 0, 32, 32, 32, 32, 0.5f, 0.5f, 0.5f, 1, Color.black);
+            ImageQuad(c, 0, 0, 56, 8, 8, 1.25f, 0.75f, 0.75f, 1, Color.black, 1, 1);
+            ImageQuad(c, 0, 8, 56, 8, 8, 1.25f, 0.75f, 0.75f, 1, Color.black, 1, 2);
+            ImageQuad(c, 0, 16, 56, 8, 8, 0.75f, 1.25f, 0.75f, 1, Color.black, 1, 1);
+            ImageQuad(c, 0, 24, 56, 8, 8, 0.75f, 1.25f, 0.75f, 1, Color.black, 1, 2);
+            ImageQuad(c, 0, 32, 56, 8, 8, 0.75f, 0.75f, 1.25f, 1, Color.black, 1, 1);
+            ImageQuad(c, 0, 40, 56, 8, 8, 0.75f, 0.75f, 1.25f, 1, Color.black, 1, 2);
+            ImageQuad(c, 0, 56, 56, 8, 8, 0.5f, 0.5f, 0.5f, 1, Color.black, 0);
+            Replay(c, camera);
+            pixels = Pixels(camera, target);
+            Filtered(new Color32(128, 0, 0, 255), (Color32)pixels.GetPixel(16, 48), "half-float x");
+            Filtered(new Color32(128, 0, 0, 255), (Color32)pixels.GetPixel(48, 48), "half-float y");
+            Filtered(new Color32(128, 0, 0, 255), (Color32)pixels.GetPixel(16, 16), "half-float z");
+            Filtered(new Color32(32, 0, 0, 255), (Color32)pixels.GetPixel(48, 16), "half-float three axes");
+            for (var axis = 0; axis < 3; axis++)
+            {
+                Assert.AreEqual(new Color32(0, 0, 0, 255), (Color32)pixels.GetPixel(axis * 16 + 4, 4), $"repeat axis {axis}");
+                Assert.AreEqual(new Color32(255, 0, 0, 255), (Color32)pixels.GetPixel(axis * 16 + 12, 4), $"mirror axis {axis}");
+            }
+            Assert.AreEqual(new Color32(255, 0, 0, 255), (Color32)pixels.GetPixel(60, 4), "point alongside linear");
+            yield return null;
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
+    }
+
+    [UnityTest]
+    public IEnumerator WritableHalfFloatImagesKeepValuesWithoutACamera()
+    {
+        // HLSL's typed float4 UAV works for either portable RGBA format. Metadata still checks the actual image.
+        var c = ImageObjects(4, 2, 4);
+        c.Add(Op.ComputeBegin);
+        c.Add(Op.Use, 30);
+        ImageValues(c, 2.5f, 0.25f, 4, 0.5f, Color.clear);
+        c.Add(Op.Image, 0, 11);
+        c.Add(Op.Image, 1, 20);
+        c.Add(Op.Dispatch, 16, 16, 1);
+        c.Add(Op.ComputeEnd);
+        Replay(c);
+        foreach (var id in new uint[] { 11, 20 })
+        {
+            var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(id), 0, TextureFormat.RGBAFloat);
+            while (!read.done) yield return null;
+            Assert.IsFalse(read.hasError);
+            var values = read.GetData<float>();
+            Assert.AreEqual(2.5f, values[0], $"image {id} red");
+            Assert.AreEqual(0.25f, values[1], $"image {id} green");
+            Assert.AreEqual(4, values[2], $"image {id} blue");
+            Assert.AreEqual(0.5f, values[3], $"image {id} alpha");
+        }
+    }
+
+    [UnityTest]
+    public IEnumerator PendingCameraDrawsKeepEarlierTargetDepth()
+    {
+        var camera = new GameObject("Tide depth order camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = ImageObjects();
+            c.DepthImage(32, 1);
+            c.DepthImage(33, 0);
+            foreach (var half in new uint[] { 0, 32 })
+            {
+                c.Add(Op.Begin, 10, 1);
+                c.Add(Op.Use, 32);
+                ImageValues(c, 0, 0, 0, -1, new Color(0, 0, 0, half == 0 ? 0.25f : 0.75f));
+                c.Add(Op.Image, 0, 0);
+                c.Add(Op.Draw, 0, 3, 1);
+                c.Add(Op.End);
+                c.Add(Op.Begin, 0, 0);
+                c.Add(Op.Scissor, half, 0, 32, 64);
+                c.Add(Op.Use, 33);
+                ImageValues(c, 0.5f, 0.5f, 0, 0, Color.black);
+                c.Add(Op.Image, 0, 12);
+                c.Add(Op.Sampler, 0, 0, 0);
+                c.Add(Op.Draw, 0, 3, 1);
+                c.Add(Op.End);
+            }
+            Replay(c, camera);
+            pixels = Pixels(camera, target);
+            Filtered(new Color32(64, 64, 64, 255), (Color32)pixels.GetPixel(16, 32), "earlier target depth");
+            Filtered(new Color32(191, 191, 191, 255), (Color32)pixels.GetPixel(48, 32), "later target depth");
+            yield return null;
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
+    }
+
+    [UnityTest]
+    public IEnumerator PendingCameraDrawsKeepEarlierCubeFacesAndArrayLayers()
+    {
+        var camera = new GameObject("Tide layered order camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = new Commands();
+            c.Add(Op.Cube, 20, 1, 64, 0);
+            c.Add(Op.CubeFace, 21, 20, 0, 22);
+            c.Add(Op.Array, 30, 1, 64, 64, 2, 0, 31);
+            c.Add(Op.ArrayLayer, 32, 30, 1);
+            c.Add(Op.Cube, 40, 1, 64, 0); // Unused compatible bindings while painting, so no attachment is sampled
+            c.Add(Op.Array, 50, 1, 64, 64, 2, 0, 51);
+            c.LayeredImage(60);
+            void Quad(uint into, uint x, uint y, uint width, uint height, float a, float b, float d, float kind, Color color)
+            {
+                c.Add(Op.Begin, into, 0);
+                c.Add(Op.Scissor, x, y, width, height);
+                c.Add(Op.Use, 60);
+                ImageValues(c, a, b, d, kind, color);
+                c.Add(Op.Image, 0, into == 21 ? 40u : 20u);
+                c.Add(Op.Image, 1, into == 32 ? 50u : 30u);
+                c.Add(Op.Sampler, 0, 1, 0);
+                c.Add(Op.Draw, 0, 3, 1);
+                c.Add(Op.End);
+            }
+            Quad(21, 0, 0, 64, 64, 0, 0, 0, -1, Color.red);
+            Quad(0, 0, 0, 32, 32, 1, 0, 0, 0, Color.black);
+            Quad(21, 0, 0, 64, 64, 0, 0, 0, -1, Color.blue);
+            Quad(0, 32, 0, 32, 32, 1, 0, 0, 0, Color.black);
+            Quad(32, 0, 0, 64, 64, 0, 0, 0, -1, Color.green);
+            Quad(0, 0, 32, 32, 32, 0.5f, 0.5f, 1, 1, Color.black);
+            Quad(32, 0, 0, 64, 64, 0, 0, 0, -1, Color.cyan);
+            Quad(0, 32, 32, 32, 32, 0.5f, 0.5f, 1, 1, Color.black);
+            Replay(c, camera);
+            pixels = Pixels(camera, target);
+            Assert.AreEqual(new Color32(255, 0, 0, 255), (Color32)pixels.GetPixel(16, 48), "earlier cube face");
+            Assert.AreEqual(new Color32(0, 0, 255, 255), (Color32)pixels.GetPixel(48, 48), "later cube face");
+            Assert.AreEqual(new Color32(0, 255, 0, 255), (Color32)pixels.GetPixel(16, 16), "earlier array layer");
+            Assert.AreEqual(new Color32(0, 255, 255, 255), (Color32)pixels.GetPixel(48, 16), "later array layer");
+            var arrayDepth = ImageTexture(31);
+            render.enabled = false;
+            Assert.IsTrue(arrayDepth == null, "an array's owned depth is released with the renderer");
+            yield return null;
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
     }
 }

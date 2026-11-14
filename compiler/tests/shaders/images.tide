@@ -1,0 +1,42 @@
+local singleton Images
+{
+    Texture image;
+    Texture3D volume;
+    [Raw] Texture3D numbers;
+    RenderTarget target;
+    Grid3<Color> cells = Grid3(2, 2, 2);
+}
+
+void Put(Texture3D image, int3 at, Color color) { image[at] = color; }
+Color Read(Texture3D image, float3 at) { return image.Sample(at); }
+
+[Group(2, 2, 2)]
+compute Fill(Images images)
+{
+    images.image[this.at.xy] = Color(1, 0.5, 0.25, 0.5);
+    Put(images.volume, this.at, Color(float3(this.at), 1));
+    Put(images.numbers, this.at, Color(1, 0.5, 0.25, 0));
+    images.target.colors[1][this.at.xy] = Color.blue;
+}
+
+frag Show(Vertex vertex, out Color color, Images images)
+{
+    color = Read(images.volume, float3(vertex.uv, 0.5)) + images.volume[int3(0)]
+          + images.numbers.Sample(float3(0.5), Filter.Point, Wrap.Repeat);
+    color.r += float(images.volume.size.z);
+}
+
+view DrawImages(mut Images images)
+{
+    images.target = RenderTarget(8, 8, 1, Format.Rgba8, Format.Rgba16f);
+    images.image = images.target.color;
+    images.volume = Texture3D(int3(2));
+    images.numbers = Texture3D(int3(2), Format.Rgba16f);
+    images.volume.Resize(int3(2));
+    GPU.Run(Fill, int3(2));
+    Draw.Mesh([Vertex { position = float2(0), uv = float2(0) },
+               Vertex { position = float2(1, 0), uv = float2(1, 0) },
+               Vertex { position = float2(0, 1), uv = float2(0, 1) }], [0, 1, 2], Show);
+    images.volume.Dispose();
+}
+scene Main { }

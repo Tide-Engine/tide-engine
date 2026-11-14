@@ -174,7 +174,7 @@ static void write_part(const tide_gpu_id texture, const tide_gpu_format format, 
 typedef struct texture_shape {
     tide_gpu_id id;
     tide_gpu_format format;
-    int width, height;
+    int width, height, depth;
 } texture_shape;
 
 static texture_shape *shapes;
@@ -196,7 +196,7 @@ static tide_gpu_id record_texture_shaped(const tide_gpu_format format, const int
         shapes = tide_realloc(shapes, shape_capacity * sizeof(texture_shape), capacity * sizeof(texture_shape));
         shape_capacity = capacity;
     }
-    shapes[shape_count++] = (texture_shape){id, format, width, height};
+    shapes[shape_count++] = (texture_shape){id, format, width, height, 1};
     return id;
 }
 
@@ -211,6 +211,61 @@ static void record_texture_write_part(const tide_gpu_id texture, const void *pix
 {
     const texture_shape *s = shape_of(texture);
     if (s) write_part(texture, s->format, s->width, pixels, x, y, width, height);
+}
+
+static int record_volume_limit(void)
+{
+    return 2048; // WebGPU's portable limit; Unity checks the actual device before making it
+}
+
+static tide_gpu_id record_volume(const tide_gpu_format format, const int width, const int height, const int depth)
+{
+    if (format < TIDE_GPU_RGBA8 || format > TIDE_GPU_R32I || width <= 0 || height <= 0 || depth <= 0 || width > record_volume_limit() || height > record_volume_limit()
+        || depth > record_volume_limit()) return 0;
+    const uint64_t size = (uint64_t)(uint32_t)width * (uint32_t)height * (uint32_t)depth
+                          * (uint32_t)tide_gpu_format_bytes(format);
+    if (size > UINT64_C(128) * 1024u * 1024u) return 0;
+    const uint32_t id = ++next_id;
+    op(TIDE_EMBED_RENDER_VOLUME, 20u);
+    u32(id);
+    u32((uint32_t)format);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32((uint32_t)depth);
+    if (shape_count == shape_capacity) {
+        const uint32_t capacity = shape_capacity ? shape_capacity * 2u : 64u;
+        shapes = tide_realloc(shapes, shape_capacity * sizeof(texture_shape), capacity * sizeof(texture_shape));
+        shape_capacity = capacity;
+    }
+    shapes[shape_count++] = (texture_shape){id, format, width, height, depth};
+    return id;
+}
+
+static void record_volume_write(const tide_gpu_id volume, const void *pixels, const int x, const int y, const int z,
+                                const int width, const int height, const int depth)
+{
+    const texture_shape *s = shape_of(volume);
+    if (!s || !pixels || x < 0 || y < 0 || z < 0 || width <= 0 || height <= 0 || depth <= 0 || x > s->width
+        || width > s->width - x || y > s->height || height > s->height - y || z > s->depth || depth > s->depth - z) return;
+    const size_t pixel = (size_t)tide_gpu_format_bytes(s->format), row = (size_t)width * pixel;
+    const uint64_t count = (uint64_t)row * (uint32_t)height * (uint32_t)depth;
+    if (count > UINT32_MAX - 32u) return; // Packet lengths are u32, including the padded payload
+    op(TIDE_EMBED_RENDER_VOLUME_WRITE, 28u + (size_t)count);
+    u32(volume);
+    u32((uint32_t)x);
+    u32((uint32_t)y);
+    u32((uint32_t)z);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32((uint32_t)depth);
+    for (int slice = 0; slice < depth; slice++) {
+        for (int r = 0; r < height; r++) {
+            const size_t at = (((size_t)(z + slice) * (size_t)s->height + (size_t)(y + r)) * (size_t)s->width + (size_t)x) * pixel;
+            memcpy(stream + stream_size, (const uint8_t *)pixels + at, row);
+            stream_size += row;
+        }
+    }
+    bytes(NULL, (((size_t)count + 3u) & ~(size_t)3u) - (size_t)count);
 }
 
 static void record_mipmaps(const tide_gpu_id texture)
@@ -440,6 +495,13 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
         u32(desc->compute);
         u32(desc->storage_count);
         u32(writes);
+    }
+    if (desc->image_writes) {
+        op(TIDE_EMBED_RENDER_PIPELINE_IMAGES, 12u + 4u * textures);
+        u32(id);
+        u32(desc->image_writes);
+        u32(textures);
+        for (uint32_t i = 0; i < textures; i++) u32(desc->image_formats[i]);
     }
     return id;
 }
@@ -777,6 +839,9 @@ const tide_gpu tide_gpu_record = {
     .array_of = record_array_of,
     .array_write = record_array_write,
     .array_layer = record_array_layer,
+    .volume = record_volume,
+    .volume_write = record_volume_write,
+    .volume_limit = record_volume_limit,
     .pipeline = record_pipeline,
     .pipeline_free = record_pipeline_free,
     .target = record_target,

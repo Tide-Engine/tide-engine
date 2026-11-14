@@ -2145,6 +2145,7 @@ static struct {
     tide_gpu_id instances;
     uint32_t instance_capacity; // Bytes the shaded runs' instance buffer holds
     tide_gpu_id white;        // A white pixel, which a mesh with no texture samples
+    tide_gpu_id volume;       // An empty volume for a missing sampled Texture3D
     tide_gpu_id atlas;        // The font atlas, as of `atlas_version`
     int atlas_width, atlas_height;
     uint32_t atlas_version;
@@ -2328,7 +2329,7 @@ static void hold_mipmaps(gpu_held *h, const uint64_t image_bytes, const uint32_t
 
 static uint64_t format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 ? 4u : format == TIDE_GPU_R16F ? 2u : format == TIDE_GPU_RGBA32I ? 16u : 1u;
+    return (uint64_t)tide_gpu_format_bytes(format);
 }
 
 static uint64_t color_bytes(const tide_gpu_color color)
@@ -2549,6 +2550,7 @@ typedef struct gpu_texture {
     uint32_t space;
     uint32_t format; // TIDE_TEXELS_*
     int32_t width, height;
+    uint32_t layers; // A Grid3 image's depth, independent of its flattened height
     uint32_t epoch; // Its list's when it copied them (see tide_draw_forget)
     tide_gpu_id texture;
     uint32_t frame; // The frame that last drew with it
@@ -2612,7 +2614,8 @@ static tide_gpu_read gpu_read_of(const uint8_t read)
            read == TIDE_SHADER_READ_CUBE ? TIDE_GPU_READ_CUBE :
            read == TIDE_SHADER_READ_DATA ? TIDE_GPU_READ_DATA :
            read == TIDE_SHADER_READ_ARRAY ? TIDE_GPU_READ_ARRAY :
-           read == TIDE_SHADER_READ_DEPTH_ARRAY ? TIDE_GPU_READ_DEPTH_ARRAY : TIDE_GPU_READ_COLOR;
+           read == TIDE_SHADER_READ_DEPTH_ARRAY ? TIDE_GPU_READ_DEPTH_ARRAY :
+           read == TIDE_SHADER_READ_VOLUME ? TIDE_GPU_READ_VOLUME : TIDE_GPU_READ_COLOR;
 }
 
 // How a pipeline reads a shader's texture `i`.
@@ -2625,6 +2628,8 @@ static tide_gpu_read gpu_read(const tide_shader *shader, const uint32_t i)
 // (tide_shader.sampler_count).
 static void shader_pipeline_textures(tide_gpu_pipeline_desc *desc, const tide_shader *shader)
 {
+    desc->image_writes = shader->image_writes;
+    memcpy(desc->image_formats, shader->image_formats, sizeof desc->image_formats);
     for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc->reads[i] = gpu_read(shader, i);
     desc->sampler_count = shader->sampler_count < TIDE_GPU_MAX_TEXTURES ? shader->sampler_count : TIDE_GPU_MAX_TEXTURES;
     for (uint32_t j = 0; j < desc->sampler_count; j++) desc->sampler_reads[j] = (uint8_t)gpu_read_of(shader->sampler_reads[j]);
@@ -2668,10 +2673,20 @@ typedef struct gpu_array {
     tide_gpu_id texture;
     // How many passes have drawn into its layers, and how many had when its smaller images were last made
     uint32_t drawn, mipped;
+    int status; // A volume allocation's asynchronous state, for contentRevision transitions
 } gpu_array;
 
 static gpu_array *gpu_arrays;
 static uint32_t gpu_array_count, gpu_array_capacity;
+
+static void volume_allocation_warning(void)
+{
+    static bool said;
+    if (!said) {
+        fprintf(stderr, "Texture3D: the device could not allocate the volume; it is empty. Use a smaller volume or fewer volumes\n");
+        said = true;
+    }
+}
 
 static gpu_array *find_array(const uint64_t id)
 {
@@ -2679,6 +2694,20 @@ static gpu_array *find_array(const uint64_t id)
         if (gpu_arrays[i].id == id) return &gpu_arrays[i];
     }
     return NULL;
+}
+
+static void volume_revision(gpu_array *a)
+{
+    if (!a || !a->texture || !gpu->texture_status) return;
+    const int status = gpu->texture_status(a->texture);
+    if (status == a->status) return;
+    a->status = status;
+    if (status < 0) volume_allocation_warning();
+    tide_render_target_state *state = tide_render_target_state_of(a->id);
+    if (state && state->alive) {
+        tide_render_target_revision_resume((uint64_t)state->content_revision);
+        state->content_revision = tide_render_revision_next();
+    }
 }
 
 static gpu_target *find_target(const uint64_t id)
@@ -2812,8 +2841,45 @@ static gpu_array *array_for(const uint64_t id, const tide_target_size size, cons
 
 // The GPU's image of a render target of `size`, under the draw's root. Called
 // outside a pass: a newly made image is black, with its depth reset.
+static gpu_array *volume_for(const tide_draw_texture *t)
+{
+    const tide_render_target_state *state = tide_render_target_state_of(t->id);
+    if (!state || !state->volume || !state->alive || !gpu->volume) return NULL;
+    gpu_array *a = find_array(t->id);
+    if (a && a->version > t->version) return a;
+    const int width = (int)t->target.width, height = (int)t->target.height;
+    if (a && a->version == t->version && a->width == width && a->height == height && a->layers == t->layers) return a;
+    if (!a) {
+        if (gpu_array_count == gpu_array_capacity) {
+            const uint32_t capacity = gpu_array_capacity ? gpu_array_capacity * 2u : 4u;
+            gpu_arrays = tide_realloc(gpu_arrays, gpu_array_capacity * sizeof(gpu_array), capacity * sizeof(gpu_array));
+            gpu_array_capacity = capacity;
+        }
+        a = &gpu_arrays[gpu_array_count++];
+        *a = (gpu_array){.id = t->id};
+    }
+    if (a->texture) free_texture(a->texture);
+    a->texture = 0;
+    a->version = t->version;
+    a->width = width; a->height = height; a->layers = t->layers;
+    const tide_gpu_format format = tide_render_target_formats(t->id).color[0] == TIDE_TARGET_RGBA16F
+                                 ? TIDE_GPU_RGBA16F : TIDE_GPU_RGBA8;
+    if (gpu->volume_limit && (width > gpu->volume_limit() || height > gpu->volume_limit() || t->layers > (uint32_t)gpu->volume_limit())) {
+        static bool said;
+        if (!said) { fprintf(stderr, "Texture3D: this device cannot hold this size; use a smaller volume\n"); said = true; }
+        return a;
+    }
+    a->texture = gpu->volume(format, width, height, (int)t->layers);
+    if (!a->texture) volume_allocation_warning();
+    a->status = a->texture && gpu->texture_status ? gpu->texture_status(a->texture) : 1;
+    if (a->texture) hold(held(&held_textures, &held_texture_count, a->texture), (uint64_t)width * (uint32_t)height * t->layers * format_bytes(format));
+    tide_render_target_content_observe(t->id, (tide_target_content){.device = gpu->epoch(), .pixels = {width, height}}, target_epoch);
+    return a;
+}
+
 static gpu_target *target_for(const uint64_t id, const tide_target_size size, const uint64_t version)
 {
+    if (id & TIDE_RENDER_VOLUME) return NULL;
     float logical_width, logical_height;
     int width, height;
     bool limited;
@@ -3416,7 +3482,7 @@ static tide_gpu_id depth_clear_pipeline(const tide_gpu_target_format into)
 static void renderer_start(void)
 {
     if (gpu_state.corners) return;
-    clear_pipeline(TIDE_GPU_TARGET_COLOR);
+    clear_pipeline(gpu->window_format ? gpu->window_format() : TIDE_GPU_TARGET_COLOR);
     static const float corners[12] = {0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0};
     gpu_state.corners = made_buffer(TIDE_GPU_VERTICES, sizeof corners, corners);
     gpu_state.white = made_texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 255, 255, 255});
@@ -4085,7 +4151,7 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
         if (count) memset(warm_done, 0, count * sizeof(bool));
         // The renderer's own, as they're drawn by default into the window's kind of target: what a first frame of
         // shapes, text and meshes would make, and what one that draws the first of a kind later would wait for
-        const tide_gpu_target_format into = TIDE_GPU_TARGET_COLOR;
+        const tide_gpu_target_format into = gpu->window_format ? gpu->window_format() : TIDE_GPU_TARGET_COLOR;
         for (int kind = 0; kind < PIPELINE_KINDS; kind++) {
             warm_ask(engine_pipeline(kind, TIDE_BLEND_ALPHA, TIDE_DEPTH_READ_WRITE, TIDE_GPU_CULL_BACK, into, 0));
         }
@@ -4505,6 +4571,7 @@ static void free_spare_data_textures(void)
 // The GPU's copy of a list's texture, uploaded if it hasn't got these pixels.
 static tide_gpu_id pack_array_texture(const tide_draw_texture *t, bool *mipped);
 static void grid_array_texture(const tide_draw_texture *t, gpu_texture *g, bool since);
+static void grid_volume_texture(const tide_draw_texture *t, gpu_texture *g, bool since);
 
 static gpu_texture *texture_for(const tide_draw_texture *t)
 {
@@ -4522,7 +4589,8 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         else index_gpu_texture(gpu_texture_count - 1u);
     }
     g->frame = gpu_frame;
-    const bool same_shape = g->texture && g->width == t->width && g->height == t->height && g->format == t->format;
+    const bool same_shape = g->texture && g->width == t->width && g->height == t->height && g->format == t->format
+                         && g->layers == t->layers;
     if (same_shape && g->version == t->version && g->epoch == t->epoch) return g;
     const bool shaped = same_shape && !g->compressed && !t->compressed.pixels;
     const tide_draw_area *areas;
@@ -4534,6 +4602,8 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     } else if (t->space == TIDE_PIXELS_PACK_ARRAY) { // An array of the pack's: its layers, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = pack_array_texture(t, &resident_mips);
+    } else if (t->space == TIDE_PIXELS_GRID_VOLUME) {
+        grid_volume_texture(t, g, shaped && g->epoch == t->epoch && tide_draw_texture_since(t, g->version, &areas, &count));
     } else if (t->space == TIDE_PIXELS_GRID_ARRAY) { // A Grid3's: its layers one under another in the list's pixels
         grid_array_texture(t, g, shaped && g->epoch == t->epoch && tide_draw_texture_since(t, g->version, &areas, &count));
     } else if (shaped && g->epoch == t->epoch && tide_draw_texture_since(t, g->version, &areas, &count)) {
@@ -4603,6 +4673,7 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     g->version = t->version;
     g->width = t->width;
     g->height = t->height;
+    g->layers = t->layers;
     g->epoch = t->epoch;
     return g;
 }
@@ -4763,6 +4834,25 @@ static bool of_destination(const tide_draw_texture *t, const uint64_t id)
 // cube is, the dark one.
 static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t texture, const tide_gpu_read read)
 {
+    if (read == TIDE_GPU_READ_VOLUME) {
+        if (!gpu_state.volume && gpu->volume) {
+            gpu_state.volume = gpu->volume(TIDE_GPU_RGBA8, 1, 1, 1);
+            if (gpu_state.volume) hold(held(&held_textures, &held_texture_count, gpu_state.volume), 4u);
+        }
+        if (!texture || texture > list->texture_count) return gpu_state.volume;
+        const tide_draw_texture *t = &list->textures[texture - 1u];
+        if (t->space == TIDE_PIXELS_TARGET_VOLUME) {
+            const gpu_array *a = find_array(t->id);
+            return a && a->texture && tide_render_target_live(t->id)
+                && (!gpu->texture_status || gpu->texture_status(a->texture) == 1) ? a->texture : gpu_state.volume;
+        }
+        if (t->space == TIDE_PIXELS_GRID_VOLUME) {
+            const gpu_texture *g = texture_for(t);
+            if (!g->texture || (gpu->texture_status && gpu->texture_status(g->texture) < 0)) volume_allocation_warning();
+            return g->texture && (!gpu->texture_status || gpu->texture_status(g->texture) == 1) ? g->texture : gpu_state.volume;
+        }
+        return gpu_state.volume;
+    }
     const bool depth = read == TIDE_GPU_READ_DEPTH || read == TIDE_GPU_READ_COMPARE, cube = read == TIDE_GPU_READ_CUBE;
     const bool data = read == TIDE_GPU_READ_DATA; // A list's numbers, and nothing else is read so
     const bool array = read == TIDE_GPU_READ_ARRAY, depth_array = read == TIDE_GPU_READ_DEPTH_ARRAY;
@@ -4770,6 +4860,7 @@ static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t te
                            : array ? gpu_state.blank : depth_array ? gpu->array_depth(gpu_state.far_array) : gpu_state.white;
     if (texture == 0 || texture > list->texture_count) return none;
     const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (t->space == TIDE_PIXELS_TARGET_VOLUME || t->space == TIDE_PIXELS_GRID_VOLUME) return none;
     // An array's colors, or its depth, only for a read of that kind
     if ((array || depth_array) != of_array(t)) return none;
     if (array != (t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_PACK_ARRAY || t->space == TIDE_PIXELS_GRID_ARRAY)) return none;
@@ -4892,6 +4983,13 @@ static bool prepare_source_target(const tide_draw_list *list, const uint32_t tex
 static bool source_target_needs(const tide_draw_list *list, const uint32_t texture, const bool check)
 {
     const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (t->space == TIDE_PIXELS_TARGET_VOLUME) {
+        gpu_array *a = find_array(t->id);
+        volume_revision(a);
+        if (a && a->version >= t->version) return false;
+        if (!check) volume_for(t);
+        return true;
+    }
     if (t->space == TIDE_PIXELS_TARGET_CUBE) { // A cube nothing drew into yet, or one that was resized, is black
         const gpu_cube *c = find_cube(t->id);
         if (c && t->version < c->version) return false;
@@ -4978,6 +5076,7 @@ static bool prepare_mipmaps(const tide_draw_list *list, const uint32_t texture, 
 static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, const bool check)
 {
     const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (t->space == TIDE_PIXELS_TARGET_VOLUME || t->space == TIDE_PIXELS_GRID_VOLUME) return false;
     if (t->space == TIDE_PIXELS_TARGET_DEPTH) return false;
     if (t->space == TIDE_PIXELS_TARGET_ARRAY) { // Once more passes have drawn into its layers, every layer's
         gpu_array *a = find_array(t->id);
@@ -5117,6 +5216,34 @@ static void bind_shader_textures(const tide_draw_list *list, const tide_shader *
 
 // A Grid3's array on the GPU: made, all of it written, or where the list says its pixels changed since the version the
 // GPU has, those parts alone, each in the layers it crosses (`since`, `areas` and their count in the list).
+static void grid_volume_texture(const tide_draw_texture *t, gpu_texture *g, const bool since)
+{
+    if (!gpu->volume || !gpu->volume_write || !t->layers || t->height % (int32_t)t->layers) return;
+    const int height = t->height / (int)t->layers;
+    if (!since) {
+        if (g->texture) free_texture(g->texture);
+        g->texture = gpu->volume(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : TIDE_GPU_RGBA8,
+                                 t->width, height, (int)t->layers);
+        if (!g->texture) return;
+        hold(held(&held_textures, &held_texture_count, g->texture), (uint64_t)t->width * (uint32_t)t->height * tide_texels_bytes(t->format));
+    }
+    const tide_draw_area whole = {0, 0, t->width, t->height};
+    const tide_draw_area *areas = &whole;
+    uint32_t count = 1;
+    if (since) (void)tide_draw_texture_since(t, g->version, &areas, &count);
+    for (uint32_t k = 0; k < count; k++) {
+        const tide_draw_area *a = &areas[k];
+        int row = a->y, left = a->height;
+        while (left > 0) {
+            const int z = row / height, y = row % height;
+            const int rows = left < height - y ? left : height - y;
+            gpu->volume_write(g->texture, t->pixels, a->x, y, z, a->width, rows, 1);
+            gpu_written += (uint64_t)a->width * (uint32_t)rows * tide_texels_bytes(t->format);
+            row += rows; left -= rows;
+        }
+    }
+}
+
 static void grid_array_texture(const tide_draw_texture *t, gpu_texture *g, const bool since)
 {
     const uint32_t layers = t->layers;
@@ -5581,7 +5708,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (!f->valid) f->width = f->height = 1.0f, f->pixel_width = f->pixel_height = 1;
         } else {
             f->gpu = target;
-            f->into = TIDE_GPU_TARGET_COLOR; // The window, or pixels of the renderer's own in its place
+            f->into = gpu->window_format ? gpu->window_format() : TIDE_GPU_TARGET_COLOR;
             f->width = root.width;
             f->height = root.height;
             f->pixel_width = root.pixel_width;
@@ -5828,6 +5955,16 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             }
             step_settled(list, s, true);
         }
+        if (gpu->texture_status && (s->kind == STEP_SHADED || s->kind == STEP_BLIT)) {
+            const tide_draw_run *run = &list->runs[s->first];
+            bool ready = true;
+            for (uint32_t k = 0; k < run->shader->texture_count; k++) {
+                if (gpu_read(run->shader, k) != TIDE_GPU_READ_VOLUME) continue;
+                const tide_gpu_id image = texture_to_read(list, run->textures[k], TIDE_GPU_READ_VOLUME);
+                if (!image || gpu->texture_status(image) != 1) ready = false;
+            }
+            if (!ready) continue; // Allocation scopes have not settled yet; no invalid image reaches a binding.
+        }
         if (cull_spans_at(i, pass_active)) { // Draws testing occlusion: the depth drawn so far measured, outside a pass
             if (pass_active) end_pass(), hiz_report.breaks++;
             pass_active = false;
@@ -5977,7 +6114,7 @@ static draw_root frame_destination(void)
                     .pixel_width = pixel_width, .pixel_height = pixel_height};
     if (!headless || !gpu_ready()) return to;
     if (!gpu_state.frame) {
-        gpu_state.frame = made_target(TIDE_GPU_TARGET_COLOR, pixel_width, pixel_height);
+        gpu_state.frame = made_target(gpu->window_format ? gpu->window_format() : TIDE_GPU_TARGET_COLOR, pixel_width, pixel_height);
         gpu_state.frame_width = pixel_width;
         gpu_state.frame_height = pixel_height;
     }
@@ -6352,7 +6489,7 @@ void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_
     }
     if (!gpu_state.target || gpu_state.target_width != width || gpu_state.target_height != height) {
         if (gpu_state.target) free_target(gpu_state.target);
-        gpu_state.target = made_target(TIDE_GPU_TARGET_COLOR, width, height);
+        gpu_state.target = made_target(gpu->window_format ? gpu->window_format() : TIDE_GPU_TARGET_COLOR, width, height);
         gpu_state.target_pixels =
             tide_realloc(gpu_state.target_pixels, (size_t)gpu_state.target_width * (size_t)gpu_state.target_height * 4u,
                          (size_t)width * (size_t)height * 4u);

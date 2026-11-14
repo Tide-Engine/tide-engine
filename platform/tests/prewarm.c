@@ -184,7 +184,10 @@ static int frame(void *user, const float seconds)
     }
     if (!calls) {
         if (again) check(tide_platform_shader_pipelines() == made, "the first frame through the others made no pipeline");
-        else check(tide_platform_shader_pipelines() == made + 1u, "the first frame through the others made the blit's alone");
+        // The unseen mesh was guessed for the window, as Early draws. Its actual offscreen RGBA8 target
+        // has a different kind from the preferred-format window, so that variant and the blit are new.
+        else check(tide_platform_shader_pipelines() == made + 2u,
+                   "the first frame through the others made the offscreen mesh variant and the blit");
         calls = tide_platform_draw_calls();
         return TIDE_KEEP_RUNNING;
     }

@@ -437,13 +437,14 @@ static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_gr
 }
 
 // A Grid3's cells as an array's layers: one under another, written where its chunks changed, as a grid's texture is
-static bool see_grid_array(const tide_grid g, const tide_grid_shape *s, grid_seen *v)
+static bool see_grid_image(const tide_grid g, const tide_grid_shape *s, grid_seen *v, const bool volume)
 {
     const bool colors = s->cell == sizeof(tide_color);
     if (s->dims != 3u || (!colors && s->cell != sizeof(float)) || !see_grid(g, s, v)) return false;
     const int32_t width = v->dir.size[0], height = v->dir.size[1], depth = v->dir.size[2];
     if (width <= 0 || height <= 0 || depth <= 0 || width > TIDE_GRID_TEXTURE_MOST || height > TIDE_GRID_TEXTURE_MOST
-        || depth > TIDE_TEXTURE_ARRAY_LAYERS) return false;
+        || (volume ? !tide_texture3d_extent_valid(tide_i3(width, height, depth), colors ? 4u : 2u)
+                   : depth > TIDE_TEXTURE_ARRAY_LAYERS)) return false;
     const uint64_t across = ((uint64_t)width + (1u << s->shift[0]) - 1u) >> s->shift[0];
     const uint64_t down = ((uint64_t)height + (1u << s->shift[1]) - 1u) >> s->shift[1];
     const uint64_t deep = ((uint64_t)depth + (1u << s->shift[2]) - 1u) >> s->shift[2];
@@ -453,7 +454,7 @@ static bool see_grid_array(const tide_grid g, const tide_grid_shape *s, grid_see
 tide_int3 tide_grid_array_extent(const tide_grid g, const tide_grid_shape *s)
 {
     grid_seen v;
-    if (!see_grid_array(g, s, &v)) return (tide_int3){0, 0, 0};
+    if (!see_grid_image(g, s, &v, false)) return (tide_int3){0, 0, 0};
     return (tide_int3){v.dir.size[0], v.dir.size[1], v.dir.size[2]};
 }
 
@@ -462,25 +463,51 @@ tide_int3 tide_grid_array_extent(const tide_grid g, const tide_grid_shape *s)
 
 #define KIND_ARRAY_RAW UINT64_C(0x47415257)
 
-uint32_t tide_draw_grid_array_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
+static uint32_t grid_image_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw, const bool volume)
 {
     grid_seen v;
-    if (!see_grid_array(g, s, &v)) return 0;
+    if (!see_grid_image(g, s, &v, volume)) return 0;
     const bool colors = s->cell == sizeof(tide_color);
     const int32_t width = v.dir.size[0], height = v.dir.size[1], depth = v.dir.size[2];
     uint64_t version = (v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g)) ^ UINT64_C(0x4152524159); // Not its Texture's
     if (raw && colors) version ^= UINT64_C(0x5241575241575241); // Other bytes than the same cells as colors
+    if (volume) version ^= UINT64_C(0x564f4c554d45);
     const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u, .raw = raw};
     // Its layers one under another: a row of the texture is a row of a layer
     const cells_box box = {.dims = 3u, .extent = {width, height, depth}, .across = 1, .wide = (size_t)width * w.bytes};
     uint8_t *pixels;
     bool kept;
-    const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_GRID_ARRAY, g.at, version, width, height * depth,
+    const uint32_t slot = tide_draw_texture_edit(d, volume ? TIDE_PIXELS_GRID_VOLUME : TIDE_PIXELS_GRID_ARRAY, g.at, version, width, height * depth,
                                                  colors ? TIDE_TEXELS_BYTES : TIDE_TEXELS_HALF,
                                                  !colors ? KIND_ARRAY_FLOATS : raw ? KIND_ARRAY_RAW : KIND_ARRAY_COLORS, &pixels, &kept);
     if (slot) d->textures[slot - 1u].layers = (uint32_t)depth;
     if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
     return slot;
+}
+
+uint32_t tide_draw_grid_array_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
+{
+    return grid_image_texture(d, g, s, raw, false);
+}
+
+uint32_t tide_draw_grid_volume_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
+{
+    return grid_image_texture(d, g, s, raw, true);
+}
+
+tide_int3 tide_grid_volume_extent(const tide_grid g, const tide_grid_shape *s)
+{
+    grid_seen v;
+    return see_grid_image(g, s, &v, true) ? tide_i3(v.dir.size[0], v.dir.size[1], v.dir.size[2]) : tide_i3(0, 0, 0);
+}
+
+tide_int3 tide_texture3d_size(const tide_texture3d_ref volume)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture3d_grid(volume, &grid, &shape)) return tide_grid_volume_extent(grid, &shape);
+    const tide_render_target_state *s = tide_render_target_state_of(volume.target.id);
+    return s && s->volume && s->alive ? tide_i3((int32_t)s->size.width, (int32_t)s->size.height, s->layers) : tide_i3(0, 0, 0);
 }
 
 uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)

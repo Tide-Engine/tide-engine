@@ -1,0 +1,17 @@
+// Source of 00000000c0de0010.compute, through tide_wgsl_translate --hlsl.
+struct Values { color: vec4<f32>, flags: vec4<f32> }
+@group(0) @binding(0) var<uniform> u: Values;
+@group(0) @binding(1) var image: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(3) var volume: texture_storage_3d<rgba8unorm, write>;
+@compute @workgroup_size(4, 4, 4)
+fn compute(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.z == 0u && all(id.xy < textureDimensions(image))) {
+        textureStore(image, vec2<i32>(id.xy), u.color);
+    }
+    let size = textureDimensions(volume);
+    if (all(id < size)) {
+        var color = u.color;
+        if (u.flags.x > 0.5) { color = vec4<f32>(vec3<f32>(id) / vec3<f32>(max(size - vec3<u32>(1u), vec3<u32>(1u))), 1.0); }
+        textureStore(volume, vec3<i32>(id), color);
+    }
+}

@@ -1,0 +1,4 @@
+// expect: read a Texture3D's contentRevision
+local singleton Fog { Texture3D volume; }
+scene Main { }
+compute F(Fog fog) { var revision = fog.volume.contentRevision; }

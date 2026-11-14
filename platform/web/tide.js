@@ -1547,7 +1547,7 @@
     // A pipeline's samplers where it says none apart (gpu.h's tide_gpu_samplers): texture i that's sampled has sampler i,
     // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
     const ownSamplers = reads => reads.map(read => read === READ_SAMPLES ? READ_DATA : read === READ_ARRAY ? 0
-        : read === READ_DEPTH_ARRAY ? 1 : read);
+        : read === READ_DEPTH_ARRAY ? 1 : read === 8 ? 0 : read);
     // Samplers: the nearest pixel past no edge first, and after the twelve of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, ANISOTROPIC = 3, FILTERS = 4, COMPARED = 12;
     const ANISOTROPY = 8; // gpu.h's TIDE_GPU_ANISOTROPY: the most reads along what a pixel covers, which a device clamps
@@ -1569,7 +1569,7 @@
                 samplers.push(device.createSampler({ magFilter: between, minFilter: between,
                     mipmapFilter: mips ? 'linear' : 'nearest', lodMaxClamp: mips ? 32 : 0,
                     maxAnisotropy: filter === ANISOTROPIC ? ANISOTROPY : 1,
-                    addressModeU: wrap, addressModeV: wrap }));
+                    addressModeU: wrap, addressModeV: wrap, addressModeW: wrap }));
             }
         }
         // 1 where the depth that's stored isn't nearer than the shader's number (the test a mesh passes to
@@ -1581,8 +1581,9 @@
     // stage's, where a render pipeline's are both of its stages', which only read storage. Explicit, so a
     // binding its shader leaves unused is still bound. `through`: how each of its samplers reads (tide_gpu_samplers),
     // sampler j at 2 + 2j, READ_DATA for a binding it hasn't.
-    function layoutFor(reads, through, storage = '', compute = false) {
-        const key = reads.join('') + '/' + through.join('') + (storage || compute ? `|${storage}${compute ? '|compute' : ''}` : '');
+    function layoutFor(reads, through, storage = '', compute = false, imageWrites = 0, imageFormats = []) {
+        const key = reads.join(',') + '/' + through.join(',') + (storage || compute ? `|${storage}${compute ? '|compute' : ''}` : '')
+            + (imageWrites ? `|images${imageWrites}:${imageFormats.join(',')}` : '');
         let layout = layouts.get(key);
         if (!layout) {
             const stages = compute ? GPUShaderStage.COMPUTE : GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
@@ -1592,8 +1593,15 @@
                     buffer: { type: storage[i] === 'w' ? 'storage' : 'read-only-storage' } });
             }
             reads.forEach((read, i) => {
+                if (imageWrites >>> i & 1) {
+                    const format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'][imageFormats[i]];
+                    entries.push({ binding: 1 + 2 * i, visibility: stages, storageTexture: { access: 'write-only', format,
+                        viewDimension: read === 8 ? '3d' : '2d' } });
+                    return;
+                }
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
                     ? { sampleType: 'float', viewDimension: 'cube' }
+                    : read === 8 ? { sampleType: 'float', viewDimension: '3d' }
                     : read === READ_ARRAY || read === READ_DEPTH_ARRAY
                     ? { sampleType: read === READ_ARRAY ? 'float' : 'depth', viewDimension: '2d-array' }
                     : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float',
@@ -1648,7 +1656,7 @@
                 const t = gpuTables.texture[textures[i]];
                 // A cube has room for its smaller images from the start: until they're made, only its first are
                 // bound, so what's read between them is its own pixels, through whichever sampler reads it
-                entries.push({ binding: 1 + 2 * i, resource: t.layered && !t.mipped ? t.base : t.view });
+                entries.push({ binding: 1 + 2 * i, resource: p.imageWrites >>> i & 1 ? (t.first || t.base || t.view) : t.layered && !t.mipped ? t.base : t.view });
                 t.groups.add(key); // Which go when it does
             }
             p.samplers.forEach((read, j) => {
@@ -1737,11 +1745,11 @@
     const samplesOf = into => (into >> 16 & 15) > 1 ? 4 : 1;
     const attachmentFormats = [null, null, 'rgba16float', 'r8unorm', 'rg8unorm', 'r16float', 'rg16float',
         'r32float', 'rgba32float', 'r32sint']; // tide_gpu_color; slot 1 is the canvas format
-    const colorFormat = color => color === 1 ? gpuFormat : attachmentFormats[color];
+    const colorFormat = (color, window = false) => color === 1 ? (window ? gpuFormat : 'rgba8unorm') : attachmentFormats[color];
     const colorFormats = into => {
         const formats = [];
         for (; formats.length < 4 && (into >> 4 * formats.length & 15); ) {
-            formats.push(colorFormat(into >> 4 * formats.length & 15));
+            formats.push(colorFormat(into >> 4 * formats.length & 15, !!(into & (1 << 20))));
         }
         return formats;
     };
@@ -1916,7 +1924,7 @@
     // prints); made in the background, its promise says so before it's ever used. Those the renderer can do without
     // (`optional`) are always made in the background, so they're never used before they're known to be made.
     function addPipeline(b, layout, described, compute) {
-        const entry = { pipeline: null, textures: b.textures, reads: b.reads, samplers: b.samplers, storage: b.storage.length, compute,
+        const entry = { pipeline: null, textures: b.textures, reads: b.reads, samplers: b.samplers, imageWrites: b.imageWrites || 0, storage: b.storage.length, compute,
             layout, optional: b.optional, shader: b.shader };
         const made = device;
         const id = gpuAdd('pipeline', entry);
@@ -1943,7 +1951,7 @@
     }
     // A compute pipeline: its entry point is `compute`, and nothing about vertices, targets or blending is read
     function computePipeline(b, module) {
-        const layout = layoutFor(b.reads, b.samplers, b.storage, true);
+        const layout = layoutFor(b.reads, b.samplers, b.storage, true, b.imageWrites, b.imageFormats);
         return addPipeline(b, layout, { label: b.name, layout: layout.pipeline, compute: { module, entryPoint: 'compute' } }, true);
     }
 
@@ -2065,7 +2073,7 @@
             // those from the start: the samplers that read none of them keep to its own pixels. A change to
             // tide_gpu_color goes here
             // One that's drawn into has the canvas's own bytes, as a target's image has: the pipelines into it are made for those
-            const format = color === 2 ? 'rgba16float' : facesPtr ? 'rgba8unorm' : gpuFormat;
+            const format = color === 2 ? 'rgba16float' : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(size));
             const texture = device.createTexture({ size: [size, size, 6], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2104,7 +2112,7 @@
                 return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array', aspect: 'depth-only' }),
                     depthLayers: whole, width, height, row: 0, groups: new Set() });
             }
-            const format = pixelsPtr ? 'rgba8unorm' : (into & 15) === 2 ? 'rgba16float' : gpuFormat;
+            const format = (into & 15) === 2 ? 'rgba16float' : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2188,6 +2196,73 @@
                 t.groups.clear();
             }
         },
+        gpu_volume(format, width, height, depth) {
+            const limit = device.limits.maxTextureDimension3D;
+            const pixel = [4, 1, 2, 16, 8, 4, 16, 4][format];
+            if (!pixel || width <= 0 || height <= 0 || depth <= 0 || width > limit || height > limit || depth > limit
+                || width * height > Math.floor(134217728 / pixel / depth)) return 0;
+            const kind = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'][format];
+            const writable = format === 0 || format >= 4;
+            const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC
+                | (writable ? GPUTextureUsage.STORAGE_BINDING : 0);
+            // Allocation/validation errors arrive asynchronously. Keep the resource private until
+            // both scopes settle; the renderer uses texture_status before binding it.
+            const maker = device;
+            maker.pushErrorScope('validation');
+            maker.pushErrorScope('out-of-memory');
+            let texture, view;
+            try {
+                texture = maker.createTexture({ dimension: '3d', size: [width, height, depth], format: kind, usage });
+                view = texture.createView({ dimension: '3d' });
+            } catch {
+                Promise.all([maker.popErrorScope(), maker.popErrorScope()]).catch(() => {});
+                if (texture) texture.destroy();
+                return 0;
+            }
+            const entry = { texture, view, device: maker, status: 0, uploads: [],
+                width, height, depth, row: width * pixel, format: kind, usage, groups: new Set() };
+            const id = gpuAdd('texture', entry);
+            Promise.all([maker.popErrorScope(), maker.popErrorScope()]).then(errors => {
+                if (entry.status < 0 || errors.some(Boolean)) {
+                    entry.status = -1;
+                    entry.uploads.length = 0;
+                    return;
+                }
+                entry.status = 1;
+                for (const upload of entry.uploads) maker.queue.writeTexture({ texture, origin: upload.origin }, upload.pixels,
+                    { bytesPerRow: upload.row, rowsPerImage: upload.height }, upload.size);
+                entry.uploads.length = 0;
+            }).catch(() => { entry.status = -1; entry.uploads.length = 0; });
+            return id;
+        },
+        gpu_texture_status: id => gpuTables.texture[id]?.status ?? (gpuTables.texture[id] ? 1 : -1),
+        gpu_volume_limit: () => device.limits.maxTextureDimension3D,
+        gpu_volume_write(id, ptr, x, y, z, width, height, depth) {
+            const t = gpuTables.texture[id];
+            if (!t || !t.depth || t.status < 0 || x < 0 || y < 0 || z < 0 || width <= 0 || height <= 0 || depth <= 0
+                || x > t.width || width > t.width - x || y > t.height || height > t.height - y
+                || z > t.depth || depth > t.depth - z) return;
+            const pixel = t.row / t.width;
+            const start = (z * t.height + y) * t.row + x * pixel;
+            const bytes = ((depth - 1) * t.height + height - 1) * t.row + width * pixel;
+            const [data, offset] = memoryBytes(ptr + start, bytes);
+            if (t.status === 0) {
+                // The game may change or grow its WASM heap before the scopes settle. Keep just
+                // this box's bytes, packed, until the image is known to exist.
+                const row = width * pixel;
+                let pixels;
+                try { pixels = new Uint8Array(row * height * depth); }
+                catch { t.status = -1; t.uploads.length = 0; return; }
+                for (let k = 0; k < depth; k++) for (let r = 0; r < height; r++) {
+                    const source = offset + (k * t.height + r) * t.row;
+                    pixels.set(data.subarray(source, source + row), (k * height + r) * row);
+                }
+                t.uploads.push({ pixels, origin: [x, y, z], size: [width, height, depth], row, height });
+                return;
+            }
+            t.device.queue.writeTexture({ texture: t.texture, origin: [x, y, z] }, data,
+                { offset, bytesPerRow: t.row, rowsPerImage: t.height }, [width, height, depth]);
+        },
         gpu_array_depth(id) {
             const t = gpuTables.texture[id];
             return !t ? 0 : t.depthLayers ? id : t.depthArray || 0;
@@ -2221,7 +2296,7 @@
         },
         gpu_mipmaps(id) {
             const t = gpuTables.texture[id];
-            if (t.depthLayers) return; // An array of depth alone has none
+            if (t.depthLayers || t.depth) return; // An array of depth alone has none
             if (t.layered) { // Each face's or layer's, one from the other, as a texture's are
                 if (t.layered[0].length < 2) return;
                 const pipeline = mipPipeline(t.format);
@@ -2284,6 +2359,7 @@
             const t = gpuTables.texture[id];
             if (t.depthArray) platform.gpu_texture_free(t.depthArray); // An array's depth goes with it
             t.texture.destroy();
+            if (t.uploads) { t.status = -1; t.uploads.length = 0; }
             gpuRemove('texture', id);
             for (const key of t.groups) bindGroups.delete(key);
         },
@@ -2294,13 +2370,24 @@
                 reads: Array.from({ length: textures }, (unused, i) => (i < 8 ? reads >>> 3 * i : readsHigh >>> 3 * (i - 8)) & 7), // Two banks of 3-bit tide_gpu_read values
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
                 into: colorFormats(into), outputs, samples: samplesOf(into), coverage: !!alphaToCoverage,
-                storage: '', compute: false };
+                storage: '', compute: false, imageWrites: 0, imageFormats: [] };
             building.samplers = ownSamplers(building.reads); // How each sampler reads, unless gpu_pipeline_samplers says
         },
         // Its samplers, apart from its textures (tide_gpu_pipeline_desc.sampler_count): how each reads, 3 bits each
         gpu_pipeline_samplers(count, low, high) {
             building.samplers = Array.from({ length: Math.min(count, MAX_TEXTURES) },
                 (unused, j) => (j < 8 ? low >>> 3 * j : high >>> 3 * (j - 8)) & 7);
+        },
+        gpu_pipeline_image_read(slot, read) {
+            if (slot >= building.textures) return;
+            building.reads[slot] = read;
+            building.samplers = ownSamplers(building.reads);
+        },
+        gpu_pipeline_images(writes, low, high) {
+            building.imageWrites = writes & 65535;
+            building.imageFormats = Array.from({ length: building.textures },
+                (unused, i) => (i < 8 ? low >>> 4 * i : high >>> 4 * (i - 8)) & 15);
+            building.samplers = building.samplers.map((read, i) => writes >>> i & 1 ? READ_DATA : read);
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
@@ -2332,7 +2419,7 @@
                     format: attributeFormats[a.format], slot: a.slot })).filter(a => a.slot === index)
                     .map(({ shaderLocation, offset, format }) => ({ shaderLocation, offset, format })),
             }));
-            const layout = layoutFor(b.reads, b.samplers, b.storage);
+            const layout = layoutFor(b.reads, b.samplers, b.storage, false, b.imageWrites, b.imageFormats);
             const described = {
                 label: b.name,
                 layout: layout.pipeline,
@@ -2369,19 +2456,21 @@
                     const many = device.createTexture({ size: [width, height], format, sampleCount: samples,
                         usage: GPUTextureUsage.RENDER_ATTACHMENT });
                     const texture = device.createTexture({ size: [width, height], format,
-                        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
+                        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+                            | (['rgba8unorm', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'].includes(format) ? GPUTextureUsage.STORAGE_BINDING : 0) });
                     sampled.push({ texture: many, view: many.createView() });
-                    colors.push(gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4,
+                    colors.push(gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, first: texture.createView({ mipLevelCount: 1 }),
                         groups: new Set() }));
                 }
                 const many = device.createTexture({ size: [width, height], format: depthFormat, sampleCount: samples,
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-                return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth: 0, width, height, canvas: null,
+                return gpuAdd('target', { colors, bytes: formats[0] === 'rgba8unorm' || formats[0] === 'bgra8unorm', depth: 0, width, height, canvas: null,
                     context: null, sampled, sampledDepth: { texture: many, view: many.createView(),
                         only: many.createView({ aspect: 'depth-only' }) } });
             }
             const colors = formats.map(format => {
-                const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
+                const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+                            | (['rgba8unorm', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'].includes(format) ? GPUTextureUsage.STORAGE_BINDING : 0);
                 const texture = device.createTexture({ size: [width, height], format, usage });
                 return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, format, usage,
                     groups: new Set() });
@@ -2391,7 +2480,7 @@
             const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width, height, row: 0, groups: new Set() });
             // Only bytes are read back: the first color image, where it's that
-            return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth, width, height, canvas: null, context: null });
+            return gpuAdd('target', { colors, bytes: formats[0] === 'rgba8unorm' || formats[0] === 'bgra8unorm', depth, width, height, canvas: null, context: null });
         },
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
         // What the renderer's pools of GPU lists grow to at most (gpu.h, storage_most): a buffer bound whole
@@ -2483,14 +2572,14 @@
             }
             // C's readback is synchronous. Copy into a canvas only when it's
             // asked for, then use the browser's existing synchronous canvas read.
+            const first = gpuTables.texture[t.colors[0]]; // A cube's face is one of its texture's layers
             if (!t.context) {
                 t.canvas = new OffscreenCanvas(t.width, t.height);
                 t.context = t.canvas.getContext('webgpu');
-                t.context.configure({ device, format: gpuFormat, alphaMode: 'opaque',
+                t.context.configure({ device, format: first.texture.format, alphaMode: 'opaque',
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST });
             }
             const copy = device.createCommandEncoder();
-            const first = gpuTables.texture[t.colors[0]]; // A cube's face is one of its texture's layers
             copy.copyTextureToTexture({ texture: first.texture, origin: [0, 0, first.layer || 0] },
                 { texture: t.context.getCurrentTexture() }, [t.width, t.height]);
             device.queue.submit([copy.finish()]);

@@ -1,3 +1,38 @@
+## Writable images and sampled volumes (2026-11-14)
+
+Compiler support for the owner's 2026-11-13 decisions (spec, Compute on the GPU). `Texture3D` uses
+`READ_VOLUME`, translated to `TIDE_SHADER_READ_VOLUME`; a true `texture_3d<f32>`, not an array of slices.
+Sample uses three coordinates and level zero. Exact `[int3]` reads use a generated helper returning zeros
+outside the volume. Image stores use a generated helper checking every signed coordinate against
+`textureDimensions` before `textureStore`; colors premultiply there, Raw numbers do not. Helpers taking
+Texture3D/Texture retain source specialization and propagate image writes to their kernel's bindings.
+
+A shader's image slot is sampled or write-only storage at its existing binding `1 + 2i`. `shader_sample.write`
+and `image_color` distinguish stores and a bound target's selected color; `shader_texture.write`,
+`image_format` and `image_color` carry the result. Written images have no sampler. Generated `tide_shader`
+metadata adds `image_writes` and `image_formats` only where an image is written. A kernel may write four
+images; sampled and written use of one source is an error directing the game to a second image. Runtime
+aliases are checked by the renderer too. Direct `target.color` and `target.colors[constant]` stores work.
+
+Storage-image formats must be static in WGSL/SPIR-V: `image_origin_format` follows all field assignments,
+immutable locals, conditional origins and target color selections. Conflicting/unknown formats fail with a
+fixed-constructor/second-image fix. Unsupported formats fail before generating a pipeline. Multisampled
+sources are refused with single-sample-target guidance: writing their resolve image would be overwritten
+by a later MSAA resolve. These limitations are Provisional, including rejecting dynamic color selection.
+
+The translators accept sampled 3D images and write-only 2D/3D storage images in rgba8unorm, rgba16float,
+r32float, rgba32float and r32sint, with textureStore and textureDimensions. Public Format constructors
+currently expose the two existing writable formats; numeric members connect when the parallel format
+work lands. SPIR-V uses typed images and OpImageWrite; HLSL uses RWTexture2D/3D at _TideTexture<i>.
+New HLSL helpers are emitted only for a module using these resource kinds. On Unity OpenGL Core, a volume
+read with another filter/wrap than its own uses exact loads and point/eight-tap filtering, wrapping each
+axis; matching modes use its own sampler. This closes an actual Repeat/Mirror mismatch found in Unity.
+
+Validation: new shaders/images golden (direct and helper stores, a target's second image, RGBA16F,
+Raw stores/reads, exact reads, metadata), spirv-val and FXC cs_5_0 /WX; every 183 existing/new WGSL,
+SPIR-V and HLSL golden check passed with no existing expectation changes. Compiler image/volume errors
+and the reload E2E are recorded in language.md. Platform and actual Unity validation: compute.md/unity.md.
+
 ## Integral handed fields (2026-11-14)
 
 Owner approved 2026-11-13: ints and int vectors in a vert's `out` struct go to

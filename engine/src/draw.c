@@ -80,7 +80,7 @@ _Static_assert(TIDE_RENDER_SAMPLES_SHIFT == TIDE_RENDER_IMAGE_SHIFT + 2 && (1 <<
 static uint64_t managed_id(const tide_render_target_state *s)
 {
     return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->holds | (s->cube ? TIDE_RENDER_CUBE : 0u)
-         | (s->layers ? TIDE_RENDER_ARRAY : 0u);
+         | (s->volume ? TIDE_RENDER_VOLUME : s->layers ? TIDE_RENDER_ARRAY : 0u);
 }
 
 // What a target of these color images holds, as its id's bits say it: for
@@ -381,6 +381,84 @@ tide_texture_array_ref tide_texture_array_make(const tide_target_size size, cons
     return (tide_texture_array_ref){.target = {.id = managed_id(s), .size = s->size}, .layers = s->layers};
 }
 
+bool tide_texture3d_extent_valid(const tide_int3 size, const uint32_t bytes)
+{
+    return bytes && size.x > 0 && size.y > 0 && size.z > 0
+        && size.x <= TIDE_TEXTURE3D_SIDE && size.y <= TIDE_TEXTURE3D_SIDE && size.z <= TIDE_TEXTURE3D_SIDE
+        && (uint64_t)size.x * (uint32_t)size.y * (uint32_t)size.z <= TIDE_TEXTURE3D_BYTES / bytes;
+}
+
+static void volume_size_warning(void)
+{
+    static bool said;
+    if (!said) {
+        fprintf(stderr, "Texture3D: size must be positive, at most %d cells on each axis and 128 MiB in all; use a smaller volume\n",
+                TIDE_TEXTURE3D_SIDE);
+        said = true;
+    }
+}
+
+tide_texture3d_ref tide_texture3d_make(const tide_int3 size, const tide_target_format format)
+{
+    if (format == TIDE_TARGET_DEPTH || !tide_texture3d_extent_valid(size, format == TIDE_TARGET_RGBA16F ? 8u : 4u)) {
+        volume_size_warning();
+        return (tide_texture3d_ref){0};
+    }
+    const tide_render_target made = make_target((tide_target_size){.width = (float)size.x, .height = (float)size.y, .scale = 1.0f},
+                                                one_format(format), "");
+    tide_render_target_state *s = tide_render_target_state_of(made.id);
+    s->volume = true;
+    s->layers = (uint16_t)size.z;
+    return (tide_texture3d_ref){.target = {.id = managed_id(s), .size = s->size}, .depth = (uint32_t)size.z};
+}
+
+void tide_texture3d_resize(const tide_texture3d_ref volume, const tide_int3 size)
+{
+    tide_render_target_state *s = tide_render_target_state_of(volume.target.id);
+    if (!s || !s->volume || !s->alive) {
+        fprintf(stderr, "Texture3D.Resize requires a live owned volume; resize the Grid3 itself for a grid-backed volume\n");
+        return;
+    }
+    const uint32_t bytes = tide_render_target_formats(volume.target.id).color[0] == TIDE_TARGET_RGBA16F ? 8u : 4u;
+    if (!tide_texture3d_extent_valid(size, bytes)) { volume_size_warning(); return; }
+    s->size = (tide_target_size){.width = (float)size.x, .height = (float)size.y, .scale = 1.0f};
+    s->layers = (uint16_t)size.z;
+    s->version++;
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
+}
+
+void tide_texture3d_dispose(const tide_texture3d_ref volume)
+{
+    tide_render_target_state *s = tide_render_target_state_of(volume.target.id);
+    if (s && s->volume) s->alive = false;
+    else if (volume.named) fprintf(stderr, "Texture3D.Dispose: a grid-backed volume borrows its Grid3; dispose only an owned volume\n");
+}
+
+int64_t tide_texture3d_content_revision(const tide_texture3d_ref volume)
+{
+    return tide_render_target_content_revision(volume.target);
+}
+
+tide_texture3d_ref tide_texture3d_resolve(tide_texture3d_ref volume)
+{
+    if (!volume.target.id) return volume;
+    volume.target = tide_render_target_resolve(volume.target);
+    const tide_render_target_state *s = tide_render_target_state_of(volume.target.id);
+    volume.depth = s && s->volume && s->alive ? s->layers : 0;
+    return volume;
+}
+
+tide_texture3d_ref tide_texture3d_recreate(const tide_texture3d_ref previous)
+{
+    if (!previous.target.id) return previous;
+    tide_texture3d_ref next = previous;
+    next.target = tide_render_target_recreate(previous.target);
+    tide_render_target_state *s = tide_render_target_state_of(next.target.id);
+    if (s) { s->volume = true; s->layers = (uint16_t)previous.depth; next.target.id = managed_id(s); }
+    return next;
+}
+
 tide_render_target tide_texture_array_layer(const tide_texture_array_ref array, const int32_t layer)
 {
     const tide_render_target resolved = tide_render_target_resolve(array.target);
@@ -493,6 +571,7 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
     tide_render_target_state *s = tide_render_target_state_of(next.id);
     s->reload_id = whole;
     s->cube = (whole & TIDE_RENDER_CUBE) != 0;
+    s->volume = (whole & TIDE_RENDER_VOLUME) != 0;
     // An array's: as many layers as its value says (tide_texture_array_recreate), or as the layer a target names
     if (whole & TIDE_RENDER_ARRAY) {
         const uint32_t layer = (uint32_t)((image & TIDE_RENDER_LAYER) >> TIDE_RENDER_LAYER_SHIFT);
@@ -2681,6 +2760,21 @@ uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref 
     return at;
 }
 
+uint32_t tide_draw_volume_source(tide_draw_list *d, const tide_texture3d_ref volume)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture3d_grid(volume, &grid, &shape))
+        return tide_draw_grid_volume_texture(d, grid, &shape, tide_texture3d_grid_raw(volume));
+    const tide_render_target target = tide_render_target_resolve(volume.target);
+    const tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (!s || !s->volume || !s->alive) return 0;
+    const uint32_t at = target_texture_version(d, TIDE_PIXELS_TARGET_VOLUME, target.id, target.size,
+                                              tide_render_target_version(target.id));
+    if (at) d->textures[at - 1u].layers = s->layers;
+    return at;
+}
+
 uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
 {
     if (!cube.target.id) {
@@ -4845,7 +4939,7 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
     if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH || t->space == TIDE_PIXELS_TARGET_CUBE
-        || t->space == TIDE_PIXELS_TARGET_ARRAY) {
+        || t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_TARGET_VOLUME) {
         const uint32_t slot = target_texture_version(d, t->space, t->id, t->target, t->version);
         if (slot) d->textures[slot - 1u].layers = t->layers;
         return slot;

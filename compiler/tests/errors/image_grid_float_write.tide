@@ -1,0 +1,5 @@
+// expect: a Grid3<float> converts to a sampled R16f volume, which core WebGPU cannot store into
+local singleton Data { Grid3<float> cells = Grid3(2, 2, 2); Texture3D volume; }
+compute Fill(Data data) { data.volume[this.at] = Color.white; }
+view Make(mut Data data) { data.volume = data.cells; GPU.Run(Fill, int3(2)); }
+scene Main { }

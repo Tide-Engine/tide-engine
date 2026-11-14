@@ -1,0 +1,4 @@
+// expect: an image's cell is at an int3
+local singleton Fog { Texture3D volume; }
+compute Fill(Fog fog) { fog.volume[int2(0)] = Color.white; }
+scene Main { }

@@ -1,0 +1,4 @@
+// expect: create a Texture3D
+local singleton Fog { Texture3D volume; }
+scene Main { }
+compute F(Fog fog) { var volume = Texture3D(int3(3)); }

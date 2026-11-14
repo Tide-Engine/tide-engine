@@ -1,0 +1,14 @@
+// Source of 00000000c0de0012.shader, through tide_wgsl_translate --hlsl.
+struct Values { at: vec4<f32>, color: vec4<f32> }
+@group(0) @binding(0) var<uniform> u: Values;
+@group(0) @binding(1) var image: texture_depth_2d;
+@group(0) @binding(2) var through: sampler;
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    var points = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+    return vec4<f32>(points[i], u.color.w, 1.0);
+}
+@fragment fn fragment() -> @location(0) vec4<f32> {
+    if (u.at.w < 0.0) { return u.color; }
+    let depth = textureSampleLevel(image, through, u.at.xy, 0.0);
+    return vec4<f32>(depth, depth, depth, 1.0);
+}

@@ -1,5 +1,59 @@
 # Compute on the GPU
 
+## Kernels write images and volumes (2026-11-14)
+
+Owner-approved 2026-11-13: "these make sense, lets do all of these" (the image stores, Texture3D and Grid3
+conversion, and no frag destination slice). Rules and the choices weighed are in docs/spec.md, Compute on the GPU;
+user pages: docs/game/shaders.md, Writing images, and docs/game/meshes-and-textures.md, Volumes.
+
+- `tide_shader.image_writes` and `.image_formats` describe write-only image slots at the ordinary texture binding
+  `1 + 2i`; `TIDE_SHADER_READ_VOLUME` is 8. Written images have no sampler. New fields are emitted only when used.
+  Tidec checks the coordinates itself before textureStore, and records transitive helper reads and writes.
+- A written image's static format is inferred from constructor assignments. Unknown, ambiguous, unsupported and
+  read/write-in-one-run sources are compiler errors with fixes. Runtime aliases through different fields are also
+  checked: a run binding one image twice while writing it is skipped with second-image guidance.
+  Targets written this way are single-sample; tidec refuses MSAA destinations, whose next resolve would replace
+  storage writes with old samples. The renderer checks it too for references reached through trusted C.
+- The renderer prepares all kernel images before its compute pass. Image-writing runs stay at their recording
+  positions, so built-in draws, arbitrary field aliases, target draws and other runs keep serial semantics. A
+  storage write makes a target's mipmaps stale, as a pass on it does. Image-reading runs also respect target-array
+  and volume dependencies (the previous run_samples_target omitted target arrays).
+- Missing written destinations use private unobservable images, one per slot and format, so other effects in a
+  kernel still run. They never write a sampled fallback. WebGPU allocations must finish their error scopes before
+  an image reaches a binding; failed sampled volumes use the empty fallback.
+  The pending-to-ready transition advances contentRevision, so a game filling only on revision changes retries
+  after allocation completes rather than losing its one initialization run.
+  A run deferred for allocation or pipeline readiness also advances its written resources' revisions until it
+  can execute. Pending sampled volumes defer a kernel rather than supplying a temporary black input to a one-time fill.
+- Color stores premultiply internally, and Sample/exact-cell reads undo it; Raw sources keep their channels.
+  This follows existing texture alpha rules, including lost RGB at alpha zero.
+- Native and web backends keep preferred window images separate from offscreen Rgba8 images: the latter must
+  actually be RGBA8 to match a core storage texture's declaration. Window capture stand-ins retain window kind so
+  warmed pipelines and scripted output use the same format.
+- Tests: `platform/tests/compute.c` adds storage targets and volumes at gpu.h, `platform/tests/images.tide`/`.c`
+  exercises the generated Tide path (before/between/after writes, alpha, direct target.color, bounds, exact cells,
+  blending on every axis, changed Color grids and float grids, and device loss on the web). Primary colors and
+  image ordering are exact; filtered volume witnesses allow one UNORM8 step at a halfway value, because Vulkan
+  and Unity round to 127 where software WebGPU rounds to 128.
+
+Validation (Windows, Clang 23.1.2, Node 24.22.1, hidden/muted): sanitize draw/targets/shaders/kernels/compute/prewarm,
+including push descriptors and descriptor sets, and embed packets pass; the generated images fixture passes with
+conditional filling on revision changes and runtime alias rejection. Native and Node WASI draw groups pass
+117/117 each. The 30 focused native compiler checks and corresponding 30 web compiler/GPU checks pass; all 183
+shader golden/SPIR-V/FXC checks pass with no existing expectation changes. The LSP volume case and 381 syntax
+grammar checks pass, and `npm run build` in docs passes. WebGPU software pages pass compute, images, targets,
+draw, kernels, shaders and prewarm, including device loss; mocked OOM verifies pending uploads own their bytes.
+Unity's actual API runs and unavailable Metal/Unity WebGPU coverage are recorded in unity.md. Android, Linux,
+macOS and the optional real-GPU web lanes were not run here.
+
+Connection still waiting on the parallel format task: dev contains the numeric GPU attachment catalogue, but
+the public Format enum still exposes only Rgba8/Depth/Rgba16f. The backend/translators already support writable
+r32float/rgba32float/r32sint; once the public members land, connect their constructor provenance, volume allocation,
+format byte counts and appropriate numeric/point-only sampling (without optional float32 filtering), and add
+public language/GPU witnesses. R8/Rg8/R16f/Rg16f remain non-storage formats and must be refused with their reason.
+The extra `image_grid_float_write`/`image_grid_color_write` diagnostics pin grid conversions as sampled views:
+they direct writes to owned Texture3D resources, and explain the float grid's non-storage R16f representation.
+
 Language rules: `docs/spec.md`, Compute on the GPU (decided 2026-11-05 where it
 says so; every other rule is Claude's, Provisional). The owner's instruction for
 the implementation (2026-11-05): build it to release-ready, compute shaders

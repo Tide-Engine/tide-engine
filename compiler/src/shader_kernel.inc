@@ -202,6 +202,62 @@ static void write_kernel(program *prog, shader *sh)
 }
 
 // A kernel's shader: one for each kernel that a GPU.Run names, as it reads what it reads whatever runs it.
+// A storage texture's format is part of its GPU declaration. Follow all resource assignments rather than choosing
+// the first constructor reached: a different format on another path must be diagnosed before any backend runs.
+static int image_origin_format(const expr *e, const int color, const int depth)
+{
+    if (!e || depth > 32) return -1;
+    if (e->type.kind == TY_GRID && e->type.decl && e->type.decl->dims == 3)
+        return e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : -5;
+    if (e->kind == E_DEFAULT) return -3; // No image: not another format
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
+        return image_origin_format(e->local->value, color, depth + 1);
+    if (e->kind == E_CONDITIONAL) {
+        const int a = image_origin_format(e->lhs, color, depth + 1), b = image_origin_format(e->rhs, color, depth + 1);
+        return a == -3 ? b : b == -3 ? a : a == b ? a : -1;
+    }
+    if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
+        return image_origin_format(e->object, 0, depth + 1);
+    if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
+        if (e->lhs->kind != E_INT || e->lhs->int_value < 0 || e->lhs->int_value > 3) return -1;
+        return image_origin_format(e->object->object, (int)e->lhs->int_value, depth + 1);
+    }
+    if (e->field) {
+        int found = -3;
+        const field *f = e->field;
+        for (int i = -1; i < f->image_assignments.count; i++) {
+            const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
+            if (!origin) continue;
+            const int got = image_origin_format(origin, color, depth + 1);
+            if (got == -3) continue;
+            if (got < 0) return got;
+            if (found != -3 && found != got) return -1;
+            found = got;
+        }
+        return found;
+    }
+    if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
+        && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D)) {
+        if (e->type.kind == TY_RENDER_TARGET && e->target_samples) {
+            const expr *samples = e->args.items[e->args.count - 1];
+            for (int i = 0; samples->constant && i < 16; i++) samples = samples->constant->value;
+            if (samples->kind != E_INT || samples->int_value != 1) return -4;
+        }
+        int slot = 0;
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *f = e->args.items[i];
+            if (f->type.kind != TY_ENUM) continue;
+            if (slot++ != color) continue;
+            if (!f->enum_member) return -1;
+            const str name = f->enum_member->name;
+            return str_eq_c(name, "Rgba8") ? 0 : str_eq_c(name, "Rgba16f") ? 4 : str_eq_c(name, "R32f") ? 5
+                 : str_eq_c(name, "Rgba32f") ? 6 : str_eq_c(name, "R32i") ? 7 : -2;
+        }
+        return slot == 0 && color == 0 ? 0 : -2;
+    }
+    return -1;
+}
+
 static shader *plan_kernel(program *prog, const expr *call, decl *k)
 {
     for (int i = 0; i < prog->shaders.count; i++) {
@@ -222,6 +278,34 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
     sb_printf(&name, "compute " STR_FMT, STR_ARG(k->name));
     sh->name = name.data;
     plan_reads(prog, sh, k);
+    int image_writes = 0;
+    for (int i = 0; i < sh->textures.count; i++) {
+        shader_texture *t = &sh->textures.items[i];
+        if (!t->write) continue;
+        image_writes++;
+        expr source = {0};
+        source.field = (field *)(uintptr_t)t->field;
+        const int format = t->field ? image_origin_format(&source, t->image_color, 0) : -1;
+        if (format < 0) {
+            diag_error(call->at, format == -4
+                       ? "a kernel writes a single-sample image: create a RenderTarget without samples, or with samples: 1, then draw it into the multisampled target"
+                       : format == -6
+                       ? "a Grid3<float> converts to a sampled R16f volume, which core WebGPU cannot store into: create a Texture3D with Format.Rgba16f and fill it with a kernel"
+                       : format == -5
+                       ? "a grid-backed volume is a sampled view of CPU data: create an owned Texture3D and fill it with a kernel instead"
+                       : format == -2
+                       ? (prog->format->members.count > 3
+                          ? "this image's format isn't a portable storage format: write into Format.Rgba8, Rgba16f, R32f, Rgba32f or R32i instead; depth, BGRA, byte/half-float one-channel and two-channel images aren't core storage formats"
+                          : "this image's format isn't a portable storage format: write into Format.Rgba8 or Format.Rgba16f instead; depth, BGRA, byte/half-float one-channel and two-channel images aren't core storage formats")
+                       : "this image's writable format isn't fixed by its constructor assignments: assign one fixed Format to this field, or write into a second image with a fixed format");
+            return NULL;
+        }
+        t->image_format = (unsigned)format;
+    }
+    if (image_writes > 4) {
+        diag_error(call->at, "a kernel writes %d images, and every GPU supports 4 at the most: split this work into separate GPU.Run calls", image_writes);
+        return NULL;
+    }
     for (int i = 0; i < sh->values.count; i++) { // A kernel's are all the run's, once for it
         shader_value *v = &sh->values.items[i];
         v->per_instance = false;

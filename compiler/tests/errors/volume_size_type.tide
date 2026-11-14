@@ -1,0 +1,4 @@
+// expect: Texture3D takes a size in texels, an int3
+local singleton Fog { Texture3D volume; }
+view Make(mut Fog fog) { fog.volume = Texture3D(int2(4)); }
+scene Main { }

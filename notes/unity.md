@@ -25,6 +25,63 @@ for this member; FXC validates the generated HLSL on this machine.
 
 # Unity as a front end
 
+## Compute images and volumes: embed ABI 20 (2026-11-14)
+
+The owner's image writes and `Texture3D` decision (2026-11-13, "these make sense, lets do all of these") now has a
+recorder and Unity replay path. Details here are Provisional; the public rules are in the spec's Views and drawing
+and Compute on the GPU sections.
+
+- **Packets.** `VOLUME` (id, `tide_gpu_format`, width, height, depth), `VOLUME_WRITE` (id, x/y/z, width/height/depth,
+  then the box's rows and consecutive slices, padded to four bytes), and `PIPELINE_IMAGES` (pipeline id, writable
+  image-slot bits, image count, each image's storage format) follow `ARRAY_BLOCKS`. The last packet is emitted only
+  for a pipeline that writes images. Images stay at their ordinary `IMAGE` slots, HLSL `_TideTexture<i>`; those
+  marked writable are storage images with no sampler. Existing packets keep their shape. `TIDE_EMBED_ABI` and
+  `TideLibrary.Abi` are 20; hosts and packages rebuild together.
+- **Volumes.** A GPU-written volume is a `RenderTexture` of `Tex3D`, `enableRandomWrite`, without mipmaps. A
+  half-float grid uses the same internal box-upload path where Unity supports stores to R16F; that avoids sending
+  the entire volume for every changed box. A device without that internal store capability uses a `Texture3D`
+  with a CPU pixel mirror; no public kernel gains a nonportable R16F binding. `TideCompute.compute`'s internal float
+  and integer kernels zero GPU volumes and upload just a box from a staging volume, preserving other cells even
+  after kernel writes. The recorder checks positive dimensions, its portable 2048 side limit, a 128 MiB byte
+  bound, and every box before cutting rows out of the full source volume. Unity checks its actual 3D limit and
+  bounded byte arithmetic before allocating; a volume that cannot be made gives no image and says so once.
+- **Order, including aliases.** Offscreen target passes now execute once while `Prepare` reads the frame, in the
+  same `work` command buffer as compute, uploads, mipmaps and depth resolves. A kernel therefore sees target draws
+  before it in this frame. Camera-own draws remain deferred, preserving Unity's scene depth. A write after such
+  a draw sampled an image makes a new image and copies its contents in work order; the draw keeps the old image.
+  Renaming updates every alias of the actual texture and the targets attaching it, including ordinary, resolved
+  and array depth: pending camera reads retain their earlier depth too. Cube faces and array layers snapshot
+  their owner's image, since their targets deliberately have no color image id of their own. This applies to kernel writes
+  and later target passes. A dispatch whose writable and sampled slots alias, or whose actual format does not
+  match its storage declaration, is left out. A second camera never repeats the offscreen writes or compute.
+  Chosen over dispatching with each camera (which repeats writes) or retaining last-frame target reads (which
+  violates recording order). GPU volumes go with the recorder's other objects at a reset or reload.
+- **Formats.** Single-sample target images of RGBA8, RGBA16F, R32F, RGBA32F and R32I can be bound for storage;
+  the other new attachment formats stay ordinary render targets. The format check uses their actual catalogue
+  values, separately from the pixel-upload format numbers.
+- **Fixtures.** `embed_render_volume_written_in_parts` pins box strides across rows and slices and refuses
+  negative/overflowing extents and enormous volumes; `embed_render_pipeline_writes_images` pins the extension
+  packet. Both pass in the native sanitize `tide_platform_embed`. The Sample's `ComputeReplayTests` now includes
+  byte-exact target draw/kernel/draw/target draw ordering, kernel-filled volume sampling between cells on each
+  axis, a GPU volume's partial upload with all other cells checked exactly, and the half-float grid-volume path.
+  It also checks point and linear sampling together, repeat and mirror on each axis of the same volume, HDR
+  RGBA16F values written without a camera, and a pending camera draw's target depth before a later pass changes it.
+  Filtered half-byte results allow one byte of rounding; the color ordering, wrapping, point and uploaded-cell
+  witnesses are exact. A final baseline fixture also pins earlier/later camera reads around cube-face and array-layer
+  writes, and that an array's owned depth is released with the renderer (the reset path now mirrors texture-free's
+  ownership cleanup). The four new shaders are translated from the WGSL text fixtures beside them; SPIR-V passes
+  `spirv-val --target-env vulkan1.3`, and the kernel, draw stages and four internal volume kernels compile with
+  FXC SM5 `/WX` (the draw uses the existing `TideWarnings.hlsl`, as the ordinary shader harness does).
+- **Unity validation:** 6000.6.0f1, Windows, hidden batch mode with `-noAudio`, a scratch project pointing at this
+  checkout's package, automatic Tide builds disabled. The nine compute/image/volume/depth cases pass on Direct3D
+  11, Direct3D 12, Vulkan and OpenGL Core (focused follow-ups cover cases added after each initial run). The tenth
+  cube/array ordering and cleanup case passes on Direct3D 11. The package and fixtures compile without C# or
+  shader warnings. The mixed-filter/wrap volume case first failed on OpenGL Core: the new 3D HLSL helper now uses
+  the texture's own sampler or emulates point/eight-tap filtering and per-axis wrap, as the existing 2D path does.
+  Not run here: Unity's Metal backend or a Unity WebGPU player. Native/WebGPU backend validation is recorded in
+  compute.md and textures.md with the combined implementation.
+
+
 ## A game laid out otherwise in a player: its C# for both (2026-11-10)
 
 The editor's game is built with DEBUG and a player's without (`--release`), so a game whose data differs with it (a

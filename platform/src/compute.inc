@@ -521,14 +521,122 @@ static const uint64_t *slot_ids(const tide_draw_list *list, const uint32_t stora
 
 // A kernel's run, outside passes: its lists' ranges and its Adds' scratch first (where a pool may grow), its record,
 // then in one compute pass its dispatch, with Add's after it.
+// A missing destination still lets the kernel's other effects run. Its stores go to a private, unobservable
+// image instead of a sampled fallback, and every slot gets its own so writable bindings never alias.
+static tide_gpu_id empty_image_destination(const tide_shader *shader, const uint32_t slot)
+{
+    static struct { uint32_t epoch, format; bool volume; tide_gpu_id image, target; } empty[TIDE_SHADER_TEXTURES];
+    const uint32_t epoch = gpu->epoch(), format = shader->image_formats[slot];
+    const bool volume = shader->texture_reads[slot] == TIDE_SHADER_READ_VOLUME;
+    if (empty[slot].epoch == epoch && empty[slot].format == format && empty[slot].volume == volume) return empty[slot].image;
+    if (empty[slot].epoch == epoch) {
+        if (empty[slot].target) free_target(empty[slot].target);
+        else if (empty[slot].image) free_texture(empty[slot].image);
+    }
+    empty[slot].epoch = epoch; empty[slot].format = format; empty[slot].volume = volume;
+    empty[slot].image = empty[slot].target = 0;
+    if (volume) {
+        empty[slot].image = gpu->volume((tide_gpu_format)format, 1, 1, 1);
+        if (empty[slot].image) hold(held(&held_textures, &held_texture_count, empty[slot].image), format_bytes((tide_gpu_format)format));
+    } else {
+        const tide_gpu_color color = format == TIDE_GPU_RGBA16F ? TIDE_GPU_COLOR_FLOAT
+            : format == TIDE_GPU_R32F ? TIDE_GPU_COLOR_R32F : format == TIDE_GPU_RGBA32F ? TIDE_GPU_COLOR_RGBA32F
+            : format == TIDE_GPU_R32I ? TIDE_GPU_COLOR_R32I : TIDE_GPU_COLOR_BYTES;
+        empty[slot].target = made_target((tide_gpu_target_format)color, 1, 1);
+        if (empty[slot].target) empty[slot].image = gpu->target_texture(empty[slot].target, 0);
+    }
+    return empty[slot].image;
+}
+
+static void retry_images(const tide_draw_list *list, const tide_draw_compute *r)
+{
+    bool volume = r->shader->image_writes != 0;
+    for (uint32_t k = 0; k < r->shader->texture_count; k++) volume |= r->shader->texture_reads[k] == TIDE_SHADER_READ_VOLUME;
+    if (!volume) return;
+    for (uint32_t k = 0; k < r->shader->texture_count; k++) {
+        if (!(r->shader->image_writes >> k & 1u)) continue;
+        const uint32_t at = r->textures[k];
+        if (!at || at > list->texture_count) continue;
+        const tide_draw_texture *t = &list->textures[at - 1u];
+        if (t->space != TIDE_PIXELS_TARGET && t->space != TIDE_PIXELS_TARGET_VOLUME) continue;
+        tide_render_target_state *state = tide_render_target_state_of(t->id);
+        if (!state || !state->alive) continue;
+        tide_render_target_revision_resume((uint64_t)state->content_revision);
+        state->content_revision = tide_render_revision_next();
+    }
+    const uint64_t *ids = slot_ids(list, r->storage);
+    for (uint32_t k = 0; ids && k < r->shader->storage_count; k++) {
+        bool writes = (r->shader->storage_writes >> k & 1u) != 0;
+        for (uint32_t a = 0; a < r->shader->add_count; a++) writes |= r->shader->adds[a].list == k;
+        tide_gpu_list_state *state = writes ? tide_gpu_list_state_of(ids[k]) : NULL;
+        if (!state || !state->alive) continue;
+        tide_render_target_revision_resume((uint64_t)state->content_revision);
+        state->content_revision = tide_render_revision_next();
+    }
+}
+
 static void run_compute(const tide_draw_list *list, const draw_step *s)
 {
     const tide_draw_compute *r = &list->computes[s->first];
     const tide_shader *shader = r->shader;
-    if (!shader || !shader->compute || shader->storage_count > TIDE_SHADER_STORAGE || shader->add_count > TIDE_SHADER_STORAGE
-        || !engine_kernels() || !pools_ready()) return;
-    const tide_gpu_id pipeline = kernel_pipeline_for(shader);
-    if (!pipeline_usable(pipeline)) return;
+    if (!shader || !shader->compute || shader->storage_count > TIDE_SHADER_STORAGE || shader->add_count > TIDE_SHADER_STORAGE) return;
+    const tide_gpu_id pipeline = kernel_pipeline_for(shader); // Compile concurrently with pending image allocations.
+    const bool kernels_ready = engine_kernels() && pools_ready();
+    // Images are made and uploaded outside the compute pass, including those the kernel only writes.
+    tide_gpu_id images[TIDE_SHADER_TEXTURES] = {0};
+    for (uint32_t k = 0; k < shader->texture_count && k < TIDE_SHADER_TEXTURES; k++) {
+        prepare_source_target(list, r->textures[k], false);
+        images[k] = texture_to_read(list, r->textures[k], gpu_read(shader, k));
+        if (gpu->texture_status && gpu_read(shader, k) == TIDE_GPU_READ_VOLUME) {
+            const uint32_t at = r->textures[k];
+            const tide_draw_texture *t = at && at <= list->texture_count ? &list->textures[at - 1u] : NULL;
+            tide_gpu_id actual = 0;
+            if (t && t->space == TIDE_PIXELS_TARGET_VOLUME) {
+                const gpu_array *a = find_array(t->id);
+                if (a) actual = a->texture;
+            } else if (t && t->space == TIDE_PIXELS_GRID_VOLUME) actual = texture_for(t)->texture;
+            if (actual && gpu->texture_status(actual) == 0) { retry_images(list, r); return; }
+        }
+    }
+    if (shader->image_writes) {
+        for (uint32_t k = 0; k < shader->texture_count; k++) {
+            if (!(shader->image_writes >> k & 1u)) continue;
+            const uint32_t at = r->textures[k];
+            const tide_draw_texture *t = at && at <= list->texture_count ? &list->textures[at - 1u] : NULL;
+            bool held = false;
+            if (t && t->space == TIDE_PIXELS_TARGET_VOLUME) {
+                const gpu_array *a = find_array(t->id);
+                held = a && a->texture && tide_render_target_live(t->id);
+                if (held && gpu->texture_status && gpu->texture_status(a->texture) == 0) { retry_images(list, r); return; }
+                if (held && gpu->texture_status && gpu->texture_status(a->texture) < 0) held = false;
+                if (held) images[k] = a->texture;
+            } else if (t && t->space == TIDE_PIXELS_TARGET) {
+                if (tide_render_target_samples(t->id) > 1u) {
+                    static bool said;
+                    if (!said) { fprintf(stderr, "GPU.Run: storage writes require a single-sample RenderTarget; use a target without MSAA\n"); said = true; }
+                    return;
+                }
+                const gpu_target *a = find_target(tide_render_target_whole(t->id));
+                held = a && a->target && tide_render_target_live(t->id);
+            }
+            if (!held) images[k] = empty_image_destination(shader, k);
+            if (!images[k]) return;
+            if (gpu->texture_status && gpu->texture_status(images[k]) != 1) { retry_images(list, r); return; }
+            for (uint32_t j = 0; j < shader->texture_count; j++) {
+                if (j == k || images[j] != images[k]) continue;
+                static bool said;
+                if (!said) { fprintf(stderr, "GPU.Run: an image written by a kernel cannot also be bound through another field; write into a second image\n"); said = true; }
+                return;
+            }
+        }
+    }
+    if (gpu->texture_status) for (uint32_t k = 0; k < shader->texture_count; k++) {
+        if (!images[k] || gpu->texture_status(images[k]) != 1) { retry_images(list, r); return; }
+    }
+    if (!pipeline_usable(pipeline) || !kernels_ready) {
+        if (!(gpu->pipeline_failed && gpu->pipeline_failed(pipeline))) retry_images(list, r);
+        return;
+    }
     const uint32_t group = shader->group[0] * shader->group[1] * shader->group[2];
     if (!group) return;
     const uint64_t *ids = slot_ids(list, r->storage);
@@ -591,10 +699,19 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
     gpu->use(pipeline);
     gpu->uniforms(block, own ? own : 16u);
     bind_shader_textures(list, shader, r->textures, r->sampling);
+    for (uint32_t k = 0; k < shader->texture_count; k++) if (shader->image_writes >> k & 1u) gpu->image(k, images[k]);
     bind_pools();
     gpu->storage(TIDE_STORAGE_RUN, record);
     if (over) gpu->dispatch_indirect(record, 0);
     else gpu->dispatch(groups[0], groups[1], groups[2]);
+    for (uint32_t k = 0; k < shader->texture_count; k++) {
+        if (!(shader->image_writes >> k & 1u)) continue;
+        const uint32_t at = r->textures[k];
+        if (!at || at > list->texture_count) continue;
+        const tide_draw_texture *t = &list->textures[at - 1u];
+        gpu_target *target = t->space == TIDE_PIXELS_TARGET ? find_target(tide_render_target_whole(t->id)) : NULL;
+        if (target) target->drawn++;
+    }
     // Each Add's survivors, in invocation order: where each group's go, then them
     for (uint32_t k = 0; k < shader->add_count; k++) {
         const uint32_t to = shader->adds[k].list < shader->storage_count ? shader->adds[k].list : 0u;
@@ -657,7 +774,8 @@ static bool run_samples_target(const tide_draw_list *list, const tide_draw_compu
         const uint32_t t = r->textures[i];
         if (!t || t > list->texture_count) continue;
         const uint32_t space = list->textures[t - 1u].space;
-        if (space == TIDE_PIXELS_TARGET || space == TIDE_PIXELS_TARGET_DEPTH || space == TIDE_PIXELS_TARGET_CUBE) return true;
+        if (space == TIDE_PIXELS_TARGET || space == TIDE_PIXELS_TARGET_DEPTH || space == TIDE_PIXELS_TARGET_CUBE
+            || space == TIDE_PIXELS_TARGET_ARRAY || space == TIDE_PIXELS_TARGET_VOLUME) return true;
     }
     return false;
 }
@@ -671,6 +789,9 @@ static bool moves_before(const tide_draw_list *list, const draw_step *w, const d
     const tide_draw_compute *r = &list->computes[w->first];
     const tide_shader *shader = r->shader;
     if (!shader || !shader->compute) return true; // It runs nothing
+    // An image-writing run stays at its recording position. This also covers aliases held by unrelated fields,
+    // built-in mesh textures, and draws into any image of the same target.
+    if (shader->image_writes) return false;
     if (s->target && run_samples_target(list, r)) return false;
     for (uint32_t k = 0; k < shader->storage_count && k < TIDE_SHADER_STORAGE; k++) {
         bool writes = (shader->storage_writes >> k & 1u) != 0;

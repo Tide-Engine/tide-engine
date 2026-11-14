@@ -641,6 +641,7 @@ typedef struct tide_render_target_state {
     void *memory;       // What it was allocated in, to free: the state is on a boundary inside it
     bool alive;
     bool cube; // A cube's: six images of its size, a face each (TIDE_RENDER_CUBE)
+    bool volume; // A volume's: one image of `layers` cells deep, never a drawing destination
     uint16_t layers; // An array's: how many images of its size (TIDE_RENDER_ARRAY), 0 for anything else
     uint16_t holds; // What it holds and its samples, as its id says them (TIDE_RENDER_FORMAT, TIDE_RENDER_SAMPLES)
 } tide_render_target_state;
@@ -680,6 +681,9 @@ enum { TIDE_CUBE_FACES = 6 }; // +x, -x, +y, -y, +z, -z
 #define TIDE_RENDER_ARRAY (UINT64_C(1) << 52)
 #define TIDE_RENDER_LAYER_SHIFT 53
 #define TIDE_RENDER_LAYER (UINT64_C(0x1FF) << TIDE_RENDER_LAYER_SHIFT)
+#define TIDE_RENDER_VOLUME (UINT64_C(1) << 62)
+enum { TIDE_TEXTURE3D_SIDE = 2048 };
+#define TIDE_TEXTURE3D_BYTES (UINT64_C(128) * 1024u * 1024u)
 enum { TIDE_TEXTURE_ARRAY_LAYERS = 256 }; // The most layers an array has: what every GPU Tide draws with takes
 
 static inline bool tide_render_target_managed(const uint64_t id)
@@ -691,7 +695,7 @@ static inline tide_render_target_state *tide_render_target_state_of(const uint64
 {
     return tide_render_target_managed(id)
         ? (tide_render_target_state *)(uintptr_t)(id & ~(TIDE_RENDER_MANAGED | TIDE_RENDER_BITS | TIDE_RENDER_CUBE | TIDE_RENDER_FACE
-                                                         | TIDE_RENDER_ARRAY | TIDE_RENDER_LAYER))
+                                                         | TIDE_RENDER_ARRAY | TIDE_RENDER_LAYER | TIDE_RENDER_VOLUME))
         : NULL;
 }
 
@@ -1083,6 +1087,26 @@ typedef struct tide_texture_array_ref {
     uint32_t layers;           // One that's drawn into: how many (the pack's says its own)
     uint32_t reserved;         // TIDE_TEXTURE_ARRAY_GRID for a Grid3's: `named` its handle, `layers` its cells' shape
 } tide_texture_array_ref;
+
+// A machine-local volume. Copies share its image. Grid references borrow their cells as textures do.
+typedef struct tide_texture3d_ref {
+    tide_render_target target;
+    uint64_t named;
+    uint32_t depth;
+    uint32_t reserved;
+} tide_texture3d_ref;
+tide_texture3d_ref tide_texture3d_make(tide_int3 size, tide_target_format format);
+static inline tide_texture3d_ref tide_texture3d_make_default(const tide_int3 size)
+{
+    return tide_texture3d_make(size, TIDE_TARGET_RGBA8);
+}
+void tide_texture3d_resize(tide_texture3d_ref volume, tide_int3 size);
+void tide_texture3d_dispose(tide_texture3d_ref volume);
+tide_int3 tide_texture3d_size(tide_texture3d_ref volume);
+int64_t tide_texture3d_content_revision(tide_texture3d_ref volume);
+tide_texture3d_ref tide_texture3d_recreate(tide_texture3d_ref previous);
+tide_texture3d_ref tide_texture3d_resolve(tide_texture3d_ref volume);
+bool tide_texture3d_extent_valid(tide_int3 size, uint32_t bytes);
 #define TIDE_TEXTURE_ARRAY_GRID 0x47524944u
 
 // An array to draw into: `layers` images (1 to TIDE_TEXTURE_ARRAY_LAYERS) of `size` (a target's: logical pixels
@@ -1203,6 +1227,8 @@ enum {
     // under another, each `height / layers` rows, bytes or halves as a grid's texture's are, kept and written where
     // its chunks changed
     TIDE_PIXELS_GRID_ARRAY,
+    TIDE_PIXELS_TARGET_VOLUME,
+    TIDE_PIXELS_GRID_VOLUME,
 };
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a
@@ -1560,6 +1586,7 @@ typedef enum tide_shader_read {
     // (sampler_reads say which). 6 and 7, as gpu.h's TIDE_GPU_READ_ARRAY and _DEPTH_ARRAY
     TIDE_SHADER_READ_ARRAY = 6,
     TIDE_SHADER_READ_DEPTH_ARRAY = 7,
+    TIDE_SHADER_READ_VOLUME = 8,
 } tide_shader_read;
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's
@@ -1630,6 +1657,8 @@ typedef struct tide_shader {
     uint32_t uniform_floats, uniform_ints;
     uint32_t texture_count;
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
+    uint16_t image_writes; // A kernel's write-only image slots, at the texture's ordinary binding
+    uint8_t image_formats[TIDE_SHADER_TEXTURES]; // Written slots' GPU formats, fixed by tidec
     // Its samplers, apart from its textures: `sampler_count` of them, sampler j at binding 2 + 2j, read as
     // `sampler_reads[j]` says (a color, a cube, a depth as a number or compared), and `texture_samplers[i]` the
     // samplers texture i is read through (bit j for sampler j). So one texture read several ways is one image and
@@ -1710,7 +1739,8 @@ static inline uint32_t tide_shader_samplers(const tide_shader *s, uint8_t reads[
     const uint32_t count = s->texture_count < TIDE_SHADER_TEXTURES ? s->texture_count : TIDE_SHADER_TEXTURES;
     for (uint32_t i = 0; i < count; i++) { // An array's is read through a color's or a depth's
         const uint8_t read = s->texture_reads[i];
-        reads[i] = read == TIDE_SHADER_READ_ARRAY ? (uint8_t)TIDE_SHADER_READ_COLOR
+        reads[i] = s->image_writes >> i & 1u ? (uint8_t)TIDE_SHADER_READ_DATA
+                 : read == TIDE_SHADER_READ_ARRAY || read == TIDE_SHADER_READ_VOLUME ? (uint8_t)TIDE_SHADER_READ_COLOR
                  : read == TIDE_SHADER_READ_DEPTH_ARRAY ? (uint8_t)TIDE_SHADER_READ_DEPTH : read;
     }
     return count;
@@ -1720,6 +1750,7 @@ static inline uint32_t tide_shader_samplers(const tide_shader *s, uint8_t reads[
 static inline uint32_t tide_shader_texture_samplers(const tide_shader *s, const uint32_t i)
 {
     if (i >= TIDE_SHADER_TEXTURES || i >= s->texture_count) return 0;
+    if (s->image_writes >> i & 1u) return 0;
     if (s->sampler_count) return s->texture_samplers[i];
     return s->texture_reads[i] == TIDE_SHADER_READ_DATA ? 0u : 1u << i;
 }
@@ -2246,6 +2277,7 @@ uint32_t tide_draw_depth_source(tide_draw_list *d, tide_depth_ref depth);
 uint32_t tide_draw_cube_source(tide_draw_list *d, tide_cubemap_ref cube);
 // A texture array's texture of the list's, for a shader that reads it by a uv and a layer: 0 for none.
 uint32_t tide_draw_array_source(tide_draw_list *d, tide_texture_array_ref array);
+uint32_t tide_draw_volume_source(tide_draw_list *d, tide_texture3d_ref volume);
 
 // Fills the whole screen, or what the clip leaves of it, with `color` as it
 // is: no blend, tint or transform changes a clear.

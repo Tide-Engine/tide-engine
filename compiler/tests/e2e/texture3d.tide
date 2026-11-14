@@ -1,0 +1,23 @@
+struct Holder { Texture3D volume; }
+singleton Cache { Resident state; }
+local singleton Volumes
+{
+    Texture3D volume;
+    Texture3D alias;
+    Holder holder;
+    List<Holder> items;
+    int beforeResize;
+}
+int ResizeAsArgument(Texture3D volume) { volume.Resize(int3(7)); return 0; }
+int First(int first, int second) { return first + second; }
+view Make(mut Volumes volumes)
+{
+    volumes.volume = Texture3D(int3(2));
+    volumes.alias = volumes.volume;
+    volumes.holder = Holder { volume = volumes.volume };
+    volumes.items = [volumes.holder];
+    volumes.volume.Resize(int3(3, 4, 5));
+    volumes.beforeResize = First(volumes.volume.size.z, ResizeAsArgument(volumes.volume));
+    volumes.volume.Resize(int3(3, 4, 5));
+}
+scene Main { }

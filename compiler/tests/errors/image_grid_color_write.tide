@@ -1,0 +1,5 @@
+// expect: a grid-backed volume is a sampled view of CPU data
+local singleton Data { Grid3<Color> cells = Grid3(2, 2, 2); Texture3D volume; }
+compute Fill(Data data) { data.volume[this.at] = Color.white; }
+view Make(mut Data data) { data.volume = data.cells; GPU.Run(Fill, int3(2)); }
+scene Main { }

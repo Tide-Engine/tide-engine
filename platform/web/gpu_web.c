@@ -26,6 +26,7 @@ TIDE_WEB_IMPORT(gpu_texture_write) void tide_web_gpu_texture_write(tide_gpu_id t
 TIDE_WEB_IMPORT(gpu_texture_write_part)
 void tide_web_gpu_texture_write_part(tide_gpu_id texture, const void *pixels, int x, int y, int width, int height);
 TIDE_WEB_IMPORT(gpu_texture_free) void tide_web_gpu_texture_free(tide_gpu_id texture);
+TIDE_WEB_IMPORT(gpu_texture_status) int tide_web_gpu_texture_status(tide_gpu_id texture);
 // A cube's faces' pixels are six pointers at `faces`, or it's 0 for none
 TIDE_WEB_IMPORT(gpu_cube) tide_gpu_id tide_web_gpu_cube(tide_gpu_color color, int size, const void *const *faces);
 TIDE_WEB_IMPORT(gpu_cube_face) tide_gpu_id tide_web_gpu_cube_face(tide_gpu_id cube, uint32_t face);
@@ -75,6 +76,13 @@ TIDE_WEB_IMPORT(gpu_array_blocks)
 tide_gpu_id tide_web_gpu_array_blocks(int width, int height, uint32_t layers, uint32_t format, uint32_t levels, uint32_t bytes,
                                       const void *pixels);
 
+TIDE_WEB_IMPORT(gpu_volume) tide_gpu_id tide_web_gpu_volume(tide_gpu_format format, int width, int height, int depth);
+TIDE_WEB_IMPORT(gpu_volume_write)
+void tide_web_gpu_volume_write(tide_gpu_id volume, const void *pixels, int x, int y, int z, int width, int height, int depth);
+TIDE_WEB_IMPORT(gpu_volume_limit) int tide_web_gpu_volume_limit(void);
+TIDE_WEB_IMPORT(gpu_pipeline_image_read) void tide_web_gpu_pipeline_image_read(uint32_t slot, uint32_t read);
+TIDE_WEB_IMPORT(gpu_pipeline_images) void tide_web_gpu_pipeline_images(uint32_t writes, uint32_t formats, uint32_t formats_high);
+
 TIDE_WEB_IMPORT(gpu_array_of) tide_gpu_id tide_web_gpu_array_of(tide_gpu_format format, int width, int height, uint32_t layers);
 TIDE_WEB_IMPORT(gpu_array_write)
 void tide_web_gpu_array_write(tide_gpu_id array, uint32_t layer, const void *pixels, int x, int y, int width, int height);
@@ -110,12 +118,23 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
 {
     uint32_t reads = 0, reads_high = 0;
     for (uint32_t i = 0; i < desc->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
-        if (i < 8u) reads |= (uint32_t)desc->reads[i] << (3u * i);
-        else reads_high |= (uint32_t)desc->reads[i] << (3u * (i - 8u));
+        if (i < 8u) reads |= ((uint32_t)desc->reads[i] & 7u) << (3u * i);
+        else reads_high |= ((uint32_t)desc->reads[i] & 7u) << (3u * (i - 8u));
     }
     tide_web_gpu_pipeline_begin(desc->name, desc->wgsl, desc->uniform_size, desc->texture_count, reads, reads_high, desc->blend, desc->depth,
                                 desc->cull, desc->into, desc->outputs ? desc->outputs : 1u, desc->stencil_test,
                                 desc->stencil_op, desc->alpha_to_coverage);
+    for (uint32_t i = 0; i < desc->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
+        if (desc->reads[i] >= 8u) tide_web_gpu_pipeline_image_read(i, desc->reads[i]);
+    }
+    if (desc->image_writes) {
+        uint32_t low = 0, high = 0;
+        for (uint32_t i = 0; i < TIDE_GPU_MAX_TEXTURES; i++) {
+            if (i < 8u) low |= (uint32_t)desc->image_formats[i] << (4u * i);
+            else high |= (uint32_t)desc->image_formats[i] << (4u * (i - 8u));
+        }
+        tide_web_gpu_pipeline_images(desc->image_writes, low, high);
+    }
     if (desc->sampler_count) { // Its samplers, apart from its textures: how each reads, 3 bits each in two banks
         uint8_t sampler_reads[TIDE_GPU_MAX_TEXTURES];
         const uint32_t count = tide_gpu_samplers(desc, sampler_reads);
@@ -139,6 +158,8 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
     if (desc->optional) tide_web_gpu_pipeline_optional();
     return tide_web_gpu_pipeline_end();
 }
+
+static tide_gpu_target_format web_window_format(void) { return TIDE_GPU_TARGET_COLOR | TIDE_GPU_TARGET_WINDOW; }
 
 static uint64_t web_storage_most(void)
 {
@@ -186,6 +207,7 @@ const tide_gpu tide_gpu_webgpu = {
     .texture_write = tide_web_gpu_texture_write,
     .texture_write_part = tide_web_gpu_texture_write_part,
     .texture_free = tide_web_gpu_texture_free,
+    .texture_status = tide_web_gpu_texture_status,
     .cube = tide_web_gpu_cube,
     .cube_face = tide_web_gpu_cube_face,
     .mipmaps = tide_web_gpu_mipmaps,
@@ -195,6 +217,7 @@ const tide_gpu tide_gpu_webgpu = {
     .pipeline_ready = tide_web_gpu_pipeline_ready,
     .pipeline_failed = tide_web_gpu_pipeline_failed,
     .target = tide_web_gpu_target,
+    .window_format = web_window_format,
     .target_limit = tide_web_gpu_target_limit,
     .storage_most = web_storage_most,
     .target_samples = tide_web_gpu_target_samples,
@@ -214,6 +237,9 @@ const tide_gpu tide_gpu_webgpu = {
     .array = tide_web_gpu_array,
     .array_depth = tide_web_gpu_array_depth,
     .array_blocks = web_array_blocks,
+    .volume = tide_web_gpu_volume,
+    .volume_write = tide_web_gpu_volume_write,
+    .volume_limit = tide_web_gpu_volume_limit,
     .array_of = tide_web_gpu_array_of,
     .array_write = tide_web_gpu_array_write,
     .array_layer = tide_web_gpu_array_layer,

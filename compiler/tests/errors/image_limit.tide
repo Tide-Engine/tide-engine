@@ -1,0 +1,5 @@
+// expect: a kernel writes 5 images
+local singleton Fog { Texture3D a; Texture3D b; Texture3D c; Texture3D d; Texture3D e; }
+compute Fill(Fog fog) { fog.a[this.at]=Color.white; fog.b[this.at]=Color.white; fog.c[this.at]=Color.white; fog.d[this.at]=Color.white; fog.e[this.at]=Color.white; }
+view Make(mut Fog fog) { fog.a=Texture3D(int3(2)); fog.b=Texture3D(int3(2)); fog.c=Texture3D(int3(2)); fog.d=Texture3D(int3(2)); fog.e=Texture3D(int3(2)); GPU.Run(Fill,int3(2)); }
+scene Main { }

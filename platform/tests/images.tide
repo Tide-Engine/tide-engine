@@ -1,0 +1,124 @@
+local singleton Images
+{
+    RenderTarget painted;
+    RenderTarget before;
+    RenderTarget after;
+    Texture image;
+    Texture3D volume;
+    Texture3D alias;
+    Texture3D colors;
+    Texture3D numbers;
+    Grid3<Color> cells = Grid3(2, 2, 2);
+    Grid3<float> floats = Grid3(2, 2, 2);
+    List<Vertex> quad;
+    int frames;
+    long revision;
+}
+
+struct Paint { Color color; }
+struct Probe { float3 uv; int mode; }
+
+[Group(4, 4)]
+compute PaintImage(Images images, Paint paint)
+{
+    images.image[this.at.xy] = paint.color;
+}
+
+[Group(4, 4)]
+compute PaintDirect(Images images)
+{
+    images.painted.color[this.at.xy] = Color.green;
+}
+
+[Group(2, 2, 2)]
+compute PaintVolume(Images images)
+{
+    images.volume[this.at] = Color(float(this.at.x), float(this.at.y), float(this.at.z), 1);
+}
+
+compute Outside(Images images)
+{
+    images.image[int2(-1, 0)] = Color.white;
+    images.image[int2(8, 0)] = Color.white;
+    images.image[int2(2147483647)] = Color.white;
+    images.volume[int3(-1)] = Color.white;
+    images.volume[int3(2, 0, 0)] = Color.white;
+    images.volume[int3(2147483647)] = Color.white;
+}
+
+compute Aliased(Images images)
+{
+    images.volume[this.at] = images.alias.Sample(float3(0.25)) + Color.green;
+}
+
+frag Image(Vertex vertex, out Color color, Texture source)
+{
+    Color read = source.Sample(vertex.uv, Filter.Point);
+    color = Color(read.r, read.g, read.b, 1);
+}
+
+frag RoundTrip(Vertex vertex, out Color color, Texture source)
+{
+    Color read = source.Sample(vertex.uv, Filter.Point);
+    color = read.r == 1 && read.g == 0.25 && read.b == 0.5 && read.a == 0.5 ? Color.blue : Color.red;
+}
+
+frag Volume(Vertex vertex, out Color color, Images images, Probe probe)
+{
+    if (probe.mode == 0) color = images.volume.Sample(probe.uv);
+    else if (probe.mode == 1) color = images.colors.Sample(probe.uv);
+    else if (probe.mode == 2) color = images.numbers.Sample(probe.uv);
+    else color = images.volume[int3(1, 0, 1)];
+}
+
+view Show(mut Images images)
+{
+    if (images.frames == 0)
+    {
+        images.painted = RenderTarget(8, 8, 1, Format.Rgba16f);
+        images.before = RenderTarget(8, 8, 1);
+        images.after = RenderTarget(8, 8, 1);
+        images.image = images.painted.color;
+        images.volume = Texture3D(int3(2));
+        images.alias = images.volume;
+        for (var z = 0; z < 2; z++)
+            for (var y = 0; y < 2; y++)
+                for (var x = 0; x < 2; x++)
+                {
+                    images.cells[x, y, z] = Color(float(x), float(y), float(z), 1);
+                    images.floats[x, y, z] = float(x + y + z);
+                }
+        images.colors = images.cells;
+        images.numbers = images.floats;
+        images.quad = [Vertex { position = float2(0, 0), uv = float2(0, 0) },
+                       Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(8, 8), uv = float2(1, 1) },
+                       Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+    }
+    images.frames++;
+    images.cells[0, 0, 0] = Color(float(images.frames % 2), 0, 0, 1);
+    images.colors = images.cells;
+    Draw.SetScreen();
+    Draw.Clear(Color.black);
+    images.painted.Clear(Color.black);
+    Draw.Blit(images.image, images.before, Image);
+    GPU.Run(PaintImage, int2(8), Paint { color = Color(1, 0.25, 0.5, 0.5) });
+    Draw.Blit(images.image, images.after, RoundTrip);
+    GPU.Run(PaintDirect, int2(8));
+    long revision = images.volume.contentRevision;
+    if (images.revision != revision) GPU.Run(PaintVolume, int3(2));
+    GPU.Run(Outside, 1);
+    GPU.Run(Aliased, 1); // Rejected at runtime: two fields name the same image. Existing cells must stay intact.
+    Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], images.before.color, Image);
+    Draw.Transform(float2(8, 0)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], images.after.color, Image); }
+    Draw.Transform(float2(16, 0)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], images.image, Image); }
+    Draw.Transform(float2(0, 8)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], Volume, Probe { uv = float3(0.5, 0.25, 0.25), mode = 0 }); }
+    Draw.Transform(float2(8, 8)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], Volume, Probe { uv = float3(0.25, 0.5, 0.25), mode = 0 }); }
+    Draw.Transform(float2(16, 8)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], Volume, Probe { uv = float3(0.25, 0.25, 0.5), mode = 0 }); }
+    Draw.Transform(float2(0, 16)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], Volume, Probe { uv = float3(0.5), mode = 1 }); }
+    Draw.Transform(float2(8, 16)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], Volume, Probe { uv = float3(0.5), mode = 2 }); }
+    Draw.Transform(float2(16, 16)) { Draw.Mesh(images.quad, [0, 1, 2, 0, 2, 3], Volume, Probe { uv = float3(0), mode = 3 }); }
+    images.revision = revision;
+}
+
+scene Main { }

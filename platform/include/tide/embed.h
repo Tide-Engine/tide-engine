@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 19u
+#define TIDE_EMBED_ABI 20u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -263,6 +263,13 @@ typedef enum tide_embed_render_op {
     // id, width, height, layers, format, levels, bytes (each layer's), then each layer's levels as TEXTURE_BLOCKS has
     // them, one layer after another: an array read as ARRAY's, its smaller images these
     TIDE_EMBED_RENDER_ARRAY_BLOCKS,
+    // id, format (tide_gpu_format), width, height, depth: a zeroed volume, with no mipmaps
+    TIDE_EMBED_RENDER_VOLUME,
+    // id, x, y, z, width, height, depth, then the box's rows, consecutive slices, padded to four bytes
+    TIDE_EMBED_RENDER_VOLUME_WRITE,
+    // Right after PIPELINE[_STORAGE]: id, image_writes (bit i for writable image i), texture_count, then each
+    // image's storage format (tide_gpu_format). Written images use the existing IMAGE slot, without a sampler.
+    TIDE_EMBED_RENDER_PIPELINE_IMAGES,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);

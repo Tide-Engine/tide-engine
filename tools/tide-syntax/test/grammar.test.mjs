@@ -354,6 +354,7 @@ const cases = {
         ['Draw.Text("DUEL"', [['Text', 'entity.name.function.call'], ['Anchor', 'support.class'], ['Font', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
+        ['Texture3D volume;', [['Texture3D', 'storage.type.primitive']]],
         ['Draw.Blit(scene.color, Draw.window, Blur);', [['Blit', 'entity.name.function.call'], ['window', '!storage.type']]],
         ['if (GUI.Button("Copy")) Clipboard.Copy(', [['GUI', 'support.class'], ['Button', '!support.class'], ['Button', 'entity.name.function.call'], ['Clipboard', 'support.class']]],
         ['if (!Cursor.locked) Cursor.Lock();', [['Cursor', 'support.class'], ['locked', '!support.class'], ['Lock', 'entity.name.function.call']]],

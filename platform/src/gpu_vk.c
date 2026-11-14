@@ -143,7 +143,7 @@ typedef struct vk_texture {
     tide_gpu_id depth_array;  // An array that's drawn into: its depth array (array_depth), freed with it
     VkFormat format;
     tide_gpu_format pixels; // An uploaded texture's, as gpu.h has them
-    int width, height;
+    int width, height, volume_depth; // volume_depth > 0: a 3D image, not layers
     uint32_t levels, layers;
     VkImageLayout rest;   // The layout it's in between uses
     VkImageUsageFlags usage;
@@ -162,6 +162,7 @@ typedef struct vk_pipeline {
     struct vk_making *making; // ...on a thread of the pool's (vk_background), till it's settled
     uint32_t texture_count;
     uint8_t reads[TIDE_GPU_MAX_TEXTURES];
+    uint16_t image_writes;
     uint32_t sampler_count;                       // The bindings its samplers span (tide_gpu_samplers)...
     uint8_t sampler_reads[TIDE_GPU_MAX_TEXTURES]; // ...and how each reads: TIDE_GPU_READ_DATA for none
     tide_gpu_target_format into;
@@ -174,7 +175,7 @@ typedef struct vk_pipeline {
 // pipeline with the same bindings sharing one. Pushed with each draw and dispatch where the
 // device pushes that many descriptors (maxPushDescriptors, 32 at the least), and otherwise a set of the frame's.
 typedef struct vk_layout {
-    uint32_t textures, own, storage; // own: bit j for sampler j
+    uint32_t textures, own, storage, image_writes; // own: bit j for sampler j
     bool push;
     VkDescriptorSetLayout set;
     VkPipelineLayout layout;
@@ -770,8 +771,8 @@ static void barrier_dispatches(const VkCommandBuffer cb)
 static void barrier_computed(const VkCommandBuffer cb)
 {
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-            DRAW_STAGES | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-            DRAW_READS | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            DRAW_STAGES | ATTACHMENT_STAGES | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            DRAW_READS | ATTACHMENT_ACCESS | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
 }
 
 // A command buffer of the frame's, recording.
@@ -928,8 +929,9 @@ static VkDescriptorSet frame_set(const VkDescriptorSetLayout layout)
                 {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, POOL_SETS * TIDE_GPU_MAX_TEXTURES},
                 {VK_DESCRIPTOR_TYPE_SAMPLER, POOL_SETS * TIDE_GPU_MAX_TEXTURES},
                 {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, POOL_SETS * TIDE_GPU_MAX_STORAGE},
+                {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, POOL_SETS * 4},
             };
-            const VkDescriptorPoolCreateInfo info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, NULL, 0, POOL_SETS, 4, sizes};
+            const VkDescriptorPoolCreateInfo info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, NULL, 0, POOL_SETS, 5, sizes};
             VkDescriptorPool pool;
             if (!check(vkCreateDescriptorPool(vk.device, &info, NULL, &pool), "vkCreateDescriptorPool")) return VK_NULL_HANDLE;
             f->pools = tide_realloc(f->pools, f->pool_count * sizeof(VkDescriptorPool), (f->pool_count + 1u) * sizeof(VkDescriptorPool));
@@ -1490,6 +1492,10 @@ static VkFormat format_of(const tide_gpu_format format)
     case TIDE_GPU_R8: return VK_FORMAT_R8_UNORM;
     case TIDE_GPU_R16F: return VK_FORMAT_R16_SFLOAT;
     case TIDE_GPU_RGBA32I: return VK_FORMAT_R32G32B32A32_SINT;
+    case TIDE_GPU_RGBA16F: return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case TIDE_GPU_R32F: return VK_FORMAT_R32_SFLOAT;
+    case TIDE_GPU_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case TIDE_GPU_R32I: return VK_FORMAT_R32_SINT;
     default: return VK_FORMAT_R8G8B8A8_UNORM;
     }
 }
@@ -1708,7 +1714,7 @@ static uint32_t levels_for(const int width, const int height)
 static void vk_mipmaps(const tide_gpu_id id)
 {
     vk_texture *t = texture_of(id);
-    if (vk.lost || !t || t->depth || !blits(t->format)) return;
+    if (vk.lost || !t || t->volume_depth || t->depth || !blits(t->format)) return;
     const uint32_t levels = levels_for(t->width, t->height);
     if (levels < 2 || (t->arrayed && t->levels < levels)) return; // An array has its room from the start, where it blits
     const VkCommandBuffer cb = outside();
@@ -1763,7 +1769,7 @@ static tide_gpu_id vk_cube(const tide_gpu_color color, const int size, const voi
 {
     if (vk.lost) return 0;
     const VkFormat format = color == TIDE_GPU_COLOR_FLOAT ? VK_FORMAT_R16G16B16A16_SFLOAT
-                          : faces ? VK_FORMAT_R8G8B8A8_UNORM : vk.window_format;
+                          : VK_FORMAT_R8G8B8A8_UNORM;
     const tide_gpu_id id = make_texture(format, size, size, levels_for(size, size), true,
                                         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                                             | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -1790,8 +1796,14 @@ static VkFormat color_format(const tide_gpu_color color)
     case TIDE_GPU_COLOR_R32F: return VK_FORMAT_R32_SFLOAT;
     case TIDE_GPU_COLOR_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
     case TIDE_GPU_COLOR_R32I: return VK_FORMAT_R32_SINT;
-    default: return vk.window_format;
+    default: return VK_FORMAT_R8G8B8A8_UNORM;
     }
+}
+
+static VkFormat target_color_format(const tide_gpu_target_format format, const uint32_t i)
+{
+    const tide_gpu_color color = tide_gpu_target_color(format, i);
+    return (format & TIDE_GPU_TARGET_WINDOW) && color == TIDE_GPU_COLOR_BYTES ? vk.window_format : color_format(color);
 }
 
 // An array: of pixels, or drawn into a layer at a time, with a depth array beside it. One that holds depth alone is
@@ -1892,6 +1904,73 @@ static void vk_array_write(const tide_gpu_id id, const uint32_t layer, const voi
     write_pixels(t, pixels, x, y, width, height, t->width, layer);
 }
 
+// Volumes have one level, one array layer, and a 3D view. No attachment views or slices.
+static int vk_volume_limit(void)
+{
+    return (int)vk.properties.limits.maxImageDimension3D;
+}
+
+static tide_gpu_id vk_volume(const tide_gpu_format format, const int width, const int height, const int depth)
+{
+    const int limit = vk_volume_limit();
+    if (vk.lost || width <= 0 || height <= 0 || depth <= 0 || width > limit || height > limit || depth > limit) return 0;
+    const uint64_t texels = (uint64_t)(uint32_t)width * (uint32_t)height;
+    const uint64_t most = UINT64_C(134217728) / (uint32_t)tide_gpu_format_bytes(format);
+    if (texels > most / (uint32_t)depth) return 0;
+    const bool storage = format == TIDE_GPU_RGBA8 || format == TIDE_GPU_RGBA16F || format == TIDE_GPU_R32F
+                         || format == TIDE_GPU_RGBA32F || format == TIDE_GPU_R32I;
+    const VkFormat f = format_of(format);
+    const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                                     | (storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0);
+    VkImageFormatProperties supported;
+    if (vkGetPhysicalDeviceImageFormatProperties(vk.physical, f, VK_IMAGE_TYPE_3D, VK_IMAGE_TILING_OPTIMAL, usage, 0, &supported)
+        != VK_SUCCESS || (uint32_t)width > supported.maxExtent.width || (uint32_t)height > supported.maxExtent.height
+        || (uint32_t)depth > supported.maxExtent.depth) return 0;
+    const VkImageCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_3D, .format = f,
+        .extent = {(uint32_t)width, (uint32_t)height, (uint32_t)depth}, .mipLevels = 1, .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    const tide_gpu_id id = texture_place();
+    vk_texture *t = &vk.textures[id - 1u];
+    *t = (vk_texture){.format = f, .pixels = format, .width = width, .height = height, .volume_depth = depth,
+                      .levels = 1, .layers = 1, .rest = VK_IMAGE_LAYOUT_GENERAL, .usage = usage};
+    if (!make_image(&info, &t->memory, &t->image)) { *t = (vk_texture){0}; return 0; }
+    t->view = make_view(t->image, VK_IMAGE_VIEW_TYPE_3D, f, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+    const VkCommandBuffer cb = outside();
+    turn_texture(cb, t, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const VkClearColorValue zero = {{0}};
+    const VkImageSubresourceRange all = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdClearColorImage(cb, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &all);
+    turn_texture(cb, t, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, t->rest);
+    return id;
+}
+
+static void vk_volume_write(const tide_gpu_id id, const void *pixels, const int x, const int y, const int z,
+                             const int width, const int height, const int depth)
+{
+    vk_texture *t = texture_of(id);
+    if (vk.lost || !t || !pixels || t->volume_depth <= 0 || x < 0 || y < 0 || z < 0 || width <= 0 || height <= 0 || depth <= 0
+        || x > t->width || width > t->width - x || y > t->height || height > t->height - y
+        || z > t->volume_depth || depth > t->volume_depth - z) return;
+    const size_t pixel = (size_t)tide_gpu_format_bytes(t->pixels), row = (size_t)width * pixel;
+    const size_t slice = row * (size_t)height, bytes = slice * (size_t)depth;
+    VkBuffer from;
+    uint8_t *at;
+    const VkDeviceSize start = ring_take(bytes, 16u, bytes, &from, &at);
+    for (int k = 0; k < depth; k++) for (int r = 0; r < height; r++) {
+        const size_t source = (((size_t)(z + k) * (size_t)t->height + (size_t)(y + r)) * (size_t)t->width + (size_t)x) * pixel;
+        memcpy(at + (size_t)k * slice + (size_t)r * row, (const uint8_t *)pixels + source, row);
+    }
+    const VkCommandBuffer cb = outside();
+    turn_texture(cb, t, t->rest, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const VkBufferImageCopy copy = {start, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {x, y, z},
+                                    {(uint32_t)width, (uint32_t)height, (uint32_t)depth}};
+    vkCmdCopyBufferToImage(cb, from, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    turn_texture(cb, t, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, t->rest);
+}
+
 static tide_gpu_id vk_array_depth(const tide_gpu_id id)
 {
     const vk_texture *t = texture_of(id);
@@ -1928,7 +2007,7 @@ static VkSampleCountFlags sample_counts(const tide_gpu_target_format format)
     VkSampleCountFlags counts = vk.properties.limits.framebufferDepthSampleCounts & vk.properties.limits.framebufferStencilSampleCounts;
     for (uint32_t i = 0; i < tide_gpu_target_colors(format); i++) {
         VkImageFormatProperties properties;
-        if (vkGetPhysicalDeviceImageFormatProperties(vk.physical, color_format(tide_gpu_target_color(format, i)), VK_IMAGE_TYPE_2D,
+        if (vkGetPhysicalDeviceImageFormatProperties(vk.physical, target_color_format(format, i), VK_IMAGE_TYPE_2D,
                                                      VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0,
                                                      &properties) != VK_SUCCESS) {
             return VK_SAMPLE_COUNT_1_BIT;
@@ -1975,10 +2054,12 @@ static tide_gpu_id vk_target_make(const tide_gpu_target_format format, const int
                      .samples = colors ? vk_target_samples(format) : 1u,
                      .bytes = colors && tide_gpu_target_color(format, 0) == TIDE_GPU_COLOR_BYTES};
     for (uint32_t i = 0; i < colors; i++) {
-        const tide_gpu_id texture = make_texture(color_format(tide_gpu_target_color(format, i)), width, height, 1, false,
+        const tide_gpu_id texture = make_texture(target_color_format(format, i), width, height, 1, false,
                                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                                     | (!(format & TIDE_GPU_TARGET_WINDOW) && tide_gpu_color_storage(tide_gpu_target_color(format, i)) ? VK_IMAGE_USAGE_STORAGE_BIT : 0u)
                                                      | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
+                                                 !(format & TIDE_GPU_TARGET_WINDOW) && tide_gpu_color_storage(tide_gpu_target_color(format, i))
+                                                     ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
         t = &vk.targets[id - 1u]; // make_texture may have moved nothing here, but be sure of the place
         t->colors[i] = texture;
         vk.textures[texture - 1u].owned = true;
@@ -1986,7 +2067,7 @@ static tide_gpu_id vk_target_make(const tide_gpu_target_format format, const int
     if (t->samples > 1u) {
         const VkCommandBuffer cb = outside();
         for (uint32_t i = 0; i < colors; i++) {
-            const VkFormat f = color_format(tide_gpu_target_color(format, i));
+            const VkFormat f = target_color_format(format, i);
             if (!many_image(f, width, height, t->samples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                             &t->many[i], &t->many_memory[i], &t->many_views[i])) {
                 fprintf(stderr, "tide: Vulkan: no memory for a target of %u samples a pixel\n", (unsigned)t->samples);
@@ -2333,7 +2414,7 @@ static uint32_t layout_for(const tide_gpu_pipeline_desc *desc)
     for (uint32_t j = 0; j < samplers; j++) own |= sampler_reads[j] != TIDE_GPU_READ_DATA ? 1u << j : 0u;
     for (uint32_t i = 0; i < vk.layout_count; i++) {
         const vk_layout *l = &vk.layouts[i];
-        if (l->textures == textures && l->own == own && l->storage == storage) return i;
+        if (l->textures == textures && l->own == own && l->storage == storage && l->image_writes == desc->image_writes) return i;
     }
     enum { BINDINGS = TIDE_GPU_STORAGE_BINDING + TIDE_GPU_MAX_STORAGE };
     VkDescriptorSetLayoutBinding bindings[BINDINGS];
@@ -2341,14 +2422,14 @@ static uint32_t layout_for(const tide_gpu_pipeline_desc *desc)
     uint32_t count = 0;
     bindings[count++] = (VkDescriptorSetLayoutBinding){0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stages, NULL};
     for (uint32_t i = 0; i < TIDE_GPU_MAX_TEXTURES; i++) {
-        if (i < textures) bindings[count++] = (VkDescriptorSetLayoutBinding){1 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, stages, NULL};
+        if (i < textures) bindings[count++] = (VkDescriptorSetLayoutBinding){1 + 2 * i, desc->image_writes >> i & 1u ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, stages, NULL};
         if (own >> i & 1u) bindings[count++] = (VkDescriptorSetLayoutBinding){2 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLER, 1, stages, NULL};
     }
     for (uint32_t i = 0; i < storage; i++) {
         bindings[count++] = (VkDescriptorSetLayoutBinding){TIDE_GPU_STORAGE_BINDING + i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                                                            stages, NULL};
     }
-    vk_layout l = {.textures = textures, .own = own, .storage = storage, .push = vk.push && count <= vk.max_push};
+    vk_layout l = {.textures = textures, .own = own, .storage = storage, .image_writes = desc->image_writes, .push = vk.push && count <= vk.max_push};
     const VkDescriptorSetLayoutCreateInfo set = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL,
                                                  l.push ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0,
                                                  count, bindings};
@@ -2458,7 +2539,7 @@ static tide_gpu_id make(vk_making *m, const tide_gpu_pipeline_desc *desc, const 
 {
     const tide_gpu_id id = pipeline_place();
     vk_pipeline *p = &vk.pipelines[id - 1u];
-    *p = (vk_pipeline){.used = true, .making = m, .texture_count = desc->texture_count, .compute = m->compute,
+    *p = (vk_pipeline){.used = true, .making = m, .texture_count = desc->texture_count, .compute = m->compute, .image_writes = desc->image_writes,
                        .storage_count = desc->storage_count < TIDE_GPU_MAX_STORAGE ? desc->storage_count : TIDE_GPU_MAX_STORAGE,
                        .layout = layout};
     if (!m->compute) p->into = desc->into;
@@ -2592,7 +2673,7 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
     VkFormat *formats = m->formats;
     const uint32_t outputs = desc->outputs ? desc->outputs : 1u;
     for (uint32_t i = 0; i < colors; i++) {
-        formats[i] = color_format(tide_gpu_target_color(desc->into, i));
+        formats[i] = target_color_format(desc->into, i);
         VkPipelineColorBlendAttachmentState b = {.colorWriteMask = 0xF};
         switch (desc->blend) {
         case TIDE_GPU_BLEND_ALPHA:
@@ -3300,7 +3381,7 @@ static void vk_use(const tide_gpu_id id)
     }
     if (id == vk.current) return; // Bound already (the check below was made as it was), with what it reads
     // A pipeline is for one kind of target
-    const tide_gpu_target_format kind = vk.pass_target ? vk.targets[vk.pass_target - 1u].format : TIDE_GPU_TARGET_COLOR;
+    const tide_gpu_target_format kind = vk.pass_target ? vk.targets[vk.pass_target - 1u].format : TIDE_GPU_TARGET_COLOR | TIDE_GPU_TARGET_WINDOW;
     if (p->into != kind) {
         fprintf(stderr, "tide: a pipeline is for targets that hold something else than the one it draws into "
                         "(tide_gpu_pipeline_desc.into)\n");
@@ -3385,7 +3466,7 @@ static bool bind(void)
         if (kept && vk.pushed_views[i] == view && vk.pushed_view_layouts[i] == t->rest) continue;
         images[i] = (VkDescriptorImageInfo){VK_NULL_HANDLE, view, t->rest};
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 1u + 2u * i, 0, 1,
-                                                 VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[i], NULL, NULL};
+                                                 p->image_writes >> i & 1u ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[i], NULL, NULL};
     }
     for (uint32_t j = 0; j < p->sampler_count && j < TIDE_GPU_MAX_TEXTURES; j++) {
         const uint8_t read = p->sampler_reads[j];
@@ -3428,7 +3509,7 @@ static bool bind(void)
             if (w->descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
                 vk.pushed_uniforms = w->pBufferInfo->buffer;
                 vk.pushed_uniforms_at = w->pBufferInfo->offset;
-            } else if (w->descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) {
+            } else if (w->descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || w->descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
                 vk.pushed_views[(w->dstBinding - 1u) / 2u] = w->pImageInfo->imageView;
                 vk.pushed_view_layouts[(w->dstBinding - 1u) / 2u] = w->pImageInfo->imageLayout;
             } else if (w->descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) {
@@ -4569,6 +4650,8 @@ static uint32_t vk_epoch(void)
     return vk.epoch;
 }
 
+static tide_gpu_target_format vk_window_target_format(void) { return TIDE_GPU_TARGET_COLOR | TIDE_GPU_TARGET_WINDOW; }
+
 const tide_gpu tide_gpu_vulkan = {
     .name = "Vulkan",
     .epoch = vk_epoch,
@@ -4598,6 +4681,9 @@ const tide_gpu tide_gpu_vulkan = {
     .array = vk_array,
     .array_depth = vk_array_depth,
     .array_blocks = vk_array_blocks,
+    .volume = vk_volume,
+    .volume_write = vk_volume_write,
+    .volume_limit = vk_volume_limit,
     .array_of = vk_array_of,
     .array_write = vk_array_write,
     .array_layer = vk_array_layer,
@@ -4607,6 +4693,7 @@ const tide_gpu tide_gpu_vulkan = {
     .background = vk_background,
     .pipeline_ready = vk_pipeline_ready,
     .target = vk_target_make,
+    .window_format = vk_window_target_format,
     .target_limit = vk_target_limit,
     .target_samples = vk_target_samples,
     .target_texture = vk_target_texture,

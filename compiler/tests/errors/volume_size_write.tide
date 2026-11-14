@@ -1,0 +1,4 @@
+// expect: can't assign
+local singleton Fog { Texture3D volume; }
+scene Main { }
+view V(mut Fog fog) { fog.volume.size = int3(3); }

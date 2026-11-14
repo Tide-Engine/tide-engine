@@ -40,12 +40,16 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GP
 // TIDE_GPU_RGBA32I is four ints of 32 bits, which a pipeline reads as they
 // are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
 // of any kind, a float's as its bits. Every backend has it with nothing asked.
-typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I } tide_gpu_format;
+typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I,
+    TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I
+} tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 ? 4 : format == TIDE_GPU_R16F ? 2 : format == TIDE_GPU_RGBA32I ? 16 : 1;
+    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
+         : format == TIDE_GPU_RGBA16F ? 8 : format == TIDE_GPU_R16F ? 2
+         : format == TIDE_GPU_RGBA32I || format == TIDE_GPU_RGBA32F ? 16 : 1;
 }
 
 // Attachment formats. BYTES and FLOAT retain their existing numeric values;
@@ -79,6 +83,14 @@ static inline bool tide_gpu_color_single_sample(const tide_gpu_color color)
     return color == TIDE_GPU_COLOR_R32F || color == TIDE_GPU_COLOR_RGBA32F || color == TIDE_GPU_COLOR_R32I;
 }
 
+// Core WebGPU storage formats, shared by every backend. Single/two-channel 8/16-bit
+// attachments are sampled/rendered but never bound for storage writes.
+static inline bool tide_gpu_color_storage(const tide_gpu_color color)
+{
+    return color == TIDE_GPU_COLOR_BYTES || color == TIDE_GPU_COLOR_FLOAT || color == TIDE_GPU_COLOR_R32F
+        || color == TIDE_GPU_COLOR_RGBA32F || color == TIDE_GPU_COLOR_R32I;
+}
+
 enum { TIDE_GPU_MAX_COLORS = 4 }; // The most color images a target has
 
 // What a target holds beside its depth, which every target has: its color
@@ -92,6 +104,8 @@ enum { TIDE_GPU_MAX_COLORS = 4 }; // The most color images a target has
 typedef uint32_t tide_gpu_target_format;
 #define TIDE_GPU_TARGET_DEPTH 0u
 #define TIDE_GPU_TARGET_COLOR 1u
+// Internal: the browser canvas uses its preferred format; offscreen byte targets use RGBA8.
+#define TIDE_GPU_TARGET_WINDOW (1u << 20)
 #define TIDE_GPU_TARGET_SAMPLES_SHIFT 16u
 enum { TIDE_GPU_MAX_SAMPLES = 8 }; // The most any device is asked for
 
@@ -149,7 +163,7 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // sampler's read (sampler_reads) is COLOR, DEPTH or COMPARE for them.
 typedef enum tide_gpu_read {
     TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA,
-    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY
+    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME
 } tide_gpu_read;
 
 // The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.
@@ -158,7 +172,7 @@ enum { TIDE_GPU_MAX_LAYERS = 256 };
 // How a sampler reads a texture that's read as `read`, where a pipeline's samplers are its textures' own.
 static inline uint8_t tide_gpu_sampler_read(const uint8_t read)
 {
-    return read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : read == TIDE_GPU_READ_ARRAY ? (uint8_t)TIDE_GPU_READ_COLOR
+    return read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : (read == TIDE_GPU_READ_ARRAY || read == TIDE_GPU_READ_VOLUME) ? (uint8_t)TIDE_GPU_READ_COLOR
          : read == TIDE_GPU_READ_DEPTH_ARRAY ? (uint8_t)TIDE_GPU_READ_DEPTH : read;
 }
 
@@ -320,6 +334,10 @@ typedef struct tide_gpu_pipeline_desc {
     // samplers say which). A texture is bound as it's sampled: one whose smaller images aren't made yet as its
     // first alone, so whatever sampler reads it reads its own pixels.
     uint8_t reads[TIDE_GPU_MAX_TEXTURES];
+    // Bit i: image i is a write-only storage image, at the same binding 1 + 2i.
+    // Its format is tide_gpu_format; only a compute pipeline writes, at most four images.
+    uint16_t image_writes;
+    uint8_t image_formats[TIDE_GPU_MAX_TEXTURES];
     // Its samplers, apart from its textures: `sampler_count`, sampler j at binding 2 + 2j, and how each reads
     // (`sampler_reads`: TIDE_GPU_READ_COLOR, _CUBE, _DEPTH as a number, _COMPARE, or _DATA for a binding it
     // hasn't). With 0, texture i that's sampled has sampler i of its own, read as the texture is (and one that's
@@ -378,7 +396,8 @@ static inline uint32_t tide_gpu_samplers(const tide_gpu_pipeline_desc *desc, uin
         return count;
     }
     const uint32_t count = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
-    for (uint32_t i = 0; i < count; i++) reads[i] = tide_gpu_sampler_read(desc->reads[i]);
+    for (uint32_t i = 0; i < count; i++) reads[i] = desc->image_writes >> i & 1u
+        ? (uint8_t)TIDE_GPU_READ_DATA : tide_gpu_sampler_read(desc->reads[i]);
     return count;
 }
 
@@ -459,6 +478,9 @@ typedef struct tide_gpu {
     // and is read as TIDE_GPU_FILTER_LINEAR.
     void (*mipmaps)(tide_gpu_id texture);
     void (*texture_free)(tide_gpu_id texture);
+    // Optional, for an asynchronously validated volume allocation: 0 pending, 1 ready,
+    // -1 failed. Other textures are ready. A pending/failed image must never be bound.
+    int (*texture_status)(tide_gpu_id texture);
 
     // A cube: six square images of `size` pixels a side, each as `color` says
     // (4 bytes a pixel, or four floats of 16 bits, with a device's bytes
@@ -488,6 +510,13 @@ typedef struct tide_gpu {
     tide_gpu_id (*array_blocks)(int width, int height, uint32_t layers, tide_texture_blocks blocks);
     // An array of `layers` images of `format` (TIDE_GPU_RGBA8 or TIDE_GPU_R16F), zeros until written, read as
     // TIDE_GPU_READ_ARRAY, a texture to `mipmaps` (each layer's, made of what's written) and `texture_free`...
+    // A volume of texels, sampled with float3 (READ_VOLUME) and written by kernels where the
+    // format permits storage. One level, zeroed, no render attachments. Invalid/oversized or
+    // failed allocations return 0. texture_free frees it. volume_write reads a box from the
+    // whole volume's pixels, rows width apart and slices width * height apart.
+    tide_gpu_id (*volume)(tide_gpu_format format, int width, int height, int depth);
+    void (*volume_write)(tide_gpu_id volume, const void *pixels, int x, int y, int z, int width, int height, int depth);
+    int (*volume_limit)(void);
     tide_gpu_id (*array_of)(tide_gpu_format format, int width, int height, uint32_t layers);
     // ...whose layer `layer` gets the `width` by `height` of `pixels` from (x, y): the layer's whole image, rows the
     // array's width apart, read where the part is.
@@ -555,6 +584,7 @@ typedef struct tide_gpu {
     // called, with 4 bytes a pixel more held. It takes that many times the
     // memory, and its color textures beside.
     tide_gpu_id (*target)(tide_gpu_target_format format, int width, int height);
+    tide_gpu_target_format (*window_format)(void); // Optional: the actual window's kind, else TARGET_COLOR
     int (*target_limit)(void); // The most pixels a side one has, on this device
     // How many samples a target that holds `format`, whose samples are what's
     // asked for, has on this device: no more than asked but where the device
@@ -683,7 +713,7 @@ typedef struct tide_gpu {
 // The samplers texture `i` of a pipeline described is read through: bit j for sampler j.
 static inline uint32_t tide_gpu_texture_samplers(const tide_gpu_pipeline_desc *desc, const uint32_t i)
 {
-    if (i >= TIDE_GPU_MAX_TEXTURES || i >= desc->texture_count) return 0;
+    if (i >= TIDE_GPU_MAX_TEXTURES || i >= desc->texture_count || (desc->image_writes >> i & 1u)) return 0;
     if (desc->sampler_count) return desc->texture_samplers[i];
     return desc->reads[i] == TIDE_GPU_READ_DATA || desc->reads[i] == TIDE_GPU_READ_SAMPLES ? 0u : 1u << i;
 }

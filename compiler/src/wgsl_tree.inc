@@ -229,7 +229,7 @@ typedef enum kind {
     K_SAMPLER, K_SAMPLER_CMP, K_TEXTURE, K_ATOMIC,
 } kind;
 
-typedef enum dim { DIM_2D, DIM_CUBE } dim;
+typedef enum dim { DIM_2D, DIM_CUBE, DIM_3D } dim;
 
 typedef struct type {
     kind kind;
@@ -239,6 +239,7 @@ typedef struct type {
     sdecl *s;  // A struct's
     dim dim;   // A texture's
     bool depth, multisampled, arrayed; // arrayed: a texture_2d_array's, texture_depth_2d_array's
+    unsigned image_format; // SPIR-V ImageFormat for write-only storage images; zero for sampled images
     uint32_t id, laid; // Its SPIR-V type, and the one laid out for a uniform block (structs and arrays)
 } type;
 

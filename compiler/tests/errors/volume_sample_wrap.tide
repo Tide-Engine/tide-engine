@@ -1,0 +1,4 @@
+// expect: a Texture3D's Sample takes a float3
+local singleton Fog { Texture3D volume; }
+scene Main { }
+frag F(Vertex vertex, out Color color, Fog fog) { color = fog.volume.Sample(float3(0), Filter.Point, Filter.Point); }

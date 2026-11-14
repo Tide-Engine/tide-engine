@@ -1,5 +1,39 @@
 # The platform layer and the renderer
 
+## Storage images and volumes (2026-11-14)
+
+Compute image writes and Texture3D's language/runtime contracts are in compute.md and textures.md. Backend details
+are provisional, within that approved work:
+
+- `gpu.h` reuses image binding `1 + 2i` for a sampled image or a write-only storage image. A pipeline's
+  `image_writes` marks the latter and `image_formats[i]` is its `tide_gpu_format`; its sampler is absent. At most
+  four storage images (core WebGPU). `TIDE_GPU_READ_VOLUME` is 8; its sampler is a color's. `volume(format,w,h,d)`,
+  `volume_write(id,whole_pixels,x,y,z,w,h,d)` and `volume_limit` cover one-level 3D images. The source's rows and
+  slices have the volume's whole dimensions, even for a partial write. `texture_free` releases a volume.
+- Vulkan makes a 3D image/view with one array layer and level, cleared to zero. It checks positive sizes, the
+  device's 3D extent and format-specific extent, and a 128 MiB byte limit with widened/division arithmetic before
+  allocation; an allocation failure returns 0. Box uploads validate every axis by subtraction before computing
+  offsets. Storage-capable volumes and target images rest in GENERAL; storage descriptors and descriptor pools
+  have their own image type. Compute's barriers cover shader-image writes and the later attachment reads/writes.
+  Non-storage attachment formats (R8/Rg8/R16f/Rg16f) acquire no storage usage.
+- Byte images offscreen are now RGBA8 on Vulkan and WebGPU, so the core `rgba8unorm` storage format matches them
+  exactly. The window keeps its preferred format (commonly BGRA8). `TIDE_GPU_TARGET_WINDOW` (bit 20) and the
+  optional `window_format()` distinguish their pipeline kinds; the renderer's window stand-ins, including test
+  capture, carry the window kind too. Cube/array byte images are RGBA8. This avoids requiring optional BGRA storage.
+  WebGPU's synchronous readback canvas uses its source texture's format, so copying RGBA8 never copies into BGRA8.
+- Tests: `platform/tests/compute.c` fills an image in a kernel and draws it before and after a second write;
+  fills RGBA8 and RGBA16F volumes (the latter keeps -0.5 and 1.5) and samples between cells independently on all
+  three axes; loads exact cells; uploads one cell
+  from a whole volume without touching its zero neighbours; rejects negative/zero/huge allocations and invalid
+  upload boxes. Oversized dispatches use explicit WGSL guards. All repeat after device loss. Native sanitize
+  `tide_platform_compute` and `_vulkan_sets` pass under Vulkan validation; the web-debug page passes on software
+  WebGPU. The compiler-generated `tide_platform_images` covers Tide guards, color-alpha round trips and Grid3s.
+- Window/offscreen kinds also explain `prewarm.c`'s changed first-use count: Early's window draw guesses Late's
+  window variant, while Late later draws into an RGBA8 render target. The first late frame therefore makes the
+  offscreen mesh variant plus the blit (two new pipelines). Exact recorded history still warms just the three
+  configurations actually used on the second run. The web prewarm test passes with both checks retained.
+
+
 ## Why a warm shader step still takes 5 s on Mount & Rifle, and keys that age (2026-11-10)
 
 Owner: "5s vs 7.7s for cached shaders still seems high no?" Measured with the hidden-loader setup of the entry

@@ -1,0 +1,4 @@
+// expect: a Texture3D has no mipmaps: use Filter.Point or Filter.Bilinear
+local singleton Fog { Texture3D volume; }
+frag Foggy(Vertex v, out Color color, Fog fog) { color = fog.volume.Sample(float3(v.uv, 0), Filter.Trilinear); }
+scene Main { }

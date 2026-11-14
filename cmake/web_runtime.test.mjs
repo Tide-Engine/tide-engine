@@ -532,3 +532,111 @@ test('WebGPU arrays: a layout reads them as 2d-array textures, through a color\'
     assert.deepEqual(Array.from(entries.filter(e => e.sampler), e => [e.binding, e.sampler.type]),
         [[2, 'filtering'], [4, 'non-filtering'], [6, 'comparison']]);
 });
+
+
+test('WebGPU volumes and write-only images keep their dimension, format and binding without a sampler', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_pipeline_begin(');
+    const end = source.indexOf('\n        gpu_pipeline_slot:', begin);
+    const layoutBegin = source.indexOf('    function layoutFor(');
+    const layoutEnd = source.indexOf('\n    // A pass', layoutBegin);
+    const snapshots = [];
+    const sandbox = {
+        string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7,
+        STORAGE_BINDING: 33, MAX_STORAGE: 4, readsDepth: read => read === 1 || read === 2,
+        ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 || read === 8 ? 0 : read === 7 ? 1 : read),
+        GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
+        device: { createBindGroupLayout: desc => { snapshots.push(desc.entries); return {}; }, createPipelineLayout: () => ({}) },
+    };
+    const keys = vm.runInNewContext(`(() => {
+        let building;
+        const backend = { ${source.slice(begin, end)} };
+        ${source.slice(layoutBegin, layoutEnd)}
+        const keys = [];
+        for (const read of [0, 8]) for (const format of [0, 4, 5, 6, 7]) {
+            backend.gpu_pipeline_begin(0, 0, 16, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+            backend.gpu_pipeline_image_read(0, read);
+            backend.gpu_pipeline_images(1, format, 0);
+            keys.push(layoutFor(building.reads, building.samplers, '', true, building.imageWrites, building.imageFormats).key);
+        }
+        backend.gpu_pipeline_begin(0, 0, 16, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+        backend.gpu_pipeline_image_read(0, 8);
+        layoutFor(building.reads, building.samplers);
+        return keys;
+    })()`, sandbox);
+    assert.equal(new Set(keys).size, 10, 'dimension and storage format are part of the layout key');
+    const formats = ['rgba8unorm', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'];
+    snapshots.slice(0, 10).forEach((entries, index) => {
+        assert.equal(entries.length, 2, 'uniforms and one image, no sampler');
+        const image = entries.find(entry => entry.binding === 1);
+        assert.equal(image.storageTexture.access, 'write-only');
+        assert.equal(image.storageTexture.format, formats[index % 5]);
+        assert.equal(image.storageTexture.viewDimension, index < 5 ? '2d' : '3d');
+        assert.equal(image.visibility, 4);
+    });
+    const sampled = snapshots[10];
+    assert.equal(sampled.find(entry => entry.binding === 1).texture.viewDimension, '3d');
+    assert.equal(sampled.find(entry => entry.binding === 2).sampler.type, 'filtering');
+});
+
+test('WebGPU volume limits, pending uploads and allocation errors stay bounded and private', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_volume(');
+    const end = source.indexOf('        gpu_array_depth(', begin);
+    const textures = [], writes = [], reads = [], scopes = [];
+    const table = [];
+    const sourceBytes = Uint8Array.from({ length: 128 }, (_, i) => i);
+    let failAllocation = false;
+    const sandbox = {
+        GPUTextureUsage: { TEXTURE_BINDING: 1, COPY_DST: 2, COPY_SRC: 4, STORAGE_BINDING: 8 },
+        gpuTables: { texture: table }, gpuAdd: (kind, value) => { table.push(value); return table.length - 1; },
+        memoryBytes: (ptr, size) => { reads.push([ptr, size]); return [sourceBytes, ptr]; },
+        device: { limits: { maxTextureDimension3D: 2048 },
+            pushErrorScope: kind => scopes.push(kind),
+            popErrorScope: () => Promise.resolve(failAllocation ? { message: 'out of memory' } : null),
+            createTexture: desc => { textures.push(desc); return { createView: view => view }; },
+            queue: { writeTexture: (...args) => writes.push(args) } },
+    };
+    const backend = vm.runInNewContext(`(() => {
+        const backend = { ${source.slice(begin, end)} };
+        for (const sizes of [[-1, 2, 2], [0, 1, 1], [2147483647, 2147483647, 2147483647], [2048, 2048, 2048]]) {
+            if (backend.gpu_volume(0, ...sizes) !== 0) throw Error('invalid volume allocated');
+        }
+        const volume = backend.gpu_volume(0, 2, 2, 2);
+        if (backend.gpu_texture_status(volume) !== 0) throw Error('pending allocation exposed');
+        backend.gpu_volume_write(volume, 64, 1, 1, 1, 1, 1, 1);
+        backend.gpu_volume_write(volume, 64, -1, 0, 0, 1, 1, 1);
+        backend.gpu_volume_write(volume, 64, 0, 0, 2147483647, 1, 1, 1);
+        backend.gpu_volume_write(volume, 64, 0, 0, 0, 3, 1, 1);
+        return backend;
+    })()`, sandbox);
+    assert.equal(textures.length, 1);
+    assert.equal(textures[0].dimension, '3d');
+    assert.deepEqual(Array.from(textures[0].size), [2, 2, 2]);
+    assert.equal(textures[0].usage, 15);
+    assert.deepEqual(reads, [[92, 4]], 'whole source: z * 16 + y * 8 + x * 4');
+    assert.equal(writes.length, 0, 'no upload into an unvalidated allocation');
+    sourceBytes.fill(0); // What the game does next cannot change the pending copy.
+    await new Promise(setImmediate);
+    assert.equal(backend.gpu_texture_status(0), 1);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(Array.from(writes[0][0].origin), [1, 1, 1]);
+    assert.deepEqual(Array.from(writes[0][1]), [92, 93, 94, 95]);
+    assert.equal(writes[0][2].bytesPerRow, 4, 'pending copy packs only the requested box');
+    assert.equal(writes[0][2].rowsPerImage, 1);
+    assert.deepEqual(Array.from(writes[0][3]), [1, 1, 1]);
+    backend.gpu_volume_write(0, 64, 1, 1, 1, 1, 1, 1);
+    assert.equal(writes[1][2].bytesPerRow, 8, 'a ready image reads the whole-volume row stride directly');
+    assert.equal(writes[1][2].rowsPerImage, 2);
+    failAllocation = true;
+    const failed = backend.gpu_volume(0, 2, 2, 2);
+    backend.gpu_volume_write(failed, 64, 0, 0, 0, 1, 1, 1);
+    assert.equal(backend.gpu_texture_status(failed), 0);
+    await new Promise(setImmediate);
+    assert.equal(backend.gpu_texture_status(failed), -1, 'OOM is a failed image, never an exposed invalid view');
+    assert.equal(writes.length, 2, 'failed allocations discard pending writes');
+    backend.gpu_volume_write(failed, 64, 0, 0, 0, 1, 1, 1);
+    assert.equal(writes.length, 2);
+    assert.deepEqual(scopes, ['validation', 'out-of-memory', 'validation', 'out-of-memory']);
+});

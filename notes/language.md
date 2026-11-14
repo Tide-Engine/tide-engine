@@ -1,3 +1,35 @@
+## Texture3D and kernel image writes (2026-11-14)
+
+`TY_TEXTURE3D` is appended after TY_GPU_LIST to preserve every existing type identity. It is a local
+40-byte tide_texture3d_ref, with RenderTarget-like shared ownership: constructor Texture3D(int3[, Format]),
+Resize(int3), Dispose(), size:int3 and contentRevision:long. Metadata is read-only; only local code may
+construct, resize or dispose it or read its revision. GPU code samples at float3 (Point/Bilinear,
+Clamp/Repeat/Mirror, no mipmaps) or reads an exact int3 cell. Grid3<Color>/Grid3<float> convert to a
+volume wherever the type is wanted, using the grid's chunk-aware runtime path. Raw volume fields and
+Raw Grid3 conversions preserve numeric channels. No Texture3D asset form or slice-drawing API is added.
+
+A kernel assigns a whole image cell with =, without mut. Render target images take int2, volumes int3.
+Component/compound stores are refused with second-image/read-edit-write guidance. CPU/frag/vert stores,
+including through helpers, are refused. Static format provenance, read/write exclusion and four-write
+limits are in shaders.md and the spec's Provisional rules.
+
+Local serialization must capture a resized volume's current depth even through stale shared references.
+Only programs naming volumes get a private raw local packer and public wrapper: it unpacks into an
+independent temporary local state, resolves volume leaves in singletons, local/attached tables, task
+frames, queued payloads and nested containers, and packs that copy. The const original is unchanged and
+heap TLS is restored. IO/worker tickets use the existing unpack reset; resident arenas are detached from
+the temporary's ownership while preserving their original serialized references. This costs a temporary
+local-state serialization on reload, never a frame's or match's work. Resource adoption/recreation uses
+tide_texture3d_resolve/recreate as other managed image references do.
+
+Tests (Windows sanitize): 26 image/volume diagnostic fixtures, the images shader golden/SPIR-V/FXC,
+lsp_texture3d, and tidec_e2e_texture3d: Resize 2x2x2 to 3x4x5, shared aliases, nested holder and list,
+original refs unchanged by packing, current depth serialized and full recreation at that size.
+Baseline tidec built inside this checkout from 091d93582 using the same toolchain/runtime: compute,
+textures, texture_arrays, render_colors, render_samples and queries generate identical C/headers except
+for compiler-source simulation IDs, identical game API hashes, and byte-identical packs. All 183 shader
+checks pass; no existing golden changed. Remaining combined native/web runs are recorded in compute.md.
+
 ## Pure functions, merged calls and `cached` (2026-11-13)
 
 The checker works out which functions and methods are pure (`decl.pure`, with `impure_why`/`impure_at`/

@@ -345,8 +345,78 @@ static int add_of(const emit *em, const int slot)
 }
 
 // An expression of a GPU list or a kernel's: written, and true; false for any other.
+static int image_slot(emit *em, const expr *image, const bool write, const loc at)
+{
+    int own;
+    int color = 0;
+    const expr *source = image;
+    if (source->kind == E_MEMBER && source->object->type.kind == TY_RENDER_TARGET && str_eq_c(source->member, "color")) source = source->object;
+    else if (source->kind == E_INDEX && source->object->kind == E_MEMBER && source->object->target_colors) {
+        if (source->lhs->kind != E_INT) {
+            refuse(em, source->lhs->at, "a kernel writes a fixed color image: use colors[0], colors[1], or another constant image index");
+            return -1;
+        }
+        color = (int)source->lhs->int_value;
+        source = source->object->object;
+    }
+    const expr *of = texture_of(em, source, &own);
+    const shader_read read = image->type.kind == TY_TEXTURE3D ? READ_VOLUME : READ_COLOR;
+    if (em->code != em->root && (own >= 0 || of)) {
+        if (em->checking) {
+            note_function_sample(em->code, own, of, read, 0, 0, false, at, write);
+        }
+        if (!of) return -1;
+    }
+    if (!of) { refuse_texture(em, image); return -1; }
+    sampling how = sampling_of(of, read, 0, 0);
+    how.write = write;
+    how.image_color = color;
+    const int slot = sample_slot(em, of, how);
+    return write || em->checking ? slot : way_texture(em, slot);
+}
+
+static void need_image_access(emit *em, const int slot, const bool write, const int dims, const bool raw)
+{
+    if (em->checking || slot < 0 || slot >= SHADER_TEXTURES) return;
+    bool *done = write ? em->image_puts : em->image_gets;
+    if (done[slot]) return;
+    done[slot] = true;
+    sb *o = &em->functions;
+    if (write) {
+        sb_printf(o, "fn tide_image_put%d(at: vec%di, value: vec4f) {\n", slot, dims);
+        sb_printf(o, "    if (all(at >= vec%di(0)) && all(at < vec%di(textureDimensions(pixels%d)))) {\n", dims, dims, slot);
+        const bool integer = em->sh->textures.items[slot].image_format == 7;
+        sb_printf(o, "        textureStore(pixels%d, at, ", slot);
+        if (integer) sb_put(o, "vec4i(value)");
+        else sb_put(o, raw ? "value" : "vec4f(value.rgb * value.a, value.a)");
+        sb_put(o, ");\n    }\n}\n");
+    } else {
+        sb_printf(o, "fn tide_image_get%d(at: vec%di) -> vec4f {\n", slot, dims);
+        sb_printf(o, "    if (all(at >= vec%di(0)) && all(at < vec%di(textureDimensions(pixels%d)))) {\n", dims, dims, slot);
+        sb_printf(o, "        return %stextureLoad(pixels%d, at, 0)%s;\n", raw ? "" : "tide_straight(", slot, raw ? "" : ")");
+        sb_put(o, "    }\n    return vec4f(0.0);\n}\n");
+        if (!raw) need(em, H_STRAIGHT);
+    }
+}
+
+static bool image_raw(const emit *em, const int slot, const expr *source)
+{
+    if (em->sh && slot >= 0 && slot < em->sh->textures.count && em->sh->textures.items[slot].field)
+        return field_is_raw(em->sh->textures.items[slot].field);
+    return declared_raw(source);
+}
+
 static bool ex_gpu(emit *em, const expr *e)
 {
+    if (e->gpu == GPU_IMAGE_INDEX) {
+        const int slot = image_slot(em, e->object, false, e->at);
+        need_image_access(em, slot, false, 3, image_raw(em, slot, e->object));
+        if (slot < 0 || em->checking) { ex(em, e->lhs); sb_put(em->o, "vec4f(0.0)"); return true; }
+        sb_printf(em->o, "tide_image_get%d(", slot);
+        ex_as(em, e->lhs, (type){TY_INT3, NULL});
+        sb_put(em->o, ")");
+        return true;
+    }
     if (e->kind == E_INDEX && shared_atomic(e->object)) {
         sb_printf(em->o, "%s(", need_shared_access(em, e->object->local, false));
         ex_as(em, e->lhs, (type){TY_INT, NULL});
@@ -417,6 +487,24 @@ static bool ex_gpu(emit *em, const expr *e)
 // A statement of a GPU list or a kernel's: written, and true; false for any other.
 static bool st_gpu(emit *em, const stmt *s)
 {
+    if (s->kind == S_ASSIGN && s->target->gpu == GPU_IMAGE_INDEX) {
+        if (!em->root->is_compute) {
+            refuse(em, s->at, "only kernels write images: use GPU.Run before the draw");
+            return true;
+        }
+        const expr *image = s->target->object;
+        const int dims = image->type.kind == TY_TEXTURE3D ? 3 : 2;
+        const int slot = image_slot(em, image, true, s->at);
+        need_image_access(em, slot, true, dims, image_raw(em, slot, image));
+        if (slot < 0 || em->checking) { ex(em, s->target->lhs); ex_as(em, s->value, (type){TY_COLOR, NULL}); return true; }
+        line(em);
+        sb_printf(em->o, "tide_image_put%d(", slot);
+        ex_as(em, s->target->lhs, (type){dims == 3 ? TY_INT3 : TY_INT2, NULL});
+        sb_put(em->o, ", ");
+        ex_as(em, s->value, (type){TY_COLOR, NULL});
+        sb_put(em->o, ");\n");
+        return true;
+    }
     if (s->kind == S_VAR && s->is_shared) { // A module's variable, the group's (put_shared): nothing here
         if (em->code != em->root) refuse(em, s->at, "a shared local is a kernel's own");
         type_fits(em, s->type, s->type_at.line ? s->type_at : s->at);

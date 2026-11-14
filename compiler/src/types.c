@@ -42,6 +42,7 @@ static const struct {
     {"DepthTexture", TY_DEPTH_TEXTURE, "depth", "tide_depth_ref"},
     {"Cubemap", TY_CUBEMAP, "cubemap", "tide_cubemap_ref"},
     {"TextureArray", TY_TEXTURE_ARRAY, "array", "tide_texture_array_ref"},
+    {"Texture3D", TY_TEXTURE3D, "volume", "tide_texture3d_ref"},
     {"DepthTextureArray", TY_DEPTH_TEXTURE_ARRAY, "depths", "tide_depth_ref"},
     {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
     {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
@@ -187,6 +188,7 @@ layout type_layout(const type t)
     if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
     if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
     if (t.kind == TY_TEXTURE_ARRAY) return (layout){40, 8}; // tide_texture_array_ref: a target, a name, its layers
+    if (t.kind == TY_TEXTURE3D) return (layout){40, 8}; // tide_texture3d_ref: a target, a grid name and depth
     if (t.kind == TY_DEPTH_TEXTURE_ARRAY) return (layout){24, 8}; // tide_depth_ref: the array's target
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_FONT) return (layout){8, 8};           // tide_font_ref: a number of the registry's
@@ -417,6 +419,7 @@ bool type_assignable(const type to, const type from)
     if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
     if (to.kind == TY_TEXTURE_ARRAY) return type_is_array_grid(from); // ...and one of three dimensions an array
+    if (to.kind == TY_TEXTURE3D) return type_is_array_grid(from);
     if (type_is_double_based(to)) {
         if (matrix_dim(to)) return matrix_dim(to) == matrix_dim(from) && !type_is_double_based(from);
         return (type_dim(to) == type_dim(from) && (type_is_int_based(from) || type_is_float_based(from)))

@@ -82,6 +82,21 @@ static void none_array_write(const tide_gpu_id array, const uint32_t layer, cons
     (void)array, (void)layer, (void)pixels, (void)x, (void)y, (void)width, (void)height;
 }
 
+static tide_gpu_id none_volume(const tide_gpu_format format, const int width, const int height, const int depth)
+{
+    if (width <= 0 || height <= 0 || depth <= 0 || width > 2048 || height > 2048 || depth > 2048) return 0;
+    const uint64_t most = UINT64_C(134217728) / (uint32_t)tide_gpu_format_bytes(format);
+    return (uint64_t)(uint32_t)width * (uint32_t)height <= most / (uint32_t)depth ? made() : 0;
+}
+
+static void none_volume_write(const tide_gpu_id volume, const void *pixels, const int x, const int y, const int z,
+                               const int width, const int height, const int depth)
+{
+    (void)volume, (void)pixels, (void)x, (void)y, (void)z, (void)width, (void)height, (void)depth;
+}
+
+static int none_volume_limit(void) { return 2048; }
+
 static tide_gpu_id none_array_depth(const tide_gpu_id array)
 {
     (void)array;
@@ -197,6 +212,9 @@ const tide_gpu tide_gpu_none = {
     .cube_face = none_cube_face,
     .array = none_array,
     .array_depth = none_array_depth,
+    .volume = none_volume,
+    .volume_write = none_volume_write,
+    .volume_limit = none_volume_limit,
     .array_of = none_array_of,
     .array_write = none_array_write,
     .array_layer = none_array_layer,

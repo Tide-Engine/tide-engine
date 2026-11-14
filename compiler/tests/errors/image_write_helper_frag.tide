@@ -1,0 +1,5 @@
+// expect: only kernels write images
+local singleton Fog { Texture3D volume; }
+scene Main { }
+void Put(Texture3D image, Color value) { image[int3(0)] = value; }
+frag F(Vertex vertex, out Color color, Fog fog) { Put(fog.volume, Color.white); color = Color.white; }
