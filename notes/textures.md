@@ -1,3 +1,32 @@
+# Image origins through `out` and `mut` (2026-11-14)
+
+From an audit: `program.image_places` (an image field given as an `out` or `mut` argument) was read by
+`linear_source_format` alone. `image_target_format` (frag outputs, typed Clear, `Read<T>`, typed sampling) and
+`image_origin_format` (a kernel's storage format) walked the field's assignments only, so `void Make(out
+RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }` then a Color frag drawn into the field compiled, and the
+draw was skipped as it ran (likewise a kernel's Color store into a volume re-made R32i through `mut`).
+
+- **Followed, not refused** (Provisional in the spec, Compute on the GPU, Formats). `note_image_place(arg, callee,
+  index)` (check.c) pushes an origin of its own onto the field's `image_assignments`: an `E_NAME` with
+  `expr.image_place` and `param` the callee's parameter. A function's image parameter now has
+  `image_assignments` too (`note_param_origin`, from `t = ...` in its body, and places of the calls it hands `t`
+  to), so a chain of helpers is followed. Every walker (`origins_target_format`, `origins_storage_format`,
+  `numeric_image_origin`, `linear_source_format`) reads a place as its parameter's origins. A place whose callee
+  can't be seen is `param` NULL, unknown (-1): C (`is_extern`), a virtual function or an override, and a built-in's
+  or a function value's `out` (`finish_out_arg`; a function's own `out` arguments go through
+  `finish_out_variable` and are noted with their parameter in `check_arg_types`). `program.image_places` is gone.
+- **What an unknown origin does** is what it did for a RenderTarget parameter: a numeric output, a kernel's store, a
+  `[Linear]` read and `Read<T>` with T a number are errors that say to fix the format where the compiler sees it; a
+  Color output or Color Clear is left to the run-time checks, which are unchanged (`shader_pipeline_of`,
+  `image_destination_fits`, `texture_to_read_as`).
+- **The kernel guard's fixture** (`platform/tests/images.tide`, Mismatched) re-made its volume through a Tide `mut`
+  helper, which is now a compile error; images.c re-makes it as R32i from C behind the code's back, once the view
+  has made it, which is the case the guard is for.
+- **Tests:** errors `image_out_argument_output`, `_numeric_output` (through two helpers), `_kernel`, `_clear`,
+  `_read`, `image_mut_argument_output`, `_kernel`, `image_extern_argument_numeric_output`, `_read`,
+  `linear_extern_argument_target`; `linear_out_argument_target`/`_mut_` now name the format the helper gives (R32i,
+  Rgba16f) instead of "not fixed". `tide_platform_images` on Vulkan with the validation layer.
+
 # [Linear] review: six findings and the pack's mark (2026-11-14)
 
 A review of the commits that built `[Linear]` (a59e6a0b9, 91030e254, 9e07d53c8) reported six faults from reading
@@ -17,11 +46,10 @@ below says where they differ (how a copy is kept fresh, "Pack layout is unchange
      built anywhere and copied whole is seen: every value of the field starts as one of those or its default).
      This is the list storage-image and numeric-output inference read too (`shader_kernel.inc`), which gain the
      literals.
-   - **A place a call makes or may change** (an image field as an `out` or `mut` argument, `note_image_place`,
-     kept in `program.image_places`) has no known format: the callee assigns its parameter. `[Linear]` reads of
-     it are the existing "format is not fixed by its constructor assignments" error, whose note now names the
-     fix (assign the image to its field directly). Only `[Linear]` reads this list: the storage-image and
-     numeric-output inference keep what they did for such a field, which is that code's owner's to decide.
+   - **A place a call makes or may change** (an image field as an `out` or `mut` argument, `note_image_place`)
+     had no known format here. Superseded the same day (top section, Image origins through `out` and `mut`):
+     every format inference now follows what the callee assigns its parameter, and only a place whose callee's
+     body can't be seen (C, a built-in, a virtual function) is unknown.
    - **At run time** `prepare_linear_target` (`platform.c`) makes no copy of a source that isn't
      `TIDE_TARGET_RGBA8` (`linear_source_bytes`, by the id's own format bits: a target's image, a cube, an
      array), and `texture_unavailable` passes the draw by with the reason, as it does for a disposed target: no

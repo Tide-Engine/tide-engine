@@ -393,24 +393,30 @@ view ShowFiltered(mut FilteredImages images, NumberImages numbers)
 }
 
 // Images whose format the compiler can't follow: a Color read handed an integer image reads as no image, and a
-// kernel whose field was re-made in another format through a `mut` parameter writes nothing. Neither may reach
-// a GPU binding of another format.
+// kernel whose field the host's C re-made in another format behind the code's back (images.c: tidec follows every
+// origin Tide code gives a field, `out` and `mut` arguments too, and refuses what it can't) writes nothing. Neither
+// may reach a GPU binding of another format.
 local singleton Mismatched
 {
     RenderTarget ids;
     RenderTarget scene;
     Texture source;
     Texture3D volume;
+    // An int read of a float grid's R16F image, as a hot reload from [Raw(float)] to [Raw(int)] would have left it
+    // before roles were told apart: images.c puts `floats` in `numbers`
+    Grid2<float> heights = Grid2(2, 2);
+    Texture floats;
+    [Raw(int)] Texture numbers;
     int frames;
     bool made;
 }
-void Remake(mut Texture3D volume) { volume = Texture3D(int3(2), Format.R32i); }
 [Group(2, 2, 2)]
 compute FillMismatched(Mismatched images) { images.volume[this.at] = Color(1, 0, 0, 1); }
 frag ReadMismatched(Vertex vertex, out Color color, Mismatched images, NumberProbe probe)
 {
     if (probe.mode == 0) color = images.source.Sample(vertex.uv, Filter.Bilinear);
-    else color = images.volume.Sample(float3(0.5));
+    else if (probe.mode == 1) color = images.volume.Sample(float3(0.5));
+    else color = images.numbers.Sample(vertex.uv) == 0 ? Color.green : Color.red;
 }
 view ShowMismatched(mut Mismatched images, NumberImages numbers)
 {
@@ -419,7 +425,9 @@ view ShowMismatched(mut Mismatched images, NumberImages numbers)
         images.ids = RenderTarget(8, 8, 1, Format.R32i);
         images.scene = RenderTarget(8, 8, 1);
         images.volume = Texture3D(int3(2));
-        Remake(images.volume);
+        images.heights[0, 0] = 3.5;
+        images.floats = images.heights;
+        images.numbers = images.ids.color;
         images.made = true;
     }
     images.frames++;
@@ -427,7 +435,7 @@ view ShowMismatched(mut Mismatched images, NumberImages numbers)
     images.scene.Clear(Color.blue);
     images.source = images.frames > 0 ? images.ids.color : images.scene.color;
     GPU.Run(FillMismatched, int3(2));
-    for (var i = 0; i < 2; i++)
+    for (var i = 0; i < 3; i++)
         Draw.Transform(float2(float(i) * 8, 104))
         { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], ReadMismatched, NumberProbe { mode = i }); }
 }

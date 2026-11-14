@@ -551,8 +551,9 @@ static const uint64_t *slot_ids(const tide_draw_list *list, const uint32_t stora
 // image instead of a sampled fallback, and every slot gets its own so writable bindings never alias.
 // Whether the image a run holds for a written slot is what the kernel's pipeline declares there
 // (tide_shader.image_formats, a tide_gpu_format): a storage binding of another format, or of one with no storage
-// use, is undefined on Vulkan and refused by WebGPU. tidec fixes the format from the assignments it can follow; a
-// struct literal, a whole struct's assignment or a `mut` parameter can put another image in the field.
+// use, is undefined on Vulkan and refused by WebGPU. tidec fixes the format from every origin it can follow (field
+// assignments, struct literals, what an `out` or `mut` argument's callee assigns its parameter) and refuses the rest;
+// C, a hot reload that changed a field's format, or a draw list filled by hand can still put another image there.
 static bool image_destination_fits(const tide_shader *shader, const uint32_t slot, const tide_draw_texture *t)
 {
     const tide_target_formats formats = tide_render_target_formats(t->id);

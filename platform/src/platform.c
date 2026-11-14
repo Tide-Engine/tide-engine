@@ -5164,6 +5164,9 @@ static tide_gpu_id texture_to_read_as(const tide_draw_list *list, const uint32_t
                                 : gpu->target_texture(g->target, tide_render_target_image(t->id));
         return image ? image : none;
     }
+    // The rest are uploaded images (a grid's, C's, the pack's), none of them ints: an integer read is given none,
+    // whatever a list says (a hot reload that changed a field's role, a list filled by hand)
+    if (integer) return none;
     const gpu_texture *g = texture_for(t);
     return g->texture ? g->texture : none;
 }
