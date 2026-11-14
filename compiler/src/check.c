@@ -6789,35 +6789,67 @@ static type check_scene_call(checker *c, expr *e)
         e->call = CALL_IS_PREPARED;
         return T_BOOL_;
     }
-    const bool load = str_eq_c(e->name, "Load");
+    // Scene.Switch(Arena) is a load that first unloads its world's scenes
+    const bool switches = str_eq_c(e->name, "Switch");
+    const bool load = switches || str_eq_c(e->name, "Load");
     const bool unload = str_eq_c(e->name, "Unload");
+    const char *const loads = switches ? "Scene.Switch" : "Scene.Load";
+    // `local Scene.Load(Menu)`: this machine's, where the code doesn't say (a function loading a prefab)
+    const bool placed = e->placement_local || (e->object && e->object->placement_local);
     if (!load && !unload) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load, Unload and IsPrepared", STR_ARG(e->name));
+        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load, Switch, Unload and IsPrepared", STR_ARG(e->name));
         if (str_eq_c(e->name, "AddPlayer") || str_eq_c(e->name, "RemovePlayer"))
             diag_note("set the scene root's Visibility group audience with Visibility.Set(group, audience)");
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Load");
+        suggest_consider_c(&s, "Switch");
         suggest_consider_c(&s, "Unload");
         suggest_consider_c(&s, "IsPrepared");
         suggest_note(&s);
         return T_ERR;
     }
     const char *error = NULL;
-    if (in_routine(c) && c->method != c->prog->startup_create) error = "%s can't load or unload scenes; systems, views and event handlers do";
-    else if (c->in_input) error = "%s runs outside the simulation, so it can't load or unload scenes";
+    // A function or a method loads and unloads as the code that calls it would (check_acts); the GPU's code,
+    // an operator and Interpolate never do
+    const bool passed = inherits(c) && c->method != c->prog->startup_create;
+    if (in_routine(c) && !inherits(c) && c->method != c->prog->startup_create) {
+        error = c->method->kind == DECL_SHADER ? "%s can't load or unload scenes; systems, views and event handlers do"
+              : c->method->is_operator ? "an operator works a value out of its operands, so it can't load or unload scenes"
+              : c->method->is_interpolate ? "Interpolate blends a value between ticks, for views, so it can't load or unload scenes"
+                                          : "%s can't load or unload scenes here; systems, views and event handlers do";
+    } else if (c->in_input) error = "%s runs outside the simulation, so it can't load or unload scenes";
     if (error) {
         diag_error(e->at, error, c->method ? routines(c) : input_code(c));
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
+    if (placed && unload) {
+        diag_error(e->at, "Scene.Unload takes the scene's entity, which says whose it is; remove 'local'");
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if (placed && !passed && !in_async_function(c) && !local_code(c)) {
+        diag_error(e->at, "the match can't load local scenes; 'local %s' is for views, local handlers and the functions they call", loads);
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
     bool local = local_code(c);
     e->local_world = local;
+    e->switches_scene = switches;
+    if (switches && c->prog->shards) {
+        diag_error(e->at, "Scene.Switch unloads every scene of a world at once, and a sharded match's scenes are on several servers");
+        diag_note("unload each with Scene.Unload(scene), then Scene.Load the next");
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
     if (load && e->args.count) {
         decl *prefab = prefab_named(c, e->args.items[0]);
         if (prefab) {
-            if (c->loop_header || c->branch_depth || c->short_circuit_depth) diag_error(e->at, "Scene.Load prefab instances in a statement or loop body, not a condition, step or conditional expression");
-            return check_prefab_spawn(c, e, prefab, true);
+            if (c->loop_header || c->branch_depth || c->short_circuit_depth) diag_error(e->at, "%s prefab instances in a statement or loop body, not a condition, step or conditional expression", loads);
+            const type made = check_prefab_spawn(c, e, prefab, true);
+            if (reading_code(c)) reading_code(c)->loads_scenes = true;
+            return made;
         }
     }
     if (load && e->args.count > 1) refuse_arg_names(e, T_ENTITY_);
@@ -6829,15 +6861,15 @@ static type check_scene_call(checker *c, expr *e)
     if (load) {
         if (e->args.count < 1) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            diag_error(e->at, "Scene.Load takes a scene followed by optional root components, like 'Scene.Load(Arena { size = 30 }, Visibility { group = group })'");
+            diag_error(e->at, "%s takes a scene followed by optional root components, like '%s(Arena { size = 30 }, Visibility { group = group })'", loads, loads);
             return T_ERR;
         }
         // Like Spawn, it creates an entity, so it runs first in its statement (see Evaluation order).
         if (c->loop_header > 0) {
-            diag_error(e->at, "Scene.Load can't be in a loop's condition or a for's step");
+            diag_error(e->at, "%s can't be in a loop's condition or a for's step", loads);
             diag_note("load in the loop's body instead");
         } else if (c->branch_depth > 0 || c->short_circuit_depth > 0) {
-            diag_error(e->at, "Scene.Load can't be %s", c->branch_depth > 0 ? "inside '?:'" : c->short_circuit_side);
+            diag_error(e->at, "%s can't be %s", loads, c->branch_depth > 0 ? "inside '?:'" : c->short_circuit_side);
             diag_note("that part only runs sometimes; load in an if/else instead");
         }
         expr *arg = e->args.items[0];
@@ -6845,7 +6877,7 @@ static type check_scene_call(checker *c, expr *e)
         if (arg->kind == E_LITERAL) {
             const type t = check_literal(c, arg);
             if (t.kind == TY_COMPONENT && t.decl->is_scene) scene = t.decl;
-            else if (t.kind != TY_ERROR) diag_error(arg->at, "Scene.Load takes a scene, and '" STR_FMT "' is %s", STR_ARG(t.decl->name), decl_what(t.decl));
+            else if (t.kind != TY_ERROR) diag_error(arg->at, "%s takes a scene, and '" STR_FMT "' is %s", loads, STR_ARG(t.decl->name), decl_what(t.decl));
         } else {
             str name;
             decl *d = (arg->kind == E_NAME || arg->kind == E_MEMBER) && qualified_text(arg, &name) ? find_type(c, name, arg->at) : NULL;
@@ -6856,15 +6888,20 @@ static type check_scene_call(checker *c, expr *e)
                 arg->type_decl = d;
                 arg->type = decl_type(d);
                 if (d->kind == DECL_COMPONENT && d->is_scene) scene = d;
-                else diag_error(arg->at, "Scene.Load takes a scene, and '" STR_FMT "' is %s", STR_ARG(d->name), decl_what(d));
+                else diag_error(arg->at, "%s takes a scene, and '" STR_FMT "' is %s", loads, STR_ARG(d->name), decl_what(d));
             } else if (check_expr(c, arg).kind != TY_ERROR) {
-                diag_error(arg->at, "Scene.Load takes a scene, like 'Scene.Load(Arena)' or 'Scene.Load(Arena { size = 30 })'");
+                diag_error(arg->at, "%s takes a scene, like '%s(Arena)' or '%s(Arena { size = 30 })'", loads, loads, loads);
             }
         }
         if (!scene) return T_ERR;
         if (in_async_function(c)) { // An async function's world is the scene's
             if (!note_task_side(c, scene->is_local ? TASK_LOCAL : TASK_MATCH, arg->at)) return T_ERR;
             local = e->local_world = scene->is_local;
+        }
+        if (passed) local = e->local_world = scene->is_local; // A function's world is the scene's, and its callers answer for it
+        if (placed && !scene->is_local) {
+            diag_error(arg->at, "'" STR_FMT "' is one of the match's scenes; remove 'local', or declare it 'local scene'", STR_ARG(scene->name));
+            return T_ERR;
         }
         if (scene->is_local != local) {
             if (scene->is_local) {
@@ -6877,10 +6914,11 @@ static type check_scene_call(checker *c, expr *e)
             return T_ERR;
         }
         e->call = CALL_LOAD;
-        if (c->system) c->system->loads_scenes = true;
+        if (reading_code(c)) reading_code(c)->loads_scenes = true;
         e->type_decl = scene;
         note_text_write(c, decl_holds_text(scene), e->at, scene, true);
         e->spawn_mask = bit(scene);
+        bool text = decl_holds_text(scene);
         for (int i = 1; i < e->args.count; i++) {
             expr *value = e->args.items[i];
             decl *comp = check_component_arg(c, value, "Scene.Load root components");
@@ -6893,8 +6931,10 @@ static type check_scene_call(checker *c, expr *e)
                 diag_error(value->at, "'" STR_FMT "' appears twice; an entity has at most one of each component", STR_ARG(comp->name));
             e->spawn_mask = mask_or(e->spawn_mask, bit(comp));
             note_text_write(c, decl_holds_text(comp), value->at, comp, true);
+            text |= decl_holds_text(comp);
         }
         vec_push(c->spawns, e);
+        if (passed) note_act(c, local, e->at, switches ? (local ? "switches local scenes" : "switches scenes") : local ? "loads local scenes" : "loads scenes", true, text);
         note_spawn(c);
         return local ? (type){TY_LOCAL_ENTITY, NULL} : T_ENTITY_;
     }
@@ -6909,6 +6949,7 @@ static type check_scene_call(checker *c, expr *e)
         if (!note_task_side(c, scene.kind == TY_LOCAL_ENTITY ? TASK_LOCAL : TASK_MATCH, e->args.items[0]->at)) return T_ERR;
         local = e->local_world = scene.kind == TY_LOCAL_ENTITY;
     }
+    if (passed && (scene.kind == TY_ENTITY || scene.kind == TY_LOCAL_ENTITY)) local = e->local_world = scene.kind == TY_LOCAL_ENTITY;
     const type_kind own = local ? TY_LOCAL_ENTITY : TY_ENTITY;
     if (scene.kind != TY_ERROR && scene.kind != own) {
         if (scene.kind == TY_ENTITY && local) {
@@ -6927,6 +6968,7 @@ static type check_scene_call(checker *c, expr *e)
         return T_ERR;
     }
     e->call = CALL_UNLOAD;
+    if (passed) note_act(c, local, e->at, local ? "unloads local scenes" : "unloads scenes", false, false);
     return T_VOID_;
 }
 

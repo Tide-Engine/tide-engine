@@ -1,0 +1,5 @@
+// expect: a view can't change the match, and 'Open' loads scenes
+scene Arena { }
+scene Main { }
+void Open() { Scene.Load(Arena); }
+view Show() { Open(); }
