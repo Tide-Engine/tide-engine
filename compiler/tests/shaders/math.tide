@@ -92,6 +92,14 @@ vert Ripple(mut SkyVertex vertex, Wind wind)
 view Show(Sky sky)
 {
     Draw.Mesh(sky.corners, sky.faces, Stars);
+    Draw.Mesh(sky.corners, sky.faces, Transfer);
     Draw.Mesh(sky.corners, sky.faces, Blow, Calm);
     Draw.Mesh(sky.corners, sky.faces, Ripple, Clouds);
+}
+
+frag Transfer(SkyVertex vertex, out Color color)
+{
+    float scalar = Math.ToLinear(vertex.uv.x);
+    float3 rgb = Math.ToDisplay(float3(scalar, vertex.uv.y, 1));
+    color = Math.ToDisplay(Math.ToLinear(Color(rgb, 0.37)));
 }

@@ -1,0 +1,6 @@
+// expect: a [Linear] image supplies Color, not a [Raw(T)] numeric image
+[Linear] asset Texture image = "../e2e/assets/hero.png";
+scene Main { }
+float Read([Raw(float)] Texture source, float2 uv) { return source.Sample(uv); }
+frag Show(Vertex vertex, out Color color) { color = Color(Read(image, vertex.uv), 0, 0); }
+view V() { Draw.Mesh([Vertex {}], [0, 0, 0], Show); }

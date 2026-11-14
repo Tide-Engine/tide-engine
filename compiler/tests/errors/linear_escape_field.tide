@@ -1,0 +1,4 @@
+// expect: this image is [Linear]; an unmarked value would lose its sRGB sampling role
+[Linear] asset Texture image = "../e2e/assets/hero.png";
+local singleton Art { Texture kept = image; }
+scene Main { }

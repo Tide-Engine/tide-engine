@@ -24,6 +24,8 @@
 
 typedef struct checker {
     program *prog;
+    VEC(expr *) linear_sources; // Validate formats after every body has contributed its field assignments.
+    VEC(expr *) linear_uses;  // [Linear] sources must retain their static sampling role.
     VEC(expr *) raw_uses;     // Raw Texture sources: sampled, inspected, stored in a Raw field or rejected (check_raw_uses).
     const expr *raw_value;    // The direct initializer/assignment of a statically [Raw] Texture field.
     const expr *texture_arg;  // Texture argument conversions whose Raw permission waits for GPU call propagation.
@@ -180,7 +182,7 @@ static void check_placement_body(checker *c, decl *m)
     checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered};
     check_method_body(&nested, m);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
-    MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
+    MERGE_CHECKS(linear_sources); MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
     MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
 #undef MERGE_CHECKS
 }
@@ -2858,6 +2860,15 @@ static bool check_sprite_args(const checker *c, const expr *e)
 // Every Raw Texture source must retain a static role, or only expose its size.
 static void check_raw_uses(const checker *c)
 {
+    for (int i = 0; i < c->prog->mesh_draws.count; i++) {
+        expr *call = c->prog->mesh_draws.items[i].call;
+        bool numeric = false;
+        for (int p = 1; call->frag && p < call->frag->params.count; p++)
+            numeric |= call->frag->params.items[p].type.kind == TY_TEXTURE && call->frag->params.items[p].sample_role.len;
+        if (!numeric) continue;
+        for (int a = 0; a < call->args.count; a++)
+            if (call->args.items[a]->type.kind == TY_TEXTURE) call->args.items[a]->raw_sampled = true;
+    }
     // GPU helpers substitute the original source expression, including its Raw field marker. No runtime value
     // carries that permission to an ordinary CPU Texture helper or a draw.
     for (int i = 0; i < c->calls.count; i++) {
@@ -2878,6 +2889,136 @@ static void check_raw_uses(const checker *c)
                    "hand on", STR_ARG(e->bind == BIND_ASSET ? e->constant->name : e->field->name), raw_kind_name(e->type));
         raw_note();
     }
+}
+
+static bool linear_kind(const type t)
+{
+    return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
+}
+
+// Sampling copies admit RGBA8 storage only. Check every assignment, including later
+// ones, so changing a target to floating-point storage cannot evade validation.
+// Zero is compatible (including no image), one incompatible, minus one unknown.
+static int linear_source_format(const expr *e, const int color, const int depth, const char **reason)
+{
+    if (!e || e->kind == E_DEFAULT) return 0;
+    if (depth > 32) return -1;
+    if (declared_linear(e) || e->bind == BIND_ASSET) return 0;
+    if (e->type.kind == TY_GRID && e->type.decl && e->type.decl->fields.count) {
+        if (e->type.decl->fields.items[0].type.kind == TY_COLOR) return 0;
+        *reason = "single-channel grid images";
+        return 1;
+    }
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
+        return linear_source_format(e->local->value, color, depth + 1, reason);
+    if (e->kind == E_CONDITIONAL) {
+        const int a = linear_source_format(e->lhs, color, depth + 1, reason);
+        return a ? a : linear_source_format(e->rhs, color, depth + 1, reason);
+    }
+    if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
+        return linear_source_format(e->object, 0, depth + 1, reason);
+    if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
+        int64_t index;
+        if (!fold_int(e->lhs, &index) || index < 0 || index > 3) return -1;
+        return linear_source_format(e->object->object, (int)index, depth + 1, reason);
+    }
+    if (e->field) {
+        const field *f = e->field;
+        for (int i = -1; i < f->image_assignments.count; i++) {
+            const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
+            const int got = linear_source_format(origin, color, depth + 1, reason);
+            if (got) return got;
+        }
+        return 0;
+    }
+    if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
+        && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_CUBEMAP || e->type.kind == TY_TEXTURE_ARRAY)) {
+        int slot = 0;
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *arg = e->args.items[i];
+            if (arg->type.kind != TY_ENUM || !arg->type.decl || !str_eq_c(arg->type.decl->name, "Format")) continue;
+            if (slot++ != color) continue;
+            for (int j = 0; arg->constant && j < 16; j++) arg = arg->constant->value;
+            if (!arg->enum_member) return -1;
+            if (str_eq_c(arg->enum_member->name, "Rgba8")) return 0;
+            *reason = str_to_cstr(arg->enum_member->name);
+            return 1;
+        }
+        return slot == 0 && color == 0 ? 0 : -1;
+    }
+    return -1;
+}
+
+static void check_linear_uses(const checker *c)
+{
+    for (int i = 0; i < c->linear_sources.count; i++) {
+        const expr *e = c->linear_sources.items[i];
+        const char *reason = NULL;
+        const int format = linear_source_format(e, 0, 0, &reason);
+        if (format == 1) {
+            diag_error(e->at, "[Linear] cannot read %s: this format has no sRGB counterpart", reason);
+            diag_note("use Format.Rgba8 for display-encoded colors, or remove [Linear] for floating-point light and single-channel data");
+        } else if (format < 0) {
+            diag_error(e->at, "this [Linear] source's format is not fixed by its constructor assignments");
+            diag_note("assign a Format.Rgba8 image directly, or keep images of different formats in separate fields");
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        const bool gpu = !site->to->is_extern && (site->from->kind == DECL_SHADER || site->from->gpu_only || site->to->gpu_only);
+        for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
+            const param *p = &site->to->params.items[k];
+            expr *arg = site->call->args.items[k];
+            if (!linear_kind(p->type) || !declared_linear(arg)) continue;
+            if (p->sample_role.len) {
+                diag_error(arg->at, "a [Linear] image supplies Color, not a [Raw(T)] numeric image");
+                diag_note("borrow it with an ordinary resource parameter, or use an unmarked numeric source with the matching [Raw(T)] role");
+            } else if (gpu && p->mode == PARAM_READ && !p->is_out) {
+                arg->raw_sampled = true; // The helper borrows its original static source.
+            }
+        }
+    }
+    // Numeric direct-source draws may consume Raw arguments above, but cannot erase a Linear role.
+    for (int i = 0; i < c->prog->mesh_draws.count; i++) {
+        const expr *call = c->prog->mesh_draws.items[i].call;
+        for (int a = 0; a < call->args.count; a++) {
+            expr *arg = call->args.items[a];
+            if (declared_linear(arg)) arg->raw_sampled = false;
+        }
+    }
+    for (int i = 0; i < c->linear_uses.count; i++) {
+        const expr *e = c->linear_uses.items[i];
+        if (e->raw_sampled) continue;
+        diag_error(e->at, "this image is [Linear]; an unmarked value would lose its sRGB sampling role");
+        diag_note("keep it in a [Linear] field, or borrow its source in a read-only GPU helper; CPU locals, parameters and returns cannot carry [Linear]");
+    }
+}
+
+static type check_linear_field_value(checker *c, expr *e, const type t)
+{
+    if (t.kind == TY_ERROR || e->kind == E_DEFAULT) return t;
+    const bool grid = t.kind == TY_GRID && t.decl && t.decl->fields.count && t.decl->fields.items[0].type.kind == TY_COLOR;
+    if (t.kind == TY_GRID && !grid) {
+        diag_error(e->at, "[Linear] cannot read single-channel grid images: this format has no sRGB counterpart");
+        diag_note("use a Color grid for display-encoded colors, or remove [Linear] for scalar data");
+        return e->type = T_ERR;
+    }
+    // Runtime image construction and target images are validated for their format separately.
+    const bool runtime = e->resource_operation || e->target_colors
+        || (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET)
+        || (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors);
+    if (!declared_linear(e) && !grid && !runtime) {
+        diag_error(e->at, "a [Linear] field takes a [Linear] image or a Color grid, not an unmarked image");
+        diag_note("mark the source field or asset [Linear], or remove [Linear] from the destination; the mark is never silently added or removed");
+        return e->type = T_ERR;
+    }
+    if (grid && declared_raw(e)) {
+        diag_error(e->at, "a [Raw] grid stores independent numbers; remove [Raw] before converting it to a [Linear] color image");
+        return e->type = T_ERR;
+    }
+    if (runtime) vec_push(c->linear_sources, e);
+    e->raw_sampled = true;
+    return t;
 }
 
 // A list argument's ordinary elements may already be checked for overload
@@ -3001,7 +3142,8 @@ static type check_field_value(checker *c, expr *e, const field *f)
     c->raw_value = raw ? e : NULL;
     const type t = check_expr_want(c, e, f ? f->type : T_ERR);
     c->raw_value = saved;
-    return raw ? check_raw_field_value(e, t) : t;
+    if (f && linear_kind(f->type) && field_is_linear(f)) return check_linear_field_value(c, e, t);
+    return raw && raw_sample_type(f).kind == TY_COLOR ? check_raw_field_value(e, t) : t;
 }
 
 // The `default` arguments of a built-in call, which resolving it left
@@ -3638,6 +3780,18 @@ static int target_formats(const checker *c, const expr *e, const int tail, const
         diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Rgba8, "
                   "Format.Rgba16f)' holds two colors and its depth", made, sep);
         return -1;
+    }
+    if (tail && formats) {
+        int64_t samples = 0;
+        const bool fixed = fold_int(e->args.items[e->args.count - 1], &samples);
+        for (int i = count - formats; i < count; i++) {
+            const expr *format = e->args.items[i];
+            if (!format->enum_member || format->enum_member->number < 7) continue;
+            if (!fixed || samples != 1) {
+                diag_error(e->args.items[e->args.count - 1]->at, "32-bit float and integer images have one sample on every device: leave samples out, or write samples: 1");
+                return -1;
+            }
+        }
     }
     return formats;
 }
@@ -5652,7 +5806,7 @@ static void place_generic_instance(checker *c, decl *d)
     check_method_body(&nested, d);
     if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
-    MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
+    MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
     MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
     MERGE_CHECKS(access_warnings);
 #undef MERGE_CHECKS
@@ -8225,6 +8379,10 @@ static type check_cube_target(checker *c, expr *e)
         diag_note("a cube of depth alone, for a lamp that shines every way, isn't there yet");
         return T_ERR;
     }
+    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number >= 3) {
+        diag_error(e->args.items[1]->at, "a Cubemap uses Format.Rgba8 or Format.Rgba16f: use a RenderTarget for numeric images, or a Texture3D for a numeric volume");
+        return T_ERR;
+    }
     e->call = CALL_BUILTIN;
     e->c_callee = argc == 2 ? "tide_cubemap_make_as" : "tide_cubemap_make";
     e->resource_operation = true;
@@ -8248,6 +8406,13 @@ static type check_volume_target(checker *c, expr *e)
         || (n == 2 && (e->args.items[1]->type.kind != TY_ENUM || e->args.items[1]->type.decl != c->prog->format))) {
         diag_error(e->at, "Texture3D takes a size in texels, an int3, and optionally a Format: 'Texture3D(int3(32), Format.Rgba16f)'");
         return T_ERR;
+    }
+    if (n == 2 && e->args.items[1]->enum_member) {
+        const int64_t format = e->args.items[1]->enum_member->number;
+        if (format != 0 && format != 2 && format != 7 && format != 8 && format != 9) {
+            diag_error(e->args.items[1]->at, "a Texture3D uses a portable storage format: choose Format.Rgba8, Rgba16f, R32f, Rgba32f or R32i");
+            return T_ERR;
+        }
     }
     for (int i = 0; i < n; i++) {
         if (arg_name(e, i).len) {
@@ -8281,6 +8446,10 @@ static type check_array_target(checker *c, expr *e)
     const int argc = e->args.count;
     const type last = argc ? e->args.items[argc - 1]->type : T_ERR;
     const bool formatted = last.kind == TY_ENUM && last.decl == c->prog->format;
+    if (formatted && e->args.items[argc - 1]->enum_member && e->args.items[argc - 1]->enum_member->number >= 3) {
+        diag_error(e->args.items[argc - 1]->at, "a TextureArray uses Format.Rgba8, Rgba16f or Depth: use a RenderTarget for numeric images, or a Texture3D for a numeric volume");
+        return T_ERR;
+    }
     const int sizes = argc - (formatted ? 1 : 0); // width, height, layers[, pixelsPerUnit]
     bool numbers = sizes == 3 || sizes == 4;
     for (int i = 0; numbers && i < sizes; i++) {
@@ -8827,6 +8996,35 @@ static type check_pixel_method(checker *c, expr *e, const bool derivative)
     return T_VOID_;
 }
 
+// A typed clear supplies one value per image. The single Color form retains its existing broadcast.
+static bool check_image_clear(checker *c, expr *e, type *result)
+{
+    if (!str_eq_c(e->name, "Clear") || !e->args.count) return false;
+    for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    const mesh_draw draw = {.call = e, .in = reading_code(c)};
+    vec_push(c->prog->mesh_draws, draw);
+    if (e->args.count == 1 && e->args.items[0]->type.kind == TY_COLOR) return false;
+    *result = T_ERR;
+    if (!check_frame_use(c, e->at, "Draw")) return true;
+    if (e->args.count > 4) {
+        diag_error(e->at, "Clear takes one value per image, four at most; split the target into separate targets");
+        return true;
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        const type t = e->args.items[i]->type;
+        if (t.kind != TY_COLOR && t.kind != TY_FLOAT && t.kind != TY_FLOAT2 && t.kind != TY_FLOAT4 && t.kind != TY_INT) {
+            diag_error(e->args.items[i]->at, "an image clear is a Color, float, float2, float4 or int; use the type its format stores");
+            return true;
+        }
+        vec_push(e->arg_want, t);
+    }
+    e->call = CALL_DRAW;
+    e->c_callee = "tide_draw_clear_images";
+    e->draw_dims = 2;
+    *result = T_VOID_;
+    return true;
+}
+
 static type check_method(checker *c, expr *e)
 {
     // A qualified primitive alias's constructor has the parser's method form.
@@ -8936,6 +9134,10 @@ static type check_method(checker *c, expr *e)
         }
         if (str_eq_c(owner, "RenderTarget")) return check_window_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
+        if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Clear")) {
+            type result;
+            if (check_image_clear(c, e, &result)) return result;
+        }
         if (str_eq_c(owner, "Draw") && (str_eq_c(e->name, "Rect") || str_eq_c(e->name, "Shape"))) {
             type filled;
             if (check_fill_draw(c, e, &filled, false)) return filled;
@@ -9198,6 +9400,7 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_TEXTURE_ARRAY) {
+        if (declared_linear(e->object)) e->object->raw_sampled = true; // Metadata and target lifetime keep the role.
         const bool resize = str_eq_c(e->name, "Resize");
         if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")) {
             check_sample_args(c, e, false);
@@ -9239,6 +9442,7 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_CUBEMAP) {
+        if (declared_linear(e->object)) e->object->raw_sampled = true;
         const bool resize = str_eq_c(e->name, "Resize");
         if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleLevel")) {
             check_sample_args(c, e, true);
@@ -9293,6 +9497,7 @@ static type check_method(checker *c, expr *e)
             decl *code = reading_code(c);
             if (code) code->uses_gpu_read = true;
             e->gpu = GPU_TARGET_READ;
+            vec_push(c->prog->mesh_draws, ((mesh_draw){.in = reading_code(c), .call = e}));
             return result_of(c->prog, grid_of(c->prog, (type){TY_COLOR, NULL}, 2), (type){TY_ENUM, c->prog->io_error}, false);
         }
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
@@ -9325,6 +9530,10 @@ static type check_method(checker *c, expr *e)
         }
         // A target's methods are Draw's, told apart by the receiver alone: the window is a target too
         e->targeted = true;
+        if (str_eq_c(e->name, "Clear")) {
+            type result;
+            if (check_image_clear(c, e, &result)) return result;
+        }
         if (str_eq_c(e->name, "Rect") || str_eq_c(e->name, "Shape")) { // ...with a fill too
             type filled;
             if (check_fill_draw(c, e, &filled, true)) return filled;
@@ -10136,6 +10345,7 @@ static type check_enum_member(expr *e, decl *d)
     for (int i = 0; i < d->members.count; i++) {
         if (str_eq(d->members.items[i].name, e->member)) {
             e->enum_member = &d->members.items[i];
+            if (d->builtin && str_eq_c(d->name, "Format") && d->named_members < i + 1) d->named_members = i + 1;
             return (type){TY_ENUM, d};
         }
     }
@@ -10569,6 +10779,7 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
     if (obj.kind == TY_TEXTURE_ARRAY || obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        if (declared_linear(e->object)) e->object->raw_sampled = true; // Layers and depth name the original target.
         const bool depths = obj.kind == TY_DEPTH_TEXTURE_ARRAY;
         const bool metadata = str_eq_c(e->member, "size") || str_eq_c(e->member, "count");
         if (gpu_code(c) && !metadata) {
@@ -10601,6 +10812,7 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
     if (obj.kind == TY_CUBEMAP) {
+        if (declared_linear(e->object)) e->object->raw_sampled = true; // Faces remain ordinary render destinations.
         if (gpu_code(c)) {
             diag_error(e->at, "a %s reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into",
                        shader_word(gpu_code(c)));
@@ -11280,7 +11492,7 @@ static type check_index(checker *c, expr *e)
             fn->gpu_only_reads = obj.kind;
         }
         e->gpu = GPU_IMAGE_INDEX;
-        return (type){TY_COLOR, NULL};
+        return declared_image_type(e->object);
     }
     if (obj.kind == TY_RENDER_TARGET && e->object->kind == E_MEMBER && e->object->target_colors) {
         // target.colors[1]: one of its color images, as a Texture. Which ones it has is the target's to say, when
@@ -11898,6 +12110,10 @@ static type check_new_mesh(checker *c, expr *e, const type want)
 // Explicit mip reads share source ownership and specialization with ordinary sampling.
 static type check_sample_level(const checker *c, expr *e, const bool cube, const bool array)
 {
+    if (declared_image_type(e->object).kind != TY_COLOR) {
+        diag_error(e->at, "a typed numeric image has no mipmaps: use Sample(uv) to read its nearest pixel");
+        return T_ERR;
+    }
     const char *names = cube ? "direction, level, filter" : array ? "uv, layer, level, filter, wrap" : "uv, level, filter, wrap";
     const int level = array ? 2 : 1;
     if (!order_named_args(e, names, level + 1)) return T_ERR;
@@ -11974,6 +12190,10 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     }
     if (str_eq_c(e->name, "SampleLevel")) return check_sample_level(c, e, false, false);
     if (gradients) {
+        if (declared_image_type(of).kind != TY_COLOR) {
+            diag_error(e->at, "a typed numeric image reads its nearest pixel: use Sample(uv) or Sample(uv, Filter.Point), without derivatives or mipmaps");
+            return T_ERR;
+        }
         if (!order_named_args(e, "uv, dx, dy, filter, wrap", 2)) return T_ERR;
         for (int i = 0; i < e->args.count; i++) {
             if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
@@ -12035,7 +12255,12 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     }
     e->call = CALL_GRID;
     e->type_decl = grid.decl;
-    return (type){TY_COLOR, NULL};
+    const type sampled = declared_image_type(of);
+    if (sampled.kind != TY_COLOR && e->args.count >= 2 && e->args.items[1]->enum_member->number != 0) {
+        diag_error(e->args.items[1]->at, "a typed numeric image reads its nearest pixel on every device: use Filter.Point or leave the filter out; numeric images have no mipmaps");
+        return T_ERR;
+    }
+    return sampled;
 }
 
 // instance.Normal(normal), in a frag or a vert: a normal of the mesh as it is
@@ -12153,7 +12378,12 @@ static type check_volume_sample(const checker *c, expr *e)
         return T_ERR;
     }
     e->call = CALL_GRID;
-    return (type){TY_COLOR, NULL};
+    const type sampled = declared_image_type(of);
+    if (sampled.kind != TY_COLOR && n > 1 && e->args.items[1]->enum_member->number != 0) {
+        diag_error(e->args.items[1]->at, "a typed numeric volume reads its nearest cell on every device: use Filter.Point or leave the filter out");
+        return T_ERR;
+    }
+    return sampled;
 }
 
 static type check_array_sample(const checker *c, expr *e)
@@ -12917,6 +13147,7 @@ static type check_expr_any_raw(checker *c, expr *e)
     }
     e->type = t;
     // Text and lists, including a struct's owned fields, go in the scratch area.
+    if (linear_kind(t) && e->field && declared_linear(e) && builds(c->prog)) vec_push(c->linear_uses, e);
     if (raw_kind(t) && e->field && declared_raw(e) && builds(c->prog)) vec_push(c->raw_uses, e);
     if (holds_heap(t) && (t.kind != TY_STRING || e->kind != E_STRING)) c->prog->uses_text = true;
     if (!whole_ok) note_device_value(c, e, t);
@@ -14102,7 +14333,8 @@ static void check_assign(checker *c, const stmt *s)
     s->target->raw_sampled = true; // A Raw field's destination is not an escaping read of its pixels.
     const type value = s->target->field ? check_field_value(c, s->value, s->target->field) : check_expr_want(c, s->value, target);
     if (s->target->field && s->op == T_ASSIGN
-        && (target.kind == TY_RENDER_TARGET || target.kind == TY_TEXTURE || target.kind == TY_TEXTURE3D)) {
+        && (target.kind == TY_RENDER_TARGET || target.kind == TY_TEXTURE || target.kind == TY_TEXTURE3D
+            || target.kind == TY_TEXTURE_ARRAY || target.kind == TY_CUBEMAP)) {
         field *f = (field *)(uintptr_t)s->target->field;
         vec_push(f->image_assignments, s->value);
     }
@@ -15978,6 +16210,7 @@ static type use_asset(checker *c, expr *e, decl *k)
                   "constant can", STR_ARG(k->return_type_name), STR_ARG(k->qualified));
         return T_ERR;
     }
+    if (k->sample_linear && linear_kind(k->return_type) && builds(c->prog)) vec_push(c->linear_uses, e);
     if (k->sample_raw && raw_kind(k->return_type) && builds(c->prog)) vec_push(c->raw_uses, e);
     type t = k->return_type;
     if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at, true);
@@ -16094,6 +16327,24 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
 // (decl.sample_filter and sample_wrap, which declared_sampling reads). An
 // asset's are read with its declaration, before any code is checked: the
 // shaders are planned from them.
+static void check_linear_attribute(decl *d, const attribute *attr)
+{
+    if (attr->args.count || attr->values.count) {
+        diag_error(attr->at, "Linear takes no arguments: '[Linear]'");
+    } else if (d->kind != DECL_ASSET || !linear_kind(d->return_type) || d->asset_many) {
+        diag_error(attr->at, "[Linear] marks one Texture, TextureArray or Cubemap asset, or a field of those types");
+        diag_note("declare each image separately and sample it by name; mark a resource field for a runtime-made image");
+    } else if (d->sample_linear) {
+        diag_error(attr->at, "'" STR_FMT "' already has a Linear", STR_ARG(d->name));
+    } else {
+        d->sample_linear = true;
+        for (int i = 0; i < d->attributes.count; i++) {
+            if (str_eq_c(d->attributes.items[i].name, "Raw"))
+                diag_error(attr->at, "[Linear] converts display-encoded color, while [Raw] promises independent stored numbers; remove one mark");
+        }
+    }
+}
+
 static void check_raw_attribute(decl *d, const attribute *attr)
 {
     const char *usage = "it goes before an asset that's one Texture, a TextureArray, a Cubemap or one Grid2<Color>, like '[Raw] "
@@ -16162,6 +16413,7 @@ static void check_lossless_attribute(decl *d, const attribute *attr)
 
 static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
 {
+    if (str_eq_c(attr->name, "Linear")) { check_linear_attribute(d, attr); return; }
     if (str_eq_c(attr->name, "Raw")) {
         check_raw_attribute(d, attr);
         return;
@@ -16432,7 +16684,7 @@ static void check_asset_decl(checker *c, decl *k)
         if (str_eq_c(attr->name, "Retarget")) {
             if (retarget) diag_error(attr->at, "an animation asset has one Retarget attribute");
             else retarget = attr;
-        } else if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
+        } else if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw") || str_eq_c(attr->name, "Linear")) {
             check_sampling_attribute(c, k, attr);
         } else if (str_eq_c(attr->name, "Lossless")) {
             check_lossless_attribute(k, attr);
@@ -16626,6 +16878,7 @@ static void check_default(checker *c, const field *f)
     c->raw_value = raw_kind(f->type) && field_is_raw(f) ? value : NULL;
     type t = check_constant_expr(c, value, true, f->type);
     if (c->raw_value == value) t = check_raw_field_value(value, t);
+    if (linear_kind(f->type) && field_is_linear(f)) t = check_linear_field_value(c, value, t);
     c->raw_value = saved_raw;
     c->assets_constant = false;
     if (f->type.kind == TY_GRID && t.kind == TY_GRID && !own_grid(value)) {
@@ -16750,7 +17003,12 @@ static void check_field_raw(const field *f, const attribute *a)
             return;
         }
     }
-    if (a->args.count || a->values.count) diag_error(a->at, "Raw takes nothing: '[Raw]'");
+    if (a->args.count || a->values.count) {
+        if ((f->type.kind != TY_TEXTURE && f->type.kind != TY_TEXTURE3D) || a->args.count || a->values.count != 1
+            || raw_sample_type(f).kind == TY_COLOR) {
+            diag_error(a->at, "Raw takes no arguments, or one numeric image type: [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] on a Texture or Texture3D field");
+        }
+    }
 }
 
 static void check_field_sampling(checker *c, const field *f, attribute *a)
@@ -16932,6 +17190,16 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             check_field_sampling(c, f, a);
             continue;
         }
+        if (str_eq_c(a->name, "Linear")) {
+            if (a->args.count || a->values.count) diag_error(a->at, "Linear takes no arguments: '[Linear]'");
+            if (!linear_kind(f->type) && f->type.kind != TY_ERROR)
+                diag_error(a->at, "[Linear] needs a Texture, TextureArray or Cubemap field; single-channel, float, depth and data formats have no sRGB counterpart");
+            for (int j = 0; j < f->attributes.count; j++) {
+                if (j < i && str_eq_c(f->attributes.items[j].name, "Linear")) diag_error(a->at, "field '" STR_FMT "' already has a Linear", STR_ARG(f->name));
+                if (str_eq_c(f->attributes.items[j].name, "Raw")) diag_error(a->at, "[Linear] converts display-encoded color, while [Raw] promises independent stored numbers; remove one mark");
+            }
+            continue;
+        }
         if (str_eq_c(a->name, "Raw")) {
             check_field_raw(f, a);
             continue;
@@ -16953,6 +17221,7 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Filter");
             suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "Linear");
             suggest_consider_c(&s, "Json");
             suggest_consider_c(&s, "Native");
             suggest_consider_c(&s, "Together");
@@ -17583,6 +17852,9 @@ static void check_signature(checker *c, decl *m)
         const bool world = names_type_as(c, p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
         c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
+        if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D) || p->mode != PARAM_READ
+            || m->is_extern || m->is_async))
+            diag_error(p->at, "[Raw(T)] qualifies a read-only Texture or Texture3D parameter of a synchronous GPU helper");
         c->grid_param = false;
         if (type_is_asset_collection(p->type)) {
             m->borrows_asset_collections = true;
@@ -18355,6 +18627,8 @@ static void check_shader_decl(const checker *c, decl *d)
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         type value = T_ERR;
         const bool plain = !t && resolve_builtin_alias(c, p->type_name, &value);
+        if (p->sample_role.len && (!plain || value.kind != TY_TEXTURE))
+            diag_error(p->at, "a frag or vert's [Raw(T)] role qualifies its read-only Texture source parameter");
 
         if (i == 0) { // The vertex
             if (!t || t->kind != DECL_STRUCT) {
@@ -18403,7 +18677,8 @@ static void check_shader_decl(const checker *c, decl *d)
                     p->is_out = false;
                 }
                 p->function_param = false;
-            } else if (d->is_frag && value.kind == TY_COLOR && p->mode == PARAM_MUT) {
+            } else if (d->is_frag && (value.kind == TY_COLOR || (p->is_out && (value.kind == TY_FLOAT
+                       || value.kind == TY_FLOAT2 || value.kind == TY_FLOAT4 || value.kind == TY_INT))) && p->mode == PARAM_MUT) {
                 if (changes) {
                     diag_error(p->at, "a frag's color is an 'out' parameter: 'out Color " STR_FMT "'", STR_ARG(p->name));
                     diag_note("it starts with no value, where 'mut Color " STR_FMT "' started white: the frag writes it on every "
@@ -18421,9 +18696,8 @@ static void check_shader_decl(const checker *c, decl *d)
                     p->output = d->outputs++;
                 }
             } else if (d->is_frag && p->is_out) {
-                diag_error(p->at, "a frag's outputs are colors: 'out Color " STR_FMT "'", STR_ARG(p->name));
-                diag_note("an output of another type than Color isn't there yet: a Color holds four floats, of which a "
-                          "target made with Format.Rgba16f keeps any number");
+                diag_error(p->at, "a frag's output is Color, float, float2, float4 or int: change the type of '" STR_FMT "'", STR_ARG(p->name));
+                diag_note("write an out parameter for each target image, in order; numeric outputs replace their image without tint or alpha multiplication");
             } else if (d->is_frag && changes) {
                 diag_error(p->at, "a frag reads '" STR_FMT "', and can't change it: drop 'mut'", STR_ARG(p->name));
                 diag_note("what it writes is its pixel's color, 'out Color color'");
@@ -20602,7 +20876,7 @@ static void add_builtins(program *prog)
     // enum Format { Rgba8, Depth, Rgba16f }: what a render target holds, named by what an image stores, said
     // when it's made, a format for each of its color images, with tide/draw.h's
     // tide_target_format's values. Like Depth, generated C has it only in a game whose code names it.
-    static const char *const formats[] = {"Rgba8", "Depth", "Rgba16f"};
+    static const char *const formats[] = {"Rgba8", "Depth", "Rgba16f", "R8", "Rg8", "R16f", "Rg16f", "R32f", "Rgba32f", "R32i"};
     decl *format = NEW(decl);
     format->kind = DECL_ENUM;
     format->name = str_from("Format");
@@ -22020,7 +22294,7 @@ static void check_attributes(checker *c)
                 check_channel_attribute(c, d, attr);
                 continue;
             }
-            if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
+            if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw") || str_eq_c(attr->name, "Linear")) {
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
@@ -22109,6 +22383,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Filter");
                 suggest_consider_c(&s, "Wrap");
                 suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "Linear");
                 suggest_consider_c(&s, "Lossless");
                 suggest_consider_c(&s, "LOD");
                 suggest_consider_c(&s, "BlendShapes");
@@ -24777,6 +25052,7 @@ bool check(program *prog)
     check_this_calls(&c);
     check_drawing_calls(&c);
     check_raw_uses(&c);
+    check_linear_uses(&c);
     check_world_passing(&c);
     if (diag_error_count() == 0) plan_shaders(prog);
     check_local_field_calls(&c); // Shader inputs can require a helper's attached local fields too.

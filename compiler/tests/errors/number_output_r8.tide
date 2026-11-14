@@ -1,0 +1,8 @@
+// expect: but Format.R8 takes float: change the output type or this image's format
+scene Main { }
+local singleton Images { RenderTarget target; }
+frag Fill(Vertex vertex, out Color value) { value = vertex.color; }
+view Show(mut Images images) {
+ images.target = RenderTarget(8,8,Format.R8);
+ images.target.Mesh([Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}], [0,1,2],Fill);
+}

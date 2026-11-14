@@ -422,6 +422,15 @@ static void build_signatures(void)
 {
     if (signature_count > 0) return;
 
+    const type transfer_types[] = {T_F, T_F3, T_COLOR};
+    for (int i = 0; i < 3; i++) {
+        const type t = transfer_types[i];
+        describe(add("Math", "ToLinear", t, c_function("tolinear", t), 1, t, T_NONE, T_NONE), "value",
+                 "Converts sRGB to linear light. RGB clamps to [0,1], NaN gives zero; Color alpha is unchanged.");
+        describe(add("Math", "ToDisplay", t, c_function("todisplay", t), 1, t, T_NONE, T_NONE), "value",
+                 "Converts linear light to sRGB. RGB clamps to [0,1], NaN gives zero; Color alpha is unchanged.");
+    }
+
     for (int n = 2; n <= 4; n++) {
         const type v = vector_type(true, n);
         add("Math", "Dot", T_F, c_function("dot", v), 2, v, v, T_NONE);

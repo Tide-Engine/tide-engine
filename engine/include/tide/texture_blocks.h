@@ -8,6 +8,7 @@
 // pack these can be its only pixels; a device without BC decodes every level.
 // These are visual resources, never simulation values or writable pixels.
 enum { TIDE_BLOCKS_BC1 = 1, TIDE_BLOCKS_BC3 = 3, TIDE_BLOCKS_RGBA8 = 4 };
+#define TIDE_BLOCKS_SRGB 0x100u
 #define TIDE_TEXTURE_BLOCK_MAGIC UINT32_C(0x43425454)
 
 typedef struct tide_texture_blocks {
@@ -17,17 +18,19 @@ typedef struct tide_texture_blocks {
 
 static inline uint32_t tide_texture_level_bytes(const uint32_t width, const uint32_t height, const uint32_t format)
 {
-    return format == TIDE_BLOCKS_RGBA8 ? width * height * 4u
-        : ((width + 3u) / 4u) * ((height + 3u) / 4u) * (format == TIDE_BLOCKS_BC1 ? 8u : 16u);
+    const uint32_t base = format & ~TIDE_BLOCKS_SRGB;
+    return base == TIDE_BLOCKS_RGBA8 ? width * height * 4u
+        : ((width + 3u) / 4u) * ((height + 3u) / 4u) * (base == TIDE_BLOCKS_BC1 ? 8u : 16u);
 }
 
 static inline bool tide_texture_blocks_size(const int32_t width, const int32_t height,
                                             const uint32_t format, uint32_t *levels, uint32_t *bytes)
 {
+    const uint32_t base = format & ~TIDE_BLOCKS_SRGB;
     *levels = *bytes = 0;
     if (width < 4 || height < 4 || width > 16384 || height > 16384
         || (width & (width - 1)) || (height & (height - 1))
-        || (format != TIDE_BLOCKS_BC1 && format != TIDE_BLOCKS_BC3 && format != TIDE_BLOCKS_RGBA8)) return false;
+        || (base != TIDE_BLOCKS_BC1 && base != TIDE_BLOCKS_BC3 && base != TIDE_BLOCKS_RGBA8)) return false;
     uint32_t w = (uint32_t)width, h = (uint32_t)height;
     do {
         *bytes += tide_texture_level_bytes(w, h, format);
@@ -83,11 +86,11 @@ static inline bool tide_texture_blocks_decode_level(const tide_texture_blocks bl
         if (w > 1u) w /= 2u;
         if (h > 1u) h /= 2u;
     }
-    if (blocks.format == TIDE_BLOCKS_RGBA8) {
+    if ((blocks.format & ~TIDE_BLOCKS_SRGB) == TIDE_BLOCKS_RGBA8) {
         memcpy(rgba, blocks.pixels + offset, (size_t)w * h * 4u);
         return true;
     }
-    const bool bc1 = blocks.format == TIDE_BLOCKS_BC1;
+    const bool bc1 = (blocks.format & ~TIDE_BLOCKS_SRGB) == TIDE_BLOCKS_BC1;
     const uint32_t across = (w + 3u) / 4u, down = (h + 3u) / 4u, size = bc1 ? 8u : 16u;
     for (uint32_t by = 0; by < down; by++) {
         for (uint32_t bx = 0; bx < across; bx++) {

@@ -5044,7 +5044,7 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(writes, "out FromLamp lamp") && has(writes, "What the vert writes for the frag it's drawn with"));
     TIDE_CHECK(has(hover_at(6, 32), "What the vert writes for the frag it's drawn with"));
     const char *frag = hover_at(11, 6);
-    TIDE_CHECK(has(frag, "Draw.Instanced(..., Look)") && has(frag, "What it writes to its `out Color` is the pixel"));
+    TIDE_CHECK(has(frag, "Draw.Instanced(..., Look)") && has(frag, "Its `out` parameters write the target's images in order"));
     TIDE_CHECK(has(frag, "- for each instance: `Crate.paint`"));
     TIDE_CHECK(has(frag, "- of what its vert wrote for it, blended across the triangle: `FromLamp.glow`") && !has(frag, "FromLamp.place"));
     const char *lamp = hover_at(11, 35);
@@ -5134,7 +5134,7 @@ TIDE_TEST(lsp_vert_place)
     const char *again = complete(PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip, out $)\n{\n}\n");
     TIDE_CHECK(!offers(again, "float4") && offers(again, "Corner"));
     const char *colors = complete(PLACE_TYPES "frag Shade(Corner corner, out $)\n{\n}\n");
-    TIDE_CHECK(offers(colors, "Color") && !offers(colors, "float4"));
+    TIDE_CHECK(offers(colors, "Color") && offers(colors, "float4") && offers(colors, "int"));
 
     open_document(PLACE_TYPES "vert Snap(mut Corner corner)\n{\n    corner.position.x = this.world.x;\n}\n");
     TIDE_CHECK(has(last_sent(), "a vert's 'this' has no 'world': it has 'clip', where the engine would put its vertex"));
@@ -6299,7 +6299,7 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(last_sent(), "\"activeParameter\":1"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Cl$ear(Color.black);\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/hover"), "Draw.Clear"));
+    TIDE_CHECK(has(request("textDocument/hover"), "RenderTarget.Clear"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Mesh([], [], $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter[, wrap]]]"));
@@ -6595,6 +6595,85 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
 }
 
 // The window's one word, and formats named by what they store; the old spellings are a rename away.
+TIDE_TEST(lsp_numeric_images_and_outputs)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Images { RenderTarget target; "
+                                "[Raw(float)] Texture scalar; [Raw(int)] Texture3D ids; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sview V(mut Images images) { images.target = RenderTarget.Window(Format.$); }\n", types);
+    const char *formats = complete(program);
+    static const char *const names[] = {"R8", "Rg8", "R16f", "Rg16f", "R32f", "Rgba32f", "R32i"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) TIDE_CHECK(offers(formats, names[i]));
+    TIDE_CHECK(has(formats, "Takes int outputs and clears, exactly"));
+    snprintf(program, sizeof program, "%sview V(mut Images images) { images.target = RenderTarget.Window(Format.R32$i); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "One signed 32-bit integer"));
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex vertex, out $) { }\n", types);
+    const char *outputs = complete(program);
+    TIDE_CHECK(offers(outputs, "Color") && offers(outputs, "float") && offers(outputs, "float2")
+               && offers(outputs, "float4") && offers(outputs, "int"));
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex vertex, out float val$ue) { value = vertex.uv.x; }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "no tint or alpha multiplication"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.$); }\n", types);
+    const char *scalar = complete(program);
+    TIDE_CHECK(offers(scalar, "Sample") && !offers(scalar, "SampleLevel") && !offers(scalar, "SampleGrad"));
+    TIDE_CHECK(has(scalar, "Filter.Point") && has(scalar, "-> float"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sample(vertex.uv$)); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "-> float"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.ids.$); }\n", types);
+    const char *volume = complete(program);
+    TIDE_CHECK(offers(volume, "Sample") && has(volume, "-> int") && has(volume, "float3"));
+    TIDE_CHECK(!offers(volume, "Resize") && !offers(volume, "Dispose"));
+    snprintf(program, sizeof program, "%sview V(mut Images images) { images.target.Clear(2.5, float2(1), $); }\n", types);
+    open_document(program);
+    const char *clears = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(clears, "RenderTarget.Clear(value image0, value image1, value image2)")
+               && has(clears, "Float clears may exceed one") && has(clears, "-> void"));
+    TIDE_CHECK(offers(complete("scene Main { }\nlocal singleton Images { [Raw($)] Texture scalar; }\n"), "float2"));
+    snprintf(program, sizeof program, "%sview V(mut Images images) { images.target = RenderTarget(8, 8, Format.Rgba32); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(actions_at(2), "Change to 'Rgba32f'"));
+}
+
+TIDE_TEST(lsp_numeric_output_quick_fixes)
+{
+    start();
+    static const char *const types[] = {"float", "float2", "float4", "int"};
+    static const char *const values[] = {"0", "float2(0)", "float4(0)", "0"};
+    for (size_t i = 0; i < sizeof types / sizeof types[0]; i++) {
+        char program[1024], title[128];
+        snprintf(program, sizeof program, "scene Main { }\nfrag Missing(Vertex vertex, out %s result)\n{\n"
+                                          "    if (vertex.uv.x < 0) result = %s;\n}\n", types[i], values[i]);
+        snprintf(title, sizeof title, "Write 'result = %s;'", values[i]);
+        open_document(program);
+        TIDE_CHECK(has(last_sent(), "without writing its numeric output, 'result'"));
+        actions_at(1);
+        const char *written = apply_fix(program, title);
+        TIDE_REQUIRE(written != NULL);
+        open_document(written);
+        TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    }
+}
+
+TIDE_TEST(lsp_numeric_image_helpers)
+{
+    start();
+    const char *members = complete("scene Main { }\nfloat Read([Raw(float)] Texture image, float2 uv)\n{\n"
+                                   "    return image.$;\n}\n");
+    TIDE_CHECK(offers(members, "Sample") && !offers(members, "SampleGrad") && has(members, "-> float"));
+    open_document("scene Main { }\nfloat Read([Raw(float)] Texture ima$ge, float2 uv)\n{\n"
+                  "    return image.Sample(uv);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "[Raw(float)] Texture image"));
+    open_document("scene Main { }\nint Read([Raw(int)] Texture3D image, float3 uv)\n{\n"
+                  "    return image.Sample(uv$);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "-> int"));
+}
+
 TIDE_TEST(lsp_window_pixels_and_format_names)
 {
     start();
@@ -13318,4 +13397,20 @@ TIDE_TEST(lsp_double_types_swizzles_parsing_and_signatures)
     TIDE_CHECK(!offers(gpu, "double") && !offers(gpu, "double3") && !offers(gpu, "double4x4"));
     open_document("singleton Data { float value = 1d; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "field 'value' is float, not double") && has(last_sent(), "float(x) converts explicitly"));
+}
+
+TIDE_TEST(lsp_linear_textures)
+{
+    start();
+    const char *names = complete("local singleton Art { [$] Texture image; }\nscene Main { }\n");
+    TIDE_CHECK(offers(names, "Linear") && has(names, "sRGB storage sampled in linear light"));
+    names = complete("[$] asset Texture image = \"image.png\";\nscene Main { }\n");
+    TIDE_CHECK(offers(names, "Linear"));
+    open_document("local singleton Art\n{\n    [Linear] Texture image;\n}\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = hover_at(2, 6);
+    TIDE_CHECK(has(hover, "[Linear]") && has(hover, "GPU reads return linear light"));
+    TIDE_CHECK(has(hover, "Alpha stays coverage") || has(hover, "alpha stays coverage"));
+    open_document("scene Main { }\nview V() { [Linear] Texture image; }\n");
+    TIDE_CHECK(has(last_sent(), "marks assets and resource fields, not parameters or locals"));
 }

@@ -1,0 +1,3 @@
+// expect: Linear takes no arguments: '[Linear]'
+local singleton Art { [Linear(1)] Texture image; }
+scene Main { }

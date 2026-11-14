@@ -1,0 +1,8 @@
+// expect: clear value 1 is float2, but Format.Rgba16f takes Color or float4: give each image a clear value of its type, in order
+scene Main { }
+local singleton Images { RenderTarget target; }
+view Clear(mut Images images)
+{
+    images.target = RenderTarget(8, 8, Format.Rgba16f);
+    images.target.Clear(float2(2.5));
+}

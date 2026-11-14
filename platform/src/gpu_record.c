@@ -116,7 +116,8 @@ static bool takes_blocks(const int width, const int height, const tide_texture_b
 {
     uint32_t levels, bytes;
     if (!blocks.pixels || width <= 0 || height <= 0) return false;
-    if (blocks.format != TIDE_BLOCKS_RGBA8 && !(blocks.format < 32u && block_formats >> blocks.format & 1u)) return false;
+    const uint32_t base = blocks.format & ~TIDE_BLOCKS_SRGB;
+    if (base != TIDE_BLOCKS_RGBA8 && !(base < 32u && block_formats >> base & 1u)) return false;
     return tide_texture_blocks_size(width, height, blocks.format, &levels, &bytes) && levels == blocks.levels
            && bytes == blocks.bytes;
 }

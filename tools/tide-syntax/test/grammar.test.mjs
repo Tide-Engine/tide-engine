@@ -83,6 +83,21 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('numeric image roles and frag outputs retain their type scopes', () => {
+    const lines = tokenize('[Raw(float)] Texture height;\n[Raw(float2)] Texture velocity;\n'
+        + '[Raw(float4)] Texture channels;\n[Raw(int)] Texture3D ids;\n'
+        + 'frag Fill(Vertex vertex, out float height, out float2 velocity, out float4 channels, out int id) { }\n'
+        + 'float Read([Raw(float)] Texture image, float2 uv) { return image.Sample(uv); }');
+    for (const [i, type] of ['float', 'float2', 'float4', 'int'].entries()) {
+        check(lines[i], [type, 'storage.type.primitive']);
+        check(lines[4], [type, 'storage.type.primitive']);
+    }
+    check(lines[3], ['Texture3D', 'storage.type.primitive']);
+    check(lines[4], ['Fill', 'entity.name.function']);
+    check(lines[5], ['float', 'storage.type.primitive', 2]);
+    check(lines[5], ['Texture', 'storage.type.primitive']);
+});
+
 test('type aliases distinguish their declaration and target from namespace imports', () => {
     const lines = tokenize('using Physics;\nusing Distance = float;\nusing Scores = Map<int, List<Combat.Score>>;\n'
         + 'namespace Game\n{\n    using Shade = Func<mut Vertex, void>;\n    using Maybe = Combat.Score?;\n'

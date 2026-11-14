@@ -1,0 +1,3 @@
+// expect: [Linear] needs a Texture, TextureArray or Cubemap field; single-channel, float, depth and data formats have no sRGB counterpart
+local singleton Art { [Linear] Grid2<float> image; }
+scene Main { }

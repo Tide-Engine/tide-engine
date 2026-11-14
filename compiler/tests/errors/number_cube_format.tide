@@ -1,0 +1,3 @@
+// expect: a Cubemap uses Format.Rgba8 or Format.Rgba16f
+scene Main { }
+view Show() { var cube=Cubemap(8,Format.R32f); cube.Dispose(); }

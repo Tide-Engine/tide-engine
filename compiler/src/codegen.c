@@ -5552,6 +5552,21 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         else sb_put(o, "))");
         return;
     }
+    if (e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_clear_images") == 0) {
+        sb_put(o, "tide_draw_clear_images(");
+        gen_draw_list(g, o, e);
+        sb_put(o, ", (const tide_clear_value[]){");
+        for (int i = 0; i < e->args.count; i++) {
+            const type t = e->args.items[i]->type;
+            const char *kind = t.kind == TY_COLOR ? "color" : t.kind == TY_FLOAT ? "float"
+                : t.kind == TY_FLOAT2 ? "float2" : t.kind == TY_FLOAT4 ? "float4" : "int";
+            sb_printf(o, "%stide_clear_%s(", i ? ", " : "", kind);
+            gen_as(g, o, e->args.items[i], t);
+            sb_put(o, ")");
+        }
+        sb_printf(o, "}, %d)", e->args.count);
+        return;
+    }
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
@@ -9386,7 +9401,10 @@ static void gen_fields(const gen *g, sb *o, const decl *d)
         if (i == d->fields.count) break;
         const field *f = &d->fields.items[i];
         sb_printf(o, "    %s %s;%s\n", f->type.kind == TY_STRING ? "tide_text" : c_type(f->type), field_cname(f),
-                  o == &g->h && f->type.kind == TY_TEXTURE && field_is_raw(f)             ? " // [Raw] Texture"
+                  o == &g->h && f->type.kind == TY_TEXTURE && field_is_linear(f) ? " // [Linear] Texture"
+                  : o == &g->h && f->type.kind == TY_TEXTURE_ARRAY && field_is_linear(f) ? " // [Linear] TextureArray"
+                  : o == &g->h && f->type.kind == TY_CUBEMAP && field_is_linear(f) ? " // [Linear] Cubemap"
+                  : o == &g->h && f->type.kind == TY_TEXTURE && field_is_raw(f)             ? " // [Raw] Texture"
                   : o == &g->h && f->type.kind == TY_TEXTURE3D && field_is_raw(f) ? " // [Raw] Texture3D"
                   : o == &g->h && f->type.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? " // [Raw] TextureArray"
                   : o == &g->h && f->type.kind == TY_CUBEMAP && field_is_raw(f)       ? " // [Raw] Cubemap"
@@ -22845,7 +22863,7 @@ static tide_grid_shape asset_grid_shape(const decl *grid)
 // One item of an asset into the pack: its block's offset.
 // `stored`, where it isn't NULL, gets an image's blocks' format (tide/texture_blocks.h), or 0 for its exact RGBA.
 static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
-                          const bool compress, uint32_t *extra, const char *cache_folder, uint32_t *stored)
+                          const bool compress, const bool linear, uint32_t *extra, const char *cache_folder, uint32_t *stored)
 {
     *extra = 0;
     uint32_t stored_here;
@@ -22861,12 +22879,12 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         // Its block is shared by what it stores (texture_content): the same file as a color and as [Raw] is one
         // block where the two come out the same, as an opaque image does, and two where they don't
         uint8_t content[32], cache[32];
-        texture_cache_key(cache, item->hash, item->key, raw, compress);
+        texture_cache_key_linear(cache, item->hash, item->key, raw, compress, linear);
         size_t cached_size;
         texture_cache_view view;
         uint8_t *cached = NULL;
         bool prepared = false;
-        if (item->prepared_texture && item->prepared_raw == raw && compress)
+        if (item->prepared_texture && item->prepared_raw == raw && compress && !linear)
             prepared = texture_cache_open(item->prepared_texture, item->prepared_texture_size, &view);
         if (!prepared) {
             cached = texture_cache_read(cache_folder, cache, &cached_size, &view);
@@ -22883,7 +22901,7 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         // A newly requested variant may not have been prepared with the old declaration: made now (texture_make)
         texture_made made;
         char why[256];
-        if (!texture_make(item, raw, compress, &made, why)) {
+        if (!texture_make_linear(item, raw, compress, linear, &made, why)) {
             diag_error((loc){0}, "'%s' can't be imported as an image: %s", item->key, why);
             return 0;
         }
@@ -23175,7 +23193,7 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
 // the cache, where pack_item then finds them (pack_item's calls, with the same raw and compress)
 typedef struct texture_want {
     const asset_match *item;
-    bool raw, compress;
+    bool raw, compress, linear;
     uint8_t key[32];
 } texture_want;
 
@@ -23184,11 +23202,11 @@ typedef struct texture_wants {
     const char *folder;
 } texture_wants;
 
-static void want_texture(texture_wants *w, const asset_match *item, const bool raw, const bool compress)
+static void want_texture(texture_wants *w, const asset_match *item, const bool raw, const bool compress, const bool linear)
 {
-    if (item->prepared_texture && item->prepared_raw == raw && compress) return;
-    texture_want t = {.item = item, .raw = raw, .compress = compress};
-    texture_cache_key(t.key, item->hash, item->key, raw, compress);
+    if (item->prepared_texture && item->prepared_raw == raw && compress && !linear) return;
+    texture_want t = {.item = item, .raw = raw, .compress = compress, .linear = linear};
+    texture_cache_key_linear(t.key, item->hash, item->key, raw, compress, linear);
     if (asset_cache_has(w->folder, t.key)) return;
     for (int i = 0; i < w->list.count; i++) {
         if (!memcmp(w->list.items[i].key, t.key, sizeof t.key)) return;
@@ -23202,7 +23220,7 @@ static void make_texture(void *context, const uint32_t i)
     const texture_want *t = &w->list.items[i];
     texture_made made;
     char why[256];
-    if (!texture_make(t->item, t->raw, t->compress, &made, why)) return; // pack_item says why
+    if (!texture_make_linear(t->item, t->raw, t->compress, t->linear, &made, why)) return; // pack_item says why
     texture_cache_write(w->folder, t->key, &made.view);
     texture_made_free(&made);
 }
@@ -23220,13 +23238,13 @@ static void want_textures(gen *g)
         const asset_value *v = d->asset;
         if (!v) continue;
         if (v->kind == ASSET_TEXTURE_ARRAY) {
-            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, !d->lossless);
+            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, !d->lossless, d->sample_linear);
         } else if (v->kind == ASSET_CUBEMAP) {
-            for (int k = 0; k < 6 && k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, false);
+            for (int k = 0; k < 6 && k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, false, d->sample_linear);
         } else if (v->kind == ASSET_TEXTURE && !v->many) {
-            want_texture(&w, &v->items[0], d->sample_raw, !d->lossless);
+            want_texture(&w, &v->items[0], d->sample_raw, !d->lossless, d->sample_linear);
         } else if (v->kind == ASSET_TEXTURE) {
-            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], false, !d->lossless);
+            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], false, !d->lossless, false);
         }
     }
     build_threads_each((uint32_t)w.list.count, TEXTURES_AT_ONCE, make_texture, &w); // The list is the arena's
@@ -23490,7 +23508,7 @@ static void build_pack(gen *g)
             uint64_t *layers = arena_alloc(sizeof *layers * (size_t)(v->count ? v->count : 1));
             uint32_t extra;
             for (int k = 0; k < v->count; k++) {
-                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, &extra, prog->game_folder, NULL);
+                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder, NULL);
             }
             tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
                            (uint32_t)(v->count ? v->items[0].image.width : 0));
@@ -23500,7 +23518,7 @@ static void build_pack(gen *g)
             uint64_t faces[6];
             uint32_t extra;
             for (int k = 0; k < 6; k++) {
-                faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, &extra, prog->game_folder, NULL);
+                faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, d->sample_linear, &extra, prog->game_folder, NULL);
             }
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
             continue;
@@ -23538,7 +23556,7 @@ static void build_pack(gen *g)
         }
         if (!v->many) {
             uint32_t extra;
-            const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, !d->lossless, &extra, prog->game_folder,
+            const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder,
                                           &stored[0]);
             tide_pack_name(&b, qualified, kind, at,
                            v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
@@ -23549,7 +23567,7 @@ static void build_pack(gen *g)
         if (!offsets || !keys) abort();
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
-            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, !d->lossless, &extra, prog->game_folder,
+            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, !d->lossless, false, &extra, prog->game_folder,
                                    k < 4 ? &stored[k] : NULL);
             if (v->is_map) { // Its key: text, as code reads one
                 uint8_t hash[32];
@@ -26787,7 +26805,10 @@ static void gen_layout(gen *g)
                           : t.kind == TY_ENUM   ? layout_index(&enums, t.decl)
                                                 : -1;
             const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
-            const char *type_name = t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture"
+            const char *type_name = t.kind == TY_TEXTURE && field_is_linear(f) ? "[Linear] Texture"
+                                  : t.kind == TY_TEXTURE_ARRAY && field_is_linear(f) ? "[Linear] TextureArray"
+                                  : t.kind == TY_CUBEMAP && field_is_linear(f) ? "[Linear] Cubemap"
+                                  : t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture"
                                   : t.kind == TY_TEXTURE3D && field_is_raw(f) ? "[Raw] Texture3D"
                                   : t.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? "[Raw] TextureArray"
                                   : t.kind == TY_CUBEMAP && field_is_raw(f) ? "[Raw] Cubemap" : layout_field_name(t);
@@ -27148,6 +27169,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
     }
     for (int t = 0; t < sh->textures.count; t++) {
         const shader_texture *texture = &sh->textures.items[t];
+        const char *linear = (texture->asset ? texture->asset->sample_linear : field_is_linear(texture->field)) ? "_linear" : "";
         if (texture->skin) continue; // Bound after this item's pose is captured
         if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
             const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
@@ -27195,7 +27217,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field), texture->image_color);
             continue;
         }
-        if (texture->read == READ_VOLUME) {
+        if (texture->read == READ_VOLUME || texture->read == READ_NUMBER_VOLUME || texture->read == READ_INT_VOLUME) {
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
             sb_printf(o, "    tide_textures[%d] = tide_draw_volume_source(tide_draw, tide_%sb%d->%s);\n", t,
@@ -27204,28 +27226,28 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
         }
         if (texture->read == READ_ARRAY) { // A TextureArray: an asset's by name, or a field's
             if (texture->asset) {
-                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source%s(tide_draw, %s);\n", t, linear, asset_cname(texture->asset));
             } else {
                 int b = 0;
                 while (sh->bound.items[b] != texture->source) b++;
-                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source(tide_draw, tide_%sb%d->%s);\n", t,
+                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source%s(tide_draw, tide_%sb%d->%s);\n", t, linear,
                           texture->field->is_local ? "l" : "", b, field_cname(texture->field));
             }
             continue;
         }
         if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
             if (texture->asset) {
-                sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+                sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source%s(tide_draw, %s);\n", t, linear, asset_cname(texture->asset));
             } else {
                 int b = 0;
                 while (sh->bound.items[b] != texture->source) b++;
-                sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source(tide_draw, tide_%sb%d->%s);\n", t,
+                sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source%s(tide_draw, tide_%sb%d->%s);\n", t, linear,
                           texture->field->is_local ? "l" : "", b, field_cname(texture->field));
             }
             continue;
         }
         if (texture->asset && texture->asset->return_type.kind == TY_TEXTURE) { // A Texture asset, by name
-            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source%s(tide_draw, %s);\n", t, linear, asset_cname(texture->asset));
             continue;
         }
         if (texture->asset) { // A Grid2<Color> asset, by name
@@ -27248,7 +27270,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                              "        : tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n",
                           t, t, t, texture->field->is_local ? "l" : "", b, field_cname(texture->field), t, t, t, t,
                           texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-            } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
+            } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source%s(tide_draw, tide_%sb%d->%s);\n", t, linear,
                              texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         }
         else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY)
@@ -27539,6 +27561,8 @@ static void gen_shaders(gen *g)
         shader_put_texture_reads(o, sh);
         // The colors its frag writes, where that's more than the pixel's: one for each color image of a target
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
+        if (shader_numeric_outputs(sh)) sb_printf(o, "    .numeric_outputs = 0x%xu,\n", shader_numeric_outputs(sh));
+        if (shader_numeric_outputs(sh)) sb_printf(o, "    .output_types = 0x%xu,\n", shader_output_types(sh));
         if (sh->blit) sb_put(o, "    .blit = true,\n");
         if (sh->frag && sh->frag->writes_depth) sb_put(o, "    .writes_depth = true,\n");
         if (sh->frag && sh->frag->cutout) sb_put(o, "    .cutout = true,\n"); // Its alpha is its coverage
@@ -27951,6 +27975,7 @@ bool codegen(program *prog, const codegen_options *opts)
     // others' C is as it was
     const int filters = prog->names_anisotropic ? 4 : prog->names_trilinear ? 3 : 2;
     if (prog->filter && prog->filter->members.count > filters) prog->filter->members.count = filters;
+    if (prog->format && prog->format->named_members <= 3) prog->format->members.count = 3;
     if (opts->info) {
         setting_text(opts->info->title, sizeof opts->info->title, prog->title);
         setting_text(opts->info->app_id, sizeof opts->info->app_id, prog->app_id);

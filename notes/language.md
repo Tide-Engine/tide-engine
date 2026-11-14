@@ -1,3 +1,26 @@
+## Linear sampled-image roles (2026-11-14)
+
+[Linear] is a static source role for Texture/TextureArray/Cubemap fields and singular assets, preserved by
+GPU helper source specialization. check_linear_uses rejects unannotated CPU escapes; field/default checks
+consume marked sources or permit Color grids/known runtime RGBA8 images. Deferred source-format validation
+follows constructor assignments, including later target changes. Typed references and their sizes are unchanged.
+Header role comments and [Linear] layout field names make role changes migrate to destination defaults.
+Parser diagnostics explicitly reject local/parameter attributes. The shader capture wrapper selects the
+*_source_linear entry point; WGSL itself performs no manual transfer conversion for a marked read.
+Contracts, Provisional picks, importer/cache/alpha details and validation: textures.md top section and spec.md.
+Numeric-role integration retains Color for every Linear source. [Raw(T), Linear] is refused, numeric helper
+parameters cannot borrow a Linear color source, and numeric direct-draw consumption cannot erase its mark.
+All seven numeric target formats have explicit no-sRGB-counterpart diagnostics. Typed numeric SampleLevel
+remains refused; Linear color SampleLevel keeps the ordinary color path.
+
+## Numeric GPU images (2026-11-14)
+
+The approved frag output types, Format members, typed Texture/Texture3D roles, per-image clears and storage
+format connection are implemented. Checker/parser/codegen contracts and exact shader/compiler tests are in
+shaders.md; resource encoding, clears and reload contracts are in render-targets.md. Existing generated C,
+headers and packs retain their identities apart from compiler-source simulation IDs when none of the new
+features is used (the five-fixture plain/layout comparison is recorded with compiler validation).
+
 ## Awaited render-target pixels (2026-11-14)
 
 RenderTarget.Read is local async, failable Grid2<Color>, lowered through the existing GPU ticket frame field.

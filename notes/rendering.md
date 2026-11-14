@@ -1,3 +1,43 @@
+## [Linear] sampled images (2026-11-14)
+
+A draw texture carries a static `linear` interpretation independently from its source id. GPU upload cache
+lookups include that bit. Texture references and their layouts are unchanged. `TIDE_GPU_SRGBA8` (8) and
+`TIDE_GPU_COLOR_SRGB` (10) are private GPU formats, not public render-target Format members; RGBA, BC1 and
+BC3 uploads use hardware sRGB formats. `TIDE_BLOCKS_SRGB` (0x100) is added only to the transient GPU upload
+descriptor; pack bytes keep their existing block-format layout. Block sizes and fallback decodes mask it.
+Vulkan uploads use R8G8B8A8_SRGB/BC1_RGBA_SRGB_BLOCK/BC3_SRGB_BLOCK. Its blit mip chain decodes and encodes
+around filtering through the image format. WebGPU uses corresponding unorm-srgb formats and render-pass mips.
+
+Target-backed marked reads use a private sampled copy: point-read existing display-premultiplied bytes,
+unpremultiply, decode RGB, premultiply in linear light, then write to private sRGB attachments. Public target
+storage, frag outputs and Read remain unchanged. Texture, cube-face and array-layer copies retain dimensions
+and have linear-light mips. Source epoch invalidation is conservative (an intervening source change can refresh
+an unchanged image too); copies are made outside the destination pass. Device loss clears handles/pipelines;
+reload and Dispose free private targets before their owning image. Runtime grids write encoded linear-premultiplied
+RGB directly, with distinct draw-cache roles and chunk-change tracking. Alpha is quantized to its stored byte
+before marked RGB premultiplication, so near-zero coverage that rounds to zero cannot leave encoded RGB.
+
+Native strict ASan engine/platform compilation and `draw_linear_grid_captures_keep_roles_and_alpha` pass.
+Integrated pass 33 checks 16 marked-image cases on native ASan Vulkan with validation and web-debug SwiftShader
+WebGPU, including prewarming, device recreation, changed target colors and copied mip chains. Final runtime audit
+confirmed sRGB flags survive unsupported-block RGBA fallback, mixed BC1/BC3 array promotion and GPU-none paths.
+The audit fixed retrying a private copy whose GPU image/face allocation failed, bounded copy-cache growth,
+and quantized grid alpha before marked RGB premultiplication (the grid unit pins alpha 0.001 rounding to clear);
+these changes require the parent's final compilation/unit check. No other-device coverage claimed.
+
+## Numeric image rendering (2026-11-14)
+
+The language feature above the attachment groundwork is complete (render-targets.md, shaders.md). Numeric
+read kinds 9–12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
+2D formats reuse the existing portable storage API. Shader numeric_outputs selects replace blending per
+attachment; output_types guards dynamically supplied incompatible targets before pipeline creation.
+The internal RESET_ALONE depth mode resets depth with every color write disabled. Sixteen static clear
+variants handle every integer-output mask while retaining clips and the selected forward/reversed convention.
+Vulkan begins each pass with zero dynamic depth bias, including direct gpu.h fixtures that bypass draw state.
+Recorder and none accept the same appended read/depth values; no new GPU function or packet is needed.
+Vulkan ASan and software WebGPU exact pixels, storage/volume writes, mixed outputs and clear tests pass;
+Unity's API-specific replay validation is in unity.md. No platform-dependent numeric filtering fallback exists.
+
 ## Reversed float depth (2026-11-14)
 
 Owner approved the investigation's recommendations: "go with recommendations". Production Vulkan prefers

@@ -1,3 +1,48 @@
+## Numeric image language surface and clears (2026-11-14)
+
+Completes the owner-approved feature recorded in "Numeric attachments: backend foundation" below. The language
+now exposes R8/Rg8/R16f/Rg16f/R32f/Rgba32f/R32i, beside Rgba8/Depth/Rgba16f, in both RenderTarget constructors.
+The output/format table and every implementation pick are Provisional in docs/spec.md, Views and drawing;
+owner decisions retain their 2026-11-13 quote there. User pages: game/render-targets.md and game/shaders.md.
+
+- The old three-bit format-per-image layout remains valid for every legacy-only target. Numeric formats use
+  the unused tags of that same 16-bit space: 31 old format codes times 16 image/sample combinations reserve
+  496 tags. A dense numeric catalogue has 7,381 single-sample format combinations and three banks of 1,555
+  compact-format combinations for 2/4/8 samples, each with four image selectors. Rank/unrank skips the reserved
+  tags. All 48,184 payloads fit without widening pointers, holds, state alignment or public resource values.
+  Exhaustive unit checks pin every payload and every legacy tag; reload tests pin mixed formats, samples,
+  all image aliases and byte limits. Widening four format lanes to four bits would have required 1 MiB alignment;
+  a resource registry or a changed public value would have introduced a broader lifetime/ABI change.
+- R8/Rg8/R16f/Rg16f and numeric float4 in Rgba16f resolve MSAA by mean. R32f/Rgba32f/R32i use one sample:
+  optional float32 resolves and integer sample-zero resolves were rejected in favor of baseline portability.
+- target.Clear(v0, ..., vN) records one value per image in format order, with exact int or float bits. Values
+  are Color/float/float2/float4/int; Color alone preserves the old broadcast on legacy targets. Numeric values
+  neither clamp to one nor premultiply; normalized attachments quantize on storage. Color values premultiply.
+  Tint/blend/transforms do not affect clears, clips do, and depth/stencil reset. Sixteen precompiled WGSL/SPIR-V/
+  HLSL clear variants cover the possible integer attachment masks without runtime shader translation.
+  ClearDepth uses an internal reset-without-color depth mode on numeric targets, retaining every image's bits.
+- Typed numeric reads use declared Raw(T) Texture/Texture3D roles, nearest loads and no mip chain. The shader
+  implementation and storage-image/volume connection are in shaders.md and compute.md. Cubes and arrays retain
+  their existing color formats; a numeric constructor format explains using a RenderTarget or Texture3D instead.
+
+Validation after merging origin/dev's reversed-depth, depth bias, WriteDepth, SampleLevel and Color readback:
+Windows Clang 23.1.2 ASan draw group 134/134 and the corresponding Node 24.22.1 WASI group 134/134 pass.
+Native and WASI E2Es pass for image_clears, number_images, render_colors, render_samples and texture3d.
+Native Vulkan target, generated images, compute (push descriptors and descriptor sets), embed, shaders,
+readback, draw (both descriptor paths) and prewarm checks pass. Software WebGPU targets, images, compute,
+draw, prewarm and readback pass, including device loss; target clears also pass forced forward-depth fallback
+on native and web. The generated mixed MRT witness pins unchanged Color tint/alpha/blend beside untouched
+numeric float4/int replacement. Exact backend probes serialize all 32 stored bits through opaque RGB, so a
+browser canvas's opaque alpha cannot hide the high byte. Typed clear probes compare every float/int bit,
+including -2147483647, values past one, free fourth channels, clips and ClearDepth preservation.
+
+All 198 native WGSL golden/SPIR-V/FXC shader checks pass, along with numeric diagnostics and generated-C
+metadata checks (shaders.md); no pre-existing shader expectation changed for this feature. The web configuration's
+161 shader/SPIR-V/numeric-diagnostic checks and minifier sweep pass. The five added clear diagnostics pass on
+both configurations. Renderer clear variants pass spirv-val and FXC /WX; CLI Unity shader catalogue checks pass.
+Editor LSP 278/278, grammar 383/383 and docs production build pass. Unity actual replay results and the few
+unavailable hardware platforms are recorded in unity.md. No CI was manually dispatched.
+
 # Owned pixel readback (2026-11-14)
 
 Owner-approved 2026-11-13: await target.Read gives an owned Grid2<Color> fails IOError in local async code.
@@ -11,16 +56,23 @@ Grid is-pattern unwrapping and fresh await/default results complete the existing
 
 Pending captures fail before build resources are freed; begun copies own their GPU data. Device reset fails
 captures already begun or prepared. Empty/disposed/depth, window and face/layer targets fail without invalid
-bindings. Numeric Format members were absent on dev: Read explicitly admits RGBA8/RGBA16f; typed numeric reads
-remain to connect with that feature. Unity's generated shader catalogue includes read_pixels_wgsl.h, copied
+bindings. Read explicitly admits Rgba8/Rgba16f as Color; other numeric formats give format-specific guidance
+to typed Sample or a kernel writing a GPU list. Rgba16f Read unpremultiplies as Color even if a numeric frag
+wrote the image; `[Raw(float4)]` GPU sampling preserves all four independent channels. Unity's generated shader catalogue includes read_pixels_wgsl.h, copied
 from --kernels and checked against the actual Tide source by tidec_read_target_builtin. CLI tests pin its
 compute asset. Embed ABI 22 covers the shared read table's target/dimension fields. Recorder and none reuse
 compute and buffer-read operations; no new GPU function or readback opcode.
 
-The absent public numeric connection is specifically Format.R8, Rg8, R16f, Rg16f, R32f, Rgba32f and R32i:
-their typed sampling checker and shader bindings must connect SampleLevel's result and filtering rules, and
-Read must select a typed Grid2 result/conversion kernel or issue the format-specific diagnostic. No numeric
-format is silently interpreted as a Color image here.
+Typed numeric reads return the declaration's numeric type through Sample with Point only. SampleLevel and
+SampleGrad are refused with guidance to use Sample. No numeric CPU Grid2 conversion is implied by the Color
+readback API.
+
+Android (correction, 2026-11-14): `tide_platform_readback` was registered there too, as a program started
+through adb. It opens a window, which on Android only an app has, so it waited for good and CTest's timeout
+didn't end it: the Android job hung on every Build run from a5b50cd74 on. On Android the same game and host
+are now an app, `tide_platform_readback_app` (`tide_android_app_test ... GPU`, as the shaders' checks):
+on this machine's emulator (`-gpu lavapipe`) it printed "ok: await target.Read owns the exact drawn 4x3
+colors at frame 5" on Vulkan and ended with 0 in 2 s.
 
 Validation: native ASan Vulkan and web-debug SwiftShader WebGPU readback fixtures pin a 4x3 MSAA-resolved
 image, prior-frame ownership, row order, straight alpha, HDR 2.0 and exact frame-5 completion of sequential reads.
@@ -53,13 +105,12 @@ OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md
 
 Full combined native/web suite results: `notes/rendering.md`, Gap integration validation.
 
-## Numeric attachments: backend foundation (2026-11-14)
+## Numeric attachments: original backend foundation (2026-11-14)
 
 The owner approved numeric frag outputs, seven formats, typed Sample and one clear value per image on
-2026-11-13: "these make sense, lets do all of these". This commit is the backend foundation only. It does
-**not** expose new Tide Format members yet; the compiler and managed-target handle encoding still only
-support the existing formats. The shader/image-writing thread can use the gpu.h catalogue below after
-this commit lands, but must not assume the Tide Format enum has landed.
+2026-11-13: "these make sense, lets do all of these". The original foundation exposed the backend catalogue;
+the language, runtime and editor connections are now built, as described at the top of this note. The
+following records the foundation's original scope and validation.
 
 - `tide_gpu_color` appends R8, RG8, R16F, RG16F, R32F, RGBA32F and R32I as values 3 through 9. Existing
   NONE/BYTES/FLOAT values and four-bit attachment packing stay unchanged. Vulkan and WebGPU map these to
@@ -69,7 +120,7 @@ this commit lands, but must not assume the Tide Format enum has landed.
   attachment kinds yield no storage and cannot index beyond a table.
 - Provisional: R32F, RGBA32F and R32I use one sample. Vulkan, WebGPU's C bridge, recorder and none agree.
   Optional float32 multisampling and integer sample-zero resolve were considered; the baseline portable
-  attachment path is chosen instead. This is not yet a Tide diagnostic or a complete numeric-output contract.
+  attachment path is chosen instead. The language now diagnoses unsupported sample counts too.
 - `check_number_attachments` in the existing platform target fixture checks every appended kind's packed
   round trip, byte count, single-sample restriction, allocation and a draw (negative signed integer or a
   float vector with a fractional fourth component and a component past one). It does not read these numeric
@@ -81,10 +132,8 @@ this commit lands, but must not assume the Tide Format enum has landed.
 - Integration: merged origin/dev's `this.front` work without conflicts. Rebuilt native and web targets and shaders;
   both platform CTests pass on Vulkan ASan and software WebGPU. The new triangle-side golden, spirv-val and
   FXC checks also pass.
-- Outstanding work for the requested feature: managed target format encoding and Tide Format members;
-  typed frag outputs, matching at draws, typed texture roles and Sample; per-image clears; blending and
-  filtering enforcement, mipmap rules, language-server support, compiler/golden and exact readback fixtures,
-  user docs and the complete Decided/Provisional spec update. This foundation does not close those gaps.
+- Follow-up integration adds managed format encoding, language members, typed outputs and matching, typed
+  Sample, per-image clears, storage/volume connections, editor support and exact numeric pixel witnesses.
 
 ## Cached images detect discarded contents (2026-11-02)
 

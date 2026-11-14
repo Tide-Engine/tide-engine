@@ -129,7 +129,7 @@ namespace Tide
             public Material material; // Draw
             public MaterialPropertyBlock properties; // ...and its pipeline's attributes and slots
             public GraphicsBuffer v0, v1, v2, index;
-            public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize;
+            public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize, shaderPass;
             public uint first, sampling, samplingHigh, unmipped, own, ownHigh;
             public RenderTexture mipmapped; // Mipmaps
             public int storage, storageCount; // Draw: the storage buffers it reads, in its recording's `storage`
@@ -158,6 +158,7 @@ namespace Tide
 
         readonly Dictionary<uint, BufferObject> buffers = new Dictionary<uint, BufferObject>();
         readonly Dictionary<uint, Image> images = new Dictionary<uint, Image>();
+        readonly HashSet<uint> srgbRefused = new HashSet<uint>();
         readonly Dictionary<uint, Target> targets = new Dictionary<uint, Target>();
         readonly Dictionary<uint, Pipeline> pipelines = new Dictionary<uint, Pipeline>();
         readonly List<(UnityEngine.Object thing, int frame)> doomed = new List<(UnityEngine.Object, int)>();
@@ -180,6 +181,8 @@ namespace Tide
         GraphicsBuffer none; // What an unused vertex slot reads
         Texture2D white;
         Texture3D emptyVolume;
+        Texture2D emptyNumber;
+        RenderTexture emptyInteger, emptyIntVolume;
         Material resolveDepth;
         bool fresh = true; // Nothing made yet: Tide's renderer makes everything again first
         bool ownSamplers;  // OpenGL Core's: each texture's own sampler, set as each draw asks (see hlsl.h)
@@ -216,6 +219,13 @@ namespace Tide
         bool offscreenPass;
         int passStart;
         bool volumeSaid;
+        bool srgbSaid;
+        Material srgbMipMaterial;
+        RenderTexture srgbMipScratch;
+        static readonly int SrgbMipInfo = Shader.PropertyToID("_TideSrgbMipInfo");
+        static readonly int SrgbSource2D = Shader.PropertyToID("_TideSrgbSource2D");
+        static readonly int SrgbSourceArray = Shader.PropertyToID("_TideSrgbSourceArray");
+        static readonly int SrgbSourceCube = Shader.PropertyToID("_TideSrgbSourceCube");
         const int MaxStorage = 4; // gpu.h's TIDE_GPU_MAX_STORAGE
         readonly uint[] storageBound = new uint[MaxStorage];
 
@@ -330,6 +340,9 @@ namespace Tide
             none = null;
             if (white != null) DestroyImmediate(white);
             if (emptyVolume != null) DestroyImmediate(emptyVolume);
+            if (emptyNumber != null) DestroyImmediate(emptyNumber);
+            if (emptyInteger != null) DestroyImmediate(emptyInteger);
+            if (emptyIntVolume != null) DestroyImmediate(emptyIntVolume);
             if (resolveDepth != null) DestroyImmediate(resolveDepth);
             Release(frame);
             foreach (var view in views.Values) Release(view);
@@ -364,6 +377,9 @@ namespace Tide
                 if (i.owned && i.arrayDepth != null && i.arrayDepth != i.texture) DestroyImmediate(i.arrayDepth);
             }
             images.Clear();
+            srgbRefused.Clear();
+            if (srgbMipScratch != null) { srgbMipScratch.Release(); DestroyImmediate(srgbMipScratch); srgbMipScratch = null; }
+            if (srgbMipMaterial != null) { DestroyImmediate(srgbMipMaterial); srgbMipMaterial = null; }
             foreach (var t in targets.Values) Release(t);
             targets.Clear();
             foreach (var p in pipelines.Values) ForgetMaterials(p);
@@ -627,6 +643,7 @@ namespace Tide
                     Mipmaps(W(0));
                     break;
                 case Op.TextureFree:
+                    srgbRefused.Remove(W(0));
                     if (images.TryGetValue(W(0), out var image))
                     {
                         if (image.owned) Doom(image.texture);
@@ -660,6 +677,7 @@ namespace Tide
                     break;
                 case Op.Target: MakeTarget(p); break;
                 case Op.TargetFree:
+                    srgbRefused.Remove(W(0));
                     if (targets.TryGetValue(W(0), out var target))
                     {
                         foreach (var id in target.imageIds) images.Remove(id);
@@ -834,6 +852,19 @@ namespace Tide
             return view;
         }
 
+        // Unity replaces sRGB texture formats with UNorm in Gamma projects, even when a GraphicsFormat is
+        // requested explicitly. Refuse marked resources instead of silently filtering display-encoded numbers.
+        bool SrgbAvailable(bool srgb)
+        {
+            if (!srgb || QualitySettings.activeColorSpace == ColorSpace.Linear) return true;
+            if (!srgbSaid)
+            {
+                srgbSaid = true;
+                Debug.LogError("Tide: [Linear] textures require Unity's Linear color space. Set Project Settings > Player > Other Settings > Color Space to Linear; Unity's Gamma mode disables sRGB image formats.");
+            }
+            return false;
+        }
+
         static GraphicsFormat TextureFormat(int format) => format switch
         {
             1 => GraphicsFormat.R8_UNorm,
@@ -843,6 +874,7 @@ namespace Tide
             5 => GraphicsFormat.R32_SFloat,
             6 => GraphicsFormat.R32G32B32A32_SFloat,
             7 => GraphicsFormat.R32_SInt,
+            8 => GraphicsFormat.R8G8B8A8_SRGB,
             _ => GraphicsFormat.R8G8B8A8_UNorm,
         };
 
@@ -872,7 +904,7 @@ namespace Tide
             if (width <= 0 || height <= 0 || depth <= 0 || width > SystemInfo.maxTexture3DSize || height > SystemInfo.maxTexture3DSize
                 || depth > SystemInfo.maxTexture3DSize || format < 0 || format > 7
                 || (long)width * height * depth > 128L * 1024 * 1024 / PixelBytes(format) || !SystemInfo.supports3DTextures
-                || !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.Sample)
+                || (!IntegerImage(format) && !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.Sample))
                 || (WritableImage(format) && !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.LoadStore)))
             {
                 VolumeUnavailable();
@@ -986,6 +1018,7 @@ namespace Tide
 
         void MakeTexture(uint id, int format, int width, int height, byte* pixels)
         {
+            if (!SrgbAvailable(format == 8)) { srgbRefused.Add(id); return; }
             var texture = NewTexture(format, width, height);
             var bytes = PixelBytes(format);
             var image = new Image { texture = texture, format = format, pixelBytes = bytes, width = width, height = height, owned = true };
@@ -1013,17 +1046,62 @@ namespace Tide
                 image.texture = texture;
                 image.used = -1;
                 texture.SetPixelData(image.pixels, 0);
-                texture.Apply(image.mips, false);
+                texture.Apply(image.mips && image.format != 8, false);
+                if (image.mips && image.format == 8) SrgbMipmaps(image);
                 return;
             }
             texture.SetPixelData(image.pixels, 0);
             texture.Apply(false, false); // Its smaller images stay as they were made
         }
 
+        // Unity's Apply(true) and GenerateMips average encoded bytes. Draw each smaller level through the
+        // image's sRGB sampling view into a separate sRGB attachment, then copy its encoded bytes back.
+        void SrgbMipmaps(Image image)
+        {
+            var texture = image.texture;
+            if (texture == null || texture.mipmapCount < 2) return;
+            if (srgbMipMaterial == null)
+                srgbMipMaterial = new Material(Resources.Load<Shader>("TideSrgbMip")) { hideFlags = HideFlags.HideAndDontSave };
+            if (srgbMipScratch == null || srgbMipScratch.width != texture.width || srgbMipScratch.height != texture.height)
+            {
+                Doom(srgbMipScratch);
+                srgbMipScratch = new RenderTexture(new RenderTextureDescriptor(texture.width, texture.height)
+                {
+                    graphicsFormat = GraphicsFormat.R8G8B8A8_SRGB, depthStencilFormat = GraphicsFormat.None,
+                    useMipMap = true, autoGenerateMips = false, mipCount = texture.mipmapCount, msaaSamples = 1,
+                }) { hideFlags = HideFlags.HideAndDontSave };
+                srgbMipScratch.Create();
+            }
+            var cube = texture.dimension == TextureDimension.Cube;
+            var array = texture.dimension == TextureDimension.Tex2DArray;
+            var layers = cube ? 6 : texture is Texture2DArray pixels ? pixels.depth : array && texture is RenderTexture rt ? rt.volumeDepth : 1;
+            var cb = Work();
+            cb.SetGlobalTexture(cube ? SrgbSourceCube : array ? SrgbSourceArray : SrgbSource2D, texture);
+            cb.DisableScissorRect();
+            cb.SetGlobalDepthBias(0, 0);
+            var width = texture.width;
+            var height = texture.height;
+            for (var level = 1; level < texture.mipmapCount; level++)
+            {
+                width = Math.Max(1, width / 2);
+                height = Math.Max(1, height / 2);
+                for (var layer = 0; layer < layers; layer++)
+                {
+                    cb.SetRenderTarget(srgbMipScratch, level);
+                    cb.SetViewport(new Rect(0, 0, width, height));
+                    cb.SetGlobalVector(SrgbMipInfo, new Vector4(width, height, level - 1, layer));
+                    cb.DrawProcedural(Matrix4x4.identity, srgbMipMaterial, cube ? 2 : array ? 1 : 0, MeshTopology.Triangles, 3);
+                    cb.CopyTexture(srgbMipScratch, 0, level, texture, layer, level);
+                }
+            }
+        }
+
         void Mipmaps(uint id)
         {
             if (!images.TryGetValue(id, out var image)) return;
-            if (image.texture is Texture2D texture && texture.mipmapCount > 1) texture.Apply(true, false);
+            if (image.texture.graphicsFormat == GraphicsFormat.R8G8B8A8_SRGB)
+                SrgbMipmaps(image);
+            else if (image.texture is Texture2D texture && texture.mipmapCount > 1) texture.Apply(true, false);
             else if (image.texture is Texture2DArray array && array.mipmapCount > 1) array.Apply(true, false);
             else if (image.texture is Cubemap cube) cube.Apply(true, false);
             else if (image.texture is RenderTexture rt && rt.useMipMap) Work().GenerateMips(rt);
@@ -1044,16 +1122,18 @@ namespace Tide
                 case 7: return GraphicsFormat.R32_SFloat;
                 case 8: return GraphicsFormat.R32G32B32A32_SFloat;
                 case 9: return GraphicsFormat.R32_SInt;
+                case 10: return GraphicsFormat.R8G8B8A8_SRGB;
                 default: return GraphicsFormat.R8G8B8A8_UNorm;
             }
         }
 
         void MakeCube(uint id, int color, int size, byte* faces)
         {
+            if (!SrgbAvailable(color == 10)) { srgbRefused.Add(id); return; }
             size = Math.Max(1, size);
             if (faces != null)
             {
-                var cube = new Cubemap(size, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.MipChain) { hideFlags = HideFlags.HideAndDontSave };
+                var cube = new Cubemap(size, AttachmentFormat(color), TextureCreationFlags.MipChain) { hideFlags = HideFlags.HideAndDontSave };
                 var face = size * size * 4;
                 var bytes = new byte[face];
                 for (var i = 0; i < 6; i++)
@@ -1077,12 +1157,13 @@ namespace Tide
         // layers, with room for its smaller images, and a depth one beside it, read as `depthId`; one of depth alone is that)
         void MakeArray(uint id, uint format, int width, int height, int layers, byte* pixels, uint depthId)
         {
+            if (!SrgbAvailable((format & 15) == 10)) { srgbRefused.Add(id); return; }
             width = Math.Max(1, width);
             height = Math.Max(1, height);
             layers = Math.Max(1, layers);
             if (pixels != null)
             {
-                var array = new Texture2DArray(width, height, layers, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.MipChain)
+                var array = new Texture2DArray(width, height, layers, AttachmentFormat((int)(format & 15)), TextureCreationFlags.MipChain)
                 {
                     hideFlags = HideFlags.HideAndDontSave,
                 };
@@ -1093,8 +1174,10 @@ namespace Tide
                     Marshal.Copy((IntPtr)(pixels + (long)i * layer), bytes, 0, layer);
                     array.SetPixelData(bytes, 0, i);
                 }
-                array.Apply(true, false);
-                images[id] = new Image { texture = array, width = width, height = height, owned = true, mips = true };
+                array.Apply((format & 15) != 10, false);
+                var image = new Image { texture = array, width = width, height = height, owned = true, mips = true };
+                images[id] = image;
+                if ((format & 15) == 10) SrgbMipmaps(image);
                 return;
             }
             var depth = new RenderTexture(width, height, GraphicsFormat.None, DepthFormat())
@@ -1123,8 +1206,12 @@ namespace Tide
         // again, so Unity keeps no copy of them.
         void MakeBlocks(uint id, int width, int height, int layers, uint format, int levels, int bytes, byte* blocks)
         {
-            var graphics = format == 1 ? GraphicsFormat.RGBA_DXT1_UNorm : format == 3 ? GraphicsFormat.RGBA_DXT5_UNorm
-                         : GraphicsFormat.R8G8B8A8_UNorm;
+            if (!SrgbAvailable((format & 0x100u) != 0)) { srgbRefused.Add(id); return; }
+            var srgb = (format & 0x100u) != 0;
+            var baseFormat = format & ~0x100u;
+            var graphics = baseFormat == 1 ? (srgb ? GraphicsFormat.RGBA_DXT1_SRGB : GraphicsFormat.RGBA_DXT1_UNorm)
+                         : baseFormat == 3 ? (srgb ? GraphicsFormat.RGBA_DXT5_SRGB : GraphicsFormat.RGBA_DXT5_UNorm)
+                         : srgb ? GraphicsFormat.R8G8B8A8_SRGB : GraphicsFormat.R8G8B8A8_UNorm;
             width = Math.Max(1, width);
             height = Math.Max(1, height);
             levels = Math.Max(1, levels);
@@ -1158,6 +1245,7 @@ namespace Tide
         // Each level's place in a chain of tide/texture_blocks.h's: its bytes from the chain's start
         static void Levels(int width, int height, uint format, int levels, Action<int, int> level)
         {
+            format &= ~0x100u; // sRGB changes sampling, never the block or level byte layout.
             var offset = 0;
             for (var i = 0; i < levels; i++)
             {
@@ -1177,6 +1265,7 @@ namespace Tide
 
         void MakeArrayOf(uint id, int format, int width, int height, int layers)
         {
+            if (!SrgbAvailable(format == 8)) { srgbRefused.Add(id); return; }
             var bytes = PixelBytes(format);
             var image = new Image
             {
@@ -1209,7 +1298,8 @@ namespace Tide
                 image.texture = array;
                 image.used = -1;
                 for (var i = 0; i < image.layers; i++) array.SetPixelData(image.pixels, 0, i, i * each);
-                array.Apply(image.mips, false);
+                array.Apply(image.mips && image.format != 8, false);
+                if (image.mips && image.format == 8) SrgbMipmaps(image);
                 return;
             }
             array.SetPixelData(image.pixels, 0, layer, layer * each);
@@ -1219,6 +1309,7 @@ namespace Tide
         // An array's layer as a target: that layer of its colors and of its depth, neither its own to free
         void MakeArrayLayer(uint id, uint array, int layer)
         {
+            if (srgbRefused.Contains(array)) { srgbRefused.Add(id); return; }
             if (!images.TryGetValue(array, out var image)) return;
             var depthAlone = image.arrayDepth == image.texture;
             targets[id] = new Target
@@ -1230,6 +1321,7 @@ namespace Tide
 
         void MakeCubeFace(uint id, uint cube, int face, uint depthId)
         {
+            if (srgbRefused.Contains(cube)) { srgbRefused.Add(id); return; }
             if (!images.TryGetValue(cube, out var image) || !(image.texture is RenderTexture rt)) return;
             var depth = DepthTexture(rt.width, rt.height, 1);
             targets[id] = new Target { cube = rt, face = (CubemapFace)face, depth = depth, width = rt.width, height = rt.height, imageIds = new[] { depthId } };
@@ -1255,6 +1347,8 @@ namespace Tide
             uint W(int i) => *(uint*)(p + 4 * i);
             var id = W(0);
             var format = W(1);
+            for (var i = 0; i < 4; i++)
+                if (!SrgbAvailable((format >> (4 * i) & 15u) == 10u)) { srgbRefused.Add(id); return; }
             int width = Math.Max(1, (int)W(2)), height = Math.Max(1, (int)W(3));
             var samples = (int)(format >> 16 & 15);
             samples = samples > 1 ? samples : 1;
@@ -1267,7 +1361,7 @@ namespace Tide
                 var pixelFormat = AttachmentPixelFormat((int)held);
                 var rt = new RenderTexture(width, height, AttachmentFormat((int)held), GraphicsFormat.None)
                 {
-                    antiAliasing = samples, useMipMap = samples == 1, autoGenerateMips = false,
+                    antiAliasing = samples, useMipMap = samples == 1 && (held <= 2 || held == 10), autoGenerateMips = false,
                     enableRandomWrite = samples == 1 && WritableImage(pixelFormat), hideFlags = HideFlags.HideAndDontSave,
                 };
                 rt.Create();
@@ -1365,6 +1459,7 @@ namespace Tide
 
         void Begin(uint target, bool clear)
         {
+            if (srgbRefused.Contains(target)) { inPass = offscreenPass = false; return; }
             inPass = true;
             stencil = 0; bias = slopeBias = 0;
             passStart = into.commands.Count;
@@ -1404,6 +1499,47 @@ namespace Tide
             inPass = offscreenPass = false;
         }
 
+        Texture EmptyRead(uint read)
+        {
+            if (read == 8 || read == 11) return emptyVolume;
+            if (read == 9)
+            {
+                if (emptyNumber == null)
+                {
+                    emptyNumber = new Texture2D(1, 1, GraphicsFormat.R32G32B32A32_SFloat, TextureCreationFlags.None)
+                    { hideFlags = HideFlags.HideAndDontSave };
+                    emptyNumber.SetPixelData(new float[4], 0); emptyNumber.Apply(false, true);
+                }
+                return emptyNumber;
+            }
+            if (read == 10 || read == 12)
+            {
+                var volume = read == 12;
+                var image = volume ? emptyIntVolume : emptyInteger;
+                if (image == null)
+                {
+                    image = new RenderTexture(new RenderTextureDescriptor(1, 1)
+                    {
+                        graphicsFormat = GraphicsFormat.R32_SInt, depthStencilFormat = GraphicsFormat.None,
+                        enableRandomWrite = true, dimension = volume ? TextureDimension.Tex3D : TextureDimension.Tex2D,
+                        volumeDepth = 1, msaaSamples = 1,
+                    }) { hideFlags = HideFlags.HideAndDontSave };
+                    image.Create();
+                    var cb = Work();
+                    if (volume)
+                    {
+                        var kernel = copier.FindKernel("TideVolumeClearInt");
+                        cb.SetComputeTextureParam(copier, kernel, "_TideVolumeToInt", image);
+                        cb.DispatchCompute(copier, kernel, 1, 1, 1);
+                    }
+                    else { cb.SetRenderTarget(image); cb.ClearRenderTarget(false, true, Color.clear); }
+                    if (volume) emptyIntVolume = image; else emptyInteger = image;
+                }
+                return image;
+            }
+            return white;
+        }
+
         Material MaterialFor(Pipeline p)
         {
             var stores = p.stencilTest != 0 || p.stencilOp != 0;
@@ -1411,7 +1547,7 @@ namespace Tide
             if (p.materials.TryGetValue(key, out var m) && m != null) return m;
             m = new Material(p.shader) { hideFlags = HideFlags.HideAndDontSave, name = "Tide " + p.name };
             // How it blends: what tide_gpu_blend says, every color premultiplied
-            switch (p.depth == 4 ? 4 : p.blend) // Depth alone (tide_gpu_depth 4) leaves every color as it is
+            switch (p.depth == 4 || p.depth == 6 ? 4 : p.blend) // Depth alone leaves every color as it is
             {
                 case 4: Blend(m, BlendMode.Zero, BlendMode.One, BlendMode.Zero, BlendMode.One); break;
                 case 1: Blend(m, BlendMode.One, BlendMode.One, BlendMode.OneMinusDstAlpha, BlendMode.One); break;
@@ -1419,11 +1555,12 @@ namespace Tide
                 case 3: Blend(m, BlendMode.One, BlendMode.Zero, BlendMode.One, BlendMode.Zero); break;
                 default: Blend(m, BlendMode.One, BlendMode.OneMinusSrcAlpha, BlendMode.One, BlendMode.OneMinusSrcAlpha); break;
             }
+            if (m.HasProperty("_TideNumericMask")) m.SetFloat("_TideNumericMask", p.depth == 4 || p.depth == 6 ? 0f : 15f);
             // Depth: Unity turns the test around where it keeps depth from 1 near
             // (tide_gpu_depth: none, tested and written, tested, written whatever is there, depth alone, equal)
-            m.SetFloat(ZTest, (float)(p.depth == 0 || p.depth == 3 ? CompareFunction.Always
+            m.SetFloat(ZTest, (float)(p.depth == 0 || p.depth == 3 || p.depth == 6 ? CompareFunction.Always
                                       : p.depth == 5 ? CompareFunction.Equal : CompareFunction.LessEqual));
-            m.SetFloat(ZWrite, p.depth == 1 || p.depth == 3 || p.depth == 4 ? 1f : 0f);
+            m.SetFloat(ZWrite, p.depth == 1 || p.depth == 3 || p.depth == 4 || p.depth == 6 ? 1f : 0f);
             var cull = p.cull == 1 ? CullMode.Back : p.cull == 2 ? CullMode.Front : CullMode.Off;
             if (flipped && cull != CullMode.Off) cull = cull == CullMode.Back ? CullMode.Front : CullMode.Back;
             m.SetFloat(Cull, (float)cull);
@@ -1482,9 +1619,11 @@ namespace Tide
                 }
             }
             if (pipeline.shader == null) return;
+            var material = MaterialFor(pipeline);
             var c = new Command
             {
-                kind = Kind.Draw, bias = bias, slopeBias = slopeBias, material = MaterialFor(pipeline), properties = pipeline.properties, count = count,
+                shaderPass = (pipeline.depth == 4 || pipeline.depth == 6) && material.passCount > 1 ? 1 : 0,
+                kind = Kind.Draw, bias = bias, slopeBias = slopeBias, material = material, properties = pipeline.properties, count = count,
                 instances = instances, first = indexed ? 0 : first,
                 v0 = VertexBuffer(0), v1 = VertexBuffer(1), v2 = VertexBuffer(2),
                 o0 = (int)vertexOffset[0], o1 = (int)vertexOffset[1], o2 = (int)vertexOffset[2],
@@ -1508,7 +1647,7 @@ namespace Tide
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
-                Texture texture = pipeline.imageReads[i] == 8 ? emptyVolume : (Texture)white;
+                Texture texture = EmptyRead(pipeline.imageReads[i]);
                 var element = RenderTextureSubElement.Default;
                 if (images.TryGetValue(sampled[i], out var image) && image.texture != null)
                 {
@@ -1756,7 +1895,7 @@ namespace Tide
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
-                Texture texture = pipeline.imageReads[i] == 8 ? emptyVolume : (Texture)white;
+                Texture texture = EmptyRead(pipeline.imageReads[i]);
                 var element = RenderTextureSubElement.Default;
                 if (images.TryGetValue(sampled[i], out var image) && image.texture != null)
                 {
@@ -1949,15 +2088,15 @@ namespace Tide
                         {
                             // Its numbers on the GPU: the first vertex or index is theirs, not _TideFirst's
                             if (c.index != null)
-                                cb.DrawProceduralIndirect(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.arguments, 0, c.properties);
-                            else cb.DrawProceduralIndirect(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.arguments, 0, c.properties);
+                                cb.DrawProceduralIndirect(c.index, Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.arguments, 0, c.properties);
+                            else cb.DrawProceduralIndirect(Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.arguments, 0, c.properties);
                         }
                         else if (c.index != null)
                         {
-                            cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances,
+                            cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.count, c.instances,
                                 c.properties);
                         }
-                        else cb.DrawProcedural(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances, c.properties);
+                        else cb.DrawProcedural(Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.count, c.instances, c.properties);
                         cb.SetGlobalDepthBias(0, 0);
                         break;
                 }

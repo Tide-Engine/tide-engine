@@ -1,3 +1,82 @@
+## [Linear] texture replay: embed ABI 24 (2026-11-14)
+
+The owner approved opt-in sRGB sampling on 2026-11-14. Static compiler roles and importer storage are in
+textures.md. Recorder packets retain their shape: pixel format 8 is SRGBA8, internal attachment color 10 is
+sRGB, and bit 0x100 of an immutable block format selects its sRGB variant. Block support/strides use the base
+format; BC1/BC3/RGBA8 payload bytes and authored levels are retained exactly. TideRender creates
+R8G8B8A8_SRGB, RGBA_DXT1_SRGB and RGBA_DXT5_SRGB resources. Internal sRGB targets are sampling copies;
+no public Format member or ordinary render target, fragment output or presentation behavior changes.
+TIDE_EMBED_ABI and TideLibrary.Abi advance together from 23 to 24 so older replays cannot silently treat the
+new format values as ordinary bytes. The C recorder's embed_render_srgb_images_retain_encoding_formats
+pins unmodified upload bytes, host BC support, marked block descriptors and RGBA-array fallback descriptors.
+
+**Provisional Unity prerequisite:** Player Color Space must be Linear for [Linear] resources. This is a real
+Unity constraint: in a Gamma scratch Sample, explicit GraphicsFormat SRGB Texture2D and Cubemap
+constructors returned UNorm, and marked gray 128 sampled as 128 rather than linear 55. The replay
+refuses marked images/arrays/cubes/internal targets and reports once, naming Project Settings > Player >
+Other Settings > Color Space > Linear. It never changes the project's setting, and unmarked Gamma resources
+continue normally. Refused internal targets and their faces/layers cannot fall through into camera drawing.
+The package README and language/user docs state this prerequisite.
+
+**Mips:** even in a Linear project, Unity Texture.Apply(true) and RenderTexture GenerateMips averaged sRGB
+bytes (gray 128 + white 255 produced 191 rather than the correct encoded linear mean 205). The replay therefore
+uses Resources/TideSrgbMip.shader to sample the previous level through its sRGB format, draw into a separate
+sRGB attachment, and copy the encoded result back. One 2D scratch render texture is retained while its shape
+matches; a shape change defers the old one with other renderer resources, and reset releases scratch/material.
+Arrays are processed by layer, cubes by face. CPU upload mirrors retain the base as stored; GPU mips are
+regenerated after changed uploads. Immutable prepared block chains bypass this operation and keep their levels.
+There is no per-pixel CPU conversion in a frame's mip path. On Unity OpenGL Core, texture-owned sampler
+state can still be Point from an earlier draw. The mip shader uses that texture's named sampler, reads exact
+texel centers and interpolates explicitly there, without changing the earlier draw's state. Other APIs use
+one bilinear SampleLevel. Numeric attachments stay unmipped; private sRGB color 10 retains its chain.
+
+**Actual Unity checks:** hidden/noAudio Unity 6000.6.0f1 scratch Sample, automatic Tide builds disabled.
+After merging numeric image work, Linear D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests each
+pass 18/18 applicable (Gamma-only witness skipped): known marked/unmarked point and midpoint pixels; GPU
+mip bytes for 2D, both array layers and all six cube faces; sRGB block formats and retained authored levels;
+production linear_texture_wgsl replay converting soft-alpha premultiplied target pixels while retaining the
+original byte-for-byte, including the private target's mip chain; all existing and incoming numeric/compute/
+image/order cases. ShaderTests passes 1/1 on each API, explicitly compiling every pass of TideSrgbMip, all
+numeric shader passes, the production-copy fixture and existing renderer/game shaders with no warnings.
+The source of 00000000c0de0015.shader is production linear_texture_wgsl from linear_wgsl.h, translated by
+this checkout's tide_wgsl_translate. Integrated Gamma D3D11 passes 16/16 applicable, including actionable
+refusal and unchanged unmarked/numeric behavior; the three supported-only sRGB witnesses are skipped.
+Metal and a Unity WebGPU player require other machines/build environments and were not run here.
+
+## Numeric images and outputs (2026-11-14)
+
+Numeric attachment formats, typed nearest reads and the three portable numeric storage formats now replay
+through the existing target, pipeline, image and volume packets. No recorder opcode or embed ABI bump is
+needed. HLSL retains the WGSL numeric-output mask and bypasses the Color conversion for a numeric float4 at
+location zero. ShaderLab uses literal `Blend i One Zero` for each numeric output; the other outputs retain
+Tide's selected blend. The seven new formats have no mip chain, and typed numeric reads use the base level.
+R8/RG8/R16F/RG16F retain mean MSAA resolve; R32F/RGBA32F/R32I remain single-sample.
+
+For numeric shaders, ShaderLab has a second pass with literal `ColorMask 0 i` for every attachment. Replay
+selects it for depth-only draws, including the renderer's reset-depth-without-color clear. A dynamic global
+ColorMask left later MRT attachments writable on Unity Vulkan; per-target dynamic ColorMask is not valid
+ShaderLab. Two passes preserve the fragment's discards and depth while keeping every numeric image intact.
+The ShaderTests fixture now compiles every pass. Games without numeric outputs still produce the earlier
+single-pass shader text.
+
+Missing typed numeric images bind all-zero float or integer resources of the correct dimension. Integer zero
+textures are render textures, initialized by clear or the existing integer volume kernel, because Unity's
+filterable Sample capability check rejects an integer Texture2D on D3D11 even though integer loads work.
+Numeric volume allocation checks LoadStore instead. These are nearest integer reads on every replay API.
+
+ComputeReplayTests pins exact scalar/pair/vector/signed outputs in every new attachment format and RGBA16F,
+a free fourth channel, replacement under Alpha, mixed float/integer clears past one with clipping, depth-only
+preservation, and R32F/RGBA32F/R32I storage volumes. Integer readback uses an integer textureLoad kernel and
+the existing buffer-read callback: OpenGL Core does not expose raw integer texture readback through Unity's
+AsyncGPUReadback texture conversion. The kernel checks every integer word without converting it to float.
+The eleven checked-in numeric WGSL fixtures pass spirv-val for Vulkan 1.3 and FXC SM5 `/WX`.
+
+Validation: the complete 14 ComputeReplayTests, a focused mixed Color/float4/int MRT blend test, and the
+shader compilation EditMode test pass on Windows
+D3D11, D3D12, Vulkan and OpenGL Core, Unity 6000.6.0f1, hidden batch mode with no audio, using a scratch Sample
+whose package points at this checkout. The shader compilation run also includes all sixteen actual renderer
+clear shader variants. Metal and a Unity WebGPU player require machines/build environments unavailable here.
+
 ## Depth-write descriptor flag: ABI 23 (2026-11-14)
 
 The follow-up writes_depth flag keeps explicit Draw.Bounds from re-enabling geometric occlusion testing for

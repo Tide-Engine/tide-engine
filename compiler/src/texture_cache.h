@@ -4,6 +4,7 @@
 
 typedef struct texture_cache_view {
     uint32_t width, height;
+    bool linear; // Stored RGB is encoded premultiplied linear light.
     const uint8_t *rgba;
     tide_texture_blocks blocks;
     // What the image is in the pack, as texture_content says: texture_cache_open fills it, and
@@ -11,6 +12,7 @@ typedef struct texture_cache_view {
     uint8_t content[32];
 } texture_cache_view;
 
+void texture_cache_key_linear(uint8_t key[32], const uint8_t source[32], const char *name, bool raw, bool compress, bool linear);
 void texture_cache_key(uint8_t key[32], const uint8_t source[32], const char *name, bool raw, bool compress);
 bool texture_cache_open(const uint8_t *data, size_t size, texture_cache_view *out);
 uint8_t *texture_cache_read(const char *folder, const uint8_t key[32], size_t *size, texture_cache_view *out);
@@ -30,5 +32,6 @@ struct asset_match;
 typedef struct texture_made {
     texture_cache_view view;
 } texture_made;
+bool texture_make_linear(const struct asset_match *item, bool raw, bool compress, bool linear, texture_made *out, char why[256]);
 bool texture_make(const struct asset_match *item, bool raw, bool compress, texture_made *out, char why[256]);
 void texture_made_free(texture_made *made);

@@ -2010,6 +2010,34 @@ static void run_bias_checks(const char *when)
     }
 }
 
+// The same bytes with and without the mark, plus runtime and compressed sources.
+static void run_linear_checks(const char *when)
+{
+    local.Art.targetPass = 33;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[20]; uint32_t got[20];
+    for (int i = 0; i < 20; i++) points[i] = tide_f2((float)(i % 8) * 32 + 8.5f, (float)(i / 8) * 32 + 8.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 20, got);
+    const float encoded = 128.0f / 255.0f, decoded = tide_tolinear_f(encoded);
+    const float painted = tide_tolinear_f(local.LinearImages.paint);
+    const float wanted[] = {encoded, decoded, encoded * 0.5f, decoded * 0.5f, decoded, decoded,
+                            painted, painted, painted, decoded, decoded, decoded * 0.5f,
+                            painted, decoded * 0.5f, decoded, decoded, decoded, decoded, decoded * 0.5f, local.LinearImages.paint};
+    for (int i = 0; i < 20; i++) {
+        const int want = (int)(wanted[i] * 255.0f + 0.5f);
+        const bool good = abs((int)(got[i] >> 24) - want) <= 3
+                       && abs((int)(got[i] >> 16 & 255u) - want) <= 3
+                       && abs((int)(got[i] >> 8 & 255u) - want) <= 3 && (got[i] & 255u) == 255u;
+        printf("%s: Linear point/filter/alpha/grid/target/cube/array/mips case %d%s (0x%08X expected %d)\n",
+               good ? "ok" : "FAIL", i, when, (unsigned)got[i], want);
+        if (!good) failures++;
+    }
+}
+
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
 // as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
 // draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
@@ -2056,6 +2084,7 @@ static void run_prewarmed_checks(void)
     run_level_checks(when);
     run_written_depth_checks(when);
     run_bias_checks(when);
+    run_linear_checks(when);
     const uint32_t after = tide_platform_shader_pipelines();
     printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
            (unsigned)after);
@@ -2095,6 +2124,7 @@ static void run_again(const int roll, const char *when)
     run_level_checks(when);
     run_written_depth_checks(when);
     run_bias_checks(when);
+    run_linear_checks(when);
 }
 #endif
 
@@ -2176,6 +2206,11 @@ static int frame(void *user, const float seconds)
     run_level_checks("");
     run_written_depth_checks("");
     run_bias_checks("");
+    run_linear_checks("");
+    local.LinearImages.paint = 0.75f;
+    run_linear_checks(", with runtime colors changed");
+    local.LinearImages.paint = 0.5f;
+    run_linear_checks(", and changed back");
     run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__

@@ -84,6 +84,7 @@ void tide_web_gpu_volume_write(tide_gpu_id volume, const void *pixels, int x, in
 TIDE_WEB_IMPORT(gpu_volume_limit) int tide_web_gpu_volume_limit(void);
 TIDE_WEB_IMPORT(gpu_pipeline_image_read) void tide_web_gpu_pipeline_image_read(uint32_t slot, uint32_t read);
 TIDE_WEB_IMPORT(gpu_pipeline_images) void tide_web_gpu_pipeline_images(uint32_t writes, uint32_t formats, uint32_t formats_high);
+TIDE_WEB_IMPORT(gpu_pipeline_numbers) void tide_web_gpu_pipeline_numbers(uint32_t outputs);
 
 TIDE_WEB_IMPORT(gpu_array_of) tide_gpu_id tide_web_gpu_array_of(tide_gpu_format format, int width, int height, uint32_t layers);
 TIDE_WEB_IMPORT(gpu_array_write)
@@ -129,6 +130,7 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
     for (uint32_t i = 0; i < desc->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
         if (desc->reads[i] >= 8u) tide_web_gpu_pipeline_image_read(i, desc->reads[i]);
     }
+    if (desc->numeric_outputs) tide_web_gpu_pipeline_numbers(desc->numeric_outputs);
     if (desc->image_writes) {
         uint32_t low = 0, high = 0;
         for (uint32_t i = 0; i < TIDE_GPU_MAX_TEXTURES; i++) {

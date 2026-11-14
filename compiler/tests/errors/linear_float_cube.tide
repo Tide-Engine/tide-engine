@@ -1,0 +1,4 @@
+// expect: [Linear] cannot read Rgba16f: this format has no sRGB counterpart
+scene Main { }
+local singleton Art { [Linear] Cubemap image; }
+view V(mut Art art) { art.image = Cubemap(2, Format.Rgba16f); }

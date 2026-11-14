@@ -37,6 +37,15 @@ For a constant angle, add lowercase `deg` to a decimal number: `quaternion.Euler
 - `quaternion(x, y, z, w)`, `quaternion(float4)` and `quaternion(float3x3)`.
 - Matrices take one vector per column, `float3x3(c0, c1, c2)`, or all their numbers row by row: in `float2x2(1, 2, 3, 4)`, `1, 2` is the first row. Also `float3x3(quaternion)`, and `float4x4(rotation, translation)` from a `float3x3` and a `float3`.
 
+## Color space
+
+`Math.ToLinear(value)` decodes sRGB RGB to linear light; `Math.ToDisplay(value)` encodes
+linear RGB for display. They take `float`, `float3` or `Color` in CPU and GPU code. RGB
+clamps to [0, 1], NaN maps to zero, and a Color's alpha is copied unchanged. GPU results
+have the same rounding limits as other Math functions. Tone-map HDR light before encoding.
+For color textures, prefer [`[Linear]`](../game/shaders.md#linear-light-color), which also
+makes filtering and mipmaps operate in linear light.
+
 ## Double precision
 
 Use `double` and `double2`/`double3`/`double4` for high precision values. They support ordinary construction, swizzles and component-wise `+ - * /`. Integers and floats widen when mixed with doubles; converting back requires an explicit constructor.

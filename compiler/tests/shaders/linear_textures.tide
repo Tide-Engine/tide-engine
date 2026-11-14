@@ -1,0 +1,23 @@
+using Image = Texture;
+[Linear] asset Image colors = "../e2e/assets/hero.png";
+[Linear] asset TextureArray layers = "../e2e/cubes/sky/sky_??.png";
+[Linear] asset Cubemap sky = "../e2e/cubes/sky/sky_??.png";
+scene Main { }
+local singleton Art
+{
+    List<Vertex> vertices;
+    List<int> indices;
+    [Linear] Image image = colors;
+    [Linear] TextureArray array = layers;
+    [Linear] Cubemap cube = sky;
+}
+Color Borrow(Texture source, float2 uv) { return source.SampleLevel(uv, 0, Filter.Bilinear); }
+Color Forward(Texture source, float2 uv) { return Borrow(source, uv); }
+frag Read(Vertex vertex, out Color color, Art art)
+{
+    color = colors.Sample(vertex.uv) + Forward(art.image, vertex.uv)
+          + art.array.SampleGrad(vertex.uv, float2(0.1, 0), float2(0, 0.1), 1)
+          + layers.SampleLevel(vertex.uv, 0, 0) + art.cube.SampleLevel(float3(vertex.uv, 1), 0)
+          + sky.Sample(float3(vertex.uv, 1));
+}
+view Show(Art art) { Draw.Mesh(art.vertices, art.indices, Read); }

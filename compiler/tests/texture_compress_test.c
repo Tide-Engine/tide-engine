@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "texture_compress.h"
+#include "texture_cache.h"
+#include "asset_files.h"
 #include "tide_test.h"
 
 // Independent BC decoder for quality checks, not used by the implementation.
@@ -186,4 +188,40 @@ TIDE_TEST(texture_blocks_decode_every_authored_level_and_clip_bc_tail_blocks)
         TIDE_CHECK(!tide_texture_blocks_decode_level((tide_texture_blocks){blocks, format, levels, bytes}, 4, 4, levels, untouched));
         TIDE_CHECK(untouched[0] == 19 && untouched[3] == 31);
     }
+}
+
+TIDE_TEST(linear_compression_mips_average_light_instead_of_encoded_channels)
+{
+    uint8_t rgba[128 * 128 * 4];
+    for (uint32_t y = 0; y < 128; y++) for (uint32_t x = 0; x < 128; x++) {
+        const uint32_t at = (y * 128u + x) * 4u;
+        rgba[at] = rgba[at + 1u] = rgba[at + 2u] = (x & 1u) ? 255u : 0u;
+        rgba[at + 3u] = 255u;
+    }
+    const tide_texture_blocks linear = texture_compress_linear(rgba, 128, 128, true);
+    const tide_texture_blocks encoded = texture_compress(rgba, 128, 128);
+    uint8_t light[64 * 64 * 4], display[64 * 64 * 4];
+    TIDE_REQUIRE(tide_texture_blocks_decode_level(linear, 128, 128, 1, light));
+    TIDE_REQUIRE(tide_texture_blocks_decode_level(encoded, 128, 128, 1, display));
+    TIDE_CHECK(light[0] >= 184u && light[0] <= 192u);
+    TIDE_CHECK(display[0] >= 124u && display[0] <= 132u);
+    free((void *)linear.pixels);
+    free((void *)encoded.pixels);
+}
+
+TIDE_TEST(linear_import_quantizes_coverage_before_encoding_premultiplied_light)
+{
+    tide_color colors[] = {{1, 0.5f, 0.25f, 0.001f}, {1, 0.5f, 0.25f, 0.5f}};
+    asset_match item = {0};
+    item.image = (tide_png_image){.width = 2, .height = 1, .pixels = colors};
+    texture_made made;
+    char why[256];
+    TIDE_REQUIRE(texture_make_linear(&item, false, false, true, &made, why));
+    const uint8_t *rgba = made.view.rgba;
+    TIDE_CHECK(rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0 && rgba[3] == 0);
+    TIDE_CHECK(rgba[7] == 128u);
+    const uint8_t red = (uint8_t)(tide_todisplay_f(128.0f / 255.0f) * 255.0f + 0.5f);
+    TIDE_CHECK(rgba[4] == red);
+    TIDE_CHECK(made.view.linear);
+    texture_made_free(&made);
 }

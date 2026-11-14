@@ -1,0 +1,5 @@
+// expect: this image is [Linear]; an unmarked value would lose its sRGB sampling role
+[Linear] asset Texture image = "../e2e/assets/hero.png";
+scene Main { }
+frag Show(Vertex vertex, out Color color, [Raw(float)] Texture source) { color = Color(source.Sample(vertex.uv), 0, 0); }
+view V() { Draw.Mesh([Vertex {}], [0, 0, 0], image, Show); }

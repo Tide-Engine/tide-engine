@@ -1,3 +1,13 @@
+## Numeric image sizes and clear payloads (2026-11-14)
+
+Managed target numeric formats occupy unused legacy 16-bit tags; pointers and old adoption/reload values
+retain their masks/alignment. Rank/unrank is bounded by a 31-entry sorted catalogue. Numeric volume byte
+limits divide the 128 MiB cap by validated bytes per texel before multiplying dimensions. Typed clear counts
+are bounded by four, matched to destination formats before reading values, and payload byte additions and
+append source/destination spans are checked before copying. Int bits never pass through numeric float
+conversion. Runtime unit tests exhaust all 48,184 numeric tags and 496 legacy tags, preserve restored image
+aliases, reject oversized RGBA32f volumes and invalid clear counts, and compare appended payloads exactly.
+
 # No Tide code can corrupt memory
 
 ## What a cached function keeps and hands out (2026-11-13)

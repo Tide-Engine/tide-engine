@@ -1,3 +1,61 @@
+## Linear-light image sources (2026-11-14)
+
+[Linear] is static source metadata on singular Texture/TextureArray/Cubemap assets and fields, preserved
+through the existing GPU-helper specialization. Generated capture uses *_source_linear; WGSL texture reads
+remain ordinary hardware samples, so Sample, SampleGrad and SampleLevel share the sRGB image-format path.
+Sample keeps its existing unpremultiplication after hardware decoding/filtering. No manual per-Sample gamma
+conversion or additional sampler binding is generated. Marked storage-image writes are refused with an
+original-target/frag fix. Rendering to a marked cube's face or array's layer still writes the original target.
+The sampled copy conversion, backend formats, alpha representation, API picks and validation are recorded in
+textures.md (top section) and rendering.md. linear_textures pins helper forwarding plus texture/array/cube
+reads through WGSL golden, SPIR-V validation and FXC.
+After merging typed image reads, declared_image_type returns Color for Linear sources before considering
+numeric Raw roles. Invalid combined annotations and typed-helper/direct-draw role mismatches are diagnosed;
+no numeric textureLoad path is substituted for a valid marked color read.
+
+## Typed numeric outputs and image roles (2026-11-14)
+
+Owner-approved 2026-11-13: "these make sense, lets do all of these". Frag outputs now include float, float2,
+float4 and int, mapped by the existing parameter order. Numeric outputs skip tint, premultiplication and blend;
+Color output behavior stays unchanged. The shader descriptor carries a numeric_outputs mask and output_types
+only when numeric outputs are used. output_types packs three bits per output (Color 0, float 1, float2 2,
+float4 3, int 4), so the renderer can validate dynamic destinations before creating a GPU pipeline.
+WGSL output locations keep their actual types; existing translators validate SPIR-V and HLSL. A retained WGSL
+comment carries the numeric mask to HLSL/Unity and survives identifier minification, so numeric float4 never
+acquires Color conversion or blending. Coverage requires a first Color output, with guidance otherwise.
+
+[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] declare sampled Texture/Texture3D roles on fields and
+read-only GPU helper parameters. Bare Raw keeps its existing filtered float4 behavior. Typed reads use nearest
+textureLoad, including wrapped normalized coordinates and guarded exact volume cells, with compatible float or
+integer bindings and typed zero fallbacks. Numeric roles reject filtered/gradient/mipmap reads with a fix.
+Constructor provenance validates output/attachment compatibility at draws, clear count/types, sampling roles,
+storage formats, single-sample 32-bit attachments and unsupported cube/array formats. Errors name the format's
+accepted type. Rgba16f deliberately permits Color or float4; the declared read role selects interpretation.
+
+R32f/Rgba32f/R32i storage writes now connect owned 2D images and Texture3D to the existing translators/backends.
+Numeric stores retain every channel/bit; ordinary Color stores retain their previous alpha contract. Runtime
+extent accounting uses actual format bytes and rejects volumes over 128 MiB. All picks and alternatives are in
+the spec's Provisional sections; tests and final merged validation are recorded with render-targets.md.
+
+Compiler validation after merging the reversed-depth, WriteDepth, SampleLevel and target-read work: Windows
+Clang 23 ASan passes all 221 selected checks (198 shader golden/SPIR-V/FXC checks, the first 19 numeric
+diagnostics, two updated unsupported-output diagnostics, numeric metadata E2E and shader-name tests).
+The final focused 33 checks pass after adding constant-format provenance and seven further diagnostics:
+all nine output/format mismatches, filtered/mip reads, helper role mismatch, coverage's first output,
+clear count/type, numeric CPU readback, cube/array restrictions and all four unsupported storage formats.
+number_images covers scalar/vector/int output locations, mixed Color and numbers, a free fourth channel,
+typed field/helper/direct-blit reads, wrapped point reads, Grid2/3<float> conversions, exact volume reads and
+R32f/Rgba32f/R32i kernel stores. Its generated C compiles and asserts each packed runtime output type.
+No existing shader expectation was regenerated for this feature; the new golden uses the merged depth rules.
+Identifier minification preserves the numeric-output marker (four minifier unit cases pass).
+
+A tidec built from origin/dev sources inside this checkout's ignored build/baseline-source produces identical
+C, headers and pack C for render_colors, render_samples, texture3d, images and queries, with and without layout:
+30 files agree after normalizing only the compiler-derived simulation byte array and TIDE_SIMULATION_ID.
+This includes render_colors' dynamic Format(99); dynamic enum conversion alone does not add new members to an
+otherwise unchanged generated Format enum. The comparison's inputs/outputs and results.json are retained under
+build/number-identity. Broader native/WebGPU/Unity validation is recorded in render-targets.md.
+
 ## Reversed depth at the final boundary (2026-11-14)
 
 The owner-approved implementation leaves tide_project, public this.clip, explicit out float4, camera records

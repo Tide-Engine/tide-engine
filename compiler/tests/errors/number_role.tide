@@ -1,0 +1,3 @@
+// expect: one numeric image type: [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)]
+scene Main { }
+local singleton Images { [Raw(float3)] Texture image; }

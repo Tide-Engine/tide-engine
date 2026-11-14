@@ -1,0 +1,3 @@
+// expect: a Texture3D uses a portable storage format
+scene Main { }
+view Show() { var volume=Texture3D(int3(2),Format.R16f); volume.Dispose(); }

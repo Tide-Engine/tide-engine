@@ -1,0 +1,4 @@
+// expect: [Linear] cannot read R32i: this format has no sRGB counterpart
+scene Main { }
+local singleton Art { [Linear] Texture image; }
+view V(mut Art art) { art.image = RenderTarget(2, 2, Format.R32i).color; }

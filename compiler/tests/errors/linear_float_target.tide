@@ -1,0 +1,4 @@
+// expect: [Linear] cannot read Rgba16f: this format has no sRGB counterpart
+scene Main { }
+local singleton Art { [Linear] Texture image; }
+view V(mut Art art) { art.image = RenderTarget(2, 2, Format.Rgba16f).color; }

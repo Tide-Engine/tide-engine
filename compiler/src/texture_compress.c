@@ -2,11 +2,12 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "tide/math.h"
 
 #define STB_DXT_IMPLEMENTATION
 #include "stb_dxt.h"
 
-tide_texture_blocks texture_compress(const uint8_t *rgba, const int32_t width, const int32_t height)
+tide_texture_blocks texture_compress_linear(const uint8_t *rgba, const int32_t width, const int32_t height, const bool linear)
 {
     tide_texture_blocks result = {0};
     if (!rgba || width < 128 || height < 128
@@ -44,9 +45,14 @@ tide_texture_blocks texture_compress(const uint8_t *rgba, const int32_t width, c
                 const uint32_t sx = x * (w > 1u ? 2u : 1u), sy = y * (h > 1u ? 2u : 1u);
                 for (uint32_t c = 0; c < 4u; c++) {
                     uint32_t sum = 0;
-                    for (uint32_t dy = 0; dy < 2u; dy++) for (uint32_t dx = 0; dx < 2u; dx++)
-                        sum += mip[((size_t)(sy + (h > 1u ? dy : 0u)) * w + sx + (w > 1u ? dx : 0u)) * 4u + c];
-                    mip[((size_t)y * next_w + x) * 4u + c] = (uint8_t)((sum + 2u) / 4u);
+                    float light = 0.0f;
+                    for (uint32_t dy = 0; dy < 2u; dy++) for (uint32_t dx = 0; dx < 2u; dx++) {
+                        const uint8_t value = mip[((size_t)(sy + (h > 1u ? dy : 0u)) * w + sx + (w > 1u ? dx : 0u)) * 4u + c];
+                        sum += value;
+                        if (linear && c < 3u) light += tide_tolinear_f((float)value / 255.0f);
+                    }
+                    mip[((size_t)y * next_w + x) * 4u + c] = linear && c < 3u
+                        ? (uint8_t)(tide_todisplay_f(light * 0.25f) * 255.0f + 0.5f) : (uint8_t)((sum + 2u) / 4u);
                 }
             }
         }
@@ -55,4 +61,9 @@ tide_texture_blocks texture_compress(const uint8_t *rgba, const int32_t width, c
     free(mip);
     result.pixels = blocks;
     return result;
+}
+
+tide_texture_blocks texture_compress(const uint8_t *rgba, const int32_t width, const int32_t height)
+{
+    return texture_compress_linear(rgba, width, height, false);
 }

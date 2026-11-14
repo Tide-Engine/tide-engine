@@ -1,0 +1,3 @@
+// expect: [Linear] converts display-encoded color, while [Raw] promises independent stored numbers; remove one mark
+scene Main { }
+local singleton Art { [Raw(int), Linear] Texture image; }

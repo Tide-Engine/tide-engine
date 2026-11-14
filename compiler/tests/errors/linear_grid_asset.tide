@@ -1,0 +1,3 @@
+// expect: [Linear] marks one Texture, TextureArray or Cubemap asset, or a field of those types
+[Linear] asset Grid2<Color> image = "../e2e/assets/hero.png";
+scene Main { }

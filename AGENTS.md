@@ -55,11 +55,11 @@ Warnings are errors. Fix warnings encountered during validation, including ones 
 
 ### Testing and merging
 
-Test only what the change needs, once, before merging: the Build workflow runs every suite on every platform for each push to `dev` and catches the rest, and full local suites are slow (owner, 2026-10-26). Run the tests of what changed and of what depends on it (`ctest -R`, a test binary's name filter), on native and web only where the changed code runs on both; a full suite only for a change that reaches broadly (codegen every game goes through, the shared runtime, the build system). Don't repeat a run for wording, notes or a fix outside what it tested. A failure in CI after the push is fixed then, first.
+Test only what the change needs, once, before merging. Keep local validation focused on changed code and its dependencies (`ctest -R`, a test binary's name filter), on native and web where the changed code runs on both. Leave full suites to GitHub Actions, including for broad compiler, shared-runtime or build changes (owner, 2026-11-14). The Build workflow runs every suite on every platform for each push to `dev` and catches the rest. Don't repeat a run for wording, notes or a fix outside what it tested. A failure in CI after the push is fixed then, first.
 
 | Scope | Required validation |
 |---|---|
-| Compiler, engine, platform or build | The affected targets' tests, native and web where the code runs on both; full suites only for broad changes (above) |
+| Compiler, engine, platform or build | The affected targets' tests, native and web where the code runs on both; full suites run in Actions |
 | Repository game, including a benchmark or prototype | Its targets and tests, native and web |
 | `docs/` only | `npm run build` in `docs/` |
 | `relay/` only | `node --test relay/relay.test.mjs relay/lobbies.test.mjs` |
@@ -72,7 +72,7 @@ Merge procedure: fetch, merge `origin/dev` into the task branch, then push `HEAD
 
 - Unrelated incoming changes and a clean merge require no repeat tests.
 - Changes to a dependency require building the affected target and running its tests.
-- Same-file/subsystem overlap or conflicts require tests for that overlap on native/web as applicable. Run both full suites again only for overlap that broad.
+- Same-file/subsystem overlap or conflicts require focused tests for that overlap on native/web as applicable. Leave full suites to Actions.
 - One round: if `dev` moves again with unrelated work, merge and push without restarting validation.
 
 ### Other repositories

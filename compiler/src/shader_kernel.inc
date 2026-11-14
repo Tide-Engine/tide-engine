@@ -204,6 +204,135 @@ static void write_kernel(program *prog, shader *sh)
 }
 
 // A kernel's shader: one for each kernel that a GPU.Run names, as it reads what it reads whatever runs it.
+int image_target_format(const expr *e, const int color, const int depth)
+{
+    if (!e || depth > 32) return -1;
+    if (e->type.kind == TY_GRID && e->type.decl)
+        return e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : 0;
+    if (e->kind == E_DEFAULT) return -3;
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
+        return image_target_format(e->local->value, color, depth + 1);
+    if (e->kind == E_CONDITIONAL) {
+        const int a = image_target_format(e->lhs, color, depth + 1), b = image_target_format(e->rhs, color, depth + 1);
+        return a == -3 ? b : b == -3 ? a : a == b ? a : -1;
+    }
+    if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
+        return image_target_format(e->object, 0, depth + 1);
+    if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
+        if (e->lhs->kind != E_INT || e->lhs->int_value < 0 || e->lhs->int_value > 3) return -1;
+        return image_target_format(e->object->object, (int)e->lhs->int_value, depth + 1);
+    }
+    if (e->field) {
+        int found = -3;
+        const field *f = e->field;
+        for (int i = -1; i < f->image_assignments.count; i++) {
+            const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
+            if (!origin) continue;
+            const int got = image_target_format(origin, color, depth + 1);
+            if (got == -3) continue;
+            if (got < 0 && got != -2) return got;
+            if (found != -3 && found != got) return -1;
+            found = got;
+        }
+        return found;
+    }
+    if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
+        && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D)) {
+        int slot = 0;
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *f = e->args.items[i];
+            if (f->type.kind != TY_ENUM || !f->type.decl || !str_eq_c(f->type.decl->name, "Format")) continue;
+            if (slot++ != color) continue;
+            for (int k = 0; f->constant && k < 32; k++) f = f->constant->value;
+            return f->enum_member ? (int)f->enum_member->number : -1;
+        }
+        return slot == 0 && color == 0 ? 0 : -2;
+    }
+    return -1;
+}
+
+bool image_format_accepts(const int format, const type value)
+{
+    return format == 1 || format == -2 || format == -3
+        || (format == 0 && value.kind == TY_COLOR)
+        || (format == 2 && (value.kind == TY_COLOR || value.kind == TY_FLOAT4))
+        || ((format == 3 || format == 5 || format == 7) && value.kind == TY_FLOAT)
+        || ((format == 4 || format == 6) && value.kind == TY_FLOAT2)
+        || (format == 8 && value.kind == TY_FLOAT4) || (format == 9 && value.kind == TY_INT);
+}
+
+static const char *image_format_types(const int format)
+{
+    return format == 0 ? "Color" : format == 2 ? "Color or float4" : format == 4 || format == 6 ? "float2"
+         : format == 8 ? "float4" : format == 9 ? "int" : "float";
+}
+
+static bool numeric_image_origin(const expr *e, const int depth)
+{
+    if (!e || depth > 32) return false;
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local)
+        return numeric_image_origin(e->local->value, depth + 1);
+    if (e->kind == E_CONDITIONAL)
+        return numeric_image_origin(e->lhs, depth + 1) || numeric_image_origin(e->rhs, depth + 1);
+    if (e->field) {
+        if (numeric_image_origin(e->field->default_value, depth + 1)) return true;
+        for (int i = 0; i < e->field->image_assignments.count; i++)
+            if (numeric_image_origin(e->field->image_assignments.items[i], depth + 1)) return true;
+    }
+    if (e->type.kind == TY_RENDER_TARGET && e->resource_operation) {
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *f = e->args.items[i];
+            if (f->type.kind == TY_ENUM && f->type.decl && str_eq_c(f->type.decl->name, "Format")
+                && (!f->enum_member || f->enum_member->number >= 3)) return true;
+        }
+    }
+    return numeric_image_origin(e->object, depth + 1);
+}
+
+static bool check_image_outputs(program *prog, const expr *call)
+{
+    const expr *target = call->blit ? call->args.items[1] : call->targeted ? call->object : NULL;
+    const bool window = !target || (target->kind == E_MEMBER && str_eq_c(target->member, "window"));
+    const int outputs = call->frag ? call->frag->outputs : 1;
+    for (int i = 0; i < outputs; i++) {
+        const int format = window ? (i == 0 ? 0 : -2) : image_target_format(target, i, 0);
+        const shader fake = {.frag = call->frag};
+        const type value = shader_output_type(&fake, i);
+        if (format == -1 && (value.kind != TY_COLOR || numeric_image_origin(target, 0))) {
+            diag_error(call->at, "this numeric frag's destination format isn't fixed by its constructor assignments: give this target one fixed Format for each image");
+            return false;
+        }
+        if (format < 0 || image_format_accepts(format, value)) continue;
+        diag_error(call->at, "frag output %d is %s, but Format." STR_FMT " takes %s: change the output type or this image's format",
+                   i + 1, type_name(value), STR_ARG(prog->format->members.items[format].name), image_format_types(format));
+        return false;
+    }
+    return true;
+}
+
+static void check_image_clear(program *prog, const expr *call)
+{
+    const expr *target = call->targeted ? call->object : NULL;
+    const bool window = !target || (target->kind == E_MEMBER && str_eq_c(target->member, "window"));
+    const bool several = strcmp(call->c_callee, "tide_draw_clear_images") == 0;
+    int count = 0;
+    for (int i = 0; i < 4; i++) {
+        const int format = window ? (i == 0 ? 0 : -2) : image_target_format(target, i, 0);
+        if (format == -1) return; // A dynamic target is checked by the runtime.
+        if (format == -2 || format == -3 || format == 1) break;
+        count++;
+        const int arg = several ? i : 0;
+        if (arg >= call->args.count) continue;
+        const type value = call->args.items[arg]->type;
+        if (image_format_accepts(format, value)) continue;
+        diag_error(call->at, "clear value %d is %s, but Format." STR_FMT " takes %s: give each image a clear value of its type, in order",
+                   i + 1, type_name(value), STR_ARG(prog->format->members.items[format].name), image_format_types(format));
+        return;
+    }
+    if (several && call->args.count != count)
+        diag_error(call->at, "this target holds %d images: give Clear exactly one value for each image, in order", count);
+}
+
 // A storage texture's format is part of its GPU declaration. Follow all resource assignments rather than choosing
 // the first constructor reached: a different format on another path must be diagnosed before any backend runs.
 static int image_origin_format(const expr *e, const int color, const int depth)
@@ -250,6 +379,7 @@ static int image_origin_format(const expr *e, const int color, const int depth)
             const expr *f = e->args.items[i];
             if (f->type.kind != TY_ENUM) continue;
             if (slot++ != color) continue;
+            for (int k = 0; f->constant && k < 32; k++) f = f->constant->value;
             if (!f->enum_member) return -1;
             const str name = f->enum_member->name;
             return str_eq_c(name, "Rgba8") ? 0 : str_eq_c(name, "Rgba16f") ? 4 : str_eq_c(name, "R32f") ? 5
@@ -280,10 +410,16 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
     sb_printf(&name, "compute " STR_FMT, STR_ARG(k->name));
     sh->name = name.data;
     plan_reads(prog, sh, k);
+    if (!check_image_sources(prog, sh, call)) return NULL;
     int image_writes = 0;
     for (int i = 0; i < sh->textures.count; i++) {
         shader_texture *t = &sh->textures.items[i];
         if (!t->write) continue;
+        if (field_is_linear(t->field)) {
+            diag_error(call->at, "a kernel cannot write a [Linear] sampled image: sRGB formats have no storage-write form");
+            diag_note("write an unmarked Format.Rgba8 target, then assign its color image to a [Linear] field for sampling");
+            return NULL;
+        }
         image_writes++;
         expr source = {0};
         source.field = (field *)(uintptr_t)t->field;

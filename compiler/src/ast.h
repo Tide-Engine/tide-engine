@@ -318,6 +318,7 @@ typedef struct device_leaf {
 #define DEVICE_WORDS 4 // Bits for up to 256 device leaves
 
 typedef struct param {
+    str sample_role; // [Raw(T)]: the numeric type sampled or stored through this image parameter.
     const struct field *call_binding; // A shader function slot, stored in its named binding value.
     const struct expr *capture_source; // Compiler-only source identity of a lambda capture.
     bool owner_context; // Entity identity borrowed from an attached component argument.
@@ -501,7 +502,7 @@ typedef enum decl_kind {
 // (a compiler-only kind: the runtime's texture read is DEPTH_ARRAY, its sampler's COMPARE).
 typedef enum shader_read {
     READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE, READ_ARRAY, READ_DEPTH_ARRAY, READ_COMPARE_ARRAY,
-    READ_VOLUME
+    READ_VOLUME, READ_NUMBER, READ_INT, READ_NUMBER_VOLUME, READ_INT_VOLUME
 } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
@@ -593,6 +594,7 @@ typedef struct decl {
     bool sparse_fallback; // A tag Add or Remove names that would take the archetypes past the limit if it moved entities (derive_archetypes)
     bool visibility_optional; // Whole-component visibility needs an independent per-row presence byte on clients.
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
+    int named_members; // Built-in Format: keep old generated enums unchanged until a new member is used.
     // A match component's or singleton's `local` fields are a declaration of
     // their own, its local part: a local one of the same kind and name, which
     // isn't in program.decls. A component's is kept for the match's entities
@@ -785,6 +787,7 @@ typedef struct decl {
     // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
     // only code the GPU runs reads, by its name (declared_raw)
     bool sample_raw;
+    bool sample_linear; // [Linear]: sRGB storage read as linear light.
     // [Lossless] before a Texture asset: its pixels are packed exactly, never block-compressed (pack_item)
     bool lossless;
     // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
@@ -2076,7 +2079,15 @@ void plan_shaders(program *prog);
 void declared_sampling(const expr *texture, int *filter, int *wrap);
 // Whether a texture's declaration says [Raw]: an asset by its name, or a grid's field.
 bool declared_raw(const expr *texture);
+type raw_sample_type(const field *image);
+type declared_image_type(const expr *image);
+unsigned shader_numeric_outputs(const shader *sh);
+unsigned shader_output_types(const shader *sh);
+int image_target_format(const expr *image, int color, int depth);
+bool image_format_accepts(int format, type value);
 bool field_is_raw(const field *f);
+bool declared_linear(const expr *texture);
+bool field_is_linear(const field *f);
 // A field's key in JSON: what its [Json("key")] says, as written between the quotes, or its name.
 str json_field_key(const field *f);
 

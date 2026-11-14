@@ -1,3 +1,13 @@
+## Linear color import (2026-11-14)
+
+Marked Texture/TextureArray/Cubemap assets prepare RGB as encode(decode(straightRGB)*alphaByte/255), with
+coverage rounded to its stored byte first (byte-zero alpha stores no light). Alpha is never transfer-converted. The importer uses Tide's transfer math, linear-filtered BC mip generation and an interpretation
+salt in content/cache identity. Private texture-cache entries carry a Linear bit; pack layout/version is
+unchanged. A marked DDS regenerates mipmaps from its base in linear light; unmarked authored levels are retained.
+Unmarked cache keys/payloads and source file sharing remain unchanged. Tests: texture_compression E2E and
+texture_compress unit (marked premult bytes, opaque role separation, BC1/BC3 and linear midpoint mips), plus
+linear_textures E2E (pack replacement with a retained marked field). Full contracts: textures.md, top section.
+
 # Assets and local files
 
 ## Pack format 5: built in place, a digest of pieces (2026-11-10)

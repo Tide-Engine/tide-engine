@@ -41,13 +41,14 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GP
 // are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
 // of any kind, a float's as its bits. Every backend has it with nothing asked.
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I,
-    TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I
+    TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I,
+    TIDE_GPU_SRGBA8 // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
 } tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
+    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
          : format == TIDE_GPU_RGBA16F ? 8 : format == TIDE_GPU_R16F ? 2
          : format == TIDE_GPU_RGBA32I || format == TIDE_GPU_RGBA32F ? 16 : 1;
 }
@@ -59,6 +60,7 @@ typedef enum tide_gpu_color {
     TIDE_GPU_COLOR_NONE, TIDE_GPU_COLOR_BYTES, TIDE_GPU_COLOR_FLOAT,
     TIDE_GPU_COLOR_R8, TIDE_GPU_COLOR_RG8, TIDE_GPU_COLOR_R16F, TIDE_GPU_COLOR_RG16F,
     TIDE_GPU_COLOR_R32F, TIDE_GPU_COLOR_RGBA32F, TIDE_GPU_COLOR_R32I,
+    TIDE_GPU_COLOR_SRGB, // Private converted-image attachments; no public Tide Format member.
 } tide_gpu_color;
 
 // Attachment storage, independent of the shader's output type. Invalid kinds
@@ -66,7 +68,7 @@ typedef enum tide_gpu_color {
 static inline uint32_t tide_gpu_color_bytes(const tide_gpu_color color)
 {
     switch (color) {
-    case TIDE_GPU_COLOR_BYTES: case TIDE_GPU_COLOR_R32F: case TIDE_GPU_COLOR_R32I: return 4;
+    case TIDE_GPU_COLOR_SRGB: case TIDE_GPU_COLOR_BYTES: case TIDE_GPU_COLOR_R32F: case TIDE_GPU_COLOR_R32I: return 4;
     case TIDE_GPU_COLOR_FLOAT: return 8;
     case TIDE_GPU_COLOR_R8: return 1;
     case TIDE_GPU_COLOR_RG8: case TIDE_GPU_COLOR_R16F: return 2;
@@ -127,7 +129,7 @@ static inline tide_gpu_target_format tide_gpu_target_sampled(const tide_gpu_targ
 static inline tide_gpu_color tide_gpu_target_color(const tide_gpu_target_format format, const uint32_t color)
 {
     const uint32_t held = color < TIDE_GPU_MAX_COLORS ? format >> (4u * color) & 15u : 0u;
-    return held <= TIDE_GPU_COLOR_R32I ? (tide_gpu_color)held : TIDE_GPU_COLOR_NONE;
+    return held <= TIDE_GPU_COLOR_SRGB ? (tide_gpu_color)held : TIDE_GPU_COLOR_NONE;
 }
 
 // How many color images it has.
@@ -163,7 +165,10 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // sampler's read (sampler_reads) is COLOR, DEPTH or COMPARE for them.
 typedef enum tide_gpu_read {
     TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA,
-    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME
+    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME,
+    // Numeric images are loaded at the nearest cell without a sampler. Float32 filtering is optional on
+    // WebGPU, so NUMBER uses an unfilterable-float binding even for formats that can be filtered.
+    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME
 } tide_gpu_read;
 
 // The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.
@@ -172,7 +177,7 @@ enum { TIDE_GPU_MAX_LAYERS = 256 };
 // How a sampler reads a texture that's read as `read`, where a pipeline's samplers are its textures' own.
 static inline uint8_t tide_gpu_sampler_read(const uint8_t read)
 {
-    return read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : (read == TIDE_GPU_READ_ARRAY || read == TIDE_GPU_READ_VOLUME) ? (uint8_t)TIDE_GPU_READ_COLOR
+    return read == TIDE_GPU_READ_SAMPLES || read >= TIDE_GPU_READ_NUMBER ? (uint8_t)TIDE_GPU_READ_DATA : (read == TIDE_GPU_READ_ARRAY || read == TIDE_GPU_READ_VOLUME) ? (uint8_t)TIDE_GPU_READ_COLOR
          : read == TIDE_GPU_READ_DEPTH_ARRAY ? (uint8_t)TIDE_GPU_READ_DEPTH : read;
 }
 
@@ -216,6 +221,7 @@ typedef enum tide_gpu_depth {
     TIDE_GPU_DEPTH_RESET, // Written whatever is there: for clears
     TIDE_GPU_DEPTH_ALONE, // As TIDE_GPU_DEPTH_TEST, and no color is written: a depth pre-pass
     TIDE_GPU_DEPTH_EQUAL, // Shows only where its depth is the one there, and nothing is written: lit after a pre-pass
+    TIDE_GPU_DEPTH_RESET_ALONE, // Clear depth within the clip, leaving every color attachment untouched.
 } tide_gpu_depth;
 
 // Which side of a triangle a pipeline doesn't draw. The front is the side its
@@ -363,6 +369,7 @@ typedef struct tide_gpu_pipeline_desc {
     // images past them are left as they were: the `@location(i)`s of what
     // `fragment` returns.
     uint32_t outputs;
+    uint8_t numeric_outputs; // Bit i: output i replaces its image, regardless of blend; no alpha semantics.
     // Alpha to coverage: the alpha of its first output is the share of each
     // pixel's samples it draws into, depth and stencil too, and what it
     // leaves of them is as it was. Only for targets of colors and samples
@@ -718,7 +725,8 @@ static inline uint32_t tide_gpu_texture_samplers(const tide_gpu_pipeline_desc *d
 {
     if (i >= TIDE_GPU_MAX_TEXTURES || i >= desc->texture_count || (desc->image_writes >> i & 1u)) return 0;
     if (desc->sampler_count) return desc->texture_samplers[i];
-    return desc->reads[i] == TIDE_GPU_READ_DATA || desc->reads[i] == TIDE_GPU_READ_SAMPLES ? 0u : 1u << i;
+    return desc->reads[i] == TIDE_GPU_READ_DATA || desc->reads[i] == TIDE_GPU_READ_SAMPLES
+        || desc->reads[i] >= TIDE_GPU_READ_NUMBER ? 0u : 1u << i;
 }
 
 // Texture `slot` and sampler `slot` together, for a pipeline whose samplers are its textures' own (sampler_count 0).

@@ -74,7 +74,7 @@ _Static_assert(TIDE_TARGET_COLORS * 3 == TIDE_RENDER_IMAGE_SHIFT && TIDE_TARGET_
                "a target's id has 3 bits for each color image's format, then which image a texture names");
 _Static_assert(TIDE_RENDER_SAMPLES_SHIFT == TIDE_RENDER_IMAGE_SHIFT + 2 && (1 << 3) == TIDE_TARGET_SAMPLES
                && TIDE_RENDER_BITS == UINT64_C(0xFFFF),
-               "...then 2 bits for its samples, as a power of two: all of it in what a uint16_t holds");
+               "...then 2 bits for its samples, as a power of two: all metadata fits the existing uint16_t");
 
 // A managed target's id: its state's address, and what it holds.
 static uint64_t managed_id(const tide_render_target_state *s)
@@ -83,17 +83,31 @@ static uint64_t managed_id(const tide_render_target_state *s)
          | (s->volume ? TIDE_RENDER_VOLUME : s->layers ? TIDE_RENDER_ARRAY : 0u);
 }
 
-// What a target of these color images holds, as its id's bits say it: for
-// each in order, 1 + its format, which is a color's (anything but
-// TIDE_TARGET_RGBA16F is TIDE_TARGET_RGBA8).
-static uint16_t holds_of(const tide_target_formats formats)
+// Legacy formats keep their original three-bit lanes. Numeric format/sample combinations
+// use the unused tags of the same 16-bit space (draw.h's compact catalogue).
+static uint32_t holds_of(const tide_target_formats formats)
 {
-    uint16_t holds = 0;
-    for (uint32_t i = 0; i < formats.count && i < TIDE_TARGET_COLORS; i++) {
-        const uint32_t format = formats.color[i] == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8;
-        holds |= (uint16_t)((format + 1u) << (3u * i));
+    bool numeric = false;
+    for (uint32_t i = 0; i < formats.count && i < TIDE_TARGET_COLORS; i++)
+        numeric |= formats.color[i] >= TIDE_TARGET_R8;
+    uint32_t holds = 0;
+    if (numeric) {
+        for (uint32_t i = formats.count; i > 0; i--) {
+            const uint32_t format = formats.color[i - 1u];
+            const uint32_t digit = format ? format - 1u : 0u;
+            holds = holds * 9u + digit + 1u;
+        }
+        return tide_render_numeric_tag(holds * 4u);
     }
+    for (uint32_t i = 0; i < formats.count && i < TIDE_TARGET_COLORS; i++)
+        holds |= (formats.color[i] + 1u) << (3u * i);
     return holds;
+}
+
+static uint8_t color_format(const tide_target_format format)
+{
+    return (uint8_t)(format >= TIDE_TARGET_RGBA8 && format <= TIDE_TARGET_R32I && format != TIDE_TARGET_DEPTH
+        ? format : TIDE_TARGET_RGBA8);
 }
 
 // What a target made with one format holds: one color image of it, or none for
@@ -101,7 +115,7 @@ static uint16_t holds_of(const tide_target_formats formats)
 static tide_target_formats one_format(const tide_target_format format)
 {
     if (format == TIDE_TARGET_DEPTH) return (tide_target_formats){0};
-    return (tide_target_formats){.count = 1, .color = {(uint8_t)(format == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8)}};
+    return (tide_target_formats){.count = 1, .color = {color_format(format)}};
 }
 
 // ...and one made with `count` of them, each a color image's.
@@ -119,7 +133,7 @@ static tide_target_formats several_formats(const tide_target_format *formats, co
             fprintf(stderr, "RenderTarget: Format.Depth is the format of a target with no color image, by itself: "
                             "among several it's a Format.Rgba8 image\n");
         }
-        held.color[i] = (uint8_t)(formats[i] == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8);
+        held.color[i] = color_format(formats[i]);
     }
     return held;
 }
@@ -141,6 +155,12 @@ static uint16_t samples_of(const int32_t samples, const tide_target_formats form
                 1 << power);
         power = 0;
     }
+    for (uint32_t i = 0; power && i < formats.count; i++) {
+        if (formats.color[i] >= TIDE_TARGET_R32F) {
+            fprintf(stderr, "RenderTarget: 32-bit float and integer image formats use one sample; omit samples or use samples: 1\n");
+            power = 0;
+        }
+    }
     return (uint16_t)(power << TIDE_RENDER_SAMPLES_SHIFT);
 }
 
@@ -151,13 +171,23 @@ static uint16_t samples_of(const int32_t samples, const tide_target_formats form
 static tide_render_target make_target_sampled(const tide_target_size size, const tide_target_formats formats,
                                               const uint16_t sampled, const char *why)
 {
+    uint32_t holds = holds_of(formats);
+    if (tide_render_target_numeric(holds) && sampled) {
+        uint32_t code = 0;
+        for (uint32_t i = formats.count; i > 0; i--) {
+            const uint32_t format = formats.color[i - 1u];
+            code = code * 6u + (format ? format - 1u : 0u) + 1u;
+        }
+        const uint32_t power = sampled >> TIDE_RENDER_SAMPLES_SHIFT;
+        holds = tide_render_numeric_tag((7381u + (power - 1u) * 1555u + code) * 4u);
+    } else if (!tide_render_target_numeric(holds)) holds |= sampled;
     void *memory = tide_alloc_zeroed(1, sizeof(tide_render_target_state) + (size_t)TIDE_RENDER_BITS);
     tide_render_target_state *s = (tide_render_target_state *)(((uintptr_t)memory + (uintptr_t)TIDE_RENDER_BITS)
                                                                & ~(uintptr_t)TIDE_RENDER_BITS);
     *s = (tide_render_target_state){.next = render_targets, .owner = &render_targets, .size = size, .version = 1,
                                     .content_revision = next_render_revision(),
                                     .memory = memory, .alive = tide_target_size_valid(size),
-                                    .holds = (uint16_t)(holds_of(formats) | sampled)};
+                                    .holds = (uint16_t)holds};
     render_targets = s;
     if (!s->alive) {
         s->size = (tide_target_size){0};
@@ -329,6 +359,10 @@ tide_cubemap_ref tide_cubemap_make(const float size)
 
 tide_cubemap_ref tide_cubemap_make_as(const float size, const tide_target_format format)
 {
+    if (format >= TIDE_TARGET_R8 && format <= TIDE_TARGET_R32I) {
+        fprintf(stderr, "Cubemap: numeric formats require a RenderTarget; cube faces hold Rgba8 or Rgba16f\n");
+        return (tide_cubemap_ref){0};
+    }
     const tide_render_target made = make_target((tide_target_size){.width = size, .height = size, .scale = 1.0f},
                                                 one_format(format == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8),
                                                 "Cubemap(size) requires a positive size, its faces' side in pixels");
@@ -364,6 +398,10 @@ void tide_cubemap_dispose(const tide_cubemap_ref cube)
 
 tide_texture_array_ref tide_texture_array_make(const tide_target_size size, const uint32_t layers, const tide_target_format format)
 {
+    if (format >= TIDE_TARGET_R8 && format <= TIDE_TARGET_R32I) {
+        fprintf(stderr, "TextureArray: numeric formats require a RenderTarget or an owned Texture3D\n");
+        return (tide_texture_array_ref){0};
+    }
     const bool counted = layers >= 1u && layers <= TIDE_TEXTURE_ARRAY_LAYERS;
     if (!counted) {
         fprintf(stderr, "TextureArray(width, height, layers) requires 1 to %d layers, and this asked for %u\n",
@@ -400,7 +438,12 @@ static void volume_size_warning(void)
 
 tide_texture3d_ref tide_texture3d_make(const tide_int3 size, const tide_target_format format)
 {
-    if (format == TIDE_TARGET_DEPTH || !tide_texture3d_extent_valid(size, format == TIDE_TARGET_RGBA16F ? 8u : 4u)) {
+    if (format != TIDE_TARGET_RGBA8 && format != TIDE_TARGET_RGBA16F && format != TIDE_TARGET_R32F
+        && format != TIDE_TARGET_RGBA32F && format != TIDE_TARGET_R32I) {
+        fprintf(stderr, "Texture3D: use a portable storage format: Rgba8, Rgba16f, R32f, Rgba32f or R32i\n");
+        return (tide_texture3d_ref){0};
+    }
+    if (!tide_texture3d_extent_valid(size, tide_target_format_bytes(format))) {
         volume_size_warning();
         return (tide_texture3d_ref){0};
     }
@@ -419,7 +462,7 @@ void tide_texture3d_resize(const tide_texture3d_ref volume, const tide_int3 size
         fprintf(stderr, "Texture3D.Resize requires a live owned volume; resize the Grid3 itself for a grid-backed volume\n");
         return;
     }
-    const uint32_t bytes = tide_render_target_formats(volume.target.id).color[0] == TIDE_TARGET_RGBA16F ? 8u : 4u;
+    const uint32_t bytes = tide_target_format_bytes((tide_target_format)tide_render_target_formats(volume.target.id).color[0]);
     if (!tide_texture3d_extent_valid(size, bytes)) { volume_size_warning(); return; }
     s->size = (tide_target_size){.width = (float)size.x, .height = (float)size.y, .scale = 1.0f};
     s->layers = (uint16_t)size.z;
@@ -560,14 +603,19 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
         return (tide_render_target){0};
     // A texture's reference names one of its target's color images, and its new one names the same; a
     // cube's face is that face of the new cube
-    const uint64_t image = previous.id & (TIDE_RENDER_IMAGE | TIDE_RENDER_FACE | TIDE_RENDER_LAYER), whole = previous.id & ~image;
+    const uint32_t selected = tide_render_target_image(previous.id);
+    const uint64_t image = previous.id & (TIDE_RENDER_FACE | TIDE_RENDER_LAYER);
+    const uint64_t whole = tide_render_target_whole(previous.id) & ~(TIDE_RENDER_FACE | TIDE_RENDER_LAYER);
     for (const tide_render_target_state *s = render_targets; s; s = s->next) {
-        if (s->reload_id == whole) return (tide_render_target){.id = managed_id(s) | image, .size = s->size};
+        if (s->reload_id == whole) {
+            const tide_render_target current = {.id = managed_id(s) | image, .size = s->size};
+            return selected ? tide_render_target_color_at(current, (int32_t)selected).target : current;
+        }
     }
     // As it was: its size, its scale, whether it follows the window, and what it holds, its samples and
     // whether it's a cube, which its id says
     tide_render_target next = make_target_sampled(previous.size, tide_render_target_formats(whole),
-                                                  (uint16_t)(whole & TIDE_RENDER_SAMPLES), "");
+                                                  samples_of((int32_t)tide_render_target_samples(whole), tide_render_target_formats(whole)), "");
     tide_render_target_state *s = tide_render_target_state_of(next.id);
     s->reload_id = whole;
     s->cube = (whole & TIDE_RENDER_CUBE) != 0;
@@ -578,6 +626,7 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
         s->layers = (uint16_t)(layer > 1u ? layer : 1u);
     }
     next.id = managed_id(s) | image;
+    if (selected) next = tide_render_target_color_at(next, (int32_t)selected).target;
     return next;
 }
 
@@ -1101,15 +1150,20 @@ static void reindex_textures(tide_draw_list *d)
     for (uint32_t i = 0; i < d->texture_count; i++) index_texture(d, i);
 }
 
-static tide_draw_texture *find_texture(const tide_draw_list *d, const uint32_t space, const uint64_t id)
+static tide_draw_texture *find_texture_role(const tide_draw_list *d, const uint32_t space, const uint64_t id, const bool linear)
 {
     if (!d->texture_index_capacity) return NULL;
     const uint32_t mask = d->texture_index_capacity - 1u;
     for (uint32_t i = texture_hash(space, id) & mask; d->texture_index[i]; i = (i + 1u) & mask) {
         tide_draw_texture *t = &d->textures[d->texture_index[i] - 1u];
-        if (t->space == space && t->id == id) return t;
+        if (t->space == space && t->id == id && t->linear == linear) return t;
     }
     return NULL;
+}
+
+static tide_draw_texture *find_texture(const tide_draw_list *d, const uint32_t space, const uint64_t id)
+{
+    return find_texture_role(d, space, id, false);
 }
 
 static tide_draw_texture *add_texture(tide_draw_list *d, const tide_draw_texture texture)
@@ -2033,7 +2087,51 @@ uint32_t tide_draw_target_depth_sized(tide_draw_list *d, const uint64_t id, cons
 
 void tide_draw_clear(tide_draw_list *d, const tide_color color)
 {
+    const uint64_t id = d->target && d->target <= d->target_count ? d->targets[d->target - 1u].id : 0;
+    if (tide_render_target_managed(id) && tide_render_target_numeric(id)) {
+        fprintf(stderr, "Clear: supply one typed value per numeric image, in the target's format order\n");
+        return;
+    }
     push(d, TIDE_DRAW_CLEAR, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), color);
+}
+
+void tide_draw_clear_images(tide_draw_list *d, const tide_clear_value *values, const uint32_t count)
+{
+    if (!values || count == 0 || count > TIDE_TARGET_COLORS) return;
+    const uint64_t id = d->target && d->target <= d->target_count ? d->targets[d->target - 1u].id : 0;
+    const tide_target_formats formats = tide_render_target_formats(id);
+    if (count != formats.count) {
+        fprintf(stderr, "Clear: supply one value per image, in the target's format order\n");
+        return;
+    }
+    uint32_t words[4][4] = {{0}};
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t format = formats.color[i];
+        const tide_clear_kind kind = values[i].kind;
+        const bool fits = kind == TIDE_CLEAR_COLOR ? format == TIDE_TARGET_RGBA8 || format == TIDE_TARGET_RGBA16F
+            : kind == TIDE_CLEAR_FLOAT ? format == TIDE_TARGET_R8 || format == TIDE_TARGET_R16F || format == TIDE_TARGET_R32F
+            : kind == TIDE_CLEAR_FLOAT2 ? format == TIDE_TARGET_RG8 || format == TIDE_TARGET_RG16F
+            : kind == TIDE_CLEAR_FLOAT4 ? format == TIDE_TARGET_RGBA16F || format == TIDE_TARGET_RGBA32F
+            : kind == TIDE_CLEAR_INT && format == TIDE_TARGET_R32I;
+        if (!fits) {
+            fprintf(stderr, "Clear: value %u does not fit its image; supply the type its format stores\n", (unsigned)i);
+            return;
+        }
+        memcpy(words[i], values[i].words, sizeof words[i]);
+        if (kind == TIDE_CLEAR_COLOR) {
+            float lanes[4];
+            memcpy(lanes, words[i], sizeof lanes);
+            lanes[0] *= lanes[3]; lanes[1] *= lanes[3]; lanes[2] *= lanes[3];
+            memcpy(words[i], lanes, sizeof lanes);
+        }
+    }
+    if (d->uniform_used > UINT32_MAX - sizeof words) return;
+    const uint32_t at = d->uniform_used;
+    d->uniforms = grow(d->uniforms, d->uniform_used, &d->uniform_capacity, sizeof words, 1, 1024u);
+    memcpy(d->uniforms + at, words, sizeof words);
+    d->uniform_used += sizeof words;
+    tide_draw_command *command = push(d, TIDE_DRAW_CLEAR_IMAGES, tide_f2(0, 0), tide_f2(0, 0), (tide_color){0});
+    command->clear_images.uniforms = at;
 }
 
 void tide_draw_clear_depth(tide_draw_list *d)
@@ -2472,17 +2570,17 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, const uint32_t space, const u
 // else leaves nothing known of what changed.
 static uint32_t texture_place(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
                               const int32_t width, const int32_t height, const uint32_t format, const uint64_t kind,
-                              uint8_t **pixels, bool *kept)
+                              uint8_t **pixels, bool *kept, const bool linear)
 {
     *pixels = NULL;
     if (kept) *kept = false;
     if (width <= 0 || height <= 0) return 0;
     const uint64_t bytes = (uint64_t)width * (uint64_t)height * tide_texels_bytes(format);
     if (bytes > UINT32_MAX) tide_out_of_memory();
-    tide_draw_texture *t = find_texture(d, space, id);
+    tide_draw_texture *t = find_texture_role(d, space, id, linear);
     bool same = false; // Its pixels are there, in this shape
     if (!t) {
-        t = add_texture(d, (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch});
+        t = add_texture(d, (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch, .linear = linear});
     } else if (t->width == width && t->height == height && t->format == format) {
         if (t->version == version) { // The same pixels, whoever wrote them
             t->frame = d->frame;
@@ -2523,14 +2621,21 @@ static uint32_t texture_place(tide_draw_list *d, const uint32_t space, const uin
 uint32_t tide_draw_texture_slot_as(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
                                    const int32_t width, const int32_t height, const uint32_t format, uint8_t **pixels)
 {
-    return texture_place(d, space, id, version, width, height, format, 0, pixels, NULL);
+    return texture_place(d, space, id, version, width, height, format, 0, pixels, NULL, false);
 }
 
 uint32_t tide_draw_texture_edit(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
                                 const int32_t width, const int32_t height, const uint32_t format, const uint64_t kind,
                                 uint8_t **pixels, bool *kept)
 {
-    return texture_place(d, space, id, version, width, height, format, kind ? kind : 1u, pixels, kept);
+    return texture_place(d, space, id, version, width, height, format, kind ? kind : 1u, pixels, kept, false);
+}
+
+uint32_t tide_draw_texture_edit_linear(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
+                                       const int32_t width, const int32_t height, const uint64_t kind,
+                                       uint8_t **pixels, bool *kept)
+{
+    return texture_place(d, space, id, version, width, height, TIDE_TEXELS_BYTES, kind, pixels, kept, true);
 }
 
 static tide_draw_texture_changes *changes_of(tide_draw_list *d, const uint32_t texture)
@@ -2637,7 +2742,7 @@ static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
             const tide_draw_texture *t = &d->textures[last->mesh.texture - 1u];
             if (t->id == (uint64_t)(uintptr_t)texture->pixels && t->space == TIDE_PIXELS_MEMORY && t->frame == d->frame
                 && t->version == texture->version && t->width == texture->width && t->height == texture->height
-                && t->format == TIDE_TEXELS_BYTES) {
+                && t->format == TIDE_TEXELS_BYTES && !t->linear) {
                 return last->mesh.texture;
             }
         }
@@ -2715,6 +2820,36 @@ uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref text
     return tide_draw_target_texture_sized(d, target.id, target.size);
 }
 
+// Static [Linear] captures share borrowed source storage but keep a distinct draw/GPU cache entry.
+static uint32_t linear_source(tide_draw_list *d, const uint32_t source)
+{
+    if (!source || source > d->texture_count) return 0;
+    tide_draw_texture copy = d->textures[source - 1u];
+    if (copy.linear) return source;
+    for (uint32_t i = 0; i < d->texture_count; i++) {
+        tide_draw_texture *t = &d->textures[i];
+        if (!t->linear || t->space != copy.space || t->id != copy.id) continue;
+        copy.linear = true;
+        copy.capacity = 0;
+        copy.changes = NULL;
+        *t = copy;
+        return i + 1u;
+    }
+    copy.linear = true;
+    copy.capacity = 0;
+    copy.changes = NULL;
+    tide_draw_texture *added = add_texture(d, copy);
+    return (uint32_t)(added - d->textures) + 1u;
+}
+
+uint32_t tide_draw_texture_source_linear(tide_draw_list *d, const tide_texture_ref texture)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_grid(texture, &grid, &shape)) return tide_draw_grid_texture_linear(d, grid, &shape);
+    return linear_source(d, tide_draw_texture_source(d, texture));
+}
+
 uint32_t tide_draw_depth_source(tide_draw_list *d, const tide_depth_ref depth)
 {
     if (!depth.target.id) return 0;
@@ -2778,6 +2913,14 @@ uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref 
     return at;
 }
 
+uint32_t tide_draw_array_source_linear(tide_draw_list *d, const tide_texture_array_ref array)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_array_grid(array, &grid, &shape)) return tide_draw_grid_array_texture_linear(d, grid, &shape);
+    return linear_source(d, tide_draw_array_source(d, array));
+}
+
 uint32_t tide_draw_volume_source(tide_draw_list *d, const tide_texture3d_ref volume)
 {
     tide_grid grid;
@@ -2806,6 +2949,11 @@ uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
     if (!tide_render_target_cubic(target.id)) return 0;
     const uint64_t id = tide_render_target_cube_of(target.id);
     return target_texture_version(d, TIDE_PIXELS_TARGET_CUBE, id, target.size, tide_render_target_version(id));
+}
+
+uint32_t tide_draw_cube_source_linear(tide_draw_list *d, const tide_cubemap_ref cube)
+{
+    return linear_source(d, tide_draw_cube_source(d, cube));
 }
 
 // A mesh's corners as the tint and the transform leave them: apart from
@@ -4954,7 +5102,7 @@ void tide_draw_mesh_3d_placed(tide_draw_list *d, const tide_mesh *mesh, const ti
 // One list after another
 
 // The texture of `from`'s mesh command, as `d` has it.
-static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, const uint32_t texture)
+static uint32_t append_texture_plain(tide_draw_list *d, const tide_draw_list *from, const uint32_t texture)
 {
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
@@ -4982,14 +5130,13 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     }
     // What `from` knows changed since the pixels `d` has is all that's copied, and `d` knows it of its own then.
     // The kind is a copy's, of that writer's: the writer itself, on `d`, would find none of its own numbers here
-    const tide_draw_texture *mine = find_texture(d, t->space, id);
+    const tide_draw_texture *mine = find_texture_role(d, t->space, id, t->linear);
     const uint64_t had = mine ? mine->version : 0;
     const uint64_t kind = t->changes && t->changes->kind ? ~t->changes->kind : 0;
     uint8_t *pixels;
     bool kept;
-    const uint32_t slot = kind ? tide_draw_texture_edit(d, t->space, id, t->version, t->width, t->height, t->format, kind,
-                                                        &pixels, &kept)
-                               : texture_place(d, t->space, id, t->version, t->width, t->height, t->format, 0, &pixels, &kept);
+    const uint32_t slot = texture_place(d, t->space, id, t->version, t->width, t->height, t->format, kind,
+                                         &pixels, &kept, t->linear);
     if (slot) d->textures[slot - 1u].layers = t->layers; // A grid's array's
     if (!pixels) return slot;
     const size_t pixel = tide_texels_bytes(t->format), row = (size_t)t->width * pixel;
@@ -5009,6 +5156,12 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
         tide_draw_texture_changed(d, slot, a->x, a->y, a->width, a->height);
     }
     return slot;
+}
+
+static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, const uint32_t texture)
+{
+    const uint32_t slot = append_texture_plain(d, from, texture);
+    return texture && from->textures[texture - 1u].linear ? linear_source(d, slot) : slot;
 }
 
 // `from`'s 2D camera `camera` (1 + its place, or 0), as `d` has it.
@@ -5322,6 +5475,17 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             }
             const tide_draw_target_data *t = c->target ? &from->targets[c->target - 1u] : NULL;
             draw_to_version(d, t ? t->id : 0, t ? t->size : (tide_target_size){0}, t ? t->version : 0);
+        } else if (c->kind == TIDE_DRAW_CLEAR_IMAGES) {
+            const uint32_t at = c->clear_images.uniforms;
+            if (at <= from->uniform_used && sizeof(uint32_t[4][4]) <= from->uniform_used - at
+                && d->uniform_used <= UINT32_MAX - sizeof(uint32_t[4][4])) {
+                const uint32_t into = d->uniform_used;
+                d->uniforms = grow(d->uniforms, d->uniform_used, &d->uniform_capacity, sizeof(uint32_t[4][4]), 1, 1024u);
+                memcpy(d->uniforms + into, from->uniforms + at, sizeof(uint32_t[4][4]));
+                d->uniform_used += sizeof(uint32_t[4][4]);
+                tide_draw_command *copy = push(d, TIDE_DRAW_CLEAR_IMAGES, tide_f2(0, 0), tide_f2(0, 0), (tide_color){0});
+                copy->clear_images.uniforms = into;
+            }
         } else if (c->kind == TIDE_DRAW_CAMERA || c->kind == TIDE_DRAW_SCREEN) {
             // What `from` plays is what `d` has from here on: the next command that draws records it
             d->place.camera_2d = camera_slot(d, (tide_draw_camera_data){.center = c->a, .size = c->b.x,
