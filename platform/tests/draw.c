@@ -30,6 +30,7 @@
 #include "tide/time.h"
 #include "../src/texture_residency.h"
 #include "../src/gpu.h" // tide_gpu_spirv_of, tide_platform_shader_pipelines
+#include "../src/depth.h"
 #ifdef TIDE_SPIRV
 #include "spirv.h"      // compiler/src's translator, which the test's build adds
 #endif
@@ -990,7 +991,7 @@ static void primitives(void)
 // as tidec writes them from Tide's (see tide_shader), here written by hand
 
 #if defined(__wasm__) || defined(TIDE_SPIRV)
-#define WGSL(source) source // The web's, and Vulkan's, which translates it (main)
+#define WGSL(source) TIDE_DEPTH_WGSL source // The web's, and Vulkan's, which translates it (main)
 #else
 #define WGSL(source) NULL
 #endif
@@ -1052,7 +1053,7 @@ static const tide_shader lit_shader = {
         "    let p = u.tide_camera * (relative * vec4f(position, 1.0));\n"
         "    var out: Corner;\n"
         "    out.tint = vec4f(color.rgb * -normal.z, color.a);\n"
-        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n" // The camera's clip space is OpenGL's
+        "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n" // The camera's clip space is OpenGL's
         "    return out;\n"
         "}\n"
         WGSL_TINT_FRAGMENT),
@@ -1073,7 +1074,7 @@ static const tide_shader flat_shader = {
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
         "    var out: Corner;\n"
         "    out.tint = color;\n"
-        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "    return out;\n"
         "}\n"
         WGSL_TINT_FRAGMENT),
@@ -1098,7 +1099,7 @@ static const tide_shader picked_shader = {
     .wgsl = WGSL(WGSL_UNIFORMS("tint: vec4f, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
-        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "}\n"
         "@fragment fn fragment() -> @location(0) vec4f {\n"
         "    var c = u.tint;\n"
@@ -1131,7 +1132,7 @@ static const tide_shader many_shader = {
     .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 248>, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
-        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "}\n"
         "@fragment fn fragment() -> @location(0) vec4f {\n"
         "    return vec4f(u.colors[u.pick.x].rgb * u.colors[u.pick.x].a, u.colors[u.pick.x].a);\n"
@@ -1167,7 +1168,7 @@ static const tide_shader counted_shader = {
         "    let p = u.tide_camera * vec4f(position + shift.xy + vec2f(mask.yz), 0.0, 1.0);\n"
         "    var out: Corner;\n"
         "    out.tint = vec4f(f32((c >> 16u) & 255), f32((c >> 8u) & 255), f32(c & 255), 255.0) / 255.0;\n"
-        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "    return out;\n"
         "}\n"
         WGSL_TINT_FRAGMENT),
@@ -1202,7 +1203,7 @@ static const tide_shader halves_shader = {
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
         "    var out: Corner;\n"
         "    out.at = uv;\n"
-        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "    return out;\n"
         "}\n"
         "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
@@ -1234,7 +1235,7 @@ static const tide_shader shared_shader = {
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
         "    var out: Corner;\n"
         "    out.at = uv;\n"
-        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "    return out;\n"
         "}\n"
         "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
@@ -1269,7 +1270,7 @@ static const tide_shader two_ways_shader = {
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
         "    var out: Corner;\n"
         "    out.at = uv;\n"
-        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "    return out;\n"
         "}\n"
         "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
@@ -1300,7 +1301,7 @@ static const tide_shader sampled_shader = {
         "    let p = u.tide_camera * vec4f(position + place.xy, 0.0, 1.0);\n"
         "    var out: Corner;\n"
         "    out.tint = textureSampleLevel(pixels0, how0, place.zw, 0.0);\n"
-        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "    return out;\n"
         "}\n"
         WGSL_TINT_FRAGMENT),
@@ -1321,7 +1322,7 @@ static const tide_shader placed_shader = {
     .wgsl = WGSL(WGSL_UNIFORMS("")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
-        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "}\n"
         "@fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {\n"
         "    let p = at.xy / u.tide_screen.xy;\n"
@@ -4175,7 +4176,7 @@ static const tide_shader lights_shader = {
         "@group(0) @binding(1) var pixels0: texture_2d<i32>;\n"
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
-        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return vec4f(p.xy, tide_clip_depth(p), p.w);\n"
         "}\n"
         "@fragment fn fragment(@builtin(position) place: vec4f) -> @location(0) vec4f {\n"
         "    let light = (i32(place.x) + i32(place.y) * 256) % max(u.lights.x, 1);\n"

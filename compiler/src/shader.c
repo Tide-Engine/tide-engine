@@ -2866,7 +2866,7 @@ static void ex_pixel(emit *em, const expr *e)
     } else if (str_eq_c(e->member, "front")) {
         sb_put(em->o, "tide_front");
     } else if (str_eq_c(e->member, "depth")) {
-        sb_put(em->o, "tide_at.z");
+        sb_put(em->o, "tide_depth(tide_at.z)");
     } else {
         sb_put(em->o, "tide_world");
     }
@@ -4210,9 +4210,9 @@ static void ex_sample(emit *em, const expr *e)
         sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", way_texture(em, slot), way_sampler(em, slot));
         ex_as(em, e->args.items[0], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
         put_layer(em, e, layer_at, slot);
-        sb_put(em->o, ", clamp(");
+        sb_put(em->o, ", tide_depth(clamp(");
         ex_as(em, e->args.items[arrayed ? 2 : 1], (type){TY_FLOAT, NULL});
-        sb_put(em->o, ", 0.0, 1.0))");
+        sb_put(em->o, ", 0.0, 1.0)))");
         return;
     }
     // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
@@ -4262,6 +4262,7 @@ static void ex_sample(emit *em, const expr *e)
         sb_put(em->o, straight ? "))" : ")");
         return;
     }
+    if (base == READ_DEPTH) sb_put(em->o, "tide_depth(");
     sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", way_texture(em, slot), way_sampler(em, slot));
     ex_as(em, e->args.items[0], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
     put_layer(em, e, layer_at, slot);
@@ -4272,7 +4273,7 @@ static void ex_sample(emit *em, const expr *e)
         ex_as(em, e->args.items[arrayed ? 2 : 1], (type){TY_FLOAT, NULL});
         sb_put(em->o, straight ? ", 0.0, 31.0)))" : ", 0.0, 31.0))");
     } else {
-        sb_put(em->o, straight ? ", 0.0))" : base == READ_COLOR ? ", 0.0)" : ", 0)");
+        sb_put(em->o, straight ? ", 0.0))" : base == READ_COLOR ? ", 0.0)" : ", 0))");
     }
 }
 
@@ -5668,9 +5669,9 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
     case S_EXPR:
         if (s->value->kind == E_METHOD && s->value->call == CALL_WRITE_DEPTH) {
             need(em, family_helper(FAMILY_CLAMP, 1));
-            sb_put(em->o, "tide_written_depth = tide_clamp1(");
+            sb_put(em->o, "tide_written_depth = tide_depth(tide_clamp1(");
             ex_as(em, s->value->args.items[0], (type){TY_FLOAT, NULL});
-            sb_put(em->o, ", 0.0, 1.0);\n");
+            sb_put(em->o, ", 0.0, 1.0));\n");
         } else if (s->value->kind == E_METHOD && s->value->call == CALL_COVER) { // How much of the pixel it covers, finished as it ends
             sb_put(em->o, "tide_cover = ");
             ex_as(em, s->value->args.items[0], (type){TY_FLOAT, NULL});
@@ -6185,7 +6186,7 @@ static void put_vertex_main(emit *em, sb *o)
     }
     // The camera's clip space is OpenGL's: depth from -1
     sb_printf(o, "    let tide_clip = %s;\n    var out: tide_corner;\n"
-                 "    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);\n",
+                 "    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);\n",
               placed ? "tide_moved" : sh->dims == 3 ? "tide_projected" : "tide_block.tide_camera * tide_place");
     for (int i = 0; i < v->fields.count; i++) {
         if (sh->frag_fields[i]) sb_printf(o, "    %stide_s%d = tide_vertex.%s;\n", out, i, field_name(&v->fields.items[i]));
@@ -6528,6 +6529,9 @@ static void write_wgsl(program *prog, shader *sh)
 
     const bool rolls = stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG);
     sb o = {0}, rest = {0};
+    sb_put(&o, "const tide_reversed_depth = true;\n"
+               "fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }\n"
+               "fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }\n");
     put_uniforms(sh, &o);
     put_pools(sh, &o); // The pools of the GPU lists its code reads, and an indirect draw's instances
     sb loads = {0};

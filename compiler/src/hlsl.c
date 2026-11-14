@@ -2525,14 +2525,14 @@ static const char *const prelude[] = {
     "float4 tidehl_clip(float4 p) {\n"
     "    p.y *= tidehl_flip();\n"
     "#if TIDEHL_REVERSED_Z\n"
-    "    p.z = p.w - p.z;\n"
+    "    if (!TIDEHL_SOURCE_REVERSED) p.z = p.w - p.z;\n"
     "#else\n"
-    "    p.z = 2.0 * p.z - p.w;\n"
+    "    p.z = TIDEHL_SOURCE_REVERSED ? p.w - 2.0 * p.z : 2.0 * p.z - p.w;\n"
     "#endif\n"
     "    return p;\n"
     "}\n"
-    "float tidehl_depth_in(float d) { return TIDEHL_REVERSED_Z ? 1.0 - d : d; }\n"
-    "float tidehl_depth_out(float d) { return TIDEHL_REVERSED_Z ? 1.0 - d : d; }\n"
+    "float tidehl_depth_in(float d) { return TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED ? 1.0 - d : d; }\n"
+    "float tidehl_depth_out(float d) { return TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED ? 1.0 - d : d; }\n"
     "float4 tidehl_position(float4 p) {\n"
     "    if (tidehl_flip() < 0.0) p.y = _TideHeight - p.y;\n"
     "    p.z = tidehl_depth_in(p.z);\n"
@@ -2800,13 +2800,13 @@ static const char *const prelude[] = {
     "    float2 p = at * size - 0.5;\n"
     "    float2 f = frac(p);\n"
     "    float4 g = t.GatherRed(TIDEHL_NEAREST(own), (floor(p) + 1.0) / size);\n"
-    "#if TIDEHL_REVERSED_Z\n"
+    "#if TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED\n"
     "    g = 1.0 - g;\n"
     "#endif\n"
-    "    float4 lit = step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)\n"
+    "    float4 lit = TIDEHL_SOURCE_REVERSED ? step(g, d.xxxx) : step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)\n"
     "    return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);\n"
     "}\n"
-    "float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return d <= tidehl_depth(t, own, at) ? 1.0 : 0.0; }\n"
+    "float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return (TIDEHL_SOURCE_REVERSED ? d >= tidehl_depth(t, own, at) : d <= tidehl_depth(t, own, at)) ? 1.0 : 0.0; }\n"
     "float tidehl_depth(Texture2DArray<float> t, SamplerState own, float3 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }\n"
     "float tidehl_compare(Texture2DArray<float> t, SamplerState own, float3 at, float d) { // at.z: the layer\n"
     "    uint w, h, n;\n"
@@ -2815,10 +2815,10 @@ static const char *const prelude[] = {
     "    float2 p = at.xy * size - 0.5;\n"
     "    float2 f = frac(p);\n"
     "    float4 g = t.GatherRed(TIDEHL_NEAREST(own), float3((floor(p) + 1.0) / size, at.z));\n"
-    "#if TIDEHL_REVERSED_Z\n"
+    "#if TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED\n"
     "    g = 1.0 - g;\n"
     "#endif\n"
-    "    float4 lit = step(d.xxxx, g);\n"
+    "    float4 lit = TIDEHL_SOURCE_REVERSED ? step(g, d.xxxx) : step(d.xxxx, g);\n"
     "    return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);\n"
     "}\n"
     "\n",
@@ -3012,6 +3012,12 @@ static void translate(translation *x, hs *out)
     hs entries = {0};
     if (vertex) entry_points(x, vertex, fragment, &entries);
     if (compute) compute_entry(x, compute, &entries);
+    bool reversed_depth = false;
+    for (int i = 0; i < x->nglobals; i++) {
+        const gdecl *g = x->globals[i];
+        reversed_depth |= same(g->name, g->len, "tide_reversed_depth");
+    }
+    hprintf(out, "#define TIDEHL_SOURCE_REVERSED %d\n", reversed_depth ? 1 : 0);
     for (int i = 0; prelude[i]; i++) hput(out, prelude[i]);
     bool volumes = false, images = false;
     for (int i = 1; i < x->ntypes; i++) {

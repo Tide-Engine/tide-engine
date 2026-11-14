@@ -1,3 +1,24 @@
+## Reversed-depth replay and float attachments (2026-11-14)
+
+The replay prefers D32_SFloat_S8_UInt attachments, with D24 where the device cannot render D32. Unity retains
+its native depth convention and ShaderLab comparison/clear mapping. HLSL recognizes the new reversed WGSL
+source convention, so vertex output, fragment depth, reads, texture loads and comparison references do not
+reverse twice. Sample-zero resolves remain raw copies. Existing forward hand-written fixtures still translate
+with their original convention. Regenerated game/built-in shaders are keyed from their new SPIR-V as before.
+
+Depth storage adds no replay packet or embed ABI layout change. The merged DepthBias packet uses ABI 21. Bit 31 of tide_embed_render_formats now reports
+float depth storage for the recorder's 8-versus-4-byte memory estimate; existing compression bits retain their
+meaning. embed_render_counts_the_hosts_depth_format pins that accounting selection and restores defaults.
+
+Validation uses a scratch Sample, this checkout's CLI and MinGW platform/runtime, hidden Unity 6000.6.0f1 batch
+mode with noAudio. All ten ComputeReplayTests pass on D3D11, D3D12, Vulkan and OpenGL Core. Generated shader
+compilation and generated-doc XML EditMode checks pass. An encountered pre-existing Unity analyzer warning in
+TypeBoundaryTests was fixed using Assembly.GetLoadedAssemblyPath rather than Assembly.Location.
+The broader PlayMode attempt passed 31/33; the live-build case passes when rerun with this checkout's running
+build service. ScaleTests still reports two whole-frame allocations (showing itself allocates zero); this is
+outside the depth replay witnesses and no allocation assertion was loosened. Metal remains external coverage.
+See depth-precision-production.md for the complete native/web validation and measurement.
+
 ## Integral handed fields and provoking corners (2026-11-14)
 
 Generated HLSL carries integer varyings with nointerpolation; bool handed fields

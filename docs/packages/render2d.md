@@ -80,6 +80,8 @@ Raw assets must stay in Raw fields; see [numeric textures](../game/meshes-and-te
 
 ## Lights and shadows
 
+Shadow depth sampling and comparison references remain forward (0 near, 1 far), including bias. Reversed float storage is handled by the renderer and needs no change to these shadow formulas.
+
 `DirectionalLight`, `PointLight` and `SpotLight` have `enabled = true` and `priority = 0`. Larger priorities receive the light and shadow budgets first. Positions come from `Transform`; directions are transformed from local space.
 
 | Light | Main fields | Default shadows |

@@ -154,3 +154,5 @@ view Mirror(mut Looking looking)
 ```
 
 For built-in cameras and invertible affine camera transforms, automatic 3D placement and a vert's `this.clip` rebase the model around the camera before projecting it. This retains small mesh details when the camera is far from the world origin. `WorldToClip()` and CPU coordinate conversions still use the combined world-space float matrix, so their rounding can differ from GPU placement. Fragment `this.world` and `Instance.transform` stay in world coordinates. Explicit clip outputs and projective camera transforms keep their existing mapping. This does not increase depth-buffer resolution or separate genuinely coincident surfaces.
+
+Depth storage separately uses reversed 32-bit floats where supported, reversing only after clip placement. Public camera matrices, `this.clip` and CPU screen/depth conversions keep the conventions above. Forward `this.depth` and sampled-depth reads do not retain the additional far precision; see [depth textures](./render-targets.md#a-target-s-depth). Devices using the forward depth fallback keep their earlier precision.

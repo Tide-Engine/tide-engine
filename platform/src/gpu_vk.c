@@ -293,7 +293,8 @@ static struct {
     bool background; // Pipelines are made on the pool's threads (tide_gpu.background)
     bool push; // Draws push what they read (VK_KHR_push_descriptor), else write sets of the frame's...
     uint32_t max_push; // ...where their layout has this many descriptors at the most (maxPushDescriptors)
-    bool depth_max; // A multisampled depth resolves to the farthest of its samples (VK_RESOLVE_MODE_MAX_BIT): depth_now
+    bool reversed_depth;
+    bool depth_max; // Farthest resolve supported: MIN for reversed depth, MAX for forward (depth_now)
     double timestamp_ns; // A timestamp's tick, in nanoseconds: 0 for none
 
     // The window's images
@@ -1579,7 +1580,7 @@ static tide_gpu_id make_layers(const VkFormat format, const int width, const int
     turn_texture(cb, t, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     const VkImageSubresourceRange all = {aspects_of(format), 0, levels, 0, layers};
     if (depth) {
-        const VkClearDepthStencilValue far = {1.0f, 0};
+        const VkClearDepthStencilValue far = {vk.reversed_depth ? 0.0f : 1.0f, 0};
         vkCmdClearDepthStencilImage(cb, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &all);
     } else {
         const VkClearColorValue zero = {{0}};
@@ -2089,7 +2090,7 @@ static tide_gpu_id vk_target_make(const tide_gpu_target_format format, const int
             abort();
         }
         turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        const VkClearDepthStencilValue far = {1.0f, 0};
+        const VkClearDepthStencilValue far = {vk.reversed_depth ? 0.0f : 1.0f, 0};
         const VkImageSubresourceRange whole = {aspects_of(vk.depth_format), 0, 1, 0, 1};
         vkCmdClearDepthStencilImage(cb, t->many_depth, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &whole);
         turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -2315,7 +2316,7 @@ static tide_gpu_id vk_depth_now(const tide_gpu_id id, uint32_t *samples)
     // Depth alone: its stencil, which a resolve by the most needn't take, is left as it is
     const VkRenderingAttachmentInfo depth = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = t->many_depth_view,
-        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, .resolveMode = VK_RESOLVE_MODE_MAX_BIT,
+        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, .resolveMode = vk.reversed_depth ? VK_RESOLVE_MODE_MIN_BIT : VK_RESOLVE_MODE_MAX_BIT,
         .resolveImageView = d->attach, .resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     };
@@ -2459,6 +2460,9 @@ typedef struct vk_making {
     size_t words;
     uint32_t *made;
     VkShaderModule module;
+    VkBool32 reversed_depth;
+    VkSpecializationMapEntry depth_entry;
+    VkSpecializationInfo depth_specialization;
     VkResult result;
     VkPipeline pipeline;
     char name[128];
@@ -2582,7 +2586,7 @@ static tide_gpu_id compute_pipeline(const tide_gpu_pipeline_desc *desc, vk_makin
     m->compute = true;
     m->compute_info = (VkComputePipelineCreateInfo){
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_COMPUTE_BIT, m->module, "compute", NULL},
+        .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_COMPUTE_BIT, m->module, "compute", &m->depth_specialization},
         .layout = vk.layouts[layout].layout, .basePipelineIndex = -1,
     };
     return make(m, desc, layout);
@@ -2609,6 +2613,9 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         abort();
     }
     vk_making *m = tide_alloc_zeroed(1, sizeof *m);
+    m->reversed_depth = vk.reversed_depth;
+    m->depth_entry = (VkSpecializationMapEntry){0, 0, sizeof(VkBool32)};
+    m->depth_specialization = (VkSpecializationInfo){1, &m->depth_entry, sizeof m->reversed_depth, &m->reversed_depth};
     m->code = code;
     m->words = words;
     m->made = made;
@@ -2616,9 +2623,9 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
     if (desc->compute) return compute_pipeline(desc, m);
     const uint32_t layout = layout_for(desc);
     m->stages[0] = (VkPipelineShaderStageCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0,
-                                                     VK_SHADER_STAGE_VERTEX_BIT, VK_NULL_HANDLE, "vertex", NULL};
+                                                     VK_SHADER_STAGE_VERTEX_BIT, VK_NULL_HANDLE, "vertex", &m->depth_specialization};
     m->stages[1] = (VkPipelineShaderStageCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0,
-                                                     VK_SHADER_STAGE_FRAGMENT_BIT, VK_NULL_HANDLE, "fragment", NULL};
+                                                     VK_SHADER_STAGE_FRAGMENT_BIT, VK_NULL_HANDLE, "fragment", &m->depth_specialization};
     VkVertexInputBindingDescription *bindings = m->bindings;
     for (uint32_t i = 0; i < desc->slot_count; i++) {
         bindings[i] = (VkVertexInputBindingDescription){i, desc->slots[i].stride,
@@ -2664,7 +2671,7 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
                          || desc->depth == TIDE_GPU_DEPTH_ALONE,
         .depthCompareOp = desc->depth == TIDE_GPU_DEPTH_RESET   ? VK_COMPARE_OP_ALWAYS
                         : desc->depth == TIDE_GPU_DEPTH_EQUAL ? VK_COMPARE_OP_EQUAL
-                                                              : VK_COMPARE_OP_LESS_OR_EQUAL,
+                                                              : vk.reversed_depth ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL,
         .stencilTestEnable = !(test == TIDE_GPU_STENCIL_ALWAYS && op == TIDE_GPU_STENCIL_KEEP),
         .front = stencil, .back = stencil, .maxDepthBounds = 1.0f,
     };
@@ -3261,7 +3268,7 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     VkRenderingAttachmentInfo colors[TIDE_GPU_MAX_COLORS];
     VkRenderingAttachmentInfo depth = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, .loadOp = load,
-                                       .storeOp = VK_ATTACHMENT_STORE_OP_STORE, .clearValue = {.depthStencil = {1.0f, 0}}};
+                                       .storeOp = VK_ATTACHMENT_STORE_OP_STORE, .clearValue = {.depthStencil = {vk.reversed_depth ? 0.0f : 1.0f, 0}}};
     uint32_t color_count = 0;
     int width, height;
     const VkClearValue black = {.color = {{0.0f, 0.0f, 0.0f, 1.0f}}};
@@ -3368,11 +3375,12 @@ static void vk_scissor(const int x, const int y, const int width, const int heig
 
 static void vk_depth_bias(const float constant, const float slope)
 {
+    const float sign = vk.reversed_depth ? -1.0f : 1.0f;
     if (vk.skip_pass) return;
-    if (!vk.recording) vkCmdSetDepthBias(vk.pass, constant, 0.0f, slope);
+    if (!vk.recording) vkCmdSetDepthBias(vk.pass, sign * constant, 0.0f, sign * slope);
     else {
         float *const values = pc_add(PC_DEPTH_BIAS, 2u * sizeof(float));
-        values[0] = constant; values[1] = slope;
+        values[0] = sign * constant; values[1] = sign * slope;
     }
 }
 
@@ -4442,16 +4450,30 @@ static bool create_device(const bool say)
     vk.timestamp_mask = bits >= 64u ? UINT64_MAX : bits ? (UINT64_C(1) << bits) - 1u : 0u;
 
     // Depth and stencil, which every target has, and which a shader samples as its depth
-    const VkFormat depths[] = {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT};
+    const VkFormat depths[] = {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
+    const char *fallback = getenv("TIDE_TEST_DEPTH_FALLBACK");
     vk.depth_format = VK_FORMAT_UNDEFINED;
     for (size_t i = 0; i < sizeof depths / sizeof depths[0] && !vk.depth_format; i++) {
+        if (i == 0 && fallback && *fallback && strcmp(fallback, "0")) continue;
         VkFormatProperties properties;
         vkGetPhysicalDeviceFormatProperties(vk.physical, depths[i], &properties);
         const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-        if ((properties.optimalTilingFeatures & need) == need) {
+        VkImageFormatProperties image;
+        const VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                      | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if ((properties.optimalTilingFeatures & need) == need
+            && vkGetPhysicalDeviceImageFormatProperties(vk.physical, depths[i], VK_IMAGE_TYPE_2D,
+                VK_IMAGE_TILING_OPTIMAL, usage, 0, &image) == VK_SUCCESS) {
             vk.depth_format = depths[i];
             vk.depth_linear = properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
         }
+    }
+    vk.reversed_depth = vk.depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+    {
+        VkPhysicalDeviceDepthStencilResolveProperties r = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES};
+        VkPhysicalDeviceProperties2 p = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &r};
+        vkGetPhysicalDeviceProperties2(vk.physical, &p);
+        vk.depth_max = (r.supportedDepthResolveModes & (vk.reversed_depth ? VK_RESOLVE_MODE_MIN_BIT : VK_RESOLVE_MODE_MAX_BIT)) != 0;
     }
     if (!vk.depth_format) {
         if (say) fprintf(stderr, "tide: Vulkan's device has no depth and stencil to sample\n");
@@ -4485,7 +4507,7 @@ static bool create_device(const bool say)
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = compared, .minFilter = compared,
         .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        .compareEnable = VK_TRUE, .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+        .compareEnable = VK_TRUE, .compareOp = vk.reversed_depth ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL,
     };
     check(vkCreateSampler(vk.device, &compare, NULL, &vk.samplers[SAMPLER_COMPARE]), "vkCreateSampler");
 
@@ -4665,6 +4687,8 @@ static uint32_t vk_epoch(void)
 
 static tide_gpu_target_format vk_window_target_format(void) { return TIDE_GPU_TARGET_COLOR | TIDE_GPU_TARGET_WINDOW; }
 
+static uint32_t vk_depth_bytes(void) { return vk.depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT ? 8u : 4u; }
+
 const tide_gpu tide_gpu_vulkan = {
     .name = "Vulkan",
     .epoch = vk_epoch,
@@ -4713,6 +4737,7 @@ const tide_gpu tide_gpu_vulkan = {
     .target_depth = vk_target_depth,
     .resolve_depth = vk_resolve_depth,
     .depth_now = vk_depth_now,
+    .depth_bytes = vk_depth_bytes,
     .target_free = vk_target_free,
     .target_read = vk_target_read,
     .target_read_part = vk_target_read_part,

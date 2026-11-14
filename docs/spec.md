@@ -8,6 +8,26 @@ The language Tide games and the engine's built-in systems are written in. It tra
 
 ## Decided
 
+### Depth precision (2026-11-14)
+
+Owner: "go with recommendations", approving the depth-precision investigation.
+Depth images use reversed 32-bit floating depth with stencil: near is 1, far is 0,
+clears write 0, and ordinary tests are greater-or-equal. `Depth.Equal` remains exact equality.
+Only the final clip conversion reverses: `(w - z) / 2`, from the same OpenGL-convention
+projection used by built-in placement and an explicit vert returning `this.clip`.
+
+Game-facing conventions retain their meaning: clip outputs, `this.clip`, `WorldToClip`,
+camera matrices and CPU screen/depth conversions use OpenGL clip space. `this.depth`,
+DepthTexture Sample (including arrays) and Compare references remain forward, 0 near and
+1 far, converted at the GPU boundary. `this.WriteDepth` also takes forward values;
+its argument converts once when written. Forward values read this way do not retain the extra
+far precision of reversed storage. A raw or precise linear-depth read remains open.
+
+WebGPU requests `depth32float-stencil8` on every device creation, including recovery.
+Devices without it use forward `depth24plus-stencil8`, retaining the previous precision
+and the same public conventions. Vulkan prefers D32_SFLOAT_S8_UINT, with the same forward
+fallback rule where that format cannot support the required use.
+
 ### Files and tools
 
 - Source files use the `.tide` extension.
@@ -640,6 +660,19 @@ event(Spawned) Setup(with Main)
 
 ## Provisional: implemented in v0, awaiting approval
 
+### Depth storage implementation (2026-11-14)
+
+The occlusion pyramid stays in forward depth: source samples convert before the existing
+maximum reduction, including each MSAA sample. Existing box bounds and rounding slack
+therefore remain conservative; forward conversion can reduce culling precision but cannot
+make the stored farthest bound nearer than its conservatively expanded test.
+
+Vulkan selects one combined sampled/attachment depth format for a device; requested sample
+counts reduce to supported counts as before. Farthest raw resolves use MIN for reversed
+storage and MAX for forward storage, only where the device advertises that mode. A private
+shader constant uses SPIR-V SpecId 0; WebGPU substitutes the same constant at compilation.
+The forced legacy test selects forward D24 on Vulkan and depth24plus on WebGPU.
+
 tidec v0 needed answers to these to work end to end. They're implemented, but the owner hasn't approved them yet, so any of them can change.
 
 ### Types and values
@@ -1040,6 +1073,8 @@ Implemented, awaiting approval:
 - **Every player can read Time.seed:** this match singleton remains public even when scenes or entities are hidden (see State visibility). A secret seed belongs in restricted scene or component state.
 
 ### Open
+
+- **Precise GPU depth reads:** a raw or precise linear-depth read remains open. Existing forward depth reads do not preserve the extra far precision of reversed float storage (2026-11-14).
 
 - Whether the engine should also offer the built-in component the owner leaned to, beside the value (`mut Random random` in a system, for games that want one sequence an entity).
 - On the GPU: a way to hold a frag's rolls still across frames (today that's `Math.Hash` of `this.position`); rolls in one expression in a set order in every shader language Tide translates to (Unity's HLSL leaves it open), which would take hoisting them into statements as the CPU's code does; a per-draw number, so two draws that don't join roll apart where they overlap, at the cost of joining; and a `Random` value there, which would need a 32-bit generator of its own type.

@@ -1,3 +1,29 @@
+## Reversed float depth (2026-11-14)
+
+Owner approved the investigation's recommendations: "go with recommendations". Production Vulkan prefers
+D32_SFLOAT_S8_UINT and WebGPU requests depth32float-stencil8 on every device request, including recovery.
+Raw depth is near=1/far=0, far clears are zero, tests and comparison samplers use GEQUAL; Equal is unchanged.
+All window, target, depth-only, array and cube allocations use the selected combined depth/stencil format.
+Vulkan requires sampled/attachment and transfer-source/destination image support, otherwise selects forward
+D24_UNORM_S8_UINT; sample counts still reduce to supported counts. WebGPU without the optional feature uses
+forward depth24plus-stencil8. Neither fallback claims the extra precision. These implementation choices are
+Provisional in the spec. An absent usable combined Vulkan format retains the existing unsupported-device path.
+
+The shaders select the same private convention: SPIR-V SpecId 0, set for vertex/fragment/compute pipelines;
+WebGPU substitutes the internal constant before shader-module caching. This avoids compiling a second game
+or changing camera records. Built-in mesh, clipped clear/all-color clear triangles and image initialization
+agree. Public sample-zero resolves copy raw depth; farthest raw Vulkan resolves use MIN when reversed, MAX
+when forward, and query the selected mode's support. Direct multisample reads convert each source sample.
+
+Memory estimates now use 8 combined depth/stencil bytes per sample for D32 and 4 for the fallback, including
+arrays, cube faces and lazy depth resolves. These remain nominal resource estimates, not aligned Vulkan
+allocation sizes or peak physical residency. The recorder obtains the same count from host feature bit 31.
+
+The new float clear shader exposed an old prewarm omission: remembered offscreen game pipelines were warmed,
+but their offscreen clear pipelines were not. warm_key now warms those clear/depth-clear variants too. The
+prewarm test retains its exact first/next-frame draw-call assertion (diagnostics now print both counts).
+Validation and the release before/after measurement are in depth-precision-production.md.
+
 # The platform layer and the renderer
 
 ## Storage images and volumes (2026-11-14)

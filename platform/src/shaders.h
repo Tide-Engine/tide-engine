@@ -1,4 +1,5 @@
 #pragma once
+#include "depth.h"
 
 // The renderer's shaders (platform.c), in WGSL: WebGPU's on the web and, as
 // SPIR-V, Vulkan's on desktop and Android, translated as the platform layer
@@ -364,6 +365,7 @@ static const char *const text_quad_wgsl = WGSL(QUAD_WGSL_VERTEX TEXT_WGSL_FRAGME
 // camera, with depth; its pixels are as a mesh's, times `tint`, the run's.
 
 static const char *const mesh_3d_wgsl = WGSL(
+    TIDE_DEPTH_WGSL
     "struct Uniforms { camera: mat4x4f, tint: vec4f, fix: vec4f, origin: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
@@ -385,7 +387,7 @@ static const char *const mesh_3d_wgsl = WGSL(
     "    out.at = uv;\n"
     "    out.tint = color * u.tint;\n"
     "    out.white = u.fix.x;\n"
-    "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n" // The camera's clip space is OpenGL's: depth from -1
+    "    out.position = vec4f(p.xy, tide_clip_depth(p), p.w);\n" // The camera's clip space is OpenGL's: depth from -1
     "    return out;\n"
     "}\n"
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
@@ -396,11 +398,12 @@ static const char *const mesh_3d_wgsl = WGSL(
 // color, which the clip cuts as it does everything else.
 
 static const char *const clear_wgsl = WGSL(
+    TIDE_DEPTH_WGSL
     "struct Uniforms { color: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
     "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
-    "    return vec4f(corner * 2.0 - 1.0, 1.0, 1.0);\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
     "}\n"
     "@fragment fn fragment() -> @location(0) vec4f {\n"
     "    return vec4f(u.color.rgb * u.color.a, u.color.a);\n"
@@ -410,12 +413,13 @@ static const char *const clear_wgsl = WGSL(
 // them, as many as it has.
 
 static const char *const clear_all_wgsl = WGSL(
+    TIDE_DEPTH_WGSL
     "struct Uniforms { color: vec4f }\n"
     "struct Colors { @location(0) a: vec4f, @location(1) b: vec4f, @location(2) c: vec4f, @location(3) d: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
     "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
-    "    return vec4f(corner * 2.0 - 1.0, 1.0, 1.0);\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
     "}\n"
     "@fragment fn fragment() -> Colors {\n"
     "    let c = vec4f(u.color.rgb * u.color.a, u.color.a);\n"
@@ -536,18 +540,20 @@ static const char *const zero_words_wgsl = WGSL(
 // FXC (Dawn's Direct3D 11) takes a loop's counter passed into `down`'s work in a branch on the invocation for varying
 // and refuses the barriers after it (X3663; notes/shaders.md, Kernels on Dawn's Direct3D 11).
 static const char *const hiz_one_wgsl = WGSL(
+    TIDE_DEPTH_WGSL
     "@group(0) @binding(1) var depth: texture_depth_2d;\n"
     "fn pixel(x: u32, y: u32) -> f32 {\n"
-    "    return textureLoad(depth, vec2<i32>(i32(x), i32(y)), 0);\n"
+    "    return tide_depth(textureLoad(depth, vec2<i32>(i32(x), i32(y)), 0));\n"
     "}\n");
 static const char *const hiz_samples_wgsl = WGSL(
+    TIDE_DEPTH_WGSL
     "@group(0) @binding(1) var depth: texture_depth_multisampled_2d;\n"
     "fn pixel(x: u32, y: u32) -> f32 {\n"
     "    let p = vec2<i32>(i32(x), i32(y));\n"
-    "    var far = textureLoad(depth, p, 0);\n"
+    "    var far = tide_depth(textureLoad(depth, p, 0));\n"
     "    let samples = i32(textureNumSamples(depth));\n"
     "    for (var s = 1; s < samples; s = s + 1) {\n"
-    "        far = max(far, textureLoad(depth, p, s));\n"
+    "        far = max(far, tide_depth(textureLoad(depth, p, s)));\n"
     "    }\n"
     "    return far;\n"
     "}\n");

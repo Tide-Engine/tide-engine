@@ -1,4 +1,6 @@
 // compute Races: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
 struct tide_uniforms {
     tide_v0: vec4i,
 }

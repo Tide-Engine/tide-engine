@@ -1395,6 +1395,7 @@
             // first instances, and many indirect draws in one call as the GPU counts them (gpu.h,
             // draw_indexed_indirect_count; Chrome's multi-draw-indirect)
             const optional = adapter => [
+                ...(adapter.features.has('depth32float-stencil8') ? ['depth32float-stencil8'] : []),
                 ...(config.textureCompression !== false && adapter.features.has('texture-compression-bc') ? ['texture-compression-bc'] : []),
                 ...['indirect-first-instance', 'chromium-experimental-multi-draw-indirect', 'multi-draw-indirect']
                     .filter(name => adapter.features.has(name))];
@@ -1574,7 +1575,7 @@
         }
         // 1 where the depth that's stored isn't nearer than the shader's number (the test a mesh passes to
         // draw there), and what that gives at the pixels around, blended
-        samplers.push(device.createSampler({ magFilter: 'linear', minFilter: 'linear', compare: 'less-equal' }));
+        samplers.push(device.createSampler({ magFilter: 'linear', minFilter: 'linear', compare: reversedDepth() ? 'greater-equal' : 'less-equal' }));
     }
     // `storage`: a letter for each of its storage buffers (tide_gpu_pipeline_desc.storage_count), at
     // STORAGE_BINDING on, 'w' for one it writes and 'r' for one it reads. A compute pipeline's are its compute
@@ -1695,8 +1696,9 @@
     // A target: the canvas, or persistent sampleable pixels of its own, each
     // with depth, and 8 bits of stencil beside it. A target's own depth is
     // sampled too.
-    const depthFormat = 'depth24plus-stencil8';
-    const depthFor = (width, height, sampled) => device.createTexture({ size: [width, height], format: depthFormat,
+    const reversedDepth = () => config.depthFallback !== true && device.features.has('depth32float-stencil8');
+    const depthFormat = () => reversedDepth() ? 'depth32float-stencil8' : 'depth24plus-stencil8';
+    const depthFor = (width, height, sampled) => device.createTexture({ size: [width, height], format: depthFormat(),
         usage: GPUTextureUsage.RENDER_ATTACHMENT | (sampled ? GPUTextureUsage.TEXTURE_BINDING : 0) });
     // The canvas's depth, sampled too where occlusion culling measures it (gpu_depth_now): `far` is its texture's id
     const windowTarget = { context: null, depth: null, far: 0, width: 0, height: 0 };
@@ -1896,7 +1898,7 @@
     // Changing a target or render state needs another pipeline, but not another copy of its shader module.
     // Keep a module only while live pipelines reference it, so hot reload doesn't retain old shader sources.
     function shaderModule(b) {
-        const code = b.failing ? `// fail-pipeline: ${b.name}\n` : b.code;
+        const code = b.failing ? `// fail-pipeline: ${b.name}\n` : b.code.replace('const tide_reversed_depth = true;', `const tide_reversed_depth = ${reversedDepth()};`);
         let shader = shaderModules.get(code);
         if (!shader) {
             const module = device.createShaderModule({ label: b.name, code });
@@ -2103,7 +2105,7 @@
             // image, which a pass on a layer draws into and its smaller images are made through: room for those from
             // the start, as a cube's. One drawn into has a depth array beside it, or is one, holding depth alone
             if (!pixelsPtr && !(into & 15)) {
-                const texture = device.createTexture({ size: [width, height, layers], format: depthFormat,
+                const texture = device.createTexture({ size: [width, height, layers], format: depthFormat(),
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
                 const whole = [];
                 for (let layer = 0; layer < layers; layer++) {
@@ -2434,7 +2436,7 @@
                 // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several
                 multisample: { count: b.samples, alphaToCoverageEnabled: b.coverage && b.samples > 1 },
                 // Either side of a triangle tests stencil the same way, against all 8 bits
-                depthStencil: { format: depthFormat, ...depths[b.depth], stencilFront: b.stencil, stencilBack: b.stencil,
+                depthStencil: { format: depthFormat(), ...depths[b.depth], depthCompare: depths[b.depth].depthCompare === 'less-equal' && reversedDepth() ? 'greater-equal' : depths[b.depth].depthCompare, stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
             };
             return addPipeline(b, layout, described, false);
@@ -2462,7 +2464,7 @@
                     colors.push(gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, first: texture.createView({ mipLevelCount: 1 }),
                         groups: new Set() }));
                 }
-                const many = device.createTexture({ size: [width, height], format: depthFormat, sampleCount: samples,
+                const many = device.createTexture({ size: [width, height], format: depthFormat(), sampleCount: samples,
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
                 return gpuAdd('target', { colors, bytes: formats[0] === 'rgba8unorm' || formats[0] === 'bgra8unorm', depth: 0, width, height, canvas: null,
                     context: null, sampled, sampledDepth: { texture: many, view: many.createView(),
@@ -2489,6 +2491,7 @@
         gpu_target_depth: id => gpuTables.target[id].depth,
         // A multisampled target's depth as a texture: WebGPU resolves none, so a pass over a texture of one
         // depth a pixel writes each pixel's first sample there
+        gpu_depth_bytes() { return reversedDepth() ? 8 : 4; },
         gpu_resolve_depth(id) {
             const t = gpuTables.target[id];
             if (!t.sampled) return;
@@ -2511,11 +2514,11 @@
                 depthResolver = { layout, pipeline: device.createRenderPipeline({
                     layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
                     vertex: { module, entryPoint: 'vertex' }, fragment: { module, entryPoint: 'fragment', targets: [] },
-                    depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'always' } }) };
+                    depthStencil: { format: depthFormat(), depthWriteEnabled: true, depthCompare: 'always' } }) };
             }
             const encoder = device.createCommandEncoder();
             const resolve = encoder.beginRenderPass({ colorAttachments: [], depthStencilAttachment: {
-                view: gpuTables.texture[t.depth].whole, depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: 1,
+                view: gpuTables.texture[t.depth].whole, depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: reversedDepth() ? 0 : 1,
                 stencilLoadOp: 'clear', stencilStoreOp: 'store', stencilClearValue: 0 } });
             resolve.setPipeline(depthResolver.pipeline);
             resolve.setBindGroup(0, device.createBindGroup({ layout: depthResolver.layout,
@@ -2605,7 +2608,7 @@
                     resolveTarget: many ? view : undefined, loadOp: load, storeOp: 'store',
                     clearValue: { r: 0, g: 0, b: 0, a: 1 } })),
                 depthStencilAttachment: { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
-                    depthLoadOp: load, depthStoreOp: 'store', depthClearValue: 1,
+                    depthLoadOp: load, depthStoreOp: 'store', depthClearValue: reversedDepth() ? 0 : 1,
                     stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 },
             };
             timePass = timeActive;
@@ -2634,7 +2637,10 @@
             for (const buffer of retired.splice(0)) buffer.destroy();
         },
         gpu_scissor: (x, y, width, height) => pass.setScissorRect(x, y, width, height),
-        gpu_depth_bias(constant, slope) { drawing.bias = [constant, slope]; },
+        gpu_depth_bias(constant, slope) {
+            const sign = reversedDepth() ? -1 : 1;
+            drawing.bias = [sign * constant, sign * slope];
+        },
         gpu_use(id) {
             drawing.pipeline = gpuTables.pipeline[id];
             drawing.bound = false;

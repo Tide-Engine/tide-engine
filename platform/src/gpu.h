@@ -709,6 +709,8 @@ typedef struct tide_gpu {
     uint32_t (*buffer_read)(tide_gpu_id buffer, size_t offset, size_t size);
     int (*buffer_read_done)(uint32_t token, void *data);
     void (*buffer_read_wait)(void);
+    // Combined depth/stencil storage bytes per sample on this device (4 if absent).
+    uint32_t (*depth_bytes)(void);
 } tide_gpu;
 
 // The samplers texture `i` of a pipeline described is read through: bit j for sampler j.

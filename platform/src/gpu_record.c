@@ -108,7 +108,7 @@ static uint32_t block_formats; // 1 << format for each the other program samples
 
 void tide_gpu_record_block_formats(const uint32_t formats)
 {
-    block_formats = formats & (1u << TIDE_BLOCKS_BC1 | 1u << TIDE_BLOCKS_BC3);
+    block_formats = formats & (1u << TIDE_BLOCKS_BC1 | 1u << TIDE_BLOCKS_BC3 | 1u << 31);
 }
 
 // Blocks the other program takes, whole: every level, as tide_texture_blocks_size has them. RGBA8 chains always.
@@ -826,7 +826,10 @@ static void forget_reads(void)
     }
 }
 
+static uint32_t record_depth_bytes(void) { return block_formats & (1u << 31) ? 8u : 4u; }
+
 const tide_gpu tide_gpu_record = {
+    .depth_bytes = record_depth_bytes,
     .name = "Unity",
     .epoch = record_epoch,
     .buffer = record_buffer,

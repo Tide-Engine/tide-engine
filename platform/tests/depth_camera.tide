@@ -1,0 +1,45 @@
+// Actual camera/model placement. The host supplies one pair and motion step at a time.
+local scene Main { }
+local singleton CameraProbe {
+    float near = 0.1;
+    float far = 100000;
+    float distance = 1000;
+    float separation = 0.01;
+    int step;
+    int mode;
+    bool standard;
+    List<Vertex3> green = [
+        Vertex3 { position = float3(-1, -1, 0), color = Color.green },
+        Vertex3 { position = float3(1, -1, 0), color = Color.green },
+        Vertex3 { position = float3(1, 1, 0), color = Color.green },
+        Vertex3 { position = float3(-1, 1, 0), color = Color.green }];
+    List<Vertex3> red = [
+        Vertex3 { position = float3(-1, -1, 0), color = Color.red },
+        Vertex3 { position = float3(1, -1, 0), color = Color.red },
+        Vertex3 { position = float3(1, 1, 0), color = Color.red },
+        Vertex3 { position = float3(-1, 1, 0), color = Color.red }];
+    List<int> faces = [0, 1, 2, 0, 2, 3];
+}
+vert Kept(mut Vertex3 v, out float4 clip) { clip = this.clip; }
+frag Paint(Vertex3 v, out Color color) { color = v.color; }
+view Show(CameraProbe p) {
+    float3 eye = float3(p.step * p.distance * 0.000001, 0, -p.step * p.distance * 0.000001);
+    Draw.Clear(Color.black);
+    if (p.standard) Draw.SetCamera(eye, quaternion.identity, 60);
+    else Draw.SetCamera(float4x4.TRS(eye, quaternion.identity, float3(1)),
+                        float4x4.PerspectiveFov(Math.Radians(60), 1, p.near, p.far));
+    Draw.SetCull(Cull.None);
+    Draw.SetFrustumCulling(false);
+    var front = float4x4.TRS(float3(0, 0, p.distance), quaternion.identity, float3(p.distance * 0.2));
+    var back = float4x4.TRS(float3(0, 0, p.distance + p.separation), quaternion.identity, float3(p.distance * 0.2));
+    if (p.mode == 0) {
+        Draw.Mesh(p.green, p.faces, front, Paint);
+        Draw.Mesh(p.red, p.faces, back, Paint);
+    } else if (p.mode == 1) {
+        Draw.Mesh(p.green, p.faces, front, Kept, Paint);
+        Draw.Mesh(p.red, p.faces, back, Kept, Paint);
+    } else {
+        Draw.Mesh(p.green, p.faces, front);
+        Draw.Mesh(p.red, p.faces, back);
+    }
+}

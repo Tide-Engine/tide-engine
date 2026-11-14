@@ -278,7 +278,8 @@ const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
 // The block formats the other program's GPU samples, a bit each, 1 << format (tide/texture_blocks.h's: 1 << 1 for
 // BC1, 1 << 3 for BC3): images the game's pack has compressed go to it as they are (TEXTURE_BLOCKS, ARRAY_BLOCKS),
 // where they'd otherwise go as RGBA8 chains decoded from them. Every object is made again (tide_embed_render_reset),
-// so it's said before the first render. None until it's said.
+// so it's said before the first render. None until it's said. Bit 31 reports D32 float/stencil storage
+// (otherwise D24) for memory accounting; it changes no replay packet or depth-value convention.
 void tide_embed_render_formats(tide_embed *e, uint32_t formats);
 
 // What a BUFFER_READ command read: its `size` bytes, or NULL (and 0) for a read

@@ -61,8 +61,9 @@
   };
   // ?bench is --bench; renderer options belong to the page (see tide.js).
   const words = location.search ? location.search.slice(1).split('&')
-    .filter(word => !word.startsWith('texture-compression=') && !word.startsWith('gpu=')) : [];
+    .filter(word => !word.startsWith('texture-compression=') && !word.startsWith('gpu=') && !word.startsWith('depth-fallback=')) : [];
   var Tide = {
+    depthFallback: new URLSearchParams(location.search).has('depth-fallback'),
     canvas: document.getElementById('canvas'),
     checkGL: !words.includes('bench'), // Timings can't: each check waits for the GPU
     arguments: words.map(word => '--' + word),

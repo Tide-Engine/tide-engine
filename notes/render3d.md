@@ -1,3 +1,10 @@
+## Reversed depth preserves package formulas (2026-11-14)
+
+Shadow Sample/Compare, fog and depth reconstruction continue reading forward public depth. No package shader
+formula or bias changed. Full native sanitize and web-debug package tests, including shadows/fog/foliage/post/
+skinning/material witnesses, passed with reversed float storage. Source-domain, fallback and measurement
+contracts: depth-precision-production.md and rendering.md.
+
 # Render3D package
 
 ## Post test sampler mapping (2026-11-05)

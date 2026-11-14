@@ -1,3 +1,19 @@
+## Reversed depth at the final boundary (2026-11-14)
+
+The owner-approved implementation leaves tide_project, public this.clip, explicit out float4, camera records
+and CPU conversions in OpenGL clip space. tide_clip_depth selects (w-z)*0.5 for float depth, (z+w)*0.5 for the
+legacy path. Both built-in and explicit clip writeback reach the same expression; Invariant remains intact.
+this.depth and depth Sample (arrays included) convert raw reads to forward values. Compare converts its clamped
+forward reference and uses the reversed comparison sampler. Kernel depth reads follow the same convention.
+The merged WriteDepth operation converts its forward argument once at the write, keeping untouched fragment
+paths' raw raster depth bits. SampleLevel remains a color-texture operation with its existing conventions.
+
+SPIR-V translates the WGSL once; its private boolean becomes SpecId 0 rather than a second depth remap.
+HLSL distinguishes canonical reversed WGSL from existing hand-written forward fixtures. Unity's native raw
+position/depth/texture-load/sample/PCF/SV_Depth wrappers convert between that source convention and the native
+one exactly once. Shader golden changes are confined to the helpers, final conversion and read/reference/write
+conversions. No simulation, random, pose or world-hash expectations changed. Validation: depth-precision-production.md.
+
 # Fragment depth output (2026-11-14)
 
 Owner-approved 2026-11-13: this.WriteDepth(value). The checker marks the frag, then WGSL writes a private

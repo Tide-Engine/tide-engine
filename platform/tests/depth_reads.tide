@@ -1,0 +1,50 @@
+local scene Main { }
+local singleton DepthReads {
+    int test;
+    int samples = 1;
+    RenderTarget target;
+    DepthTexture depth;
+    List<Vertex3> plane = [
+        Vertex3 { position = float3(-1, -1, 10), color = Color.green },
+        Vertex3 { position = float3(1, -1, 10), color = Color.green },
+        Vertex3 { position = float3(1, 1, 10), color = Color.green },
+        Vertex3 { position = float3(-1, 1, 10), color = Color.green }];
+    List<int> faces = [0, 1, 2, 0, 2, 3];
+}
+frag FragDepth(Vertex3 v, out Color color) {
+    color = Math.Abs(this.depth - 0.99009901) < 0.00001 ? v.color : Color.red;
+}
+vert ClipDepth(mut Vertex3 v, out float4 clip) {
+    clip = this.clip;
+    v.color = Math.Abs(clip.z / clip.w - 0.98019802) < 0.00002 ? Color.green : Color.red;
+}
+frag Paint(Vertex3 v, out Color color) { color = v.color; }
+frag Copy(Vertex v, out Color color, Texture source) { color = source.Sample(v.uv, Filter.Point); }
+frag Read(Vertex v, out Color color, Texture source, DepthReads p) {
+    float d = p.depth.Sample(v.uv);
+    mut bool good = p.test == 3 ? d == 1 : Math.Abs(d - 0.99009901) < 0.00001;
+    if (p.test == 2) good = good && p.depth.Compare(v.uv, 0.98) > 0.99 && p.depth.Compare(v.uv, 0.999) < 0.01;
+    color = good ? Color.green : Color.red;
+}
+view Show(mut DepthReads p) {
+    if (!p.target.valid) p.target = RenderTarget(64, 64, samples: p.samples);
+    p.depth = p.target.depth;
+    Draw.Clear(Color.black);
+    p.target.Clear(Color.black);
+    p.target.SetCull(Cull.None);
+    p.target.SetCamera(float4x4.identity, float4x4.PerspectiveFov(Math.Radians(60), 1, 0.1, 1000));
+    if (p.test == 0) p.target.Mesh(p.plane, p.faces, float4x4.identity, FragDepth);
+    else if (p.test == 1) p.target.Mesh(p.plane, p.faces, float4x4.identity, ClipDepth, Paint);
+    else if (p.test >= 4) {
+        p.target.Depth(Depth.Only) { p.target.Mesh(p.plane, p.faces, float4x4.identity); }
+        if (p.test == 6) p.target.ClearDepth();
+        p.target.Depth(p.test == 6 ? Depth.ReadWrite : Depth.Equal) {
+            if (p.test == 5) p.target.Mesh(p.plane, p.faces, float4x4.identity, ClipDepth, Paint);
+            else p.target.Mesh(p.plane, p.faces, float4x4.identity, Paint);
+        }
+    } else {
+        if (p.test == 2) p.target.Mesh(p.plane, p.faces, float4x4.identity, Paint);
+        Draw.Blit(p.target.color, Draw.window, Read);
+    }
+    if (p.test < 2 || p.test >= 4) Draw.Blit(p.target.color, Draw.window, Copy);
+}

@@ -192,6 +192,7 @@ static int frame(void *user, const float seconds)
         return TIDE_KEEP_RUNNING;
     }
     if (again) {
+        printf("prewarmed draw calls: first %u, next %u\n", calls, tide_platform_draw_calls());
         check(calls == tide_platform_draw_calls(), "and drew as many calls as the frame after it: every one");
     } else if (tide_platform_draw_calls() < 4u && frames < WAIT_FRAMES) {
         return TIDE_KEEP_RUNNING; // The blit's, made in the background where it's that backend
