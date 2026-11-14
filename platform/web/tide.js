@@ -1925,7 +1925,7 @@
     // (`optional`) are always made in the background, so they're never used before they're known to be made.
     function addPipeline(b, layout, described, compute) {
         const entry = { pipeline: null, textures: b.textures, reads: b.reads, samplers: b.samplers, imageWrites: b.imageWrites || 0, storage: b.storage.length, compute,
-            layout, optional: b.optional, shader: b.shader };
+            layout, optional: b.optional, shader: b.shader, described };
         const made = device;
         const id = gpuAdd('pipeline', entry);
         const failed = error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
@@ -2634,10 +2634,25 @@
             for (const buffer of retired.splice(0)) buffer.destroy();
         },
         gpu_scissor: (x, y, width, height) => pass.setScissorRect(x, y, width, height),
+        gpu_depth_bias(constant, slope) { drawing.bias = [constant, slope]; },
         gpu_use(id) {
             drawing.pipeline = gpuTables.pipeline[id];
             drawing.bound = false;
-            pass.setPipeline(drawing.pipeline.pipeline);
+            const entry = drawing.pipeline;
+            const [constant, slope] = drawing.bias || [0, 0];
+            let pipeline = entry.pipeline;
+            if (constant || slope) {
+                const key = `${constant},${slope}`;
+                entry.biases ||= new Map();
+                pipeline = entry.biases.get(key);
+                if (!pipeline) {
+                    pipeline = device.createRenderPipeline({ ...entry.described, depthStencil: {
+                        ...entry.described.depthStencil, depthBias: constant, depthBiasSlopeScale: slope } });
+                    if (entry.biases.size >= 32) entry.biases.delete(entry.biases.keys().next().value);
+                } else entry.biases.delete(key);
+                entry.biases.set(key, pipeline);
+            }
+            pass.setPipeline(pipeline);
         },
         gpu_stencil: value => pass.setStencilReference(Math.min(value, 255)),
         gpu_uniforms(ptr, size) {

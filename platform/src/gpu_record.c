@@ -599,6 +599,13 @@ static void record_scissor(const int x, const int y, const int width, const int 
     u32((uint32_t)height);
 }
 
+static void record_depth_bias(const float constant, const float slope)
+{
+    op(TIDE_EMBED_RENDER_DEPTH_BIAS, 8u);
+    bytes(&constant, 4u);
+    bytes(&slope, 4u);
+}
+
 static void record_use(const tide_gpu_id pipeline)
 {
     op(TIDE_EMBED_RENDER_USE, 4u);
@@ -855,6 +862,7 @@ const tide_gpu tide_gpu_record = {
     .begin = record_begin,
     .end = record_end,
     .scissor = record_scissor,
+    .depth_bias = record_depth_bias,
     .use = record_use,
     .stencil = record_stencil,
     .uniforms = record_uniforms,

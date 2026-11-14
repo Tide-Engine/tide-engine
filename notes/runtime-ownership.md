@@ -1,3 +1,9 @@
+# Depth-bias draw state (2026-11-14)
+
+Within the owner-approved rendering task, agents maintain tide_draw_set_depth_bias, _unset_depth_bias,
+_push_depth_bias and _push_no_depth_bias. Generated C uses the existing draw-setting conventions.
+Bounds, batching, backend and ABI details are in drawing.md.
+
 # Runtime written by Claude for now
 
 ## Image-writing kernels and Texture3D (2026-11-14)

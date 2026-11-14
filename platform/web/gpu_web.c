@@ -65,6 +65,7 @@ TIDE_WEB_IMPORT(gpu_target_read) void tide_web_gpu_target_read(tide_gpu_id targe
 TIDE_WEB_IMPORT(gpu_begin) void tide_web_gpu_begin(tide_gpu_id target, bool clear);
 TIDE_WEB_IMPORT(gpu_end) void tide_web_gpu_end(void);
 TIDE_WEB_IMPORT(gpu_scissor) void tide_web_gpu_scissor(int x, int y, int width, int height);
+TIDE_WEB_IMPORT(gpu_depth_bias) void tide_web_gpu_depth_bias(float constant, float slope);
 TIDE_WEB_IMPORT(gpu_use) void tide_web_gpu_use(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_stencil) void tide_web_gpu_stencil(uint32_t value);
 TIDE_WEB_IMPORT(gpu_uniforms) void tide_web_gpu_uniforms(const void *data, size_t size);
@@ -230,6 +231,7 @@ const tide_gpu tide_gpu_webgpu = {
     .begin = tide_web_gpu_begin,
     .end = tide_web_gpu_end,
     .scissor = tide_web_gpu_scissor,
+    .depth_bias = tide_web_gpu_depth_bias,
     .use = tide_web_gpu_use,
     .stencil = tide_web_gpu_stencil,
     .uniforms = tide_web_gpu_uniforms,

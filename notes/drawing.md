@@ -1,3 +1,25 @@
+# Depth bias (2026-11-14)
+
+Owner-approved 2026-11-13: destination-owned DepthBias/SetDepthBias, block restore and zero-argument reset,
+3D only. Picks and alternatives are Provisional in spec.md. Constant is truncated, bounded precision units;
+slope is bounded and nonfinite values become zero. Commands carry the pair; batching and level gathering
+compare it, and biased instances skip occlusion tests. Native Vulkan uses dynamic state (including recorded
+parallel command buffers), so no new pipeline keys. WebGPU keeps 32 LRU variants per logical pipeline. Zero
+reuses the original pipeline. These internal variants are not logical renderer pipeline counts. The new
+optional gpu.h callback is ignored by none, serialized by the recorder and replayed with Unity's
+SetGlobalDepthBias (positive-away API), reset after each draw. Embed ABI 21 also appends eight bytes to the
+fallback draw command (52 bytes); Unity's explicit layout is updated. No-use C and shaders are unchanged.
+Vulkan/WebGPU currently store forward depth; their single callback boundary is where the parallel reversed
+storage work must flip both factors when it merges.
+
+Validation: native ASan Vulkan and web-debug SwiftShader WebGPU shader pixels pass positive/negative constant
+and slope on coplanar draws, with prewarming/device recreation. Draw units 129/129 and the recorder suite pass;
+the new recorder packet's exact float payload is pinned. Three compiler diagnostic fixtures pass (including
+both two-form errors), LSP draw-depth completion passes, all 192 WGSL golden/SPIR-V/FXC checks pass, existing
+goldens unchanged. Docs builds. Unity 6000.6.0f1 hidden no-audio ComputeReplayTests pass 10/10 each on D3D11,
+D3D12, Vulkan and OpenGL Core. Metal requires a Mac. Public numeric Format members and reversed storage were
+not yet on dev at this merge.
+
 # Drawing: `Draw`, its settings, shapes and meshes
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.

@@ -5344,3 +5344,26 @@ view FragmentDepths(Art art) {
     Draw.SetDepth(.Equal);
     Draw.Mesh(card, art.faces, float4x4.Translate(float3(-48, 112, 0)), PixelDepth);
 }
+
+[After(FragmentDepths)]
+view BiasedDepths(Art art) {
+    if (art.targetPass != 32) return;
+    Draw.Clear(Color.black); Draw.SetClip(); Draw.SetCull(.None); Draw.SetDepth(.ReadWrite);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(256, 256, 0.1, 100));
+    mut List<Corner3> card = [Corner3 { position = float3(-12, -12, 0), color = Color.red },
+                             Corner3 { position = float3(12, -12, 0), color = Color.red },
+                             Corner3 { position = float3(12, 12, 0), color = Color.red },
+                             Corner3 { position = float3(-12, 12, 0), color = Color.red }];
+    for (int column = 0; column < 4; column++) {
+        for (int i = 0; i < 4; i++) { card[i].color = Color.red; card[i].position.z = column >= 2 ? card[i].position.x * 0.1 : 0; }
+        Draw.SetDepthBias();
+        Draw.Mesh(card, art.faces, float4x4.Translate(float3(column * 32 - 112, 112, 5)), BiasColor);
+        for (int i = 0; i < 4; i++) card[i].color = Color.blue;
+        Draw.DepthBias(column < 2 ? (column == 0 ? 8 : -8) : 0, column >= 2 ? (column == 2 ? 1 : -1) : 0) {
+            Draw.Mesh(card, art.faces, float4x4.Translate(float3(column * 32 - 112, 112, 5)), BiasColor);
+        }
+    }
+    Draw.SetDepthBias();
+}
+
+frag BiasColor(Corner3 vertex, out Color color) { color = vertex.color; }

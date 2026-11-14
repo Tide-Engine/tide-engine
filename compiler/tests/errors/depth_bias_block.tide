@@ -1,0 +1,3 @@
+// expect: SetDepthBias
+scene Main {}
+view Show() { Draw.DepthBias(1, 1); }

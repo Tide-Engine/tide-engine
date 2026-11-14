@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_PIPELINE_IMAGES + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_DEPTH_BIAS + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_PIPELINE_IMAGES) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DEPTH_BIAS) {
             r.whole = false;
             break;
         }
@@ -1179,4 +1179,15 @@ TIDE_TEST(embed_commands_and_scenes)
     tide_embed_status_of(e, &status);
     TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
     tide_embed_destroy(e);
+}
+
+TIDE_TEST(embed_render_depth_bias)
+{
+    tide_gpu_record_begin();
+    tide_gpu_record.depth_bias(-8.0f, 1.5f);
+    uint32_t size; const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 16u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_DEPTH_BIAS && u32_at(packet, 4) == 8u);
+    float values[2]; memcpy(values, packet + 8, sizeof values);
+    TIDE_CHECK(values[0] == -8.0f && values[1] == 1.5f);
 }

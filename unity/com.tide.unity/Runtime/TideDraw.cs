@@ -4,9 +4,9 @@ using UnityEngine;
 
 namespace Tide
 {
-    // tide_draw_command as tide/draw.h lays it out (44 bytes): a command of what
+    // tide_draw_command as tide/draw.h lays it out (52 bytes): a command of what
     // Tide's views drew this frame (tide_embed_draw's packet).
-    [StructLayout(LayoutKind.Explicit, Size = 44)]
+    [StructLayout(LayoutKind.Explicit, Size = 52)]
     public struct TideDrawCommand
     {
         [FieldOffset(0)] public byte kind;
@@ -18,6 +18,7 @@ namespace Tide
         [FieldOffset(12)] public uint count; // ...and how many
         [FieldOffset(20)] public ushort anchor; // TEXT: the place of its box at `a`
         [FieldOffset(28)] public Color color;
+        [FieldOffset(44)] public Vector2 depthBias;
     }
 
     // tide_draw_shape_data (60 bytes): the rest of a smooth shape.

@@ -1507,3 +1507,12 @@ back a DepthTexture.Sample result. Values clamp; NaN becomes zero. A path with n
 depth; the last write wins. Helpers return a value for the frag to write. Equal and Only use that value,
 so a prepass and its lit pass should compute the same depth. These draws skip automatic geometry-bound
 culling, and depth tests may run after the frag.
+
+## Depth bias
+
+`Draw.DepthBias(-8, -1) { Draw.Mesh(vertices, indices, transform); }` pulls a coplanar 3D draw nearer.
+`Draw.SetDepthBias(8, 1);` pushes subsequent 3D draws away; `Draw.SetDepthBias();` clears it. Targets have
+both forms and keep their own setting. Blocks restore what they found; 2D draws are unaffected.
+The constant counts GPU precision steps (truncated to a whole number), and slope scales pixel-depth slope.
+A floating depth image's step follows its depth precision, rather than a fixed fraction of the range.
+Constants outside ±65536, slopes outside ±16 and nonfinite values become zero. Start with small factors.

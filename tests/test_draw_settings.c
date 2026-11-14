@@ -899,3 +899,17 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     tide_draw_free(&to);
     tide_draw_free(&d);
 }
+
+TIDE_TEST(draw_depth_bias_restores_and_repairs)
+{
+    tide_draw_list d = {0};
+    tide_draw_set_depth_bias(&d, 3.9f, 2.0f);
+    TIDE_CHECK(d.place.depth_bias.x == 3 && d.place.depth_bias.y == 2);
+    const uint32_t mark = tide_draw_push_depth_bias(&d, -8, -1);
+    TIDE_CHECK(d.place.depth_bias.x == -8);
+    tide_draw_pop(&d, mark);
+    TIDE_CHECK(d.place.depth_bias.x == 3 && d.place.depth_bias.y == 2);
+    tide_draw_set_depth_bias(&d, 1e30f, -1e30f);
+    TIDE_CHECK(d.place.depth_bias.x == 0 && d.place.depth_bias.y == 0);
+    tide_draw_free(&d);
+}

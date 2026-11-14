@@ -2961,7 +2961,22 @@ mut void Enter(Stance next)
   - Each field that something snaps gets a hidden int counting its snaps, after the type's fields, which `Snap()` increments (wrapping). Views blend the field only between two ticks with the same count. The counter is ordinary match data: snapshots, rollback, packing, the match hash, host migration and hot reload carry it, and it changes the type's layout, and so the match's compatibility, only in a game that snaps that field. It costs nothing for fields never snapped and next to nothing in network bytes, as it rarely changes.
   - `verified` views and view queries follow the same rule over their own endpoints.
 
-#### Provisional: a frag writes depth (2026-11-14)
+#### Provisional: depth bias (2026-11-14)
+
+Constant is a number of GPU depth precision steps, truncated toward zero to match WebGPU's integer factor.
+With integer depth a step is its smallest representable interval. With floating depth it follows the
+primitive's largest stored-depth exponent; it is not a fixed fraction of the forward range. Slope multiplies
+the largest absolute pixel-depth slope. Positive pushes away; negative pulls nearer. Bias is GPU raster state,
+so WriteDepth replaces it. Magnitudes can differ across depth formats; the visibility direction is portable.
+A fixed forward interval was considered, but core WebGPU exposes precision-scaled constant bias rather than
+that interval; doing it in shaders would change depth testing and add fragment work to every affected draw.
+Constants outside [-65536,65536], slopes outside [-16,16], NaN and infinities restore zero for that factor.
+No depth-bias clamp is exposed. Vulkan uses dynamic state; WebGPU keeps at most 32 bias variants per logical
+pipeline, evicting the least recently used, with zero bias reusing the original. Logical renderer pipeline
+counts are unchanged; these device pipeline variants are additional. Occlusion tests of biased instances
+are disabled because their geometric depth is not the rasterized depth.
+
+### Provisional: a frag writes depth (2026-11-14)
 
 WriteDepth is a statement in the frag itself, following Discard's implicit-this rule. A helper returns its
 computed depth for the frag to write. The last write on the path wins; a path without a write keeps triangle
@@ -3287,6 +3302,13 @@ Owner: "these make sense, lets do all of these". A struct a vert hands its frag 
 hold ints and int vectors, carried unblended from the triangle's first corner. A float
 field stays blended, and all read fields count toward the existing 15 carried values.
 
+#### Depth bias (decided 2026-11-13)
+
+The owner: "these make sense, lets do all of these". `Draw.DepthBias(constant, slope) { ... }` and
+`Draw.SetDepthBias(constant, slope)` are destination-owned draw settings, also methods on render targets.
+Blocks restore the preceding setting; `Draw.SetDepthBias()` restores none. They change only 3D draws.
+Positive bias pushes away from the camera, including when the depth image uses reversed storage.
+
 #### A frag writes depth (decided 2026-11-13)
 
 The owner: "these make sense, lets do all of these". `this.WriteDepth(value)` replaces a pixel's depth,
@@ -3316,7 +3338,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - Built since: a frag's color as `out Color color` and a vert's struct for its frag, which are in the rules above (Code the GPU runs), which side of a triangle draws, which is among the Draw settings, above (`Draw.Cull`), and stencil, which is among them too (`Draw.Stencil`). Their picks are under Provisional.
 - Built since: mipmaps, as a filter, `Filter.Trilinear`, with the level's derivatives asked as a frag starts so that code still samples in any branch. What was picked to build it is under Provisional (Mipmaps).
 - Built since: cube maps, as a type of their own, `Cubemap`: an asset's six files, or six faces a view draws into, read by a direction. It was item 9 of the drawing surface's reshaping, the last. What was picked to build it is under Provisional (Cubemaps).
-- Left for later: a depth bias as state (a frag subtracts one where it compares), and reading a target's pixels back into Tide.
+- Left for later: reading a target's pixels back into Tide.
 - Open: a `shader Name { ... }` block that groups a vert and a frag under one name, maybe with the two unnamed inside. It would only add a name for a pair that's checked already, so it can come once naming two at a draw gets tedious.
 
 ### Provisional

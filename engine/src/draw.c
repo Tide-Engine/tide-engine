@@ -1262,7 +1262,7 @@ static inline __attribute__((always_inline)) tide_draw_command *push(tide_draw_l
     if (__builtin_expect(d->count == d->capacity, 0)) more_commands(d);
     tide_draw_command *c = &d->commands[d->count++];
     *c = (tide_draw_command){.kind = (uint8_t)kind, .blend = (uint8_t)d->place.blend, .a = a, .b = b,
-                             .color = color_read(&color)};
+                             .color = color_read(&color), .depth_bias = d->place.depth_bias};
     return c;
 }
 
@@ -1299,6 +1299,7 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
                 break;
             case TIDE_DRAW_SAVED_NO_TRANSFORM_3D: p->moved &= ~MOVED_3D; break;
             case TIDE_DRAW_SAVED_CLIP: p->clip = s->value; break;
+            case TIDE_DRAW_SAVED_DEPTH_BIAS: p->depth_bias = s->depth_bias; break;
             case TIDE_DRAW_SAVED_DEPTH: p->depth = s->value; break;
             case TIDE_DRAW_SAVED_CULL: p->cull = s->value; break;
             case TIDE_DRAW_SAVED_STENCIL: p->stencil = s->value; break;
@@ -1448,6 +1449,22 @@ uint32_t tide_draw_push_blend(tide_draw_list *d, const tide_blend blend)
 }
 
 // What the selected destination's 3D meshes do with its depth: its own, as its cameras are.
+void tide_draw_set_depth_bias(tide_draw_list *d, const float constant, const float slope)
+{
+    // WebGPU requires an integer constant. Bound arbitrary game values before converting.
+    d->place.depth_bias.x = constant >= -65536.0f && constant <= 65536.0f ? (float)(int32_t)constant : 0.0f;
+    d->place.depth_bias.y = slope >= -16.0f && slope <= 16.0f ? slope : 0.0f;
+}
+void tide_draw_unset_depth_bias(tide_draw_list *d) { d->place.depth_bias = tide_f2(0, 0); }
+uint32_t tide_draw_push_depth_bias(tide_draw_list *d, const float constant, const float slope)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_DEPTH_BIAS)->depth_bias = d->place.depth_bias;
+    tide_draw_set_depth_bias(d, constant, slope);
+    return mark;
+}
+uint32_t tide_draw_push_no_depth_bias(tide_draw_list *d) { return tide_draw_push_depth_bias(d, 0, 0); }
+
 void tide_draw_set_depth(tide_draw_list *d, const tide_depth depth)
 {
     d->place.depth = (uint32_t)depth <= TIDE_DEPTH_EQUAL ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
@@ -1910,6 +1927,7 @@ void tide_draw_defaults(tide_draw_list *d)
         p->bounds = (tide_draw_bounds){0};
         p->blend = TIDE_BLEND_ALPHA;
         p->depth = TIDE_DEPTH_READ_WRITE;
+        p->depth_bias = tide_f2(0, 0);
         p->cull = TIDE_CULL_BACK;
     }
     refresh(d);
@@ -3650,11 +3668,12 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     // More instances of the run before it, when nothing came between them and they draw with the same
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
     // What has no depth says 0 whatever is set, so the setting never comes between two 2D runs
+    const tide_float2 bias = kind == TIDE_DRAW_SHADED && shader->dims == 3 ? d->place.depth_bias : tide_f2(0, 0);
     const uint8_t deep = kind == TIDE_DRAW_SHADED && shader->dims == 3 && (uint32_t)depth <= TIDE_DEPTH_EQUAL ? (uint8_t)depth : 0;
     // ...and what has no sides, so neither does that one
     const uint8_t sided = kind == TIDE_DRAW_SHADED && shader->dims == 3 ? sides(cull) : 0;
     if (kind == TIDE_DRAW_SHADED && last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)blend
-        && last->depth == deep && last->cull == sided && !run.indirect && !d->runs[last->shaded.run].indirect
+        && last->depth == deep && last->depth_bias.x == bias.x && last->depth_bias.y == bias.y && last->cull == sided && !run.indirect && !d->runs[last->shaded.run].indirect
         && !d->runs[last->shaded.run].culled
         && same_storage(d, d->runs[last->shaded.run].storage, run.storage, shader->storage_count)) {
         tide_draw_run *r = &d->runs[last->shaded.run];
@@ -3719,6 +3738,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     tide_draw_command *c = push(d, kind, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
     c->blend = (uint8_t)blend;
     c->depth = deep;
+    c->depth_bias = bias;
     c->cull = sided;
     c->shaded.run = d->run_count++;
     if (d->diagnostics) tide_draw_geometry_record(d, c, mesh, count);
@@ -4259,7 +4279,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
     d->culls = grow(d->culls, d->cull_count, &d->cull_capacity, 1, sizeof(tide_draw_cull), 64u);
     d->culls[job] = (tide_draw_cull){.camera = cull_camera(d, &d->frustum_matrix, &view), .mesh = mesh, .page = slot,
                                      .first = first, .count = count, .packs = size / 16u, .low = (uint8_t)low,
-                                     .high = (uint8_t)high, .occlusion = p->occlusion ? 1u : 0u, .bounds = bounds};
+                                     .high = (uint8_t)high, .occlusion = p->occlusion && p->depth_bias.x == 0.0f && p->depth_bias.y == 0.0f ? 1u : 0u, .bounds = bounds};
     d->cull_count++;
     if (d->diagnostics) { // The geometry rows what the GPU draws of each of its levels counts in, once it says
         tide_draw_cull *made = &d->culls[job];
@@ -4272,7 +4292,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
     // After the set of draws recorded just before it, of the same mesh through the same shader with the same
     // settings and values, as the CPU's runs of a level gather (tide_draw_gather_levels): from its first level on
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
-    if (last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)p->blend && last->depth == depth
+    if (last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)p->blend && last->depth == depth && last->depth_bias.x == p->depth_bias.x && last->depth_bias.y == p->depth_bias.y
         && last->cull == cull && last->shaded.run < d->run_count) {
         tide_draw_run *r = &d->runs[last->shaded.run];
         const uint32_t top = r->mesh && r->mesh <= d->mesh_count ? d->meshes[r->mesh - 1u].level : 0u;
@@ -4296,7 +4316,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
             same = c->kind == TIDE_DRAW_SHADED && c->shaded.run < d->run_count && d->runs[c->shaded.run].culled == r->culled
                 && d->runs[c->shaded.run].mesh && d->runs[c->shaded.run].mesh <= d->mesh_count
                 && d->meshes[d->runs[c->shaded.run].mesh - 1u].level == level && c->blend == last->blend
-                && c->depth == depth && c->cull == cull;
+                && c->depth == depth && c->depth_bias.x == p->depth_bias.x && c->depth_bias.y == p->depth_bias.y && c->cull == cull;
         }
         if (same) {
             const uint32_t uniforms_at = r->uniforms, set = r->culled - 1u, jobs = r->culled_count + 1u;
@@ -4635,7 +4655,7 @@ static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, co
 {
     if (d->profile_active) d->profile_active->submitted += count;
     tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
-    if (last && last->kind == TIDE_DRAW_MESH_3D && last->blend == (uint8_t)blend && last->depth == (uint8_t)depth
+    if (last && last->kind == TIDE_DRAW_MESH_3D && last->blend == (uint8_t)blend && last->depth == (uint8_t)depth && last->depth_bias.x == d->place.depth_bias.x && last->depth_bias.y == d->place.depth_bias.y
         && last->cull == cull && last->mesh3.mesh == mesh && last->mesh3.texture == texture
         && last->mesh3.filter == (uint16_t)filter && last->mesh3.wrap == (uint16_t)wrap
         && last->mesh3.first + last->mesh3.count == at && same_color(last->color, tint)) {

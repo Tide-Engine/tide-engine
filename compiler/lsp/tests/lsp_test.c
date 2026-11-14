@@ -932,7 +932,7 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     const char *three = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
-    TIDE_CHECK(offers(three, "Depth") && offers(three, "SetDepth") && offers(three, "Transform"));
+    TIDE_CHECK(offers(three, "Depth") && offers(three, "SetDepth") && offers(three, "DepthBias") && offers(three, "SetDepthBias") && offers(three, "Transform"));
     TIDE_CHECK(has(three, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(three, "\"SetDepth(${1:mode})\""));
     TIDE_CHECK(offers(three, "Blend") && offers(three, "Clip"));
     const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");

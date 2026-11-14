@@ -1016,6 +1016,7 @@ typedef struct draw_step {
     bool camera_mirrored;
     uint32_t kind;    // STEP_*
     uint32_t blend;   // How it goes over what's there: tide_blend
+    tide_float2 depth_bias;
     uint32_t depth;   // STEP_MESH_3D, and a STEP_SHADED through a 3D shader: what it does with depth, tide_depth
     uint32_t cull;    // ...and which of its triangles don't draw, as they reach the GPU: tide_gpu_cull
     uint32_t stencil; // What it does with its destination's stencil: a tide_stencil, packed. None, for a clear and a blit
@@ -2103,6 +2104,7 @@ static bool pipeline_made(const draw_step *s)
 // A step's pipeline, for the draws after it, with the step's stencil number where the pass has another.
 static void use_pipeline(const draw_step *s)
 {
+    if (gpu->depth_bias) gpu->depth_bias(s->depth_bias.x, s->depth_bias.y);
     gpu->use(s->pipeline);
     const uint32_t value = stencil_value(s->stencil);
     if (value != pass_stencil) gpu->stencil(pass_stencil = value);
@@ -5788,6 +5790,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (list->meshes[c->mesh3.mesh - 1u].space == TIDE_MESH_BYTES) break; // A shader's: not these vertices
             draw_step *s = add_step(STEP_MESH_3D);
             s->depth = c->depth;
+            if (c->kind == TIDE_DRAW_MESH_3D || (c->kind == TIDE_DRAW_SHADED && list->runs[c->shaded.run].shader->dims == 3)) s->depth_bias = c->depth_bias;
             s->cull = gpu_cull(c->cull, f->mirrored);
             s->first = c->mesh3.first;
             s->count = c->mesh3.count;
@@ -5809,6 +5812,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (c->kind == TIDE_DRAW_BLIT && list->runs[c->shaded.run].shader->dims != 2) break;
             draw_step *s = add_step(c->kind == TIDE_DRAW_BLIT ? STEP_BLIT : STEP_SHADED);
             s->depth = c->depth;
+            if (c->kind == TIDE_DRAW_MESH_3D || (c->kind == TIDE_DRAW_SHADED && list->runs[c->shaded.run].shader->dims == 3)) s->depth_bias = c->depth_bias;
             s->cull = gpu_cull(c->cull, f->mirrored);
             s->profile_geometry = c->profile_geometry;
             s->first = c->shaded.run;

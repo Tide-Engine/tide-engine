@@ -632,6 +632,7 @@ typedef struct tide_gpu {
     // draw everywhere. It's inside the target.
     void (*scissor)(int x, int y, int width, int height);
     // The pipeline the draws after it use, then what it draws with.
+    void (*depth_bias)(float constant, float slope);
     void (*use)(tide_gpu_id pipeline);
     // The number the stencil tests of the draws after it compare with, and
     // what TIDE_GPU_STENCIL_REPLACE stores, from 0 to 255: the pass's, whatever

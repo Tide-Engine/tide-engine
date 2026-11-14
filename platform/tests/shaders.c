@@ -1988,6 +1988,23 @@ static void run_written_depth_checks(const char *when)
     }
 }
 
+static void run_bias_checks(const char *when)
+{
+    local.Art.targetPass = 32;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    const tide_float2 points[] = {{16.5f,16.5f},{48.5f,16.5f},{80.5f,16.5f},{112.5f,16.5f}};
+    uint32_t got[4]; tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 4, got);
+    for (int i = 0; i < 4; i++) {
+        const bool good = got[i] == (i % 2 == 0 ? 0xFF0000FFu : 0x0000FFFFu);
+        printf("%s: depth bias constant/slope sign case %d%s (0x%08X)\n", good ? "ok" : "FAIL", i, when, (unsigned)got[i]);
+        if (!good) failures++;
+    }
+}
+
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
 // as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
 // draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
@@ -2033,6 +2050,7 @@ static void run_prewarmed_checks(void)
     run_flat_corner_checks(when);
     run_level_checks(when);
     run_written_depth_checks(when);
+    run_bias_checks(when);
     const uint32_t after = tide_platform_shader_pipelines();
     printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
            (unsigned)after);
@@ -2071,6 +2089,7 @@ static void run_again(const int roll, const char *when)
     run_flat_corner_checks(when);
     run_level_checks(when);
     run_written_depth_checks(when);
+    run_bias_checks(when);
 }
 #endif
 
@@ -2151,6 +2170,7 @@ static int frame(void *user, const float seconds)
     run_flat_corner_checks("");
     run_level_checks("");
     run_written_depth_checks("");
+    run_bias_checks("");
     run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__

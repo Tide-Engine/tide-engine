@@ -1,0 +1,9 @@
+scene Main {}
+local singleton Art { List<Vertex3> corners; RenderTarget target; }
+frag Biased(Vertex3 vertex, out Color color) { color = vertex.color; }
+view Show(Art art) {
+    Draw.DepthBias(8, 1) { Draw.Mesh(art.corners, [0, 1, 2], float4x4.identity, Biased); }
+    art.target.SetDepthBias(-8, -1);
+    art.target.DepthBias(0, 0) { art.target.Mesh(art.corners, [0, 1, 2], float4x4.identity, Biased); }
+    art.target.SetDepthBias();
+}

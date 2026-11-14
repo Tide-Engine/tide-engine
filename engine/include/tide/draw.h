@@ -232,6 +232,7 @@ typedef struct tide_draw_command {
         } words;
     };
     tide_color color;
+    tide_float2 depth_bias; // Constant precision steps and slope, positive away
 } tide_draw_command;
 
 #define TIDE_DRAW_FIRST_CAMERA UINT32_MAX
@@ -1302,6 +1303,7 @@ typedef struct tide_draw_place {
     // cameras_3d, or 0 for the camera each frame starts with...
     uint32_t camera_2d, camera_3d;
     uint32_t clip;  // ...and 1 + its place in tide_draw_list.clips, or 0 for none
+    tide_float2 depth_bias;
     uint32_t depth; // tide_depth: what the 3D meshes to come do with depth
     uint32_t cull;  // tide_cull: which side of their triangles isn't drawn
     uint32_t stencil; // A tide_stencil, packed: what the commands to come do with stencil
@@ -1379,6 +1381,7 @@ typedef struct tide_draw_saved {
     union {
         uint32_t value; // What a place has for its blend, a camera, a clip, its depth, its cull or its stencil
         float pixels;
+        tide_float2 depth_bias;
         tide_color tint;
         struct {
             tide_draw_transform transform;
@@ -1400,6 +1403,7 @@ enum {
     TIDE_DRAW_SAVED_CLIP,
     TIDE_DRAW_SAVED_CAMERA_2D,
     TIDE_DRAW_SAVED_CAMERA_3D,
+    TIDE_DRAW_SAVED_DEPTH_BIAS,
     TIDE_DRAW_SAVED_DEPTH,
     TIDE_DRAW_SAVED_CULL,
     TIDE_DRAW_SAVED_STENCIL,
@@ -2358,6 +2362,10 @@ uint32_t tide_draw_push_transform_3d(tide_draw_list *d, tide_float4x4 transform)
 // each covered sample is shaded once. Nothing else has depth: 2D commands
 // neither read nor write it whatever this says, a clear sets it back, and a
 // blit leaves it.
+void tide_draw_set_depth_bias(tide_draw_list *d, float constant, float slope);
+void tide_draw_unset_depth_bias(tide_draw_list *d);
+uint32_t tide_draw_push_depth_bias(tide_draw_list *d, float constant, float slope);
+uint32_t tide_draw_push_no_depth_bias(tide_draw_list *d);
 void tide_draw_set_depth(tide_draw_list *d, tide_depth depth);
 void tide_draw_unset_depth(tide_draw_list *d);
 uint32_t tide_draw_push_depth(tide_draw_list *d, tide_depth depth);

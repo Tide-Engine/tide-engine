@@ -43,7 +43,7 @@ namespace Tide
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Image, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
             DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler, Array, ArrayLayer,
-            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks, Volume, VolumeWrite, PipelineImages,
+            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks, Volume, VolumeWrite, PipelineImages, DepthBias,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -121,6 +121,7 @@ namespace Tide
         // What a camera's commands get: a pass, a rect, a draw with everything it reads, smaller images made...
         struct Command
         {
+            public float bias, slopeBias;
             public Kind kind;
             public Target target; // Begin (null for the camera's own), ResolveDepth
             public bool clear, flipped;
@@ -210,6 +211,7 @@ namespace Tide
         readonly uint[] sampling = new uint[MaxTextures]; // By sampler slot (SAMPLER)
         int uniformAt, uniformSize;
         int stencil;
+        float bias, slopeBias;
         bool inPass, flipped, inCompute;
         bool offscreenPass;
         int passStart;
@@ -677,6 +679,7 @@ namespace Tide
                 case Op.Use:
                     pipelines.TryGetValue(W(0), out pipeline);
                     break;
+                case Op.DepthBias: bias = BitConverter.Int32BitsToSingle((int)W(0)); slopeBias = BitConverter.Int32BitsToSingle((int)W(1)); break;
                 case Op.Stencil: stencil = (int)W(0); break;
                 case Op.Uniforms:
                 {
@@ -1358,7 +1361,7 @@ namespace Tide
         void Begin(uint target, bool clear)
         {
             inPass = true;
-            stencil = 0;
+            stencil = 0; bias = slopeBias = 0;
             passStart = into.commands.Count;
             offscreenPass = false;
             if (target == 0 || !targets.TryGetValue(target, out var t))
@@ -1476,7 +1479,7 @@ namespace Tide
             if (pipeline.shader == null) return;
             var c = new Command
             {
-                kind = Kind.Draw, material = MaterialFor(pipeline), properties = pipeline.properties, count = count,
+                kind = Kind.Draw, bias = bias, slopeBias = slopeBias, material = MaterialFor(pipeline), properties = pipeline.properties, count = count,
                 instances = instances, first = indexed ? 0 : first,
                 v0 = VertexBuffer(0), v1 = VertexBuffer(1), v2 = VertexBuffer(2),
                 o0 = (int)vertexOffset[0], o1 = (int)vertexOffset[1], o2 = (int)vertexOffset[2],
@@ -1921,6 +1924,7 @@ namespace Tide
                         cb.SetGlobalInteger(Offsets[0], c.o0);
                         cb.SetGlobalInteger(Offsets[1], c.o1);
                         cb.SetGlobalInteger(Offsets[2], c.o2);
+                        cb.SetGlobalDepthBias(c.bias, c.slopeBias);
                         cb.SetGlobalInteger(First, (int)c.first);
                         for (var i = 0; i < c.textureCount; i++)
                         {
@@ -1949,6 +1953,7 @@ namespace Tide
                                 c.properties);
                         }
                         else cb.DrawProcedural(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances, c.properties);
+                        cb.SetGlobalDepthBias(0, 0);
                         break;
                 }
             }

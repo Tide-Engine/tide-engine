@@ -738,6 +738,9 @@ static void build_signatures(void)
                 "(shapes, text and 2D meshes) draw over what's there, in order, whatever this says.",
                 1, &T_DEPTH);
     add_unset("Draw", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
+    add_setting("Draw", "DepthBias", "tide_draw_push_depth_bias", "tide_draw_set_depth_bias", NULL, "constant, slope",
+                "Depth offset for 3D draws: positive pushes away from the camera. Constant is truncated precision steps; slope scales depth slope. Blocks restore the prior setting.", 2, &T_F, &T_F);
+    add_setting("Draw", "DepthBias", "tide_draw_push_no_depth_bias", "tide_draw_unset_depth_bias", NULL, "", "Restore no bias.", 0);
     add_setting("Draw", "Cull", "tide_draw_push_cull", "tide_draw_set_cull", NULL, "side",
                 "Which side of the 3D meshes' triangles isn't drawn: `Cull.Back` (each frame's first: a triangle seen "
                 "from behind isn't drawn, so what's solid costs half its triangles), `Cull.Front` (only the backs are: "

@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 20u
+#define TIDE_EMBED_ABI 21u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -270,6 +270,7 @@ typedef enum tide_embed_render_op {
     // Right after PIPELINE[_STORAGE]: id, image_writes (bit i for writable image i), texture_count, then each
     // image's storage format (tide_gpu_format). Written images use the existing IMAGE slot, without a sampler.
     TIDE_EMBED_RENDER_PIPELINE_IMAGES,
+    TIDE_EMBED_RENDER_DEPTH_BIAS, // float constant, float slope; positive away
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);

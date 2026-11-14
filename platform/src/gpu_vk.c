@@ -73,7 +73,7 @@
     X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkCmdPipelineBarrier) X(vkCmdCopyBuffer)                          \
     X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage)   \
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBindPipeline) X(vkCmdSetViewport) X(vkCmdSetScissor)           \
-    X(vkCmdSetStencilReference) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw)                        \
+    X(vkCmdSetDepthBias) X(vkCmdSetStencilReference) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw)                        \
     X(vkCmdDrawIndexed) X(vkCreatePipelineCache) X(vkDestroyPipelineCache) X(vkGetPipelineCacheData)               \
     X(vkMergePipelineCaches) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool)          \
     X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCmdBindDescriptorSets) X(vkGetFenceStatus)        \
@@ -2639,7 +2639,7 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .polygonMode = VK_POLYGON_MODE_FILL,
         .cullMode = desc->cull == TIDE_GPU_CULL_BACK ? VK_CULL_MODE_BACK_BIT : desc->cull == TIDE_GPU_CULL_FRONT ? VK_CULL_MODE_FRONT_BIT
                                                                                                           : VK_CULL_MODE_NONE,
-        .frontFace = VK_FRONT_FACE_CLOCKWISE, .lineWidth = 1.0f,
+        .frontFace = VK_FRONT_FACE_CLOCKWISE, .lineWidth = 1.0f, .depthBiasEnable = VK_TRUE,
     };
     const uint32_t colors = tide_gpu_target_colors(desc->into);
     const uint32_t samples = colors ? tide_gpu_target_samples(desc->into) : 1u;
@@ -2697,8 +2697,8 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
     }
     m->blend = (VkPipelineColorBlendStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, NULL, 0, VK_FALSE,
                                                        VK_LOGIC_OP_COPY, colors, blends, {0}};
-    static const VkDynamicState dynamic[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
-    m->dynamics = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, NULL, 0, 3, dynamic};
+    static const VkDynamicState dynamic[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_DEPTH_BIAS};
+    m->dynamics = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, NULL, 0, 4, dynamic};
     m->rendering = (VkPipelineRenderingCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, NULL, 0, colors, formats,
                                                      vk.depth_format, vk.depth_format};
     m->info = (VkGraphicsPipelineCreateInfo){
@@ -2746,7 +2746,7 @@ static VkBuffer uniform_buffer; // Where the uniforms the draws after them read 
 // no pool, a pass is recorded as it ends, on the frame's thread.
 
 typedef enum pc_kind {
-    PC_TURN, PC_BARRIER_PASS, PC_QUERY_RESET, PC_TIMESTAMP, PC_RENDERING, PC_VIEWPORT, PC_SCISSOR, PC_STENCIL,
+    PC_TURN, PC_BARRIER_PASS, PC_QUERY_RESET, PC_TIMESTAMP, PC_RENDERING, PC_VIEWPORT, PC_SCISSOR, PC_STENCIL, PC_DEPTH_BIAS,
     PC_PIPELINE, PC_PUSH, PC_SETS, PC_VERTEX, PC_INDEX, PC_DRAW, PC_DRAW_INDEXED, PC_DRAW_INDIRECT,
     PC_DRAW_INDEXED_INDIRECT, PC_DRAW_INDEXED_INDIRECT_COUNT, PC_END_RENDERING,
 } pc_kind;
@@ -3030,6 +3030,9 @@ static void replay(const VkCommandBuffer cb, const vk_deferred *d)
             break;
         case PC_SCISSOR:
             vkCmdSetScissor(cb, 0, 1, op);
+            break;
+        case PC_DEPTH_BIAS:
+            vkCmdSetDepthBias(cb, ((const float *)op)[0], 0.0f, ((const float *)op)[1]);
             break;
         case PC_STENCIL:
             vkCmdSetStencilReference(cb, VK_STENCIL_FACE_FRONT_AND_BACK, *(const uint32_t *)op);
@@ -3361,6 +3364,16 @@ static void vk_scissor(const int x, const int y, const int width, const int heig
     if (vk.skip_pass) return;
     const VkRect2D rect = {{x > 0 ? x : 0, y > 0 ? y : 0}, {(uint32_t)(width > 0 ? width : 0), (uint32_t)(height > 0 ? height : 0)}};
     pc_scissor(rect);
+}
+
+static void vk_depth_bias(const float constant, const float slope)
+{
+    if (vk.skip_pass) return;
+    if (!vk.recording) vkCmdSetDepthBias(vk.pass, constant, 0.0f, slope);
+    else {
+        float *const values = pc_add(PC_DEPTH_BIAS, 2u * sizeof(float));
+        values[0] = constant; values[1] = slope;
+    }
 }
 
 static void vk_use(const tide_gpu_id id)
@@ -4706,6 +4719,7 @@ const tide_gpu tide_gpu_vulkan = {
     .begin = vk_begin,
     .end = vk_end,
     .scissor = vk_scissor,
+    .depth_bias = vk_depth_bias,
     .use = vk_use,
     .stencil = vk_stencil,
     .uniforms = vk_uniforms,

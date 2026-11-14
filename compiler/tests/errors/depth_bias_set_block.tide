@@ -1,0 +1,3 @@
+// expect: DepthBias
+scene Main {}
+view Show() { Draw.SetDepthBias(1, 1) { Draw.Clear(Color.red); } }
