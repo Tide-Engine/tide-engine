@@ -48,6 +48,7 @@ export const sidebar: Group[] = [
             { text: 'Build code', link: '/game/build-code' },
             { text: 'Scenes', link: '/game/scenes' },
             { text: 'State visibility', link: '/game/visibility' },
+            { text: 'Endless worlds', link: '/game/endless-worlds' },
             { text: 'Async and tasks', link: '/game/tasks' },
             { text: 'Input', link: '/game/input' },
         ],
