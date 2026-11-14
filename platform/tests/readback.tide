@@ -13,6 +13,11 @@ local singleton CopyState
     Cubemap heights;      // R16f faces
     TextureArray flows;   // Rg8 layers
     TextureArray glows;   // Rgba16f layers
+    Cubemap exactFaces;   // R32f faces, six layers
+    Cubemap idFaces;      // R32i faces
+    TextureArray idLayers;   // R32i layers
+    TextureArray wideLayers; // Rgba32f layers
+    Cubemap shadowCube;   // Format.Depth: six faces of depth alone
     float depth;          // What DepthCard writes
     int images; int none; int windowImages;
 }
@@ -25,6 +30,7 @@ local singleton CopyResult
     Grid2<Color> face0; Grid2<Color> face3; Grid2<Color> face5; Grid2<float> faceDepth;
     Grid2<Color> layer0; Grid2<Color> layer2; Grid2<float> layerDepth; Grid2<float> shadow1;
     Grid2<float> height1; Grid2<float> height4; Grid2<float2> flow1; Grid2<float4> glow0; Grid2<Color> glowColor;
+    Grid2<float> exact3; Grid2<int> id5; Grid2<int> idLayer1; Grid2<float4> wide0; Grid2<float> shadowFace1; Grid2<float> shadowFace0;
     bool missingFailed; bool disposedFailed;
 }
 async void ReadImages(CopyState state, mut CopyResult result) {
@@ -62,6 +68,13 @@ async void ReadImages(CopyState state, mut CopyResult result) {
     if (await state.flows.layers[1].Read<float2>() is Grid2<float2> flow1) result.flow1 = flow1.Copy(); else result.failed = true;
     if (await state.glows.layers[0].Read<float4>() is Grid2<float4> glow0) result.glow0 = glow0.Copy(); else result.failed = true;
     if (await state.glows.layers[0].Read() is Grid2<Color> glowColor) result.glowColor = glowColor.Copy(); else result.failed = true;
+    // 32-bit faces and layers, which are six layers or an array's, and a depth cube's faces
+    if (await state.exactFaces.faces[3].Read<float>() is Grid2<float> exact3) result.exact3 = exact3.Copy(); else result.failed = true;
+    if (await state.idFaces.faces[5].Read<int>() is Grid2<int> id5) result.id5 = id5.Copy(); else result.failed = true;
+    if (await state.idLayers.layers[1].Read<int>() is Grid2<int> idLayer1) result.idLayer1 = idLayer1.Copy(); else result.failed = true;
+    if (await state.wideLayers.layers[0].Read<float4>() is Grid2<float4> wide0) result.wide0 = wide0.Copy(); else result.failed = true;
+    if (await state.shadowCube.faces[1].ReadDepth() is Grid2<float> shadowFace1) result.shadowFace1 = shadowFace1.Copy(); else result.failed = true;
+    if (await state.shadowCube.faces[0].ReadDepth() is Grid2<float> shadowFace0) result.shadowFace0 = shadowFace0.Copy(); else result.failed = true;
     // What isn't there fails, and nothing more: a layer past the array's, and a target disposed before its read
     if (await state.array.layers[7].Read() is Grid2<Color> missing) result.failed = true; else result.missingFailed = true;
     RenderTarget gone = RenderTarget(2, 2, 1);
@@ -88,6 +101,11 @@ view Paint(mut CopyState state, mut CopyResult result) {
         state.heights = Cubemap(2, Format.R16f);
         state.flows = TextureArray(2, 2, 2, 1, Format.Rg8);
         state.glows = TextureArray(2, 2, 1, 1, Format.Rgba16f);
+        state.exactFaces = Cubemap(2, Format.R32f);
+        state.idFaces = Cubemap(2, Format.R32i);
+        state.idLayers = TextureArray(2, 2, 2, 1, Format.R32i);
+        state.wideLayers = TextureArray(2, 2, 1, 1, Format.Rgba32f);
+        state.shadowCube = Cubemap(2, Format.Depth);
         state.started = true;
         state.images = state.several.colors.count * 100 + state.bytes.colors.count * 10 + state.deep.colors.count;
         RenderTarget none = default;
@@ -188,5 +206,26 @@ view Paint(mut CopyState state, mut CopyResult result) {
         state.depth = i == 0 ? 0.375 : 0.625;
         shadow.Mesh(card, [0,1,2,0,2,3], float4x4.identity, DepthCard);
     }
+    // 32-bit numbers in faces and layers, bit for bit, the pixel (1, 0) another; a depth cube's face drawn on its left
+    for (int i = 0; i < 6; i++)
+    {
+        state.exactFaces.faces[i].SetScreen();
+        state.exactFaces.faces[i].Clear(i * 1.25 + 0.5);
+        state.exactFaces.faces[i].Clip(Rect(1, 0, 1, 1)) { state.exactFaces.faces[i].Clear(-3000000000.0); }
+        state.idFaces.faces[i].Clear(-100000 * i - 7);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        state.idLayers.layers[i].SetScreen();
+        state.idLayers.layers[i].Clear(i == 0 ? -2147483647 : 16777217);
+        state.idLayers.layers[i].Clip(Rect(0, 1, 1, 1)) { state.idLayers.layers[i].Clear(-5); }
+    }
+    state.wideLayers.layers[0].Clear(float4(1000000000, -3.25, 0.1, 7));
+    RenderTarget lamp = state.shadowCube.faces[1];
+    lamp.Clear(Color.black);
+    lamp.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+    lamp.SetCull(.None); lamp.SetDepth(.ReadWrite);
+    state.depth = 0.375;
+    lamp.Mesh(left, [0,1,2,0,2,3], float4x4.identity, DepthCard);
     state.frame += 1;
 }

@@ -6706,6 +6706,52 @@ TIDE_TEST(lsp_numeric_image_helpers)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "-> int"));
 }
 
+// 32-bit layers and faces, int arrays and cubes, typed volumes that blend, a depth cube's depth, and SampleLevel's
+// filter left out (Trilinear)
+TIDE_TEST(lsp_exact_numbers_and_depth_cubes)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Images { [Raw(float)] TextureArray depths; [Raw(int)] Cubemap ids; "
+                                "[Raw(float4)] Texture3D fog; Cubemap sky; Cubemap lamp; DepthCubemap shadows; }\n";
+    char program[4096];
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images)\n{\n"
+             "    float depth = images.depths.Sample(vertex.uv, 1, Filter.Bilinear);\n"
+             "    int id = images.ids.Sample(float3(vertex.uv, 1));\n"
+             "    float4 fog = images.fog.Sample(float3(vertex.uv, 0.5), Filter.Bilinear);\n"
+             "    Color sky = images.sky.SampleLevel(float3(vertex.uv, 1), 2);\n"
+             "    float lit = images.shadows.Compare(float3(vertex.uv, 1), 0.5) + images.shadows.Sample(float3(1, 0, 0));\n"
+             "    color = Color(depth + float(id) + fog.w + lit, sky.g, 0);\n}\n"
+             "view V(mut Images images) { images.depths = TextureArray(8, 8, 2, Format.R32f); images.ids = Cubemap(8, Format.R32i); "
+             "images.fog = Texture3D(int3(4), Format.Rgba16f); images.sky = Cubemap(8); images.lamp = Cubemap(64, Format.Depth); "
+             "images.shadows = images.lamp.depth; }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // A typed array's members are its role's, SampleLevel's snippet names its level
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.depths.$); }\n", types);
+    const char *layers = complete(program);
+    TIDE_CHECK(offers(layers, "Sample") && offers(layers, "SampleLevel") && has(layers, "-> float"));
+    TIDE_CHECK(has(layers, "SampleLevel($1, $2, $3)") && has(layers, "four exact loads"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(float(images.ids.$)); }\n", types);
+    const char *ids = complete(program);
+    TIDE_CHECK(offers(ids, "Sample") && has(ids, "-> int") && !offers(ids, "SampleLevel"));
+    // A depth cube's depth, read by a direction, and a cube's member that hands it out
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.shadows.$); }\n", types);
+    const char *depths = complete(program);
+    TIDE_CHECK(offers(depths, "Sample") && offers(depths, "Compare") && has(depths, "float3 direction"));
+    snprintf(program, sizeof program, "%sview V(mut Images images) { var d = images.lamp.$; }\n", types);
+    const char *cube = complete(program);
+    TIDE_CHECK(offers(cube, "faces") && offers(cube, "depth") && has(cube, "DepthCubemap"));
+    TIDE_CHECK(offers(complete("scene Main { }\nlocal singleton L { Depth$ shadows; }\n"), "DepthCubemap"));
+    snprintf(program, sizeof program, "%sview V(mut Images images) { images.lamp = Cubemap(64, Format.Dep$th); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "cube.depth"));
+    // SampleLevel that names no filter reads between levels
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = images.sky.$; }\n", types);
+    TIDE_CHECK(has(complete(program), "Filter filter = Filter.Trilinear"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.fog.$.x); }\n", types);
+    TIDE_CHECK(has(complete(program), "loaded exactly and blended in the shader for R32f and Rgba32f"));
+}
+
 TIDE_TEST(lsp_window_pixels_and_format_names)
 {
     start();

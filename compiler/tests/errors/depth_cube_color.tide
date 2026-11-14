@@ -1,0 +1,6 @@
+// expect: 'shadows' reads a cube's depth, and the cube's faces are Format.Rgba8: only a cube of depth alone has its depth read, made with 'Cubemap(size, Format.Depth)'
+// expect: a cube's color faces each draw with depth of their own, which isn't kept to be read
+scene Main { }
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; }
+frag Lit(Vertex vertex,out Color color,Lamp lamp) { color=Color(lamp.shadows.Compare(float3(vertex.uv,1),0.5),0,0); }
+view Show(mut Lamp lamp) { lamp.cube=Cubemap(64); lamp.shadows=lamp.cube.depth; List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Lit); }

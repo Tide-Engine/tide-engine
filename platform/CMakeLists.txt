@@ -1266,9 +1266,10 @@ if(NOT TIDE_ANDROID)
     endforeach()
 endif()
 
-# Exercise depth arrays, stencil, sample-zero resolves, shadows and conservative occlusion on legacy storage too.
+# Exercise depth arrays, stencil, sample-zero resolves, shadows, conservative occlusion and depth cubes on legacy
+# storage too.
 if(NOT TIDE_ANDROID)
-    foreach(case targets shaders occlusion)
+    foreach(case targets shaders occlusion images)
         set(target tide_platform_${case})
         if(TIDE_WEB)
             tide_add_web_test(${target}_depth_fallback TARGET ${target} PIXELS QUERY "depth-fallback=1"

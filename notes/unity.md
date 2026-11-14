@@ -1,3 +1,13 @@
+## What the replay owes this day's exact reads and depth cubes (2026-11-14, not run in Unity)
+
+render-targets.md (top) built 32-bit array layers and cube faces, typed array loads, typed volume blends and
+`Cubemap(size, Format.Depth)` without touching TideRender.cs (the owner's later pass). A cube of depth alone or of
+32-bit numbers is recorded as an ordinary array (6 layers, layer targets), and its reads are the existing
+`Texture2DArray` loads and depth compares, so no new packet arrives. The replay owes: the two new image read kinds
+13 and 14 (`TIDE_GPU_READ_NUMBER_ARRAY`, `_INT_ARRAY`: loaded arrays of floats and of ints) bound as the recorded
+`Texture2DArray` they are, and `EmptyRead` giving a zero RGBA32F / R32_SInt Tex2DArray for them (it gives `white`
+now; the engine binds its own recorded fallbacks, so it isn't reached); the catalogue's new ReadTargetLayerInts and
+changed ReadTargetLayerNumbers (a load now), which `tide unity` writes. Their HLSL compiles under fxc.
 ## Read kernels, number images and [Linear] run in Unity: three replay fixes (2026-11-14)
 
 What landed on dev the same day without a Unity run (the ten read kernels, number images' filtering, mips,

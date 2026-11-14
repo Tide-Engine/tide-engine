@@ -482,6 +482,13 @@ compute ReadTargetLayerNumbers(LayerNumbersReadSource source) {
     if (this.at.x >= source.width * source.height) return;
     source.pixels[this.at.x] = source.image.Sample((float2(this.at.x % source.width, this.at.x / source.width) + float2(0.5)) / float2(source.width, source.height), source.layer, Filter.Point);
 }
+// An R32i layer's ints, loaded as they are; a cube of them is six layers, so its faces are read here too.
+local singleton LayerIntsReadSource { [Raw(int)] TextureArray image; GPUList<int> pixels; int width; int height; int layer; }
+[Group(64)]
+compute ReadTargetLayerInts(LayerIntsReadSource source) {
+    if (this.at.x >= source.width * source.height) return;
+    source.pixels[this.at.x] = source.image.Sample((float2(this.at.x % source.width, this.at.x / source.width) + float2(0.5)) / float2(source.width, source.height), source.layer);
+}
 local singleton LayerReadSource { TextureArray image; GPUList<Color> pixels; int width; int height; int layer; }
 [Group(64)]
 compute ReadTargetLayer(LayerReadSource source) {
@@ -506,4 +513,5 @@ view PixelReadKernels()
     GPU.Run(ReadTargetLayerDepth, 64);
     GPU.Run(ReadTargetFaceNumbers, 64);
     GPU.Run(ReadTargetLayerNumbers, 64);
+    GPU.Run(ReadTargetLayerInts, 64);
 }

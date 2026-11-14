@@ -225,9 +225,7 @@ static bool target_read_names(const tide_render_target target, const int32_t ima
     if (kind == TIDE_TARGET_READ_DEPTH) return image == 0 && tide_render_target_managed(id); // Every target of Tide's has depth
     const tide_target_formats formats = tide_render_target_formats(id);
     if (image < 0 || (uint32_t)image >= formats.count) return false;
-    // A face's and a layer's numbers are floats: cubes and arrays hold no integer image
-    if ((tide_render_target_cubic(id) || tide_render_target_arrayed(id)) && kind == TIDE_TARGET_READ_INT) return false;
-    return tide_target_read_fits(formats.color[image], kind);
+    return tide_target_read_fits(formats.color[image], kind); // An R32i face's and layer's ints too
 }
 
 uint32_t tide_render_target_read_begin_as(const tide_render_target target, const int32_t image, const uint32_t kind)

@@ -139,13 +139,52 @@ Read a numeric image through a declared [typed texture field](./shaders.md#numbe
 `[Raw(float2)] Texture velocity;` then `velocity = target.colors[1];` in local code. Its `Sample` returns a
 `float2`. A typed read that names no filter reads the nearest pixel. Images in `R8`, `Rg8`, `R16f`, `Rg16f`
 and `Rgba16f` also blend (`Filter.Bilinear`, `Filter.Trilinear`, `Filter.Anisotropic`) and have mipmaps, read
-with `SampleLevel` and `SampleGrad`: a blurred mask or a variance shadow map works on every device. `R32f`,
-`Rgba32f` and `R32i` read their nearest pixel everywhere, since no GPU blends integers and only some blend
-32-bit floats; asking one of them to blend is a compile error that names the format to draw into instead.
+with `SampleLevel` and `SampleGrad`: a blurred mask or a variance shadow map works on every device. `R32f` and
+`Rgba32f` blend with `Filter.Bilinear` as four exact loads blended in the shader, the same bits on every device
+(only some GPUs blend 32-bit floats themselves), and have no mipmaps; `R32i` reads its nearest pixel, since no GPU
+blends integers. Asking one of them for what it hasn't got is a compile error that names the format to draw into
+instead.
 
-The same four compact formats make array layers and cube faces: `TextureArray(256, 256, 4, Format.R16f)` and
-`Cubemap(256, Format.R16f)`. Draw numbers into `array.layers[i]` or `cube.faces[i]`, and read them through a
-`[Raw(float)] TextureArray` or `[Raw(float)] Cubemap` field.
+Every number format makes array layers and cube faces: `TextureArray(256, 256, 4, Format.R16f)`,
+`Cubemap(256, Format.R32f)`, `TextureArray(64, 64, 8, Format.R32i)`. Draw numbers into `array.layers[i]` or
+`cube.faces[i]`, and read them through a `[Raw(float)] TextureArray`, `[Raw(int)] Cubemap` or other typed field.
+A cube of `R32f`, `Rgba32f` or `R32i` is read at its nearest pixel, exactly: a distance cube a lamp's shadow keeps
+to full precision, or an id per direction.
+
+### A cube of depth alone
+
+`Cubemap(1024, Format.Depth)` is six faces of depth alone, for a lamp that shines every way. Draw each face from
+the lamp's place, as for any cube, and read the depth through `cube.depth`, a `DepthCubemap`, kept in a field of a
+component or singleton the frag takes. `Sample(direction)` gives the nearest thing's depth that way, 0 near to 1
+far, and `Compare(direction, depth)` how much of what's stored around there isn't nearer than `depth`, blended
+within the face: 1 is lit.
+
+```tide
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; float3 at; bool made; }
+
+view MakeLamp(mut Lamp lamp)
+{
+    if (!lamp.made) { lamp.cube = Cubemap(1024, Format.Depth); lamp.shadows = lamp.cube.depth; lamp.made = true; }
+    // ...then each face drawn from lamp.at with float4x4.PerspectiveFov(1.5707964, 1, 0.1, 50)
+}
+
+// The depth a face's camera stores for a point `way` from the lamp: along the face's axis, its perspective's
+float LampDepth(float3 way)
+{
+    float along = Math.Max(Math.Abs(way.x), Math.Max(Math.Abs(way.y), Math.Abs(way.z)));
+    return 50 / (50 - 0.1) * (1 - 0.1 / along);
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp)
+{
+    float3 way = this.world - lamp.at;
+    float lit = lamp.shadows.Compare(way, LampDepth(way) - 0.0005);
+    color = Color(lit, lit, lit);
+}
+```
+
+Its faces read back with `await cube.faces[i].ReadDepth()`. A cube of colors keeps no depth to read: each face
+draws with depth of its own, and `cube.depth` of one is a compile error where its format is known.
 
 ### Clearing each image
 
@@ -345,7 +384,8 @@ A [cube's face](./meshes-and-textures.md) and an array's layer are targets, and 
 a time: `await cube.faces[2].Read()`, `await array.layers[1].Read()`, and `ReadDepth()` of either. Each is one
 image, with its rows from the top as it was drawn, of the format its cube or array was made with: a face of a
 `Cubemap(256, Format.R16f)` is read with `Read<float>()`, a layer of a `Format.Rg8` array with `Read<float2>()`,
-by the table above.
+an `R32i` face or layer with `Read<int>()`, by the table above. A face of a `Cubemap(size, Format.Depth)` has its
+depth alone: `ReadDepth()`.
 
 ### How many images
 

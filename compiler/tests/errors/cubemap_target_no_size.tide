@@ -1,4 +1,4 @@
-// expect: Cubemap takes its faces' side in pixels, and what each holds when that isn't Format.Rgba8: 'Cubemap(256)' or 'Cubemap(256, Format.Rgba16f)'
+// expect: Cubemap takes its faces' side in pixels, and what each holds when that isn't Format.Rgba8: 'Cubemap(256)', 'Cubemap(256, Format.Rgba16f)' or 'Cubemap(1024, Format.Depth)'
 // expect: a cube's six faces are squares of one size and one format, each with depth of its own
 // ...and the size isn't left out
 scene Main { }

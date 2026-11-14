@@ -148,6 +148,17 @@ static void check_reads(void)
         good = good && color_is(r->glowColor, x, y, 2, 0.5f, 0.25f, 0.5f);
     }
     check(good, "faces and layers of numbers are read as their own types: Read<float>, Read<float2>, Read<float4>");
+    // 32-bit faces and layers (a cube of them is six layers) bit for bit, and a depth cube's faces
+    good = sized(r->exact3, 2, 2) && sized(r->id5, 2, 2) && sized(r->idLayer1, 2, 2) && sized(r->wide0, 2, 2);
+    for (int32_t y = 0; good && y < 2; y++) for (int32_t x = 0; good && x < 2; x++) {
+        good = float_is(r->exact3, x, y, x == 1 && y == 0 ? -3000000000.0f : 3 * 1.25f + 0.5f);
+        good = good && cell_is(r->id5, &tide_shape_Grid2_int, x, y, &(int32_t){-500007});
+        good = good && cell_is(r->idLayer1, &tide_shape_Grid2_int, x, y, &(int32_t){x == 0 && y == 1 ? -5 : 16777217});
+        good = good && cell_is(r->wide0, &tide_shape_Grid2_float4, x, y, (const float[4]){1000000000.0f, -3.25f, 0.1f, 7});
+    }
+    check(good, "R32f and R32i cube faces and R32i and Rgba32f array layers are read bit for bit");
+    check(all_depth(r->shadowFace1, 2, 2, 0.375f, 1.0f) && all_depth(r->shadowFace0, 2, 2, 1.0f, 1.0f),
+          "a depth cube's faces are read: a frag's depth, and the far limit where nothing drew");
     // Float depth storage holds each of these depths exactly, and so does its read; 24 bits round them. Which a
     // device has is its own to say: asserted where the desktop GPUs these run on are known to store floats
 #ifdef _WIN32

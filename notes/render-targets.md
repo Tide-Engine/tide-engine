@@ -1,3 +1,88 @@
+## 32-bit numbers loaded exactly, typed volumes blended, depth cubes, SampleLevel reads levels (2026-11-14)
+
+The owner's "make sure everything we can add or validate we do" took the remaining refusals of the section below.
+Every rule is Provisional (Claude) in docs/spec.md: Portable filtering, Number images as array layers and cube
+faces, Depth cubes (Cubemaps), explicit mip level, and Compute's volume sampling. Users: game/shaders.md (Number
+images, Choosing a mip level, cubes), game/render-targets.md (A cube of depth alone, readback), meshes-and-textures.md.
+
+- **What a game gains.** `Filter.Bilinear` on a typed R32f/Rgba32f `Texture`, `TextureArray` layer or `Texture3D`:
+  four (eight) texels loaded and blended in the shader, bit-identical everywhere (`Point`, and `SampleLevel`/`SampleGrad`
+  naming Point/Bilinear, load the nearest). Typed `Texture3D` Bilinear: Rgba16f and `Grid3<float>` through the sampler
+  (`TIDE_SHADER_READ_NUMBER_VOLUME_BLEND`, 16, a GPU `READ_VOLUME`, no `tide_straight`, zeros for none from the
+  existing zero volume). `TextureArray`/`Cubemap` of R32f, Rgba32f and R32i; `[Raw(int)]` on arrays, cubes and helper
+  parameters; a typed array's Point read is a load for every format. `Cubemap(size, Format.Depth)` with
+  `cube.depth`, a `DepthCubemap` (`TY_DEPTH_CUBEMAP`, appended to the type kinds; `tide_depth_ref` of the cube's id),
+  `Sample(direction)` and `Compare(direction, value)`. A Color/cube/array `SampleLevel` that names no filter is
+  Trilinear (`said_filter` 2 in `ex_sample_read`).
+- **Compiler** (`shader.c`). `sampling_of` = `sampling_as` (the old body) then `exact_sampling(s, format, typed)`: a
+  typed field's format comes from `image_target_format` of its assignments (fixed for every typed field already), a
+  frag's own Texture's from its draw's source (`shader.source_format`, part of `plan`'s key only where that source is
+  7/8, so no other game's shaders split; `writing` is the shader `emitter` is writing, NULL while checking, and the
+  layout refines direct samples by `sh->source_format`). Refinement: `NUMBER_BLEND`/typed `VOLUME` filter <= 1 on
+  7/8 -> `READ_NUMBER`/`READ_NUMBER_VOLUME`; typed `ARRAY` filter 0 (any format) or <= 1 (7/8/9) -> `READ_NUMBER_LAYERS`
+  /`READ_INT_LAYERS` (new compiler kinds, TIDE 17/18 -> GPU `READ_NUMBER_ARRAY`/`READ_INT_ARRAY`, 13/14); typed `CUBE`
+  filter 0 on 7/8/9 -> the same layers kinds. `[Raw(int)]` arrays/cubes go straight to `READ_INT_LAYERS`.
+  `ex_numeric_sample` writes the helpers: wrap on the uv, then either the nearest texel or four/eight corners whose
+  integer places are wrapped by `tide_index{2,3}_{0,1,2}` (clamp, repeat, mirrored repeat) and `mix`ed; a cube's
+  `tide_cube_face(d) -> (u, v, face)` (longest axis, ties x then y then z; the gpu.h face layout, the inverse of
+  ReadTargetFace's directions), loaded from `texture_2d_array`. A read written for a sampler returns all four
+  channels and `ex_sample` narrows. What stays on a sampler for 7/8 (levels, gradients, Trilinear, a cube blended) is
+  `refuse_blended_numbers` at the draw. Depth cubes: `ex_depth_cube_read` emits `tide_depth_cube<t>_<s>` /
+  `tide_compare_cube<t>_<s>` (face math then the `DEPTH_ARRAY`/`COMPARE_ARRAY` read, `tide_depth` both ways), the
+  texture a `texture_depth_2d_array`, so `texture_reads` say `DEPTH_ARRAY`: no new runtime read kind. `check_image_sources`
+  refuses a `DepthCubemap` whose cube's known format isn't Depth (`image_target_format` follows `cube.depth`).
+- **Checker** (`check.c`): Cubemap's Depth/32-bit refusals and TextureArray's 32-bit one gone; `[Raw(int)]` on layered
+  fields and parameters allowed; int array/cube filters, int volume Bilinear refused ("a GPU blends no integers");
+  typed float volumes take Bilinear. `cube.depth` (local code; an asset's is an error), `check_depth_cube_read`, the
+  type through holds/arrays/purity/codegen (`tide_cubemap_depth`, reload like `DEPTH_TEXTURE_ARRAY`, `tide_draw_depth_source`).
+- **Runtime** (`platform.c`). `cube_layered(id)`: a cube of depth alone or 32-bit numbers is `made_array(format, s, s,
+  6)` with `made_layer` faces (`cube_for`), never `gpu->cube`; `texture_to_read_as` gives it only to `NUMBER_ARRAY`/
+  `INT_ARRAY` (float vs R32i) and its depth array to a `DEPTH_ARRAY` read of `TIDE_PIXELS_TARGET_DEPTH` of the cube's
+  id (`of_cube_depth`: `of_array`, `of_destination` and source preparation take it; a color cube's depth reads none),
+  and a `READ_CUBE` of a layered cube or a filtering `READ_ARRAY` of a 32-bit array none. New fallbacks
+  `gpu_state.number_layers`/`int_layers` (1x1x1 arrays of RGBA32F/R32I, zero on every backend). Mipmaps are never made
+  of 32-bit images, layered cubes or 32-bit target images (`unblended_format`). Readback: a layered cube's face reads
+  through the layer kernels (`PIXEL_READ_LAYER_DEPTH`, `_LAYER_NUMBERS`); R32i faces and layers through the new
+  `ReadTargetLayerInts` (cull.tide; `gpu_list.c` no longer refuses int faces/layers); `ReadTargetLayerNumbers` is now
+  a load, so it reads R32f/Rgba32f layers too. read_pixels_wgsl.h regenerated (12 kernels), shaders.h and the CLI's
+  Unity count (18 computes) follow.
+- **Backends.** gpu.h `TIDE_GPU_READ_NUMBER_ARRAY`/`_INT_ARRAY` (loaded, no sampler: `tide_gpu_sampler_read`'s
+  `>= NUMBER` covers them). WebGPU: `layoutFor` 2d-array `unfilterable-float`/`sint`; `gpu_array` takes kinds 7-9 with
+  one level. Vulkan: `color_of` maps R32_SFLOAT/R32G32B32A32_SFLOAT/R32_SINT back (a layer target's kind was BYTES and
+  stopped the program: "a pipeline is for targets that hold something else"); descriptors were already read-agnostic.
+  The recorder passes the new read values through unchanged; no embed ABI or packet change.
+- **Unity's replay (not changed here: TideRender.cs is the owner's later pass).** What it must do: (1) bind a recorded
+  array to the two new read kinds 13/14 as a `Texture2DArray` (the HLSL is `Texture2DArray<float4|int4>.Load`, checked
+  by fxc); `EmptyRead` gives `white` for an unknown kind, which is never reached while the engine binds its own
+  recorded fallback arrays, but should give a zero RGBA32F/R32_SInt Tex2DArray for 13/14; (2) a depth cube and a
+  32-bit cube arrive as ordinary array packets (depth-only and color arrays, `TIDE_GPU_CUBE_FACES` layers, layer
+  targets), already replayed for `TextureArray`; their reads are its existing `Texture2DArray` depth compare (Gather
+  PCF) and loads, so the picture matches Vulkan and WebGPU; (3) the catalogue gains ReadTargetLayerInts and a changed
+  ReadTargetLayerNumbers, written by `tide unity`. Not replayed in an editor for this change.
+- **Tests.** Shaders: `exact_numbers` and `depth_cubes` (new WGSL goldens; their SPIR-V passes spirv-val and HLSL fxc),
+  `number_filters` and `linear_textures` regenerated (typed array Point loads; SampleLevel's Trilinear samplers).
+  Errors: 12 new (`number_cube_blend_r32f`, `number_array_level_rgba32f`, `number_array_int_filter`,
+  `number_cube_int_filter`, `number_volume_int_blend`, `depth_cube_*` x7), 7 changed messages, 10 removed (they compile
+  now: `cubemap_target_depth`, `number_filter_r32f`, `number_filter_source_r32f`, `number_*_format*`, `*_role_int*`).
+  Units: `draw_number_cubes_and_arrays_hold_every_format` (every format, a depth cube's face and depth and its reload).
+  LSP: `lsp_exact_numbers_and_depth_cubes`. Pixels: platform/tests/images 16 probes (R32f/Rgba32f blends clamped,
+  repeated, mirrored, through a helper and a frag's own source; R32f/Rgba32f/R32i layers; an R32f cube's six faces and
+  a drawn face's halves; R32i/Rgba32f faces; an R32f volume's eight cells; Rgba16f and Grid3<float> volumes through the
+  sampler; Color texture/cube/array SampleLevel unnamed; a depth cube sampled, compared and through a helper; none
+  given), registered also as `tide_platform_images_depth_fallback`; platform/tests/readback: R32f/R32i faces, R32i and
+  Rgba32f layers, a depth cube's faces, bit for bit.
+- **Validation** (Windows, Clang 23, Node 24.22.1, hidden): sanitize Vulkan `tide_platform_images` (+ depth fallback),
+  `_readback` (+ fallback), `_targets`, `_shaders`, `_compute`, `_kernels`, `_depth_reads` (+ fallbacks), every
+  `tidec_error_*`, e2e cubemaps/texture_arrays/number_images/target_reads/render_targets/texture3d, `tide_tests`,
+  `tidels_tests`, `tide_cli_tests`, `tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid`; web-debug SwiftShader
+  WebGPU images/readback and their fallbacks (device loss included), the WASI e2e and `tide_web_runtime`. Not run:
+  Unity, Android, Metal, real-GPU web lanes.
+- **Not built, and why.** Mipmaps of R32f/Rgba32f (a kernel-made chain and an eight-load level blend weighed, spec);
+  blending a 32-bit cube across a face's edge (needs the faces beside it; nearest only, an error that names R16f);
+  a color cube's depth (its faces' depths are separate images; the spec says to draw a depth cube too);
+  `cube.depth.size`. Still left out by the owner: a blend per output, a chosen mip level as a destination, frag-drawn
+  volume slices, an sRGB target format; the precise depth read waits on the owner.
+
 ## Number images blend, have mipmaps, and make array layers and cube faces (2026-11-14)
 
 The owner asked that the first day's conservative refusals go where every backend can do the work ("make sure
@@ -55,10 +140,8 @@ Portable filtering and Number images as array layers and cube faces. Users: game
   206 shader golden/SPIR-V/FXC checks, the focused diagnostics, `tidec_e2e_number_images`/`_cubemaps`, draw units
   125/125 and `tidels_tests` pass. Unity: the C# change is one condition and was not compiled or replayed in an
   editor for this change; Metal, Android and real-GPU web lanes were not run.
-- **Not built, and why.** Blending R32f/Rgba32f (device-dependent without the owner; a four-load shader blend is the
-  alternative weighed in the spec). R32f/Rgba32f/R32i layers and faces (need non-filtering sampler bindings; a cube
-  has no exact load). Blended typed Texture3D reads (typed volumes are storage formats; Rgba16f volumes could
-  blend). Mipmaps of a multisampled target on WebGPU and Unity (their resolved images have no chain, as before
+- **Not built, and why.** (Since built, the section above: R32f/Rgba32f blending by exact loads, 32-bit layers and
+  faces, blended typed Texture3D reads.) Mipmaps of a multisampled target on WebGPU and Unity (their resolved images have no chain, as before
   this work, for colors too). Left out by the owner: a blend per output, a chosen mip level as a destination,
   frag-drawn volume slices, an sRGB target format; R8/Rg8/R16f/Rg16f kernel storage isn't portable on WebGPU.
 
@@ -464,5 +547,5 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **tidec:** `TY_CUBEMAP` (`tide_cubemap_ref`), a rendering resource wherever `DepthTexture` is one (`holds_render_resource`, `resource_type`, the reload's rebinding in `gen_resource_fields`: `tide_render_target_adopt`, or `tide_cubemap_recreate`). `check_cube_target` (from `check_window_target`, as `Cubemap(size)` is the owner `RenderTarget`'s; the two entries in `builtins.c` are for editors), `check_cube_sample`, and `cube.faces` as an index's object alone, through `checker.colors_indexed` and `expr.target_colors`, as `target.colors` is. `ASSET_CUBEMAP` (`asset_files.h`): `asset_resolve` wants a glob, reads each match as a PNG, and `order_cube` puts the six in the faces' order by how their names end (`cube_face_of`), or says what's wrong.
   - **In the shaders** (`ex_cube_sample` in `compiler/src/shader.c`): `READ_CUBE` is a `shader_sample`'s and a `shader_texture`'s `read`, a binding for each filter a cube is read with; `Filter.Trilinear` in a frag lifts the direction as a uv is lifted (`tide_uv<n>`, `tide_dx<n>`, `tide_dy<n>`, of three components), and what's read goes through `tide_straight`, as a texture's color does. `compiler/tests/shaders/cubemaps` pins both languages.
   - **Generated C is what it was for a game with no cubemap, byte for byte** (dev's tidec against this one over every game's source list, 248 of them, with `--layout` and without), and no shader's text moved (`compiler/tests/shaders/`). The two games that differ are the ones that use it.
-  - **Not built** (all in `docs/spec.md`): a level or a roughness a game picks; a cube of depth alone; a face's color or depth as a texture; several colors or samples on a cube; a cube as a draw's own texture or a frag's own parameter; files other than six PNGs; lists and maps of cubes; all six faces in one pass; a helper for the six cameras.
+  - **Not built** (all in `docs/spec.md`; a level a game picks, `SampleLevel`, and a cube of depth alone were built since, 2026-11-13/14): a face's color or depth as a texture; several colors or samples on a cube; a cube as a draw's own texture or a frag's own parameter; files other than six PNGs; lists and maps of cubes; all six faces in one pass; a helper for the six cameras.
   - **Tests:** `check_cubes` in `platform/tests/targets.c` at `gpu.h` (six faces uploaded and six drawn into, each read towards both of its quarters, blended at a face's middle, with no smaller images and with them, a face read back, a pass over what's there, a float cube, everything made twice); pass 17 of `platform/tests/shaders.tide` with `run_cube_checks` in `shaders.c` (from Tide: the asset by name and through a field, a painted cube, a face read between its smaller images made of what was just drawn, a float cube, no cube, a vert's read, and each face against a camera at its middle), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/cubemaps` (values, ids, faces as destinations, each binding's filter, a reload in the same memory and in other memory, Resize and Dispose, the pack gone), natively and under Node; `pack_cubemaps_are_six_images_named_as_one` (`tests/test_pack.c`); `compiler/tests/shaders/cubemaps`; `compiler/tests/errors/cubemap_*.tide`, a file a diagnostic (48, with wrong face files in `compiler/tests/e2e/cubes/`, which is outside `e2e/assets/` so the asset tests' globs don't match them); `lsp_cubemaps`. Not run: Android, whose apps of these tests are started by hand, and OpenGL on a Mac, which nothing runs.

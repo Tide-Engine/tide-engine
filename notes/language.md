@@ -59,8 +59,8 @@ Parser diagnostics explicitly reject local/parameter attributes. The shader capt
 Contracts, Provisional picks, importer/cache/alpha details and validation: textures.md top section and spec.md.
 Numeric-role integration retains Color for every Linear source. [Raw(T), Linear] is refused, numeric helper
 parameters cannot borrow a Linear color source, and numeric direct-draw consumption cannot erase its mark.
-All seven numeric target formats have explicit no-sRGB-counterpart diagnostics. Typed numeric SampleLevel
-remains refused; Linear color SampleLevel keeps the ordinary color path.
+All seven numeric target formats have explicit no-sRGB-counterpart diagnostics. Typed SampleLevel of the formats
+every device blends reads between levels (render-targets.md, top); Linear color SampleLevel keeps the color path.
 
 ## Numeric GPU images (2026-11-14)
 

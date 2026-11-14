@@ -218,6 +218,9 @@ int image_target_format(const expr *e, const int color, const int depth)
     }
     if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
         return image_target_format(e->object, 0, depth + 1);
+    // A cube's depth is the cube's: Format.Depth where it holds depth to read
+    if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_CUBEMAP && str_eq_c(e->member, "depth"))
+        return image_target_format(e->object, 0, depth + 1);
     if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
         // A cube's face and an array's layer hold the one image their cube or array does
         if (e->object->object && (e->object->object->type.kind == TY_CUBEMAP || e->object->object->type.kind == TY_TEXTURE_ARRAY))

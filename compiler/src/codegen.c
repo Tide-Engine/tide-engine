@@ -4903,6 +4903,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_CUBEMAP && e->type.kind == TY_DEPTH_CUBEMAP) { // cube.depth, a depth cube's
+            sb_put(o, "tide_cubemap_depth(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY) {
             // array.depth, array.size, array.count, and its depth's size and count
             const bool depths = e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY;
@@ -25592,7 +25598,8 @@ static bool resource_fields(const decl *d)
 static bool resource_type(const type t)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_GPU_LIST) return true;
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_GPU_LIST
+        || t.kind == TY_DEPTH_CUBEMAP) return true;
     if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
         || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return resource_fields(t.decl);
     return false;
@@ -25664,7 +25671,7 @@ static void gen_resource_value(gen *g, const type t, const char *at, const char 
         sb_printf(o, "%s}\n", pad);
         return;
     }
-    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) { // Its array's target, kept or made again
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP) { // Its array's or cube's target, kept or made again
         sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
         sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
         sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s.target = tide_render_target_recreate(%s.target);\n",
@@ -27273,7 +27280,10 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field));
             continue;
         }
-        if (texture->read == READ_ARRAY) { // A TextureArray: an asset's by name, or a field's
+        // A typed array's or cube's 32-bit numbers, loaded from its layers: the array or the cube, as its read is
+        const bool layered = texture->read == READ_NUMBER_LAYERS || texture->read == READ_INT_LAYERS;
+        if (texture->read == READ_ARRAY || (layered && texture->field && texture->field->type.kind == TY_TEXTURE_ARRAY)) {
+            // A TextureArray: an asset's by name, or a field's
             if (texture->asset) {
                 sb_printf(o, "    tide_textures[%d] = tide_draw_array_source%s(tide_draw, %s);\n", t, linear, asset_cname(texture->asset));
             } else {
@@ -27284,7 +27294,8 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
             }
             continue;
         }
-        if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
+        if (texture->read == READ_CUBE || (layered && texture->field && texture->field->type.kind == TY_CUBEMAP)) {
+            // A Cubemap: an asset's by name, or a field's
             if (texture->asset) {
                 sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source%s(tide_draw, %s);\n", t, linear, asset_cname(texture->asset));
             } else {
@@ -27322,7 +27333,8 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
             } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source%s(tide_draw, tide_%sb%d->%s);\n", t, linear,
                              texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         }
-        else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY)
+        else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY
+                 || texture->field->type.kind == TY_DEPTH_CUBEMAP)
             sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         else

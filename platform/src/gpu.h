@@ -178,7 +178,11 @@ typedef enum tide_gpu_read {
     TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME,
     // Numeric images are loaded at the nearest cell without a sampler. Float32 filtering is optional on
     // WebGPU, so NUMBER uses an unfilterable-float binding even for formats that can be filtered.
-    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME
+    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME,
+    // ...and an array's layers loaded so (tide_gpu.array, of any float format, or of TIDE_GPU_COLOR_R32I):
+    // `texture_2d_array<f32>` as unfilterable floats, and `texture_2d_array<i32>`, each with textureLoad and no
+    // sampler. What a typed array of 32-bit numbers is read with, and a cube of them, which is six layers.
+    TIDE_GPU_READ_NUMBER_ARRAY, TIDE_GPU_READ_INT_ARRAY
 } tide_gpu_read;
 
 // The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.

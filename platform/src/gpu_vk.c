@@ -1791,6 +1791,9 @@ static tide_gpu_color color_of(const VkFormat format)
     case VK_FORMAT_R8G8_UNORM: return TIDE_GPU_COLOR_RG8;
     case VK_FORMAT_R16_SFLOAT: return TIDE_GPU_COLOR_R16F;
     case VK_FORMAT_R16G16_SFLOAT: return TIDE_GPU_COLOR_RG16F;
+    case VK_FORMAT_R32_SFLOAT: return TIDE_GPU_COLOR_R32F;
+    case VK_FORMAT_R32G32B32A32_SFLOAT: return TIDE_GPU_COLOR_RGBA32F;
+    case VK_FORMAT_R32_SINT: return TIDE_GPU_COLOR_R32I;
     case VK_FORMAT_R8G8B8A8_SRGB: return TIDE_GPU_COLOR_SRGB;
     default: return TIDE_GPU_COLOR_BYTES;
     }

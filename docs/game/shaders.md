@@ -207,14 +207,22 @@ float wide = images.mask.SampleLevel(vertex.uv, 3);                   // A small
 float2 moments = images.velocity.Sample(vertex.uv, Filter.Trilinear); // Between pixels and levels
 ```
 
-`Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` read their nearest pixel
-on every device, because a GPU only blends 32-bit floats with an optional feature and the picture would differ
-by device: blending one is a compile error naming `R16f` or `Rgba16f`. `R32i` is always exact: a GPU blends no
-integers. Bare `[Raw]` retains its existing four-channel behavior.
+`Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` blend too, with
+`Filter.Bilinear`: a GPU only blends 32-bit floats with an optional feature, so tidec loads the four pixels
+around the uv exactly and blends them in the shader, and the picture is the same bits on every device. They
+have no mipmaps, so `Filter.Trilinear`, `Filter.Anisotropic`, `SampleLevel` and `SampleGrad` on one are a
+compile error naming `R16f` or `Rgba16f`. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
+retains its existing four-channel behavior.
 
-The typed role goes on `Texture` and `Texture3D` fields, on `TextureArray` and `Cubemap` fields (the three
-float roles, for layers and faces made with `R8`, `Rg8`, `R16f`, `Rg16f` or `Rgba16f`), and on read-only image
-parameters of synchronous GPU helpers. A caller supplies an image with the same role:
+```csharp
+float distance = images.distances.Sample(vertex.uv, Filter.Bilinear); // An R32f image: four exact loads, blended
+```
+
+The typed role goes on `Texture` and `Texture3D` fields, on `TextureArray` and `Cubemap` fields (any number
+format makes layers and faces: `[Raw(int)]` for `R32i`), and on read-only image parameters of synchronous GPU
+helpers. An array's nearest pixel is an exact load of any format; an array of `R32f` or `Rgba32f` blends with
+`Filter.Bilinear` as above. A cube of `R32f`, `Rgba32f` or `R32i` is read at its nearest pixel: the face the
+direction points at and the pixel nearest it, loaded exactly. A caller supplies an image with the same role:
 
 ```csharp
 float Height([Raw(float)] Texture image, float2 uv)
@@ -1029,7 +1037,8 @@ view Reflect(mut Room room)
 - **`cube.faces[0]` to `cube.faces[5]`** are `RenderTarget`s, in the order `+x`, `-x`, `+y`, `-y`, `+z`, `-z`. Each has everything a target has: its own camera, clip and settings, `Clear`, `Mesh`, `Instanced` and the rest, and depth of its own.
 - **A face that's drawn again each frame is cleared first.** Its color and its depth stay from frame to frame, as any target's do: without a `Clear`, what was nearest in the frames before hides what's drawn now.
 - **A face is what a camera at the cube's middle sees along the face's axis,** with a field of view of 90: `+y` is up for the four around, and for the one above and the one below, `-z` and `+z`. That's six rotations, which the example below has as `Facing`.
-- `Cubemap(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them.
+- `Cubemap(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them. A [number format](#number-images) holds numbers, and `Cubemap(size, Format.Depth)` depth alone, for a lamp that shines every way: its frag reads `cube.depth`, a `DepthCubemap` kept in a field, with `Sample(direction)` and `Compare(direction, depth)` (see [A cube of depth alone](./render-targets.md#a-cube-of-depth-alone)).
+- **`cube.SampleLevel(direction, level)`** reads a smaller image, between the two nearest it: a blurred reflection's roughness, `room.around.SampleLevel(reflected, roughness * 5)`.
 - Its size is in pixels, whatever the display. `cube.Resize(size)` gives it another, with empty images, and `cube.Dispose()` lets it go. Copies share it, as a target's do.
 - **A draw into a face doesn't read that face's cube.** It's passed by, with a line that says so. What reflects itself in itself takes two cubes.
 - A face has no `color` or `depth` of its own to hand out: the cube is what's read.
@@ -1633,13 +1642,14 @@ Kernels run everywhere Tide draws: Vulkan (desktop and Android), WebGPU, and Uni
 
 ## Choosing a mip level
 
-`source.SampleLevel(uv, level, Filter.Trilinear)` reads a level you choose, including from a vert, kernel or GPU
-helper. Level 0 is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp
-to the available images. Use Trilinear to read the mip chain; Point and Bilinear read the original image.
-A cubemap takes a direction: `sky.SampleLevel(direction, 2, Filter.Trilinear)`. An array takes its layer first:
-`images.SampleLevel(uv, layer, 2, Filter.Trilinear)`. Texture3D has no mipmaps; use its Sample method.
-Typed number images have no mipmaps and cannot use SampleLevel or SampleGrad. Use `Sample(uv)` to read
-their nearest pixel, with implicit or explicit `Filter.Point`.
+`source.SampleLevel(uv, level)` reads a level you choose, including from a vert, kernel or GPU helper. Level 0
+is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp to the
+available images. A SampleLevel that names no filter reads between levels (`Filter.Trilinear`), on a color
+texture, a cube, an array and a number image alike; naming `Filter.Point` or `Filter.Bilinear` reads the original
+image. A cubemap takes a direction: `sky.SampleLevel(direction, roughness * 5)` for a blurred reflection. An array
+takes its layer first: `images.SampleLevel(uv, layer, 2)`. Texture3D has no mipmaps; use its Sample method.
+Number images in R8, Rg8, R16f, Rg16f and Rgba16f take SampleLevel and SampleGrad as colors do; R32f, Rgba32f
+and R32i have no mipmaps, and read with `Sample(uv)` (an R32f or Rgba32f one blended with `Filter.Bilinear`).
 Drawing into a selected mip level is not available.
 
 ## Writing a pixel's depth

@@ -173,6 +173,9 @@ typedef enum type_kind {
     TY_FONT,      // Font: a local reference to a font of this machine's registry (tide/font.h): Font.Regular, Font.Bold, an asset's or a decoded one
     TY_GPU_LIST,  // GPUList<T>: a list that lives on the GPU, this machine's (tide_gpu_list); decl's one field is its element
     TY_TEXTURE3D, // Texture3D: machine-local volume, sampled continuously on all three axes
+    // DepthCubemap: a depth cube's depth (Cubemap(size, Format.Depth)), six faces of it, which a frag or vert reads by a
+    // direction as a DepthTexture is read by a uv. Appended, as TY_DOUBLE was, to keep the kinds before it as they are
+    TY_DEPTH_CUBEMAP,
 } type_kind;
 
 typedef struct type {
@@ -505,7 +508,10 @@ typedef enum shader_read {
     READ_VOLUME, READ_NUMBER, READ_INT, READ_NUMBER_VOLUME, READ_INT_VOLUME,
     // A typed float image read through a filtering sampler (blended, or at a mip level): a color's binding and sampler,
     // numbers as stored, and zero where no image is given
-    READ_NUMBER_BLEND
+    READ_NUMBER_BLEND,
+    // A typed array's layers, or a typed cube's six faces held as layers, of 32-bit floats or ints: loaded exactly
+    // from a texture_2d_array, with no sampler (a cube's face and its texel worked out from the direction)
+    READ_NUMBER_LAYERS, READ_INT_LAYERS
 } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
@@ -1628,6 +1634,9 @@ typedef struct shader {
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw, read as that texture says
     bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
+    // ...and where the frag's own typed Texture is handed an image of 32-bit floats, its Format (7 R32f, 8 Rgba32f),
+    // which a blended read loads exactly; -1 otherwise
+    int source_format;
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     bool gpu_instances;  // ...a GPU list's, read from its storage slot (instance_storage), drawn indirect

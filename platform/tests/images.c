@@ -44,16 +44,18 @@ static int frame(void *user, const float seconds)
     }
 #endif
     tide_draw_reset(&list);
-    tide_gui_begin(&gui, &devices, tide_f2(24, 112), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(24, 160), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
-    const tide_float2 places[40] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
+    tide_float2 places[56] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
         {4,28},{12,28},{20,28},{4,36},{12,36},{20,36},{4,44},{12,44},
         {4,52},{12,52},{20,52},{4,60},{12,60},{20,60},{4,68},{12,68},{20,68},
         {4,76},{12,76},{20,76},{4,84},{12,84},{20,84},{4,92},{12,92},{20,92},{4,100},{12,100},{20,100},
         {4,108},{12,108}};
-    uint32_t pixels[40];
-    tide_platform_read_pixels_as(&list, 24, 112, 1, places, 40, pixels);
+    for (unsigned i = 0; i < 15; i++) places[40 + i] = tide_f2(4.0f + 8.0f * (float)(i % 3), 116.0f + 8.0f * (float)(i / 3));
+    places[55] = tide_f2(4, 156);
+    uint32_t pixels[56];
+    tide_platform_read_pixels_as(&list, 24, 160, 1, places, 56, pixels);
     if (++warm < 3) return TIDE_KEEP_RUNNING;
     check(pixels[0], 0, 0, 0, "a draw before the image write sees the earlier black image");
     check(pixels[1], 0, 0, 255, "a draw between writes sees the exact first HDR color with alpha undone");
@@ -80,6 +82,17 @@ static int frame(void *user, const float seconds)
     for (unsigned i = 0; i < 12; i++) check(pixels[26 + i], 0, 255, 0, filtered[i]);
     check(pixels[38], 255, 255, 255, "a Color read handed an integer image reads as no image");
     check(pixels[39], 0, 0, 0, "a Color volume read and a kernel's Color store never reach an integer volume");
+    static const char *const exact[] = {"R32f blends four exact loads, clamped, repeated, mirrored and through a helper",
+        "Rgba32f blends four free channels exactly, 1e9 too", "an R32f array layer: cleared, nearest, blended, a layer past its last",
+        "an Rgba32f array layer blends exactly, and another reads its clear", "an R32i array's layers are exact ints",
+        "an R32f cube's six faces, each its own clear, by direction", "an R32f cube face drawn in halves, read either side",
+        "R32i and Rgba32f cube faces are exact", "an R32f volume blends its eight cells exactly",
+        "an Rgba16f volume and a Grid3<float> blend through the sampler, a free fourth channel kept",
+        "a Color texture's SampleLevel that names no filter reads between levels", "...and a Color cube's and array's",
+        "a depth cube's depth by a direction: a frag's, the far limit, through a helper",
+        "a depth cube's depth compared, either side of what's stored", "no array, cube or depth cube: zeros, and the far limit"};
+    for (unsigned i = 0; i < 15; i++) check(pixels[40 + i], 0, 255, 0, exact[i]);
+    check(pixels[55], 0, 255, 0, "a frag's own typed Texture handed an R32f image blends it exactly");
     if (local.Images.revision <= 0 || (stage == 2 && local.Images.revision == revision)) failures++;
 #ifdef __wasm__
     if (stage == 0 && !failures) {
@@ -98,7 +111,7 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 112, .hidden = true});
+    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 160, .hidden = true});
     printf("renderer: %s\n", tide_platform_renderer());
     tide_platform_run(frame, NULL);
 }

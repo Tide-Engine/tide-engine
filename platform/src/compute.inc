@@ -3,7 +3,7 @@ static bool target_read_prepare(tide_gpu_read_request *request);
 // tide_target_read's color kinds, in its order.
 enum { PIXEL_READ_COLOR, PIXEL_READ_FLOAT, PIXEL_READ_FLOAT2, PIXEL_READ_FLOAT4, PIXEL_READ_INT, PIXEL_READ_DEPTH,
        PIXEL_READ_FACE, PIXEL_READ_LAYER, PIXEL_READ_FACE_NUMBERS, PIXEL_READ_LAYER_NUMBERS, PIXEL_READ_LAYER_DEPTH,
-       PIXEL_READS };
+       PIXEL_READ_LAYER_INTS, PIXEL_READS };
 _Static_assert(PIXEL_READ_COLOR == (int)TIDE_TARGET_READ_COLOR && PIXEL_READ_FLOAT == (int)TIDE_TARGET_READ_FLOAT
                && PIXEL_READ_FLOAT2 == (int)TIDE_TARGET_READ_FLOAT2 && PIXEL_READ_FLOAT4 == (int)TIDE_TARGET_READ_FLOAT4
                && PIXEL_READ_INT == (int)TIDE_TARGET_READ_INT, "a color read's kernel is its kind's");
@@ -577,7 +577,7 @@ static tide_gpu_id empty_image_destination(const tide_shader *shader, const uint
     static struct { uint32_t epoch, format; bool volume; tide_gpu_id image, target; } empty[TIDE_SHADER_TEXTURES];
     const uint32_t epoch = gpu->epoch(), format = shader->image_formats[slot];
     const uint8_t read = shader->texture_reads[slot];
-    const bool volume = read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME || read == TIDE_SHADER_READ_INT_VOLUME;
+    const bool volume = read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME || read == TIDE_SHADER_READ_INT_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME_BLEND;
     if (empty[slot].epoch == epoch && empty[slot].format == format && empty[slot].volume == volume) return empty[slot].image;
     if (empty[slot].epoch == epoch) {
         if (empty[slot].target) free_target(empty[slot].target);
@@ -603,7 +603,7 @@ static void retry_images(const tide_draw_list *list, const tide_draw_compute *r)
     bool volume = r->shader->image_writes != 0;
     for (uint32_t k = 0; k < r->shader->texture_count; k++) {
         const uint8_t read = r->shader->texture_reads[k];
-        volume |= read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME || read == TIDE_SHADER_READ_INT_VOLUME;
+        volume |= read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME || read == TIDE_SHADER_READ_INT_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME_BLEND;
     }
     if (!volume) return;
     for (uint32_t k = 0; k < r->shader->texture_count; k++) {

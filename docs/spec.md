@@ -3492,7 +3492,13 @@ and over an error under Equal/Only, which would prevent useful prepasses.
 
 NaN levels become zero; negative infinity clamps to zero and positive infinity to the last image.
 Level zero is the original image, one halves each dimension, and fractional levels blend with Trilinear or
-Anisotropic. Point and Bilinear retain their base-image sampler contract. Levels clamp to 0..31 and the sampler's
+Anisotropic. Point and Bilinear retain their base-image sampler contract. A SampleLevel that names no filter is
+Trilinear (Provisional, Claude, 2026-11-14), on a Color texture, a cube and an array as on a typed image, whatever
+filter the texture says: a level read through a filter that reads none would be the base image's, which the
+editors' two-argument `SampleLevel(uv, level)` silently was. Weighed: the texture's own filter, as `Sample`'s is (a
+cube's Bilinear), with a warning where it's known to read no levels; and an error asking for the filter; chosen the
+filter the call means. SampleGrad keeps the texture's own filter, as its gradients are how Anisotropic is reached.
+Levels clamp to 0..31 and the sampler's
 available chain; an image with no smaller images reads level zero. TextureArray uses
 `SampleLevel(uv, layer, level[, filter[, wrap]])`: layer precedes level to keep Sample's argument order.
 Chosen over level-before-layer, which would make a positional float level look like the existing integer layer.
@@ -3724,7 +3730,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     - **An asset's is `asset Cubemap sky = "art/sky_??.png";`:** a glob that matches exactly the six files, each a supported PNG, PSD, JPEG, TGA, BMP or RGBA8 DDS image (only its base image is used). Argued: six named arguments, or six `asset Texture`s put together in code, say the faces outright; but an asset's path is one constant text, and a glob over files named by a convention is what a list of textures already is. **Each file is named for its face by how its name ends before its extension: `px`, `nx`, `py`, `ny`, `pz`, `nz`,** in any case. Picked over `+x` and `-x`, which are awkward in file names, shells and URLs, and over `right`, `left`, `top`, which don't say which way is which; it's the convention the tools that write cube maps mostly use. A file that ends in none of them, a face that's missing or there twice, a face that isn't square and faces of different sizes are errors at the path, which name the file. One file, or a URL, is an error that says to write a glob.
     - **A list or a map of cubes isn't there:** `List<Cubemap>` and `Map<string, Cubemap>` are errors, as the glob is already the cube's own.
     - **In the pack, a cube is six images, each there once** (shared by its file's hash, with a `Texture` of the same file too), and a block that names them in order. A `Cubemap` of the pack's is a name, as a `Texture` of the pack's is: what a field keeps of `sky` is the cube as the files are now.
-    - **`Cubemap(size)` makes a `Cubemap` that's drawn into** (a constructor, as `RenderTarget(width, height)` is; it was `RenderTarget.Cube(size)` for an afternoon, and a static of one type that makes another read oddly: `RenderTarget.Cube` is an error that names the constructor), and `Cubemap(size, format)` one whose faces hold `format`: `Format.Rgba8`, when left out, or `Format.Rgba16f`. `Format.Depth` is an error. It's made in local code, as a target is. Its name is the card's; that it gives a `Cubemap`, and not a `RenderTarget` with six of everything, is a pick: a cube is no destination by itself, and every method a target has would have to refuse it.
+    - **`Cubemap(size)` makes a `Cubemap` that's drawn into** (a constructor, as `RenderTarget(width, height)` is; it was `RenderTarget.Cube(size)` for an afternoon, and a static of one type that makes another read oddly: `RenderTarget.Cube` is an error that names the constructor), and `Cubemap(size, format)` one whose faces hold `format`: `Format.Rgba8`, when left out, `Format.Rgba16f`, a number format (Number images as array layers and cube faces, below), or `Format.Depth`, six faces of depth alone (Depth cubes, below). It's made in local code, as a target is. Its name is the card's; that it gives a `Cubemap`, and not a `RenderTarget` with six of everything, is a pick: a cube is no destination by itself, and every method a target has would have to refuse it.
     - **Its size is in pixels,** whatever the display, where a target's is in logical pixels at the display's scale: a cube's faces aren't laid over the window. `cube.Resize(size)` gives it another and empty images, and `cube.Dispose()` lets it go for every copy. Neither is for an asset's cube, which is an error where it's known and a line on the game's output otherwise.
     - **`cube.faces[i]` is a `RenderTarget`,** with an int that's any expression: the face `i`, from 0, in the faces' order. `cube.faces` is only read one at a time, as `target.colors` is, and can't be assigned. A constant index past 5 is an error; one that's only known as the game runs, and a face of a cube that isn't drawn into (an asset's, or one never made), is no destination, and draws into it are passed by.
     - **A face is a destination like any other:** its own camera, clip, transform, blend, tint, depth, cull and stencil, every draw a target has, and depth and stencil of its own, kept from frame to frame. Six faces are six sets of depth. Its color and its depth aren't handed out (`face.color` and `face.depth` name no image, and a draw that samples one is passed by): the cube is what's read. `face.Resize` and `face.Dispose` change nothing, having said so: they're the cube's.
@@ -3736,11 +3742,15 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     - **`Format.Rgba16f`** is floats on every backend (the bytes fallback went with the GL backends, 2026-11-05).
     - **A game with no `Cubemap` generates the C it did,** and no shader's text moved.
     - In C: `tide_cubemap_ref`, `tide_cubemap_make`, `tide_cubemap_make_as`, `tide_cubemap_face`, `tide_cubemap_resize`, `tide_cubemap_dispose`, `tide_draw_cube_source`, and `TIDE_SHADER_READ_CUBE` for how a shader reads that texture; in the pack, `TIDE_PACK_CUBEMAP`, `tide_pack_cubemap_of` and `tide_pack_cubemap_find`.
-    - Not there: choosing the level a cube is read at, or a roughness, which a blurred reflection wants (mipmaps have no chosen level yet); a cube of depth alone, for a lamp that shines every way; a face's depth as a `DepthTexture`, or its color as a `Texture`; several color images or samples on a cube; a cube as a draw's own texture or a frag's own parameter; a cube made of six `Texture`s or grids as the game runs; image formats other than PNG, PSD, JPEG, TGA, BMP and RGBA8 DDS, and the layouts that put six faces in one file (a cross, a strip, a panorama); float files; lists, maps and arrays of cubes; drawing all six faces in one pass; `[Filter]` on a cube.
+    - **Depth cubes** (Provisional, Claude, 2026-11-14; the owner asked for the "isn't there yet" refusal to go: "make sure everything we can add or validate we do"): `Cubemap(size, Format.Depth)` is six faces of depth alone, each a destination of depth alone as a `RenderTarget(w, h, Format.Depth)` is, at the far limit until drawn into. `cube.depth` is its `DepthCubemap`, a type of its own (a `DepthTexture` is read by a uv; this by a direction), kept in local state as a `DepthTexture` is and read in a frag or a vert where it's a field of a component or singleton the code takes, or a GPU helper's parameter: `Sample(direction)` gives the nearest thing's depth that way from the cube's middle, forward, 0 at the near plane to 1 at the far limit; `Compare(direction, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, blended as a `DepthTexture`'s compare is. A direction of any length; `value` is kept between 0 and 1. A default one is no cube's and reads as the far limit. `cube.depth` of a cube of colors is a compile error at the draw where its format is known (each of its faces draws with a depth of its own, which isn't kept to be read); where it isn't, it's no image, and a draw that reads it is passed by with a line, as one reading a disposed target's depth is.
+      - **How it's held and read: six layers of a depth array,** the faces' targets its layers, and tidec works out the face the direction points at and the place on it (the longest axis, x before y before z where two are as long) and reads that layer as a `DepthTextureArray` is, through the same sampler, under either depth storage (reversed floats, or the forward fallback). Weighed: a cube texture of depth with its own view (`texture_depth_cube`, a cube-compatible depth image), whose comparisons a GPU blends across a face's edge; Unity's replay compares a cube nearest-only where its 2D and array compares blend four comparisons, so the pictures would differ there, and it needs a new depth-cube image on every backend and in the recorder. Chosen six layers, the same picture everywhere with no new backend or recorder image: a compare at a face's very edge blends within that face, its last pixels standing for the next face's.
+      - Its faces read back with `ReadDepth()`; `face.depth` and `face.color` still name no image.
+      - Not there: a cube of colors' depth (draw it into a depth cube too); `cube.depth.size`.
+    - Not there: a face's depth as a `DepthTexture`, or its color as a `Texture`; several color images or samples on a cube; a cube as a draw's own texture or a frag's own parameter; a cube made of six `Texture`s or grids as the game runs; image formats other than PNG, PSD, JPEG, TGA, BMP and RGBA8 DDS, and the layouts that put six faces in one file (a cross, a strip, a panorama); float files; lists, maps and arrays of cubes; drawing all six faces in one pass; `[Filter]` on a cube.
   - **Texture arrays** (2026-11-05: the owner asked for them, "just cause nothing needs [it] isn't an excuse", and picked from a proposal that they are types of their own, `TextureArray` and `DepthTextureArray`; that an asset's is a glob's images or a list of paths; that one a view draws into is `TextureArray(width, height, layers, ...)`, whose `layers[i]` are targets and whose `depth` is its depth array; and that a frag reads one with `Sample(uv, layer)`, an int layer, clamped. Every rule below beyond those was picked to build it, Provisional):
     - **A type of its own, `TextureArray`,** for the same reason a `Cubemap` is one: every place a `Texture` goes reads it by a `float2`, and an array is read by a `float2` and a layer. Its depth, each layer's, is a `DepthTextureArray`. An array is one of a draw's 16 textures, however many layers it has, and each way it's read one of its samplers.
     - **An asset's is images of one size,** a glob's, as its layers in the order a glob's list has them (by path), `asset TextureArray ground = "art/ground/*.png";`, or a list of paths in its order, `asset TextureArray ground = ["art/grass.png", "art/rock.png"];`, each a file or a glob, the same file twice being two layers of one image in the pack. 1 to 256 of them; one of another size is an error that names both. `[Filter]` and `[Wrap]` say how a `Sample` that says none reads it. Its layers compress as a `Texture` asset's do (built 2026-11-05): each layer of 128 pixels or more, a power of two a side, is BC1 where every alpha is 255 and BC3 otherwise, and an array with both is BC3 throughout on the GPU (an opaque layer's BC1 blocks turned to BC3 losslessly), its smaller images prepared in the build; `[Lossless]` keeps every layer exact, and a device without BC decodes every level. A list or a map of arrays isn't there (the glob is the array's own).
-    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, one of the number formats every device blends (`R8`, `Rg8`, `R16f`, `Rg16f`: Number images as array layers and cube faces, below), or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
+    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, a number format (`R8`, `Rg8`, `R16f`, `Rg16f`, `R32f`, `Rgba32f`, `R32i`: Number images as array layers and cube faces, below), or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
     - **`array.layers[i]` is a `RenderTarget`,** a destination as a cube's face is: its own camera, clip and settings, drawing into layer `i` of the array's colors and of its depth. Read one at a time; one past its layers, or of an asset's array, is no destination, and draws into it are passed by. A layer can't be resized or disposed by itself: `array.Resize(width, height)` and `array.Dispose()` are the whole array's. A new or resized array is black, its depth at the far limit.
     - **`array.depth` is its `DepthTextureArray`.** `array.size` (a layer's pixels, an `int2`) and `array.count` (its layers) are read in local code, as a `Texture`'s size is, and in a frag or a vert (built 2026-11-05: the GPU's own `textureDimensions` and `textureNumLayers`); a `DepthTextureArray` has both too. Zeros for none.
     - **A `Grid3<Color>` or a `Grid3<float>` converts to a `TextureArray`** (built 2026-11-05) wherever a `Grid2` of them converts to a `Texture`: its z its layers, each `size.x` by `size.y`, 1 to 256 of them and at most 16,384 a side, or the array is none. It names the grid, as a grid's `Texture` does: what's drawn is the grid as it is then, and the GPU gets only the parts of the layers whose chunks changed. Colors are a byte a channel, floats a half each, read in `.r`. A `Grid3` of anything else where an array goes is an error that says which are.
@@ -3822,14 +3832,25 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     every backend (Vulkan 1.3's required formats, WebGPU core, Unity's), so their mipmaps are made of what was
     drawn, when a read that uses them first needs them, as a Color target's are. Wrap remains
     Clamp/Repeat/Mirror, the Sample's own (a `Texture` field takes no `[Wrap]`).
-    - **`R32f` and `Rgba32f` stay nearest on every device.** A GPU blends 32-bit floats only with an optional
-      feature (WebGPU's `float32-filterable`, a format feature on Vulkan). Weighed: asking for the feature and
-      blending where it's there, nearest elsewhere, which gives another picture by device and was refused for
-      that; blending four exact loads in the shader, the same picture everywhere at four reads a Sample and with
-      no mipmaps or anisotropy, which isn't built and is the owner's to ask for; and nearest only, chosen. A
-      blended read, `SampleLevel` or `SampleGrad` of one is a compile error at the draw that names `R16f` or
-      `Rgba16f`; the format is known there from the field's constructor assignments, which a typed field needs
-      fixed already.
+    - **`R32f` and `Rgba32f` blend through exact loads, the same bits on every device** (Provisional, Claude,
+      2026-11-14, after the owner's "make sure everything we can add or validate we do"; it replaces that day's
+      nearest-only rule). A GPU blends 32-bit floats only with an optional feature (WebGPU's `float32-filterable`,
+      a format feature on Vulkan), so a `Filter.Bilinear` read of one is the four texels around the uv (a
+      `Texture3D`'s eight) loaded exactly and blended in tidec's shader code by where the uv is between them, as
+      the GPU's Bilinear is, with the Sample's wrap on the texels it reaches past an edge. A `Texture`, a
+      `TextureArray`'s layer and a `Texture3D` blend so; `Filter.Point` loads the nearest texel, and so does
+      `SampleLevel` or `SampleGrad` naming `Filter.Point` or `Filter.Bilinear` (level 0). Which images are of these
+      formats tidec knows from a typed field's constructor assignments, which it needs fixed already, and from a
+      draw's source for a frag's own typed `Texture` (a shader of its own for those): the R8 to Rgba16f formats keep
+      the GPU's one sampled read. Weighed: asking for the feature and blending where it's there, nearest elsewhere,
+      another picture by device, refused for that; nearest only, the first day's rule; and loads for every format,
+      the same bits for those too at four reads where the GPU's sampler takes one, refused for what it costs the
+      formats that blend everywhere.
+    - **They have no mipmaps:** `Filter.Trilinear`, `Filter.Anisotropic`, a `SampleLevel` or `SampleGrad` that
+      names neither Point nor Bilinear (or no filter, which is Trilinear), of an `R32f` or `Rgba32f` image, is a
+      compile error at the draw naming `R16f` or `Rgba16f`. Weighed: a chain made of exact means by a kernel, and an
+      eight-load blend between two levels, which would read levels everywhere at about twice a Bilinear's cost and
+      a chain's memory; chosen none, as the formats' purpose is numbers as they are.
     - **`R32i` stays nearest:** no GPU blends integers. Any filter but Point, `SampleLevel` and `SampleGrad`
       are errors where they're written.
     - **A read through a blending sampler is never handed an image it can't blend,** whatever path the image
@@ -3840,16 +3861,26 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     - **A typed read of no image is zeros,** blended or not, in a Texture, an array or a cube.
     - Ordinary Color and bare Raw textures keep their filters.
   - **Number images as array layers and cube faces** (Provisional, 2026-11-14): `TextureArray(width, height,
-    layers[, pixelsPerUnit], format)` and `Cubemap(size, format)` take `R8`, `Rg8`, `R16f` and `Rg16f` beside
-    their color formats. A frag's numeric output draws into `array.layers[i]` or `cube.faces[i]` and
-    `Clear(value)` fills one with a typed value, both matched to the format as a target's are. They're read
-    through `[Raw(float)]`, `[Raw(float2)]` or `[Raw(float4)]` on a `TextureArray` or `Cubemap` field or a GPU
-    helper's read-only parameter: `Sample`, `SampleLevel` and (an array's) `SampleGrad` give the role's type,
-    nearest where no filter is named, blended and between mipmaps where one is. `R32f`, `Rgba32f` and `R32i`
-    are refused there with the fix: an array's layers and a cube's faces are read through a sampler, a cube by
-    nothing else on any GPU, and those formats need a non-blending sampler binding of their own, which isn't
-    built (weighed against exact loads of an array's layer, which a cube has no counterpart of; `R16f` holds a
-    distance or a moment to three digits). `[Raw(int)]` on either is an error for the same reason.
+    layers[, pixelsPerUnit], format)` and `Cubemap(size, format)` take every number format beside their color
+    formats: `R8`, `Rg8`, `R16f`, `Rg16f`, and (Claude, later the same day) `R32f`, `Rgba32f` and `R32i`. A frag's
+    numeric output draws into `array.layers[i]` or `cube.faces[i]` and `Clear(value)` fills one with a typed value,
+    both matched to the format as a target's are. They're read through `[Raw(float)]`, `[Raw(float2)]`,
+    `[Raw(float4)]` or `[Raw(int)]` on a `TextureArray` or `Cubemap` field or a GPU helper's read-only parameter:
+    `Sample` gives the role's type, nearest where no filter is named; a filter named blends, and `SampleLevel` and
+    (an array's) `SampleGrad` read between mipmaps, Trilinear where they name no filter, for the formats every
+    device blends. A typed array's nearest pixel is an exact load whatever its format, through a binding every
+    float format fits (an unfilterable `texture_2d_array<f32>`, `<i32>` for ints), the texel a nearest sampler
+    gives; its `R32f` and `Rgba32f` layers blend with `Filter.Bilinear` as four exact loads (Portable filtering).
+    - **A cube of 32-bit numbers is six layers** on the GPU, an array's, its faces their targets: no GPU samples an
+      integer cube, nor blends 32-bit floats everywhere. tidec reads it by working out the face the direction points
+      at and the place on it (the longest axis; x before y before z where two are as long, at a face's very edge),
+      and loading the nearest texel there, the same on every backend. It's read at its nearest pixel alone: a
+      filter or a level is a compile error at the draw naming `R16f` or `Rgba16f`, as blending across a face's edge
+      from loads would take the faces beside it and no backend's own. Weighed: an unfilterable cube binding and a
+      non-filtering sampler for the float formats, which leaves integers out and binds differently on Unity; a 2D
+      array view of a cube, which Unity's replay can't take of a cube's image; six layers chosen.
+    - **`[Raw(int)]`** on an array or a cube reads `R32i` layers and faces, nearest alone: a filter is an error
+      that says no GPU blends integers. A typed read of no image is zeros, as ever.
   - **Multisampling:** R8, Rg8, R16f and Rg16f support their usual sample counts and resolve each numeric
     channel by the mean. Numeric float4 outputs into Rgba16f use its ordinary mean resolve too. R32f,
     Rgba32f and R32i require one sample, including when mixed with other images of a target. Optional float32
@@ -4166,6 +4197,10 @@ These are implementation picks, rather than additional owner decisions.
   the eight neighboring cells, with Point for an exact nearest cell. Clamp, Repeat and Mirror apply on all axes.
   There are no volume mipmaps, and no `SampleLevel`, Trilinear or Anisotropic volume filtering: a full chain and
   its three-dimensional downsampling were weighed against a predictable base-level image for simulation and lookup data.
+  A typed `[Raw(float)]`, `[Raw(float2)]` or `[Raw(float4)]` volume reads its nearest cell where no filter is named,
+  as a typed `Texture` does, and blends with `Filter.Bilinear` (Provisional, Claude, 2026-11-14, under Portable
+  filtering): an `Rgba16f` volume and a `Grid3<float>`'s through the GPU's sampler, an `R32f` or `Rgba32f` one as its
+  eight cells loaded exactly and blended in the shader. A `[Raw(int)]` volume reads its nearest cell alone.
 - **Exact cells:** `volume[int3 at]` reads a `Color`, or a typed Raw field's float/float2/float4/int, in GPU code, zeros outside. It accompanies continuous
   `Sample` rather than forcing callers to reconstruct cell-center normalized coordinates. A float grid's ordinary volume
   reads its value as red, zero green and blue and alpha one.
