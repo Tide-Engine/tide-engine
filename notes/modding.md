@@ -20,9 +20,13 @@ The owner settled who builds on desktop, in a discussion that started from Steam
 - Two ways to take mods, both wanted, the developer's choice. **Compiled with the game**: the game ships its `.tide` files and builds with its mods as one program; the first requirement above (same storage, schedule and speed) describes this way. **Loaded into the game**: the game ships finished with declarations and no code, and a mod compiled by itself is loaded as a library. The owner wants this so that a game needn't give its source away.
 - Declarations are visible to mods unless the developer hides them with a marker (name to pick). Agreed "for a first run".
 
+- C is unsafe for mods by default: a mod calls a game function that reaches `extern` only where the developer marked it for mods (marker's name to pick).
+- Loaded mods: their systems run serially in a fixed order at the named phases' boundaries for a first version; desktop first, the web after.
+- Loaded mods: a combination of the game's components that the game never makes should work, not be an error (the owner found the error "too limiting", adding "i could be wrong"). The proposed way, tables made at run time that the game's systems also go through, is in the spec and unchecked against the code.
+
 The owner's main concern is malicious code. The answer given, not yet a decision of its own: a mod is Tide alone and Tide can't corrupt memory, so a mod can only make the calls the engine offers; the sandbox covers bugs of ours.
 
-The second way needs runtime work (mods' types described at run time, a mod's systems scheduled at load), which is the owner's to agree and write. Its proposed shape and the questions awaiting the owner are in `docs/spec.md`, Mods, Open: new combinations of the game's components, where a mod's systems run, the web, calls that reach `extern`, the sandbox against Steam's client, and an interpreter for consoles and phones. Shipping the game as bitcode and linking again per mod set was weighed and not chosen.
+The second way needs runtime work (mods' types described at run time, a mod's systems scheduled at load), which is the owner's to agree and write. Its proposed shape and the questions awaiting the owner are in `docs/spec.md`, Mods, Open: how new combinations of the game's components are stored, the sandbox against Steam's client, and an interpreter for consoles and phones. Shipping the game as bitcode and linking again per mod set was weighed and not chosen.
 
 ## What is built
 
