@@ -1,3 +1,9 @@
+## Depth-write descriptor flag: ABI 23 (2026-11-14)
+
+The follow-up writes_depth flag keeps explicit Draw.Bounds from re-enabling geometric occlusion testing for
+frags that replace depth. Generated C and the renderer rebuild together; TideLibrary.Abi and embed.h are 23.
+No recorder opcode, shader text or replay behavior changed. Details and focused tests: shaders.md.
+
 ## Pixel readback kernel (2026-11-14)
 
 Embed ABI 22 extends the host-shared read table, with no new GPU command. The engine's pixel-read kernel uses

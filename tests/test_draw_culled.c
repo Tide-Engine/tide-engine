@@ -575,3 +575,22 @@ TIDE_TEST(draw_culled_join_leaves_no_level_without_a_mesh)
     tide_text_use(NULL, NULL);
     tide_heaps_free(&heap);
 }
+
+TIDE_TEST(draw_depth_writing_frag_skips_occlusion_with_explicit_bounds)
+{
+    const uint64_t mark = tide_scratch_mark();
+    tide_heaps heap = {0}; tide_text_use(NULL, &heap);
+    tide_list items = scattered(300, 5u, NONE_MIRRORED, 20.0f); in_view(items, 1u);
+    tide_draw_list d = {0}; frame(&d, true);
+    tide_draw_set_occlusion(&d, true);
+    tide_draw_set_bounds(&d, tide_f3(0, 0, 0), tide_f3(1, 1, 1));
+    tide_shader shader = listed_shader; shader.writes_depth = true;
+    const tide_list vertices = tide_list_from(corners, 4, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(whole, 12, sizeof(uint32_t));
+    TIDE_CHECK(tide_draw_mesh_shaded_list(&d, &shader, vertices, indices, items, sizeof(item), write_item, 0x80000001u,
+                                         NULL, NULL, 0));
+    TIDE_CHECK(d.cull_count > 0);
+    for (uint32_t i = 0; i < d.cull_count; i++) TIDE_CHECK(d.culls[i].occlusion == 0);
+    tide_draw_free(&d); tide_list_release(&items, TIDE_IN_LOCAL); tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL); tide_heaps_free(&heap);
+}

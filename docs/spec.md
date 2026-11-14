@@ -3385,7 +3385,8 @@ depth. Values clamp to [0, 1], with NaN becoming zero. `this.depth` continues to
 Depth tests use the replacement: Equal compares it, Only writes it without color, and multisampling applies
 it to each covered sample. The shader makes no early-test promise, allowing the device to test after writing.
 Automatic geometry-bound culling is disabled for these shaders: their triangle bounds cannot predict their
-depth. Actual stored depth still contributes to occlusion of later ordinary draws. A matching prepass must
+depth. Explicit Bounds can describe geometric clipping, but never re-enable occlusion testing for a depth-writing
+frag. Actual stored depth still contributes to occlusion of later ordinary draws. A matching prepass must
 run the same depth-writing frag. Chosen over conservative-depth restrictions, which would limit the feature,
 and over an error under Equal/Only, which would prevent useful prepasses.
 

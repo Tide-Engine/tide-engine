@@ -1977,6 +1977,11 @@ static void run_written_depth_checks(const char *when)
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
+    for (uint32_t i = 0; i < list.run_count; i++) {
+        if (strcmp(list.runs[i].shader->name, "PixelDepth on Corner3") == 0 && !list.runs[i].shader->writes_depth) {
+            puts("FAIL: WriteDepth metadata missing"); failures++;
+        }
+    }
     const tide_float2 points[] = {{16.5f,16.5f},{48.5f,16.5f},{80.5f,16.5f}};
     uint32_t got[3];
     tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 3, got);

@@ -1681,6 +1681,7 @@ typedef struct tide_shader {
     // it covers (alpha to coverage), and a blend by its alpha replaces what's there; into one of a sample, its
     // uniforms' `screen.w` is below 0, and it cuts at 0.5 itself.
     bool cutout;
+    bool writes_depth; // Fragment depth differs from geometry: never use geometry for occlusion tests
     uint32_t bounds_position; // 1 + float3 position's byte offset, only for undeformed 3D geometry; 0: unknown
     // Whether it has a vertex stage for a listed run (tide_draw_run.listed): an int instance attribute, the
     // instance's place in its list, in place of the packs, which it reads from texture `texture_count` (its

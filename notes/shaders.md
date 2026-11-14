@@ -1256,3 +1256,14 @@ Code the GPU runs has no values that may be missing, so a `T?` field read there 
 Build 43582979490 found three older error fixtures still pinning the complete pixel-method list without
 WriteDepth. Their expected message now includes the new method; the generated diagnostic already explained
 it correctly. The three native sanitizer compiler error tests pass. No implementation change.
+
+## Explicit bounds on depth-writing frags (2026-11-14)
+
+A final audit caught that Draw.Bounds could re-enable geometric occlusion tests after WriteDepth's automatic
+bounds were disabled. tide_shader.writes_depth is now emitted only for these frags, and their culling jobs
+always disable occlusion. Explicit bounds can still describe geometric clipping. A focused draw-list regression
+pins explicit bounds with Occlusion(true); the pixel fixture checks generated metadata. Embed ABI 23 keeps the
+shared descriptor layout in step. No-use C and shader output remain unchanged.
+
+Validation of the explicit-bounds correction: native ASan draw units 131/131; Vulkan and web-debug WebGPU
+shader pixels pass both reversed float and forced forward depth; docs build passes. Shader text is unchanged.

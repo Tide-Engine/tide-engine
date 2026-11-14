@@ -4279,7 +4279,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
     d->culls = grow(d->culls, d->cull_count, &d->cull_capacity, 1, sizeof(tide_draw_cull), 64u);
     d->culls[job] = (tide_draw_cull){.camera = cull_camera(d, &d->frustum_matrix, &view), .mesh = mesh, .page = slot,
                                      .first = first, .count = count, .packs = size / 16u, .low = (uint8_t)low,
-                                     .high = (uint8_t)high, .occlusion = p->occlusion && p->depth_bias.x == 0.0f && p->depth_bias.y == 0.0f ? 1u : 0u, .bounds = bounds};
+                                     .high = (uint8_t)high, .occlusion = p->occlusion && !shader->writes_depth && p->depth_bias.x == 0.0f && p->depth_bias.y == 0.0f ? 1u : 0u, .bounds = bounds};
     d->cull_count++;
     if (d->diagnostics) { // The geometry rows what the GPU draws of each of its levels counts in, once it says
         tide_draw_cull *made = &d->culls[job];

@@ -1515,7 +1515,8 @@ In a frag, `this.WriteDepth(value);` replaces depth with a forward value from 0 
 back a DepthTexture.Sample result. Values clamp; NaN becomes zero. A path with no write retains triangle
 depth; the last write wins. Helpers return a value for the frag to write. Equal and Only use that value,
 so a prepass and its lit pass should compute the same depth. These draws skip automatic geometry-bound
-culling, and depth tests may run after the frag.
+culling, and depth tests may run after the frag. Explicit Bounds also leave occlusion testing disabled for
+a depth-writing frag.
 
 ## Depth bias
 
@@ -1524,4 +1525,4 @@ culling, and depth tests may run after the frag.
 both forms and keep their own setting. Blocks restore what they found; 2D draws are unaffected.
 The constant counts GPU precision steps (truncated to a whole number), and slope scales pixel-depth slope.
 A floating depth image's step follows its depth precision, rather than a fixed fraction of the range.
-Constants outside ±65536, slopes outside ±16 and nonfinite values become zero. Start with small factors.
+Constants outside Â±65536, slopes outside Â±16 and nonfinite values become zero. Start with small factors.
