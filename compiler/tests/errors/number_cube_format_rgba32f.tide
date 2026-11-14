@@ -1,0 +1,3 @@
+// expect: a Cubemap's faces are read through a blending sampler, which 32-bit float and integer images lack on some devices
+scene Main { }
+view Show() { var cube=Cubemap(8,Format.Rgba32f); cube.Dispose(); }

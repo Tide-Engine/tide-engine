@@ -359,12 +359,15 @@ tide_cubemap_ref tide_cubemap_make(const float size)
 
 tide_cubemap_ref tide_cubemap_make_as(const float size, const tide_target_format format)
 {
-    if (format >= TIDE_TARGET_R8 && format <= TIDE_TARGET_R32I) {
-        fprintf(stderr, "Cubemap: numeric formats require a RenderTarget; cube faces hold Rgba8 or Rgba16f\n");
+    // Faces are read through a blending sampler: the formats every device blends
+    if (format >= TIDE_TARGET_R32F && format <= TIDE_TARGET_R32I) {
+        fprintf(stderr, "Cubemap: 32-bit float and integer faces aren't blended on every device; use R16f, Rg16f or Rgba16f, "
+                        "or a RenderTarget for each image\n");
         return (tide_cubemap_ref){0};
     }
+    const bool held = format == TIDE_TARGET_RGBA16F || (format >= TIDE_TARGET_R8 && format <= TIDE_TARGET_RG16F);
     const tide_render_target made = make_target((tide_target_size){.width = size, .height = size, .scale = 1.0f},
-                                                one_format(format == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8),
+                                                one_format(held ? format : TIDE_TARGET_RGBA8),
                                                 "Cubemap(size) requires a positive size, its faces' side in pixels");
     tide_render_target_state *s = tide_render_target_state_of(made.id);
     if ((uint64_t)(uintptr_t)s & (TIDE_RENDER_CUBE | TIDE_RENDER_FACE)) { // Its id says which face there
@@ -398,8 +401,10 @@ void tide_cubemap_dispose(const tide_cubemap_ref cube)
 
 tide_texture_array_ref tide_texture_array_make(const tide_target_size size, const uint32_t layers, const tide_target_format format)
 {
-    if (format >= TIDE_TARGET_R8 && format <= TIDE_TARGET_R32I) {
-        fprintf(stderr, "TextureArray: numeric formats require a RenderTarget or an owned Texture3D\n");
+    // Layers are read through a blending sampler: the formats every device blends
+    if (format >= TIDE_TARGET_R32F && format <= TIDE_TARGET_R32I) {
+        fprintf(stderr, "TextureArray: 32-bit float and integer layers aren't blended on every device; use R16f, Rg16f or "
+                        "Rgba16f, a RenderTarget for each image, or an owned Texture3D\n");
         return (tide_texture_array_ref){0};
     }
     const bool counted = layers >= 1u && layers <= TIDE_TEXTURE_ARRAY_LAYERS;

@@ -1,4 +1,4 @@
-// expect: a typed numeric image has no mipmaps: use Sample(uv)
+// expect: an int image reads its nearest pixel: a GPU blends no integers, so it has no smaller images
 scene Main { }
-local singleton Images { [Raw(float)] Texture image; }
+local singleton Images { [Raw(int)] Texture image; }
 frag Read(Vertex vertex, out Color color, Images images) { color=Color(images.image.SampleLevel(vertex.uv,1),0,0); }

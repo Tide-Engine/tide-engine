@@ -3661,7 +3661,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **Texture arrays** (2026-11-05: the owner asked for them, "just cause nothing needs [it] isn't an excuse", and picked from a proposal that they are types of their own, `TextureArray` and `DepthTextureArray`; that an asset's is a glob's images or a list of paths; that one a view draws into is `TextureArray(width, height, layers, ...)`, whose `layers[i]` are targets and whose `depth` is its depth array; and that a frag reads one with `Sample(uv, layer)`, an int layer, clamped. Every rule below beyond those was picked to build it, Provisional):
     - **A type of its own, `TextureArray`,** for the same reason a `Cubemap` is one: every place a `Texture` goes reads it by a `float2`, and an array is read by a `float2` and a layer. Its depth, each layer's, is a `DepthTextureArray`. An array is one of a draw's 16 textures, however many layers it has, and each way it's read one of its samplers.
     - **An asset's is images of one size,** a glob's, as its layers in the order a glob's list has them (by path), `asset TextureArray ground = "art/ground/*.png";`, or a list of paths in its order, `asset TextureArray ground = ["art/grass.png", "art/rock.png"];`, each a file or a glob, the same file twice being two layers of one image in the pack. 1 to 256 of them; one of another size is an error that names both. `[Filter]` and `[Wrap]` say how a `Sample` that says none reads it. Its layers compress as a `Texture` asset's do (built 2026-11-05): each layer of 128 pixels or more, a power of two a side, is BC1 where every alpha is 255 and BC3 otherwise, and an array with both is BC3 throughout on the GPU (an opaque layer's BC1 blocks turned to BC3 losslessly), its smaller images prepared in the build; `[Lossless]` keeps every layer exact, and a device without BC decodes every level. A list or a map of arrays isn't there (the glob is the array's own).
-    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
+    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, one of the number formats every device blends (`R8`, `Rg8`, `R16f`, `Rg16f`: Number images as array layers and cube faces, below), or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
     - **`array.layers[i]` is a `RenderTarget`,** a destination as a cube's face is: its own camera, clip and settings, drawing into layer `i` of the array's colors and of its depth. Read one at a time; one past its layers, or of an asset's array, is no destination, and draws into it are passed by. A layer can't be resized or disposed by itself: `array.Resize(width, height)` and `array.Dispose()` are the whole array's. A new or resized array is black, its depth at the far limit.
     - **`array.depth` is its `DepthTextureArray`.** `array.size` (a layer's pixels, an `int2`) and `array.count` (its layers) are read in local code, as a `Texture`'s size is, and in a frag or a vert (built 2026-11-05: the GPU's own `textureDimensions` and `textureNumLayers`); a `DepthTextureArray` has both too. Zeros for none.
     - **A `Grid3<Color>` or a `Grid3<float>` converts to a `TextureArray`** (built 2026-11-05) wherever a `Grid2` of them converts to a `Texture`: its z its layers, each `size.x` by `size.y`, 1 to 256 of them and at most 16,384 a side, or the array is none. It names the grid, as a grid's `Texture` does: what's drawn is the grid as it is then, and the GPU gets only the parts of the layers whose chunks changed. Colors are a byte a channel, floats a half each, read in `.r`. A `Grid3` of anything else where an array goes is an error that says which are.
@@ -3733,12 +3733,44 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     retains its earlier behavior. A synchronous GPU helper takes `[Raw(float)] Texture image` or the
     corresponding role/Texture3D parameter, read-only, and requires a caller with the same role. This preserves
     the type through helper chains without introducing a separate runtime texture type.
-  - **Portable filtering:** typed numeric reads always use the nearest pixel, with implicit `Filter.Point`
-    or an explicit Point; other filters and SampleGrad are compile errors. Wrap remains Clamp/Repeat/Mirror.
-    Typed numeric images have no mipmaps; SampleLevel is a compile error directing the game to Sample.
-    Filterable compact formats could have been given linear reads and
-    a mip chain, but one rule for numeric image roles avoids optional float32 filtering and accidental ID
-    interpolation, and keeps integer formats bit-exact. Ordinary Color and bare Raw textures keep their filters.
+  - **Portable filtering** (Provisional, 2026-11-14; it replaces that day's first rule, nearest reads only, after
+    the owner asked that everything a GPU can do be allowed: "make sure everything we can add or validate we do"):
+    a typed read that names no filter reads the nearest pixel, as before, whatever the image's own `[Filter]`
+    says. A typed float image in `R8`, `Rg8`, `R16f`, `Rg16f` or `Rgba16f` also takes `Filter.Bilinear`,
+    `Filter.Trilinear` and `Filter.Anisotropic`, `SampleLevel` and `SampleGrad`, through the GPU's own sampler,
+    and gives its role's `float`, `float2` or `float4` with no alpha work. A `SampleLevel` or `SampleGrad` that
+    names no filter reads between levels (`Filter.Trilinear`). Those five formats blend and are drawn into on
+    every backend (Vulkan 1.3's required formats, WebGPU core, Unity's), so their mipmaps are made of what was
+    drawn, when a read that uses them first needs them, as a Color target's are. Wrap remains
+    Clamp/Repeat/Mirror, the Sample's own (a `Texture` field takes no `[Wrap]`).
+    - **`R32f` and `Rgba32f` stay nearest on every device.** A GPU blends 32-bit floats only with an optional
+      feature (WebGPU's `float32-filterable`, a format feature on Vulkan). Weighed: asking for the feature and
+      blending where it's there, nearest elsewhere, which gives another picture by device and was refused for
+      that; blending four exact loads in the shader, the same picture everywhere at four reads a Sample and with
+      no mipmaps or anisotropy, which isn't built and is the owner's to ask for; and nearest only, chosen. A
+      blended read, `SampleLevel` or `SampleGrad` of one is a compile error at the draw that names `R16f` or
+      `Rgba16f`; the format is known there from the field's constructor assignments, which a typed field needs
+      fixed already.
+    - **`R32i` stays nearest:** no GPU blends integers. Any filter but Point, `SampleLevel` and `SampleGrad`
+      are errors where they're written.
+    - **A read through a blending sampler is never handed an image it can't blend,** whatever path the image
+      took to its field (a format chosen as the game runs, a `?:` of two targets, C): at run time such a read
+      gets no image, a Color read the white pixel and a typed one zeros. So is a kernel whose written field
+      holds an image of another format than its pipeline declares, or one with no storage use: its stores go
+      to a private image, with a line that says so once. Neither reaches a GPU binding of another format.
+    - **A typed read of no image is zeros,** blended or not, in a Texture, an array or a cube.
+    - Ordinary Color and bare Raw textures keep their filters.
+  - **Number images as array layers and cube faces** (Provisional, 2026-11-14): `TextureArray(width, height,
+    layers[, pixelsPerUnit], format)` and `Cubemap(size, format)` take `R8`, `Rg8`, `R16f` and `Rg16f` beside
+    their color formats. A frag's numeric output draws into `array.layers[i]` or `cube.faces[i]` and
+    `Clear(value)` fills one with a typed value, both matched to the format as a target's are. They're read
+    through `[Raw(float)]`, `[Raw(float2)]` or `[Raw(float4)]` on a `TextureArray` or `Cubemap` field or a GPU
+    helper's read-only parameter: `Sample`, `SampleLevel` and (an array's) `SampleGrad` give the role's type,
+    nearest where no filter is named, blended and between mipmaps where one is. `R32f`, `Rgba32f` and `R32i`
+    are refused there with the fix: an array's layers and a cube's faces are read through a sampler, a cube by
+    nothing else on any GPU, and those formats need a non-blending sampler binding of their own, which isn't
+    built (weighed against exact loads of an array's layer, which a cube has no counterpart of; `R16f` holds a
+    distance or a moment to three digits). `[Raw(int)]` on either is an error for the same reason.
   - **Multisampling:** R8, Rg8, R16f and Rg16f support their usual sample counts and resolve each numeric
     channel by the mean. Numeric float4 outputs into Rgba16f use its ordinary mean resolve too. R32f,
     Rgba32f and R32i require one sample, including when mixed with other images of a target. Optional float32
@@ -3762,7 +3794,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **1, 2, 4 or 8.** 1 is a target that says nothing. A number that's known as the game is compiled and is none of those is an error; one that's only known as it runs is the one of those under it (5 is 4, 100 is 8, 0 is 1), with a line that says so.
   - **A device with fewer draws it with what it has,** and the engine says so once, on the game's output: the most of 8, 4 and 2 that's no more than asked and that the device has for what the target holds. WebGPU has 1 and 4 and nothing else, so there 2 is 4 (more than asked, where the other choice was no smoothing at all) and 8 is 4. Nothing lets a game ask what it got.
   - **What it's for:** each of the target's pixels keeps that many colors, depths and stencils while it's drawn into, and a triangle's edge covers some of them, so the edges of 3D meshes, and of 2D ones, are smooth. A frag still runs once for a pixel a triangle covers, not once a sample. The smooth shapes and text are smooth by themselves, and are as they were.
-  - **Its images are what its samples come to,** one value a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's. Color reads keep their filters; typed numeric reads use Point as specified above. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
+  - **Its images are what its samples come to,** one value a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's. Color reads keep their filters; typed numeric reads follow Portable filtering, above. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
   - **Its depth is read as any target's** (2026-10-13; the owner asked for the engine to be fixed where a game had worked around the refusal there was, and each rule is a pick, to confirm). `target.depth` of a multisampled target is one depth a pixel: one of the pixel's samples, as they are when the draw that reads it is drawn. It's made of the samples only for a target whose depth a draw reads, and again only once more was drawn into the target, so a target nothing reads the depth of has no texture for it and pays no pass. A sample picked, not their mean or their nearest: an edge is a step, as a target's with no samples is, and the depth is one a surface there really has.
   - **A target of depth alone has none:** `Format.Depth` with `samples` above 1 is an error where both are written, and where either is only known as it runs the target has one sample, with a line that says so.
   - **The window has none.** A game that wants an antialiased frame draws it into `RenderTarget.Window(samples: 4)` and brings it to the window with `Draw.Blit`. The window's own framebuffer would take a setting that's the game's and three ways to ask for it that can each be refused (GLFW's hint before the window is made, the WebGL context's `antialias`, which a browser may ignore, and an EGL config on Android), a canvas on WebGPU has no samples of its own at all, and the GUI, the stats and the smooth shapes drawn there gain nothing from it.

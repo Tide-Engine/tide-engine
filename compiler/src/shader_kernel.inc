@@ -219,6 +219,9 @@ int image_target_format(const expr *e, const int color, const int depth)
     if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
         return image_target_format(e->object, 0, depth + 1);
     if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
+        // A cube's face and an array's layer hold the one image their cube or array does
+        if (e->object->object && (e->object->object->type.kind == TY_CUBEMAP || e->object->object->type.kind == TY_TEXTURE_ARRAY))
+            return color == 0 ? image_target_format(e->object->object, 0, depth + 1) : -2;
         if (e->lhs->kind != E_INT || e->lhs->int_value < 0 || e->lhs->int_value > 3) return -1;
         return image_target_format(e->object->object, (int)e->lhs->int_value, depth + 1);
     }
@@ -237,7 +240,8 @@ int image_target_format(const expr *e, const int color, const int depth)
         return found;
     }
     if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
-        && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D)) {
+        && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D || e->type.kind == TY_CUBEMAP
+            || e->type.kind == TY_TEXTURE_ARRAY)) {
         int slot = 0;
         for (int i = 0; i < e->args.count; i++) {
             const expr *f = e->args.items[i];
@@ -279,7 +283,7 @@ static bool numeric_image_origin(const expr *e, const int depth)
         for (int i = 0; i < e->field->image_assignments.count; i++)
             if (numeric_image_origin(e->field->image_assignments.items[i], depth + 1)) return true;
     }
-    if (e->type.kind == TY_RENDER_TARGET && e->resource_operation) {
+    if ((e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_CUBEMAP || e->type.kind == TY_TEXTURE_ARRAY) && e->resource_operation) {
         for (int i = 0; i < e->args.count; i++) {
             const expr *f = e->args.items[i];
             if (f->type.kind == TY_ENUM && f->type.decl && str_eq_c(f->type.decl->name, "Format")

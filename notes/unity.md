@@ -49,7 +49,8 @@ Numeric attachment formats, typed nearest reads and the three portable numeric s
 through the existing target, pipeline, image and volume packets. No recorder opcode or embed ABI bump is
 needed. HLSL retains the WGSL numeric-output mask and bypasses the Color conversion for a numeric float4 at
 location zero. ShaderLab uses literal `Blend i One Zero` for each numeric output; the other outputs retain
-Tide's selected blend. The seven new formats have no mip chain, and typed numeric reads use the base level.
+Tide's selected blend. R8/RG8/R16F/RG16F single-sample targets have a mip chain since the blended typed reads (render-targets.md, top; not
+replayed in an editor for that change); R32F/RGBA32F/R32I have none, and their typed reads use the base level.
 R8/RG8/R16F/RG16F retain mean MSAA resolve; R32F/RGBA32F/R32I remain single-sample.
 
 For numeric shaders, ShaderLab has a second pass with literal `ColorMask 0 i` for every attachment. Replay

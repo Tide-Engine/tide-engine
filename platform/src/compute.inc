@@ -541,6 +541,29 @@ static const uint64_t *slot_ids(const tide_draw_list *list, const uint32_t stora
 // then in one compute pass its dispatch, with Add's after it.
 // A missing destination still lets the kernel's other effects run. Its stores go to a private, unobservable
 // image instead of a sampled fallback, and every slot gets its own so writable bindings never alias.
+// Whether the image a run holds for a written slot is what the kernel's pipeline declares there
+// (tide_shader.image_formats, a tide_gpu_format): a storage binding of another format, or of one with no storage
+// use, is undefined on Vulkan and refused by WebGPU. tidec fixes the format from the assignments it can follow; a
+// struct literal, a whole struct's assignment or a `mut` parameter can put another image in the field.
+static bool image_destination_fits(const tide_shader *shader, const uint32_t slot, const tide_draw_texture *t)
+{
+    const tide_target_formats formats = tide_render_target_formats(t->id);
+    const uint32_t image = t->space == TIDE_PIXELS_TARGET ? tide_render_target_image(t->id) : 0u;
+    if (image >= formats.count) return false;
+    const uint32_t held = formats.color[image];
+    const tide_gpu_format stored = held == TIDE_TARGET_RGBA8 ? TIDE_GPU_RGBA8 : held == TIDE_TARGET_RGBA16F ? TIDE_GPU_RGBA16F
+                                 : held == TIDE_TARGET_R32F ? TIDE_GPU_R32F : held == TIDE_TARGET_RGBA32F ? TIDE_GPU_RGBA32F
+                                 : held == TIDE_TARGET_R32I ? TIDE_GPU_R32I : TIDE_GPU_RGBA32I; // None of a kernel's
+    if (stored == (tide_gpu_format)shader->image_formats[slot]) return true;
+    static bool said;
+    if (!said) {
+        fprintf(stderr, "GPU.Run: a kernel writes an image of another format than the one its field was made with, so its "
+                        "writes are dropped: keep one fixed Format in each image field a kernel writes\n");
+        said = true;
+    }
+    return false;
+}
+
 static tide_gpu_id empty_image_destination(const tide_shader *shader, const uint32_t slot)
 {
     static struct { uint32_t epoch, format; bool volume; tide_gpu_id image, target; } empty[TIDE_SHADER_TEXTURES];
@@ -608,7 +631,7 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
     tide_gpu_id images[TIDE_SHADER_TEXTURES] = {0};
     for (uint32_t k = 0; k < shader->texture_count && k < TIDE_SHADER_TEXTURES; k++) {
         prepare_source_target(list, r->textures[k], false);
-        images[k] = texture_to_read(list, r->textures[k], gpu_read(shader, k));
+        images[k] = shader_texture_to_read(list, shader, k, r->textures[k]);
         const tide_gpu_read read = gpu_read(shader, k);
         if (gpu->texture_status && (read == TIDE_GPU_READ_VOLUME || read == TIDE_GPU_READ_NUMBER_VOLUME || read == TIDE_GPU_READ_INT_VOLUME)) {
             const uint32_t at = r->textures[k];
@@ -632,6 +655,7 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
                 held = a && a->texture && tide_render_target_live(t->id);
                 if (held && gpu->texture_status && gpu->texture_status(a->texture) == 0) { retry_images(list, r); return; }
                 if (held && gpu->texture_status && gpu->texture_status(a->texture) < 0) held = false;
+                if (held && !image_destination_fits(shader, k, t)) held = false;
                 if (held) images[k] = a->texture;
             } else if (t && t->space == TIDE_PIXELS_TARGET) {
                 if (tide_render_target_samples(t->id) > 1u) {
@@ -640,7 +664,9 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
                     return;
                 }
                 const gpu_target *a = find_target(tide_render_target_whole(t->id));
-                held = a && a->target && tide_render_target_live(t->id);
+                held = a && a->target && tide_render_target_live(t->id) && image_destination_fits(shader, k, t);
+                if (held) images[k] = gpu->target_texture(a->target, tide_render_target_image(t->id));
+                held = held && images[k];
             }
             if (!held) images[k] = empty_image_destination(shader, k);
             if (!images[k]) return;

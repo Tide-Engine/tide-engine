@@ -1361,7 +1361,7 @@ namespace Tide
                 var pixelFormat = AttachmentPixelFormat((int)held);
                 var rt = new RenderTexture(width, height, AttachmentFormat((int)held), GraphicsFormat.None)
                 {
-                    antiAliasing = samples, useMipMap = samples == 1 && (held <= 2 || held == 10), autoGenerateMips = false,
+                    antiAliasing = samples, useMipMap = samples == 1 && (held <= 6 || held == 10), autoGenerateMips = false, // Colors and the number formats every device blends
                     enableRandomWrite = samples == 1 && WritableImage(pixelFormat), hideFlags = HideFlags.HideAndDontSave,
                 };
                 rt.Create();

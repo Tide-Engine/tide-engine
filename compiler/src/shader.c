@@ -215,7 +215,7 @@ static bool volume_read(const shader_read read)
 // How a sampler reads for a way a texture is read: an array's as a texture's, as it's sampled the same way.
 static shader_read base_read(const shader_read read)
 {
-    return read == READ_ARRAY || read == READ_VOLUME ? READ_COLOR : read == READ_DEPTH_ARRAY ? READ_DEPTH : read == READ_COMPARE_ARRAY ? READ_COMPARE : read;
+    return read == READ_ARRAY || read == READ_VOLUME || read == READ_NUMBER_BLEND ? READ_COLOR : read == READ_DEPTH_ARRAY ? READ_DEPTH : read == READ_COMPARE_ARRAY ? READ_COMPARE : read;
 }
 
 int shader_size_words(const shader_texture *t)
@@ -326,7 +326,7 @@ static void put_textures(sb *o, const shader *sh)
                       volume_read(t->read) ? "3" : "2", t->read == READ_INT || t->read == READ_INT_VOLUME ? "i32" : "f32");
         } else if (t) {
             sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n", 1 + 2 * i, i,
-                      t->read == READ_COLOR ? "texture_2d<f32>" : t->read == READ_CUBE ? "texture_cube<f32>"
+                      t->read == READ_COLOR || t->read == READ_NUMBER_BLEND ? "texture_2d<f32>" : t->read == READ_CUBE ? "texture_cube<f32>"
                       : t->read == READ_VOLUME ? "texture_3d<f32>" : t->read == READ_ARRAY ? "texture_2d_array<f32>" : t->read == READ_DEPTH_ARRAY ? "texture_depth_2d_array"
                       : "texture_depth_2d");
         }
@@ -341,7 +341,7 @@ static const char *read_name(const shader_read read)
 {
     return read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH" : read == READ_CUBE ? "CUBE"
          : read == READ_NUMBER ? "NUMBER" : read == READ_INT ? "INT" : read == READ_NUMBER_VOLUME ? "NUMBER_VOLUME"
-         : read == READ_INT_VOLUME ? "INT_VOLUME"
+         : read == READ_INT_VOLUME ? "INT_VOLUME" : read == READ_NUMBER_BLEND ? "NUMBER_BLEND"
          : read == READ_DATA ? "DATA" : read == READ_VOLUME ? "VOLUME" : read == READ_ARRAY ? "ARRAY" : read == READ_DEPTH_ARRAY ? "DEPTH_ARRAY" : "COLOR";
 }
 
@@ -360,7 +360,13 @@ void shader_put_texture_reads(sb *o, const shader *sh)
     for (int t = 0; t < sh->textures.count; t++) reads |= sh->textures.items[t].read != READ_COLOR;
     if (reads) {
         sb_put(o, "    .texture_reads = {");
-        for (int t = 0; t < sh->textures.count; t++) sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read_name(sh->textures.items[t].read));
+        for (int t = 0; t < sh->textures.count; t++) {
+            // A typed array's and a typed cube's are read as any array's and cube's: only what none reads as differs
+            const shader_texture *texture = &sh->textures.items[t];
+            const bool typed = texture->field && raw_sample_type(texture->field).kind != TY_COLOR;
+            sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", typed && texture->read == READ_ARRAY ? "NUMBER_ARRAY"
+                      : typed && texture->read == READ_CUBE ? "NUMBER_CUBE" : read_name(texture->read));
+        }
         sb_put(o, "},\n");
     }
     if (!samplers_own(sh)) {
@@ -3858,7 +3864,16 @@ typedef struct sampling {
 // the texture `of` names.
 static sampling sampling_of(const expr *of, const shader_read read, const int filter, const int wrap)
 {
-    if (numeric_read(read)) return (sampling){read, 0, wrap < 0 ? 0 : wrap, true, true, false, 0};
+    int typed_filter, typed_wrap; // What its declaration says ([Wrap]), where the Sample says none
+    declared_sampling(of, &typed_filter, &typed_wrap);
+    if (typed_wrap < 0) typed_wrap = 0;
+    if (numeric_read(read)) return (sampling){read, 0, wrap < 0 ? typed_wrap : wrap, true, true, false, 0};
+    // A typed image's filter and wrap are the Sample's alone: nearest and clamped where it says neither, and
+    // between its smaller images for a level or gradients that name no filter
+    const bool typed = declared_image_type(of).kind != TY_COLOR;
+    if (read == READ_NUMBER_BLEND) return (sampling){read, filter < 0 ? 2 : filter, wrap < 0 ? typed_wrap : wrap, true, true, false, 0};
+    if (typed && arrayed_read(read)) return (sampling){read, filter < 0 ? 0 : filter, wrap < 0 ? typed_wrap : wrap, true, true, false, 0};
+    if (typed && read == READ_CUBE) return (sampling){read, filter < 0 ? 0 : filter, 0, true, true, false, 0};
     if (read == READ_VOLUME) return (sampling){read, filter == 0 ? 0 : 1, wrap < 0 ? 0 : wrap, true, true, false, 0};
     if (arrayed_read(read)) { // As a texture or a depth is, its way its own
         sampling s = sampling_of(of, base_read(read), filter, wrap);
@@ -4092,7 +4107,8 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
                          STR_ARG(em->root->name), STR_ARG(fn->name));
             continue;
         }
-        if (s.explicit_level || s.gradients || !em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE && how.read != READ_ARRAY)) continue;
+        if (s.explicit_level || s.gradients || !em->root->is_frag
+            || (how.read != READ_COLOR && how.read != READ_CUBE && how.read != READ_ARRAY && how.read != READ_NUMBER_BLEND)) continue;
         const char *where = how.read == READ_CUBE ? "direction" : "uv";
         const char *what = how.read == READ_CUBE ? "cube" : "texture";
         if (how.filter >= 2) {
@@ -4230,7 +4246,32 @@ static void ex_numeric_sample(emit *em, const expr *e, const expr *of, const sha
 // A Sample, SampleGrad, or a depth's Compare: of a texture parameter, a grid or texture
 // field or an asset, where the frag or vert names it, and in a function, of
 // its own parameter, which is the texture its call named, or of an asset.
+static void ex_sample_read(emit *em, const expr *e);
+
+// Whether a Sample of a typed image goes through a sampler: a TextureArray's or a Cubemap's always, and a
+// Texture's of floats where it blends, reads a level or takes gradients. The rest are exact loads.
+static bool typed_through_sampler(const expr *e)
+{
+    const type held = e->object->type;
+    const type typed = declared_image_type(e->object);
+    if (typed.kind == TY_COLOR || typed.kind == TY_INT) return false;
+    if (held.kind == TY_TEXTURE_ARRAY || held.kind == TY_CUBEMAP) return true;
+    if (held.kind != TY_TEXTURE) return false;
+    return str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")
+        || (e->args.count > 1 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number != 0);
+}
+
 static void ex_sample(emit *em, const expr *e)
+{
+    // A typed image's numbers through a sampler: the channels its type has, of the four a GPU reads
+    const bool typed = !str_eq_c(e->name, "Compare") && typed_through_sampler(e);
+    if (typed && (e->type.kind == TY_FLOAT || e->type.kind == TY_FLOAT2)) sb_put(em->o, "(");
+    ex_sample_read(em, e);
+    if (typed && e->type.kind == TY_FLOAT) sb_put(em->o, ").x");
+    else if (typed && e->type.kind == TY_FLOAT2) sb_put(em->o, ").xy");
+}
+
+static void ex_sample_read(emit *em, const expr *e)
 {
     const bool gradients = str_eq_c(e->name, "SampleGrad");
     const bool level = str_eq_c(e->name, "SampleLevel");
@@ -4243,9 +4284,11 @@ static void ex_sample(emit *em, const expr *e)
     const bool cube = held.kind == TY_CUBEMAP;
     const bool volume = held.kind == TY_TEXTURE3D;
     const bool compares = str_eq_c(e->name, "Compare");
-    const bool number = declared_image_type(e->object).kind != TY_COLOR;
+    const bool sampled = !compares && typed_through_sampler(e);
+    const bool number = !sampled && declared_image_type(e->object).kind != TY_COLOR;
     const bool integer = e->type.kind == TY_INT;
     const shader_read read = number ? (volume ? (integer ? READ_INT_VOLUME : READ_NUMBER_VOLUME) : integer ? READ_INT : READ_NUMBER)
+                           : sampled && held.kind == TY_TEXTURE ? READ_NUMBER_BLEND
                            : volume ? READ_VOLUME : cube ? READ_CUBE : held.kind == TY_TEXTURE_ARRAY ? READ_ARRAY
                            : held.kind == TY_DEPTH_TEXTURE_ARRAY ? (compares ? READ_COMPARE_ARRAY : READ_DEPTH_ARRAY)
                            : held.kind != TY_DEPTH_TEXTURE ? READ_COLOR : compares ? READ_COMPARE : READ_DEPTH;
@@ -4255,8 +4298,10 @@ static void ex_sample(emit *em, const expr *e)
     const int layer_at = arrayed ? (gradients ? 3 : 1) : -1;
     // What the Sample says of how it reads: -1 for what it leaves to its texture
     const int filter_at = (gradients ? 3 : level ? 2 : 1) + (arrayed ? 1 : 0);
-    const int said_filter = (cube || base == READ_COLOR) && e->args.count > filter_at ? (int)e->args.items[filter_at]->enum_member->number : -1;
-    const int said_wrap = base == READ_COLOR && e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : -1;
+    // A typed image's level or gradients that name no filter read between its smaller images
+    const int said_filter = (cube || base == READ_COLOR) && e->args.count > filter_at ? (int)e->args.items[filter_at]->enum_member->number
+                          : sampled && (level || gradients) ? 2 : -1;
+    const int said_wrap = (base == READ_COLOR || number) && e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : -1;
     const expr *of = e->object;
     if (em->code != em->root) { // A function's: its own parameter's, which each call names, or an asset's
         int own;
@@ -4280,11 +4325,10 @@ static void ex_sample(emit *em, const expr *e)
             return;
         }
     }
-    sampling how = sampling_of(of, base, said_filter, said_wrap);
+    sampling how = sampling_of(of, read == READ_NUMBER_BLEND || (sampled && arrayed) ? read : base, said_filter, said_wrap);
     how.read = read; // An array's way is its own, its sampler a texture's (base_read)
     if (number) {
-        const int wrap = e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : 0;
-        ex_numeric_sample(em, e, of, read, wrap);
+        ex_numeric_sample(em, e, of, read, how.wrap); // The Sample's wrap, or its declaration's
         return;
     }
     if (cube) {
@@ -5434,7 +5478,9 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
         for (int side = 0; side < 2; side++) {
             expr *arm = shorted ? ((side == 0) == (e->op == T_AND) ? e->rhs : cond) : side == 0 ? e->lhs : e->rhs;
             em->indent++;
-            st_steps(em, s, arm, false, made);
+            // The condition is in its variable already, made before the `if`: walking it again would write its
+            // own arms a second time, in a scope that has none of their variables
+            if (arm != cond) st_steps(em, s, arm, false, made);
             line(em);
             sb_printf(em->o, "%s = ", name);
             ex_as(em, arm, e->type);
@@ -7006,8 +7052,15 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
                            type_name(value), STR_ARG(prog->format->members.items[format].name), image_format_types(format));
                 return false;
             }
+            if (t->read == READ_NUMBER_BLEND && format >= 7) {
+                diag_error(call->at, "the frag blends its source or reads its smaller images, and Format." STR_FMT " is read at its nearest "
+                           "pixel on every device: draw the numbers into Format.%s, or read the source with Sample(uv)",
+                           STR_ARG(prog->format->members.items[format].name), format == 7 ? "R16f" : "Rgba16f");
+                return false;
+            }
         }
-        if (!t->field || (t->field->type.kind != TY_TEXTURE && t->field->type.kind != TY_TEXTURE3D)) continue;
+        if (!t->field || (t->field->type.kind != TY_TEXTURE && t->field->type.kind != TY_TEXTURE3D
+                          && t->field->type.kind != TY_TEXTURE_ARRAY && t->field->type.kind != TY_CUBEMAP)) continue;
         expr source = {.field = (field *)(uintptr_t)t->field};
         const int format = image_target_format(&source, t->image_color, 0);
         const type value = raw_sample_type(t->field);
@@ -7019,11 +7072,19 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
             diag_error(call->at, "a Grid3<float> volume takes [Raw(float)]: declare its numeric image role as float");
             return false;
         }
+        if (format >= 7 && t->read == READ_NUMBER_BLEND) {
+            diag_error(call->at, "image '" STR_FMT "' is blended or read at a mip level, and Format." STR_FMT " is read at its nearest "
+                       "pixel on every device: draw the numbers into Format.%s, or read it with Sample(uv)",
+                       STR_ARG(t->field->name), STR_ARG(prog->format->members.items[format].name), format == 7 ? "R16f" : "Rgba16f");
+            diag_note("a GPU blends 32-bit floats only where it has an optional feature, so a blended read would differ by "
+                      "device; R8, Rg8, R16f, Rg16f and Rgba16f blend and have smaller images everywhere");
+            return false;
+        }
         if (format < 0 || image_format_accepts(format, value)) continue;
         if (format == 0 || format == 2) {
-            diag_error(call->at, "image '" STR_FMT "' is read as %s, but Format." STR_FMT " takes %s: use a Texture without a typed Raw role%s",
+            diag_error(call->at, "image '" STR_FMT "' is read as %s, but Format." STR_FMT " takes %s: use a %s without a typed Raw role%s",
                        STR_ARG(t->field->name), type_name(value), STR_ARG(prog->format->members.items[format].name),
-                       image_format_types(format), format == 2 ? ", or [Raw(float4)] to read four numbers" : "");
+                       image_format_types(format), type_name(t->field->type), format == 2 ? ", or [Raw(float4)] to read four numbers" : "");
         } else {
             diag_error(call->at, "image '" STR_FMT "' is read as %s, but Format." STR_FMT " takes %s: declare its numeric role with [Raw(%s)]",
                        STR_ARG(t->field->name), type_name(value), STR_ARG(prog->format->members.items[format].name),

@@ -502,7 +502,10 @@ typedef enum decl_kind {
 // (a compiler-only kind: the runtime's texture read is DEPTH_ARRAY, its sampler's COMPARE).
 typedef enum shader_read {
     READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE, READ_ARRAY, READ_DEPTH_ARRAY, READ_COMPARE_ARRAY,
-    READ_VOLUME, READ_NUMBER, READ_INT, READ_NUMBER_VOLUME, READ_INT_VOLUME
+    READ_VOLUME, READ_NUMBER, READ_INT, READ_NUMBER_VOLUME, READ_INT_VOLUME,
+    // A typed float image read through a filtering sampler (blended, or at a mip level): a color's binding and sampler,
+    // numbers as stored, and zero where no image is given
+    READ_NUMBER_BLEND
 } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
@@ -1338,6 +1341,7 @@ struct expr {
     int mesh_part;
     bool blit;           // Draw.Blit: source texture, destination target and a frag
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
+    bool args_checked;   // A Clear's arguments were checked while telling a typed clear from a Color's: once is enough
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
     int target_formats;      // RenderTarget(...) of several color images: how many of its last arguments are their formats
     bool target_samples;     // ...which `samples: n` comes after: the call's last argument, and its formats go to C as several, however many

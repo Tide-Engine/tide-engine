@@ -6619,8 +6619,20 @@ TIDE_TEST(lsp_numeric_images_and_outputs)
     TIDE_CHECK(has(request("textDocument/hover"), "no tint or alpha multiplication"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.$); }\n", types);
     const char *scalar = complete(program);
-    TIDE_CHECK(offers(scalar, "Sample") && !offers(scalar, "SampleLevel") && !offers(scalar, "SampleGrad"));
-    TIDE_CHECK(has(scalar, "Filter.Point") && has(scalar, "-> float"));
+    // A float image blends and has mipmaps where its format does on every device; an int image is nearest only
+    TIDE_CHECK(offers(scalar, "Sample") && offers(scalar, "SampleLevel") && offers(scalar, "SampleGrad"));
+    TIDE_CHECK(has(scalar, "Filter.Point") && has(scalar, "-> float") && has(scalar, "Reads a mip level"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sample(vertex.uv, Filter.Bilinear) + images.scalar.SampleLevel(vertex.uv, 1), 0, 0); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    static const char layered[] = "scene Main { }\nlocal singleton Layered { [Raw(float)] TextureArray layers; [Raw(float2)] Cubemap cube; }\n"
+                                  "frag Show(Vertex vertex, out Color color, Layered images)\n{\n"
+                                  "    float height = images.layers.Sample(vertex.uv, 1, Filter.Bilinear);\n"
+                                  "    float2 pair = images.cube.SampleLevel(float3(vertex.uv, 1), 2);\n"
+                                  "    color = Color(height, pair.x, pair.y);\n}\n"
+                                  "view V(mut Layered images) { images.layers = TextureArray(8, 8, 2, Format.R16f); images.cube = Cubemap(8, Format.Rg16f); }\n";
+    open_document(layered);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sample(vertex.uv$)); }\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "-> float"));
@@ -6664,7 +6676,7 @@ TIDE_TEST(lsp_numeric_image_helpers)
     start();
     const char *members = complete("scene Main { }\nfloat Read([Raw(float)] Texture image, float2 uv)\n{\n"
                                    "    return image.$;\n}\n");
-    TIDE_CHECK(offers(members, "Sample") && !offers(members, "SampleGrad") && has(members, "-> float"));
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "SampleGrad") && has(members, "-> float"));
     open_document("scene Main { }\nfloat Read([Raw(float)] Texture ima$ge, float2 uv)\n{\n"
                   "    return image.Sample(uv);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));

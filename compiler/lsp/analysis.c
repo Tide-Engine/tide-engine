@@ -1890,13 +1890,13 @@ static const char *format_member_doc(const str name)
     static const struct { const char *name, *doc; } formats[] = {
         {"Rgba8", "Four unsigned byte channels (4 bytes per pixel). Takes Color outputs and Color clears; the default target format."},
         {"Depth", "Depth and stencil without a color image. Use this as the target's only format."},
-        {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels; Color keeps its alpha and blend behavior."},
-        {"R8", "One unsigned byte channel (1 byte per pixel). Takes float outputs and clears, clamped to 0–1. Read through [Raw(float)] Texture with Point sampling."},
-        {"Rg8", "Two unsigned byte channels (2 bytes per pixel). Takes float2 outputs and clears, clamped to 0–1. Read through [Raw(float2)] Texture with Point sampling."},
-        {"R16f", "One 16-bit float (2 bytes per pixel). Takes float outputs and clears. Read through [Raw(float)] Texture with Point sampling."},
-        {"Rg16f", "Two 16-bit floats (4 bytes per pixel). Takes float2 outputs and clears. Read through [Raw(float2)] Texture with Point sampling."},
-        {"R32f", "One 32-bit float (4 bytes per pixel). Takes float outputs and clears, including values past one. Read through [Raw(float)] Texture with Point sampling. One sample only; kernels can write it."},
-        {"Rgba32f", "Four 32-bit floats (16 bytes per pixel). Takes float4 outputs and clears, with four independent channels. Read through [Raw(float4)] Texture with Point sampling. One sample only; kernels can write it."},
+        {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels, and a [Raw(float4)] read blends and reads mipmaps on every device; Color keeps its alpha and blend behavior."},
+        {"R8", "One unsigned byte channel (1 byte per pixel). Takes float outputs and clears, clamped to 0–1. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"Rg8", "Two unsigned byte channels (2 bytes per pixel). Takes float2 outputs and clears, clamped to 0–1. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"R16f", "One 16-bit float (2 bytes per pixel). Takes float outputs and clears. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"Rg16f", "Two 16-bit floats (4 bytes per pixel). Takes float2 outputs and clears. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"R32f", "One 32-bit float (4 bytes per pixel). Takes float outputs and clears, including values past one. Read through [Raw(float)] Texture at its nearest pixel on every device: no blending or mipmaps, and no array layers or cube faces (use R16f for those). One sample only; kernels can write it."},
+        {"Rgba32f", "Four 32-bit floats (16 bytes per pixel). Takes float4 outputs and clears, with four independent channels. Read through [Raw(float4)] Texture at its nearest pixel on every device: no blending or mipmaps, and no array layers or cube faces (use Rgba16f for those). One sample only; kernels can write it."},
         {"R32i", "One signed 32-bit integer (4 bytes per pixel). Takes int outputs and clears, exactly. Read through [Raw(int)] Texture with Point sampling. One sample only; kernels can write it."},
     };
     for (size_t i = 0; i < sizeof formats / sizeof formats[0]; i++) {
@@ -3783,7 +3783,9 @@ static void describe(const occurrence *o, sb *out)
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->sample_role.len) {
             sb_put(out, "\n\nA numeric image borrowed from its caller, with the same declared role. Sample returns its "
-                        "declared type and reads the nearest cell, with Filter.Point only and no mipmaps or alpha conversion.");
+                        "declared type with no alpha conversion, and reads the nearest cell unless it names a filter. "
+                        "R8, Rg8, R16f, Rg16f and Rgba16f images blend and read mipmaps (SampleLevel, SampleGrad); "
+                        "32-bit float and int images are nearest only.");
         }
         if (o->param->mode == PARAM_QUERY) {
             if (o->param->function_param) {
@@ -4296,8 +4298,9 @@ static void describe(const occurrence *o, sb *out)
              "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
              "escape to ordinary Texture storage, CPU arguments or returns, or draws. "
              "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
-             "the image's numeric Sample result. These typed images read the nearest cell, with only Filter.Point "
-             "and no mipmaps; the role must fit their format."},
+             "the image's numeric Sample result; a TextureArray or Cubemap takes the three float roles. Typed images read "
+             "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
+             "every device, 32-bit float and int images are nearest only. The role must fit their format."},
             {"Lossless", "[Lossless]",
              "Keeps this `Texture` asset's pixels exact in the pack, a byte a channel. Without it, an image whose sides are "
              "powers of two and at least 128 pixels is block-compressed as the game is built (BC1, or BC3 with alpha), "
@@ -8142,8 +8145,21 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             sb label = {0};
             format_numeric_sample(t, numeric, &label);
             item(c, "Sample", CK_METHOD, label.data,
-                 "Reads the nearest cell as its declared numeric type, without alpha conversion. Only Filter.Point is supported; no mipmaps.",
+                 "Reads its declared numeric type, without alpha conversion: the nearest cell, or blended where a filter is named and the format blends on every device (R8, Rg8, R16f, Rg16f, Rgba16f).",
                  "Sample($1)");
+            if (t.kind == TY_TEXTURE && numeric.kind != TY_INT) { // The formats every device blends have mipmaps too
+                sb level = {0}, grad = {0};
+                sb_printf(&level, "Texture.SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> %s",
+                          type_name(numeric));
+                sb_printf(&grad, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> %s",
+                          type_name(numeric));
+                item(c, "SampleLevel", CK_METHOD, level.data,
+                     "Reads a mip level of an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type: 0 is the image "
+                     "itself, each level after it half the size, made of what was drawn.", "SampleLevel($1)");
+                item(c, "SampleGrad", CK_METHOD, grad.data,
+                     "Reads an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type with the uv's change a pixel "
+                     "across and down, which picks the mip level. In a frag.", "SampleGrad($1)");
+            }
         }
         item(c, "size", CK_PROPERTY, t.kind == TY_TEXTURE3D ? "int3" : "int2", "The image's size in texels, or zeros for no image.", NULL);
         if (!gpu && t.kind == TY_TEXTURE3D) {
@@ -10475,7 +10491,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "
                  "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values. "
                  "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture/Texture3D fields or read-only GPU helper parameters declare "
-                 "numeric Sample results, nearest-cell reads and Filter.Point only.", "Raw");
+                 "numeric Sample results; TextureArray and Cubemap fields take the float roles. Reads are nearest unless a filter is "
+                 "named; 32-bit float and int images are nearest only.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");
@@ -10490,7 +10507,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             static const char *const types[] = {"float", "float2", "float4", "int"};
             for (size_t i = 0; i < sizeof types / sizeof types[0]; i++)
                 item(&c, types[i], CK_STRUCT, "The numeric type this image stores and Sample returns",
-                     "Typed numeric images read the nearest cell. Their only filter is Filter.Point, with no mipmaps.", NULL);
+                     "Typed numeric images read the nearest cell unless a Sample names a filter. Float images in R8, Rg8, R16f, Rg16f or Rgba16f blend and have mipmaps; int and 32-bit float images are nearest only.", NULL);
             break;
         }
         complete_value_types(&c, VT_VALUES);
@@ -12775,7 +12792,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         } else if (str_eq_c(name, "Retarget")) {
             add_signature(&s, RETARGET_ATTRIBUTE_FORM, RETARGET_ATTRIBUTE_DOC);
         } else if (str_eq_c(name, "Raw")) {
-            add_signature(&s, "Raw(type)", "On Texture/Texture3D fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type. Reads use the nearest cell, with Filter.Point only and no mipmaps. Bare Raw retains its existing numeric-channel role.");
+            add_signature(&s, "Raw(type)", "On Texture/Texture3D fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type; TextureArray and Cubemap fields take the float roles. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps, int and 32-bit float images are nearest only. Bare Raw retains its existing numeric-channel role.");
         }
     } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
         const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];
@@ -12868,7 +12885,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
                    && numeric_receiver(callee - 1, at).kind != TY_COLOR) {
             sb label = {0};
             format_numeric_sample(t, numeric_receiver(callee - 1, at), &label);
-            add_signature(&s, label.data, "Reads the nearest cell as the declared numeric type. Only Filter.Point is supported; no mipmaps or alpha conversion.");
+            add_signature(&s, label.data, "Reads the declared numeric type with no alpha conversion: the nearest cell, or blended with a named filter where the format blends on every device (R8, Rg8, R16f, Rg16f, Rgba16f). SampleLevel and SampleGrad read those formats' mipmaps.");
         } else if (form) {
             sb label = {0};
             format_method(form, t, &label);
