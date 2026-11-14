@@ -1498,6 +1498,7 @@ static VkFormat format_of(const tide_gpu_format format)
     case TIDE_GPU_R32F: return VK_FORMAT_R32_SFLOAT;
     case TIDE_GPU_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
     case TIDE_GPU_R32I: return VK_FORMAT_R32_SINT;
+    case TIDE_GPU_RG16F: return VK_FORMAT_R16G16_SFLOAT; // Sampled, filtered, blitted and drawn into on every device
     default: return VK_FORMAT_R8G8B8A8_UNORM;
     }
 }
@@ -2184,15 +2185,17 @@ static uint64_t vk_storage_most(void)
     return most & ~(uint64_t)15u;
 }
 
+// A target's color image and its depth: none for an id that's no target's, as texture_of is for a texture
 static tide_gpu_id vk_target_texture(const tide_gpu_id id, const uint32_t color)
 {
+    if (!id || id > vk.target_count || !vk.targets[id - 1u].used) return 0;
     const vk_target *t = &vk.targets[id - 1u];
     return !t->face && color < t->color_count ? t->colors[color] : 0;
 }
 
 static tide_gpu_id vk_target_depth(const tide_gpu_id id)
 {
-    return vk.targets[id - 1u].depth;
+    return id && id <= vk.target_count && vk.targets[id - 1u].used ? vk.targets[id - 1u].depth : 0;
 }
 
 static void vk_target_free(const tide_gpu_id id)

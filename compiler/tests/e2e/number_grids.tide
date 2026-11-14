@@ -1,0 +1,54 @@
+// Grids of numbers as textures: each through the [Raw(T)] role of its numbers, as a field's value, a GPU helper's
+// argument, a frag's source given by a draw and a blit, and sampled by its own name (number_grids_test.c).
+scene Main { }
+local singleton Art
+{
+    Grid2<float2> flow = Grid2(3, 2);
+    Grid2<float4> vectors = Grid2(3, 2);
+    Grid2<int> ids = Grid2(3, 2);
+    Grid2<byte> masks = Grid2(3, 2);
+    [Raw(float2)] Texture f;
+    [Raw(float4)] Texture v;
+    [Raw(int)] Texture i;
+    [Raw(int)] Texture b;
+    int2 sizes;
+    int frames;
+}
+float2 Flow([Raw(float2)] Texture image, float2 uv) { return image.Sample(uv, Filter.Bilinear); }
+frag Fields(Vertex vertex, out Color color, Art art)
+{
+    float2 a = art.f.Sample(vertex.uv, Filter.Bilinear) + Flow(art.flow, vertex.uv);
+    float4 c = art.v.SampleLevel(vertex.uv, 1, Filter.Trilinear);
+    int d = art.i.Sample(vertex.uv) + art.b.Sample(vertex.uv, Filter.Point, Wrap.Repeat);
+    color = Color(a.x + c.y, float(d), float(art.f.size.x), 1);
+}
+frag ByName(Vertex vertex, out Color color, Art art)
+{
+    color = Color(art.flow.Sample(vertex.uv).x + art.vectors.Sample(vertex.uv, Filter.Bilinear).w,
+                  float(art.ids.Sample(vertex.uv) + art.masks.Sample(vertex.uv)), 0, 1);
+}
+frag Source(Vertex vertex, out Color color, [Raw(int)] Texture source) { color = Color(float(source.Sample(vertex.uv)), 0, 0, 1); }
+view Show(mut Art art)
+{
+    if (art.frames == 0)
+    {
+        art.flow[0, 0] = float2(1.5, -2);
+        art.flow[2, 1] = float2(0.25, 1000000);
+        art.vectors[1, 0] = float4(1, 2, 3, 0.5);
+        art.ids[0, 1] = -2147483647;
+        art.ids[2, 0] = 16777217;
+        art.masks[1, 1] = 255;
+        art.f = art.flow;
+        art.v = art.vectors;
+        art.i = art.ids;
+        art.b = art.masks;
+    }
+    if (art.frames == 2) art.ids[1, 1] = 7; // One cell changed: the texture says that much
+    art.frames++;
+    art.sizes = art.f.size + art.b.size;
+    List<Vertex> quad = [Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    Draw.Mesh(quad, [0, 1, 2], Fields);
+    Draw.Mesh(quad, [0, 1, 2], ByName);
+    Draw.Mesh(quad, [0, 1, 2], art.ids, Source);
+    Draw.Blit(art.masks, Draw.window, Source);
+}

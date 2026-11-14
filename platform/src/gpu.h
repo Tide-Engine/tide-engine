@@ -40,15 +40,18 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GP
 // TIDE_GPU_RGBA32I is four ints of 32 bits, which a pipeline reads as they
 // are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
 // of any kind, a float's as its bits. Every backend has it with nothing asked.
+// TIDE_GPU_RG16F is two halves (a Grid2<float2>'s cells), read as (r, g, 0, 1), blended on every device as R16F is.
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I,
     TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I,
-    TIDE_GPU_SRGBA8 // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
+    TIDE_GPU_SRGBA8, // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
+    TIDE_GPU_RG16F
 } tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
+    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I
+               || format == TIDE_GPU_RG16F ? 4
          : format == TIDE_GPU_RGBA16F ? 8 : format == TIDE_GPU_R16F ? 2
          : format == TIDE_GPU_RGBA32I || format == TIDE_GPU_RGBA32F ? 16 : 1;
 }

@@ -28,7 +28,9 @@ frames (no copy), then `[Linear]` for frames (one copy, its bytes decoded, and e
 more held on Vulkan and WebGPU), in several passes of a frame with other targets drawn between (still one), drawn
 into again (one more), drawn and read twice in a frame (two), resized (one), the three refused formats, and
 disposal. Vulkan with the validation layer, WebGPU on the web-debug page, both depth fallbacks. Pass 33 of the
-shader fixture covers the cube's and the array's copies as before. Not run: Unity, Android, Linux, macOS.
+shader fixture covers the cube's and the array's copies as before. Android: `tide_platform_targets_app` and its 24-bit
+depth fallback, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: Unity, Linux,
+macOS.
 
 ## [Linear] sampled images (2026-11-14)
 
@@ -60,7 +62,7 @@ these changes require the parent's final compilation/unit check. No other-device
 ## Numeric image rendering (2026-11-14)
 
 The language feature above the attachment groundwork is complete (render-targets.md, shaders.md). Numeric
-read kinds 9–12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
+read kinds 9â€“12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
 2D formats reuse the existing portable storage API. Shader numeric_outputs selects replace blending per
 attachment; output_types guards dynamically supplied incompatible targets before pipeline creation.
 The internal RESET_ALONE depth mode resets depth with every color write disabled. Sixteen static clear
@@ -798,8 +800,11 @@ indefinite wait.
 `tide_platform_update_while_waiting` is optional and active only after the
 frame callback returns `TIDE_KEEP_RUNNING`, during presentation. It must not
 poll input/events, render, reload, or change GPU/window resources. Desktop
-GLFW supplies it; Android retains `tide_gpu_vk_present` without an updater,
-and OpenGL/web are unchanged. Headless runs never call the host updater, so
+GLFW supplies it, and since 2026-11-14 Android's activity too (Claude's pick,
+Provisional: it presented without an updater, so a phone's match waited out
+every GPU-bound frame's fence; `tide_platform_gpu_wait_app` found it,
+`notes/android-and-mingw.md`, Every window fixture an app); OpenGL/web are
+unchanged. Headless runs never call the host updater, so
 their made-up time and scripted frame boundaries remain unchanged.
 
 Two frame slots remain in flight. Fence completion still precedes garbage

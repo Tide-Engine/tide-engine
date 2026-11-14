@@ -1,0 +1,5 @@
+// expect: a Grid2<float2> is a Texture only where a [Raw(float2)] Texture is wanted
+scene Main { }
+local singleton Art { Grid2<float2> flow = Grid2(4, 4); }
+int2 Size(Texture t) { return t.size; }
+view Show(mut Art art) { var s = Size(art.flow); }

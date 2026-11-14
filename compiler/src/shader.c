@@ -203,6 +203,12 @@ static bool one_image(const shader_read a, const shader_read b)
         || ((a == READ_DEPTH_ARRAY || a == READ_COMPARE_ARRAY) && (b == READ_DEPTH_ARRAY || b == READ_COMPARE_ARRAY));
 }
 
+// A read of a target's or an array's depth: another image than its colors.
+static bool depth_image_read(const shader_read read)
+{
+    return read == READ_DEPTH || read == READ_COMPARE || read == READ_DEPTH_ARRAY || read == READ_COMPARE_ARRAY;
+}
+
 static bool numeric_read(const shader_read read)
 {
     return read == READ_NUMBER || read == READ_INT || read == READ_NUMBER_VOLUME || read == READ_INT_VOLUME
@@ -3104,15 +3110,10 @@ static void ex_member(emit *em, const expr *e)
         }
         return;
     }
-    // A field of the frag's or vert's own vertex: which ones it reads decides what the mesh's corners pass on
+    // A field of the frag's or vert's own vertex: which ones it reads decides what the mesh's corners pass on. A frag's
+    // int fields come from the triangle's first corner, unblended, as a vert's handed ints do (put_varyings)
     if (em->checking && em->code == em->root && obj->kind == E_NAME && obj->bind == BIND_PARAM && e->field && obj->param->reads) {
         em->root->params.items[param_index(em->root, obj->param)].reads[field_index(obj->param->type.decl, e->field)] = true;
-        if (em->root->is_frag && param_index(em->root, obj->param) == 0 && type_is_int_based(e->type)) {
-            refuse(em, e->at, "'" STR_FMT "' is made of ints, which don't blend across a triangle, so a frag can't read it",
-                   STR_ARG(e->member));
-            diag_note("a vert can read it; for the pixels, keep it as a float in the vertex");
-            return;
-        }
         sb_printf(em->o, is_pointer(obj->param) ? "(*%s).%s" : "%s.%s", local_name(obj->param->name), field_name(e->field));
         return;
     }
@@ -3713,13 +3714,29 @@ type raw_sample_type(const field *image)
     return (type){TY_COLOR, NULL};
 }
 
+// Whether image `given` fits where a texture is read as `want` (declared_image_type): the same role, or a
+// Grid2<float>'s, which a Color read takes as (r, 0, 0, 1) and a [Raw(float)] one as its number.
+bool image_role_fits(const expr *given, const type want)
+{
+    if (declared_image_type(given).kind == want.kind) return true;
+    return given && want.kind == TY_FLOAT && type_is_texture_grid(given->type)
+        && given->type.decl->fields.items[0].type.kind == TY_FLOAT;
+}
+
+type param_sample_type(const param *p)
+{
+    if (!p || !p->sample_role.len) return (type){TY_COLOR, NULL};
+    const str role = p->sample_role;
+    return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2 : str_eq_c(role, "int") ? TY_INT : TY_FLOAT4, NULL};
+}
+
 type declared_image_type(const expr *image)
 {
     if (declared_linear(image)) return (type){TY_COLOR, NULL};
-    if (image && image->bind == BIND_PARAM && image->param && image->param->sample_role.len) {
-        const str role = image->param->sample_role;
-        return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2 : str_eq_c(role, "int") ? TY_INT : TY_FLOAT4, NULL};
-    }
+    if (image && image->bind == BIND_PARAM && image->param && image->param->sample_role.len) return param_sample_type(image->param);
+    // A Grid2 of numbers is read as its cells are (Grid2<float2> as float2s...), wherever it's read as a texture
+    const type numbers = image ? type_number_grid_role(image->type) : (type){TY_ERROR, NULL};
+    if (numbers.kind != TY_ERROR) return numbers;
     return raw_sample_type(image ? image->field : NULL);
 }
 
@@ -3962,9 +3979,12 @@ static int typed_format(const expr *of)
 static sampling exact_sampling(sampling s, const int format, const bool typed)
 {
     const shader_read layers = format == 9 ? READ_INT_LAYERS : READ_NUMBER_LAYERS;
-    // A typed array's nearest pixel is loaded whatever its format, as a typed Texture's is: the same texel a nearest
-    // sampler gives, through a binding every float format fits, 32-bit ones too
-    if (typed && s.read == READ_ARRAY && s.filter == 0) {
+    // A typed array's nearest pixel is loaded where its format isn't one every device blends, or isn't known (a
+    // kernel's field the renderer binds): the same texel a nearest sampler gives, through a binding every float format
+    // fits, 32-bit ones too. One of a known blendable format keeps its sampler, so its Point and blended reads stay one
+    // of the draw's 16 textures.
+    const bool blendable = format == -6 || (format >= 2 && format <= 6);
+    if (typed && s.read == READ_ARRAY && s.filter == 0 && !blendable) {
         s.read = layers;
         s.filter_said = s.wrap_said = true;
         return s;
@@ -4213,7 +4233,7 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
         const expr *of = s.param < 0 ? s.asset : arg ? spec[s.param].sampled : NULL;
         const int mine = arg ? own[s.param] : -1;
         const expr parameter = {.bind = BIND_PARAM, .param = s.param >= 0 ? &fn->params.items[s.param] : NULL};
-        if (arg && declared_image_type(arg).kind != declared_image_type(&parameter).kind) {
+        if (arg && !image_role_fits(arg, declared_image_type(&parameter))) {
             refuse(em, arg->at, "an image passed to a numeric image parameter must keep the same [Raw(T)] role");
             continue;
         }
@@ -4483,7 +4503,7 @@ static bool typed_through_sampler(const expr *e)
     if (typed.kind == TY_COLOR || typed.kind == TY_INT) return false;
     if (held.kind == TY_TEXTURE_ARRAY || held.kind == TY_CUBEMAP) return true;
     if (held.kind == TY_TEXTURE3D) return e->args.count > 1 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number != 0;
-    if (held.kind != TY_TEXTURE) return false;
+    if (held.kind != TY_TEXTURE && type_number_grid_role(held).kind == TY_ERROR) return false; // A Grid2<float2>'s or <float4>'s too
     return str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")
         || (e->args.count > 1 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number != 0);
 }
@@ -4575,7 +4595,7 @@ static void ex_sample_read(emit *em, const expr *e)
     const bool int_layers = number && integer && (cube || held.kind == TY_TEXTURE_ARRAY);
     const shader_read read = int_layers ? READ_INT_LAYERS
                            : number ? (volume ? (integer ? READ_INT_VOLUME : READ_NUMBER_VOLUME) : integer ? READ_INT : READ_NUMBER)
-                           : sampled && held.kind == TY_TEXTURE ? READ_NUMBER_BLEND
+                           : sampled && (held.kind == TY_TEXTURE || held.kind == TY_GRID) ? READ_NUMBER_BLEND
                            : volume ? READ_VOLUME : cube ? READ_CUBE : held.kind == TY_TEXTURE_ARRAY ? READ_ARRAY
                            : held.kind == TY_DEPTH_TEXTURE_ARRAY ? (compares ? READ_COMPARE_ARRAY : READ_DEPTH_ARRAY)
                            : held.kind != TY_DEPTH_TEXTURE ? READ_COLOR : compares ? READ_COMPARE : READ_DEPTH;
@@ -4677,7 +4697,8 @@ static void ex_sample_read(emit *em, const expr *e)
         return;
     }
     // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
-    const bool straight = base == READ_COLOR && !declared_raw(of);
+    // A typed image's through a sampler (READ_NUMBER_BLEND) are too: a grid of numbers handed to a helper's [Raw(T)]
+    const bool straight = base == READ_COLOR && read != READ_NUMBER_BLEND && !declared_raw(of);
     if (straight) {
         need(em, H_STRAIGHT);
         sb_put(em->o, "tide_straight(");
@@ -6453,15 +6474,17 @@ static void put_dice(emit *em, sb *o, const int stage, const char *nth)
 // What the vertex stage passes on to the pixels, as members of the stage's
 // struct: the vertex's fields the pixels read, the fields they read of what
 // the vert wrote for them, where they are in the world, and the instance's
-// float4s and int4s, which don't blend.
+// float4s and int4s, which don't blend. A vertex's ints and int vectors are the
+// triangle's first corner's, flat, as a vert's handed ones are.
 static void put_varyings(emit *em, sb *o)
 {
     const shader *sh = em->sh;
     int location = 0;
     for (int i = 0; i < sh->vertex->fields.count; i++) {
         if (!sh->frag_fields[i]) continue;
-        const char *t = ty(em, as_float(sh->vertex->fields.items[i].type));
-        sb_printf(o, "    @location(%d) tide_s%d: %s,\n", location++, i, t);
+        const type t = sh->vertex->fields.items[i].type;
+        const bool flat = type_is_int_based(t);
+        sb_printf(o, "    @location(%d) %stide_s%d: %s,\n", location++, flat ? "@interpolate(flat) " : "", i, ty(em, t));
     }
     for (int h = 0; h < sh->handed.count; h++) {
         const shader_handed *handed = &sh->handed.items[h];
@@ -7243,6 +7266,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
             add_bound(sh, p->type.decl);
         }
     }
+    bool conflict_said = false;
     for (int i = 0; i < code->samples.count; i++) {
         shader_sample own = code->samples.items[i];
         if (own.field < 0 && !own.asset && own.read != READ_SIZE) { // The frag's own Texture: as its draw's source is
@@ -7269,10 +7293,18 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
             if (s->read == READ_SIZE) vec_push(sh->sizes, t);
             else vec_push(sh->textures, t);
         }
-        if (k < sh->textures.count && s->read != READ_SIZE) {
-            shader_texture *image = &sh->textures.items[k];
-            if (image->write != s->write) {
+        // A kernel that writes an image can't read it in that run, whichever way it's read: a typed [Raw(T)] read
+        // (READ_NUMBER, READ_INT_VOLUME...) is another entry of the same image than the store's READ_COLOR or
+        // READ_VOLUME, so the image is compared, not the entry. A target's depth is another image than its colors.
+        if (k < sh->textures.count && s->read != READ_SIZE && !conflict_said) {
+            for (int j = 0; j < sh->textures.count; j++) {
+                const shader_texture *image = &sh->textures.items[j];
+                if (image->direct != t.direct || image->source != t.source || image->field != t.field || image->asset != t.asset
+                    || image->image_color != t.image_color || image->write == s->write || depth_image_read(image->read)
+                    || depth_image_read(t.read) || image->read == READ_DATA || t.read == READ_DATA) continue;
                 diag_error(code->at, "a kernel can't read and write the same image in one run: read a second image and write into this one, then swap them in local code");
+                conflict_said = true;
+                break;
             }
         }
         if (source) add_bound(sh, (decl *)source);
@@ -7381,11 +7413,17 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
         if (t->direct) {
             const expr *source = draw_source(call);
             const type value = frag_source_type(sh->frag);
-            if (source && value.kind != declared_image_type(source).kind) {
+            if (source && !image_role_fits(source, value)) {
                 diag_error(call->at, "a frag's Texture source must keep its [Raw(T)] numeric role: pass an image with the same role as the source parameter");
                 return false;
             }
             const int format = source ? image_target_format(source, 0, 0) : -3;
+            if (format == 1) {
+                diag_error(call->at, "the frag's source is the color of a target of depth alone (Format.Depth), which has none: "
+                           "read the target's depth through a DepthTexture field holding 'target.depth', or make the target "
+                           "with a color Format");
+                return false;
+            }
             if (format >= 0 && !image_format_accepts(format, value)) {
                 diag_error(call->at, "the frag's source reads %s, but Format." STR_FMT " takes %s: pass a source image with the matching numeric role and format",
                            type_name(value), STR_ARG(prog->format->members.items[format].name), image_format_types(format));
@@ -7416,7 +7454,29 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
             return false;
         }
         if (format == -6 && value.kind != TY_COLOR && value.kind != TY_FLOAT) {
-            diag_error(call->at, "a Grid3<float> volume takes [Raw(float)]: declare its numeric image role as float");
+            diag_error(call->at, "image '" STR_FMT "' holds a %s, which is read as Color or with [Raw(float)]: declare its numeric "
+                       "image role as float", STR_ARG(t->field->name),
+                       t->field->type.kind == TY_TEXTURE3D ? "Grid3<float> volume" : "Grid2<float>'s image");
+            return false;
+        }
+        // Format.Depth's image has no colors: a target's or an array's of depth alone (its depth is read apart)
+        if (format == 1 && !t->write && t->field->type.kind == TY_TEXTURE_ARRAY && t->read != READ_DEPTH_ARRAY) {
+            diag_error(call->at, "image '" STR_FMT "' is a TextureArray of depth alone (Format.Depth), which has no colors to read: "
+                       "keep its depth in a DepthTextureArray field holding '" STR_FMT ".depth' and read that with Sample(uv, layer), "
+                       "or make the array with a color Format", STR_ARG(t->field->name), STR_ARG(t->field->name));
+            return false;
+        }
+        if (format == 1 && !t->write && t->field->type.kind == TY_CUBEMAP) {
+            diag_error(call->at, "cube '" STR_FMT "' is a cube of depth alone (Format.Depth), which has no colors to read: keep "
+                       "its depth in a DepthCubemap field holding '" STR_FMT ".depth' and read that with Sample(direction) or "
+                       "Compare(direction, value), or make the cube with a color Format", STR_ARG(t->field->name),
+                       STR_ARG(t->field->name));
+            return false;
+        }
+        if (format == 1 && !t->write && t->field->type.kind == TY_TEXTURE) {
+            diag_error(call->at, "image '" STR_FMT "' holds the color of a target of depth alone (Format.Depth), which has none: "
+                       "read the target's depth through a DepthTexture field holding 'target.depth', or make the target with a "
+                       "color Format", STR_ARG(t->field->name));
             return false;
         }
         if (value.kind != TY_COLOR && !refuse_blended_numbers(prog, call, t, format)) return false;
@@ -7614,7 +7674,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         const field *f = &vertex->fields.items[i];
         if (sh->frag) {
             const param *p = &sh->frag->params.items[0];
-            sh->frag_fields[i] = (p->whole || (p->reads && p->reads[i])) && !type_is_int_based(f->type);
+            sh->frag_fields[i] = p->whole || (p->reads && p->reads[i]); // Ints too, flat (put_varyings)
         } else {
             sh->frag_fields[i] = str_eq_c(f->name, "color") || (textured && str_eq_c(f->name, "uv"));
         }

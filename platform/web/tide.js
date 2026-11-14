@@ -1692,6 +1692,12 @@
         return group;
     }
 
+    // Whether a sampler that blends reads a format on every device, as making smaller images does: 32-bit floats
+    // only with 'float32-filterable', which isn't asked for, and integers never
+    function blendedFormat(format) {
+        return !format.endsWith('32float') && !format.endsWith('sint') && !format.endsWith('uint');
+    }
+
     // A texture's smaller images, which WebGPU makes none of: each is drawn
     // from the one before it, a pixel the mean of the four it's made of (one
     // sample between them, blended). A pipeline for each format there is.
@@ -2048,8 +2054,9 @@
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4][format];
-            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb'][format];
+            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4, 4][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb',
+                'rg16float'][format];
             const texture = device.createTexture({ size: [width, height], format, usage });
             const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
@@ -2330,7 +2337,10 @@
         },
         gpu_mipmaps(id) {
             const t = gpuTables.texture[id];
-            if (t.depthLayers || t.depth) return; // An array of depth alone has none
+            if (!t || t.depthLayers || t.depth) return; // An array of depth alone has none
+            // ...nor an image no sampler blends: 32-bit floats without a feature WebGPU's core hasn't, and integers.
+            // The renderer asks for none of those (blends_target_format in platform.c)
+            if (t.format && !blendedFormat(t.format)) return;
             if (t.layered) { // Each face's or layer's, one from the other, as a texture's are
                 if (t.layered[0].length < 2) return;
                 const pipeline = mipPipeline(t.format);
@@ -2358,7 +2368,7 @@
                 return;
             }
             const levels = 1 + Math.floor(Math.log2(Math.max(t.width, t.height)));
-            if (!t.format || levels < 2) return;
+            if (!t.format || levels < 2 || t.format === 'r32sint' || t.format === 'rgba32sint') return; // No GPU blends ints
             const pipeline = mipPipeline(t.format);
             if (!t.levels) {
                 // A texture has as many images as it was made with, so the first time, one with room for them
@@ -2488,16 +2498,18 @@
                 // depth's, kept from pass to pass, and each color image is what a pass's end resolves its samples
                 // into, a texture as any target's. Its depth is a texture of the program's once it's resolved
                 // (gpu_resolve_depth)
+                // Its format and use are said as a target's of one sample are, so it has smaller images made of what
+                // was resolved (gpu_mipmaps), into whose first a pass resolves (`first`, gpu_begin)
                 const colors = [], sampled = [];
                 for (const format of formats) {
                     const many = device.createTexture({ size: [width, height], format, sampleCount: samples,
                         usage: GPUTextureUsage.RENDER_ATTACHMENT });
-                    const texture = device.createTexture({ size: [width, height], format,
-                        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
-                            | (['rgba8unorm', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'].includes(format) ? GPUTextureUsage.STORAGE_BINDING : 0) });
+                    const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+                        | (['rgba8unorm', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'].includes(format) ? GPUTextureUsage.STORAGE_BINDING : 0);
+                    const texture = device.createTexture({ size: [width, height], format, usage });
                     sampled.push({ texture: many, view: many.createView() });
                     colors.push(gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, first: texture.createView({ mipLevelCount: 1 }),
-                        groups: new Set() }));
+                        format, usage, groups: new Set() }));
                 }
                 const many = device.createTexture({ size: [width, height], format: depthFormat(), sampleCount: samples,
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
@@ -2523,8 +2535,9 @@
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
         // What the renderer's pools of GPU lists grow to at most (gpu.h, storage_most): a buffer bound whole
         gpu_storage_most: () => Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize),
-        gpu_target_texture: (id, color) => gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
-        gpu_target_depth: id => gpuTables.target[id].depth,
+        // ...and none for an id that's no target's
+        gpu_target_texture: (id, color) => !gpuTables.target[id] || gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
+        gpu_target_depth: id => gpuTables.target[id]?.depth || 0,
         // A multisampled target's depth as a texture: WebGPU resolves none, so a pass over a texture of one
         // depth a pixel writes each pixel's first sample there
         gpu_depth_bytes() { return reversedDepth() ? 8 : 4; },

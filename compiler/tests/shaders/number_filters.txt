@@ -148,11 +148,11 @@ struct tide_uniforms {
 @group(0) @binding(12) var sampler5: sampler;
 @group(0) @binding(13) var pixels6: texture_2d_array<f32>;
 @group(0) @binding(14) var sampler6: sampler;
-@group(0) @binding(15) var pixels7: texture_2d_array<f32>;
+@group(0) @binding(15) var pixels7: texture_cube<f32>;
 @group(0) @binding(16) var sampler7: sampler;
 @group(0) @binding(17) var pixels8: texture_cube<f32>;
 @group(0) @binding(18) var sampler8: sampler;
-@group(0) @binding(19) var pixels9: texture_cube<f32>;
+@group(0) @binding(20) var sampler9: sampler;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -203,15 +203,8 @@ fn tf_Height_45(t_uv: vec2f, t_layer: i32) -> f32 {
     return (textureSampleLevel(pixels5, sampler3, t_uv, clamp(t_layer, 0, i32(textureNumLayers(pixels5)) - 1), 0.0)).x;
 }
 
-fn tide_number6_0_13(uv: vec2f, layer: i32) -> vec4f {
-    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
-    let tide_layer = clamp(layer, 0, i32(textureNumLayers(pixels6)) - 1);
-    let tide_size = vec2i(textureDimensions(pixels6));
-    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
-    return textureLoad(pixels6, tide_at, tide_layer, 0);
-}
-fn tf_Far_48(t_way: vec3f) -> f32 {
-    return (textureSampleLevel(pixels8, sampler6, t_way, 0.0)).x;
+fn tf_Far_47(t_way: vec3f) -> f32 {
+    return (textureSampleLevel(pixels7, sampler7, t_way, 0.0)).x;
 }
 
 fn ts_Read(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
@@ -261,7 +254,7 @@ fn ts_Read(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var tide_choice24: vec2f = vec2f(0.0, tide_choice23);
     var tide_choice25: vec4f = textureSampleGrad(pixels4, sampler4, tide_choice18, tide_choice21, tide_choice24);
     var t_energy: vec4f = (tide_choice17 + tide_choice25);
-    t_value = (t_value + (tf_Height_45(t_vertex.m_uv, 1) + (tide_number6_0_13(t_vertex.m_uv, 0)).x));
+    t_value = (t_value + (tf_Height_45(t_vertex.m_uv, 1) + (textureSampleLevel(pixels5, sampler5, t_vertex.m_uv, clamp(0, 0, i32(textureNumLayers(pixels5)) - 1), 0.0)).x));
     var tide_choice26: vec2f = t_vertex.m_uv;
     var tide_choice27: i32 = 1;
     var tide_choice28: f32 = 1.0;
@@ -275,14 +268,14 @@ fn ts_Read(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var tide_choice36: vec2f = vec2f(0.0, tide_choice35);
     var tide_choice37: f32 = (textureSampleGrad(pixels5, sampler1, tide_choice30, clamp(0, 0, i32(textureNumLayers(pixels5)) - 1), tide_choice33, tide_choice36)).x;
     t_value = (t_value + (tide_choice29 + tide_choice37));
-    var t_flow: vec2f = (textureSampleGrad(pixels7, sampler5, t_vertex.m_uv, clamp(1, 0, i32(textureNumLayers(pixels7)) - 1), tide_dx3, tide_dy3)).xy;
-    t_value = (t_value + (tf_Far_48(vec3f(t_vertex.m_uv, 1.0)) + (textureSampleLevel(pixels8, sampler7, vec3f(t_vertex.m_uv, f32((-1))), 0.0)).x));
+    var t_flow: vec2f = (textureSampleGrad(pixels6, sampler6, t_vertex.m_uv, clamp(1, 0, i32(textureNumLayers(pixels6)) - 1), tide_dx3, tide_dy3)).xy;
+    t_value = (t_value + (tf_Far_47(vec3f(t_vertex.m_uv, 1.0)) + (textureSampleLevel(pixels7, sampler8, vec3f(t_vertex.m_uv, f32((-1))), 0.0)).x));
     var tide_choice38: i32 = 1;
     var tide_choice39: vec2f = t_vertex.m_uv;
     var tide_choice40: vec3f = vec3f(1.0, tide_choice39);
     var tide_choice41: i32 = 2;
-    t_value = (t_value + (textureSampleLevel(pixels8, sampler8, tide_choice40, tide_clamp1(2.0, 0.0, 31.0))).x);
-    var t_probe: vec4f = textureSampleGrad(pixels9, sampler8, vec3f(t_vertex.m_uv, 1.0), tide_dx4, tide_dy4);
+    t_value = (t_value + (textureSampleLevel(pixels7, sampler9, tide_choice40, tide_clamp1(2.0, 0.0, 31.0))).x);
+    var t_probe: vec4f = textureSampleGrad(pixels8, sampler9, vec3f(t_vertex.m_uv, 1.0), tide_dx4, tide_dy4);
     var tide_choice42: vec2f = t_vertex.m_uv;
     var tide_choice43: i32 = 1;
     var tide_choice44: f32 = (textureSampleLevel(pixels0, sampler1, tide_choice42, tide_clamp1(1.0, 0.0, 31.0))).x;

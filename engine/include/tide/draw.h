@@ -1393,11 +1393,14 @@ enum {
 // TIDE_TEXELS_INTS is four ints of 32 bits, which a shader reads as they are,
 // by a pixel's place and never between two: a list's elements, as numbers
 // (tide_draw_list_data).
-enum { TIDE_TEXELS_BYTES, TIDE_TEXELS_HALF, TIDE_TEXELS_INTS };
+// TIDE_TEXELS_HALF2 and TIDE_TEXELS_HALF4 are two and four halves (a Grid2<float2>'s and a Grid2<float4>'s cells,
+// Rg16f and Rgba16f on the GPU, which every device blends), and TIDE_TEXELS_INT one int of 32 bits (a Grid2<int>'s
+// and a Grid2<byte>'s, R32i), which only an integer read is given (tide_draw_grid_number_texture).
+enum { TIDE_TEXELS_BYTES, TIDE_TEXELS_HALF, TIDE_TEXELS_INTS, TIDE_TEXELS_HALF2, TIDE_TEXELS_HALF4, TIDE_TEXELS_INT };
 
 static inline uint32_t tide_texels_bytes(const uint32_t format)
 {
-    return format == TIDE_TEXELS_HALF ? 2u : format == TIDE_TEXELS_INTS ? 16u : 4u;
+    return format == TIDE_TEXELS_HALF ? 2u : format == TIDE_TEXELS_INTS ? 16u : format == TIDE_TEXELS_HALF4 ? 8u : 4u;
 }
 
 // A 2D transform: where it puts the point (x, y) is `offset` + x * `x` + y * `y`.
@@ -2513,6 +2516,9 @@ uint32_t tide_draw_texture_edit_linear(tide_draw_list *d, uint32_t space, uint64
                                        int32_t width, int32_t height, uint64_t kind, uint8_t **pixels, bool *kept);
 
 uint32_t tide_draw_texture_source(tide_draw_list *d, tide_texture_ref texture);
+// ...for a [Raw] or [Raw(T)] Texture field's read: a grid's colors as numbers, with no alpha worked into them, and a
+// grid of numbers as its cells are (tide_draw_grid_number_texture); anything else as tide_draw_texture_source.
+uint32_t tide_draw_texture_source_raw(tide_draw_list *d, tide_texture_ref texture);
 uint32_t tide_draw_texture_source_linear(tide_draw_list *d, tide_texture_ref texture);
 uint32_t tide_draw_array_source_linear(tide_draw_list *d, tide_texture_array_ref array);
 uint32_t tide_draw_cube_source_linear(tide_draw_list *d, tide_cubemap_ref cube);

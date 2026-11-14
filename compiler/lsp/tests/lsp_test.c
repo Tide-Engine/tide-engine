@@ -1696,7 +1696,7 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(frag, "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)"));
     TIDE_CHECK(has(frag, "Runs on the GPU, for each pixel of a mesh a view draws through it"));
     TIDE_CHECK(has(frag, "- for each instance: `Box.tint`\\n- for each draw: `Sun.direction`\\n- as textures: `Models.wood`\\n"
-                         "- of its vertex, blended across the triangle: `normal`, `uv`"));
+                         "- of its vertex, floats blended across the triangle and integral fields flat from its first corner: `normal`, `uv`"));
     TIDE_CHECK(!has(frag, "glow") && !has(frag, "strength") && !has(frag, "Runs once per tick"));
     const char *vert = hover_at(43, 82);
     TIDE_CHECK(has(vert, "vert Wave(mut BoxVertex vertex, Time time, Instance instance)") && has(vert, "for each vertex"));
@@ -5045,7 +5045,7 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *vert = hover_at(6, 6);
     TIDE_CHECK(has(vert, "vert Place(mut Corner corner, out FromLamp lamp, Sun sun)"));
-    TIDE_CHECK(has(vert, "What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle"));
+    TIDE_CHECK(has(vert, "What it writes to a struct it takes as `out`, the frag it's drawn with reads: floats blended across the triangle, integral fields flat from its first corner"));
     TIDE_CHECK(has(vert, "- for each draw: `Sun.at`") && !has(vert, "FromLamp."));
     const char *writes = hover_at(6, 45);
     TIDE_CHECK(has(writes, "out FromLamp lamp") && has(writes, "What the vert writes for the frag it's drawn with"));
@@ -5053,7 +5053,7 @@ TIDE_TEST(lsp_shader_outputs)
     const char *frag = hover_at(11, 6);
     TIDE_CHECK(has(frag, "Draw.Instanced(..., Look)") && has(frag, "Its `out` parameters write the target's images in order"));
     TIDE_CHECK(has(frag, "- for each instance: `Crate.paint`"));
-    TIDE_CHECK(has(frag, "- of what its vert wrote for it, blended across the triangle: `FromLamp.glow`") && !has(frag, "FromLamp.place"));
+    TIDE_CHECK(has(frag, "- of what its vert wrote for it, floats blended across the triangle and integral fields flat from its first corner: `FromLamp.glow`") && !has(frag, "FromLamp.place"));
     const char *lamp = hover_at(11, 35);
     TIDE_CHECK(has(lamp, "What the vert this frag is drawn with wrote for it") && has(lamp, "which the corners pass on: `glow`."));
     TIDE_CHECK(has(hover_at(11, 47), "An element of the draw's instance list"));

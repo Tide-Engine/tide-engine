@@ -2011,6 +2011,34 @@ TIDE_TEST(draw_meshes_3d_are_kept_and_instanced)
     tide_draw_free(&d);
 }
 
+// Draw.DepthBias: instances of one 3D mesh drawn one after another are one command under one bias, and a command of
+// their own under another, each command with its bias: a decal right after its base never draws with the base's.
+TIDE_TEST(draw_meshes_3d_join_under_one_depth_bias_only)
+{
+    tide_draw_list d = {0};
+    const tide_mesh mesh = {cube_corners, 4, cube_indices, 9, 1};
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
+    const tide_float2 biases[6] = {{0, 0}, {0, 0}, {-8, 0}, {-8, 0}, {-8, 1.5f}, {0, 0}};
+    for (int i = 0; i < 6; i++) {
+        if (i == 5) tide_draw_unset_depth_bias(&d);
+        else if (i == 2 || i == 4) tide_draw_set_depth_bias(&d, biases[i].x, biases[i].y);
+        tide_draw_mesh_3d(&d, &mesh, tide_translate_f4x4(tide_f3((float)i, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
+    }
+    uint32_t meshes = 0;
+    const tide_draw_command *runs[6] = {0};
+    for (uint32_t i = 0; i < d.count; i++) {
+        if (d.commands[i].kind == TIDE_DRAW_MESH_3D && meshes < 6u) runs[meshes++] = &d.commands[i];
+    }
+    TIDE_REQUIRE(meshes == 4);
+    const uint32_t counts[4] = {2, 2, 1, 1}, firsts[4] = {0, 2, 4, 5};
+    for (uint32_t k = 0; k < 4; k++) {
+        TIDE_CHECK(runs[k]->mesh3.count == counts[k]);
+        TIDE_CHECK(runs[k]->depth_bias.x == biases[firsts[k]].x && runs[k]->depth_bias.y == biases[firsts[k]].y);
+        TIDE_CHECK(d.matrices[runs[k]->mesh3.first].c3.x == (float)firsts[k]);
+    }
+    tide_draw_free(&d);
+}
+
 // Many meshes are each found again, frame after frame, without a copy.
 TIDE_TEST(draw_meshes_3d_many)
 {

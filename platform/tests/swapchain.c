@@ -3,6 +3,13 @@
 // bigger and smaller, and with everything else when the device is lost while
 // frames are shown. The validation layer checks every call on the way
 // (tide_gpu_test), and each frame reads a pixel back to show it drew.
+//
+// On Android the window is the activity's, the screen's size, which the app
+// can't set: it asks cmake/run_android.mjs (--steps) to turn the screen to
+// landscape and back, which the window follows, and once the device was lost,
+// to send the app home, which takes its surface away (frames draw nothing),
+// and to bring it to the front, which gives another: a swapchain made on the
+// same device, everything made on it kept.
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -12,12 +19,25 @@
 #include "tide/platform.h"
 #include "window.h"
 
+// What the device's player would do, asked of the test's runner (Android's)
+static void ask(const char *what)
+{
+    printf("step: %s\n", what);
+    fflush(stdout);
+}
+
+#ifdef __ANDROID__
+// Frames a turn or a trip to the background may take to reach the window before the test fails: the emulator's
+// software GPU draws them slower than a desktop's
+enum { WAIT_FRAMES = 3600 };
+#else
 // GLFW's, without its header, and the desktop window's (desktop/glfw.c).
 typedef struct GLFWwindow GLFWwindow;
 void glfwSetWindowSize(GLFWwindow *window, int width, int height);
 GLFWwindow *tide_glfw_window(void);
 
 enum { WAIT_FRAMES = 600 }; // Frames a resize may take to reach the window before the test fails
+#endif
 
 static int failures;
 
@@ -62,7 +82,7 @@ static void check_swapchain(const uint32_t made, const char *what)
     expect(image_width == width && image_height == height && times == made, said);
 }
 
-typedef enum { START, GROWING, SHRINKING, LOSING, DONE } stage;
+typedef enum { START, GROWING, SHRINKING, LOSING, AWAY, BACK, DONE } stage;
 
 static int frame(void *user, const float seconds)
 {
@@ -84,7 +104,11 @@ static int frame(void *user, const float seconds)
         }
         check_swapchain(1, "as the window opened");
         from_width = width, from_height = height;
+#ifdef __ANDROID__
+        ask("turn");
+#else
         glfwSetWindowSize(tide_glfw_window(), 160, 120);
+#endif
         now = GROWING;
         return TIDE_KEEP_RUNNING;
     case GROWING:
@@ -100,10 +124,19 @@ static int frame(void *user, const float seconds)
             return TIDE_KEEP_RUNNING;
         }
         waited = 0;
+#ifdef __ANDROID__
+        check_swapchain(now == GROWING ? 2u : 3u, now == GROWING ? "the screen turned" : "the screen turned back");
+        expect((width > height) == (now == GROWING), "the window took the screen's other shape");
+#else
         check_swapchain(now == GROWING ? 2u : 3u, now == GROWING ? "a window made bigger" : "a window made smaller");
+#endif
         from_width = width, from_height = height;
         if (now == GROWING) {
+#ifdef __ANDROID__
+            ask("upright");
+#else
             glfwSetWindowSize(tide_glfw_window(), 40, 30);
+#endif
             now = SHRINKING;
         } else {
             epoch = tide_gpu_vulkan.epoch();
@@ -115,6 +148,38 @@ static int frame(void *user, const float seconds)
         // The frame after the loss drew on another device, in a swapchain made on it
         expect(tide_gpu_vulkan.epoch() != epoch, "a lost device was made again as the next frame drew");
         check_swapchain(4, "after the device was lost");
+#ifdef __ANDROID__
+        epoch = tide_gpu_vulkan.epoch();
+        ask("home");
+        now = AWAY;
+#else
+        now = DONE;
+#endif
+        return TIDE_KEEP_RUNNING;
+    case AWAY: // In the background: no window, so frames draw nothing in one
+        if (!tide_window_unseen()) {
+            if (++waited < WAIT_FRAMES) return TIDE_KEEP_RUNNING;
+            expect(false, "the app went to the background, and its window with it");
+            return 1;
+        }
+        waited = 0;
+        expect(true, "the app went to the background, and its window with it");
+        ask("front");
+        now = BACK;
+        return TIDE_KEEP_RUNNING;
+    case BACK: // ...and back, with a window again: a surface of its own, a swapchain made on it, on the same device
+        if (tide_window_unseen()) {
+            if (++waited < WAIT_FRAMES) return TIDE_KEEP_RUNNING;
+            expect(false, "the app came back to the front, with a window");
+            return 1;
+        }
+        // This frame drew into the new surface's images, and the next one shows them again
+        if (waited >= 0) {
+            waited = -1;
+            return TIDE_KEEP_RUNNING;
+        }
+        expect(tide_gpu_vulkan.epoch() == epoch, "the device and everything made on it stayed while the app was away");
+        check_swapchain(5, "the app back at the front");
         now = DONE;
         return TIDE_KEEP_RUNNING;
     case DONE:

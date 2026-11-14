@@ -1,10 +1,10 @@
-// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<int>
+// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<bool>
 // expect: a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red
 scene Main { }
 
 local singleton Art
 {
-    Grid2<int> cells = Grid2(4, 4);
+    Grid2<bool> cells = Grid2(4, 4);
     List<Vertex> corners;
 }
 

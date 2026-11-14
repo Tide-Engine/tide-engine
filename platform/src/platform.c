@@ -2692,13 +2692,6 @@ static bool cube_layered(const uint64_t id)
     return formats.count == 0 || (formats.color[0] >= TIDE_TARGET_R32F && formats.color[0] <= TIDE_TARGET_R32I);
 }
 
-// Whether an image of `format` (tide_target_format) is 32-bit numbers, which no device blends everywhere: never read
-// through a filtering sampler, and given no smaller images
-static bool unblended_format(const uint8_t format)
-{
-    return format >= TIDE_TARGET_R32F && format <= TIDE_TARGET_R32I;
-}
-
 static gpu_cube *find_cube(const uint64_t id)
 {
     for (uint32_t i = 0; i < gpu_cube_count; i++) {
@@ -2962,6 +2955,18 @@ static gpu_target *target_for(const uint64_t id, const tide_target_size size, co
         }
     }
     return g;
+}
+
+// A pass begins on the destination `id`, whose GPU target is `g`: what reads between its smaller images after this
+// pass has them made again, a cube's of all its faces' and an array's of all its layers'.
+static void target_drawn(const uint64_t id, gpu_target *g)
+{
+    if (!g) return;
+    g->drawn++;
+    gpu_cube *of = tide_render_target_cubic(id) ? find_cube(tide_render_target_cube_of(id)) : NULL;
+    if (of) of->drawn++;
+    gpu_array *in = tide_render_target_arrayed(id) ? find_array(tide_render_target_array_of(id)) : NULL;
+    if (in) in->drawn++;
 }
 
 // Dispose invalidates every alias, even one already recorded in a list.
@@ -4360,15 +4365,84 @@ uint32_t tide_platform_prewarm_waiting(void)
     return waiting;
 }
 
+// What a shader reads where it's given no image of a kind (texture_to_read_as), made the first time a frag, a vert
+// or a kernel that reads that kind is in a list, here, before any pass: a depth's far one is a target cleared, which
+// takes a pass of its own. A depth's far one, a cube's dark one, an array's white one, a typed image's zeros and a
+// list's nothing.
+// An array of one pixel of zeros, of floats or of ints: what a typed array's or a cube's 32-bit numbers loaded from its
+// layers read for none (TIDE_GPU_READ_NUMBER_ARRAY, _INT_ARRAY). Drawn-into arrays start at zero on every backend.
+static tide_gpu_id layers_fallback(const bool ints)
+{
+    tide_gpu_id *none = ints ? &gpu_state.int_layers : &gpu_state.number_layers;
+    if (!*none) {
+        *none = made_array(tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, ints ? TIDE_GPU_COLOR_R32I : TIDE_GPU_COLOR_RGBA32F),
+                           1, 1, 1, NULL);
+    }
+    return *none;
+}
+
+static void make_read_fallbacks(const tide_shader *shader)
+{
+    for (uint32_t t = 0; t < shader->texture_count; t++) {
+        const tide_gpu_read read = gpu_read(shader, t);
+        if (read == TIDE_GPU_READ_CUBE && !gpu_state.dark) { // ...and one that reads a cube, the dark one
+            static const uint8_t black[4] = {0, 0, 0, 255};
+            static const void *const faces[TIDE_GPU_CUBE_FACES] = {black, black, black, black, black, black};
+            gpu_state.dark = made_cube(TIDE_GPU_COLOR_BYTES, 1, faces);
+        }
+        const uint8_t typed = t < TIDE_SHADER_TEXTURES ? shader->texture_reads[t] : 0u;
+        if (tide_shader_read_blends_numbers(typed)) { // ...a typed image's numbers, zeros
+            static const uint8_t zero[4] = {0, 0, 0, 0};
+            static const void *const zeros[TIDE_GPU_CUBE_FACES] = {zero, zero, zero, zero, zero, zero};
+            if (typed == TIDE_SHADER_READ_NUMBER_BLEND && !gpu_state.zero) gpu_state.zero = made_texture(TIDE_GPU_RGBA8, 1, 1, zero);
+            if (typed == TIDE_SHADER_READ_NUMBER_CUBE && !gpu_state.zero_cube) gpu_state.zero_cube = made_cube(TIDE_GPU_COLOR_BYTES, 1, zeros);
+            if (typed == TIDE_SHADER_READ_NUMBER_ARRAY && !gpu_state.zero_array) gpu_state.zero_array = made_array(TIDE_GPU_TARGET_COLOR, 1, 1, 1, zeros);
+        }
+        if (read == TIDE_GPU_READ_NUMBER_ARRAY || read == TIDE_GPU_READ_INT_ARRAY) { // ...an array's 32-bit numbers, zeros
+            layers_fallback(read == TIDE_GPU_READ_INT_ARRAY);
+            continue;
+        }
+        if (read == TIDE_GPU_READ_DATA && !gpu_state.nothing) { // ...and one that reads a list, no numbers
+            gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, (const int32_t[4]){0, 0, 0, 0});
+        }
+        if (read == TIDE_GPU_READ_ARRAY && !gpu_state.blank) { // ...one that reads an array, a white one
+            static const uint8_t white[4] = {255, 255, 255, 255};
+            static const void *const layers[1] = {white};
+            gpu_state.blank = made_array(TIDE_GPU_TARGET_COLOR, 1, 1, 1, layers);
+        }
+        if (read == TIDE_GPU_READ_DEPTH_ARRAY && !gpu_state.far_array) { // ...and an array's depth, the far one
+            gpu_state.far_array = made_array(TIDE_GPU_TARGET_DEPTH, 1, 1, 1, NULL);
+            const tide_gpu_id layer = gpu_state.far_array ? gpu->array_layer(gpu_state.far_array, 0) : 0;
+            if (layer) { // Cleared to the far limit
+                gpu->begin(layer, true);
+                gpu->end();
+                gpu->target_free(layer);
+            }
+        }
+        if (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || read == TIDE_GPU_READ_DATA || read == TIDE_GPU_READ_ARRAY
+            || read == TIDE_GPU_READ_DEPTH_ARRAY || gpu_state.far) continue;
+        gpu_state.far = made_target(TIDE_GPU_TARGET_DEPTH, 1, 1);
+        if (!gpu_state.far) continue;
+        gpu->begin(gpu_state.far, true);
+        gpu->end();
+    }
+}
+
 // What the list's shaded runs draw from goes to the GPU, before anything
 // draws: their meshes, their instances into the instance buffer, which grows
-// as they need, and a pipeline for each shader that has none.
+// as they need, and a pipeline for each shader that has none. A kernel's
+// fallbacks are made here too.
 static bool upload_shaded(const tide_draw_list *list)
 {
     bool any = false;
     gathered_used = 0;
     cull_plan(list);
     for (uint32_t i = 0; i < step_count; i++) {
+        if (steps[i].kind == STEP_COMPUTE) { // A kernel reads what a frag does where it's given nothing
+            const tide_shader *kernel = list->computes[steps[i].first].shader;
+            if (kernel && kernel->compute) make_read_fallbacks(kernel);
+            continue;
+        }
         if (steps[i].kind != STEP_SHADED && steps[i].kind != STEP_BLIT) continue;
         if (!frame_targets[steps[i].target].valid || leaves_nothing(list, &steps[i])) continue;
         const tide_draw_run *run = &list->runs[steps[i].first];
@@ -4450,54 +4524,7 @@ static bool upload_shaded(const tide_draw_list *list)
                                              steps[i].cull, frame_targets[steps[i].target].into,
                                              stencil_state(steps[i].stencil));
         }
-        // A shader that reads a depth it may not be given reads the far one: made here, outside any pass
-        for (uint32_t t = 0; t < run->shader->texture_count; t++) {
-            const tide_gpu_read read = gpu_read(run->shader, t);
-            if (read == TIDE_GPU_READ_CUBE && !gpu_state.dark) { // ...and one that reads a cube, the dark one
-                static const uint8_t black[4] = {0, 0, 0, 255};
-                static const void *const faces[TIDE_GPU_CUBE_FACES] = {black, black, black, black, black, black};
-                gpu_state.dark = made_cube(TIDE_GPU_COLOR_BYTES, 1, faces);
-            }
-            const uint8_t typed = t < TIDE_SHADER_TEXTURES ? run->shader->texture_reads[t] : 0u;
-            if (tide_shader_read_blends_numbers(typed)) { // ...a typed image's numbers, zeros
-                static const uint8_t zero[4] = {0, 0, 0, 0};
-                static const void *const zeros[TIDE_GPU_CUBE_FACES] = {zero, zero, zero, zero, zero, zero};
-                if (typed == TIDE_SHADER_READ_NUMBER_BLEND && !gpu_state.zero) gpu_state.zero = made_texture(TIDE_GPU_RGBA8, 1, 1, zero);
-                if (typed == TIDE_SHADER_READ_NUMBER_CUBE && !gpu_state.zero_cube) gpu_state.zero_cube = made_cube(TIDE_GPU_COLOR_BYTES, 1, zeros);
-                if (typed == TIDE_SHADER_READ_NUMBER_ARRAY && !gpu_state.zero_array) gpu_state.zero_array = made_array(TIDE_GPU_TARGET_COLOR, 1, 1, 1, zeros);
-            }
-            if (read == TIDE_GPU_READ_NUMBER_ARRAY || read == TIDE_GPU_READ_INT_ARRAY) { // ...an array's 32-bit numbers, zeros
-                const bool ints = read == TIDE_GPU_READ_INT_ARRAY;
-                tide_gpu_id *none = ints ? &gpu_state.int_layers : &gpu_state.number_layers;
-                if (!*none) { // Drawn-into arrays start at zero on every backend
-                    *none = made_array(tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, ints ? TIDE_GPU_COLOR_R32I : TIDE_GPU_COLOR_RGBA32F),
-                                       1, 1, 1, NULL);
-                }
-                continue;
-            }
-            if (read == TIDE_GPU_READ_DATA && !gpu_state.nothing) { // ...and one that reads a list, no numbers
-                gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, (const int32_t[4]){0, 0, 0, 0});
-            }
-            if (read == TIDE_GPU_READ_ARRAY && !gpu_state.blank) { // ...one that reads an array, a white one
-                static const uint8_t white[4] = {255, 255, 255, 255};
-                static const void *const layers[1] = {white};
-                gpu_state.blank = made_array(TIDE_GPU_TARGET_COLOR, 1, 1, 1, layers);
-            }
-            if (read == TIDE_GPU_READ_DEPTH_ARRAY && !gpu_state.far_array) { // ...and an array's depth, the far one
-                gpu_state.far_array = made_array(TIDE_GPU_TARGET_DEPTH, 1, 1, 1, NULL);
-                const tide_gpu_id layer = gpu_state.far_array ? gpu->array_layer(gpu_state.far_array, 0) : 0;
-                if (layer) { // Cleared to the far limit
-                    gpu->begin(layer, true);
-                    gpu->end();
-                    gpu->target_free(layer);
-                }
-            }
-            if (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || read == TIDE_GPU_READ_DATA || read == TIDE_GPU_READ_ARRAY
-                || read == TIDE_GPU_READ_DEPTH_ARRAY || gpu_state.far) continue;
-            gpu_state.far = made_target(TIDE_GPU_TARGET_DEPTH, 1, 1);
-            gpu->begin(gpu_state.far, true);
-            gpu->end();
-        }
+        make_read_fallbacks(run->shader);
     }
     if (any && list->instance_used + gathered_used) {
         buffer_room(&gpu_state.instances, &gpu_state.instance_capacity, list->instance_used + gathered_used, 1, 4096u);
@@ -4795,9 +4822,12 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         }
         if (g->texture && !resident_mips) gpu->texture_write(g->texture, pixels);
         else if (!g->texture) {
-            // A grid of floats' cells are one float of 16 bits a pixel
-            g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
-                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : t->linear ? TIDE_GPU_SRGBA8 : TIDE_GPU_RGBA8, t->width, t->height, pixels);
+            // A grid of floats' cells are one float of 16 bits a pixel, of float2s two and of float4s four; of ints
+            // and bytes, one int of 32 bits
+            g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : t->format == TIDE_TEXELS_HALF2 ? TIDE_GPU_RG16F
+                                      : t->format == TIDE_TEXELS_HALF4 ? TIDE_GPU_RGBA16F : t->format == TIDE_TEXELS_INT ? TIDE_GPU_R32I
+                                      : t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : t->linear ? TIDE_GPU_SRGBA8 : TIDE_GPU_RGBA8,
+                                      t->width, t->height, pixels);
         }
         free(decoded);
         if (!resident_mips) gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
@@ -5131,34 +5161,70 @@ static bool of_destination(const tide_draw_texture *t, const uint64_t id)
 // cube is, the dark one.
 // With `blend`, the read is a typed image's through a filtering sampler (TIDE_SHADER_READ_NUMBER_BLEND): none
 // is a pixel of zeros. Whatever a list says, a read through a filtering sampler is never handed a 32-bit float or
-// an integer image, which a GPU blends on some devices only or never: it reads as none.
+// an integer image, which a GPU blends on some devices only or never: it reads as none. Nor is a read of an
+// array's colors handed an array of depth alone, whose image is its depth.
+// What none is, for a read of `read` that isn't a volume's: made here where it's a texture of one pixel, which
+// needs no pass, and found where make_read_fallbacks made it before any pass (a depth's, a cube's, an array's).
+// 0 where it couldn't be made, which a draw or a kernel binds nothing for.
+static tide_gpu_id read_fallback(const tide_gpu_read read, const bool blend)
+{
+    if (read == TIDE_GPU_READ_NUMBER_ARRAY || read == TIDE_GPU_READ_INT_ARRAY) return layers_fallback(read == TIDE_GPU_READ_INT_ARRAY);
+    if (read == TIDE_GPU_READ_INT || read == TIDE_GPU_READ_DATA) { // An integer image's, or a list's: no numbers
+        if (!gpu_state.nothing) gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, (const int32_t[4]){0});
+        return gpu_state.nothing;
+    }
+    if (read >= TIDE_GPU_READ_NUMBER) { // A typed image's, read as stored
+        if (!gpu_state.number) gpu_state.number = made_texture(TIDE_GPU_RGBA32F, 1, 1, (const float[4]){0});
+        return gpu_state.number;
+    }
+    const bool cube = read == TIDE_GPU_READ_CUBE, array = read == TIDE_GPU_READ_ARRAY;
+    if (blend && cube && gpu_state.zero_cube) return gpu_state.zero_cube;
+    if (blend && array && gpu_state.zero_array) return gpu_state.zero_array;
+    if (blend && !cube && !array) {
+        if (!gpu_state.zero) gpu_state.zero = made_texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){0});
+        return gpu_state.zero;
+    }
+    switch (read) {
+    case TIDE_GPU_READ_CUBE: return gpu_state.dark;
+    case TIDE_GPU_READ_ARRAY: return gpu_state.blank;
+    case TIDE_GPU_READ_DEPTH:
+    case TIDE_GPU_READ_COMPARE: return gpu_state.far ? gpu->target_depth(gpu_state.far) : 0;
+    case TIDE_GPU_READ_DEPTH_ARRAY: return gpu_state.far_array ? gpu->array_depth(gpu_state.far_array) : 0;
+    default: return gpu_state.white;
+    }
+}
+
+// Whether a sampler that blends can read a target's color image of `format` (tide_target_format): not a 32-bit
+// float's or an integer's, which no GPU blends without an optional feature or at all. So neither is read through
+// one, nor has smaller images made, which are made by blending.
+static bool blends_target_format(const uint32_t format)
+{
+    return format < TIDE_TARGET_R32F || format > TIDE_TARGET_R32I;
+}
+
 static tide_gpu_id texture_to_read_as(const tide_draw_list *list, const uint32_t texture, const tide_gpu_read read, const bool blend)
 {
     if (read == TIDE_GPU_READ_NUMBER_ARRAY || read == TIDE_GPU_READ_INT_ARRAY) {
         // A typed array's layers, or a cube's faces held as layers, of 32-bit numbers: an array's image of floats for
         // floats (an unfilterable binding takes any float format) and of ints for ints, else none, zeros
         const bool ints = read == TIDE_GPU_READ_INT_ARRAY;
-        tide_gpu_id *none = ints ? &gpu_state.int_layers : &gpu_state.number_layers;
-        if (!*none) {
-            *none = made_array(tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, ints ? TIDE_GPU_COLOR_R32I : TIDE_GPU_COLOR_RGBA32F),
-                               1, 1, 1, NULL);
-        }
-        if (!texture || texture > list->texture_count) return *none;
+        const tide_gpu_id none = layers_fallback(ints);
+        if (!texture || texture > list->texture_count) return none;
         const tide_draw_texture *t = &list->textures[texture - 1u];
         if (t->space == TIDE_PIXELS_GRID_ARRAY) { // A Grid3<float>'s layers, half floats
             const gpu_texture *g = ints ? NULL : texture_for(t);
-            return g && g->texture ? g->texture : *none;
+            return g && g->texture ? g->texture : none;
         }
         const bool cube = t->space == TIDE_PIXELS_TARGET_CUBE;
-        if (!cube && t->space != TIDE_PIXELS_TARGET_ARRAY) return *none;
+        if (!cube && t->space != TIDE_PIXELS_TARGET_ARRAY) return none;
         const uint64_t id = cube ? t->id : tide_render_target_array_of(t->id);
         const tide_target_formats formats = tide_render_target_formats(id);
-        if (formats.count == 0 || ints != (formats.color[0] == TIDE_TARGET_R32I)) return *none;
-        if (cube && !cube_layered(id)) return *none; // A cube of a format every device blends is a cube, never layers
+        if (formats.count == 0 || ints != (formats.color[0] == TIDE_TARGET_R32I)) return none;
+        if (cube && !cube_layered(id)) return none; // A cube of a format every device blends is a cube, never layers
         const gpu_cube *c = cube ? find_cube(id) : NULL;
         const gpu_array *a = cube ? NULL : find_array(id);
         const tide_gpu_id image = c ? c->texture : a ? a->texture : 0;
-        return image ? image : *none;
+        return image ? image : none;
     }
     const bool integer = read == TIDE_GPU_READ_INT || read == TIDE_GPU_READ_INT_VOLUME;
     const bool numeric = read >= TIDE_GPU_READ_NUMBER;
@@ -5186,65 +5252,64 @@ static tide_gpu_id texture_to_read_as(const tide_draw_list *list, const uint32_t
         }
         return none;
     }
-    if (integer && !gpu_state.nothing) gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, (const int32_t[4]){0});
-    if (numeric && !integer && !gpu_state.number) gpu_state.number = made_texture(TIDE_GPU_RGBA32F, 1, 1, (const float[4]){0});
     const bool depth = read == TIDE_GPU_READ_DEPTH || read == TIDE_GPU_READ_COMPARE, cube = read == TIDE_GPU_READ_CUBE;
     const bool data = read == TIDE_GPU_READ_DATA; // A list's numbers, and nothing else is read so
     const bool array = read == TIDE_GPU_READ_ARRAY, depth_array = read == TIDE_GPU_READ_DEPTH_ARRAY;
-    if (blend && !cube && !array && !gpu_state.zero) gpu_state.zero = made_texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){0});
-    const tide_gpu_id none = numeric ? (integer ? gpu_state.nothing : gpu_state.number)
-                           : blend && cube && gpu_state.zero_cube ? gpu_state.zero_cube
-                           : blend && array && gpu_state.zero_array ? gpu_state.zero_array
-                           : blend && !cube && !array ? gpu_state.zero : data ? gpu_state.nothing : cube ? gpu_state.dark : depth ? gpu->target_depth(gpu_state.far)
-                           : array ? gpu_state.blank : depth_array ? gpu->array_depth(gpu_state.far_array) : gpu_state.white;
-    if (texture == 0 || texture > list->texture_count) return none;
+    if (texture == 0 || texture > list->texture_count) return read_fallback(read, blend);
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (linear_target_source(t)) {
         const linear_target_copy *copy = find_linear_target(t);
-        return copy && copy->texture ? copy->texture : none;
+        return copy && copy->texture ? copy->texture : read_fallback(read, blend);
     }
-    if (t->space == TIDE_PIXELS_TARGET_VOLUME || t->space == TIDE_PIXELS_GRID_VOLUME) return none;
+    if (t->space == TIDE_PIXELS_TARGET_VOLUME || t->space == TIDE_PIXELS_GRID_VOLUME) return read_fallback(read, blend);
     // An array's colors, or its depth, only for a read of that kind
-    if ((array || depth_array) != of_array(t)) return none;
-    if (array != (t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_PACK_ARRAY || t->space == TIDE_PIXELS_GRID_ARRAY)) return none;
+    if ((array || depth_array) != of_array(t)) return read_fallback(read, blend);
+    if (array != (t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_PACK_ARRAY || t->space == TIDE_PIXELS_GRID_ARRAY))
+        return read_fallback(read, blend);
     if (depth_array && of_cube_depth(t)) { // A depth cube's six faces of depth, a depth array's layers
-        if (tide_render_target_colors(t->id) != 0) return none; // A cube of colors keeps no depth to read
+        if (tide_render_target_colors(t->id) != 0) return read_fallback(read, blend); // A cube of colors keeps no depth to read
         const gpu_cube *c = find_cube(t->id);
         const tide_gpu_id image = c && c->texture && cube_layered(t->id) ? gpu->array_depth(c->texture) : 0;
-        return image ? image : none;
+        return image ? image : read_fallback(read, blend);
     }
     if (t->space == TIDE_PIXELS_TARGET_ARRAY || depth_array) {
+        // An array of depth alone has no colors: its texture is its depth, which no color binding takes
+        if (!depth_array && tide_render_target_colors(t->id) == 0) return read_fallback(read, blend);
         // Through a filtering sampler: never an array of 32-bit numbers, which no device blends everywhere
-        if (array && unblended_format(tide_render_target_formats(t->id).color[0])) return none;
+        if (array && !blends_target_format(tide_render_target_formats(t->id).color[0])) return read_fallback(read, blend);
         const gpu_array *a = find_array(tide_render_target_array_of(t->id));
         const tide_gpu_id image = !a || !a->texture ? 0 : depth_array ? gpu->array_depth(a->texture) : a->texture;
-        return image ? image : none;
+        return image ? image : read_fallback(read, blend);
     }
-    if (data != (t->space == TIDE_PIXELS_LIST && t->format == TIDE_TEXELS_INTS)) return none;
-    if (cube != of_cube(t)) return none;
+    if (data != (t->space == TIDE_PIXELS_LIST && t->format == TIDE_TEXELS_INTS)) return read_fallback(read, blend);
+    if (cube != of_cube(t)) return read_fallback(read, blend);
     if (t->space == TIDE_PIXELS_TARGET_CUBE) {
-        if (cube_layered(t->id)) return none; // Six layers, not a cube: read through its layers alone
+        if (cube_layered(t->id)) return read_fallback(read, blend); // Six layers, not a cube: read through its layers alone
         const gpu_cube *c = find_cube(t->id);
-        return c && c->texture ? c->texture : none;
+        return c && c->texture ? c->texture : read_fallback(read, blend);
     }
-    if (depth != (t->space == TIDE_PIXELS_TARGET_DEPTH)) return none;
+    if (depth != (t->space == TIDE_PIXELS_TARGET_DEPTH)) return read_fallback(read, blend);
     if (of_target(t)) { // Its depth, or the color image its id names
         if (numeric) {
             const tide_target_formats formats = tide_render_target_formats(t->id);
             const uint32_t at = tide_render_target_image(t->id);
-            if (at >= formats.count || integer != (formats.color[at] == TIDE_TARGET_R32I)) return none;
+            if (at >= formats.count || integer != (formats.color[at] == TIDE_TARGET_R32I)) return read_fallback(read, blend);
         } else if (!depth) { // Through a filtering sampler
             const tide_target_formats formats = tide_render_target_formats(t->id);
             const uint32_t at = tide_render_target_image(t->id);
-            if (at < formats.count && formats.color[at] >= TIDE_TARGET_R32F && formats.color[at] <= TIDE_TARGET_R32I) return none;
+            if (at < formats.count && !blends_target_format(formats.color[at])) return read_fallback(read, blend);
         }
         const gpu_target *g = find_target(tide_render_target_whole(t->id));
         const tide_gpu_id image = !g || !g->target ? 0 : depth ? gpu->target_depth(g->target)
                                 : gpu->target_texture(g->target, tide_render_target_image(t->id));
-        return image ? image : none;
+        return image ? image : read_fallback(read, blend);
     }
+    // The rest are uploaded images (a grid's, C's, the pack's), of which a grid of ints' alone holds ints: an integer
+    // read is given that and nothing else, and it's given to no other read, whatever a list says (a hot reload that
+    // changed a field's role, a list filled by hand)
+    if (!data && integer != (t->format == TIDE_TEXELS_INT)) return read_fallback(read, blend);
     const gpu_texture *g = texture_for(t);
-    return g->texture ? g->texture : none;
+    return g->texture ? g->texture : read_fallback(read, blend);
 }
 
 static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t texture, const tide_gpu_read read)
@@ -5482,7 +5547,7 @@ static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, c
     if (t->space == TIDE_PIXELS_TARGET_ARRAY) { // Once more passes have drawn into its layers, every layer's
         gpu_array *a = find_array(t->id);
         if (!a || !a->texture || a->mipped == a->drawn || tide_render_target_colors(t->id) == 0
-            || unblended_format(tide_render_target_formats(t->id).color[0])) return false; // 32-bit numbers have none
+            || !blends_target_format(tide_render_target_formats(t->id).color[0])) return false; // 32-bit numbers have none
         if (!check) {
             made_mipmaps(a->texture);
             a->mipped = a->drawn;
@@ -5501,15 +5566,18 @@ static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, c
     if (of_target(t)) {
         gpu_target *g = find_target(tide_render_target_whole(t->id));
         const uint32_t image = tide_render_target_image(t->id);
-        const tide_gpu_id color = g && g->target && image < TIDE_GPU_MAX_COLORS ? gpu->target_texture(g->target, image) : 0;
+        // An image no sampler blends has none: its read is given no image (texture_to_read_as)
         const tide_target_formats formats = tide_render_target_formats(t->id);
-        if (!color || g->mipped[image] == g->drawn || (image < formats.count && unblended_format(formats.color[image]))) return false;
+        if (image < formats.count && !blends_target_format(formats.color[image])) return false;
+        const tide_gpu_id color = g && g->target && image < TIDE_GPU_MAX_COLORS ? gpu->target_texture(g->target, image) : 0;
+        if (!color || g->mipped[image] == g->drawn) return false;
         if (!check) {
             made_target_mipmaps(g->target, image, color, gpu_target_format(g->id), g->width, g->height);
             g->mipped[image] = g->drawn;
         }
         return true;
     }
+    if (t->format == TIDE_TEXELS_INT || t->format == TIDE_TEXELS_INTS) return false; // No GPU blends integers
     gpu_texture *g = texture_for(t);
     if (!g->texture || g->mipped) return false;
     if (!check) {
@@ -6449,6 +6517,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // color), or in one of its own if nothing draws in it.
     render_part(over, TIDE_RENDER_CULLING);
     bool pass_active = false;
+    bool after_kernel = false; // A kernel ran since the destination's pass, or since it was chosen
     bool cleared = over;
     uint32_t calls = 0; // The steps that draw, a draw call each
     uint32_t gpu_calls = 0; // ...those whose draws and vertices the GPU decides (counted_*, cull.inc)
@@ -6461,6 +6530,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             pass_active = false;
             if (s->kind == STEP_COMPUTE) run_compute(list, s);
             else run_gpu_op(list, s);
+            after_kernel |= s->kind == STEP_COMPUTE;
             source_epoch++; // What it wrote may be what a draw reads
             prepare_storage_draws(list, i + 1u); // The indirect draws up to the next one's, with the counts it left
             continue;
@@ -6478,12 +6548,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (draw_target && !view_only_3d) {
                 gpu_target *g = target_for(f->id, f->size, f->version);
                 f->gpu = g ? g->target : 0;
-                if (g) g->drawn++; // What reads between its smaller images after this pass has them made again
-                gpu_cube *of = g && tide_render_target_cubic(f->id) ? find_cube(tide_render_target_cube_of(f->id)) : NULL;
-                if (of) of->drawn++; // A cube's are all its faces'
-                gpu_array *in = g && tide_render_target_arrayed(f->id) ? find_array(tide_render_target_array_of(f->id)) : NULL;
-                if (in) in->drawn++; // ...as an array's are all its layers'
+                target_drawn(f->id, g);
             }
+            after_kernel = false;
             uniforms = target_uniforms();
         }
         if (!frame_targets[draw_target].valid) continue;
@@ -6530,6 +6597,10 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             source_epoch++;
         }
         if (!pass_active && step_draws(s)) {
+            // A pass on the target a kernel ran beside, whose smaller images it may have had made: drawn again
+            if (after_kernel && draw_target && !view_only_3d)
+                target_drawn(frame_targets[draw_target].id, find_target(frame_targets[draw_target].id));
+            after_kernel = false;
             begin_pass(frame_targets[draw_target].gpu, !draw_target && !cleared);
             passes++;
             if (!draw_target) cleared = true;
