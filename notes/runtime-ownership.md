@@ -1,3 +1,16 @@
+## Reads of parts and volumes, banded reads (2026-11-14)
+
+Within the owner-approved pixel readback (2026-11-13) and the owner's "make sure everything we can add or validate we
+do" (2026-11-14), agents maintain the new `tide_render_target_read_begin_part(target, image, kind, from, size)`
+(generated C calls it for a part of an image and for a Texture3D's box), the request's appended `from`, `size` and
+`depth`, `tide_gpu_read_result.depth`, a volume's read in `target_read_names`, and the Grid3 and row-run filling of
+`tide_render_target_read_grid`; the renderer's bands (`pixel_reads`, compute.inc) and four ReadVolume kernels in
+cull.tide. The shared read table changed layout: embed ABI 25, Unity's `TideLibrary.Abi`, and TIDE_HOST_SHAPE counts
+`sizeof(tide_gpu_reads)`, so a library of the other layout isn't loaded. Generated C's new grid helpers
+(`tide_grid_carry`, `tide_grid_mine`) and GPU-ticket forgetting (`tide_forget_gpu_<frame>`) are written into the game's
+C over the existing `tide_grid_set`, `tide_grid_copy`, `tide_handle_where`, `tide_pack_holds` and
+`tide_gpu_list_read_forget`: no other runtime function. Contracts and tests: render-targets.md, top section.
+
 ## [Linear] image captures (2026-11-14)
 
 The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and

@@ -2465,6 +2465,7 @@ static const method_form volume_calls[] = {
     {"Sample", "Sample(float3 uvw, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Color volumes blend all three axes. A typed Raw volume returns its declared float, float2, float4 or int and reads the nearest cell; only Filter.Point is accepted. Volumes have no mipmaps."},
     {"Resize", "Resize(int3 size)", "Changes the volume size in texels, discarding contents. Copies share the resource."},
     {"Dispose", "Dispose()", "Releases this volume and leaves all references empty."},
+    {"Read", "Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", "Await in local async code for an owned copy of the volume's cells, a frame or more later, as a render target's image is read: without `<T>` a `Grid3<Color>` of an Rgba8 or Rgba16f volume, `Read<float>()` for R32f, `Read<float4>()` for Rgba32f (and an Rgba16f volume's numbers), `Read<int>()` for R32i, bit for bit. A box of it: its first cell and how many along each axis, `Read(int3(0), int3(8))`, clamped to the volume. The volume's format must be fixed where it's made; device loss fails."},
 };
 
 static const method_form array_calls[] = {
@@ -2502,8 +2503,8 @@ static const method_form depth_array_calls[] = {
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
-    {"Read", "Read<T>([int image]) -> Grid2<T> fails IOError", "Await in local async code for an owned copy of one resolved color image, a frame or more later: `await target.Read()` its first, `Read(1)` its second, with a constant int. Without `<T>` it's a `Grid2<Color>` of an Rgba8 or Rgba16f image, straight Color values, including HDR. An image of numbers is read as its own type, bit for bit: `Read<float>()` for R8, R16f and R32f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f (and an Rgba16f image's four numbers as stored), `Read<int>()` for R32i. The target's formats must be fixed where it's made. A cube's face and an array's layer are read the same way: `await cube.faces[0].Read()`. At most 4,000,000 pixels; device loss fails."},
-    {"ReadDepth", "ReadDepth() -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. At most 4,000,000 pixels; device loss fails."},
+    {"Read", "Read<T>([int image][, int2 from, int2 size]) -> Grid2<T> fails IOError", "Await in local async code for an owned copy of one resolved color image, a frame or more later: `await target.Read()` its first, `Read(1)` its second, with a constant int. Without `<T>` it's a `Grid2<Color>` of an Rgba8 or Rgba16f image, straight Color values, including HDR. An image of numbers is read as its own type, bit for bit: `Read<float>()` for R8, R16f and R32f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f (and an Rgba16f image's four numbers as stored), `Read<int>()` for R32i. The target's formats must be fixed where it's made. A part of it: its first pixel and how many pixels across and down, `Read(int2(x, y), int2(16, 16))`, in the image's own pixels, clamped to it (none of it there fails). A cube's face and an array's layer are read the same way: `await cube.faces[0].Read()`. Any size of image; what reads hold together is at most 512 MiB; device loss fails."},
+    {"ReadDepth", "ReadDepth([int2 from, int2 size]) -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. A part of it as `Read`'s: its first pixel and how many, int2s, clamped to the image. Any size; device loss fails."},
 };
 
 #define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
@@ -7622,7 +7623,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb detail = {0};
             format_method(&volume_calls[i], t, &detail);
             item(c, volume_calls[i].name, CK_METHOD, detail.data, volume_calls[i].doc,
-                 i == 0 ? "Sample($1)" : i == 1 ? "Resize($1)" : "Dispose()");
+                 i == 0 ? "Sample($1)" : i == 1 ? "Resize($1)" : i == 2 ? "Dispose()" : "Read()");
         }
         item(c, "size", CK_PROPERTY, "int3", "The volume's size in texels, or zeros for no volume.", NULL);
         if (!gpu) item(c, "contentRevision", CK_PROPERTY, "long", "Changes when the volume's contents are discarded; refill it after a change.", NULL);
@@ -8178,6 +8179,7 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         if (!gpu && t.kind == TY_TEXTURE3D) {
             item(c, "Resize", CK_METHOD, "Texture3D.Resize(int3 size)", volume_calls[1].doc, "Resize($1)");
             item(c, "Dispose", CK_METHOD, "Texture3D.Dispose()", volume_calls[2].doc, "Dispose()");
+            item(c, "Read", CK_METHOD, "Texture3D.Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", volume_calls[3].doc, "Read()");
             item(c, "contentRevision", CK_PROPERTY, "long", "Changes when the volume's contents are discarded.", NULL);
         }
         return;

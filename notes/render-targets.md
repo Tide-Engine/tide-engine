@@ -1,3 +1,83 @@
+## Reads of any size, of parts and of volumes; grids kept across waits; dropped reads let go (2026-11-14)
+
+The readback audit's workstream (owner, 2026-11-14: "make sure everything we can add or validate we do"). Every
+rule is a pick, Provisional in docs/spec.md (Grids a task keeps across its waits; Reads of any size, of parts and of
+volumes; the GPU lists' reads bullet for dropped tasks). Users: game/render-targets.md, game/tasks.md,
+language/grids.md. Corrects "Owned pixel readback" below (the refusal of a wait while a grid is held is gone) and
+"Readback of every image" (its limits).
+
+- **Grids across waits** (the high finding: the first fix refused a wait only while an `is` grid local was in scope,
+  so a failable local's grid and the grid of an earlier `await` in the same statement were carried as raw scratch
+  handles across the wait, and read freed or reused scratch after it). Now `gen_spill` has a grid case,
+  `tide_grid_carry(&slot, value, shape, where)`: a helper written into the game's C (no runtime function), which
+  leaves the slot alone where the value is the slot's own grid (the task took it back and didn't change it), copies a
+  grid code didn't make first (a world's, the pack's: `tide_grid_set` only takes a scratch grid's cells), and else is
+  `tide_grid_set` into the task's world's heap. `gen_reload` gives the local the frame's grid as it is; `place_where`
+  of a task's grid local is `tide_grid_mine(&local, shape)`, which makes it a scratch copy before any write (a cell,
+  `Clear`, `Decode`, a `mut` argument) and says `TIDE_IN_SCRATCH`; a whole assignment to it takes the new grid with no
+  copy. A dead slot holding a grid is released at the next wait (`slot_holds_grid` in `gen_spill_live`). The frame's
+  release already released grid fields. The checker's blanket refusal in `check_await` and the S_VAR "a task can't
+  keep a grid while it waits" are gone; `errors/read_target_kept_across_wait` and `errors/grid_async_local` became
+  `tidec_e2e_task_grids`. Match tasks keep theirs in the match heap, which `tide_heaps_hash`, the snapshot copy and
+  packing already cover. `tide_assign_<T>`'s grid paths use `tide_grid_carry` too, so a struct value with a grid
+  carried in a frame (a foreach over an asset `Map<string, Grid2<Color>>`) keeps it across a second wait (it was
+  released and re-owned as empty) and copies a pack grid (it took the size alone).
+- **Dropped tasks forget their GPU read** (`gen_frame_forget_gpu`, `frame_reads_gpu`: a frame's own ticket or an
+  awaited child frame's): `tide_forget_gpu_<frame>` on the gone/cancelled branch of the task pass, the `tide_r < 0`
+  paths of the run loop and of a task's start, `tide_task_local_cancel_work` and `tide_local_free`;
+  `tide_reset_gpu_<frame>` (ticket 0, read again) as a local world is unpacked. A swap that keeps the frames
+  (rebind) forgets nothing: the host's table is the next build's. The 600-frame release stays as a backstop.
+- **Reads of any size.** `target_read_prepare` clamps the part asked for to the image (`pixel_span`), and splits its
+  rows into bands of at most `PIXEL_BAND_BYTES` (32 MiB) and `PIXEL_BAND_ROWS` (65,535). Each band is a storage
+  buffer of its own (`made_buffer`), its list's header at word 0, bound where the kernel's list's pool goes (after
+  `bind_pools`, so the other pool is still bound): no GPU list's pool grows, and every band's kernel runs in the same
+  compute pass of the same frame. `compute.inc`'s `pixel_reads[slot]` (serial, bands, failed) replaces the pool
+  ranges; each band's `buffer_read` begins as soon as one can (the request is BEGUN at its first), its `buffer_read_done`
+  writes into the request's data at the band's place, and the read finishes once all are back, failed where one came
+  back -1. A band of a request let go of before it began goes; a forgotten BEGUN one begins no more bands and finishes
+  as its begun ones come back. Device loss drops the bands (ids alone) and fails a banded or begun read. The 4,000,000
+  pixel check is gone; `PIXEL_READ_PENDING_MOST` (512 MiB) bounds what reads hold together.
+- **Kernels** (`cull.tide`): every ReadTarget kernel indexes by `this.at.xy` over a 2D dispatch of a band, with
+  uniforms `width` (the part's), `rows` and `first` (the band's), `left`, `top` (the part's first pixel), `across`,
+  `down` (the image's size, for its uv), and `face`/`layer`. Four new ones, ReadVolumeColor/Float/Float4/Int, read a
+  Texture3D's cells exactly (`image[int3]`) by row (a y and a z each: `VolumeCell`). `pixel_read_kernel` names each
+  kernel's uniforms; `read_pixels_wgsl.h` and shaders.h list fifteen; Unity's CLI catalogue writes 21 computes.
+- **Engine** (`gpu_list.c`, draw.h): `tide_render_target_read_begin_part(target, image, kind, from[3], size[3])`
+  (begin_as is it with all of the image); `tide_gpu_read_request` gains `from`, `size`, `depth` (appended; embed ABI
+  25, Unity's `TideLibrary.Abi`; TIDE_HOST_SHAPE counts the shared table's size), `tide_gpu_read_result.depth`. A
+  volume (`TIDE_RENDER_VOLUME`) is named as image 0 of its one format, no depth. `tide_render_target_read_grid` makes
+  a Grid3 for a volume's result and fills a row's run of a chunk with one poke and one copy (a `memcpy` of the run where
+  a pixel is its cell's words).
+- **Renderer, volumes:** a volume nothing drew with is made for the read (`volume_for` of a description of it), and
+  one still being made (`texture_status` 0) is asked again next frame.
+- **Compiler:** `Read`/`ReadDepth` take `int2 from, int2 size` after the image's number (`expr.read_part`), the image
+  number folds (`fold_int`: a const of constants and operators; `Read(-1)` gets the range message), and a Texture3D's
+  `Read<T>([int3 from, int3 size])` (`expr.read_volume`) gives a `Grid3`, its type held against the volume's format by
+  `check_target_read`. Generated C calls begin_part only for a part (other reads are the C they were).
+- **Tests.** `tidec_e2e_task_grids` (local task: two reads in a statement, a read and an async call among a call's
+  arguments, a failable local, an `is` name across a read of another target, a made grid changed after waits and
+  cleared, an asset list's and an asset map's grids a frame at a time, with a view scribbling scratch each frame; a
+  match task's grid across ticks, packed and unpacked as it waits, hashes equal each tick); both fail with the old raw
+  spill. `tidec_e2e_target_reads`: a computed const image number, a read cancelled asked and begun and one waiting as
+  the local world goes (each frees its slot; fails without the forget), parts and volumes as asked (refusals, a Grid3
+  of a box), grids of reads 1 to 186 wide with a step of 1 and 4. `draw_pixel_reads_pending_through_a_build_unload`
+  (tests/test_draw_settings.c). `tide_platform_reload_reads`: a target read asked as a build unloads fails, and the
+  host's renderer never resolves it (an ASan use-after-free without `pixel_reads_unload`). `tide_platform_readback`,
+  native Vulkan (validation layers) and WebGPU, and under the depth fallback: a 2100x2000 Rgba8 target (4.2 million
+  pixels, three bands, rows checked across the seams) and R32f one bit for bit, a corner past the edge clamped, one
+  pixel of an int image, a part clamped from negative corners, a depth's, a face's and a layer's part, a part outside
+  and a part of nothing failing, four Texture3D formats whole and a box, a written depth of 0.1 within 2^-24 (and as
+  `1 - (1 - 0.1f)` under float storage), then the device lost with a read on its way back (it fails), and reads on the
+  next device exact. Errors' four argument messages changed.
+- **Not run:** Unity. The Sample's read kernels (`Assets/Tests/Resources/TideShaders/00000000c0de0014` and
+  `c0de0061`-`68`.compute) were written again from the new WGSL with `tide_wgsl_translate --hlsl` (the old WGSL
+  reproduced the checked-in files byte for byte but for c0de0014, already stale), and ComputeReplayTests' read
+  commands now give the banded layout (48 bytes of uniforms, a 2D dispatch): neither was compiled or replayed in an
+  editor. Android, Metal and the real-GPU web lanes were not run. The asked-with-bands state at device loss (every
+  band's `buffer_read` refused) has no hook to reach it.
+- **Not built:** reading a Texture asset back (spec: the same pixels are a `Grid2<Color>` asset on the CPU, and the
+  GPU's copy can be block-compressed).
+
 ## Number images blend, have mipmaps, and make array layers and cube faces (2026-11-14)
 
 The owner asked that the first day's conservative refusals go where every backend can do the work ("make sure

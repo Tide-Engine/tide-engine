@@ -238,6 +238,7 @@ static void gen_task_result_helpers(gen *g)
                 sb_printf(o, "        tide_forget_workers_%s(&r->frame, w->tide_workers);\n", type_cname(ti->frame));
             if (local && fn->uses_io)
                 sb_printf(o, "        tide_forget_io_%s(&r->frame, w->tide_io);\n", type_cname(ti->frame));
+            if (local && frame_reads_gpu(g, ti)) sb_printf(o, "        tide_forget_gpu_%s(&r->frame);\n", type_cname(ti->frame));
             sb_put(o, "        return;\n    }\n");
         }
         sb_put(o, "    default: return;\n    }\n}\n\n");

@@ -1,5 +1,15 @@
 # Compute on the GPU
 
+## A dropped task's read is let go of at once; a target's read uses no pool (2026-11-14)
+
+A list's read (and a target's) whose task ends while it waits, cancelled, with its owner, at a world's free, is
+forgotten then (`tide_forget_gpu_<frame>`, render-targets.md top section): before, nothing but the await's end
+forgot a ticket, so a dropped read held one of the 64 slots, and a target's its bytes against the pending limit, for
+600 frames (`TIDE_GPU_READ_KEPT_FRAMES`, kept as the backstop for C that never forgets). A target's read and a
+Texture3D's no longer take a range of a pool: their bands are buffers of their own (`pixel_reads` in compute.inc), so
+no GPU list's pool grows for a read, and a read of any size fits a device's bound-buffer limit. Spec: GPU lists'
+reads bullet, and Reads of any size, of parts and of volumes.
+
 ## Kernels write images and volumes (2026-11-14)
 
 Owner-approved 2026-11-13: "these make sense, lets do all of these" (the image stores, Texture3D and Grid3

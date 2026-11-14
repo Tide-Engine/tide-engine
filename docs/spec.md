@@ -1834,7 +1834,8 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
   - A field takes a new grid, what a function returns, or a copy: `terrain.heights = Ramp(64);` gives the field that grid's size and cells, the world's own. Its default is still a new grid.
   - A function can take a grid, `mut` or not, as any value: one it reads, and with `mut` one it changes where it is, a field's or a local's (`Border(terrain.heights, 9)`), whose writes count as the caller's, as any `mut` argument's do. A grid can't be an `out` parameter. A worker reads its grid parameters and code the GPU runs reads them where they are, as before; neither takes one `mut`.
   - `cells.Copy()` is a grid of its own with the same size and cells, of any grid: a field's, an asset's or a local's.
-- **How a grid code owns is kept** (Claude's picks, 2026-11-03): in the scratch area, as a local's list is, gone when the system, view or handler that made it is done, and copied into the world when a field takes it. So a parallel loop goes through a world's grid, a component's or a singleton's, not a local's or a parameter's (an error that says so; a foreach over one goes in order), a task can't keep one in a local while it waits, and a lambda can't capture one. A worker still reads only its captured grid parameters: its code keeps no grid in a local.
+- **How a grid code owns is kept** (Claude's picks, 2026-11-03): in the scratch area, as a local's list is, gone when the system, view or handler that made it is done, and copied into the world when a field takes it. So a parallel loop goes through a world's grid, a component's or a singleton's, not a local's or a parameter's (an error that says so; a foreach over one goes in order), a lambda can't capture one, and a task keeps one across its waits as a copy of its own in its frame, as it keeps its text and lists (Provisional, Claude, 2026-11-14: Grids a task keeps across its waits). A worker still reads only its captured grid parameters: its code keeps no grid in a local.
+- **Grids a task keeps across its waits** (Provisional, Claude, 2026-11-14, as the owner asked that every gap that can be closed is: "make sure everything we can add or validate we do"): a grid a task holds as it waits (a local's, a name `is` gives, a failable or `T?` local holding one, and a value an earlier `await` of the same statement gave, as in `(await a.Read())![0, 0] + (await b.Read())![0, 0]`) goes into its frame as a copy of its own, in the task's world's heap, as its text and lists do. After the wait the task reads the frame's copy where it is, and the first change it makes (a cell set, `Clear`, `Decode`, a `mut` argument) makes it a copy of the task's own again, so a grid kept unchanged across many waits is copied once. A grid the task didn't make (the pack's, as a `foreach` over an asset `List<Grid2<Color>>` gives, or a field's read before the wait) is copied whole, so the frame never holds the pack's memory, which a hot reload can take away. A match task's grids are in the match's heap: snapshots, packed worlds and the world's hash take them in with everything else. A grid no local in scope holds goes back to the heap at the next wait. Weighed: refusing every wait while a grid is held (what was built first, the same day; it refused a `foreach` over an asset's frames with a wait in it, and missed the grid of an earlier `await` in the statement and a failable local's, which then went through freed memory), and copying at every wait as lists are (which would copy a 4K read's 127 MiB once a frame for a task that waits a frame at a time).
 - `Grid2(...)` takes its cell type from where it goes: a field, a local's type, a parameter or what a function returns; anywhere else it's an error that says so.
 - A chunk is the engine's: 4096 cells (64 by 64, or 16 by 16 by 16 in 3D), or for cells bigger than four bytes, as many as fit in a page (16 KiB), a power of two along each axis, the first axes the most.
 - A loop over a grid with a size on every axis goes through every cell within it. An open axis goes on forever, so there a loop goes through the cells of the chunks the grid has, where something was set: in blocks, every block that takes in part of one. A foreach over an open grid goes through them in the same order, rows from the first, skipping what has no chunk.
@@ -3330,9 +3331,8 @@ The owner: "these make sense, lets do all of these". `await target.Read()` in lo
 `Grid2<Color>` with `fails IOError`, by the same asynchronous rules as GPUList.Read. It never enters match code.
 It captures the frame drawn after the request, a frame or more later, and fails when the device is lost.
 Colors are straight Color values, as Sample returns, rather than multiplied by alpha.
-The grid `is` names is a local's grid, which lasts until the task next waits, so an `await` while it is in scope
-is a compile error that says to copy what's kept into a component or singleton first (Provisional, Claude,
-2026-11-14: the alternative, carrying the grid across waits as a task carries its lists, is not built).
+The grid `is` names is a local's grid, which a task keeps across its later waits as it keeps its lists, a copy of
+its own in its frame (Provisional, Claude, 2026-11-14: Grids a task keeps across its waits).
 A target's other color images, images of numbers as their own types, its depth, a cube's faces and an array's
 layers are read too since 2026-11-14 (`Read(image)`, `Read<T>()`, `ReadDepth()`), and `target.colors.count`
 says how many images it holds: their rules are picks, under Provisional (which image a read is of, and as what).
@@ -3385,8 +3385,8 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 RGBA8 preserves its stored quantization; RGBA16f preserves HDR values above one. Transparent pixels give zero.
 Grid dimensions are physical pixels, with x right and y down. A copied grid uses `.Copy()` under ordinary grid
 ownership rules; a directly awaited return is fresh. `is Grid2<Color> pixels` can unwrap this failable result.
-There are 64 read slots shared with list reads, at most 4,000,000 pixels per image and 128 MiB of outstanding
-pixel results. Exceeding the image/byte limit fails; occupied slots wait, as list reads do. Headless native runs
+There are 64 read slots shared with list reads, and 512 MiB of outstanding pixel results; an image of any size is read
+(Reads of any size, of parts and of volumes, below). Exceeding the byte limit fails; occupied slots wait, as list reads do. Headless native runs
 wait at the next frame's start. Hidden fixed-size web test frames wait between WASM frames for pending mappings,
 so scripted frame counts agree without blocking the browser thread. Ordinary resizable web games remain async.
 Unsupported formats fail before binding a shader. `Read()` accepts Rgba8/Rgba16f as Color and always
@@ -3398,7 +3398,7 @@ The owner asked that every read that can work does (2026-11-14: "make sure every
 we do"). What was built, each a pick with what it was weighed against:
 
 - **`await target.Read(image)` reads color image `image`,** counted from 0 as `target.colors[image]` is. It is a
-  constant int (a literal or a `const`), from 0 to 3: the image is part of what the read gives, which the
+  constant int (a literal, or a `const` of literals, other constants and operators), from 0 to 3: the image is part of what the read gives, which the
   compiler has to know. An index that's only known as the game runs was weighed and refused for that reason,
   not left to fail as it runs; `target.colors[i].Read()` was weighed too, and would have made every `Texture`
   look readable where only a target's image is.
@@ -3453,12 +3453,38 @@ we do"). What was built, each a pick with what it was weighed against:
   it would mean drawing every frame of any game that might read into a target of Tide's first and copying that
   to the display, a cost for all frames to serve one. A game that wants its frame draws into
   `RenderTarget.Window()`, reads that, and `Draw.Blit`s it to the window.
-- **Limits are the Color read's:** 64 read slots shared with list reads, 4,000,000 pixels an image, 128 MiB of
-  outstanding results (a float or int image is 4 bytes a pixel of it, a float2 one 8, the others 16, and so is any read of a
-  face or a layer).
-- **Not there:** reading a part of an image (a rectangle); a `Texture3D`'s cells or a `Texture` asset's pixels
-  back (a kernel writing a GPU list reads either); a number read of a target whose format is only known as the
-  game runs.
+- **Limits are the Color read's:** 64 read slots shared with list reads, and 512 MiB of outstanding results (a float
+  or int image is 4 bytes a pixel of it, a float2 one 8, the others 16, and so is any read of a face or a layer).
+
+#### Provisional: reads of any size, of parts and of volumes (2026-11-14)
+
+The owner asked that every read that can work does ("make sure everything we can add or validate we do"). Each a pick:
+
+- **An image of any size is read.** The 4,000,000-pixel limit was the one dispatch's (65,535 groups of 64); a read now
+  runs its kernel over a band of rows at a time, each band a buffer of its own of at most 32 MiB and 65,535 rows, all
+  of them from the same frame's image and read back on their own, so a 4K or 5K `RenderTarget.Window()` is read whole
+  whatever one buffer a device binds (128 MiB on every WebGPU device). What reads hold together, from when their
+  kernels run until they're let go of, is at most 512 MiB (a 5K window's Color, 225 MiB, fits; an 8K one's alone):
+  past that a read fails with `IOError`. Weighed: tiles a game asks for itself (the rectangle below does that, where a
+  read of the whole image would hold too much), and a whole image in one buffer (past what devices bind).
+- **A part of an image: `Read(int2 from, int2 size)`**, after the image's number where it has one (`Read(1, from,
+  size)`, `Read<float>(from, size)`) and the same for `ReadDepth(from, size)` and a face's and a layer's reads: its
+  first pixel and how many pixels across and down, in the image's own pixels (as the grid is), x right and y down.
+  It's clamped to the image: the grid is the part inside it, its cell (0, 0) that part's first pixel, and a part with
+  none of the image in it, or a size of 0 or less, fails. The limits are the part's, so a tile of an image too big to
+  hold whole reads, and picking one pixel copies one. Weighed: a `Rect` (it's floats, for the GUI, where a read's
+  pixels are whole), a type of int rectangles (one more type for a pair of int2s), and a grid of the size asked for
+  with zeros outside the image (a read past the edge would look like pixels of zero).
+- **A `Texture3D`'s cells: `await volume.Read()`, `Read<T>()` and a box, `Read(int3 from, int3 size)`,** an owned
+  `Grid3` of the volume's format's type, `fails IOError`, as an image's read is: `Read()` of an Rgba8 or Rgba16f volume
+  (straight Colors), `Read<float>()` of R32f, `Read<float4>()` of Rgba32f (and an Rgba16f volume's numbers),
+  `Read<int>()` of R32i, each cell exactly as a kernel's `volume[at]` reads it. The type is checked against the format
+  the volume was made with, as a target's is. The box is clamped as a part is. A volume nothing wrote yet reads zeros;
+  one made from a `Grid3` is that grid's, which the CPU has (its read fails).
+- **Not there:** a `Texture` asset's pixels back. The same pixels, exactly, are a `Grid2<Color>` asset of the same file
+  on the CPU with no wait (`asset Grid2<Color> map = "art/map.png";`), where the GPU's copy can be block-compressed
+  (BC1, BC3, BC7: a device's decoding of the blocks, not the file's pixels) and is made only for a frame that draws
+  with it. Also not there: a number read of a target whose format is only known as the game runs.
 
 #### Provisional: depth bias (2026-11-14)
 
@@ -4233,7 +4259,7 @@ Kernels, GPU lists, `GPU.Run`, ordered `Add`, atomics, `shared`, `GPU.Barrier`, 
 - **GPU lists passed on alone** (built 2026-11-05): a function's `GPUList<T>` parameter is the list its call names, by a field or by the caller's own such parameter; the function is written once for each storage buffer it's called with, as one taking a `List<T>` is for each list. It isn't a value: no local keeps one, no function returns one, and `?:` doesn't pick one. What a function does to it, writing elements, `Add` and atomics, the kernel that calls it does to the list it passed, so a frag or vert calling one that writes is an error that says a kernel runs it. A call of a function that adds to a list counts as an `Add` of that list: once on a path, not in a loop, and a statement of its own, checked once every function's body is.
 - **The count:** only `Add`, `Set`, `Clear` and `SetCount(n)` change it; a write by index past the count leaves it, so a list a kernel fills by index takes `SetCount` from the CPU. `SetCount` is a pick of its own, in local code beside `Set` and `Clear`.
 - **`capacity`** is readable on both sides; `contentRevision` on the CPU.
-- **Reads back** are of the list as the frame drawn after the read was asked for leaves it (the renderer begins them once that frame's work is recorded). On the web they arrive when the browser has them; without a window (`--capture`, `--frames`, `--script`) at the next frame's start. A read nobody polls for 600 frames (its task was cancelled) is let go. 64 are pending at most; past that the await waits.
+- **Reads back** are of the list as the frame drawn after the read was asked for leaves it (the renderer begins them once that frame's work is recorded). On the web they arrive when the browser has them; without a window (`--capture`, `--frames`, `--script`) at the next frame's start. A task dropped while it waits (cancelled, its owner gone, its local world freed) lets go of its read at once, a target's too, so its slot and what it holds go free; one the renderer has begun goes once the renderer is done with it (Provisional, Claude, 2026-11-14: a dropped read held its slot and its bytes for 600 frames, which made a target's later reads fail). A read nobody polls or lets go of for 600 frames (C that asks and never looks) is let go. 64 are pending at most; past that the await waits.
 - **Atomics on `shared` memory** are on a `shared int[N]`'s elements; such an array's reads and writes are atomic too, and it can't be read whole.
 - **Shared locals** take no initializer, are changeable without `mut`, and are a kernel's own body's top level.
 - **`Draw.Instanced` over a GPU list** takes no `lod:` and no skinned mesh. Inside `Draw.Transform` (built 2026-11-05, after the first cut, which left such a draw unmoved), the draw's matrix goes with its uniforms and the GPU puts each instance's transform through it, as the CPU does a list's; one that mirrors turns the draw's front round, as it does a list's.

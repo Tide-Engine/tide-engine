@@ -2864,6 +2864,12 @@ static void gen_component_owner(gen *g, sb *o, const expr *e)
     else sb_put(o, "tide_this");
 }
 
+// A grid local of a task's code, which a wait leaves as the frame's (gen_spill, gen_reload).
+static bool task_grid_local(const gen *g, const expr *e)
+{
+    return g->task && e->kind == E_NAME && e->bind == BIND_LOCAL && e->type.kind == TY_GRID;
+}
+
 // Where a place's memory is, as C, for its text and lists (see tide/text.h):
 // a world's, for what's part of one, which owns them, or the scratch area's,
 // for what isn't, which borrows. A field or list element is where its value is.
@@ -2875,6 +2881,12 @@ static const char *place_where(const gen *g, const expr *e)
     }
     while (e->kind == E_MEMBER || e->kind == E_INDEX) e = e->object;
     if (e->kind != E_NAME) return "TIDE_IN_SCRATCH";
+    // A task's grid local is its frame's after a wait (gen_reload): what changes it changes a copy of its own
+    if (task_grid_local(g, e)) {
+        sb mine = {0};
+        sb_printf(&mine, "tide_grid_mine(&%s, &%s)", local_cname(g, e->name), grid_shape_name(e->type.decl));
+        return mine.data;
+    }
     // A mut method's own fields: where its caller's value is
     if (e->bind == BIND_FIELD) return g->routine && g->routine->is_mut_method && !g->in_input ? "tide_self_where" : "TIDE_IN_SCRATCH";
     if (e->bind != BIND_PARAM) return "TIDE_IN_SCRATCH";
@@ -6035,12 +6047,15 @@ static const char *task_slot_for(gen *g, const char *local, const type t)
 }
 
 // Puts `value`, C of type `t`, in the frame's place `slot` (C, like
-// tide_f->x): text and lists as the world's own, `where` the task's world.
+// tide_f->x): text, lists and grids as the world's own, `where` the task's
+// world. A grid the task took back from its frame and left as it was stays the
+// frame's (tide_grid_carry).
 static void gen_spill(gen *g, const char *slot, const char *value, const type t, const char *where)
 {
     sb *o = &g->c;
     switch (t.kind) {
     case TY_STRING: line(g, o, "tide_text_set(&%s, %s, %s);", slot, value, where); return;
+    case TY_GRID: line(g, o, "tide_grid_carry(&%s, %s, &%s, %s);", slot, value, grid_shape_name(t.decl), where); return;
     case TY_LIST: line(g, o, "tide_list%d_assign(&%s, %s, %s);", t.decl->index, slot, value, where); return;
     case TY_MAP:
     case TY_SET: line(g, o, "tide_map%d_assign(&%s, %s, %s);", t.decl->index, slot, value, where); return;
@@ -6076,7 +6091,8 @@ static void gen_spill(gen *g, const char *slot, const char *value, const type t,
 }
 
 // Takes the value in the frame's place `slot` back into C local `local`, of
-// type `t`. Lists come back as copies, so the task changes its own.
+// type `t`. Lists come back as copies, so the task changes its own; a grid as
+// the frame's, which a write first copies (tide_grid_mine, place_where).
 static void gen_reload(gen *g, const char *local, const char *slot, const type t)
 {
     sb *o = &g->c;
@@ -6151,12 +6167,20 @@ static bool task_value_handles(const type t, const task_ref_outer *outer)
     return false;
 }
 
+// Whether a frame's slot of type `t` holds a grid: a grid's, or a T?'s or a failable call's result's whose value is one.
+static bool slot_holds_grid(const type t)
+{
+    if (t.kind == TY_GRID) return true;
+    return (t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) && t.decl && t.decl->fields.items[0].type.kind == TY_GRID;
+}
+
 static void gen_spill_live(gen *g)
 {
     const char *where = world_where(g->task->local);
     for (int i = 0; i < g->task->info->slots.count; i++) {
         const task_slot *slot = &g->task->info->slots.items[i];
-        if (!task_value_handles(slot->type, NULL)) continue;
+        // A grid no local in scope holds goes back to the world's heap as the task waits: a read's can be big
+        if (!task_value_handles(slot->type, NULL) && !slot_holds_grid(slot->type)) continue;
         bool live = false;
         for (int k = 0; k < g->task->live.count; k++) live |= strcmp(slot->local, g->task->live.items[k].name) == 0;
         if (live) continue;
@@ -6331,14 +6355,44 @@ static void gen_await(gen *g, expr *e, const char *name)
         // await list.Read(): a ticket of the frame's until the GPU is done with the frame drawn next (tide/draw.h)
         line(g, o, "tide_f->tide_gpu_ticket = 0;");
         line(g, o, "tide_gpu_resume%d:;", k);
-        indent(g, o);
-        sb_put(o, call->gpu == GPU_TARGET_READ
-            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_as("
-            : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
-        gen_expr(g, o, call->object);
-        // Which image and as what (tide_target_read): the grid below is of that kind's cells
-        if (call->gpu == GPU_TARGET_READ) sb_printf(o, ", %d, %uu);\n", (int)call->read_image, (unsigned)call->read_kind);
-        else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
+        if (call->gpu == GPU_TARGET_READ && call->read_part) {
+            // A part of the image, or a box of a volume: its first pixel and how many along each axis, clamped to the
+            // image as the read begins
+            const int n = call->args.count;
+            const type vec = {call->read_volume ? TY_INT3 : TY_INT2, NULL};
+            line(g, o, "if (!tide_f->tide_gpu_ticket) {");
+            g->indent++;
+            indent(g, o);
+            sb_printf(o, "const %s tide_from%d = ", c_type(vec), k);
+            gen_as(g, o, call->args.items[n - 2], vec);
+            sb_put(o, ";\n");
+            indent(g, o);
+            sb_printf(o, "const %s tide_size%d = ", c_type(vec), k);
+            gen_as(g, o, call->args.items[n - 1], vec);
+            sb_put(o, ";\n");
+            indent(g, o);
+            sb_put(o, "tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_part(");
+            gen_expr(g, o, call->object);
+            sb from_z = {0}, size_z = {0}; // A part of an image is one deep
+            if (call->read_volume) sb_printf(&from_z, "tide_from%d.z", k), sb_printf(&size_z, "tide_size%d.z", k);
+            else sb_put(&from_z, "0"), sb_put(&size_z, "1");
+            sb_printf(o, "%s, %d, %uu, (const int32_t[3]){tide_from%d.x, tide_from%d.y, %s}, "
+                         "(const int32_t[3]){tide_size%d.x, tide_size%d.y, %s});\n",
+                      call->read_volume ? ".target" : "", (int)call->read_image, (unsigned)call->read_kind, k, k, from_z.data,
+                      k, k, size_z.data);
+            g->indent--;
+            line(g, o, "}");
+        } else {
+            indent(g, o);
+            sb_put(o, call->gpu == GPU_TARGET_READ
+                ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_as("
+                : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
+            gen_expr(g, o, call->object);
+            // Which image and as what (tide_target_read): the grid below is of that kind's cells
+            if (call->gpu == GPU_TARGET_READ) sb_printf(o, "%s, %d, %uu);\n", call->read_volume ? ".target" : "",
+                                                       (int)call->read_image, (unsigned)call->read_kind);
+            else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
+        }
         line(g, o, "tide_gpu_read_result tide_read%d;", k);
         line(g, o, "if (!tide_gpu_list_read_poll((uint32_t)tide_f->tide_gpu_ticket, &tide_read%d)) {", k);
         g->indent++;
@@ -8911,7 +8965,9 @@ static void gen_stmt_now(gen *g, const stmt *s)
             gen_expr(g, o, target);
             sb_put(o, "), ");
             gen_expr(g, o, s->value);
-            sb_printf(o, ", &%s, %s);\n", grid_shape_name(target->type.decl), place_where(g, target));
+            // A task's local takes the new grid whatever it held: its frame still has the old one (gen_spill)
+            sb_printf(o, ", &%s, %s);\n", grid_shape_name(target->type.decl),
+                      task_grid_local(g, target) ? "TIDE_IN_SCRATCH" : place_where(g, target));
             break;
         }
         if (target->kind == E_INDEX && target->object->type.kind == TY_MAP) { // scores[k] = x: added, or the value replaced
@@ -10815,6 +10871,22 @@ static void gen_grid_caches(gen *g)
 static void gen_grid_helpers(gen *g)
 {
     sb *o = &g->c;
+    if (g->prog->grids.count) {
+        // A grid going into a world's place (`where`), a task's frame as it waits among them: a copy of its own there.
+        // One the place has already (a task's, taken back from its frame and left as it was) stays; anything code
+        // didn't make (a world's, the pack's) is copied first, as tide_grid_set takes only what code made.
+        sb_put(o, "TIDE_HELPER void tide_grid_carry(tide_grid *to, tide_grid value, const tide_grid_shape *s, const uint32_t where)\n{\n"
+                  "    if (value.at && value.at == to->at) return;\n"
+                  "    if (tide_heap_of(where) && value.at && (tide_handle_where(value.at) != TIDE_IN_SCRATCH || tide_pack_holds(value.at)))\n"
+                  "        value = tide_grid_copy(value, s);\n"
+                  "    tide_grid_set(to, value, s, where);\n}\n\n");
+    }
+    if (g->prog->grids.count && g->tasks.count) {
+        // A task's grid local, to change: the frame's after a wait, which the task changes through a copy of its own
+        sb_put(o, "TIDE_HELPER uint32_t tide_grid_mine(tide_grid *g, const tide_grid_shape *s)\n{\n"
+                  "    if (g->at && (tide_handle_where(g->at) != TIDE_IN_SCRATCH || tide_pack_holds(g->at))) *g = tide_grid_copy(*g, s);\n"
+                  "    return TIDE_IN_SCRATCH;\n}\n\n");
+    }
     for (int i = 0; i < g->prog->grids.count; i++) {
         const decl *grid = g->prog->grids.items[i];
         const int k = grid->index;
@@ -11067,7 +11139,7 @@ static void gen_text_helpers(gen *g)
             } else if (hp->list) sb_printf(o, "    tide_list%d_assign(&to->%s, value.%s, where);\n", hp->list->index, hp->path, hp->path);
             else if (hp->array) sb_printf(o, "    tide_array%d_assign(&to->%s, value.%s, where);\n", hp->array->index, hp->path, hp->path);
             else if (hp->map) sb_printf(o, "    tide_map%d_assign(&to->%s, value.%s, where);\n", hp->map->index, hp->path, hp->path);
-            else if (hp->grid) sb_printf(o, "    tide_grid_set(&to->%s, value.%s, &%s, where);\n", hp->path, hp->path, grid_shape_name(hp->grid));
+            else if (hp->grid) sb_printf(o, "    tide_grid_carry(&to->%s, value.%s, &%s, where);\n", hp->path, hp->path, grid_shape_name(hp->grid));
             else sb_printf(o, "    tide_text_set(&to->%s, tide_text_view(value.%s), where);\n", hp->path, hp->path);
         }
         // A T? field left with no value keeps nothing: its lists go back to the heap, and it's zeros, as one
@@ -18442,6 +18514,58 @@ static void gen_frame_forget_io(gen *g, const task_info *ti)
     sb_put(o, "}\n\n");
 }
 
+// Whether a task's frame can hold a GPU read's ticket: its own await's, or an awaited task's frame within it.
+static bool frame_reads_gpu(gen *g, const task_info *ti)
+{
+    if (ti->fn->uses_gpu_read) return true;
+    for (int i = 0; i < ti->fn->awaits.count; i++) {
+        const task_info *child = task_of(g, ti->fn->awaits.items[i]);
+        if (child && frame_reads_gpu(g, child)) return true;
+    }
+    return false;
+}
+
+// A task dropped while it waits for a GPU read lets go of the read at once (tide_gpu_list_read_forget: one asked for
+// goes free, one begun once the renderer is done with it), as a task that finishes its await does, and as its other
+// tickets go: its slot and what it holds are no one's to keep. A frame carried through a hot reload keeps its ticket,
+// as the host's table is the next build's too.
+static void gen_frame_forget_gpu(gen *g, const task_info *ti)
+{
+    if (!frame_reads_gpu(g, ti)) return;
+    sb *o = &g->c;
+    const char *name = type_cname(ti->frame);
+    // ...and a frame packed with another world, restored, reads again: its ticket was that world's
+    for (int forget = 0; forget < 2; forget++) {
+        sb_printf(o, "TIDE_HELPER void tide_%s_gpu_%s(%s *v)\n{\n", forget ? "forget" : "reset", name, name);
+        if (ti->fn->uses_gpu_read) {
+            if (forget) sb_put(o, "    if (v->tide_gpu_ticket) tide_gpu_list_read_forget((uint32_t)v->tide_gpu_ticket);\n");
+            sb_put(o, "    v->tide_gpu_ticket = 0;\n");
+        }
+        for (int i = 0; i < ti->fn->awaits.count; i++) {
+            const task_info *child = task_of(g, ti->fn->awaits.items[i]);
+            if (!child || !frame_reads_gpu(g, child)) continue;
+            sb_printf(o, "    tide_%s_gpu_%s(&v->tide_await_%s);\n", forget ? "forget" : "reset", type_cname(child->frame),
+                      task_id(child->fn));
+        }
+        sb_put(o, "}\n\n");
+    }
+}
+
+// Every waiting task's GPU reads let go of, or (restored) asked for again, in a local world.
+static void gen_forget_gpu_tables(gen *g, const char *local, const char *pad, const bool forget)
+{
+    sb *o = &g->c;
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, true) || !frame_reads_gpu(g, ti)) continue;
+        const char *id = task_id(ti->fn);
+        sb_printf(o, "%sfor (uint32_t i = 0; i < %s->tide_tasks_%s.count; i++) {\n", pad, local, id);
+        sb_printf(o, "%s    tide_task_%s *task = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, i, 0);\n", pad, id, local, id, id);
+        sb_printf(o, "%s    tide_%s_gpu_%s(&task->frame);\n", pad, forget ? "forget" : "reset", type_cname(ti->frame));
+        sb_printf(o, "%s}\n", pad);
+    }
+}
+
 // External completion tickets are owned by the live tasks that requested
 // them. Restored tasks request a fresh barrier when they next resume.
 static void gen_reset_io_tables(gen *g, const char *local, const char *pad, const bool forget)
@@ -18513,6 +18637,7 @@ static void gen_task_pass(gen *g, const bool local)
         sb_printf(o, "            tide_task_%s *tide_gone = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_i, 0);\n", id, w, id, id);
         if (local && ti->fn->uses_workers) sb_printf(o, "            tide_forget_workers_%s(&tide_gone->frame, tide_l->tide_workers);\n", type_cname(ti->frame));
         if (local && ti->fn->uses_io) sb_printf(o, "            tide_forget_io_%s(&tide_gone->frame, tide_l->tide_io);\n", type_cname(ti->frame));
+        if (local && frame_reads_gpu(g, ti)) sb_printf(o, "            tide_forget_gpu_%s(&tide_gone->frame);\n", type_cname(ti->frame));
         if (ti->fn->handles_tasks)
             sb_printf(o, "            tide_task_%s_complete_%s(%s, &tide_gone->frame, TIDE_TASK_GONE);\n", local ? "local" : "match", id, w);
         sb_printf(o, "            tide_release_%s(&tide_gone->frame, %s);\n", type_cname(ti->frame), where);
@@ -18591,6 +18716,7 @@ static void gen_task_pass(gen *g, const bool local)
         }
         if (local && ti->fn->uses_workers) sb_printf(o, "            if (tide_r < 0) tide_forget_workers_%s(&tide_f, tide_l->tide_workers);\n", type_cname(ti->frame));
         if (local && ti->fn->uses_io) sb_printf(o, "            if (tide_r < 0) tide_forget_io_%s(&tide_f, tide_l->tide_io);\n", type_cname(ti->frame));
+        if (local && frame_reads_gpu(g, ti)) sb_printf(o, "            if (tide_r < 0) tide_forget_gpu_%s(&tide_f);\n", type_cname(ti->frame));
         sb_printf(o, "            if (tide_r < 0) tide_release_%s(&tide_f, %s);\n", type_cname(ti->frame), where);
         sb_printf(o, "            tide_task_%s *tide_back = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_due_v.row, 0);\n",
                   id, w, id, id);
@@ -18706,6 +18832,7 @@ static void gen_tasks(gen *g)
         gen_task_waiting(g, &g->tasks.items[i]);
         gen_frame_release(g, g->tasks.items[i].frame);
         gen_frame_forget_io(g, &g->tasks.items[i]);
+        gen_frame_forget_gpu(g, &g->tasks.items[i]);
         gen_frame_workers(g, &g->tasks.items[i]);
     }
     for (int i = 0; i < g->tasks.count; i++) {
@@ -18775,6 +18902,7 @@ static void gen_tasks(gen *g)
             sb_put(o, "    if (tide_r < 0) {\n");
             if (local && ti->fn->uses_workers) sb_printf(o, "        tide_forget_workers_%s(tide_f, tide_l->tide_workers);\n", type_cname(ti->frame));
             if (local && ti->fn->uses_io) sb_printf(o, "        tide_forget_io_%s(tide_f, tide_l->tide_io);\n", type_cname(ti->frame));
+            if (local && frame_reads_gpu(g, ti)) sb_printf(o, "        tide_forget_gpu_%s(tide_f);\n", type_cname(ti->frame));
             sb_printf(o, "        tide_release_%s(tide_f, %s);\n        return;\n    }\n", type_cname(ti->frame), world_where(local));
             if (ti->fn->handles_tasks) sb_printf(o, "    if (%s->tide_tasks_%s.count >= INT32_MAX) tide_out_of_memory();\n", w, id);
             sb_printf(o, "    const uint32_t tide_row = tide_table_add(&%s->tide_tasks_%s, &tide_columns_tasks_%s);\n", w, id, id);
@@ -24801,6 +24929,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (g->ix_any) sb_put(o, "    tide_index_cache_free(w->tide_index_cache);\n    w->tide_index_cache = NULL;\n");
     if (!local && g->prog->keeps_previous) sb_put(o, "    tide_previous_release(w, true);\n");
     if (local) sb_put(o, "    tide_workers_free(w->tide_workers);\n    w->tide_workers = NULL;\n");
+    if (local) gen_forget_gpu_tables(g, "w", "    ", true); // Its tasks' reads, which go with them
     resident_field residents[RESIDENTS_MOST];
     const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
     for (int i = 0; i < resident_count; i++) {
@@ -25030,6 +25159,9 @@ static void gen_world_bytes(gen *g, const bool local)
     }
     if (local) gen_reset_io_tables(g, "w", "    ", false);
     if (local) gen_reset_worker_tables(g, "w", "    ", false);
+    // A restored task reads again: the ticket it was carried with is the packed world's, which that world lets go of
+    // as it's freed (a native reload carrying it over), or another program's table's (the web's)
+    if (local) gen_forget_gpu_tables(g, "w", "    ", false);
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    ok = ok && tide_attached_unpack(&w->%s, %s, &bytes);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
     }
@@ -25968,6 +26100,7 @@ static void gen_rebind_resources(gen *g)
         if (d->kind != DECL_COMPONENT || !resource_fields(d)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < l->%s.rows.count; row++) {\n", fields_table(d));
         sb_printf(o, "        %s *v = tide_attached_cell(&l->%s, %s, row);\n", type_cname(d), fields_table(d), fields_columns(d));
+        if (resolving_volume_refs) sb_put(o, "        (void)v;\n");
         gen_resource_fields(g, d, "(*v)", "        ");
         sb_put(o, "    }\n");
     }
@@ -25977,6 +26110,7 @@ static void gen_rebind_resources(gen *g)
         const char *id = task_id(ti->fn);
         sb_printf(o, "    for (uint32_t row = 0; row < l->tide_tasks_%s.count; row++) {\n", id);
         sb_printf(o, "        tide_task_%s *v = tide_table_cell(&l->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n", id, id, id);
+        if (resolving_volume_refs) sb_put(o, "        (void)v; // A frame that holds no volume has none to resolve\n");
         gen_resource_fields(g, ti->frame, "v->frame", "        ");
         sb_put(o, "    }\n");
     }

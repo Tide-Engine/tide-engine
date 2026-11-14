@@ -1,3 +1,15 @@
+## Reads of parts and volumes, and a task's grids across waits (2026-11-14)
+
+A read's part is any game's ints: the renderer clamps it to the image in 64 bits (`pixel_span`), refuses a part of
+nothing, and works its bytes in 64 bits against the 512 MiB pending limit (which also keeps `bytes` within 32 bits)
+before it allocates; each band is at most 32 MiB and 65,535 rows. The engine refuses a size of 0 or less as it's
+asked, and a volume's read is image 0 of its one format. A grid made of a result checks the result's dimensions
+(two for an image, three for a volume, `width * height * depth` its count, `step >= stride`) before it copies a run,
+whose length is bounded by the chunk and the row. A task's grid is never kept as a raw handle across a wait any more:
+the frame owns a copy in its world's heap (`tide_grid_carry`), a write after the wait copies the frame's first
+(`tide_grid_mine`), and the pack's grids are copied whole, so a pack-only reload can't leave a frame holding them.
+Tests: `tidec_e2e_task_grids` (a view scribbles scratch every frame; the old raw spill fails it), `tidec_e2e_target_reads`.
+
 ## Numeric image sizes and clear payloads (2026-11-14)
 
 Managed target numeric formats occupy unused legacy 16-bit tags; pointers and old adoption/reload values

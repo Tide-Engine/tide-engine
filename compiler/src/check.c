@@ -9344,7 +9344,8 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
-    if (read_typed && obj.kind != TY_RENDER_TARGET && obj.kind != TY_ERROR) { // Left for its receiver's type, above
+    if (read_typed && obj.kind != TY_RENDER_TARGET && !(obj.kind == TY_TEXTURE3D && str_eq_c(e->name, "Read"))
+        && obj.kind != TY_ERROR) { // Left for its receiver's type, above
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
         diag_note("a render target's read does, for an image of numbers: 'await target.Read<float>()'");
     }
@@ -9465,6 +9466,49 @@ static type check_method(checker *c, expr *e)
             check_sample_args(c, e, false);
             return check_volume_sample(c, e);
         }
+        if (str_eq_c(e->name, "Read")) {
+            // await volume.Read(), Read<T>(), and a box of it, Read(int3 from, int3 size): an owned Grid3 of its cells,
+            // a frame or more later, as a render target's read (check_target_read holds the type against its format)
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            for (int i = 0; i < e->args.count; i++) if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+            bool fits = c->awaiting == e && (e->args.count == 0 || e->args.count == 2);
+            for (int i = 0; fits && i < e->args.count; i++) fits = e->args.items[i]->type.kind == TY_INT3;
+            if (!fits) {
+                diag_error(e->at, "a Texture3D's Read takes nothing, or a box of it: its first cell and how many cells along each "
+                                  "axis, int3s, and finishes later: 'var cells = await volume.Read();' or 'await "
+                                  "volume.Read(int3(0), int3(8))' in local async code");
+                return T_ERR;
+            }
+            type cell = (type){TY_COLOR, NULL};
+            if (e->type_arg.len > 0) {
+                cell = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+                if (cell.kind == TY_ERROR) return T_ERR;
+                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT2 && cell.kind != TY_FLOAT4
+                    && cell.kind != TY_INT) {
+                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a volume holds: Color, float, float2, float4 or int, "
+                                                    "not %s", type_name(cell));
+                    diag_note("'Read<float>()' reads Format.R32f, 'Read<float4>()' Rgba16f and Rgba32f, 'Read<int>()' R32i, and "
+                              "'Read()' an Rgba8 or Rgba16f volume");
+                    return T_ERR;
+                }
+            }
+            if (in_async_function(c)) {
+                if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
+            } else if (!local_code(c)) {
+                diag_error(e->at, "a Texture3D belongs to this machine: read it in local async code, never match code");
+                return T_ERR;
+            }
+            decl *code = reading_code(c);
+            if (code) code->uses_gpu_read = true;
+            e->read_kind = (uint8_t)(cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
+                                     : cell.kind == TY_INT ? 4 : 0);
+            e->read_image = 0;
+            e->read_part = e->args.count == 2;
+            e->read_volume = true;
+            e->gpu = GPU_TARGET_READ;
+            vec_push(c->prog->mesh_draws, ((mesh_draw){.in = reading_code(c), .call = e}));
+            return result_of(c->prog, grid_of(c->prog, cell, 3), (type){TY_ENUM, c->prog->io_error}, false);
+        }
         const bool resize = str_eq_c(e->name, "Resize"), dispose = str_eq_c(e->name, "Dispose");
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!resize && !dispose) {
@@ -9472,7 +9516,8 @@ static type check_method(checker *c, expr *e)
                 diag_error(e->at, "a Texture3D has no mipmaps: use Sample(uvw, Filter.Point) or Sample(uvw, Filter.Bilinear)");
                 return T_ERR;
             }
-            diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Resize(int3) and Dispose(), not '" STR_FMT "'", STR_ARG(e->name));
+            diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Read(), Resize(int3) and Dispose(), not '" STR_FMT "'",
+                       STR_ARG(e->name));
             return T_ERR;
         }
         if (gpu_refuses(c, e->at, resize ? "resize a Texture3D" : "dispose a Texture3D", "local code owns the volume")) return T_ERR;
@@ -9573,13 +9618,23 @@ static type check_method(checker *c, expr *e)
             // the formats the target was made with (check_target_read), which are known once every body is checked
             const bool depth = str_eq_c(e->name, "ReadDepth");
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            if (c->awaiting != e || e->args.count > (depth ? 0 : 1)) {
-                diag_error(e->at, depth ? "ReadDepth takes no arguments and finishes later: 'var depths = await target.ReadDepth();' "
-                                          "in local async code"
-                                        : "Read takes the color image's number, or nothing for the first, and finishes later: "
-                                          "'var pixels = await target.Read();' in local async code");
+            for (int i = 0; i < e->args.count; i++) if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+            // ...and a part of it: its first pixel and how many pixels across and down, int2s, after the image's number
+            const int whole = depth ? 0 : e->args.count == 1 || e->args.count == 3 ? 1 : 0;
+            const bool part = e->args.count - whole == 2;
+            bool fits = c->awaiting == e && (e->args.count == whole || part);
+            for (int i = whole; fits && part && i < e->args.count; i++) fits = e->args.items[i]->type.kind == TY_INT2;
+            if (!fits) {
+                diag_error(e->at, depth ? "ReadDepth takes nothing, or a part of the depth: its first pixel and how many pixels "
+                                          "across and down, int2s, and finishes later: 'var depths = await target.ReadDepth();' "
+                                          "or 'await target.ReadDepth(int2(x, y), int2(16, 16))' in local async code"
+                                        : "Read takes the color image's number, or nothing for the first, then a part of it if "
+                                          "not all: its first pixel and how many pixels across and down, int2s, and finishes "
+                                          "later: 'var pixels = await target.Read();' or 'await target.Read(int2(x, y), "
+                                          "int2(16, 16))' in local async code");
                 return T_ERR;
             }
+            e->read_part = part;
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
                 return T_ERR;
@@ -9604,23 +9659,22 @@ static type check_method(checker *c, expr *e)
             e->read_kind = (uint8_t)(depth ? 5 : cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
                                      : cell.kind == TY_INT ? 4 : 0);
             e->read_image = 0;
-            if (e->args.count) {
-                // Which image is part of the read's type, so it's a number the compiler knows
-                const expr *image = e->args.items[0];
-                if (image->type.kind == TY_ERROR) return T_ERR;
-                for (int i = 0; image->constant && i < 32; i++) image = image->constant->value;
-                if (!type_assignable(T_INT_, e->args.items[0]->type) || image->kind != E_INT) {
+            if (whole) {
+                // Which image is part of the read's type, so it's a number the compiler knows: a literal, or a const
+                // of literals, other constants and operators (fold_int)
+                int64_t image = 0;
+                if (!type_assignable(T_INT_, e->args.items[0]->type) || !fold_int(e->args.items[0], &image)) {
                     diag_error(e->args.items[0]->at, "Read takes which color image as a constant int, counted from 0: 'await "
                                                      "target.Read(1)' reads 'target.colors[1]'");
                     diag_note("what a read gives depends on the image's format, so the compiler has to know which image it is");
                     return T_ERR;
                 }
-                if (image->int_value < 0 || image->int_value >= TARGET_COLORS) {
+                if (image < 0 || image >= TARGET_COLORS) {
                     diag_error(e->args.items[0]->at, "a render target holds %d color images at the most: 'Read(0)' to 'Read(%d)'",
                                TARGET_COLORS, TARGET_COLORS - 1);
                     return T_ERR;
                 }
-                e->read_image = (uint8_t)image->int_value;
+                e->read_image = (uint8_t)image;
             }
             if (in_async_function(c)) {
                 if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
@@ -13047,16 +13101,8 @@ static type check_await(checker *c, expr *e)
         diag_note("go through them with 'for' loops, which can wait: 'for (var y = 0; y < cells.size.y; y++) { ... }'");
         return T_ERR;
     }
-    // A grid a task holds is the one 'is' named, from a read: it's in the scratch area, which a wait gives back
-    for (int i = 0; i < c->locals.count; i++) {
-        const stmt *const held = c->locals.items[i];
-        if (held->type.kind != TY_GRID) continue;
-        diag_error(e->at, "a task can't wait while it holds the grid '" STR_FMT "': a local's grid lasts until the task waits",
-                   STR_ARG(held->name));
-        diag_note("copy what's kept into a component or singleton first, like 'state.pixels = " STR_FMT ".Copy();', and wait "
-                  "after the code '" STR_FMT "' is in", STR_ARG(held->name), STR_ARG(held->name));
-        return T_ERR;
-    }
+    // A grid the task holds as it waits, a local's or a value an earlier await in the statement gave, goes in its
+    // frame as a copy of its own (codegen.c, gen_spill)
     if (t.kind == TY_ERROR) return T_ERR;
     if (t.kind == TY_STRUCT && t.decl->task_handle) {
         if (!t.decl->task_origin && in_async_function(c)
@@ -15290,12 +15336,8 @@ static void check_var(checker *c, stmt *s)
     // what a function returned, in the scratch area as a local's list is, and never another's.
     const bool names_grid = s->type.kind == TY_GRID && s->value && (gpu_code(c) || (c->method && c->method->gpu_only));
     if (s->type.kind == TY_GRID && !names_grid) {
-        const loc at = s->type_at.line ? s->type_at : s->value ? s->value->at : s->at;
-        if (async_code(c)) {
-            diag_error(at, "a task can't keep a grid while it waits: a local's grid lasts until the code that made it is done");
-            diag_note("keep it in a component or singleton, or make and use it in a function the task calls");
-            s->type = T_ERR;
-        } else if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
+        // A task's grid goes in its frame as it waits, a copy of its own, as its lists do (codegen.c, gen_spill)
+        if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
                    && c->method->kind == DECL_FUNCTION && takes_grid(c->method) && s->value->kind == E_NAME
                    && s->value->bind == BIND_PARAM) {
             // A name for a grid it's passed: in a function only code the GPU runs calls, as a frag's local names one,

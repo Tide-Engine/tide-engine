@@ -10,6 +10,11 @@
 #include "game.h"
 #include "tide/platform.h"
 #include "window.h"
+#ifdef __wasm__
+#include "tide_web.h" // The page, to lose WebGPU's device
+#else
+#include "gpu_vk.h" // Vulkan's device, which the test loses
+#endif
 static tide_world world;
 static tide_local local;
 static tide_draw_list list;
@@ -158,21 +163,146 @@ static void check_reads(void)
     check(local.CopyState.images == 420 && local.CopyState.none == 0, "colors.count is 4, 2, none for depth alone, and none for no target");
 }
 
+static bool volume_cell(const tide_grid grid, const tide_grid_shape *shape, const int32_t x, const int32_t y, const int32_t z,
+                        const void *words)
+{
+    const void *cell = tide_grid_peek(grid, x, y, z, shape);
+    return cell && memcmp(cell, words, shape->cell) == 0;
+}
+
+static void check_more(void)
+{
+    const MoreResult *m = &local.MoreResult;
+    check(!m->failed, "the reads past 4,000,000 pixels, of parts and of volumes, give what they read");
+    // 4,200,000 pixels, in bands: the color everywhere but the square at the bottom right, rows across the bands' seams
+    bool good = sized(m->big, 2100, 2000);
+    const int32_t rows[] = {0, 997, 998, 999, 1000, 1995, 1996, 1997, 1999};
+    for (int i = 0; good && i < (int)(sizeof rows / sizeof rows[0]); i++) {
+        for (int32_t x = 0; good && x < 2100; x += 7) {
+            const bool white = x >= 2090 && rows[i] >= 1990;
+            good = white ? bytes_are(m->big, x, rows[i], 1, 1, 1, 1) : bytes_are(m->big, x, rows[i], 0.2f, 0.4f, 0.6f, 1);
+        }
+    }
+    good = good && bytes_are(m->big, 2099, 1999, 1, 1, 1, 1) && bytes_are(m->big, 2089, 1999, 0.2f, 0.4f, 0.6f, 1);
+    check(good, "a 2100x2000 target's 4,200,000 pixels are read whole, in bands");
+    good = sized(m->corner, 100, 100) && bytes_are(m->corner, 0, 0, 0.2f, 0.4f, 0.6f, 1) && bytes_are(m->corner, 99, 99, 1, 1, 1, 1)
+        && bytes_are(m->corner, 90, 90, 1, 1, 1, 1) && bytes_are(m->corner, 89, 99, 0.2f, 0.4f, 0.6f, 1);
+    check(good, "a part past the image's edge is the part inside it, from its first pixel");
+    good = sized(m->floats, 2100, 2000) && float_is(m->floats, 0, 0, 1.5f) && float_is(m->floats, 2098, 1999, 1.5f)
+        && float_is(m->floats, 2099, 1999, -3.0f) && float_is(m->floats, 1050, 1000, 1.5f);
+    check(good, "Read<float> of a 2100x2000 R32f target gives each number, bit for bit");
+    good = sized(m->one, 1, 1) && cell_is(m->one, &tide_shape_Grid2_int, 0, 0, &(int32_t){16777217});
+    good = good && sized(m->clamped, 2, 1) && color_is(m->clamped, 0, 0, 1, 0, 0, 1) && color_is(m->clamped, 1, 0, 0, 0, 1, 1);
+    good = good && sized(m->depthPart, 1, 1) && depth_is(m->depthPart, 0, 0, 0.25f);
+    good = good && sized(m->facePart, 1, 1) && color_is(m->facePart, 0, 0, 0, 0, 1, 1);
+    good = good && sized(m->layerPart, 1, 1) && depth_is(m->layerPart, 0, 0, 0.625f);
+    check(good, "parts of images: a pixel, a part clamped to the image, a depth's, a face's and a layer's");
+    check(m->outsideFailed && m->emptyFailed, "a part outside the image and a part of nothing fail");
+    // A volume's cells: at (x, y, z), x / 2 red (to its byte), y green, z blue; x + 10y + 100z; its negative less 7
+    int32_t size[3];
+    tide_grid_size(m->colors, size);
+    good = size[0] == 3 && size[1] == 2 && size[2] == 2;
+    for (int32_t z = 0; z < 2; z++) for (int32_t y = 0; y < 2; y++) for (int32_t x = 0; x < 3; x++) {
+        const tide_color *c = tide_grid_peek(m->colors, x, y, z, &tide_shape_Grid3_Color);
+        // 0.5 is 127.5 of a byte, which a device stores as either byte beside it
+        good = good && c && fabsf(c->r - x * 0.5f) <= 0.5f / 255.0f + 1e-6f && c->g == (float)y && c->b == (float)z && c->a == 1.0f;
+        const float n = (float)(x + 10 * y + 100 * z);
+        good = good && volume_cell(m->numbers, &tide_shape_Grid3_float, x, y, z, &n);
+        good = good && volume_cell(m->ids, &tide_shape_Grid3_int, x, y, z, &(int32_t){-(x + 10 * y + 100 * z) - 7});
+        good = good && volume_cell(m->wides, &tide_shape_Grid3_float4, x, y, z, (const float[4]){(float)x, (float)y, (float)z, 1000000});
+    }
+    tide_grid_size(m->box, size);
+    good = good && size[0] == 2 && size[1] == 2 && size[2] == 1;
+    for (int32_t y = 0; y < 2; y++) for (int32_t x = 0; x < 2; x++)
+        good = good && volume_cell(m->box, &tide_shape_Grid3_float, x, y, 0, &(float){(float)(x + 1 + 10 * y + 100)});
+    check(good, "a Texture3D's cells are read as its format's type, whole and a box of them");
+    // 0.1 isn't a multiple of 2^-24: reversed float storage keeps 1 - 0.1 to its float, and the read's 1 - that is
+    // within 2^-24 of 0.1, exactly what float arithmetic gives; 24 bits keep it to their nearest step
+    const volatile float tenth = 0.1f, one = 1.0f;
+    const float stored = one - tenth, back = one - stored;
+    good = sized(m->tenth, 2, 2);
+    for (int32_t y = 0; good && y < 2; y++) for (int32_t x = 0; good && x < 2; x++) {
+        const float *d = tide_grid_peek(m->tenth, x, y, 0, &tide_shape_Grid2_float);
+        good = d && fabsf(*d - 0.1f) <= 1.0f / 16777215.0f;
+#ifdef _WIN32
+        if (!getenv("TIDE_TEST_DEPTH_FALLBACK")) good = good && *d == back; // Float storage, as above
+#endif
+    }
+    (void)back;
+    check(good, "a written depth of 0.1 comes back within 2^-24, as 1 - (1 - 0.1) is in floats");
+}
+
+// The target read on its way back, if one is
+static bool target_read_begun(void)
+{
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        const tide_gpu_read_request *r = &tide_gpu_read_requests()[i];
+        if (r->target.id && r->state == TIDE_GPU_READ_BEGUN) return true;
+    }
+    return false;
+}
+
 static int frame(void *user, float seconds)
 {
     (void)user; (void)seconds;
+    static int phase; // 0 the first reads, 1 the reads past them, 2 a device lost, 3 the reads on the next device
+    static int waited;
+#ifndef __wasm__
+    static uint32_t lost_epoch; // Vulkan's device's, as it was lost
+#endif
+    static bool lost;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(32, 32), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     uint32_t pixel;
     tide_platform_read_pixels_as(&list, 32, 32, 1, &(tide_float2){0,0}, 1, &pixel);
-    if (local.CopyResult.done) {
+    if (++waited > 600) { printf("FAIL: phase %d of the reads did not complete\n", phase); return 1; }
+    if (phase == 0 && local.CopyResult.done) {
         check_reads();
+        phase = 1, waited = 0;
+    }
+    if (phase == 1 && local.MoreResult.done) {
+        check_more();
+        phase = 2, waited = 0;
+        local.MoreState.lose = true;
+    }
+    if (phase == 2) {
+        if (!lost && target_read_begun()) {
+            // The device goes while the read is on its way back (as a driver that starts over, or a GPU switched)
+#ifdef __wasm__
+            if (strcmp(tide_platform_renderer(), "WebGPU") == 0) tide_web_eval("Tide.loseDevice()");
+#else
+            if (strcmp(tide_platform_renderer(), "Vulkan") == 0) lost_epoch = tide_gpu_vulkan.epoch(), tide_gpu_vk_lose();
+#endif
+            lost = true;
+        }
+        if (local.MoreResult.lostDone) {
+            const bool losable = strcmp(tide_platform_renderer(), "Vulkan") == 0 || strcmp(tide_platform_renderer(), "WebGPU") == 0;
+            check(lost == losable && (!lost || local.MoreResult.lostFailed), "a read the device lost on its way back fails");
+            phase = 3, waited = 0;
+        }
+    }
+    if (phase == 3) {
+        // ...once there's another device
+#ifdef __wasm__
+        if (!local.MoreState.again && strcmp(tide_platform_renderer(), "WebGPU") == 0 && !tide_web_eval("Tide.gpuDevices() > 1"))
+            return TIDE_KEEP_RUNNING;
+#else
+        if (!local.MoreState.again && strcmp(tide_platform_renderer(), "Vulkan") == 0 && tide_gpu_vulkan.epoch() == lost_epoch)
+            return TIDE_KEEP_RUNNING;
+#endif
+        local.MoreState.again = true;
+        if (!local.MoreResult.againDone) return TIDE_KEEP_RUNNING;
+        const MoreResult *m = &local.MoreResult;
+        bool good = !m->failed && sized(m->again, 4, 2) && sized(m->againColor, 10, 10);
+        for (int32_t y = 0; good && y < 2; y++) for (int32_t x = 0; good && x < 4; x++)
+            good = cell_is(m->again, &tide_shape_Grid2_int, x, y, &(int32_t){x == 1 && y == 0 ? 16777217 : -2147483647});
+        good = good && bytes_are(m->againColor, 0, 0, 1, 1, 1, 1) && bytes_are(m->againColor, 9, 9, 1, 1, 1, 1);
+        check(good, "reads on the next device give what it drew, exactly");
         printf("renderer: %s\n", tide_platform_renderer());
         return failures ? 1 : 0;
     }
-    if (local.CopyState.frame > 400) { puts("FAIL: target.Read did not complete"); failures = 1; return 1; }
     return TIDE_KEEP_RUNNING;
 }
 int main(void)
