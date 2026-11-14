@@ -37,6 +37,17 @@ inverts the directory's hash to make 200 places that share a slot (read) and 300
 sit side by side in the table, each near its own slot, which make a later lookup of a place with no chunk walk them all
 (spec, Grids, Open): the game's code reading the grid, not FromBytes, pays that.
 
+**Chunk counts past 64 bits** (found by the review, 2026-11-14, and older than FromBytes): `dir_head` multiplied a sized
+grid's chunks along its three axes in `uint64_t`, which wraps. 252,871 x 1,179,713 x 61,836,419 chunks (sizes 4,045,936 x
+18,875,408 x 989,382,704, each under `INT32_MAX`) is 2^64 + 21, so the grid listed its chunks by place in a table of 21
+slots and its first chunk's index wrote a megabyte past it: from plain Tide code (`Grid3(...)`, then a cell set), and with
+FromBytes from 23 bytes anyone could send. Now every such product saturates (`sat_mul`, `sat_add` in grid.c): `dir_head`,
+FromBytes' bound on the chunk count, a parallel loop's tiles (`around`, and the lists made for `records * around` and
+`count * around`, which `places_room` then refuses past `UINT32_MAX` as it did) and its window of chunks (a signed
+product that could overflow), and `block_reach` adds in 64 bits (a block of `INT32_MAX` cells overflowed an `int`).
+`grid_bytes_sizes_whose_chunks_pass_64_bits` (tide_tests) reads those bytes and checks the grid isn't flat (it fails
+without the fix, in release), and `tidec_safety_grid_bytes` sets and reads such a grid in the world (`wraps`).
+
 ## Numeric image sizes and clear payloads (2026-11-14)
 
 Managed target numeric formats occupy unused legacy 16-bit tags; pointers and old adoption/reload values

@@ -5,6 +5,7 @@
 // expect: tide: Grid3.FromBytes refused bytes: they have 65,537 chunks, 268,439,552 bytes of cells, more than the 268,435,456 it makes (TIDE_GRID_BYTES_MOST)
 // expect: most refused
 // expect: kept Dirt
+// expect: wraps 1 1 4045936
 // ticks: 3
 
 // Grids as bytes (docs/spec.md, Grids): bytes anyone could have sent read into the world's fields, every tick, under
@@ -30,6 +31,9 @@ singleton Field
     Grid3<Block> chunk = Grid3(16, 16, 16);
     Grid2<int> open;
     Grid2<int> huge = Grid2(2000000000, 2000000000);
+    // Chunks along its axes whose product passes 64 bits: 252,871 x 1,179,713 x 61,836,419 is 2^64 + 21, which a
+    // grid once took for 21 and listed its chunks by place in a table of 21
+    Grid3<Block> wraps = Grid3(4045936, 18875408, 989382704);
     Grid3<Cell> cells = Grid3(4, 4, 4);
     List<byte> kept;
     int most = 2147483647;
@@ -122,5 +126,11 @@ system Run(mut Field f)
         Grid3<Cell> repaired = Grid3<Cell>.FromBytes(bad)!;
         var c = repaired[0, 0, 0];
         if (c.heat == 0 && !c.lit && c.block == Block.Air && repaired.size.x == 1) Debug.Log($"kept {f.chunk[2, 0, 0]}");
+        // ...set in the world, and from 23 bytes anyone could send: a chunk at (0, 1, 0)
+        f.wraps[0, 16, 0] = Block.Stone;
+        List<byte> sent = [0x47, 0x13, 1, 0xF0, 0xF8, 0xF6, 0x01, 0x90, 0x88, 0x80, 0x09, 0xB0, 0x90, 0xE3, 0xD7, 0x03, 1, 0, 2, 0, 0xFF, 0x3F, 1];
+        Grid3<Block> read = Grid3<Block>.FromBytes(sent)!;
+        f.wraps = Grid3<Block>.FromBytes(f.wraps.ToBytes())!;
+        Debug.Log($"wraps {int(read[0, 16, 0])} {int(f.wraps[0, 16, 0])} {read.size.x}");
     }
 }

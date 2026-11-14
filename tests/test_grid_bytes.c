@@ -382,6 +382,39 @@ TIDE_TEST(grid_bytes_places_chosen_to_collide)
 
 // Bytes saying more chunks than they could hold are refused before anything is made; so are more than
 // TIDE_GRID_BYTES_MOST would take, which the log names
+// A sized grid whose chunks along its axes multiply past 64 bits (252,871 x 1,179,713 x 61,836,419 is 2^64 + 21) is
+// one whose chunks are found by their places' hash, not a table of 21 its chunk's index is a million past
+TIDE_TEST(grid_bytes_sizes_whose_chunks_pass_64_bits)
+{
+    const uint64_t mark = tide_scratch_mark();
+    uint8_t bytes[32];
+    size_t n = 0;
+    bytes[n++] = 0x47;
+    bytes[n++] = 0x13;
+    n += put_varint(bytes + n, 1);
+    n += put_varint(bytes + n, 4045936);
+    n += put_varint(bytes + n, 18875408);
+    n += put_varint(bytes + n, 989382704);
+    n += put_varint(bytes + n, 1);
+    bytes[n++] = 0; // The chunk at (0, 1, 0)
+    bytes[n++] = 2;
+    bytes[n++] = 0;
+    bytes[n++] = 0xFF; // Its 4,096 cells, all 1
+    bytes[n++] = 0x3F;
+    bytes[n++] = 1;
+    bool canonical;
+    TIDE_CHECK(reads(bytes, n, &bytes3, NULL, &canonical) && canonical);
+    tide_grid g;
+    TIDE_REQUIRE(tide_grid_from_memory(bytes, n, &bytes3, NULL, &g));
+    const tide_grid_dir *d = tide_grid_dir_of(g);
+    TIDE_REQUIRE(d);
+    TIDE_CHECK(!d->flat && d->records == 1);
+    TIDE_CHECK(get_byte(g, 0, 16, 0) == 1 && get_byte(g, 15, 31, 15) == 1 && get_byte(g, 0, 0, 0) == 0);
+    set_byte(&g, 4045935, 18875407, 989382703, 7); // The last cell: another chunk, found by its place
+    TIDE_CHECK(get_byte(g, 4045935, 18875407, 989382703) == 7 && get_byte(g, 0, 16, 0) == 1);
+    tide_scratch_reset(mark);
+}
+
 TIDE_TEST(grid_bytes_counts_past_what_they_hold)
 {
     const uint64_t mark = tide_scratch_mark();

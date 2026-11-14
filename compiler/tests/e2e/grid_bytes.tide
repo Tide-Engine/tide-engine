@@ -6,6 +6,8 @@
 
 asset Grid2<Color> hero = "assets/hero.png";
 
+using Blocks = Grid3<Block>; // FromBytes through an alias of the grid's type
+
 enum Block : byte
 {
     Air,
@@ -269,6 +271,8 @@ system Check(mut Results results, mut Kept kept, Time time)
     Expect(t, SameBytes(kept.blocks.ToBytes(), kept.dense));
     Grid3<Block> loaded = Load(kept.dense) ?? Grid3(1, 1, 1);
     Expect(t, SameBlocks(dense, loaded));
+    Grid3<Block> aliased = Blocks.FromBytes(kept.dense) ?? Grid3(1, 1, 1);
+    Expect(t, SameBlocks(dense, aliased));
     mut var bound = 0;
     if (Grid3<Block>.FromBytes(kept.dense) is Grid3<Block> got) bound = int(got[1, 2, 3]);
     Expect(t, bound == int(Pattern(1, 2, 3)));

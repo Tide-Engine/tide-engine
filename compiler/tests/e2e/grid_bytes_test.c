@@ -45,8 +45,8 @@ TIDE_TEST(grid_bytes_all_checks_pass)
 {
     start();
     const Tally *t = &world.Results.tally;
-    if (t->firstFailure || t->checks != 45) printf("    %d checks, check %d failed\n", (int)t->checks, (int)t->firstFailure);
-    TIDE_CHECK(t->checks == 45);
+    if (t->firstFailure || t->checks != 46) printf("    %d checks, check %d failed\n", (int)t->checks, (int)t->firstFailure);
+    TIDE_CHECK(t->checks == 46);
     TIDE_CHECK(t->passed == t->checks);
     TIDE_CHECK(tide_scratch_mark() == 0); // What the calls made was the scratch area's, gone with the system
     tide_world_free(&world);

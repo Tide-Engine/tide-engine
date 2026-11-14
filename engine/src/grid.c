@@ -38,6 +38,19 @@ static uint32_t dir_bytes(const uint32_t room, const uint32_t slots)
     return (uint32_t)(sizeof(tide_grid_dir) + room * sizeof(tide_grid_record) + slots * sizeof(uint32_t));
 }
 
+// Products and sums of counts that can pass what 64 bits hold (three axes of up to 2^31 cells, chunks or
+// blocks), saturated: a count that big is refused or taken as too many where it's used, never wrapped to a
+// small one that a table or a list is then made for
+static uint64_t sat_mul(const uint64_t a, const uint64_t b)
+{
+    return a && b > UINT64_MAX / a ? UINT64_MAX : a * b;
+}
+
+static uint64_t sat_add(const uint64_t a, const uint64_t b)
+{
+    return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
+
 static int32_t chunks_along(const int32_t size, const uint32_t shift)
 {
     return (int32_t)(((uint32_t)size + (1u << shift) - 1u) >> shift);
@@ -50,7 +63,7 @@ static tide_grid_dir dir_head(const int32_t size[3], const tide_grid_shape *s)
     const bool sized = size[0] > 0 && size[1] > 0 && (s->dims == 2 || size[2] > 0);
     if (sized) {
         for (uint32_t i = 0; i < s->dims; i++) head.chunks[i] = chunks_along(size[i], s->shift[i]);
-        const uint64_t total = (uint64_t)head.chunks[0] * (uint64_t)head.chunks[1] * (uint64_t)head.chunks[2];
+        const uint64_t total = sat_mul(sat_mul((uint64_t)head.chunks[0], (uint64_t)head.chunks[1]), (uint64_t)head.chunks[2]);
         if (total <= FLAT_MOST) {
             head.flat = 1;
             head.slots = (uint32_t)total;
@@ -416,7 +429,7 @@ static uint32_t order_places(int32_t *places, const uint32_t count)
 // blocks that get into it.
 static int32_t block_reach(const int32_t side, const int32_t block)
 {
-    return (side + block - 2) / side;
+    return (int32_t)(((int64_t)side + block - 2) / side); // A block of up to INT32_MAX cells: no int's overflow
 }
 
 // The blocks that start in the tile at chunk place `t` along axis `a`, within
@@ -483,7 +496,7 @@ void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, co
     // Its tiles: every chunk place that sized blocks start in, or with an
     // open axis, the places of chunks the grid has and of those before them
     // whose blocks get into them
-    const uint64_t around = (uint64_t)(reach[0] + 1) * (uint64_t)(reach[1] + 1) * (uint64_t)(reach[2] + 1);
+    const uint64_t around = sat_mul(sat_mul((uint64_t)reach[0] + 1u, (uint64_t)reach[1] + 1u), (uint64_t)reach[2] + 1u);
     uint32_t count = 0;
     if (!l->open) {
         int64_t first[3], last[3];
@@ -506,7 +519,7 @@ void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, co
             }
         }
     } else {
-        l->tiles = places_room((uint64_t)d->records * around + 1u);
+        l->tiles = places_room(sat_add(sat_mul(d->records, around), 1u));
         for (uint32_t i = 0; i < d->records; i++) {
             const int32_t *c = tide_grid_records(d)[i].chunk;
             for (int32_t dz = 0; dz <= reach[2]; dz++) {
@@ -532,7 +545,7 @@ void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, co
 
     // The chunks its blocks can write in: each tile's, and those its reach
     // gets into, as far as the loop's last cells go
-    l->chunk = places_room((uint64_t)count * around + 1u);
+    l->chunk = places_room(sat_add(sat_mul(count, around), 1u));
     uint32_t chunks = 0;
     for (uint32_t i = 0; i < count; i++) {
         const int32_t *t = &l->tiles[3u * i];
@@ -709,14 +722,14 @@ typedef struct window_chunks {
 static void window_chunks_find(const tide_par_loop *l, window_chunks *w, const int32_t lo[3], const uint32_t extent[3])
 {
     const tide_grid_shape *s = l->shape;
-    int64_t total = 1;
+    uint64_t total = 1;
     bool wraps = false; // A window past the ints' edge has cells from both ends of them: each chunk is looked up as it comes
     for (uint32_t a = 0; a < 3; a++) {
         const int64_t hi = (int64_t)lo[a] + extent[a] - 1;
         wraps |= hi > INT32_MAX;
         w->first[a] = lo[a] >> s->shift[a];
         w->count[a] = wraps ? 1 : (int32_t)(hi >> s->shift[a]) - w->first[a] + 1;
-        total *= w->count[a];
+        total = sat_mul(total, (uint64_t)w->count[a]); // Three axes of 2^28 chunks pass 64 bits
     }
     w->listed = !wraps && total <= WINDOW_CHUNKS;
     for (int32_t i = 0; w->listed && i < (int32_t)total; i++) {
@@ -1492,7 +1505,8 @@ static bool from_bytes(bytes_in *r, const tide_grid_shape *s, const tide_grid_re
     const uint64_t least = s->dims + 1u + (uint64_t)cell;
     if ((uint64_t)count > (uint64_t)(r->end - r->at) / least) return false;
     const bool sized = chunks_along_axis[0] && chunks_along_axis[1] && (s->dims == 2 || chunks_along_axis[2]);
-    if (sized && (uint64_t)count > (uint64_t)chunks_along_axis[0] * (uint64_t)chunks_along_axis[1] * (uint64_t)chunks_along_axis[2]) {
+    if (sized && (uint64_t)count > sat_mul(sat_mul((uint64_t)chunks_along_axis[0], (uint64_t)chunks_along_axis[1]),
+                                           (uint64_t)chunks_along_axis[2])) {
         return false;
     }
     const uint32_t chunk_bytes = tide_grid_chunk_bytes(s);

@@ -189,6 +189,12 @@ grid`, `tidec_e2e_grid_bytes`, `tidec_safety_grid_bytes`, `tidec_safety_grid_val
 `bench_voxels`, `bench_voxels_checked`. Web and the docs site's build weren't run here: the e2e's hash is meant to be the
 web's too.
 
+**After its review** (merged into t3/minecraft-scale-world-readiness): a sized grid's chunk counts could multiply past 64
+bits and wrap (notes/memory-safety.md, Chunk counts past 64 bits), now saturated; the alias form
+(`using Blocks = Grid3<Block>; Blocks.FromBytes(bytes)`) has a check in `tidec_e2e_grid_bytes` (46 now); the spec names
+`LocalEntity` cells beside `Entity`, and says that bytes `ToBytes` wrote of an open grid filled at places chosen to collide
+can be refused when read back, as a world's own grid doesn't limit its probes.
+
 **Gaps.** Bytes of another chunk geometry aren't read (a future format would say so), and the bytes don't name the cell's
 type, only its size. A field given what FromBytes made copies it from the scratch area (a read straight into a world's heap
 would save that). An open grid's hashed directory is slow for places chosen to collide (spec, Grids, Open).
