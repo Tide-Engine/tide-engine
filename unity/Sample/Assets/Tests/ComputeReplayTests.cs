@@ -32,7 +32,7 @@ public sealed unsafe class ComputeReplayTests
         Dispatch, DispatchIndirect, DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount,
         Target = 12, Image = 21, Draw = 24, Sampler = 37, Volume = 44, VolumeWrite, PipelineImages,
         Texture = 4, Mipmaps = 6, Cube = 8, CubeFace = 9, Array = 38, ArrayLayer = 39,
-        ArrayOf = 40, TextureBlocks = 42, ArrayBlocks = 43,
+        ArrayOf = 40, TextureBlocks = 42, ArrayBlocks = 43, DepthBias = 47,
     }
 
     // tide_embed_render's commands: an op, its byte count, its words
@@ -66,6 +66,13 @@ public sealed unsafe class ComputeReplayTests
         public void Draws(uint id, ulong key, uint uniforms, uint storage)
         {
             Pipeline(id, key, uniforms, 3);
+            Add(Op.PipelineStorage, id, 0, storage, 0);
+        }
+
+        // ...with depth tested and written (tide_gpu_depth 1)
+        public void DepthDraws(uint id, ulong key, uint uniforms, uint storage)
+        {
+            Pipeline(id, key, uniforms, 3, null, false, 1);
             Add(Op.PipelineStorage, id, 0, storage, 0);
         }
 
@@ -1041,6 +1048,20 @@ public sealed unsafe class ComputeReplayTests
     {
         var c = ImageObjects(0, 2);
         ImageQuad(c, 10, 0, 0, 64, 64, 0, 0, 0, -1, new Color(1, 0.25f, 0.125f, 0.5f));
+        // Two corners of other colors, so rows read from the wrong end fail. Green over the top left by its corners
+        // alone (clip space, y up: the triangle (0, 0), (32, 0), (0, 32) in pixels from the top left), and blue in
+        // the bottom right 16 by 16 by a clip rect, whose rows count from the top as the image's do
+        c.Buffer(5, 24, new[] { Bits(-1), Bits(1), Bits(0), Bits(1), Bits(-1), Bits(0) });
+        c.Buffer(6, 16, new uint[] { 0xff00ff00, 0, 0, 0 });
+        c.Draws(33, Shape, 16, 2);
+        c.Add(Op.Begin, 10, 0);
+        c.Add(Op.Use, 33);
+        c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+        c.Add(Op.Storage, 0, 5);
+        c.Add(Op.Storage, 1, 6);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.End);
+        ImageQuad(c, 10, 48, 48, 16, 16, 0, 0, 0, -1, new Color(0, 0, 0.5f, 0.5f));
         const int count = 64 * 64;
         var words = new uint[4 + count * 4]; words[0] = words[1] = count;
         c.Buffer(1, (uint)words.Length * 4, words);
@@ -1057,7 +1078,124 @@ public sealed unsafe class ComputeReplayTests
         yield return Answers(1);
         Assert.AreEqual(count * 4, answers[1].Length);
         var wanted = new uint[] { Bits(2), Bits(0.5f), Bits(0.25f), Bits(0.5f) };
-        for (var i = 0; i < count * 4; i++) Assert.AreEqual(wanted[i % 4], answers[1][i], "pixel word " + i);
+        var green = new uint[] { Bits(0), Bits(1), Bits(0), Bits(1) };
+        var blue = new uint[] { Bits(0), Bits(0), Bits(1), Bits(0.5f) };
+        var greens = 0;
+        for (var i = 0; i < count; i++)
+        {
+            // Pixel i is column i % 64 of row i / 64, rows from the top
+            int x = i % 64, y = i / 64;
+            if (Math.Abs(x + y - 31) <= 1) continue; // The triangle's slanted edge, either side by the rasterizer
+            var color = x + y < 31 ? green : x >= 48 && y >= 48 ? blue : wanted;
+            if (color == green) greens++;
+            for (var k = 0; k < 4; k++) Assert.AreEqual(color[k], answers[1][i * 4 + k], $"pixel ({x}, {y}) from the top left, word {k}");
+        }
+        Assert.Greater(greens, 400, "the top left corner's pixels");
+    }
+
+    // A clip rect's rows count from the top, in the camera's own pass as in a target's (the pixel read above): red
+    // in the camera's top quarter alone, and the target's top quarter (green) shown over the camera's lower half.
+    [UnityTest]
+    public IEnumerator ClipRectsCountRowsFromTheTop()
+    {
+        var camera = new GameObject("Tide clip camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = ImageObjects();
+            ImageQuad(c, 10, 0, 0, 64, 64, 0, 0, 0, -1, Color.blue);
+            ImageQuad(c, 10, 0, 0, 64, 16, 0, 0, 0, -1, Color.green);
+            ImageQuad(c, 0, 0, 0, 64, 16, 0, 0, 0, -1, Color.red);
+            ImageQuad(c, 0, 0, 32, 32, 32, 0.5f, 0.125f, 0, 0, Color.black, 0); // The target's top quarter...
+            ImageQuad(c, 0, 32, 32, 32, 32, 0.5f, 0.875f, 0, 0, Color.black, 0); // ...and its lowest
+            Replay(c, camera);
+            pixels = Pixels(camera, target);
+            // Unity's pixels count rows from the bottom
+            Assert.AreEqual(new Color32(255, 0, 0, 255), (Color32)pixels.GetPixel(32, 56), "the camera's top rows are clipped to");
+            Assert.AreEqual(new Color32(0, 0, 0, 255), (Color32)pixels.GetPixel(32, 40), "and no others");
+            Assert.AreEqual(new Color32(0, 255, 0, 255), (Color32)pixels.GetPixel(16, 16), "a target's top rows are clipped to");
+            Assert.AreEqual(new Color32(0, 0, 255, 255), (Color32)pixels.GetPixel(48, 16), "and no others");
+            yield return null;
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
+    }
+
+    // A depth bias in Unity's own depth convention (Draw.DepthBias: positive pushes away from the camera, negative
+    // pulls nearer, whichever way the device stores depth). Four columns of two draws each on one plane, depth tested
+    // and written, the first red and the second green; with no bias the second passes, its depth being equal.
+    [UnityTest]
+    public IEnumerator DepthBiasPushesAwayWherePositive()
+    {
+        var camera = new GameObject("Tide depth bias camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        Texture2D pixels = null;
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            const uint red = 0xff0000ff, green = 0xff00ff00;
+            // The first draw's bias and the second's, a column each
+            var biases = new[] { (0f, 8f), (0f, -8f), (-8f, 0f), (0f, 0f) };
+            foreach (var own in new[] { false, true }) // In a target's pass, which runs as it's read, and in the camera's own
+            {
+                var c = own ? new Commands() : ImageObjects(); // The second frame goes on with the first's objects
+                if (!own)
+                {
+                    c.Buffer(1, 24, new[] { Bits(-1), Bits(-1), Bits(3), Bits(-1), Bits(-1), Bits(3) }); // A triangle over everything
+                    c.Buffer(2, 16, new[] { red, green, 0u, 0u });
+                    c.DepthDraws(5, Shape, 16, 2);
+                }
+                c.Add(Op.Begin, own ? 0u : 10u, own ? 0u : 1u);
+                for (var column = 0u; column < 4; column++)
+                {
+                    c.Add(Op.Scissor, column * 16, 0, 16, 64);
+                    c.Add(Op.Use, 5);
+                    c.Add(Op.Storage, 0, 1);
+                    c.Add(Op.Storage, 1, 2);
+                    for (var draw = 0; draw < 2; draw++)
+                    {
+                        c.Add(Op.Uniforms, 16, Bits(draw), 0, 0, 0);
+                        c.Add(Op.DepthBias, Bits(draw == 0 ? biases[column].Item1 : biases[column].Item2), Bits(0));
+                        c.Add(Op.Draw, 0, 3, 1);
+                    }
+                }
+                c.Add(Op.End);
+                if (!own)
+                {
+                    for (var column = 0u; column < 4; column++)
+                        ImageQuad(c, 0, column * 16, 0, 16, 64, (column * 16 + 8) / 64f, 0.5f, 0, 0, Color.black, 0);
+                }
+                Replay(c, camera);
+                if (pixels != null) UnityEngine.Object.Destroy(pixels);
+                pixels = Pixels(camera, target);
+                var where = own ? " in the camera's own pass" : " in a target's pass";
+                Assert.AreEqual(new Color32(255, 0, 0, 255), (Color32)pixels.GetPixel(8, 32), "a draw pushed away loses to the one there" + where);
+                Assert.AreEqual(new Color32(0, 255, 0, 255), (Color32)pixels.GetPixel(24, 32), "a draw pulled nearer wins" + where);
+                Assert.AreEqual(new Color32(255, 0, 0, 255), (Color32)pixels.GetPixel(40, 32), "a draw pulled nearer stays under a later one with none" + where);
+                Assert.AreEqual(new Color32(0, 255, 0, 255), (Color32)pixels.GetPixel(56, 32), "with no bias the later draw of one depth passes" + where);
+                yield return null;
+            }
+        }
+        finally
+        {
+            if (pixels != null) UnityEngine.Object.Destroy(pixels);
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
     }
 
 }
