@@ -127,7 +127,7 @@ public class TypeBoundaryTests
         try
         {
             var modules = Directory.GetFiles(Path.Combine(EditorApplication.applicationContentsPath, "Managed", "UnityEngine"), "UnityEngine*.dll");
-            var references = modules.Append(typeof(Tide.TideComponent).Assembly.Location).ToArray();
+            var references = modules.Append(typeof(Tide.TideComponent).Assembly.GetLoadedAssemblyPath()).ToArray();
             var messages = Compile(sources, folder + "/Game.dll", $"/unsafe /doc:\"{folder}/Game.xml\"", references);
             Assert.IsFalse(messages.Any(m => m.type == CompilerMessageType.Error), string.Join("\n", messages.Select(m => m.message).Take(10)));
             var xml = File.ReadAllText(folder + "/Game.xml");
@@ -152,7 +152,7 @@ public class TypeBoundaryTests
     static CompilerMessage[] CompileApart(string source, string folder)
     {
         return Compile(new[] { source }, folder + "/Probe.dll", "",
-                       typeof(MonoBehaviour).Assembly.Location, typeof(Tide.TideComponent).Assembly.Location, typeof(Tide.Game.Ball).Assembly.Location);
+                       typeof(MonoBehaviour).Assembly.GetLoadedAssemblyPath(), typeof(Tide.TideComponent).Assembly.GetLoadedAssemblyPath(), typeof(Tide.Game.Ball).Assembly.GetLoadedAssemblyPath());
     }
 
     static CompilerMessage[] Compile(string[] sources, string assembly, string options, params string[] references)

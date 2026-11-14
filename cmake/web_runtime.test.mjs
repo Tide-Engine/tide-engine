@@ -103,6 +103,8 @@ test('WebGPU shares exact shader sources across live pipelines and releases them
         checkShader() { checked++; },
     });
     vm.runInContext(`
+        let reversed = true;
+        const reversedDepth = () => reversed;
         const shaderModules = new Map(), gpuTables = { pipeline: [null] };
         function gpuRemove(kind, id) { gpuTables[kind][id] = null; }
         ${source.slice(begin, end)}
@@ -126,6 +128,22 @@ test('WebGPU shares exact shader sources across live pipelines and releases them
     step('shaderModules.clear();'); // deviceLost clears this device-owned cache
     step("make('same WGSL');");
     assert.equal(made, 5, 'a replacement device gets its own module');
+    step("make('const tide_reversed_depth = true;');");
+    assert.equal(step('gpuTables.pipeline.at(-1).shader.code'), 'const tide_reversed_depth = true;');
+    step("reversed = false; shaderModules.clear(); make('const tide_reversed_depth = true;');");
+    assert.equal(step('gpuTables.pipeline.at(-1).shader.code'), 'const tide_reversed_depth = false;',
+        'a fallback replacement device compiles forward shaders');
+});
+
+test('WebGPU requests float depth whenever an adapter offers it, including forced fallback tests', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('            const optional = adapter =>');
+    const end = source.indexOf('            const requiredFeatures', begin);
+    assert.ok(begin >= 0 && end > begin);
+    const context = vm.createContext({ config: { depthFallback: true } });
+    vm.runInContext(source.slice(begin, end), context);
+    assert.equal(vm.runInContext("optional({features: new Set(['depth32float-stencil8'])}).includes('depth32float-stencil8')", context), true);
+    assert.equal(vm.runInContext("optional({features: new Set()}).includes('depth32float-stencil8')", context), false);
 });
 
 test('web loader reports shader counts without repeating unchanged progress', async () => {

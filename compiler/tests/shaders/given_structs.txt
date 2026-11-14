@@ -1,4 +1,7 @@
 // Play and Lit on Boned: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -216,7 +219,7 @@ fn ts_Lit(t_corner: tt_Boned, t_color: ptr<function, vec4f>) {
     let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
     let tide_clip = tide_projected;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     return out;
 }
 @fragment fn fragment(in: tide_corner) -> @location(0) vec4f {

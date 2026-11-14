@@ -1,4 +1,7 @@
 // CapacityReserve and CapacityKinds on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -63,8 +66,8 @@ fn tide_list8(tide_i: i32) -> i32 {
 
 fn ts_CapacityKinds(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var t_number: f32 = f32(tide_list8(0));
-    var t_depth: f32 = textureSampleLevel(pixels9, sampler8, t_vertex.m_uv, 0);
-    var t_compared: f32 = textureSampleCompareLevel(pixels9, sampler9, t_vertex.m_uv, clamp(0.5, 0.0, 1.0));
+    var t_depth: f32 = tide_depth(textureSampleLevel(pixels9, sampler8, t_vertex.m_uv, 0));
+    var t_compared: f32 = textureSampleCompareLevel(pixels9, sampler9, t_vertex.m_uv, tide_depth(clamp(0.5, 0.0, 1.0)));
     var t_cube: vec4f = tide_straight(textureSampleLevel(pixels10, sampler10, vec3f(1.0, 0.0, 0.0), 0.0));
     (*t_color) = select(vec4f(1.0, 0.0, 0.0, 1.0), vec4f(0.0, 1.0, 0.0, 1.0), (((((t_number == 7.0) && (t_depth > 0.99)) && (t_compared > 0.99)) && (t_cube.r > 0.99)) && (t_cube.g < 0.01)));
 }
@@ -75,7 +78,7 @@ fn ts_CapacityKinds(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
     let tide_clip = tide_block.tide_camera * tide_place;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }
@@ -92,6 +95,9 @@ fn ts_CapacityKinds(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 }
 
 // CapacitySixteen on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -148,8 +154,8 @@ fn tide_list0(tide_i: i32) -> i32 {
 fn ts_CapacitySixteen(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var t_sum: f32 = ((((((((((((tide_straight(textureSampleLevel(pixels1, sampler0, t_vertex.m_uv, 0.0)).r * tide_straight(textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels2, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels3, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels4, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels5, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels6, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels7, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels8, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels9, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels10, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels11, sampler0, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels12, sampler0, t_vertex.m_uv, 0.0)).r);
     var t_number: f32 = f32(tide_list0(0));
-    var t_depth: f32 = textureSampleLevel(pixels13, sampler2, t_vertex.m_uv, 0);
-    var t_compared: f32 = textureSampleCompareLevel(pixels13, sampler3, t_vertex.m_uv, clamp(0.5, 0.0, 1.0));
+    var t_depth: f32 = tide_depth(textureSampleLevel(pixels13, sampler2, t_vertex.m_uv, 0));
+    var t_compared: f32 = textureSampleCompareLevel(pixels13, sampler3, t_vertex.m_uv, tide_depth(clamp(0.5, 0.0, 1.0)));
     var t_cube: vec4f = tide_straight(textureSampleLevel(pixels14, sampler4, vec3f(1.0, 0.0, 0.0), 0.0));
     (*t_color) = select(vec4f(1.0, 0.0, 0.0, 1.0), vec4f(0.0, 1.0, 0.0, 1.0), (((((t_sum > 11.5) && (t_number == 7.0)) && (t_depth > 0.99)) && (t_compared > 0.99)) && (t_cube.r > 0.99)));
 }
@@ -159,7 +165,7 @@ fn ts_CapacitySixteen(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
     let tide_clip = tide_block.tide_camera * tide_place;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }
@@ -176,6 +182,9 @@ fn ts_CapacitySixteen(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 }
 
 // CapacityWays on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -213,7 +222,7 @@ fn ts_CapacityWays(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_dy0: vec2f = dpdy(tide_uv0);
     var t_said: f32 = ((tide_straight(textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0)).r + tide_straight(textureSampleLevel(pixels0, sampler1, t_vertex.m_uv, 0.0)).r) + tide_straight(textureSampleLevel(pixels0, sampler2, t_vertex.m_uv, 0.0)).r);
     var t_carried: f32 = (tide_straight(textureSampleGrad(pixels1, sampler3, t_vertex.m_uv, tide_dx0, tide_dy0)).r + tide_straight(textureSampleLevel(pixels1, sampler4, t_vertex.m_uv, 0.0)).r);
-    var t_depth: f32 = (textureSampleLevel(pixels2, sampler5, t_vertex.m_uv, 0) + textureSampleCompareLevel(pixels2, sampler6, t_vertex.m_uv, clamp(0.5, 0.0, 1.0)));
+    var t_depth: f32 = (tide_depth(textureSampleLevel(pixels2, sampler5, t_vertex.m_uv, 0)) + textureSampleCompareLevel(pixels2, sampler6, t_vertex.m_uv, tide_depth(clamp(0.5, 0.0, 1.0))));
     (*t_color) = select(vec4f(1.0, 0.0, 0.0, 1.0), vec4f(0.0, 1.0, 0.0, 1.0), (((t_said > 2.5) && (t_carried > 1.5)) && (t_depth > 1.99)));
 }
 
@@ -222,7 +231,7 @@ fn ts_CapacityWays(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
     let tide_clip = tide_block.tide_camera * tide_place;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }
@@ -239,6 +248,9 @@ fn ts_CapacityWays(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 }
 
 // CapacitySkin on Vertex3: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -349,7 +361,7 @@ fn ts_CapacitySkin(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {
     let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
     let tide_clip = tide_projected;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }
@@ -366,6 +378,9 @@ fn ts_CapacitySkin(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {
 }
 
 // CapacityFixed on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -434,7 +449,7 @@ fn ts_CapacityFixed(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
     let tide_clip = tide_block.tide_camera * tide_place;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }
@@ -451,6 +466,9 @@ fn ts_CapacityFixed(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 }
 
 // CapacityTwelve on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -529,7 +547,7 @@ fn ts_CapacityTwelve(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
     let tide_clip = tide_block.tide_camera * tide_place;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }
@@ -546,6 +564,9 @@ fn ts_CapacityTwelve(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 }
 
 // CapacityOne on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -583,7 +604,7 @@ fn ts_CapacityOne(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
     let tide_clip = tide_block.tide_camera * tide_place;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }

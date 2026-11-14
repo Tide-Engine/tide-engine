@@ -71,6 +71,8 @@ static void write_kernel(program *prog, shader *sh)
     const decl *k = sh->kernel;
     const int group = kernel_group(k);
     sb o = {0};
+    sb_put(&o, "const tide_reversed_depth = true;\n"
+               "fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }\n");
     put_kernel_uniforms(sh, &o);
     put_textures(&o, sh); // As put_uniforms writes a frag's
     int adds = 0;

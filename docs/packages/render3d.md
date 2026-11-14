@@ -280,6 +280,9 @@ Each frame, the renderer keeps up to `maxLights` lights in descending `priority`
 
 ## Shadows
 
+Shadow depth reads and comparison references remain forward (0 near, 1 far), including shadow bias. The renderer converts these at its depth-storage boundary; reversed float storage needs no change to the package's shadow formulas.
+
+
 Directional lights follow the camera by default. `shadowCascades = 4` divides the visible depth range into four overlapping slices, with finer shadow detail near the camera. `shadowRange = 40` is the farthest camera-forward distance receiving these shadows, limited by `camera.far`. Set it to the distance your game needs: a smaller range gives the same texture resolution to a smaller part of the scene.
 
 Each cascade fits a stable sphere around its frustum slice and snaps its light-space placement to the shadow texel grid. Splits combine evenly spaced and logarithmic distances. Shadows blend over the last 10% of each slice; the last cascade fades to fully lit at `shadowRange`. `shadowDistance` extends the casting volume toward the light, allowing off-camera geometry within that reach to shadow visible surfaces. This is a caster reach, separate from the camera's shadow range.

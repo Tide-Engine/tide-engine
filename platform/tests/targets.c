@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "gpu.h"
+#include "depth.h"
 #include "window.h"
 #ifdef TIDE_SPIRV
 #include "spirv.h" // compiler/src's translator, which the test's build adds
@@ -22,7 +23,7 @@
 
 enum { WIDTH = 4, HEIGHT = 6 };
 
-static const char wgsl[] =
+static const char wgsl[] = TIDE_DEPTH_WGSL
     "struct Uniforms { settings: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
@@ -31,7 +32,7 @@ static const char wgsl[] =
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"
     "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"
     "    let at = points[i];\n"
-    "    return Vertex(vec4f(at, (u.settings.z + 1.0) * 0.5, 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
+    "    return Vertex(vec4f(at, tide_depth((u.settings.z + 1.0) * 0.5), 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
     "}\n"
     "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
     "    let sampled = textureSampleLevel(pixels0, how0, v.uv, 0.0);\n"
@@ -45,6 +46,7 @@ static const char wgsl[] =
 // ...and compared with `settings.x`: how much of what's stored isn't nearer.
 
 #define DEPTH_WGSL(sampler_type, read)                                                                                 \
+    TIDE_DEPTH_WGSL \
     "struct Uniforms { settings: vec4f }\n"                                                                            \
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"                                                                \
     "@group(0) @binding(1) var pixels0: texture_depth_2d;\n"                                                           \
@@ -53,16 +55,16 @@ static const char wgsl[] =
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"                                                   \
     "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"                                   \
     "    let at = points[i];\n"                                                                                        \
-    "    return Vertex(vec4f(at, (u.settings.z + 1.0) * 0.5, 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"               \
+    "    return Vertex(vec4f(at, tide_depth((u.settings.z + 1.0) * 0.5), 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"               \
     "}\n"                                                                                                              \
     "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"                                                       \
     "    let depth = " read ";\n"                                                                                      \
     "    return vec4f(depth, depth, depth, 1);\n"                                                                      \
     "}\n"
 
-static const char depth_wgsl[] = DEPTH_WGSL("sampler", "textureSampleLevel(pixels0, how0, v.uv, 0)");
+static const char depth_wgsl[] = DEPTH_WGSL("sampler", "tide_depth(textureSampleLevel(pixels0, how0, v.uv, 0))");
 static const char compare_wgsl[] =
-    DEPTH_WGSL("sampler_comparison", "textureSampleCompareLevel(pixels0, how0, v.uv, clamp(u.settings.x, 0.0, 1.0))");
+    DEPTH_WGSL("sampler_comparison", "textureSampleCompareLevel(pixels0, how0, v.uv, tide_depth(clamp(u.settings.x, 0.0, 1.0)))");
 
 static int failures;
 
@@ -75,7 +77,7 @@ static const tide_shader list_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1,
-    .wgsl =
+    .wgsl = TIDE_DEPTH_WGSL
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
@@ -102,7 +104,7 @@ static const tide_shader depth_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_DEPTH},
-    .wgsl =
+    .wgsl = TIDE_DEPTH_WGSL
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "@group(0) @binding(1) var pixels0: texture_depth_2d;\n"
@@ -112,7 +114,7 @@ static const tide_shader depth_shader = {
         "  return Vertex(u.camera * vec4f(position, 0, 1), coords);\n"
         "}\n"
         "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
-        "  let depth = textureSampleLevel(pixels0, how0, v.uv, 0);\n"
+        "  let depth = tide_depth(textureSampleLevel(pixels0, how0, v.uv, 0));\n"
         "  return vec4f(depth, depth, depth, 1);\n"
         "}\n",
 };
@@ -125,7 +127,7 @@ static const tide_shader compare_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_COMPARE},
-    .wgsl =
+    .wgsl = TIDE_DEPTH_WGSL
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "@group(0) @binding(1) var pixels0: texture_depth_2d;\n"
@@ -135,7 +137,7 @@ static const tide_shader compare_shader = {
         "  return Vertex(u.camera * vec4f(position, 0, 1), coords);\n"
         "}\n"
         "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
-        "  let lit = textureSampleCompareLevel(pixels0, how0, v.uv, clamp(u.settings.x, 0.0, 1.0));\n"
+        "  let lit = textureSampleCompareLevel(pixels0, how0, v.uv, tide_depth(clamp(u.settings.x, 0.0, 1.0)));\n"
         "  return vec4f(lit, lit, lit, 1);\n"
         "}\n",
 };
@@ -149,14 +151,14 @@ static const tide_shader caster_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex3, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex3, color)}},
     .instance_floats = 4,
-    .wgsl =
+    .wgsl = TIDE_DEPTH_WGSL
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, origin: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "@vertex fn vertex(@location(0) position: vec3f, @location(3) m0: vec4f, @location(4) m1: vec4f,\n"
         "                  @location(5) m2: vec4f, @location(6) m3: vec4f) -> @builtin(position) vec4f {\n"
         "  let relative = mat4x4f(m0 - u.origin * m0.w, m1 - u.origin * m1.w, m2 - u.origin * m2.w, m3 - u.origin * m3.w);\n"
         "  let clip = u.camera * (relative * vec4f(position, 1));\n"
-        "  return vec4f(clip.xy, (clip.z + clip.w) * 0.5, clip.w);\n"
+        "  return vec4f(clip.xy, tide_clip_depth(clip), clip.w);\n"
         "}\n"
         "@fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {\n"
         "  if (at.x > 2.0) { discard; }\n"
@@ -577,7 +579,9 @@ static void check_gpu_memory(void)
     const uint64_t after_small = tide_platform_gpu_memory();
     const uint64_t big = held_with_target(WIDTH * 2, HEIGHT * 2);
     const uint64_t after_big = tide_platform_gpu_memory();
-    if (before == 0 || small <= before + WIDTH * HEIGHT * 8u || big - small != 3u * WIDTH * HEIGHT * 8u) {
+    const tide_gpu *gpu = tide_window_gpu();
+    const uint64_t pixel_bytes = 4u + (gpu->depth_bytes ? gpu->depth_bytes() : 4u);
+    if (before == 0 || small <= before + WIDTH * HEIGHT * pixel_bytes || big - small != 3u * WIDTH * HEIGHT * pixel_bytes) {
         failures++;
         fprintf(stderr, "gpu memory: %llu before, %llu with a target of %d by %d, %llu with one of %d by %d\n",
                 (unsigned long long)before, (unsigned long long)small, WIDTH, HEIGHT, (unsigned long long)big, WIDTH * 2, HEIGHT * 2);
@@ -2087,7 +2091,7 @@ static void check_render_stencil(const float scale)
 
 // Three colors at once: a color, numbers past 1 and under 0, and four times the uv.
 
-static const char three_wgsl[] =
+static const char three_wgsl[] = TIDE_DEPTH_WGSL
     "struct Uniforms { settings: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"
@@ -2095,7 +2099,7 @@ static const char three_wgsl[] =
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"
     "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"
     "    let at = points[i];\n"
-    "    return Vertex(vec4f(at, (u.settings.z + 1.0) * 0.5, 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
+    "    return Vertex(vec4f(at, tide_depth((u.settings.z + 1.0) * 0.5), 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
     "}\n"
     "@fragment fn fragment(v: Vertex) -> Colors {\n"
     "    return Colors(vec4f(0.25, 0.5, 0.75, 1), vec4f(3, -1, 0.5, 1), vec4f(v.uv * 4.0, 2, 1));\n"
@@ -2103,7 +2107,7 @@ static const char three_wgsl[] =
 
 // A texture's color times `settings.x`, plus `settings.y`: what floats hold, in what bytes show.
 
-static const char scaled_wgsl[] =
+static const char scaled_wgsl[] = TIDE_DEPTH_WGSL
     "struct Uniforms { settings: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
@@ -2112,7 +2116,7 @@ static const char scaled_wgsl[] =
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"
     "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"
     "    let at = points[i];\n"
-    "    return Vertex(vec4f(at, (u.settings.z + 1.0) * 0.5, 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
+    "    return Vertex(vec4f(at, tide_depth((u.settings.z + 1.0) * 0.5), 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
     "}\n"
     "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
     "    return vec4f(textureSampleLevel(pixels0, how0, v.uv, 0.0).rgb * u.settings.x + vec3f(u.settings.y), 1);\n"
@@ -2188,7 +2192,7 @@ static void check_number_attachments(void)
 {
     const tide_gpu *gpu = tide_window_gpu();
     static const uint32_t bytes[] = {0, 4, 8, 1, 2, 2, 4, 4, 16, 4};
-    static const char vertex[] =
+    static const char vertex[] = TIDE_DEPTH_WGSL
         "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
         "  return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0, 1);\n}\n";
     for (uint32_t kind = TIDE_GPU_COLOR_R8; kind <= TIDE_GPU_COLOR_R32I; kind++) {
@@ -2352,7 +2356,7 @@ static const tide_shader two_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .outputs = 2,
-    .wgsl =
+    .wgsl = TIDE_DEPTH_WGSL
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "struct Colors { @location(0) first: vec4f, @location(1) second: vec4f }\n"
@@ -2372,7 +2376,7 @@ static const tide_shader quarter_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .texture_count = 1,
-    .wgsl =
+    .wgsl = TIDE_DEPTH_WGSL
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
@@ -2513,7 +2517,7 @@ enum { EDGE = 8 }; // A square target a triangle's edge crosses from corner to c
 // of the diagonal, so that it goes through no pixel's middle: a pixel on it is
 // covered in part, whatever samples a device has there.
 
-static const char edge_wgsl[] =
+static const char edge_wgsl[] = TIDE_DEPTH_WGSL
     "struct Uniforms { settings: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
@@ -2859,7 +2863,7 @@ static void check_render_samples(const int32_t samples)
 // of checks any were in, and how many.
 // A cube read by a direction that's the same for every pixel (`settings.xyz`), at the level `settings.w`.
 
-static const char cube_wgsl[] =
+static const char cube_wgsl[] = TIDE_DEPTH_WGSL
     "struct Uniforms { settings: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@group(0) @binding(1) var pixels0: texture_cube<f32>;\n"

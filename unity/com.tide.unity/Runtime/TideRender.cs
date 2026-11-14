@@ -260,7 +260,8 @@ namespace Tide
         // The block formats this GPU samples, as tide_embed_render_formats takes them: 1 << 1 for BC1, 1 << 3 for BC3
         public static uint BlockFormats =>
             (SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.DXT1) ? 1u << 1 : 0u)
-            | (SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.DXT5) ? 1u << 3 : 0u);
+            | (SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.DXT5) ? 1u << 3 : 0u)
+            | (DepthFormat() == GraphicsFormat.D32_SFloat_S8_UInt ? 1u << 31 : 0u);
 
         public static bool Supported =>
             SystemInfo.supportsSetConstantBuffer && SystemInfo.supportsComputeShaders && SystemInfo.supportsIndirectArgumentsBuffer
@@ -1096,7 +1097,7 @@ namespace Tide
                 images[id] = new Image { texture = array, width = width, height = height, owned = true, mips = true };
                 return;
             }
-            var depth = new RenderTexture(width, height, GraphicsFormat.None, GraphicsFormat.D24_UNorm_S8_UInt)
+            var depth = new RenderTexture(width, height, GraphicsFormat.None, DepthFormat())
             {
                 dimension = TextureDimension.Tex2DArray, volumeDepth = layers, hideFlags = HideFlags.HideAndDontSave,
             };
@@ -1235,9 +1236,13 @@ namespace Tide
             images[depthId] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = rt.width, height = rt.height };
         }
 
+        static GraphicsFormat DepthFormat() =>
+            SystemInfo.IsFormatSupported(GraphicsFormat.D32_SFloat_S8_UInt, GraphicsFormatUsage.Render)
+                ? GraphicsFormat.D32_SFloat_S8_UInt : GraphicsFormat.D24_UNorm_S8_UInt;
+
         static RenderTexture DepthTexture(int width, int height, int samples)
         {
-            var depth = new RenderTexture(width, height, GraphicsFormat.None, GraphicsFormat.D24_UNorm_S8_UInt)
+            var depth = new RenderTexture(width, height, GraphicsFormat.None, DepthFormat())
             {
                 antiAliasing = samples, bindTextureMS = samples > 1, hideFlags = HideFlags.HideAndDontSave,
             };

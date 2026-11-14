@@ -2341,12 +2341,14 @@ static uint64_t color_bytes(const tide_gpu_color color)
 
 // A target's pixel: its color images and 4 bytes of depth and stencil, each `samples` times when it's multisampled, and
 // then each color image once more, resolved
+static uint32_t depth_bytes(void) { return gpu->depth_bytes ? gpu->depth_bytes() : 4u; }
+
 static uint64_t target_bytes(const tide_gpu_target_format format, const int width, const int height)
 {
     uint64_t colors = 0;
     for (uint32_t i = 0; i < tide_gpu_target_colors(format); i++) colors += color_bytes(tide_gpu_target_color(format, i));
     const uint64_t samples = tide_gpu_target_samples(format);
-    const uint64_t pixel = samples > 1u ? (colors + 4u) * samples + colors : colors + 4u;
+    const uint64_t pixel = samples > 1u ? (colors + depth_bytes()) * samples + colors : colors + depth_bytes();
     return (uint64_t)width * (uint64_t)height * pixel;
 }
 
@@ -2454,7 +2456,7 @@ static tide_gpu_id made_target(const tide_gpu_target_format format, const int wi
 static tide_gpu_id made_face(const tide_gpu_id cube, const uint32_t face, const int size)
 {
     const tide_gpu_id id = gpu->cube_face(cube, face);
-    if (id) hold(held(&held_targets, &held_target_count, id), (uint64_t)size * (uint64_t)size * 4u);
+    if (id) hold(held(&held_targets, &held_target_count, id), (uint64_t)size * (uint64_t)size * depth_bytes());
     return id;
 }
 
@@ -4110,6 +4112,10 @@ static bool drawn(const tide_shader *shader)
 
 static tide_gpu_id warm_key(const tide_shader *shader, const used_key *key)
 {
+    // A known offscreen draw also needs its target's clears ready on its first frame.
+    // The window variants warmed below have a different attachment format.
+    warm_ask(clear_pipeline(key->into));
+    warm_ask(depth_clear_pipeline(key->into));
     // ...and its listed pipeline, which its draws of a list go through (tide_draw_run.listed)
     if (!key->blit && shader->listed) {
         warm_ask(listed_pipeline_for(shader, key->blend, key->depth, key->cull, key->into, key->state));
@@ -5035,8 +5041,8 @@ static bool source_target_needs(const tide_draw_list *list, const uint32_t textu
         gpu_held *h = held(&held_targets, &held_target_count, g->target);
         if (!h->resolved && gpu->target_depth(g->target)) { // Where the device gave it one sample, its depth is its own
             h->resolved = true;
-            h->bytes += (uint64_t)g->width * (uint64_t)g->height * 4u;
-            gpu_memory += (uint64_t)g->width * (uint64_t)g->height * 4u;
+            h->bytes += (uint64_t)g->width * (uint64_t)g->height * depth_bytes();
+            gpu_memory += (uint64_t)g->width * (uint64_t)g->height * depth_bytes();
         }
     }
     return made || stale;

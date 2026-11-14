@@ -1,4 +1,7 @@
 // Leaf on Corner: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -52,7 +55,7 @@ fn ts_Leaf(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
     let tide_clip = tide_projected;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }
@@ -75,6 +78,9 @@ fn ts_Leaf(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
 }
 
 // Glowing on Corner: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
@@ -147,7 +153,7 @@ fn ts_Glowing(t_vertex: tt_Corner, t_color: ptr<function, vec4f>, t_glow: ptr<fu
     let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
     let tide_clip = tide_projected;
     var out: tide_corner;
-    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
     return out;
 }

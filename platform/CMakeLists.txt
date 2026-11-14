@@ -30,6 +30,8 @@ else()
     install(FILES third_party/vulkan/LICENSE.md third_party/vulkan/Apache-2.0.txt DESTINATION licenses/vulkan-headers
         COMPONENT tide)
 endif()
+
+
 if(NOT TIDE_WEB)
     # WebRTC for rooms on desktop (src/rtc/rtc.h); the web has the browser's.
     file(GLOB TIDE_RTC_SOURCES CONFIGURE_DEPENDS src/rtc/*.c)
@@ -1237,4 +1239,44 @@ if(TIDE_WEB)
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_threads-browser")
     set_tests_properties(tide_platform_web_threads PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
         PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
+endif()
+
+# Reversed float precision and the public forward conventions, including the forced legacy path.
+if(NOT TIDE_ANDROID)
+    foreach(case camera reads)
+        set(target tide_platform_depth_${case})
+        tide_add_game(${target} SOURCES tests/depth_${case}.tide NAME game HOST tests/depth_${case}.c)
+        target_link_libraries(${target} PRIVATE tide_platform)
+        target_include_directories(${target} PRIVATE web src)
+        if(TIDE_WEB)
+            tide_web_page(${target} SHELL web/test_shell.html)
+            tide_add_web_test(${target} TARGET ${target} PIXELS QUERY "frames=1" EXPECT "regression complete")
+            if(case STREQUAL "reads")
+                tide_add_web_test(${target}_fallback TARGET ${target} PIXELS QUERY "frames=1&depth-fallback=1" EXPECT "regression complete")
+            endif()
+        else()
+            add_test(NAME ${target} COMMAND ${target} --frames=1)
+            tide_gpu_test(${target})
+            if(case STREQUAL "reads")
+                add_test(NAME ${target}_fallback COMMAND ${target} --frames=1)
+                tide_gpu_test(${target}_fallback)
+                set_property(TEST ${target}_fallback APPEND PROPERTY ENVIRONMENT "TIDE_TEST_DEPTH_FALLBACK=1")
+            endif()
+        endif()
+    endforeach()
+endif()
+
+# Exercise depth arrays, stencil, sample-zero resolves, shadows and conservative occlusion on legacy storage too.
+if(NOT TIDE_ANDROID)
+    foreach(case targets shaders occlusion)
+        set(target tide_platform_${case})
+        if(TIDE_WEB)
+            tide_add_web_test(${target}_depth_fallback TARGET ${target} PIXELS QUERY "depth-fallback=1"
+                EXPECT "renderer: WebGPU" SECONDS 240)
+        else()
+            add_test(NAME ${target}_depth_fallback COMMAND ${target})
+            tide_gpu_test(${target}_depth_fallback)
+            set_property(TEST ${target}_depth_fallback APPEND PROPERTY ENVIRONMENT "TIDE_TEST_DEPTH_FALLBACK=1")
+        endif()
+    endforeach()
 endif()

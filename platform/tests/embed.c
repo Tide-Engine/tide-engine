@@ -17,6 +17,14 @@
 #include "shaders_spirv.h"
 #endif
 
+TIDE_TEST(embed_render_counts_the_hosts_depth_format)
+{
+    tide_gpu_record_block_formats(0);
+    TIDE_CHECK(tide_gpu_record.depth_bytes() == 4u);
+    tide_gpu_record_block_formats(1u << 31);
+    TIDE_CHECK(tide_gpu_record.depth_bytes() == 8u);
+    tide_gpu_record_block_formats(0);
+}
 
 // What the game's view saw at the last frame (embed.tide's Show).
 static int seen_ticks = -1, seen_presses = -1;

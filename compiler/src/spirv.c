@@ -159,7 +159,7 @@ enum {
     OP_CAPABILITY = 17, OP_TYPE_VOID = 19, OP_TYPE_BOOL = 20, OP_TYPE_INT = 21, OP_TYPE_FLOAT = 22,
     OP_TYPE_VECTOR = 23, OP_TYPE_MATRIX = 24, OP_TYPE_IMAGE = 25, OP_TYPE_SAMPLER = 26, OP_TYPE_SAMPLED_IMAGE = 27,
     OP_TYPE_ARRAY = 28, OP_TYPE_RUNTIME_ARRAY = 29, OP_TYPE_STRUCT = 30, OP_TYPE_POINTER = 32, OP_TYPE_FUNCTION = 33, OP_CONSTANT_TRUE = 41,
-    OP_CONSTANT_FALSE = 42, OP_CONSTANT = 43, OP_CONSTANT_COMPOSITE = 44, OP_CONSTANT_NULL = 46, OP_FUNCTION = 54,
+    OP_CONSTANT_FALSE = 42, OP_CONSTANT = 43, OP_CONSTANT_COMPOSITE = 44, OP_CONSTANT_NULL = 46, OP_SPEC_CONSTANT_TRUE = 48, OP_FUNCTION = 54,
     OP_FUNCTION_PARAMETER = 55, OP_FUNCTION_END = 56, OP_FUNCTION_CALL = 57, OP_VARIABLE = 59, OP_LOAD = 61,
     OP_STORE = 62, OP_ACCESS_CHAIN = 65, OP_ARRAY_LENGTH = 68, OP_DECORATE = 71, OP_MEMBER_DECORATE = 72, OP_VECTOR_EXTRACT_DYNAMIC = 77,
     OP_VECTOR_SHUFFLE = 79, OP_COMPOSITE_CONSTRUCT = 80, OP_COMPOSITE_EXTRACT = 81, OP_TRANSPOSE = 84,
@@ -192,7 +192,7 @@ enum {
 
 
 enum {
-    DEC_BLOCK = 2, DEC_COL_MAJOR = 5, DEC_ARRAY_STRIDE = 6, DEC_MATRIX_STRIDE = 7, DEC_BUILTIN = 11, DEC_FLAT = 14,
+    DEC_SPEC_ID = 1, DEC_BLOCK = 2, DEC_COL_MAJOR = 5, DEC_ARRAY_STRIDE = 6, DEC_MATRIX_STRIDE = 7, DEC_BUILTIN = 11, DEC_FLAT = 14,
     DEC_INVARIANT = 18, DEC_NON_WRITABLE = 24, DEC_LOCATION = 30, DEC_BINDING = 33, DEC_DESCRIPTOR_SET = 34, DEC_OFFSET = 35,
 };
 
@@ -2520,6 +2520,14 @@ static void emit_function(translation *x, fdecl *f)
 // pipeline binds, and its private ones.
 static void emit_global(translation *x, const gdecl *g)
 {
+    if (g->is_const && same(g->name, g->len, "tide_reversed_depth")) {
+        const int t = t_simple(x, K_BOOL);
+        const uint32_t id = new_id(x);
+        INS(&x->globals_words, OP_SPEC_CONSTANT_TRUE, spv_type(x, t), id);
+        INS(&x->decorations, OP_DECORATE, id, DEC_SPEC_ID, 0); // Private depth convention
+        bind(x, g->name, g->len, (val){.t = t, .id = id});
+        return;
+    }
     if (g->is_const) {
         if (!g->init) fail(x, g->line, g->col, "'%.*s' needs a value", g->len, g->name);
         // A module's constant is a number: what it's given has to be one

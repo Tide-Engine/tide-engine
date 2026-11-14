@@ -767,6 +767,15 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 
 ## A target's depth
 
+Depth storage uses reversed 32-bit floats with stencil where supported, improving distant
+surface separation without changing camera or shader conventions. Clip coordinates still
+use OpenGL's -w to +w range. `this.depth`, depth `Sample` and `Compare` references still
+use 0 near and 1 far. These forward reads lose the additional far precision of internal
+storage; there is currently no raw or precise linear-depth read. WebGPU devices without
+`depth32float-stencil8`, and Vulkan devices without the required float depth support, keep
+the earlier forward depth path and its precision. Clear depth still means the far limit.
+
+
 A [render target](./render-targets.md#what-a-target-holds) keeps how far the nearest thing drawn at each of its pixels is, and a frag reads that as it reads a color: `target.depth`, a `DepthTexture`, which a view keeps in a field of a singleton or a component the frag takes.
 
 ```csharp

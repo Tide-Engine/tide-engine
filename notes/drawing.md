@@ -1,3 +1,20 @@
+## Depth precision with conservative forward occlusion (2026-11-14)
+
+Reversed float storage changes only the final GPU clip conversion. Public matrices, WorldToClip, screen/depth
+conversions, clip output and this.clip retain their conventions. Built-in/custom/explicit-clip Depth.Equal
+pre-passes therefore agree. Constant and slope DepthBias are negated only at the reversed Vulkan/WebGPU
+callback boundary; the forward fallback and Unity positive-away API retain their signs. Public depth Sample, Compare and this.depth stay forward; WriteDepth takes forward
+values as well. Forward reads do not retain the additional precision of raw reversed float storage.
+
+Provisional implementation choice: keep the Hi-Z pyramid in forward depth. Both hand-written source kernels
+convert raw loads before their existing MAX reductions; multisampled sources convert every sample. Tide's
+HiZFirst reads through the compiler's converted public Sample. occlusion.tide, cull.tide and cull.inc therefore
+retain their forward nearest bounds, positive-float bit ordering, empty=1 and strict nearest>farthest test.
+The existing 2^-20 nearward rounding allowance exceeds the forward conversion's rounding error. This may lose
+culling opportunities at distance, but preserves conservative visibility and avoids reversing the box-bound
+proof. Existing occlusion witnesses pass on both float and forced fallback paths. Validation and measurements:
+depth-precision-production.md.
+
 # Depth bias (2026-11-14)
 
 Owner-approved 2026-11-13: destination-owned DepthBias/SetDepthBias, block restore and zero-argument reset,

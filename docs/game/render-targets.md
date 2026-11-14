@@ -210,6 +210,15 @@ The formats are the constructor's last arguments, after its pixels per unit when
 
 ## A target's depth
 
+Depth storage uses reversed 32-bit floats with stencil where supported, improving distant
+surface separation without changing camera or shader conventions. Clip coordinates still
+use OpenGL's -w to +w range. `this.depth`, depth `Sample` and `Compare` references still
+use 0 near and 1 far. These forward reads lose the additional far precision of internal
+storage; there is currently no raw or precise linear-depth read. WebGPU devices without
+`depth32float-stencil8`, and Vulkan devices without the required float depth support, keep
+the earlier forward depth path and its precision. Clear depth still means the far limit.
+
+
 A frag reads a target's depth as it reads its color: `target.depth` beside `target.color`. It's a `DepthTexture`, which a view keeps in local state, and a frag reads where it's a field of a component or a singleton it takes (see [Frags and verts](./shaders.md#a-target-s-depth)). `target.depth.size` gives the actual physical dimensions in local CPU code, including the device's size limit, even for a depth-only target. The retained depth reference's `.size` also works in shaders. This reads metadata without allocating, resolving or reading back the image; `target.size` still gives logical dimensions:
 
 ```csharp

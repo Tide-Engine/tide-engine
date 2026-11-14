@@ -1,3 +1,19 @@
+## Float depth storage and forward public reads (2026-11-14)
+
+Targets, depth-only images, depth arrays, cube-face attachments and MSAA/resolved depth now share the device's
+selected depth convention. Vulkan D32_SFLOAT_S8_UINT/WebGPU depth32float-stencil8 store reversed values; legacy
+D24/depth24plus store forward values. ClearDepth and clipped/general color clears reset to the selected far
+value. Public depth reads and Compare references remain forward. Sample-zero resolving preserves raw storage;
+farthest resolving selects MIN for reverse, MAX for forward. Device recovery renegotiates the WebGPU feature
+and recreates pipelines, samplers and images. Forced fallback tests use TIDE_TEST_DEPTH_FALLBACK=1 (Vulkan)
+and the test shell's depth-fallback query (WebGPU); the convention fixture asserts actual 4-byte fallback
+storage and actual requested 1/4 sample counts, then repeats after web device loss.
+
+Resource accounting includes 8-byte combined float depth/stencil samples and resolves, versus 4-byte legacy
+samples. The existing target-memory test follows the backend's selected count; its pixel assertions were
+retained. Hand-written gpu.h fixtures now declare the same private depth helper as production shaders.
+Validation and remaining external hardware coverage: depth-precision-production.md.
+
 # Render targets and cubemaps
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
