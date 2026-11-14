@@ -1,3 +1,13 @@
+## Grids of numbers as textures (2026-11-14)
+
+Within the owner's "make sure everything we can add or validate we do" (2026-11-14), agents maintain the
+grid-cells kinds of a grid's Texture (`TIDE_TEXTURE_CELLS_*`, `tide_texture_cells_bytes`,
+`tide_texture_of_grid_cells`, `tide_texture_grid_cells`, and `tide_texture_grid` taking kinds 1 to 6),
+`tide_draw_grid_number_texture`, `tide_draw_texture_source_raw` (what a `[Raw]`/`[Raw(T)]` Texture field's capture
+calls in generated C) and the texel formats `TIDE_TEXELS_HALF2`, `_HALF4`, `_INT`, with `TIDE_GPU_RG16F` in gpu.h.
+Generated C calls the first and the capture functions. No resource-reference layout change: the kind is in bits the
+reference had for its 1 or 2. Contracts and tests: textures.md (top); the Unity replay's format and ABI: unity.md.
+
 ## [Linear] image captures (2026-11-14)
 
 The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and

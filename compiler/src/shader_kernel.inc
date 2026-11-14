@@ -227,8 +227,11 @@ int image_target_format(const expr *e, const int color, const int depth)
 {
     if (!e || depth > 32) return -1;
     if (e->image_place) return e->param ? origins_target_format(NULL, &e->param->image_assignments, color, depth) : -1;
-    if (e->type.kind == TY_GRID && e->type.decl)
-        return e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : 0;
+    if (e->type.kind == TY_GRID && e->type.decl) { // A grid's image: R16f read as Color or float, RGBA8, or one of numbers
+        const type numbers = type_number_grid_role(e->type);
+        return numbers.kind == TY_FLOAT2 ? 6 : numbers.kind == TY_FLOAT4 ? 2 : numbers.kind == TY_INT ? 9
+             : e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : 0;
+    }
     if (e->kind == E_DEFAULT) return -3;
     if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
         return image_target_format(e->local->value, color, depth + 1);
@@ -429,6 +432,7 @@ static int image_origin_format(const expr *e, const int color, const int depth)
     if (e->image_place) return e->param ? origins_storage_format(NULL, &e->param->image_assignments, color, depth) : -1;
     if (e->type.kind == TY_GRID && e->type.decl && e->type.decl->dims == 3)
         return e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : -5;
+    if (e->type.kind == TY_GRID) return -7; // A Grid2's Texture, of any cells: the CPU's cells, sampled
     if (e->kind == E_DEFAULT) return -3; // No image: not another format
     if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
         return image_origin_format(e->local->value, color, depth + 1);
@@ -507,6 +511,8 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
                        ? "a Grid3<float> converts to a sampled R16f volume, which core WebGPU cannot store into: create a Texture3D with Format.Rgba16f and fill it with a kernel"
                        : format == -5
                        ? "a grid-backed volume is a sampled view of CPU data: create an owned Texture3D and fill it with a kernel instead"
+                       : format == -7
+                       ? "a grid's Texture is a sampled view of its CPU cells, which the CPU's next change would replace: write a RenderTarget's color image with a fixed Format instead, and sample that"
                        : format == -2
                        ? (prog->format->members.count > 3
                           ? "this image's format isn't a portable storage format: write into Format.Rgba8, Rgba16f, R32f, Rgba32f or R32i instead; depth, BGRA, byte/half-float one-channel and two-channel images aren't core storage formats"

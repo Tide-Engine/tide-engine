@@ -1,0 +1,5 @@
+// expect: a Grid2<int> is a Texture only where a [Raw(int)] Texture is wanted, which reads its numbers as they are
+// expect: a plain Texture takes a Grid2<Color> or a Grid2<float>
+scene Main { }
+local singleton Art { Grid2<int> ids = Grid2(4, 4); Texture plain; }
+view Show(mut Art art) { art.plain = art.ids; }

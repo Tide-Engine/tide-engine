@@ -1498,6 +1498,7 @@ static VkFormat format_of(const tide_gpu_format format)
     case TIDE_GPU_R32F: return VK_FORMAT_R32_SFLOAT;
     case TIDE_GPU_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
     case TIDE_GPU_R32I: return VK_FORMAT_R32_SINT;
+    case TIDE_GPU_RG16F: return VK_FORMAT_R16G16_SFLOAT; // Sampled, filtered, blitted and drawn into on every device
     default: return VK_FORMAT_R8G8B8A8_UNORM;
     }
 }

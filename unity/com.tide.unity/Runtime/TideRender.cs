@@ -939,6 +939,7 @@ namespace Tide
             6 => GraphicsFormat.R32G32B32A32_SFloat,
             7 => GraphicsFormat.R32_SInt,
             8 => GraphicsFormat.R8G8B8A8_SRGB,
+            9 => GraphicsFormat.R16G16_SFloat, // A Grid2<float2>'s cells (tide_gpu_format's TIDE_GPU_RG16F)
             _ => GraphicsFormat.R8G8B8A8_UNorm,
         };
 
@@ -1076,7 +1077,8 @@ namespace Tide
 
         static Texture2D NewTexture(int format, int width, int height)
         {
-            var flags = format == 3 ? TextureCreationFlags.None : TextureCreationFlags.MipChain;
+            // Integer images (a list's numbers, a Grid2<int>'s cells) are read at their nearest pixel: no smaller images
+            var flags = IntegerImage(format) ? TextureCreationFlags.None : TextureCreationFlags.MipChain;
             return new Texture2D(Math.Max(1, width), Math.Max(1, height), TextureFormat(format), flags) { hideFlags = HideFlags.HideAndDontSave };
         }
 

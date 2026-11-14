@@ -281,6 +281,32 @@ static void number_cells(const cells_writer *w, const uint8_t *cells, const int3
     for (int32_t x = 0; x < count; x++) w->write(cells + (size_t)x * w->cell, (int32_t *)(void *)(out + (size_t)x * w->bytes));
 }
 
+// A Grid2<float2>'s or a Grid2<float4>'s cells as halves, each float to the nearest (tide_half_from_float), as a
+// Grid2<float>'s are: `bytes` / 2 of them a cell.
+static void halves_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
+{
+    const uint32_t halves = w->bytes / 2u;
+    for (int32_t x = 0; x < count; x++) {
+        for (uint32_t k = 0; k < halves; k++, out += 2) {
+            float value;
+            memcpy(&value, cells + (size_t)x * w->cell + (size_t)k * sizeof value, sizeof value);
+            const uint16_t half = tide_half_from_float(value);
+            memcpy(out, &half, sizeof half);
+        }
+    }
+}
+
+// A Grid2<int>'s cells as they are, and a Grid2<byte>'s each its 0 to 255, an int of 32 bits a cell.
+static void ints_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
+{
+    for (int32_t x = 0; x < count; x++, out += 4) {
+        int32_t value;
+        if (w->cell == 1u) value = cells[x];
+        else memcpy(&value, cells + (size_t)x * sizeof value, sizeof value);
+        memcpy(out, &value, sizeof value);
+    }
+}
+
 // The cells of a grid that its texture holds, and where: a box of them, from
 // `lo`, `extent` along each axis (one layer, for a grid of two dimensions),
 // whose layers are side by side, `across` of them, and then under each other.
@@ -414,20 +440,26 @@ static void grid_cells(tide_draw_list *d, const uint32_t slot, uint8_t *pixels, 
 #define KIND_FLOATS UINT64_C(0x47464C54)
 #define KIND_RAW UINT64_C(0x47524157)
 
+// A Grid2 that's a texture, seen (see_grid): false for one with no size on an axis, which is no texture, one bigger
+// than any GPU's (bytes that aren't a grid's could say any size), and one whose chunks couldn't be a grid of its size's.
+static bool see_grid_texture(const tide_grid g, const tide_grid_shape *s, grid_seen *v)
+{
+    if (s->dims != 2u || !see_grid(g, s, v)) return false;
+    const int32_t width = v->dir.size[0], height = v->dir.size[1];
+    if (width <= 0 || height <= 0 || width > TIDE_GRID_TEXTURE_MOST || height > TIDE_GRID_TEXTURE_MOST) return false;
+    // A grid with a size on both axes has as many chunks as cover it, and no more of them than that
+    const uint64_t across = ((uint64_t)width + (1u << s->shift[0]) - 1u) >> s->shift[0];
+    const uint64_t down = ((uint64_t)height + (1u << s->shift[1]) - 1u) >> s->shift[1];
+    if (v->dir.records > across * down) return false;
+    return !v->dir.flat || ((uint64_t)v->dir.chunks[0] == across && (uint64_t)v->dir.chunks[1] == down);
+}
+
 static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw, const bool linear)
 {
     const bool colors = s->cell == sizeof(tide_color);
     grid_seen v;
-    if (s->dims != 2u || (!colors && s->cell != sizeof(float)) || !see_grid(g, s, &v)) return 0;
+    if ((!colors && s->cell != sizeof(float)) || !see_grid_texture(g, s, &v)) return 0;
     const int32_t width = v.dir.size[0], height = v.dir.size[1];
-    // A grid with no size on an axis is no texture. No GPU has a texture bigger, and bytes that aren't a grid's
-    // could say any size
-    if (width <= 0 || height <= 0 || width > TIDE_GRID_TEXTURE_MOST || height > TIDE_GRID_TEXTURE_MOST) return 0;
-    // A grid with a size on both axes has as many chunks as cover it, and no more of them than that
-    const uint64_t across = ((uint64_t)width + (1u << s->shift[0]) - 1u) >> s->shift[0];
-    const uint64_t down = ((uint64_t)height + (1u << s->shift[1]) - 1u) >> s->shift[1];
-    if (v.dir.records > across * down) return 0;
-    if (v.dir.flat && ((uint64_t)v.dir.chunks[0] != across || (uint64_t)v.dir.chunks[1] != down)) return 0;
     // A grid of the pack's has its file's version, in its directory's header, as the builder put it
     uint64_t version = v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g);
     if (linear) version ^= UINT64_C(0x4c494e454152);
@@ -531,6 +563,29 @@ uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide
 uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
 {
     return grid_texture(d, g, s, true, false);
+}
+
+#define KIND_NUMBERS UINT64_C(0x474E554D00) // ...plus the cells' kind, a writer of its own for each
+
+uint32_t tide_draw_grid_number_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const uint32_t cells)
+{
+    const uint32_t bytes = tide_texture_cells_bytes(cells);
+    grid_seen v;
+    if (cells < TIDE_TEXTURE_CELLS_FLOAT2S || !bytes || s->cell != bytes || !see_grid_texture(g, s, &v)) return 0;
+    const int32_t width = v.dir.size[0], height = v.dir.size[1];
+    // Other bytes than the same grid's as colors or floats, were a handle to name both
+    const uint64_t version = (v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g)) ^ (UINT64_C(0x4E554D4245520000) | cells);
+    const uint32_t format = cells == TIDE_TEXTURE_CELLS_FLOAT2S ? TIDE_TEXELS_HALF2 : cells == TIDE_TEXTURE_CELLS_FLOAT4S
+                          ? TIDE_TEXELS_HALF4 : TIDE_TEXELS_INT;
+    const cells_writer w = {.row = format == TIDE_TEXELS_INT ? ints_cells : halves_cells, .bytes = tide_texels_bytes(format),
+                            .cell = bytes};
+    const cells_box box = {.dims = 2u, .extent = {width, height, 1}, .across = 1, .wide = (size_t)width * w.bytes};
+    uint8_t *pixels;
+    bool kept;
+    const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_GRID, g.at, version, width, height, format, KIND_NUMBERS | cells,
+                                                 &pixels, &kept);
+    if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
+    return slot;
 }
 
 static uint64_t take_mesh_key(tide_draw_list *d, tide_list vertices, tide_list indices);

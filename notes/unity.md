@@ -129,6 +129,16 @@ in the Sample's Gamma color space as before. Before the fix ScaleTests failed (0
 run: EditMode (no editor code changed), Metal, a Unity WebGPU player. Note for the next run: without a
 `-force-` flag this machine's editor picks Direct3D 12, not 11.
 
+## Grids of numbers: embed ABI 25 (2026-11-14)
+
+A Grid2<float2>'s texture is the recorder's pixel format 9, `TIDE_GPU_RG16F` (two halves a pixel), which
+TideRender's `TextureFormat` makes `R16G16_SFloat` (`PixelBytes` 4, as before for unknown numbers); a Grid2<float4>'s is
+the existing Rgba16f (4) and a Grid2<int>'s or Grid2<byte>'s the existing R32i (7), now also 2D textures of the
+TEXTURE packet. `NewTexture` gives integer images (3 and 7) no mip chain, as nothing reads one between levels.
+Packets keep their shape; TIDE_EMBED_ABI and TideLibrary.Abi go from 24 to 25 together, so an older replay can't
+take format 9 for RGBA8. `embed_render_number_grid_textures` pins the packets (formats, bytes, a part's rows). Not
+run in Unity: there is no Unity on this machine for this work.
+
 ## [Linear] texture replay: embed ABI 24 (2026-11-14)
 
 The owner approved opt-in sRGB sampling on 2026-11-14. Static compiler roles and importer storage are in

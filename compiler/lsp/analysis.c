@@ -4301,7 +4301,10 @@ static void describe(const occurrence *o, sb *out)
              "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
              "the image's numeric Sample result; a TextureArray or Cubemap takes the three float roles. Typed images read "
              "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
-             "every device, 32-bit float and int images are nearest only. The role must fit their format."},
+             "every device, 32-bit float and int images are nearest only. The role must fit their format. A grid of numbers is "
+             "a Texture of its role alone: a Grid2<float> takes [Raw(float)] (or none), a Grid2<float2> [Raw(float2)], a "
+             "Grid2<float4> [Raw(float4)], a Grid2<int> or Grid2<byte> [Raw(int)], as a field's value, a typed helper's "
+             "argument or a typed frag's source, and each is sampled by its own name as those numbers."},
             {"Lossless", "[Lossless]",
              "Keeps this `Texture` asset's pixels exact in the pack, a byte a channel. Without it, an image whose sides are "
              "powers of two and at least 128 pixels is block-compressed as the game is built (BC1, or BC3 with alpha), "
@@ -7881,6 +7884,13 @@ static bool changes_match(const scope *sc)
         && !sc->decl->is_interpolate && !sc->decl->is_audio;
 }
 
+// What a field's image is read as: a grid of numbers' cells (Grid2<float2>...), or its [Raw(T)] role's T.
+static type field_image_role(const field *f)
+{
+    const type numbers = type_number_grid_role(f->type);
+    return numbers.kind != TY_ERROR ? numbers : raw_sample_type(f);
+}
+
 // A half-written Sample can have no expression tree yet. Recover its declared image role from the
 // receiver's field chain, so signature help and member completion do not turn numeric images into colors.
 static type numeric_receiver(const int dot, const loc at)
@@ -7888,7 +7898,7 @@ static type numeric_receiver(const int dot, const loc at)
     const type color = {TY_COLOR, NULL};
     if (dot < 1 || DOC->toks[dot - 1].kind != T_IDENT) return color;
     const occurrence *o = occurrence_at(DOC->toks[dot - 1].at);
-    if (o && o->field) return raw_sample_type(o->field);
+    if (o && o->field) return field_image_role(o->field);
     if (o && o->param && o->param->sample_role.len) {
         return numeric_role(o->param->sample_role);
     }
@@ -7907,7 +7917,7 @@ static type numeric_receiver(const int dot, const loc at)
         }
         owner = member_type(owner, DOC->toks[k].text);
     }
-    return image ? raw_sample_type(image) : color;
+    return image ? field_image_role(image) : color;
 }
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
@@ -10503,7 +10513,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values. "
                  "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture/Texture3D fields or read-only GPU helper parameters declare "
                  "numeric Sample results; TextureArray and Cubemap fields take the float roles. Reads are nearest unless a filter is "
-                 "named; 32-bit float and int images are nearest only.", "Raw");
+                 "named; 32-bit float and int images are nearest only. A Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> "
+                 "is a Texture where its role (float2, float4, int) takes it.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");

@@ -728,6 +728,32 @@ TIDE_TEST(embed_render_srgb_images_retain_encoding_formats)
     tide_gpu_record_reset();
 }
 
+// A grid of numbers' textures, as the replay makes them (TideRender.cs TextureFormat, PixelBytes): Rg16f (format 9, two
+// halves a pixel), Rgba16f and R32i, each pixel's bytes as given, and a part of one written with its own width's rows.
+TIDE_TEST(embed_render_number_grid_textures)
+{
+    const uint16_t pairs[4] = {0x3E00u, 0xC000u, 0x3400u, 0x7BFFu}; // (1.5, -2), (0.25, 65504)
+    const int32_t ids[2] = {-2147483647, 16777217};
+    const uint16_t fours[4] = {0x3C00u, 0x4000u, 0x4200u, 0x3800u};
+    tide_gpu_record_begin();
+    const tide_gpu_id rg = tide_gpu_record.texture(TIDE_GPU_RG16F, 2, 1, pairs);
+    const tide_gpu_id r32i = tide_gpu_record.texture(TIDE_GPU_R32I, 2, 1, ids);
+    const tide_gpu_id rgba = tide_gpu_record.texture(TIDE_GPU_RGBA16F, 1, 1, fours);
+    tide_gpu_record.texture_write_part(rg, pairs, 1, 0, 1, 1);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    // Three textures of 28 bytes and 8 of pixels each, then a write of 28 bytes and one pixel of 4
+    TIDE_REQUIRE(rg && r32i && rgba && size == 3u * 36u + 32u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_TEXTURE && u32_at(packet, 12) == 9u && u32_at(packet, 16) == 2u);
+    TIDE_CHECK(memcmp(packet + 28u, pairs, sizeof pairs) == 0);
+    TIDE_CHECK(u32_at(packet, 36 + 12) == TIDE_GPU_R32I && memcmp(packet + 36u + 28u, ids, sizeof ids) == 0);
+    TIDE_CHECK(u32_at(packet, 72 + 12) == TIDE_GPU_RGBA16F && memcmp(packet + 72u + 28u, fours, sizeof fours) == 0);
+    // The part: the second pixel alone, at x 1, its four bytes from the texture's own row
+    TIDE_CHECK(u32_at(packet, 108) == TIDE_EMBED_RENDER_TEXTURE_WRITE && u32_at(packet, 108 + 12) == 1u);
+    TIDE_CHECK(memcmp(packet + 108u + 28u, pairs + 2, 4u) == 0);
+    tide_gpu_record_reset();
+}
+
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds
 // of storage, a compute pass, direct and indirect dispatches and draws, a draw of records as many as a count says, a
 // copy, and a read back the other program answers (tide_embed_render_read) for buffer_read_done to give, once. The

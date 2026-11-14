@@ -2101,6 +2101,8 @@ void declared_sampling(const expr *texture, int *filter, int *wrap);
 bool declared_raw(const expr *texture);
 type raw_sample_type(const field *image);
 type declared_image_type(const expr *image);
+type param_sample_type(const param *p); // A [Raw(T)] parameter's T, Color for one with no typed role
+bool image_role_fits(const expr *given, type want); // An image read as `want`: its own role, or a float grid's float
 unsigned shader_numeric_outputs(const shader *sh);
 unsigned shader_output_types(const shader *sh);
 int image_target_format(const expr *image, int color, int depth);

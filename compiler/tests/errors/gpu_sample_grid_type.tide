@@ -1,4 +1,5 @@
-// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<int>
+// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<bool>
+// expect: a Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> is sampled too, as its numbers
 scene Main { }
 
 struct V
@@ -22,7 +23,7 @@ local singleton Models
     List<V> crate;
     List<int> faces;
     Grid2<Color> wood = Grid2(4, 4);
-    Grid2<int> heights = Grid2(4, 4);
+    Grid2<bool> heights = Grid2(4, 4);
 }
 
 event(Spawned) Setup(with Main)

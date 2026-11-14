@@ -4786,9 +4786,12 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         }
         if (g->texture && !resident_mips) gpu->texture_write(g->texture, pixels);
         else if (!g->texture) {
-            // A grid of floats' cells are one float of 16 bits a pixel
-            g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
-                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : t->linear ? TIDE_GPU_SRGBA8 : TIDE_GPU_RGBA8, t->width, t->height, pixels);
+            // A grid of floats' cells are one float of 16 bits a pixel, of float2s two and of float4s four; of ints
+            // and bytes, one int of 32 bits
+            g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : t->format == TIDE_TEXELS_HALF2 ? TIDE_GPU_RG16F
+                                      : t->format == TIDE_TEXELS_HALF4 ? TIDE_GPU_RGBA16F : t->format == TIDE_TEXELS_INT ? TIDE_GPU_R32I
+                                      : t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : t->linear ? TIDE_GPU_SRGBA8 : TIDE_GPU_RGBA8,
+                                      t->width, t->height, pixels);
         }
         free(decoded);
         if (!resident_mips) gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
@@ -5225,9 +5228,10 @@ static tide_gpu_id texture_to_read_as(const tide_draw_list *list, const uint32_t
                                 : gpu->target_texture(g->target, tide_render_target_image(t->id));
         return image ? image : read_fallback(read, blend);
     }
-    // The rest are uploaded images (a grid's, C's, the pack's), none of them ints: an integer read is given none,
-    // whatever a list says (a hot reload that changed a field's role, a list filled by hand)
-    if (integer) return read_fallback(read, blend);
+    // The rest are uploaded images (a grid's, C's, the pack's), of which a grid of ints' alone holds ints: an integer
+    // read is given that and nothing else, and it's given to no other read, whatever a list says (a hot reload that
+    // changed a field's role, a list filled by hand)
+    if (!data && integer != (t->format == TIDE_TEXELS_INT)) return read_fallback(read, blend);
     const gpu_texture *g = texture_for(t);
     return g->texture ? g->texture : read_fallback(read, blend);
 }
@@ -5492,6 +5496,7 @@ static bool mipmaps_needed(const tide_draw_list *list, const uint32_t texture, c
         }
         return true;
     }
+    if (t->format == TIDE_TEXELS_INT || t->format == TIDE_TEXELS_INTS) return false; // No GPU blends integers
     gpu_texture *g = texture_for(t);
     if (!g->texture || g->mipped) return false;
     if (!check) {

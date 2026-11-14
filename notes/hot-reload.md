@@ -219,9 +219,10 @@ wrong numeric type). `field_role_spelling` (codegen.c) spells each role, `[Raw(i
 Texture3D` and so on, for the header comment and `tide_layout_field.type` both; plain `[Raw]` and `[Linear]` are
 spelled as they were, so existing games' headers don't move. `raw_texture_layout` now compiles plain, `[Raw]`,
 `[Raw(float)]`, `[Raw(float4)]` and `[Raw(int)]` and needs five different hashes, five layout names and one
-simulation ID. As defence in depth the renderer gives an integer read none of the uploaded images (none is an
-integer one: `texture_to_read_as`), which `tide_platform_images` checks by handing a `[Raw(int)]` field a float
-grid's image from C (it failed Vulkan's validation layer without the guard).
+simulation ID. As defence in depth the renderer gives an integer read none of the uploaded images but a grid of
+ints' (`TIDE_TEXELS_INT`, since the same day: textures.md, top), and no other read those (`texture_to_read_as`),
+which `tide_platform_images` checks by handing a `[Raw(int)]` field a float grid's image from C (it failed Vulkan's
+validation layer without the guard).
 
 Owner-approved Raw Texture fields retain their ordinary C reference layout.
 Annotated fields receive a generated header comment so a role flip changes the

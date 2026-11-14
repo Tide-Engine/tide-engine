@@ -460,3 +460,65 @@ view ShowMismatched(mut Mismatched images, NumberImages numbers)
         Draw.Transform(float2(float(i % 3) * 8, 112 + float(i / 3) * 8))
         { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], ReadMismatched, NumberProbe { mode = i }); }
 }
+
+// Grids of numbers as textures, through the [Raw(T)] role of their cells: a Grid2<float2> in a field, blended and at
+// its nearest cell; a Grid2<float4> by its name, blended, and in a field at its one smaller image; a Grid2<int> through a
+// helper, its ints exact; a Grid2<byte> as a frag's source; and a Grid2<int> one cell of which changes every frame,
+// so a texture sent in parts that missed a change shows the old number.
+local singleton NumberGrids
+{
+    Grid2<float2> pairs = Grid2(2, 1);
+    Grid2<float4> fours = Grid2(2, 1);
+    Grid2<int> ids = Grid2(2, 1);
+    Grid2<byte> masks = Grid2(2, 1);
+    Grid2<int> counts = Grid2(4, 4);
+    [Raw(float2)] Texture pairTexture;
+    [Raw(float4)] Texture fourTexture;
+    int frames;
+    bool made;
+}
+struct GridProbe { int mode; int frame; }
+int Id([Raw(int)] Texture image, float2 uv) { return image.Sample(uv); }
+frag CheckGrids(Vertex vertex, out Color color, NumberGrids grids, GridProbe probe)
+{
+    mut bool good = false;
+    float2 middle = float2(0.5);
+    if (probe.mode == 0) good = NearTwo(grids.pairTexture.Sample(middle, Filter.Bilinear), float2(1.5, 0))
+        && NearTwo(grids.pairTexture.Sample(float2(0.25, 0.5)), float2(0, 1)) && NearTwo(grids.pairTexture.Sample(float2(0.75, 0.5)), float2(3, -1));
+    else if (probe.mode == 1) good = NearFour(grids.fours.Sample(middle, Filter.Bilinear), float4(1.5, -0.5, 1, 0.5))
+        && NearFour(grids.fourTexture.SampleLevel(middle, 1, Filter.Trilinear), float4(1.5, -0.5, 1, 0.5))
+        && NearFour(grids.fours.Sample(float2(0.75, 0.5)), float4(3, -1, 2, 0));
+    else if (probe.mode == 2) good = Id(grids.ids, float2(0.25, 0.5)) == -2147483647 && Id(grids.ids, float2(0.75, 0.5)) == 16777217;
+    else if (probe.mode == 4) good = grids.counts.Sample(float2(0.625, 0.375)) == probe.frame && grids.counts.Sample(float2(0.125)) == 5;
+    else good = grids.masks.Sample(float2(0.75, 0.5)) == 255 && grids.masks.Sample(float2(0.25, 0.5)) == 0;
+    color = good ? Color.green : Color.red;
+}
+frag CheckGridSource(Vertex vertex, out Color color, [Raw(int)] Texture source)
+{
+    color = source.Sample(float2(0.75, 0.5)) == 255 && source.Sample(float2(0.25, 0.5), Filter.Point, Wrap.Repeat) == 0
+        ? Color.green : Color.red;
+}
+[After(ShowMismatched)]
+view ShowNumberGrids(mut NumberGrids grids, NumberImages numbers)
+{
+    if (!grids.made)
+    {
+        grids.pairs[0, 0] = float2(0, 1);
+        grids.pairs[1, 0] = float2(3, -1);
+        grids.fours[0, 0] = float4(0, 0, 0, 1);
+        grids.fours[1, 0] = float4(3, -1, 2, 0);
+        grids.ids[0, 0] = -2147483647;
+        grids.ids[1, 0] = 16777217;
+        grids.masks[1, 0] = 255;
+        grids.counts[0, 0] = 5;
+        grids.pairTexture = grids.pairs;
+        grids.fourTexture = grids.fours;
+        grids.made = true;
+    }
+    grids.frames++;
+    grids.counts[2, 1] = grids.frames;
+    for (var i = 0; i < 5; i++)
+        Draw.Transform(float2(float(i % 3) * 8, 128 + float(i / 3) * 8))
+        { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], CheckGrids, GridProbe { mode = i == 3 ? 5 : i, frame = grids.frames }); }
+    Draw.Transform(float2(16, 136)) { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], grids.masks, CheckGridSource); }
+}

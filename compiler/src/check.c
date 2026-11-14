@@ -29,6 +29,10 @@ typedef struct checker {
     VEC(expr *) raw_uses;     // Raw Texture sources: sampled, inspected, stored in a Raw field or rejected (check_raw_uses).
     const expr *raw_value;    // The direct initializer/assignment of a statically [Raw] Texture field.
     const expr *texture_arg;  // Texture argument conversions whose Raw permission waits for GPU call propagation.
+    // A Grid2 of numbers going where a typed [Raw(T)] Texture is wanted (a field's value, a typed parameter's argument),
+    // whose T is then checked against the grid's: anywhere else a Texture goes, it's refused (refuse_number_grid)
+    const expr *number_grid_value;
+    type number_grid_role;    // ...that role's T
     bool raw_mesh; // Resolving an imported mesh payload rather than its stable value handle.
     bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
@@ -274,6 +278,14 @@ static void note_conversion(const type want, const type have)
         diag_note("a char is one character in single quotes, like 'a', and a text's is 'text[i]'");
     } else if (want.kind == TY_STRING && have.kind == TY_CHAR) {
         diag_note("text is written in double quotes, and a char joins it with '+': '\"\" + c'");
+    } else if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
+        diag_note("a Texture is a Grid2<Color> or a Grid2<float> anywhere, and a Grid2<float2>, Grid2<float4>, Grid2<int> or "
+                  "Grid2<byte> where a [Raw(float2)], [Raw(float4)] or [Raw(int)] Texture is wanted; read other grids cell "
+                  "by cell, or copy their cells into one of those");
+    } else if ((want.kind == TY_TEXTURE_ARRAY || want.kind == TY_TEXTURE3D) && have.kind == TY_GRID) {
+        diag_note("a %s is a Grid3<Color> or a Grid3<float>", type_name(want));
+    } else if (want.kind == TY_TEXTURE && have.kind != TY_TEXTURE) {
+        diag_note("a Texture is an asset's, a RenderTarget's color image ('target.color'), or a grid of colors or floats");
     }
 }
 
@@ -2848,6 +2860,35 @@ static bool refuse_raw_grid(const expr *e)
     return false;
 }
 
+// The role a Grid2 of numbers is read through, as written: "float2", "float4" or "int".
+static const char *number_grid_role_name(const type grid)
+{
+    const type role = type_number_grid_role(grid);
+    return role.kind == TY_FLOAT2 ? "float2" : role.kind == TY_FLOAT4 ? "float4" : "int";
+}
+
+// A Grid2<float2>, <float4>, <int> or <byte> where a Texture goes that no [Raw(T)] of its T takes (`want` the
+// role that does take it there, TY_ERROR for none): false, and said. A grid of numbers keeps them only where the
+// role that reads them is known; a plain Texture would draw them as colors.
+static bool refuse_number_grid(const expr *e, const type grid, const type want)
+{
+    const type role = type_number_grid_role(grid);
+    if (role.kind == TY_ERROR || (want.kind == role.kind)) return true;
+    const char *t = number_grid_role_name(grid);
+    if (want.kind != TY_ERROR) {
+        diag_error(e->at, "this is a %s, which a [Raw(%s)] Texture reads, and this one is [Raw(%s)]", type_name(grid), t,
+                   type_name(want));
+        diag_note("a [Raw(float2)] Texture takes a Grid2<float2>, a [Raw(float4)] one a Grid2<float4>, a [Raw(int)] one a "
+                  "Grid2<int> or a Grid2<byte>, and a [Raw(float)] one a Grid2<float>: change the role, or the grid's cells");
+        return false;
+    }
+    diag_error(e->at, "a %s is a Texture only where a [Raw(%s)] Texture is wanted, which reads its numbers as they are",
+               type_name(grid), t);
+    diag_note("assign it to a '[Raw(%s)] Texture' field, or hand it to a '[Raw(%s)] Texture' parameter of a function the "
+              "GPU runs, or to a frag's; a plain Texture takes a Grid2<Color> or a Grid2<float>", t, t);
+    return false;
+}
+
 // A sprite's texture, checked: a grid of numbers is none, as for a mesh (check_mesh_draw). And the Filter and
 // Wrap it takes after the rest, which a call is resolved with.
 static bool check_sprite_args(const checker *c, const expr *e)
@@ -3147,6 +3188,9 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         return e->type = inner;
     }
     if (raw_kind(inner) && c->raw_value != e && c->texture_arg != e && !refuse_raw_grid(e)) return e->type = T_ERR;
+    if (inner.kind == TY_TEXTURE
+        && !refuse_number_grid(e, t, c->number_grid_value == e ? c->number_grid_role : (type){TY_ERROR, NULL}))
+        return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
     if (inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(e, &value) && value >= 0 && value <= 255) {
@@ -3199,7 +3243,17 @@ static type check_field_value(checker *c, expr *e, const field *f)
     const expr *saved = c->raw_value;
     const bool raw = f && raw_kind(f->type) && field_is_raw(f);
     c->raw_value = raw ? e : NULL;
+    // A typed [Raw(T)] Texture field takes a grid of the numbers its T reads (refuse_number_grid)
+    const expr *saved_grid = c->number_grid_value;
+    const type saved_role = c->number_grid_role;
+    const type role = raw && f->type.kind == TY_TEXTURE ? raw_sample_type(f) : (type){TY_COLOR, NULL};
+    if (role.kind != TY_COLOR) {
+        c->number_grid_value = e;
+        c->number_grid_role = role;
+    }
     const type t = check_expr_want(c, e, f ? f->type : T_ERR);
+    c->number_grid_value = saved_grid;
+    c->number_grid_role = saved_role;
     c->raw_value = saved;
     if (f && linear_kind(f->type) && field_is_linear(f)) return check_linear_field_value(c, e, t);
     return raw && raw_sample_type(f).kind == TY_COLOR ? check_raw_field_value(e, t) : t;
@@ -5423,7 +5477,16 @@ static void check_method_args(checker *c, expr *e, decl *m)
             if (p && type_is_asset_collection(p->type)) c->asset_value = arg;
             const expr *previous_texture = c->texture_arg;
             if (p && p->type.kind == TY_TEXTURE) c->texture_arg = arg;
+            // A [Raw(T)] Texture parameter takes a grid of the numbers its T reads (refuse_number_grid)
+            const expr *previous_grid = c->number_grid_value;
+            const type previous_role = c->number_grid_role;
+            if (p && p->type.kind == TY_TEXTURE && p->sample_role.len) {
+                c->number_grid_value = arg;
+                c->number_grid_role = param_sample_type(p);
+            }
             check_expr_want(c, arg, p ? p->type : T_ERR);
+            c->number_grid_value = previous_grid;
+            c->number_grid_role = previous_role;
             c->texture_arg = previous_texture;
             c->input_value = previous;
             c->asset_value = previous_asset;
@@ -7577,9 +7640,18 @@ static type check_blit(checker *c, expr *e)
     }
     const type source = e->args.items[0]->type;
     bool ok = refuse_raw_grid(e->args.items[0]);
-    if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
+    if (type_number_grid_role(source).kind != TY_ERROR) { // A grid of numbers, for a frag whose [Raw(T)] reads them
+        type role = {TY_ERROR, NULL};
+        for (int p = 1; frag && frag->is_frag && p < frag->params.count; p++) {
+            const param *from = &frag->params.items[p];
+            if (from->type.kind == TY_TEXTURE && from->sample_role.len) role = param_sample_type(from);
+        }
+        ok = refuse_number_grid(e->args.items[0], source, role) && ok;
+    } else if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
         diag_error(e->args.items[0]->at, "Blit's source is a Texture, which a Grid2<Color> and a Grid2<float> are too, not %s",
                    type_name(source));
+        diag_note("a Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> is the source of a frag whose Texture is "
+                  "[Raw(float2)], [Raw(float4)] or [Raw(int)]");
         ok = false;
     }
     if (e->args.items[1]->type.kind != TY_RENDER_TARGET && e->args.items[1]->type.kind != TY_ERROR) {
@@ -7910,13 +7982,25 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
 
-    // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn
+    // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn. A grid of numbers
+    // is the source of a frag whose Texture parameter's [Raw(T)] reads them
     for (int i = 2; i < count; i++) {
         const expr *arg = e->args.items[i];
         if (!refuse_raw_grid(arg)) return T_ERR;
         if (arg->type.kind != TY_GRID || type_is_texture_grid(arg->type)) continue;
+        if (type_number_grid_role(arg->type).kind != TY_ERROR) {
+            type source = {TY_ERROR, NULL};
+            for (int p = 1; e->frag && p < e->frag->params.count; p++) {
+                const param *from = &e->frag->params.items[p];
+                if (from->type.kind == TY_TEXTURE && from->sample_role.len) source = param_sample_type(from);
+            }
+            if (!refuse_number_grid(arg, arg->type, source)) return T_ERR;
+            continue;
+        }
         diag_error(arg->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(arg->type));
-        diag_note("a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red");
+        diag_note("a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red; a "
+                  "Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> goes to a frag whose Texture is [Raw(float2)], "
+                  "[Raw(float4)] or [Raw(int)]");
         return T_ERR;
     }
 
@@ -12355,8 +12439,11 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
         return T_ERR;
     }
-    if (grid.kind == TY_GRID && !type_is_texture_grid(grid)) {
+    // A grid of numbers (Grid2<float2>, <float4>, <int>, <byte>) is sampled as its cells are, as a [Raw(T)] Texture is
+    if (grid.kind == TY_GRID && !type_is_texture_grid(grid) && type_number_grid_role(grid).kind == TY_ERROR) {
         diag_error(e->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(grid));
+        diag_note("a Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> is sampled too, as its numbers; other grids are "
+                  "read cell by cell, 'grid[x, y]'");
         return T_ERR;
     }
     e->object->raw_sampled = true; // A [Raw] Texture asset is read here, and nowhere else (check_raw_uses)
