@@ -157,6 +157,8 @@ static tide_gpu_id tide_web_gpu_depth_now_of(const tide_gpu_id target, uint32_t 
 
 static uint32_t tide_web_gpu_target_samples(const tide_gpu_target_format format)
 {
+    for (uint32_t i = 0; i < tide_gpu_target_colors(format); i++)
+        if (tide_gpu_color_single_sample(tide_gpu_target_color(format, i))) return 1u;
     return tide_gpu_target_samples(format) > 1u && tide_gpu_target_colors(format) ? 4u : 1u;
 }
 

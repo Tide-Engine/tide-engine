@@ -108,7 +108,12 @@ static tide_gpu_id none_target(const tide_gpu_target_format format, const int wi
 
 static int none_target_limit(void) { return 8192; }
 
-static uint32_t none_target_samples(const tide_gpu_target_format format) { return tide_gpu_target_samples(format); }
+static uint32_t none_target_samples(const tide_gpu_target_format format)
+{
+    for (uint32_t i = 0; i < tide_gpu_target_colors(format); i++)
+        if (tide_gpu_color_single_sample(tide_gpu_target_color(format, i))) return 1u;
+    return tide_gpu_target_samples(format);
+}
 
 static tide_gpu_id none_target_texture(const tide_gpu_id target, const uint32_t color)
 {

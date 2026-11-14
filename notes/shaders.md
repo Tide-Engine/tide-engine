@@ -1,5 +1,14 @@
 # Code the GPU runs: frags and verts
 
+## Numeric attachments: backend foundation (2026-11-14)
+
+`notes/render-targets.md`, Numeric attachments, records the appended gpu.h attachment catalogue and its
+backend validation. This stage changes no compiler or shader output. Numeric frag parameters, typed
+sampling, per-image clears and their golden/error/readback fixtures remain unimplemented. The existing
+174 shader golden/SPIR-V/HLSL checks pass on native ASan, including switch_values. Confirmed
+`st_switch` and `compiler/tests/shaders/switch_values.tide` already cover GPU switch code; removed the
+stale spec Open item that claimed GPU while and switch were missing.
+
 ## Invariant positions (2026-11-06)
 
 Every game shader's vertex position is `@builtin(position) @invariant` (`write_wgsl`, `tide_corner`), as is the

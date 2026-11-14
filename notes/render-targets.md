@@ -4,6 +4,36 @@ OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md
 
 Full combined native/web suite results: `notes/rendering.md`, Gap integration validation.
 
+## Numeric attachments: backend foundation (2026-11-14)
+
+The owner approved numeric frag outputs, seven formats, typed Sample and one clear value per image on
+2026-11-13: "these make sense, lets do all of these". This commit is the backend foundation only. It does
+**not** expose new Tide Format members yet; the compiler and managed-target handle encoding still only
+support the existing formats. The shader/image-writing thread can use the gpu.h catalogue below after
+this commit lands, but must not assume the Tide Format enum has landed.
+
+- `tide_gpu_color` appends R8, RG8, R16F, RG16F, R32F, RGBA32F and R32I as values 3 through 9. Existing
+  NONE/BYTES/FLOAT values and four-bit attachment packing stay unchanged. Vulkan and WebGPU map these to
+  their matching attachment formats; Unity replay maps them to explicit GraphicsFormats. The recorder
+  already carries the packed format unchanged. No generated-C/runtime boundary or shader generation changes.
+- `tide_gpu_color_bytes` centralizes 1/2/4/8/16-byte storage counts; renderer accounting uses it. Invalid
+  attachment kinds yield no storage and cannot index beyond a table.
+- Provisional: R32F, RGBA32F and R32I use one sample. Vulkan, WebGPU's C bridge, recorder and none agree.
+  Optional float32 multisampling and integer sample-zero resolve were considered; the baseline portable
+  attachment path is chosen instead. This is not yet a Tide diagnostic or a complete numeric-output contract.
+- `check_number_attachments` in the existing platform target fixture checks every appended kind's packed
+  round trip, byte count, single-sample restriction, allocation and a draw (negative signed integer or a
+  float vector with a fractional fourth component and a component past one). It does not read these numeric
+  images back and therefore does not establish exact pixel preservation.
+- Validation: Windows Clang 23 ASan `tide_platform_targets` passes on Vulkan; web-debug target builds and
+  its CTest passes on software WebGPU (muted headless browser). All 174 existing shader golden, SPIR-V
+  validation and HLSL/FXC CTests pass unchanged. Docs production build passes. Unity's C#
+  changes have not been compiled in a Unity editor. Release web runtime regenerated with Node 24.22.1.
+- Outstanding work for the requested feature: managed target format encoding and Tide Format members;
+  typed frag outputs, matching at draws, typed texture roles and Sample; per-image clears; blending and
+  filtering enforcement, mipmap rules, language-server support, compiler/golden and exact readback fixtures,
+  user docs and the complete Decided/Provisional spec update. This foundation does not close those gaps.
+
 ## Cached images detect discarded contents (2026-11-02)
 
 Owner-approved per-target invalidation query: `target.contentRevision`, a
