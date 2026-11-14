@@ -1,0 +1,7 @@
+// expect: Read<float4> gives a Grid2<float4> of the image's own numbers, and this target's format for image 0 isn't fixed by its constructor assignments
+// expect: that of one C makes, isn't known here
+scene Main {}
+local singleton State { RenderTarget target; }
+extern void c_make(out RenderTarget t);
+view V(mut State state) { c_make(out state.target); }
+async void Read(State state) { var pixels = await state.target.Read<float4>(); }

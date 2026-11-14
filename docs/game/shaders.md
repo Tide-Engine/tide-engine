@@ -77,7 +77,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)
 }
 ```
 
-- **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
+- **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints and int vectors don't blend: a frag reads them exactly as the triangle's first corner has them, as it reads [what a vert hands it](#from-a-vert-to-its-frag), so a per-face material or ID is the same whole number at every pixel of the face. Each field it reads is one of the 15 values carried from the corners.
 - **`this` is the pixel the frag runs for.** Its read-only fields say where it is, and `this.Discard()` leaves it undrawn: see [Where the pixel is](#where-the-pixel-is).
 - **`out Color color` is the pixel.** A frag writes its output through an [`out` parameter](../language/functions.md#out-parameters), and returns nothing. What it wrote there when it ends is the pixel's color, blended over what's behind it by its alpha.
 - **It starts with no value, so the frag writes it.** On every path that ends, and before reading it: `color.a = 1` alone, with nothing written first, is an error, and so is a frag whose only write is inside an `if` with no `else`. It isn't the pixel already on the screen either: a GPU doesn't let a frag read that. A path that ends in [`this.Discard()`](#where-the-pixel-is) draws no pixel, and owes it nothing.

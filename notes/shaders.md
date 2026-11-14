@@ -1,3 +1,26 @@
+## A frag reads its vertex's ints, flat (2026-11-14)
+
+From an audit: a frag reading `corner.material` (an int of its vertex) was refused with a note to keep it a float
+in the vertex, which interpolates three equal values with weights that needn't sum to exactly 1, so `int()` can
+give 2 for 3. Built instead (Provisional in the spec, beside Integral handed fields): `plan` counts a frag's int
+fields in `frag_fields` (the refusal in `ex_member` and the `!type_is_int_based` there are gone), and
+`put_varyings` writes them `@interpolate(flat)` with their own type (they went through `as_float`, which only ever
+saw floats). The vertex stage already read them as `i32` attributes. A frag that reads its vertex whole gets its
+ints too (zeros before, said nowhere). Each counts toward the 15 values. SPIR-V Flat, HLSL nointerpolation and
+Unity's OpenGL Core last-corner exception are the handed ints' path. Editor hover lists a vertex's and a handed
+struct's int fields among what the corners pass on (`put_reads` no longer drops them) and says floats blend while
+integral fields are flat. Tests: golden `shaders/vertex_int` (through spirv-val and fxc), `errors/gpu_frag_int_field`
+(now the 15-value limit with ints counted), pass 29 of `platform/tests/shaders.tide` (three first corners read
+directly, 16777217 and -2147483647 exact), `lsp_test`.
+
+## A kernel's typed read of the image it writes (2026-11-14)
+
+`plan_reads` compared a store with the other reads of its (image, read kind) entry, and a typed `[Raw(T)]` read is
+another kind (`READ_NUMBER`, `READ_INT_VOLUME`...) than the store's `READ_COLOR`/`READ_VOLUME`, so `v[this.at] =
+v[this.at] + 1.0` on a `[Raw(float)] Texture3D` compiled and the renderer's alias check skipped every run. It
+compares the image now (same source, field, asset and color image, any read kind but a depth's or a list's), once a
+shader. Errors `image_read_write_raw_volume`, `_int_volume`, `_raw_texture` (through a helper).
+
 ## Unity's ShaderLab masks the images a frag doesn't write (2026-11-14)
 
 `tide_hlsl_unity_shader` (`compiler/src/hlsl.c`) writes `ColorMask 0 i` in a shader's first pass for each of a
@@ -142,7 +165,7 @@ its frag from the triangle's first indexed corner, without blending. Bytes,
 bools and enums follow the same path (Provisional); bools travel as i32 0/1.
 Floats still blend; there is no flat-float annotation. Only read fields are sent,
 one location each, under the existing 15-location check. Ordinary vertex int
-fields still require explicit handing through an out struct. Matrices, nested
+fields required explicit handing through an out struct until later that day (top: a frag reads them flat itself). Matrices, nested
 structs, quaternions and 64-bit ints remain rejected, with the supported types
 named in the fix. WGSL interpolate(flat) translates through the existing SPIR-V
 Flat and HLSL nointerpolation paths. No runtime, GPU API or recorder changes.
