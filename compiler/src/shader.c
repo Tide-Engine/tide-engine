@@ -7290,9 +7290,7 @@ void plan_shaders(program *prog)
         const mesh_draw *draw = &prog->mesh_draws.items[i];
         expr *call = draw->call;
         if (call->gpu == GPU_TARGET_READ) {
-            const int format = image_target_format(call->object, 0, 0);
-            if (format >= 3)
-                diag_error(call->at, "Read returns Grid2<Color> from a Color image: sample this numeric image on the GPU instead, or copy it into a Color target before Read");
+            check_target_read(prog, call);
             continue;
         }
         if (call->c_callee && (!strcmp(call->c_callee, "tide_draw_clear_images") || !strcmp(call->c_callee, "tide_draw_clear"))) {

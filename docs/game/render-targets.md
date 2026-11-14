@@ -283,8 +283,68 @@ It takes a frame or more and can fail if the device is lost or the image exceeds
 match code. Multisampled targets read their resolved color. Float images retain colors above one, and alpha
 is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership.
 Reads share 64 slots with GPU list reads. An image can contain up to 4,000,000 pixels; outstanding pixel results
-are limited to 128 MiB. Window, depth, cube faces and array layers cannot be read this way. Draw into an
-ordinary Rgba8 or Rgba16f color target first. `Read` always interprets Rgba16f as Color and unpremultiplies
-RGB; use `[Raw(float4)]` shader reads to keep four independent channels. Other numeric formats are read in
-shaders through their typed texture declaration. To bring a numeric result into local code, have a kernel
-write a GPU list and read that list.
+are limited to 128 MiB.
+
+### Which image, and as what
+
+A target that holds several images reads any of them, by its number: `await target.Read(1)` reads
+`target.colors[1]`. The number is a constant, as what a read gives depends on the image.
+
+An image of numbers is read as its own type, written in `<>`, with the bits it stores:
+
+| The image's format | The read | What it gives |
+|---|---|---|
+| `Rgba8`, `Rgba16f` | `Read()` | `Grid2<Color>`, alpha not multiplied in |
+| `R8`, `R16f`, `R32f` | `Read<float>()` | `Grid2<float>` |
+| `Rg8`, `Rg16f` | `Read<float2>()` | `Grid2<float2>` |
+| `Rgba32f`, `Rgba16f` | `Read<float4>()` | `Grid2<float4>`, its four numbers as stored |
+| `R32i` | `Read<int>()` | `Grid2<int>` |
+
+```tide
+local singleton Picking { RenderTarget scene; Grid2<int> ids; Grid2<float> depths; }
+
+view Make(mut Picking picking)
+{
+    if (!picking.scene.valid) picking.scene = RenderTarget.Window(Format.Rgba8, Format.R32i);
+}
+
+async void ReadIds(mut Picking picking)
+{
+    if (await picking.scene.Read<int>(1) is Grid2<int> ids) picking.ids = ids.Copy();
+    if (await picking.scene.ReadDepth() is Grid2<float> depths) picking.depths = depths.Copy();
+}
+```
+
+- **Floats and ints come back bit for bit.** `R32f`, `Rgba32f` and `R32i` give what a frag or a clear wrote.
+  `R16f` and `Rg16f` give the 16-bit float that was stored, and `R8` and `Rg8` the stored byte over 255.
+- **The compiler checks the type against the target's format,** so the target has to be made one way wherever
+  it's assigned, with its formats written there: `Read<float>()` of a `RenderTarget` parameter, or of a target
+  made with `R32f` in one place and `Rg16f` in another, is an error that says so. A plain `Read()` of a target
+  whose formats aren't known is checked as it runs, and fails where the image isn't a Color's.
+- **`Read<float4>()` of an `Rgba16f` image** gives its four numbers as they're stored, where `Read()` gives
+  them as a Color, dividing its alpha out again. Use it for an image a frag wrote a `float4` into.
+
+### Depth
+
+`await target.ReadDepth()` returns `Grid2<float> fails IOError`: each pixel's depth, 0 at the near plane and 1
+at the far limit, as [`this.depth` and a depth's `Sample`](#a-target-s-depth) give it, whichever way the device
+stores it. Every target has one, a target of depth alone too. A multisampled target gives one depth a pixel.
+Where depth is stored as floats the depths a frag wrote come back exactly; on a device with 24-bit depth they
+come back to the nearest of its steps.
+
+### Cube faces and array layers
+
+A [cube's face](./meshes-and-textures.md) and an array's layer are targets, and are read the same way, one at
+a time: `await cube.faces[2].Read()`, `await array.layers[1].Read()`, and `ReadDepth()` of either. Each is one
+Color image, with its rows from the top as it was drawn.
+
+### How many images
+
+`target.colors.count` is how many color images a target holds: 0 for a target of depth alone and for one that
+was never made or was disposed.
+
+### The window
+
+`Draw.window` can't be read: its image is the display's own, which the GPU doesn't hand back to a kernel, and
+under Unity it's Unity's. Draw the frame into `RenderTarget.Window()`, read that, and
+[`Draw.Blit`](./shaders.md) it to the window.

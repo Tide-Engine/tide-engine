@@ -1,0 +1,92 @@
+// Every form of a render target's read back: which image and as what each asks the engine for, and the grid its
+// answer becomes (target_reads_test.c stands in for the renderer).
+scene Main { }
+const int Normals = 2;
+local singleton Reads
+{
+    RenderTarget plain;   // One Rgba8 image
+    RenderTarget several; // Rgba16f, R32f, Rg16f, R32i
+    RenderTarget masks;   // R8, Rg8, Rgba32f
+    RenderTarget shadow;  // Depth alone
+    Cubemap cube;
+    TextureArray array;
+    bool started;
+    int stage;
+    int failed;
+    int counts;
+    Grid2<Color> color;
+    Grid2<Color> hdr;
+    Grid2<float4> raw;
+    Grid2<float> scalar;
+    Grid2<float2> pair;
+    Grid2<int> ids;
+    Grid2<float> mask;
+    Grid2<float2> mask2;
+    Grid2<float4> full;
+    Grid2<float> depth;
+    Grid2<float> shadowDepth;
+    Grid2<Color> face;
+    Grid2<float> faceDepth;
+    Grid2<Color> layer;
+    Grid2<float> layerDepth;
+    Grid2<Color> given;
+}
+
+// A target whose formats aren't known here is still read as Color, and checked as it runs
+async void ReadGiven(RenderTarget target, mut Reads reads)
+{
+    if (await target.Read() is Grid2<Color> pixels) reads.given = pixels.Copy();
+    else reads.failed += 1;
+    reads.stage += 1;
+}
+
+async void ReadAll(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> color) reads.color = color.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read(0) is Grid2<Color> hdr) reads.hdr = hdr.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<float4>() is Grid2<float4> raw) reads.raw = raw.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<float>(1) is Grid2<float> scalar) reads.scalar = scalar.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<float2>(Normals) is Grid2<float2> pair) reads.pair = pair.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<int>(3) is Grid2<int> ids) reads.ids = ids.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.masks.Read<float>() is Grid2<float> mask) reads.mask = mask.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.masks.Read<float2>(1) is Grid2<float2> mask2) reads.mask2 = mask2.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.masks.Read<float4>(2) is Grid2<float4> full) reads.full = full.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.ReadDepth() is Grid2<float> depth) reads.depth = depth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.shadow.ReadDepth() is Grid2<float> shadowDepth) reads.shadowDepth = shadowDepth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.cube.faces[4].Read() is Grid2<Color> face) reads.face = face.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.cube.faces[1].ReadDepth() is Grid2<float> faceDepth) reads.faceDepth = faceDepth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.array.layers[2].Read() is Grid2<Color> layer) reads.layer = layer.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.array.layers[0].ReadDepth() is Grid2<float> layerDepth) reads.layerDepth = layerDepth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    ReadGiven(reads.plain, reads);
+}
+
+view Start(mut Reads reads)
+{
+    if (reads.started) return;
+    reads.started = true;
+    reads.plain = RenderTarget(2, 2, 1);
+    reads.several = RenderTarget(3, 2, 1, Format.Rgba16f, Format.R32f, Format.Rg16f, Format.R32i);
+    reads.masks = RenderTarget(2, 1, 1, Format.R8, Format.Rg8, Format.Rgba32f);
+    reads.shadow = RenderTarget(2, 2, 1, Format.Depth);
+    reads.cube = Cubemap(2);
+    reads.array = TextureArray(2, 2, 3, 1);
+    RenderTarget none = default;
+    reads.counts = reads.plain.colors.count * 1000 + reads.several.colors.count * 100 + reads.masks.colors.count * 10
+                 + reads.shadow.colors.count + none.colors.count + reads.cube.faces[0].colors.count * 10000;
+    ReadAll(reads);
+}

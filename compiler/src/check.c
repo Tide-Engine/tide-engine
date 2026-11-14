@@ -9079,8 +9079,11 @@ static type check_method(checker *c, expr *e)
             && !(c->method && find_property(c->method->owner, e->object->name))) world = component_world(c, e->object->at);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
     }
-    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads
-    if (e->type_arg.len > 0 && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
+    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads, and target.Read<float>(), which is
+    // known for a render target's once its receiver is checked
+    const bool read_typed = e->type_arg.len > 0 && (str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadDepth"))
+                         && !names_builtin_owner(c, e->object) && !names_wait(c, e->object);
+    if (e->type_arg.len > 0 && !read_typed && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
         && !((str_eq_c(e->name, "Set") || str_eq_c(e->name, "Reset"))
              && visibility_typed_receiver(c, e->object))) {
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
@@ -9259,6 +9262,10 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
+    if (read_typed && obj.kind != TY_RENDER_TARGET && obj.kind != TY_ERROR) { // Left for its receiver's type, above
+        diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
+        diag_note("a render target's read does, for an image of numbers: 'await target.Read<float>()'");
+    }
     if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!str_eq_c(e->name, "Cancel") || e->args.count) {
@@ -9478,15 +9485,60 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_RENDER_TARGET) {
-        if (str_eq_c(e->name, "Read")) {
+        if (str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadDepth")) {
+            // await target.Read(), Read(image), Read<T>(), Read<T>(image) and ReadDepth(): an owned grid of one of
+            // its images, a frame or more later. The cell type is written here, and plan_shaders holds it against
+            // the formats the target was made with (check_target_read), which are known once every body is checked
+            const bool depth = str_eq_c(e->name, "ReadDepth");
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            if (e->args.count || c->awaiting != e) {
-                diag_error(e->at, "Read takes no arguments and finishes later: 'var pixels = await target.Read();' in local async code");
+            if (c->awaiting != e || e->args.count > (depth ? 0 : 1)) {
+                diag_error(e->at, depth ? "ReadDepth takes no arguments and finishes later: 'var depths = await target.ReadDepth();' "
+                                          "in local async code"
+                                        : "Read takes the color image's number, or nothing for the first, and finishes later: "
+                                          "'var pixels = await target.Read();' in local async code");
                 return T_ERR;
             }
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
                 return T_ERR;
+            }
+            type cell = depth ? T_FLOAT_ : (type){TY_COLOR, NULL};
+            if (e->type_arg.len > 0) {
+                if (depth) {
+                    diag_error(e->type_arg_qual_at, "ReadDepth takes no type in '<>': a depth is a float, 'await target.ReadDepth()'");
+                    return T_ERR;
+                }
+                cell = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+                if (cell.kind == TY_ERROR) return T_ERR;
+                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT2 && cell.kind != TY_FLOAT4
+                    && cell.kind != TY_INT) {
+                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a color image holds: Color, float, float2, float4 or int, "
+                                                    "not %s", type_name(cell));
+                    diag_note("'Read<float>()' reads Format.R8, R16f and R32f, 'Read<float2>()' Rg8 and Rg16f, 'Read<float4>()' "
+                              "Rgba16f and Rgba32f, 'Read<int>()' R32i, and 'Read()' a Color image");
+                    return T_ERR;
+                }
+            }
+            e->read_kind = (uint8_t)(depth ? 5 : cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
+                                     : cell.kind == TY_INT ? 4 : 0);
+            e->read_image = 0;
+            if (e->args.count) {
+                // Which image is part of the read's type, so it's a number the compiler knows
+                const expr *image = e->args.items[0];
+                if (image->type.kind == TY_ERROR) return T_ERR;
+                for (int i = 0; image->constant && i < 32; i++) image = image->constant->value;
+                if (!type_assignable(T_INT_, e->args.items[0]->type) || image->kind != E_INT) {
+                    diag_error(e->args.items[0]->at, "Read takes which color image as a constant int, counted from 0: 'await "
+                                                     "target.Read(1)' reads 'target.colors[1]'");
+                    diag_note("what a read gives depends on the image's format, so the compiler has to know which image it is");
+                    return T_ERR;
+                }
+                if (image->int_value < 0 || image->int_value >= TARGET_COLORS) {
+                    diag_error(e->args.items[0]->at, "a render target holds %d color images at the most: 'Read(0)' to 'Read(%d)'",
+                               TARGET_COLORS, TARGET_COLORS - 1);
+                    return T_ERR;
+                }
+                e->read_image = (uint8_t)image->int_value;
             }
             if (in_async_function(c)) {
                 if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
@@ -9498,7 +9550,7 @@ static type check_method(checker *c, expr *e)
             if (code) code->uses_gpu_read = true;
             e->gpu = GPU_TARGET_READ;
             vec_push(c->prog->mesh_draws, ((mesh_draw){.in = reading_code(c), .call = e}));
-            return result_of(c->prog, grid_of(c->prog, (type){TY_COLOR, NULL}, 2), (type){TY_ENUM, c->prog->io_error}, false);
+            return result_of(c->prog, grid_of(c->prog, cell, 2), (type){TY_ENUM, c->prog->io_error}, false);
         }
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
             const bool resize = str_eq_c(e->name, "Resize");
@@ -10600,8 +10652,11 @@ static type check_member(checker *c, expr *e)
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && str_eq_c(e->member, "window")
-            && c->awaiting && str_eq_c(c->awaiting->name, "Read") && c->awaiting->object == e) {
+            && c->awaiting && (str_eq_c(c->awaiting->name, "Read") || str_eq_c(c->awaiting->name, "ReadDepth"))
+            && c->awaiting->object == e) {
             diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
+            diag_note("the window's image is the display's, which no GPU hands back to a kernel: 'RenderTarget.Window()' is a "
+                      "target of its size to draw into, read, and 'Draw.Blit' to the window");
             return T_ERR;
         }
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
@@ -10648,8 +10703,17 @@ static type check_member(checker *c, expr *e)
     c->device_whole_ok = e->object; // devices.gamepad reads what it names, not all of devices
     c->in_place_ok = e->object;     // state.tail reads its field where the state is
     c->member_object = e->object;
+    // target.colors.count: how many color images it holds. `colors` is otherwise read one at a time
+    const bool counts_colors = str_eq_c(e->member, "count") && e->object->kind == E_MEMBER && str_eq_c(e->object->member, "colors");
+    const expr *colors_indexed = c->colors_indexed;
+    if (counts_colors) c->colors_indexed = e->object;
     const type obj = check_expr(c, e->object);
+    if (counts_colors) c->colors_indexed = colors_indexed;
     if (obj.kind == TY_ERROR) return T_ERR;
+    if (counts_colors && obj.kind == TY_RENDER_TARGET && e->object->target_colors) {
+        if (gpu_refuses(c, e->at, "count a RenderTarget's color images", "the view owns the target")) return T_ERR;
+        return T_INT_;
+    }
 
     if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
         if (!str_eq_c(e->member, "isRunning") && !str_eq_c(e->member, "isCompleted") && !str_eq_c(e->member, "isCancelled")) {
@@ -11463,12 +11527,13 @@ static type check_index(checker *c, expr *e)
 {
     c->device_whole_ok = e->object; // devices.touchscreen.touches[0] reads the one it names
     c->in_place_ok = e->object;     // tail[i] reads its element where the array is
+    const expr *outer_colors = c->colors_indexed; // cube.faces[0].colors.count: the count's own, around this index
     c->colors_indexed = e->object;  // target.colors[1] reads the one it names
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
     c->asset_value = previous_asset;
-    c->colors_indexed = NULL;
+    c->colors_indexed = outer_colors;
     bool skin_handled;
     const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;

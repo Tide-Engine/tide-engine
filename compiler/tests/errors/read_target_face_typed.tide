@@ -1,0 +1,4 @@
+// expect: a cube's face holds one Color image: read it with 'await cube.faces[i].Read()', and its depth with 'ReadDepth()'
+scene Main {}
+local singleton State { Cubemap cube; }
+async void Read(State state) { var pixels = await state.cube.faces[0].Read<float4>(); }

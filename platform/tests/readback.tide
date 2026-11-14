@@ -1,18 +1,84 @@
 scene Main {}
-local singleton CopyState { RenderTarget target; RenderTarget high; bool started; int frame; }
-local singleton CopyResult { Grid2<Color> pixels; Grid2<Color> hdr; bool done; bool failed; }
+local singleton CopyState
+{
+    RenderTarget target; RenderTarget high; bool started; int frame;
+    RenderTarget several; // Rgba8, R32f, Rg16f, R32i
+    RenderTarget bytes;   // R8, Rg8
+    RenderTarget half;    // R16f
+    RenderTarget wide;    // Rgba32f
+    RenderTarget deep;    // Format.Depth
+    Cubemap cube;
+    TextureArray array;
+    TextureArray shadows; // Format.Depth layers
+    float depth;          // What DepthCard writes
+    int images; int none; int windowImages;
+}
+local singleton CopyResult
+{
+    Grid2<Color> pixels; Grid2<Color> hdr; bool done; bool failed; int firstFrame;
+    Grid2<Color> first; Grid2<float> second; Grid2<float2> third; Grid2<int> fourth;
+    Grid2<float> mask; Grid2<float2> pair; Grid2<float> halves; Grid2<float4> wide; Grid2<float4> hdrRaw;
+    Grid2<float> depth; Grid2<float> resolved; Grid2<float> alone;
+    Grid2<Color> face0; Grid2<Color> face3; Grid2<Color> face5; Grid2<float> faceDepth;
+    Grid2<Color> layer0; Grid2<Color> layer2; Grid2<float> layerDepth; Grid2<float> shadow1;
+    bool missingFailed; bool disposedFailed;
+}
 async void ReadImages(CopyState state, mut CopyResult result) {
     if (await state.target.Read() is Grid2<Color> pixels) result.pixels = pixels.Copy();
     else result.failed = true;
     if (await state.high.Read() is Grid2<Color> hdr) result.hdr = hdr.Copy();
     else result.failed = true;
+    result.firstFrame = state.frame;
+    // Each image of a target, as its own type
+    if (await state.several.Read(0) is Grid2<Color> first) result.first = first.Copy(); else result.failed = true;
+    if (await state.several.Read<float>(1) is Grid2<float> second) result.second = second.Copy(); else result.failed = true;
+    if (await state.several.Read<float2>(2) is Grid2<float2> third) result.third = third.Copy(); else result.failed = true;
+    if (await state.several.Read<int>(3) is Grid2<int> fourth) result.fourth = fourth.Copy(); else result.failed = true;
+    if (await state.bytes.Read<float>() is Grid2<float> mask) result.mask = mask.Copy(); else result.failed = true;
+    if (await state.bytes.Read<float2>(1) is Grid2<float2> pair) result.pair = pair.Copy(); else result.failed = true;
+    if (await state.half.Read<float>() is Grid2<float> halves) result.halves = halves.Copy(); else result.failed = true;
+    if (await state.wide.Read<float4>() is Grid2<float4> wide) result.wide = wide.Copy(); else result.failed = true;
+    if (await state.high.Read<float4>() is Grid2<float4> raw) result.hdrRaw = raw.Copy(); else result.failed = true;
+    // Depth: a target's, a multisampled target's, and a target's of depth alone
+    if (await state.several.ReadDepth() is Grid2<float> depth) result.depth = depth.Copy(); else result.failed = true;
+    if (await state.target.ReadDepth() is Grid2<float> resolved) result.resolved = resolved.Copy(); else result.failed = true;
+    if (await state.deep.ReadDepth() is Grid2<float> alone) result.alone = alone.Copy(); else result.failed = true;
+    // A cube's faces and an array's layers
+    if (await state.cube.faces[0].Read() is Grid2<Color> face0) result.face0 = face0.Copy(); else result.failed = true;
+    if (await state.cube.faces[3].Read() is Grid2<Color> face3) result.face3 = face3.Copy(); else result.failed = true;
+    if (await state.cube.faces[5].Read() is Grid2<Color> face5) result.face5 = face5.Copy(); else result.failed = true;
+    if (await state.cube.faces[2].ReadDepth() is Grid2<float> faceDepth) result.faceDepth = faceDepth.Copy(); else result.failed = true;
+    if (await state.array.layers[0].Read() is Grid2<Color> layer0) result.layer0 = layer0.Copy(); else result.failed = true;
+    if (await state.array.layers[2].Read() is Grid2<Color> layer2) result.layer2 = layer2.Copy(); else result.failed = true;
+    if (await state.array.layers[1].ReadDepth() is Grid2<float> layerDepth) result.layerDepth = layerDepth.Copy(); else result.failed = true;
+    if (await state.shadows.layers[1].ReadDepth() is Grid2<float> shadow1) result.shadow1 = shadow1.Copy(); else result.failed = true;
+    // What isn't there fails, and nothing more: a layer past the array's, and a target disposed before its read
+    if (await state.array.layers[7].Read() is Grid2<Color> missing) result.failed = true; else result.missingFailed = true;
+    RenderTarget gone = RenderTarget(2, 2, 1);
+    gone.Dispose();
+    if (await gone.Read() is Grid2<Color> never) result.failed = true; else result.disposedFailed = true;
     result.done = true;
 }
+
+frag HighColor(Vertex vertex, out Color color) { color = Color(2, 0.5, 0.25, 0.5); }
+frag DepthCard(Vertex3 vertex, out Color color, CopyState state) { color = vertex.color; this.WriteDepth(state.depth); }
+
 view Paint(mut CopyState state, mut CopyResult result) {
     if (!state.started) {
         state.target = RenderTarget(4, 3, 1, samples: 4);
         state.high = RenderTarget(2, 2, 1, Format.Rgba16f);
+        state.several = RenderTarget(4, 2, 1, Format.Rgba8, Format.R32f, Format.Rg16f, Format.R32i);
+        state.bytes = RenderTarget(2, 2, 1, Format.R8, Format.Rg8);
+        state.half = RenderTarget(2, 2, 1, Format.R16f);
+        state.wide = RenderTarget(2, 2, 1, Format.Rgba32f);
+        state.deep = RenderTarget(2, 2, 1, Format.Depth);
+        state.cube = Cubemap(2);
+        state.array = TextureArray(2, 2, 3, 1);
+        state.shadows = TextureArray(2, 2, 2, 1, Format.Depth);
         state.started = true;
+        state.images = state.several.colors.count * 100 + state.bytes.colors.count * 10 + state.deep.colors.count;
+        RenderTarget none = default;
+        state.none = none.colors.count;
         ReadImages(state, result);
     }
     state.target.SetScreen(); state.target.SetBlend(.Replace);
@@ -21,7 +87,76 @@ view Paint(mut CopyState state, mut CopyResult result) {
     state.high.SetScreen(); state.high.SetBlend(.Replace); state.high.Clear(Color.black);
     List<Vertex> quad = [Vertex {}, Vertex { position = float2(2, 0) }, Vertex { position = float2(2) }, Vertex { position = float2(0, 2) }];
     state.high.Mesh(quad, [0,1,2,0,2,3], HighColor);
+
+    // Typed clears, whole and then clipped to the pixel (1, 0), are exact in every image
+    state.several.SetScreen();
+    state.several.Clear(Color.red, 2.5, float2(-4, 8), -2147483647);
+    state.several.Clip(Rect(1, 0, 1, 1)) { state.several.Clear(Color(0, 0, 1, 1), 0.001, float2(0.5, 65504), 16777217); }
+    state.bytes.SetScreen();
+    state.bytes.Clear(1.0, float2(0, 1));
+    state.bytes.Clip(Rect(0, 1, 1, 1)) { state.bytes.Clear(0.2, float2(0.6, 0.4)); }
+    state.half.SetScreen();
+    state.half.Clear(0.5);
+    state.half.Clip(Rect(1, 1, 1, 1)) { state.half.Clear(-2.5); }
+    state.wide.SetScreen();
+    state.wide.Clear(float4(1000000000, -3.25, 0.1, 7));
+    state.wide.Clip(Rect(1, 0, 1, 1)) { state.wide.Clear(float4(0, 0.000001, -65536.5, 3)); }
+
+    // Depth a frag writes, in forward terms, over the right half of `several` (red over red) and all of the others
+    List<Vertex3> card = [Vertex3 { position = float3(-1, -1, 0.5) }, Vertex3 { position = float3(1, -1, 0.5) },
+                          Vertex3 { position = float3(1, 1, 0.5) }, Vertex3 { position = float3(-1, 1, 0.5) }];
+    List<Vertex3> left = [Vertex3 { position = float3(-1, -1, 0.5) }, Vertex3 { position = float3(0, -1, 0.5) },
+                          Vertex3 { position = float3(0, 1, 0.5) }, Vertex3 { position = float3(-1, 1, 0.5) }];
+    state.several.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+    state.several.SetCull(.None); state.several.SetDepth(.ReadWrite);
+    state.depth = 0.25;
+    List<Vertex3> right = [Vertex3 { position = float3(0, -1, 0.5), color = Color.red }, Vertex3 { position = float3(1, -1, 0.5), color = Color.red },
+                           Vertex3 { position = float3(1, 1, 0.5), color = Color.red }, Vertex3 { position = float3(0, 1, 0.5), color = Color.red }];
+    state.several.Mesh(right, [0,1,2,0,2,3], float4x4.identity, DepthCard);
+    state.deep.Clear(Color.black);
+    state.deep.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+    state.deep.SetCull(.None); state.deep.SetDepth(.ReadWrite);
+    state.depth = 0.75;
+    state.deep.Mesh(card, [0,1,2,0,2,3], float4x4.identity, DepthCard);
+
+    // Each face and layer its own color, with its top left pixel white: which face, and which way up
+    for (int i = 0; i < 6; i++)
+    {
+        RenderTarget face = state.cube.faces[i];
+        face.SetScreen(); face.SetBlend(.Replace);
+        face.Clear(Color(i / 5.0, 1 - i / 5.0, 0, 1));
+        face.Rect(float2(0.5, 0.5), float2(1, 1), Color.white);
+        face.Rect(float2(1.5, 0.5), float2(1, 1), Color.blue);
+        if (i == 2)
+        {
+            face.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+            face.SetCull(.None); face.SetDepth(.ReadWrite);
+            state.depth = 0.125;
+            face.Mesh(left, [0,1,2,0,2,3], float4x4.identity, DepthCard);
+        }
+    }
+    for (int i = 0; i < 3; i++)
+    {
+        RenderTarget layer = state.array.layers[i];
+        layer.SetScreen(); layer.SetBlend(.Replace);
+        layer.Clear(Color(i / 2.0, 0, 1 - i / 2.0, 0.5));
+        layer.Rect(float2(0.5, 0.5), float2(1, 1), Color.white);
+        if (i == 1)
+        {
+            layer.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+            layer.SetCull(.None); layer.SetDepth(.ReadWrite);
+            state.depth = 0.5;
+            layer.Mesh(left, [0,1,2,0,2,3], float4x4.identity, DepthCard);
+        }
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        RenderTarget shadow = state.shadows.layers[i];
+        shadow.Clear(Color.black);
+        shadow.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+        shadow.SetCull(.None); shadow.SetDepth(.ReadWrite);
+        state.depth = i == 0 ? 0.375 : 0.625;
+        shadow.Mesh(card, [0,1,2,0,2,3], float4x4.identity, DepthCard);
+    }
     state.frame += 1;
 }
-
-frag HighColor(Vertex vertex, out Color color) { color = Color(2, 0.5, 0.25, 0.5); }

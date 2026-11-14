@@ -6357,6 +6357,19 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.$\n}\n", types);
     const char *members = complete(program);
     TIDE_CHECK(offers(members, "depth") && offers(members, "color") && offers(members, "Read") && has(members, "DepthTexture"));
+    // Its reads back: an image as its own type, by its number, and its depth; and how many images it holds
+    TIDE_CHECK(offers(members, "ReadDepth") && has(members, "Read<T>([int image]) -> Grid2<T> fails IOError")
+               && has(members, "ReadDepth() -> Grid2<float> fails IOError") && has(members, "colors.count"));
+    snprintf(program, sizeof program, "%slocal singleton Saved { Grid2<float> depths; Grid2<Color> pixels; int images; }\n"
+                                      "async void Save(Lamp lamp, mut Saved saved)\n{\n"
+                                      "    if (await lamp.map.ReadDepth() is Grid2<float> depths) saved.depths = depths.Copy();\n"
+                                      "    if (await lamp.map.Read<Color>(0) is Grid2<Color> pixels) saved.pixels = pixels.Copy();\n"
+                                      "    saved.images = lamp.map.colors.count;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    snprintf(program, sizeof program, "%sasync void Save(Lamp lamp)\n{\n    var depths = await lamp.map.ReadDepth($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "ReadDepth() -> Grid2<float> fails IOError"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    var shadow = lamp.map.depth;\n    lamp.shadow = sha$dow;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "DepthTexture"));

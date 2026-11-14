@@ -2500,7 +2500,8 @@ static const method_form depth_array_calls[] = {
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
-    {"Read", "Read() -> Grid2<Color> fails IOError", "Await in local async code for an owned copy of the first resolved color image, a frame or more later. Straight Color values, including HDR. At most 4,000,000 pixels; device loss fails."},
+    {"Read", "Read<T>([int image]) -> Grid2<T> fails IOError", "Await in local async code for an owned copy of one resolved color image, a frame or more later: `await target.Read()` its first, `Read(1)` its second, with a constant int. Without `<T>` it's a `Grid2<Color>` of an Rgba8 or Rgba16f image, straight Color values, including HDR. An image of numbers is read as its own type, bit for bit: `Read<float>()` for R8, R16f and R32f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f (and an Rgba16f image's four numbers as stored), `Read<int>()` for R32i. The target's formats must be fixed where it's made. A cube's face and an array's layer are read the same way: `await cube.faces[0].Read()`. At most 4,000,000 pixels; device loss fails."},
+    {"ReadDepth", "ReadDepth() -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. At most 4,000,000 pixels; device loss fails."},
 };
 
 #define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
@@ -7501,7 +7502,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             item(c, "colors", CK_PROPERTY, "Texture, by its number",
                  "The target's color images, in the order of the formats it was made with: `colors[1]` is its second, "
-                 "as a Texture, and `colors[0]` is `color`. A frag's `out Color` parameters go to them in that order.",
+                 "as a Texture, and `colors[0]` is `color`. A frag's `out Color` parameters go to them in that order. "
+                 "`colors.count` is how many it holds.",
                  "colors[$1]");
         }
         item(c, "depth", CK_PROPERTY, "DepthTexture",
@@ -7510,7 +7512,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             for (size_t i = 0; i < sizeof target_calls / sizeof target_calls[0]; i++)
                 item(c, target_calls[i].name, CK_METHOD, target_calls[i].form, target_calls[i].doc,
-                     i == 0 ? "Resize($1, $2)" : strcmp(target_calls[i].name, "Read") == 0 ? "Read()" : "Dispose()");
+                     i == 0 ? "Resize($1, $2)" : strcmp(target_calls[i].name, "Read") == 0 ? "Read()"
+                     : strcmp(target_calls[i].name, "ReadDepth") == 0 ? "ReadDepth()" : "Dispose()");
         }
         if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) {
             builtin_list_members(str_from("Draw"), add_target_member, c); // The window's, as its own

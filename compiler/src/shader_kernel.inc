@@ -333,6 +333,58 @@ static void check_image_clear(program *prog, const expr *call)
         diag_error(call->at, "this target holds %d images: give Clear exactly one value for each image, in order", count);
 }
 
+// await target.Read<T>(image): the cell type written there against the format the target's image was made with. A
+// Color read of a target whose formats aren't known here (a parameter, a target made two ways) is checked as it
+// runs, and fails there; a number read's format has to be known, as its grid's type is the image's own.
+static void check_target_read(program *prog, const expr *call)
+{
+    static const char *const cells[] = {"Color", "float", "float2", "float4", "int"};
+    static const char *const reads[] = {"Read", "Read<float>", "Read<float2>", "Read<float4>", "Read<int>"};
+    const int kind = call->read_kind, image = call->read_image;
+    if (kind > 4) return; // ReadDepth: every target has depth
+    const expr *target = call->object;
+    if (target->kind == E_INDEX && target->object && target->object->kind == E_MEMBER && target->object->target_colors
+        && target->object->object && target->object->object->type.kind != TY_RENDER_TARGET) {
+        // cube.faces[i], array.layers[i]: one image, a Color's
+        if (kind == 0 && image == 0) return;
+        const bool cube = target->object->object->type.kind == TY_CUBEMAP;
+        diag_error(call->at, "a %s holds one Color image: read it with 'await %s.Read()', and its depth with 'ReadDepth()'",
+                   cube ? "cube's face" : "TextureArray's layer", cube ? "cube.faces[i]" : "array.layers[i]");
+        return;
+    }
+    const int format = image_target_format(target, image, 0);
+    if (format == 1 || format == -2) {
+        if (format == 1 || image == 0) {
+            diag_error(call->at, "this target holds depth alone, and Read reads a color image: read its depth with 'await "
+                                 "target.ReadDepth()'");
+        } else {
+            diag_error(call->at, "Read(%d) reads the target's color image %d, and this target was made with fewer: its images "
+                                 "are counted from 0, in the order of the formats it was made with", image, image);
+        }
+        return;
+    }
+    if (format < 0) {
+        if (kind == 0) return;
+        diag_error(call->at, "%s gives a Grid2<%s> of the image's own numbers, and this target's format for image %d isn't fixed "
+                             "by its constructor assignments", reads[kind], cells[kind], image);
+        diag_note("make the target one way wherever it's assigned, with a Format for each image, 'RenderTarget(width, height, "
+                  "Format.R32f)', and read the field or local it's kept in; a RenderTarget parameter's format isn't known here");
+        return;
+    }
+    const bool fits = kind == 0 ? format == 0 || format == 2 : kind == 1 ? format == 3 || format == 5 || format == 7
+                    : kind == 2 ? format == 4 || format == 6 : kind == 3 ? format == 2 || format == 8 : format == 9;
+    if (fits) return;
+    const int want = format == 0 || format == 2 ? 0 : format == 3 || format == 5 || format == 7 ? 1 : format == 4 || format == 6 ? 2
+                   : format == 8 ? 3 : 4;
+    char index[16] = "";
+    if (image) snprintf(index, sizeof index, "%d", image);
+    diag_error(call->at, "%s gives a Grid2<%s>, but this target's image %d is Format." STR_FMT ", which holds %s: write 'await "
+                         "target.%s(%s)'", reads[kind], cells[kind], image, STR_ARG(prog->format->members.items[format].name),
+               format == 2 ? "Color or float4" : cells[want], reads[want], index);
+    if (format == 2) diag_note("'Read<float4>(%s)' gives an Rgba16f image's four numbers as stored; 'Read(%s)' gives them as a "
+                               "Color, its alpha undone", index, index);
+}
+
 // A storage texture's format is part of its GPU declaration. Follow all resource assignments rather than choosing
 // the first constructor reached: a different format on another path must be diagnosed before any backend runs.
 static int image_origin_format(const expr *e, const int color, const int depth)

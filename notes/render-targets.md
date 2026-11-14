@@ -43,6 +43,82 @@ both configurations. Renderer clear variants pass spirv-val and FXC /WX; CLI Uni
 Editor LSP 278/278, grammar 383/383 and docs production build pass. Unity actual replay results and the few
 unavailable hardware platforms are recorded in unity.md. No CI was manually dispatched.
 
+# Readback of every image (2026-11-14)
+
+The owner asked for the gaps of "Owned pixel readback" (below) to be closed: "make sure everything we can add or
+validate we do". Rules and the alternatives weighed are Provisional in docs/spec.md (which image a read is of, and
+as what); the user page is docs/game/render-targets.md, Reading pixels in local code. Where this and the section
+below differ (no depth, face, layer or numeric read; one pipeline), this is what's built.
+
+- **Language.** `await target.Read()`, `Read(image)`, `Read<T>()`, `Read<T>(image)` (T: Color, float, float2,
+  float4, int; `image` a constant int 0..3) and `await target.ReadDepth()`, each a failable owned `Grid2` of that
+  cell. `target.colors.count` is an int. Cube faces and array layers are RenderTargets already, so
+  `cube.faces[i].Read()`/`ReadDepth()` and `array.layers[i]...` are the same calls. The window stays a compile error;
+  the spec says why it isn't the same path (its image is an attachment-only swapchain/canvas image, Unity's under
+  Unity).
+- **Checker** (`check.c`, the RenderTarget method branch): sets `expr.read_kind` (tide_target_read: 0 Color, 1
+  float, 2 float2, 3 float4, 4 int, 5 depth) and `expr.read_image`. The `<T>` on a method named Read/ReadDepth is
+  left for the receiver's type (`read_typed`), and refused there for any other receiver. `colors.count` grants the
+  `colors` member its one-at-a-time exemption through `colors_indexed`, which `check_index` now restores instead of
+  clearing (it broke `cube.faces[0].colors...` before).
+- **Format check** (`check_target_read`, shader_kernel.inc, from `plan_shaders`): `image_target_format` of the
+  read's target and image, the provenance numeric frag outputs and typed clears use. Known format: the read's kind
+  must fit (Rgba16f fits Color and float4), else an error naming the format and the read that fits. Unknown format:
+  an error for a number read, with the fix; allowed for a Color read, which the runtime checks. No image there
+  (`Format.Depth`, an image past the constructor's) is an error. A face/layer takes only `Read()` and `ReadDepth()`.
+  The type can't be inferred in the checker: a field's `image_assignments` are complete only after every body.
+- **Engine** (`draw.h`, `gpu_list.c`): `tide_render_target_read_begin_as(target, image, kind)`;
+  `tide_render_target_read_begin` is image 0 as Color. `tide_gpu_read_request` gained `image` and `kind` in what was
+  padding (its size and the other fields' places are unchanged, so no embed ABI change: nothing but the engine and
+  the renderer reads them). A request is refused as it's asked (`target_read_names`): no target, the window, a
+  volume, a cube or array without a face/layer, a dead target, an image it hasn't got, a kind that isn't the
+  image's (`tide_target_read_fits`), depth of a borrowed target. Poll gives `stride` by kind
+  (`tide_target_read_words`: 4, 1, 2, 4, 1, 1) and fails a result whose pixels' words pass `bytes`.
+  `tide_render_target_read_grid` makes a grid only where the shape's cell is `stride * 4` bytes, of two dimensions,
+  and `count` is `width * height`. `tide_render_target_color_count(id)` is `colors.count`.
+- **Renderer** (`platform.c` `target_read_prepare`, `compute.inc`): nine kernels in `cull.tide`, a pipeline each
+  made on first use (`pixel_read_pipelines`): ReadTargetPixels (Color, as before), ReadTargetFloat/Float2/Float4
+  and ReadTargetInt (typed `[Raw(T)]` textures: `textureLoad`, no sampler, no alpha), ReadTargetDepth
+  (`DepthTexture.Sample`, so `tide_depth` turns reversed storage forward), ReadTargetFace (the cube, by the
+  direction through each pixel's middle), ReadTargetLayer and ReadTargetLayerDepth (the array and its depth array,
+  by layer). Ints go to a range of the ints pool, everything else the words pool. The request is checked again
+  against what the target holds now. A multisampled target's depth is resolved first by `resolve_target_depth`,
+  factored out of `prepare_source_target` (same bookkeeping and memory accounting). No gpu.h function, recorder
+  opcode or tide.js change: Vulkan, WebGPU, the recorder and none run them through compute, images and buffer reads.
+- **Face directions** (gpu.h's cube convention; `p` is the pixel's middle in -1..1, x right, y down): +x
+  `(1, -p.y, -p.x)`, -x `(-1, -p.y, p.x)`, +y `(p.x, 1, p.y)`, -y `(p.x, -1, -p.y)`, +z `(p.x, -p.y, 1)`, -z
+  `(-p.x, -p.y, -1)`. The fixture pins faces 0, 3 and 5 with an asymmetric top row.
+- **Unity's catalogue.** `platform/src/read_pixels_wgsl.h` now holds all nine kernels' WGSL, written by
+  `node compiler/tests/read_target_builtin.mjs <tidec> <repo> --write` from `tidec --kernels`, and
+  `tidec_read_target_builtin` compares it byte for byte (it was a substring check, which had let the checked-in
+  ReadTargetPixels go stale when kernels gained the `tide_reversed_depth` preamble: a catalogue entry is found by
+  a key of its exact WGSL on the web and of its SPIR-V elsewhere, so a copy that isn't what the renderer hands the
+  recorder may not be found). Regenerate it whenever a ReadTarget kernel or the
+  kernel preamble changes. shaders.h lists the nine (`target_pixels` .. `target_layer_depth`); the CLI's
+  `unity_shaders_written` counts 15 computes.
+- **Limits** are unchanged: 64 slots shared with list reads, 4,000,000 pixels, 128 MiB outstanding (now counted
+  by each kind's words).
+- **Tests.**
+  - `tidec_e2e_target_reads`: every form's request (image, kind, the face/layer in its id), a stand-in renderer's
+    answer, and the typed grid it becomes, word for word; then the engine alone: each kind against each format,
+    images out of range (negative, INT32_MAX), the window, no target, a cube without a face, a face past the
+    sixth, a disposed target, a result shorter than its pixels, sizes that are negative or overflow, a grid of
+    another cell size.
+  - Errors `read_target_*`, `read_depth_*`, `read_type_other_receiver`, `number_read_cpu`,
+    `render_target_colors_count_frag` (22 new or changed; `render_target_colors_count` is gone, as it compiles).
+  - `tide_platform_readback` and `_depth_fallback`, native Vulkan (sanitize, validation layer) and WebGPU
+    (web-debug): the earlier 4x3 MSAA and HDR reads at frame 5; four images of one target (Rgba8, R32f, Rg16f,
+    R32i) from typed clears, whole and clipped to one pixel, bit for bit, -2147483647 and 16777217 among the ints;
+    R8/Rg8 bytes; R16f; Rgba32f with 1e9 and 1e-6; an Rgba16f image's stored (premultiplied) numbers through
+    `Read<float4>`; depth a frag wrote (0.25, 0.75, 0.125, 0.5, 0.375, 0.625) beside the far limit for a target,
+    a 4-sample target, a target of depth alone, a face, a color array's layer and a depth array's layer (exact
+    under float storage, asserted natively); faces and layers by color and orientation; a layer past the array's
+    and a disposed target failing; `colors.count`.
+  - `lsp_render_target_formats_and_depth`: completions and signature help for the reads, a clean document.
+- **Not run:** Unity's replay of the eight new kernels (their HLSL compiles under fxc cs_5_0 with Unity's
+  warnings, `tide_hlsl_shaders_valid`, and they use no new packet); Android (no window fixture there, as below);
+  Metal; the optional real-GPU web lanes.
+
 # Owned pixel readback (2026-11-14)
 
 Owner-approved 2026-11-13: await target.Read gives an owned Grid2<Color> fails IOError in local async code.

@@ -898,6 +898,14 @@ static const char *const hiz_wgsl = WGSL(
     X(add_offsets, add_offsets_wgsl, NULL)                                                                             \
     X(add_scatter, add_scatter_wgsl, NULL)                                                                             \
     X(target_pixels, target_pixels_wgsl, NULL)                                                                         \
+    X(target_float, target_float_wgsl, NULL)                                                                           \
+    X(target_float2, target_float2_wgsl, NULL)                                                                         \
+    X(target_float4, target_float4_wgsl, NULL)                                                                         \
+    X(target_int, target_int_wgsl, NULL)                                                                               \
+    X(target_depth, target_depth_wgsl, NULL)                                                                           \
+    X(target_face, target_face_wgsl, NULL)                                                                             \
+    X(target_layer, target_layer_wgsl, NULL)                                                                           \
+    X(target_layer_depth, target_layer_depth_wgsl, NULL)                                                               \
     X(zero_words, zero_words_wgsl, NULL)                                                                               \
     X(hiz_one, hiz_one_wgsl, hiz_wgsl)                                                                                 \
     X(hiz_samples, hiz_samples_wgsl, hiz_wgsl)

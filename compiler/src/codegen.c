@@ -4925,6 +4925,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_INT && e->object->kind == E_MEMBER
+            && e->object->target_colors) { // target.colors.count
+            sb_put(o, "tide_render_target_color_count((");
+            gen_expr(g, o, e->object->object);
+            sb_put(o, ").id)");
+            break;
+        }
         if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_LONG) {
             sb_put(o, "tide_render_target_content_revision(");
             gen_expr(g, o, e->object);
@@ -6311,10 +6318,11 @@ static void gen_await(gen *g, expr *e, const char *name)
         line(g, o, "tide_gpu_resume%d:;", k);
         indent(g, o);
         sb_put(o, call->gpu == GPU_TARGET_READ
-            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin("
+            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_as("
             : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
         gen_expr(g, o, call->object);
-        if (call->gpu == GPU_TARGET_READ) sb_put(o, ");\n");
+        // Which image and as what (tide_target_read): the grid below is of that kind's cells
+        if (call->gpu == GPU_TARGET_READ) sb_printf(o, ", %d, %uu);\n", (int)call->read_image, (unsigned)call->read_kind);
         else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
         line(g, o, "tide_gpu_read_result tide_read%d;", k);
         line(g, o, "if (!tide_gpu_list_read_poll((uint32_t)tide_f->tide_gpu_ticket, &tide_read%d)) {", k);

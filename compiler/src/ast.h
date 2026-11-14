@@ -1284,6 +1284,9 @@ struct expr {
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
                            // ...and cube.faces: a Cubemap's faces, of which an index is one as a RenderTarget (cube.faces[2])
+    // await target.Read<T>(image), await target.ReadDepth() (GPU_TARGET_READ): which color image, from 0, and as what
+    // (tide/draw.h's tide_target_read: 0 Color, 1 float, 2 float2, 3 float4, 4 int, 5 the depth)
+    uint8_t read_image, read_kind;
 
 
     // E_CALL, E_METHOD
