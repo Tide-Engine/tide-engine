@@ -19,7 +19,7 @@ public class ShaderTests
         {
             Assert.IsNotNull(shader);
             var material = new Material(shader);
-            ShaderUtil.CompilePass(material, 0, true);
+            for (var pass = 0; pass < material.passCount; pass++) ShaderUtil.CompilePass(material, pass, true);
             foreach (var message in ShaderUtil.GetShaderMessages(shader)) said.Add($"{shader.name}: {message.severity} {message.message} ({message.platform})");
             Object.DestroyImmediate(material);
         }

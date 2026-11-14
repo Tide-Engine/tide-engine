@@ -360,7 +360,10 @@ static int image_slot(emit *em, const expr *image, const bool write, const loc a
         source = source->object->object;
     }
     const expr *of = texture_of(em, source, &own);
-    const shader_read read = image->type.kind == TY_TEXTURE3D ? READ_VOLUME : READ_COLOR;
+    const type value = declared_image_type(image);
+    const bool volume = image->type.kind == TY_TEXTURE3D;
+    const shader_read read = write || value.kind == TY_COLOR ? (volume ? READ_VOLUME : READ_COLOR)
+        : volume ? (value.kind == TY_INT ? READ_INT_VOLUME : READ_NUMBER_VOLUME) : value.kind == TY_INT ? READ_INT : READ_NUMBER;
     if (em->code != em->root && (own >= 0 || of)) {
         if (em->checking) {
             note_function_sample(em->code, own, of, read, 0, 0, false, at, write, false);
@@ -375,7 +378,7 @@ static int image_slot(emit *em, const expr *image, const bool write, const loc a
     return write || em->checking ? slot : way_texture(em, slot);
 }
 
-static void need_image_access(emit *em, const int slot, const bool write, const int dims, const bool raw)
+static void need_image_access(emit *em, const int slot, const bool write, const int dims, const bool raw, const type value)
 {
     if (em->checking || slot < 0 || slot >= SHADER_TEXTURES) return;
     bool *done = write ? em->image_puts : em->image_gets;
@@ -383,19 +386,23 @@ static void need_image_access(emit *em, const int slot, const bool write, const 
     done[slot] = true;
     sb *o = &em->functions;
     if (write) {
-        sb_printf(o, "fn tide_image_put%d(at: vec%di, value: vec4f) {\n", slot, dims);
+        sb_printf(o, "fn tide_image_put%d(at: vec%di, value: %s) {\n", slot, dims, ty(em, value));
         sb_printf(o, "    if (all(at >= vec%di(0)) && all(at < vec%di(textureDimensions(pixels%d)))) {\n", dims, dims, slot);
         const bool integer = em->sh->textures.items[slot].image_format == 7;
         sb_printf(o, "        textureStore(pixels%d, at, ", slot);
-        if (integer) sb_put(o, "vec4i(value)");
-        else sb_put(o, raw ? "value" : "vec4f(value.rgb * value.a, value.a)");
+        if (integer) sb_put(o, "vec4i(value, 0, 0, 0)");
+        else if (value.kind == TY_FLOAT) sb_put(o, "vec4f(value, 0.0, 0.0, 0.0)");
+        else if (value.kind == TY_FLOAT2) sb_put(o, "vec4f(value, 0.0, 0.0)");
+        else sb_put(o, raw || value.kind == TY_FLOAT4 ? "value" : "vec4f(value.rgb * value.a, value.a)");
         sb_put(o, ");\n    }\n}\n");
     } else {
-        sb_printf(o, "fn tide_image_get%d(at: vec%di) -> vec4f {\n", slot, dims);
+        sb_printf(o, "fn tide_image_get%d(at: vec%di) -> %s {\n", slot, dims, ty(em, value));
         sb_printf(o, "    if (all(at >= vec%di(0)) && all(at < vec%di(textureDimensions(pixels%d)))) {\n", dims, dims, slot);
-        sb_printf(o, "        return %stextureLoad(pixels%d, at, 0)%s;\n", raw ? "" : "tide_straight(", slot, raw ? "" : ")");
-        sb_put(o, "    }\n    return vec4f(0.0);\n}\n");
-        if (!raw) need(em, H_STRAIGHT);
+        const bool straight = !raw && value.kind == TY_COLOR;
+        sb_printf(o, "        return %stextureLoad(pixels%d, at, 0)%s%s;\n", straight ? "tide_straight(" : "", slot,
+                  straight ? ")" : "", value.kind == TY_FLOAT || value.kind == TY_INT ? ".x" : value.kind == TY_FLOAT2 ? ".xy" : "");
+        sb_printf(o, "    }\n    return %s(%s);\n}\n", ty(em, value), value.kind == TY_INT ? "0" : "0.0");
+        if (straight) need(em, H_STRAIGHT);
     }
 }
 
@@ -410,7 +417,7 @@ static bool ex_gpu(emit *em, const expr *e)
 {
     if (e->gpu == GPU_IMAGE_INDEX) {
         const int slot = image_slot(em, e->object, false, e->at);
-        need_image_access(em, slot, false, 3, image_raw(em, slot, e->object));
+        need_image_access(em, slot, false, 3, image_raw(em, slot, e->object), e->type);
         if (slot < 0 || em->checking) { ex(em, e->lhs); sb_put(em->o, "vec4f(0.0)"); return true; }
         sb_printf(em->o, "tide_image_get%d(", slot);
         ex_as(em, e->lhs, (type){TY_INT3, NULL});
@@ -495,13 +502,14 @@ static bool st_gpu(emit *em, const stmt *s)
         const expr *image = s->target->object;
         const int dims = image->type.kind == TY_TEXTURE3D ? 3 : 2;
         const int slot = image_slot(em, image, true, s->at);
-        need_image_access(em, slot, true, dims, image_raw(em, slot, image));
-        if (slot < 0 || em->checking) { ex(em, s->target->lhs); ex_as(em, s->value, (type){TY_COLOR, NULL}); return true; }
+        const type value = s->target->type;
+        need_image_access(em, slot, true, dims, image_raw(em, slot, image), value);
+        if (slot < 0 || em->checking) { ex(em, s->target->lhs); ex_as(em, s->value, value); return true; }
         line(em);
         sb_printf(em->o, "tide_image_put%d(", slot);
         ex_as(em, s->target->lhs, (type){dims == 3 ? TY_INT3 : TY_INT2, NULL});
         sb_put(em->o, ", ");
-        ex_as(em, s->value, (type){TY_COLOR, NULL});
+        ex_as(em, s->value, value);
         sb_put(em->o, ");\n");
         return true;
     }

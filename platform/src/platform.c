@@ -1058,6 +1058,8 @@ typedef struct draw_step {
     tide_float2 at;   // STEP_CLIP: its top left corner in window pixels
     tide_float2 to;   // ...and its bottom right one
     rgba color;       // STEP_CLEAR
+    uint32_t clear_words[4][4];
+    bool clear_images;
     bool depth_alone; // ...which sets depth back and leaves colors and stencil
 } draw_step;
 
@@ -2148,6 +2150,7 @@ static struct {
     uint32_t instance_capacity; // Bytes the shaded runs' instance buffer holds
     tide_gpu_id white;        // A white pixel, which a mesh with no texture samples
     tide_gpu_id volume;       // An empty volume for a missing sampled Texture3D
+    tide_gpu_id number, number_volume, int_volume; // Zero numeric fallbacks, typed like their shader bindings.
     tide_gpu_id atlas;        // The font atlas, as of `atlas_version`
     int atlas_width, atlas_height;
     uint32_t atlas_version;
@@ -2170,6 +2173,7 @@ static struct {
 typedef struct engine_pipelines {
     tide_gpu_target_format into;
     tide_gpu_id made[PIPELINE_KINDS][BLENDS][DEPTHS][CULLS]; // Only the 3D meshes' have more than the first depth and cull
+    tide_gpu_id clear_images;
     tide_gpu_id clear; // The clears'
     tide_gpu_id depth_clear; // ...and the ones of depth alone
 } engine_pipelines;
@@ -2195,7 +2199,7 @@ static tide_gpu_target_format gpu_target_format(const uint64_t id)
     const tide_target_formats held = tide_render_target_formats(id);
     tide_gpu_target_format format = TIDE_GPU_TARGET_DEPTH;
     for (uint32_t i = 0; i < held.count; i++) {
-        format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_RGBA16F ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES);
+        format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_RGBA8 ? TIDE_GPU_COLOR_BYTES : held.color[i] == TIDE_TARGET_RGBA16F ? TIDE_GPU_COLOR_FLOAT : (tide_gpu_color)held.color[i]);
     }
     // ...and its samples, as this device has them for what it asked for
     const uint32_t asked = tide_render_target_samples(id);
@@ -2619,7 +2623,11 @@ static tide_gpu_read gpu_read_of(const uint8_t read)
            read == TIDE_SHADER_READ_DATA ? TIDE_GPU_READ_DATA :
            read == TIDE_SHADER_READ_ARRAY ? TIDE_GPU_READ_ARRAY :
            read == TIDE_SHADER_READ_DEPTH_ARRAY ? TIDE_GPU_READ_DEPTH_ARRAY :
-           read == TIDE_SHADER_READ_VOLUME ? TIDE_GPU_READ_VOLUME : TIDE_GPU_READ_COLOR;
+           read == TIDE_SHADER_READ_VOLUME ? TIDE_GPU_READ_VOLUME :
+           read == TIDE_SHADER_READ_NUMBER ? TIDE_GPU_READ_NUMBER :
+           read == TIDE_SHADER_READ_INT ? TIDE_GPU_READ_INT :
+           read == TIDE_SHADER_READ_NUMBER_VOLUME ? TIDE_GPU_READ_NUMBER_VOLUME :
+           read == TIDE_SHADER_READ_INT_VOLUME ? TIDE_GPU_READ_INT_VOLUME : TIDE_GPU_READ_COLOR;
 }
 
 // How a pipeline reads a shader's texture `i`.
@@ -2866,8 +2874,10 @@ static gpu_array *volume_for(const tide_draw_texture *t)
     a->texture = 0;
     a->version = t->version;
     a->width = width; a->height = height; a->layers = t->layers;
-    const tide_gpu_format format = tide_render_target_formats(t->id).color[0] == TIDE_TARGET_RGBA16F
-                                 ? TIDE_GPU_RGBA16F : TIDE_GPU_RGBA8;
+    const uint32_t color = tide_render_target_formats(t->id).color[0];
+    const tide_gpu_format format = color == TIDE_TARGET_RGBA16F ? TIDE_GPU_RGBA16F
+        : color == TIDE_TARGET_R32F ? TIDE_GPU_R32F : color == TIDE_TARGET_RGBA32F ? TIDE_GPU_RGBA32F
+        : color == TIDE_TARGET_R32I ? TIDE_GPU_R32I : TIDE_GPU_RGBA8;
     if (gpu->volume_limit && (width > gpu->volume_limit() || height > gpu->volume_limit() || t->layers > (uint32_t)gpu->volume_limit())) {
         static bool said;
         if (!said) { fprintf(stderr, "Texture3D: this device cannot hold this size; use a smaller volume\n"); said = true; }
@@ -3281,12 +3291,28 @@ static tide_gpu_cull gpu_cull(const uint32_t cull, const bool mirrored)
 // with depth and one side left out, into targets that hold what `into` says:
 // made if there's none. Into targets of depth alone, where a color has nowhere
 // to go, it's the 3D meshes' that write depth, and whatever stores stencil.
+// Keep dynamically supplied targets out of incompatible pipelines too; static game draws are checked by tidec.
+static bool output_format_fits(const uint32_t kind, const tide_gpu_color format)
+{
+    return format == TIDE_GPU_COLOR_NONE
+        || (kind == 0 && (format == TIDE_GPU_COLOR_BYTES || format == TIDE_GPU_COLOR_FLOAT))
+        || (kind == 1 && (format == TIDE_GPU_COLOR_R8 || format == TIDE_GPU_COLOR_R16F || format == TIDE_GPU_COLOR_R32F))
+        || (kind == 2 && (format == TIDE_GPU_COLOR_RG8 || format == TIDE_GPU_COLOR_RG16F))
+        || (kind == 3 && (format == TIDE_GPU_COLOR_FLOAT || format == TIDE_GPU_COLOR_RGBA32F))
+        || (kind == 4 && format == TIDE_GPU_COLOR_R32I);
+}
+
 static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t depth, uint32_t cull,
                                    const tide_gpu_target_format into, const uint32_t state)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
         [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
+    if (!output_format_fits(0, tide_gpu_target_color(into, 0))) {
+        static bool said;
+        if (!said) { fprintf(stderr, "tide: draw skipped: built-in drawing writes Color; use a frag with the numeric type this image stores\n"); said = true; }
+        return 0;
+    }
     const bool bare = into == TIDE_GPU_TARGET_DEPTH;
     if (blend >= BLENDS || bare) blend = TIDE_BLEND_ALPHA; // None is read where there's no color
     if (kind != PIPELINE_MESHES_3D || depth >= DEPTHS) depth = TIDE_DEPTH_READ_WRITE;
@@ -3462,10 +3488,46 @@ static tide_gpu_id clear_pipeline(const tide_gpu_target_format into)
     });
 }
 
+static tide_gpu_id image_clear_pipeline(const tide_gpu_target_format into, const bool depth_alone)
+{
+    tide_gpu_id *made = depth_alone ? &pipelines_into(into)->depth_clear : &pipelines_into(into)->clear_images;
+    if (*made) return *made;
+    uint32_t integers = 0;
+    for (uint32_t i = 0; i < tide_gpu_target_colors(into); i++)
+        if (tide_gpu_target_color(into, i) == TIDE_GPU_COLOR_R32I) integers |= 1u << i;
+    tide_gpu_pipeline_desc desc = {
+        .name = "typed image clears", .uniform_size = 64, .numeric_outputs = 15,
+        .blend = depth_alone ? TIDE_GPU_BLEND_ALPHA : TIDE_GPU_BLEND_REPLACE,
+        .depth = depth_alone ? TIDE_GPU_DEPTH_RESET_ALONE : TIDE_GPU_DEPTH_RESET, .stencil_op = depth_alone ? TIDE_GPU_STENCIL_KEEP : TIDE_GPU_STENCIL_ZERO,
+        .into = into, .outputs = 4,
+    };
+    switch (integers) {
+    case 0: desc.wgsl = clear_images_0_wgsl; desc.spirv = SPIRV_OF(clear_images_0); desc.spirv_words = SPIRV_WORDS(clear_images_0); break;
+    case 1: desc.wgsl = clear_images_1_wgsl; desc.spirv = SPIRV_OF(clear_images_1); desc.spirv_words = SPIRV_WORDS(clear_images_1); break;
+    case 2: desc.wgsl = clear_images_2_wgsl; desc.spirv = SPIRV_OF(clear_images_2); desc.spirv_words = SPIRV_WORDS(clear_images_2); break;
+    case 3: desc.wgsl = clear_images_3_wgsl; desc.spirv = SPIRV_OF(clear_images_3); desc.spirv_words = SPIRV_WORDS(clear_images_3); break;
+    case 4: desc.wgsl = clear_images_4_wgsl; desc.spirv = SPIRV_OF(clear_images_4); desc.spirv_words = SPIRV_WORDS(clear_images_4); break;
+    case 5: desc.wgsl = clear_images_5_wgsl; desc.spirv = SPIRV_OF(clear_images_5); desc.spirv_words = SPIRV_WORDS(clear_images_5); break;
+    case 6: desc.wgsl = clear_images_6_wgsl; desc.spirv = SPIRV_OF(clear_images_6); desc.spirv_words = SPIRV_WORDS(clear_images_6); break;
+    case 7: desc.wgsl = clear_images_7_wgsl; desc.spirv = SPIRV_OF(clear_images_7); desc.spirv_words = SPIRV_WORDS(clear_images_7); break;
+    case 8: desc.wgsl = clear_images_8_wgsl; desc.spirv = SPIRV_OF(clear_images_8); desc.spirv_words = SPIRV_WORDS(clear_images_8); break;
+    case 9: desc.wgsl = clear_images_9_wgsl; desc.spirv = SPIRV_OF(clear_images_9); desc.spirv_words = SPIRV_WORDS(clear_images_9); break;
+    case 10: desc.wgsl = clear_images_10_wgsl; desc.spirv = SPIRV_OF(clear_images_10); desc.spirv_words = SPIRV_WORDS(clear_images_10); break;
+    case 11: desc.wgsl = clear_images_11_wgsl; desc.spirv = SPIRV_OF(clear_images_11); desc.spirv_words = SPIRV_WORDS(clear_images_11); break;
+    case 12: desc.wgsl = clear_images_12_wgsl; desc.spirv = SPIRV_OF(clear_images_12); desc.spirv_words = SPIRV_WORDS(clear_images_12); break;
+    case 13: desc.wgsl = clear_images_13_wgsl; desc.spirv = SPIRV_OF(clear_images_13); desc.spirv_words = SPIRV_WORDS(clear_images_13); break;
+    case 14: desc.wgsl = clear_images_14_wgsl; desc.spirv = SPIRV_OF(clear_images_14); desc.spirv_words = SPIRV_WORDS(clear_images_14); break;
+    case 15: desc.wgsl = clear_images_15_wgsl; desc.spirv = SPIRV_OF(clear_images_15); desc.spirv_words = SPIRV_WORDS(clear_images_15); break;
+    }
+    return *made = gpu->pipeline(&desc);
+}
+
 // A clear of depth alone: the clears' triangle with a clear color over what's
 // there, which leaves every color image as it is, and no stencil stored.
 static tide_gpu_id depth_clear_pipeline(const tide_gpu_target_format into)
 {
+    for (uint32_t i = 0; i < tide_gpu_target_colors(into); i++)
+        if (tide_gpu_target_color(into, i) >= TIDE_GPU_COLOR_R8) return image_clear_pipeline(into, true);
     tide_gpu_id *made = &pipelines_into(into)->depth_clear;
     if (*made) return *made;
     const bool several = tide_gpu_target_colors(into) > 1;
@@ -3538,7 +3600,8 @@ static void find_pipelines(const tide_draw_list *list)
         case STEP_MESH_3D:
             s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, into, state);
             break;
-        case STEP_CLEAR: s->pipeline = s->depth_alone ? depth_clear_pipeline(into) : clear_pipeline(into); break;
+        case STEP_CLEAR: s->pipeline = s->depth_alone ? depth_clear_pipeline(into)
+            : s->clear_images ? image_clear_pipeline(into, false) : clear_pipeline(into); break;
         default: break;
         }
     }
@@ -3879,6 +3942,12 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
         [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
+    for (uint32_t i = 0; i < tide_shader_outputs(shader) && i < tide_gpu_target_colors(into); i++) {
+        if (output_format_fits((shader->output_types >> (3u * i)) & 7u, tide_gpu_target_color(into, i))) continue;
+        static bool said;
+        if (!said) { fprintf(stderr, "tide: draw skipped: frag output %u does not fit its target image; use the numeric type its Format stores\n", (unsigned)i + 1u); said = true; }
+        return 0;
+    }
     if (blend >= BLENDS) blend = blit ? TIDE_BLEND_REPLACE : TIDE_BLEND_ALPHA;
     if (into == TIDE_GPU_TARGET_DEPTH) blend = TIDE_BLEND_ALPHA; // None is read
     // Only a 3D mesh has depth: a 2D one draws over what's there, and a blit leaves its destination's alone
@@ -3924,6 +3993,7 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
         .stencil_op = (tide_gpu_stencil_op)(state >> 4),
         .into = into,
         .outputs = tide_shader_outputs(shader),
+        .numeric_outputs = shader->numeric_outputs,
         .storage_count = tide_shader_compute_storage(shader), // The pools its GPU lists are ranges of, read
     };
     if (shader->cutout) { // What a cut-out covers it covers wholly, its alpha the share of the samples it covers
@@ -4842,29 +4912,38 @@ static bool of_destination(const tide_draw_texture *t, const uint64_t id)
 // cube is, the dark one.
 static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t texture, const tide_gpu_read read)
 {
-    if (read == TIDE_GPU_READ_VOLUME) {
-        if (!gpu_state.volume && gpu->volume) {
-            gpu_state.volume = gpu->volume(TIDE_GPU_RGBA8, 1, 1, 1);
-            if (gpu_state.volume) hold(held(&held_textures, &held_texture_count, gpu_state.volume), 4u);
+    const bool integer = read == TIDE_GPU_READ_INT || read == TIDE_GPU_READ_INT_VOLUME;
+    const bool numeric = read >= TIDE_GPU_READ_NUMBER;
+    if (read == TIDE_GPU_READ_VOLUME || read == TIDE_GPU_READ_NUMBER_VOLUME || read == TIDE_GPU_READ_INT_VOLUME) {
+        tide_gpu_id *fallback = integer ? &gpu_state.int_volume : numeric ? &gpu_state.number_volume : &gpu_state.volume;
+        if (!*fallback && gpu->volume) {
+            *fallback = gpu->volume(integer ? TIDE_GPU_R32I : numeric ? TIDE_GPU_RGBA32F : TIDE_GPU_RGBA8, 1, 1, 1);
+            if (*fallback) hold(held(&held_textures, &held_texture_count, *fallback), numeric && !integer ? 16u : 4u);
         }
-        if (!texture || texture > list->texture_count) return gpu_state.volume;
+        const tide_gpu_id none = *fallback;
+        if (!texture || texture > list->texture_count) return none;
         const tide_draw_texture *t = &list->textures[texture - 1u];
         if (t->space == TIDE_PIXELS_TARGET_VOLUME) {
+            if (integer != (tide_render_target_formats(t->id).color[0] == TIDE_TARGET_R32I)) return none;
             const gpu_array *a = find_array(t->id);
             return a && a->texture && tide_render_target_live(t->id)
-                && (!gpu->texture_status || gpu->texture_status(a->texture) == 1) ? a->texture : gpu_state.volume;
+                && (!gpu->texture_status || gpu->texture_status(a->texture) == 1) ? a->texture : none;
         }
         if (t->space == TIDE_PIXELS_GRID_VOLUME) {
+            if (integer) return none;
             const gpu_texture *g = texture_for(t);
             if (!g->texture || (gpu->texture_status && gpu->texture_status(g->texture) < 0)) volume_allocation_warning();
-            return g->texture && (!gpu->texture_status || gpu->texture_status(g->texture) == 1) ? g->texture : gpu_state.volume;
+            return g->texture && (!gpu->texture_status || gpu->texture_status(g->texture) == 1) ? g->texture : none;
         }
-        return gpu_state.volume;
+        return none;
     }
+    if (integer && !gpu_state.nothing) gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, (const int32_t[4]){0});
+    if (numeric && !integer && !gpu_state.number) gpu_state.number = made_texture(TIDE_GPU_RGBA32F, 1, 1, (const float[4]){0});
     const bool depth = read == TIDE_GPU_READ_DEPTH || read == TIDE_GPU_READ_COMPARE, cube = read == TIDE_GPU_READ_CUBE;
     const bool data = read == TIDE_GPU_READ_DATA; // A list's numbers, and nothing else is read so
     const bool array = read == TIDE_GPU_READ_ARRAY, depth_array = read == TIDE_GPU_READ_DEPTH_ARRAY;
-    const tide_gpu_id none = data ? gpu_state.nothing : cube ? gpu_state.dark : depth ? gpu->target_depth(gpu_state.far)
+    const tide_gpu_id none = numeric ? (integer ? gpu_state.nothing : gpu_state.number)
+                           : data ? gpu_state.nothing : cube ? gpu_state.dark : depth ? gpu->target_depth(gpu_state.far)
                            : array ? gpu_state.blank : depth_array ? gpu->array_depth(gpu_state.far_array) : gpu_state.white;
     if (texture == 0 || texture > list->texture_count) return none;
     const tide_draw_texture *t = &list->textures[texture - 1u];
@@ -4885,6 +4964,11 @@ static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t te
     }
     if (depth != (t->space == TIDE_PIXELS_TARGET_DEPTH)) return none;
     if (of_target(t)) { // Its depth, or the color image its id names
+        if (numeric) {
+            const tide_target_formats formats = tide_render_target_formats(t->id);
+            const uint32_t at = tide_render_target_image(t->id);
+            if (at >= formats.count || integer != (formats.color[at] == TIDE_TARGET_R32I)) return none;
+        }
         const gpu_target *g = find_target(tide_render_target_whole(t->id));
         const tide_gpu_id image = !g || !g->target ? 0 : depth ? gpu->target_depth(g->target)
                                 : gpu->target_texture(g->target, tide_render_target_image(t->id));
@@ -5818,6 +5902,15 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             select_target(c->target < targets ? c->target : targets);
             add_step(STEP_TARGET);
             break;
+        case TIDE_DRAW_CLEAR_IMAGES: {
+            const uint32_t at = c->clear_images.uniforms;
+            if (at <= list->uniform_used && sizeof(uint32_t[4][4]) <= list->uniform_used - at) {
+                draw_step *step = add_step(STEP_CLEAR);
+                step->clear_images = true;
+                memcpy(step->clear_words, list->uniforms + at, sizeof step->clear_words);
+            }
+            break;
+        }
         case TIDE_DRAW_CLEAR:
             if (c->a.x != 0.0f) add_step(STEP_CLEAR)->depth_alone = true;
             else add_step(STEP_CLEAR)->color = color;
@@ -6029,8 +6122,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             const tide_draw_run *run = &list->runs[s->first];
             bool ready = true;
             for (uint32_t k = 0; k < run->shader->texture_count; k++) {
-                if (gpu_read(run->shader, k) != TIDE_GPU_READ_VOLUME) continue;
-                const tide_gpu_id image = texture_to_read(list, run->textures[k], TIDE_GPU_READ_VOLUME);
+                const tide_gpu_read read = gpu_read(run->shader, k);
+                if (read != TIDE_GPU_READ_VOLUME && read != TIDE_GPU_READ_NUMBER_VOLUME && read != TIDE_GPU_READ_INT_VOLUME) continue;
+                const tide_gpu_id image = texture_to_read(list, run->textures[k], read);
                 if (!image || gpu->texture_status(image) != 1) ready = false;
             }
             if (!ready) continue; // Allocation scopes have not settled yet; no invalid image reaches a binding.
@@ -6081,7 +6175,14 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             const float color[4] = {(float)s->color.r / 255.0f, (float)s->color.g / 255.0f, (float)s->color.b / 255.0f,
                                     (float)s->color.a / 255.0f};
             use_pipeline(s);
-            gpu->uniforms(color, sizeof color);
+            if (s->clear_images) gpu->uniforms(s->clear_words, sizeof s->clear_words);
+            else {
+                uint32_t zero[4][4] = {{0}};
+                bool integers = false;
+                for (uint32_t k = 0; k < tide_gpu_target_colors(frame_targets[s->target].into); k++)
+                    integers |= tide_gpu_target_color(frame_targets[s->target].into, k) >= TIDE_GPU_COLOR_R8;
+                gpu->uniforms(integers ? (const void *)zero : (const void *)color, integers ? sizeof zero : sizeof color);
+            }
             gpu->draw(0, 3, 1);
             vertices += 3;
             calls++;

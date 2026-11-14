@@ -1,0 +1,5 @@
+// expect: but Format.Rgba8 takes Color: use a Texture without a typed Raw role
+scene Main { }
+local singleton Images { RenderTarget target; [Raw(float)] Texture source; }
+frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.source.Sample(vertex.uv),0,0); }
+view Show(mut Images images) { images.target=RenderTarget(8,8); images.source=images.target.color; Draw.Mesh([Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}],[0,1,2],Read); }

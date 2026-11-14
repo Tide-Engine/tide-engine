@@ -1,0 +1,12 @@
+// tide numeric outputs: 15
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct Uniforms { values: array<vec4u, 4> }
+struct Colors { @location(0) c0: vec4f, @location(1) c1: vec4f, @location(2) c2: vec4f, @location(3) c3: i32 }
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);
+}
+@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<vec4f>(u.values[1]), bitcast<vec4f>(u.values[2]), bitcast<i32>(u.values[3].x)); }

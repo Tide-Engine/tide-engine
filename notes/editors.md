@@ -1,5 +1,25 @@
 # The language server and the editors
 
+## Numeric images and frag outputs (2026-11-14)
+
+Format completion and hover describe all seven numeric members, accepted output/clear types, storage bytes,
+32-bit single-sample limits and portable kernel formats. Frag headers offer Color, float, float2, float4 and
+int after out; parameter hover explains the image ordinal and numeric replace/no-tint/no-alpha contract.
+Missing-output quick fixes initialize numeric values with 0/float2(0)/float4(0), retaining Color's existing fix.
+Ordinary enum-member typo fixes cover the new format names.
+
+Raw attribute completion/signature help describes the four numeric role arguments. Fields and read-only
+Texture/Texture3D helper parameters carry their role into Sample hover, member completion and signature help;
+they return the numeric type and show Point as the default. Numeric members omit SampleGrad/SampleLevel.
+Volume sampling signatures identify Texture3D and float3 coordinates. Clear completion, hover and signature
+help describe one to four positional image values and float clears past one, alongside the legacy broadcast.
+
+Tests: lsp_numeric_images_and_outputs, lsp_numeric_output_quick_fixes and lsp_numeric_image_helpers. The shared
+TextMate grammar already tokenizes numeric out types and typed Raw fields/parameters; an added grammar probe
+pins their existing primitive/function scopes without changing tokenization for other programs.
+Validation after the overlapping depth/readback merge: Windows Clang 23 ASan tidels_tests lsp_ passes 278/278;
+Node 24.22.1 shared grammar tests pass 383/383. The docs production build passes with the new user pages.
+
 ## Texture3D (2026-11-14)
 
 The language server recognizes Texture3D as a local volume. Type hover describes creation, sharing,

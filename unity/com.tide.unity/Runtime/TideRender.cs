@@ -129,7 +129,7 @@ namespace Tide
             public Material material; // Draw
             public MaterialPropertyBlock properties; // ...and its pipeline's attributes and slots
             public GraphicsBuffer v0, v1, v2, index;
-            public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize;
+            public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize, shaderPass;
             public uint first, sampling, samplingHigh, unmipped, own, ownHigh;
             public RenderTexture mipmapped; // Mipmaps
             public int storage, storageCount; // Draw: the storage buffers it reads, in its recording's `storage`
@@ -180,6 +180,8 @@ namespace Tide
         GraphicsBuffer none; // What an unused vertex slot reads
         Texture2D white;
         Texture3D emptyVolume;
+        Texture2D emptyNumber;
+        RenderTexture emptyInteger, emptyIntVolume;
         Material resolveDepth;
         bool fresh = true; // Nothing made yet: Tide's renderer makes everything again first
         bool ownSamplers;  // OpenGL Core's: each texture's own sampler, set as each draw asks (see hlsl.h)
@@ -330,6 +332,9 @@ namespace Tide
             none = null;
             if (white != null) DestroyImmediate(white);
             if (emptyVolume != null) DestroyImmediate(emptyVolume);
+            if (emptyNumber != null) DestroyImmediate(emptyNumber);
+            if (emptyInteger != null) DestroyImmediate(emptyInteger);
+            if (emptyIntVolume != null) DestroyImmediate(emptyIntVolume);
             if (resolveDepth != null) DestroyImmediate(resolveDepth);
             Release(frame);
             foreach (var view in views.Values) Release(view);
@@ -872,7 +877,7 @@ namespace Tide
             if (width <= 0 || height <= 0 || depth <= 0 || width > SystemInfo.maxTexture3DSize || height > SystemInfo.maxTexture3DSize
                 || depth > SystemInfo.maxTexture3DSize || format < 0 || format > 7
                 || (long)width * height * depth > 128L * 1024 * 1024 / PixelBytes(format) || !SystemInfo.supports3DTextures
-                || !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.Sample)
+                || (!IntegerImage(format) && !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.Sample))
                 || (WritableImage(format) && !SystemInfo.IsFormatSupported(TextureFormat(format), GraphicsFormatUsage.LoadStore)))
             {
                 VolumeUnavailable();
@@ -1267,7 +1272,7 @@ namespace Tide
                 var pixelFormat = AttachmentPixelFormat((int)held);
                 var rt = new RenderTexture(width, height, AttachmentFormat((int)held), GraphicsFormat.None)
                 {
-                    antiAliasing = samples, useMipMap = samples == 1, autoGenerateMips = false,
+                    antiAliasing = samples, useMipMap = samples == 1 && held <= 2, autoGenerateMips = false,
                     enableRandomWrite = samples == 1 && WritableImage(pixelFormat), hideFlags = HideFlags.HideAndDontSave,
                 };
                 rt.Create();
@@ -1404,6 +1409,47 @@ namespace Tide
             inPass = offscreenPass = false;
         }
 
+        Texture EmptyRead(uint read)
+        {
+            if (read == 8 || read == 11) return emptyVolume;
+            if (read == 9)
+            {
+                if (emptyNumber == null)
+                {
+                    emptyNumber = new Texture2D(1, 1, GraphicsFormat.R32G32B32A32_SFloat, TextureCreationFlags.None)
+                    { hideFlags = HideFlags.HideAndDontSave };
+                    emptyNumber.SetPixelData(new float[4], 0); emptyNumber.Apply(false, true);
+                }
+                return emptyNumber;
+            }
+            if (read == 10 || read == 12)
+            {
+                var volume = read == 12;
+                var image = volume ? emptyIntVolume : emptyInteger;
+                if (image == null)
+                {
+                    image = new RenderTexture(new RenderTextureDescriptor(1, 1)
+                    {
+                        graphicsFormat = GraphicsFormat.R32_SInt, depthStencilFormat = GraphicsFormat.None,
+                        enableRandomWrite = true, dimension = volume ? TextureDimension.Tex3D : TextureDimension.Tex2D,
+                        volumeDepth = 1, msaaSamples = 1,
+                    }) { hideFlags = HideFlags.HideAndDontSave };
+                    image.Create();
+                    var cb = Work();
+                    if (volume)
+                    {
+                        var kernel = copier.FindKernel("TideVolumeClearInt");
+                        cb.SetComputeTextureParam(copier, kernel, "_TideVolumeToInt", image);
+                        cb.DispatchCompute(copier, kernel, 1, 1, 1);
+                    }
+                    else { cb.SetRenderTarget(image); cb.ClearRenderTarget(false, true, Color.clear); }
+                    if (volume) emptyIntVolume = image; else emptyInteger = image;
+                }
+                return image;
+            }
+            return white;
+        }
+
         Material MaterialFor(Pipeline p)
         {
             var stores = p.stencilTest != 0 || p.stencilOp != 0;
@@ -1411,7 +1457,7 @@ namespace Tide
             if (p.materials.TryGetValue(key, out var m) && m != null) return m;
             m = new Material(p.shader) { hideFlags = HideFlags.HideAndDontSave, name = "Tide " + p.name };
             // How it blends: what tide_gpu_blend says, every color premultiplied
-            switch (p.depth == 4 ? 4 : p.blend) // Depth alone (tide_gpu_depth 4) leaves every color as it is
+            switch (p.depth == 4 || p.depth == 6 ? 4 : p.blend) // Depth alone leaves every color as it is
             {
                 case 4: Blend(m, BlendMode.Zero, BlendMode.One, BlendMode.Zero, BlendMode.One); break;
                 case 1: Blend(m, BlendMode.One, BlendMode.One, BlendMode.OneMinusDstAlpha, BlendMode.One); break;
@@ -1419,11 +1465,12 @@ namespace Tide
                 case 3: Blend(m, BlendMode.One, BlendMode.Zero, BlendMode.One, BlendMode.Zero); break;
                 default: Blend(m, BlendMode.One, BlendMode.OneMinusSrcAlpha, BlendMode.One, BlendMode.OneMinusSrcAlpha); break;
             }
+            if (m.HasProperty("_TideNumericMask")) m.SetFloat("_TideNumericMask", p.depth == 4 || p.depth == 6 ? 0f : 15f);
             // Depth: Unity turns the test around where it keeps depth from 1 near
             // (tide_gpu_depth: none, tested and written, tested, written whatever is there, depth alone, equal)
-            m.SetFloat(ZTest, (float)(p.depth == 0 || p.depth == 3 ? CompareFunction.Always
+            m.SetFloat(ZTest, (float)(p.depth == 0 || p.depth == 3 || p.depth == 6 ? CompareFunction.Always
                                       : p.depth == 5 ? CompareFunction.Equal : CompareFunction.LessEqual));
-            m.SetFloat(ZWrite, p.depth == 1 || p.depth == 3 || p.depth == 4 ? 1f : 0f);
+            m.SetFloat(ZWrite, p.depth == 1 || p.depth == 3 || p.depth == 4 || p.depth == 6 ? 1f : 0f);
             var cull = p.cull == 1 ? CullMode.Back : p.cull == 2 ? CullMode.Front : CullMode.Off;
             if (flipped && cull != CullMode.Off) cull = cull == CullMode.Back ? CullMode.Front : CullMode.Back;
             m.SetFloat(Cull, (float)cull);
@@ -1482,9 +1529,11 @@ namespace Tide
                 }
             }
             if (pipeline.shader == null) return;
+            var material = MaterialFor(pipeline);
             var c = new Command
             {
-                kind = Kind.Draw, bias = bias, slopeBias = slopeBias, material = MaterialFor(pipeline), properties = pipeline.properties, count = count,
+                shaderPass = (pipeline.depth == 4 || pipeline.depth == 6) && material.passCount > 1 ? 1 : 0,
+                kind = Kind.Draw, bias = bias, slopeBias = slopeBias, material = material, properties = pipeline.properties, count = count,
                 instances = instances, first = indexed ? 0 : first,
                 v0 = VertexBuffer(0), v1 = VertexBuffer(1), v2 = VertexBuffer(2),
                 o0 = (int)vertexOffset[0], o1 = (int)vertexOffset[1], o2 = (int)vertexOffset[2],
@@ -1508,7 +1557,7 @@ namespace Tide
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
-                Texture texture = pipeline.imageReads[i] == 8 ? emptyVolume : (Texture)white;
+                Texture texture = EmptyRead(pipeline.imageReads[i]);
                 var element = RenderTextureSubElement.Default;
                 if (images.TryGetValue(sampled[i], out var image) && image.texture != null)
                 {
@@ -1756,7 +1805,7 @@ namespace Tide
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
-                Texture texture = pipeline.imageReads[i] == 8 ? emptyVolume : (Texture)white;
+                Texture texture = EmptyRead(pipeline.imageReads[i]);
                 var element = RenderTextureSubElement.Default;
                 if (images.TryGetValue(sampled[i], out var image) && image.texture != null)
                 {
@@ -1949,15 +1998,15 @@ namespace Tide
                         {
                             // Its numbers on the GPU: the first vertex or index is theirs, not _TideFirst's
                             if (c.index != null)
-                                cb.DrawProceduralIndirect(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.arguments, 0, c.properties);
-                            else cb.DrawProceduralIndirect(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.arguments, 0, c.properties);
+                                cb.DrawProceduralIndirect(c.index, Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.arguments, 0, c.properties);
+                            else cb.DrawProceduralIndirect(Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.arguments, 0, c.properties);
                         }
                         else if (c.index != null)
                         {
-                            cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances,
+                            cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.count, c.instances,
                                 c.properties);
                         }
-                        else cb.DrawProcedural(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances, c.properties);
+                        else cb.DrawProcedural(Matrix4x4.identity, c.material, c.shaderPass, MeshTopology.Triangles, c.count, c.instances, c.properties);
                         cb.SetGlobalDepthBias(0, 0);
                         break;
                 }

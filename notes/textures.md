@@ -13,8 +13,9 @@ expectations unchanged; new argument/CPU/volume diagnostics pass. Shader LSP tes
 381/381, docs build pass. Unity 6000.6.0f1 hidden D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests pass 10/10 each (existing image/volume/order
 suite). Explicit levels use the already tested HLSL level-sampling helpers. NaN maps to zero through Tide's clamp;
 infinities clamp to the range, then samplers clamp to the available chain. Point/Bilinear remain level zero.
-The public numeric Format members were not on dev at this merge: connect typed numeric SampleLevel with their
-typed sampling implementation when those arrive. Metal and other machines remain CI/device coverage.
+Typed numeric texture roles now connect the new public Format members through Sample, returning their
+declared numeric type with Point only. These images have no mip chain; SampleLevel and SampleGrad are
+refused with guidance to use Sample. Metal and other machines remain CI/device coverage.
 
 # Textures and how they are sampled
 
@@ -51,8 +52,9 @@ alternatives weighed. User docs: docs/game/meshes-and-textures.md, Volumes; docs
 The native ASan and Node WASI draw groups pass 117/117. The actual native/WebGPU volume, changed-grid and
 device-loss witnesses pass; shader goldens, SPIR-V, FXC, reload E2E and diagnostics pass (compute.md). Resized
 volumes are resolved in an independent local-state copy before serialization, preserving current depth through
-nested containers and full web reload while leaving const source references untouched. Public numeric Format
-connections still await their parallel task's members; exact remaining work is listed in compute.md.
+nested containers and full web reload while leaving const source references untouched. Public R32f, Rgba32f
+and R32i volumes now use their exact format byte counts and typed numeric/point-only reads; kernel storage
+connections and fixtures are described in compute.md. Compact numeric formats are attachment-only.
 
 ## `Filter.Anisotropic` (2026-11-10)
 

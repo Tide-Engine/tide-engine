@@ -2949,7 +2949,7 @@ input PlayerInput
 ### Decided
 
 - **Numeric frag outputs and image formats** (owner, 2026-11-13: "these make sense, lets do all of these";
-  implementation pending beyond the backend attachment catalogue): a frag can write `out float`, `out float2`,
+  built 2026-11-14): a frag can write `out float`, `out float2`,
   `out float4` and `out int` beside `out Color`. Number outputs are neither tinted nor premultiplied and replace
   the stored value regardless of the draw's blend; Color keeps its existing behavior. The added formats are
   `R8`, `Rg8`, `R16f`, `Rg16f`, `R32f`, `Rgba32f` and `R32i`. An incompatible output is a compile error at the
@@ -3146,7 +3146,7 @@ view DrawBox(Box box, Models models)
 ```
 
   - The first parameter is the vertex: a struct of the game's, or the built-in `Vertex` or `Vertex3`, which is what the mesh's list holds. A mesh draw that names a frag or vert whose vertex isn't its list's is an error. A vert takes it `mut` and changes it in place; the engine then applies the transform and the camera, unless the vert puts its vertex itself (below). A frag gets it blended across the triangle, and can't change it.
-  - **A frag's outputs are `out` parameters, its color among them** (agreed 2026-10-07, the owner's idea): `out Color color` is the pixel's color. It starts with no value, as any `out` parameter does (see Out parameters): the frag writes it before it reads it, and on every path that ends, so a frag that leaves a path without writing its color is an error. A frag takes up to four, each a `Color`, for a target that holds as many color images: they go to them in the order they're written, the pixel's color first, and each is owed on every path that ends, as the first is (agreed 2026-10-07). An output of another type isn't there yet. What the frag wrote there is blended over what's behind it by its alpha, as meshes are: the frag writes the color itself, and the engine does what its blend needs of it (see Alpha and color space) (or as `Draw.Blend` says, times `Draw.Tint`: see Draw settings).
+  - **A frag's outputs are `out` parameters, its color among them** (agreed 2026-10-07, the owner's idea): `out Color color` is the pixel's color. It starts with no value, as any `out` parameter does (see Out parameters): the frag writes it before it reads it, and on every path that ends, so a frag that leaves a path without writing its color is an error. A frag takes up to four outputs (`Color`, `float`, `float2`, `float4` or `int`, owner-approved 2026-11-13), for a target that holds as many images: they go to them in the order they're written, and each is owed on every path that ends, as the first is (agreed 2026-10-07). A numeric output must fit its image's format; it replaces the stored value with no tint or alpha multiplication. A Color output is blended over what's behind it by its alpha, as meshes are: the frag writes the color itself, and the engine does what its blend needs of it (see Alpha and color space) (or as `Draw.Blend` says, times `Draw.Tint`: see Draw settings).
     - `mut Color color`, which is what a frag's color was, and which started as `Color.white`, is an error that names `out`, with the change as a quick fix. A frag that leaned on the white writes it: the editor offers `color = Color.white;` where a path writes nothing, and where the color is read first.
     - A vert's vertex stays `mut`: it's handed a vertex and changes it. `out` there is an error that says so.
   - **A vert hands its frag a struct of its own** (agreed 2026-10-07): an `out` parameter of the vert's, a struct, which the GPU blends across the triangle and the frag it's drawn with reads as a read-only parameter, so what a vert works out needs no field in every vertex of the mesh. Verts and frags stay declarations of their own, paired where a draw names them, and a frag that reads a struct the draw's vert doesn't write, or in a draw with no vert, is an error at the draw.
@@ -3359,8 +3359,11 @@ pixel results. Exceeding the image/byte limit fails; occupied slots wait, as lis
 wait at the next frame's start. Hidden fixed-size web test frames wait between WASM frames for pending mappings,
 so scripted frame counts agree without blocking the browser thread. Ordinary resizable web games remain async.
 No window, depth, cube-face or array-layer read is provided; use an ordinary color RenderTarget. Unsupported
-formats fail before binding a shader. Numeric Format members were not on dev at implementation time: their
-future typed image-read path must explicitly connect these methods; Read currently accepts RGBA8/RGBA16f only.
+formats fail before binding a shader. Read accepts Rgba8/Rgba16f as Color; other numeric formats give a
+diagnostic directing the game to typed Sample or a kernel writing a GPU list. A numeric Grid2 result and a
+conversion kernel were considered; keeping this Color readback avoids an implicit conversion that loses
+integer bits. Rgba16f Read always unpremultiplies as Color; its format alone does not record a numeric role.
+Use a `[Raw(float4)]` shader read to preserve the four independent channels of a numeric Rgba16f image.
 
 #### Provisional: depth bias (2026-11-14)
 
@@ -3487,7 +3490,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **A destination with no size** (a target that was disposed) has zeros for `WorldToClip()`, `CameraProjection()` and `WorldToScreenMatrix()`, as the conversions give zeros there. A camera that's singular or not finite is given as it is: it's what the renderer would draw through.
   - **Local code only, as the conversions are**, and not in code the GPU runs: a view works a matrix out and keeps it where its frag reads it.
 - One word for the window, and formats by what they store (built 2026-10-07; that the target which follows the window is `RenderTarget.Window()` and `RenderTarget.Window(factor)`, that drawing in the screen's pixels is `Draw.Screen() { ... }` and `Draw.SetScreen()`, that `Screen` is the window's measurements alone (`Screen.width`, `Screen.height`, `Screen.Flip`), that `Draw.window` stays, that depth alone is `Format.Depth`, and that formats are named by what they store are decided; what follows was picked to build it, to confirm):
-  - **The formats are `Format.Rgba8`, `Format.Depth` and `Format.Rgba16f`.** A color format's name is its channels, the bits of each, and `f` where they're floats: four channels of a byte each, and four floats of 16 bits. So the ones to come have their names already (`R8`, `Rg8`, `R16f`, `Rgba32f`), with no word to find for each. `Depth` says no bits: what a target's depth has is the GPU's (24 bits and 8 of stencil today), and nothing reads it by its size.
+  - **The formats are `Format.Rgba8`, `Format.Depth`, `Format.Rgba16f`, `Format.R8`, `Format.Rg8`, `Format.R16f`, `Format.Rg16f`, `Format.R32f`, `Format.Rgba32f` and `Format.R32i`.** A color format's name is its channels, the bits of each, and `f` where they're floats: four channels of a byte each, and four floats of 16 bits. The numeric formats added 2026-11-14 follow the same names, with `i` for a signed integer. `Depth` says no bits: the preferred storage is reversed 32-bit float with 8-bit stencil, with the legacy forward 24-bit path where needed (Depth precision below); public reads remain forward values.
   - **No `Format.Color` beside `Format.Rgba8`.** One name for one thing: an alias would be a second spelling of the same number in every example, and the question of which to write. What it would have been friendlier for is the first target someone makes, and that one says no format at all: `RenderTarget(width, height)` holds one `Rgba8` image.
   - **The members' numbers are what they were** (`Rgba8` 0, `Depth` 1, `Rgba16f` 2): they're in a target's id, so a target made by a build from before is the same format to a build from after.
   - **The old spellings are errors that name the new one**, with the rename as the editors' quick fix: `RenderTarget.Screen`, and `Format.Color`, `Format.DepthOnly` and `Format.Float`; and `Draw.Pixels` and `Draw.SetPixels` (a target's own too), the names this card gave the screen's pixel space for an afternoon. They went back to `Screen` and `SetScreen` the same day (the owner having left the review's follow-ups to Claude): with the target named `Window`, `Screen` means one thing, the screen's pixel space, as `Screen.width` and `Screen.Flip` do; and `Pixels` sat beside a frag's `Pixel` parameter as two names that read as one.
@@ -3686,25 +3689,64 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; writing a pixel's depth from a frag; reading a depth back into Tide; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
   - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): through the target's camera as a matrix, `target.WorldToClip()` (see The cameras as matrices, above: the projection, after z turned around, after the camera's transform undone, which a game spelled out itself until that was built); then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective.
 - **Several colors and float images** (built 2026-10-07; a format for each color image after a target's size, four at the most, `target.colors[i]`, a frag's outputs to them by their order with the rest of either dropped or left, and floats where a GPU draws into them with bytes and a line where one doesn't, are decided, above; everything here is a pick, to confirm):
-  - **`Format.Rgba16f`** is the enum's third member, and the one float format there is: four floats of 16 bits a pixel, each any number to three digits or so (up to about 65,000, in steps of a thousandth near 1). It's the one every backend that has float images draws into, blends and reads blended between pixels, so a `Format.Rgba16f` image behaves as a `Format.Rgba8` one does but for what it keeps. It takes twice the memory. Floats of 32 bits, and images of one or two channels, are Open.
+  - **`Format.Rgba16f`** is the enum's third member, and the original float format: four floats of 16 bits a pixel, each any number to three digits or so (up to about 65,000, in steps of a thousandth near 1). It's the one every backend that has float images draws into, blends and reads blended between pixels, so a `Format.Rgba16f` image behaves as a `Format.Rgba8` one does but for what it keeps. It takes twice the memory. The numeric formats and their matching rules follow below.
   - **Where the formats are written:** after the size and, where it's said, the pixels per unit, `RenderTarget(width, height, pixelsPerUnit, Format.Rgba8, Format.Rgba16f)`, and after a screen's factor. A fifth is an error, and so is `Format.Depth` written among several: every target has depth, so it's said alone. A format is a value like any enum's, so one that's only known as it runs, and isn't a color's among several, is a `Format.Rgba8` image, with a line that says so.
   - **`target.colors` is only read one at a time,** `target.colors[1]`, with an int that's any expression. It's no list: `target.colors` by itself, its `count`, and a loop over it are errors that say to read one. A literal index past 3 is an error; any other image a target hasn't got is found out when a draw samples it, which is passed by with a line that says so, as a draw that samples the color of a target of depth alone is. `Draw.window` has none, like its `color`.
   - **`target.color`, `target.colors[i]` and `target.depth` can't be assigned:** they're the target's own images. (The first and the last compiled before, to C that didn't.)
   - **What the engine draws itself has one color,** which goes into a target's first color image and leaves the others: shapes, text, 2D and 3D meshes drawn with no frag, and so the GUI's widgets, were they drawn there.
-  - **A clear fills every color image** with its color, and sets depth back. Its color is a color, each channel from 0 to 1, whatever the image holds: a float image can't be cleared to more than white, or to a color of its own.
+  - **A clear fills each image** with its corresponding typed value and sets depth back; numeric float values can exceed one. The existing one-Color clear still broadcasts to ordinary color targets (Numeric images and outputs, below).
   - **A frag's outputs are matched by their order alone,** wherever they are among its parameters and whatever they're called, so `out Color albedo, Sun sun, out Color normal` writes the first image and the second.
-  - **Each output is finished as the pixel's color is:** times the draw's tint (`Draw.Tint`), then blended over what's in its own image by its own alpha, as the draw's blend says. There's one blend for a draw, not one for each output, so an output that's data is written with an alpha of 1 (`Color(x, y, z)` has one): an image keeps each color times its alpha, under `Blend.Replace` too.
+  - **Each Color output is finished as the pixel's color is:** times the draw's tint (`Draw.Tint`), then blended over what's in its own image by its own alpha, as the draw's blend says. There's one blend for a draw, not one for each output, a Color output keeps its color times alpha under `Blend.Replace` too. Numeric outputs replace their image without tint, blending or premultiplication.
   - **A frag of several outputs draws anywhere:** into the window or a target of one color image, where its first is the pixel's and the others go nowhere, and into a target of depth alone, where none does. Nothing warns: one frag serves a pass that fills three images and a pass that casts a shadow.
   - **`Draw.Blit`** replaces as many of its destination's color images as its frag has outputs, and leaves the others. Its source is one `Texture`, as ever: a frag that reads several images of a target takes the others through `Texture` fields of a singleton.
   - **A draw into a target samples none of that target's color images,** the second no more than the first, whichever of them it writes: it's passed by, with the line a draw that samples its own color gets.
   - **Every GPU Tide draws with draws into floats** since the GL backends went (2026-11-05); the decided fallback for one that couldn't (bytes, and a line on the game's output) went with them.
-  - **Not there:** an output of another type than a `Color`; reading how many color images a target has; a `Format` for each output's blend or for a clear; a target's color image as another target's (each target owns its images).
+  - **Not there:** reading how many images a target has; a blend for each output; a target's color image as another target's (each target owns its images).
+- **Numeric images and outputs** (built 2026-11-14; the output types, formats, typed reads and per-image clears are
+  decided 2026-11-13 above; the following are implementation picks, Provisional):
+  - **Type matching:** R8, R16f and R32f take `float`; Rg8 and Rg16f take `float2`; R32i takes `int`;
+    Rgba32f takes `float4`; Rgba8 takes `Color`; Rgba16f takes either `Color` or `float4`. R8/Rg8 clamp
+    and quantize channels to unsigned bytes. Half floats have 16-bit precision; 32-bit floats and signed
+    integers retain their representable values. Requiring an exact shape, rather than silently dropping or
+    filling channels, catches drawing into the wrong image. A mismatch is diagnosed at the draw with its fix.
+  - **Numeric reads use a field role:** `[Raw(float)] Texture`, `[Raw(float2)] Texture`,
+    `[Raw(float4)] Texture` and `[Raw(int)] Texture`; the same roles apply to Texture3D fields.
+    `target.color` and `target.colors[i]` remain image references assigned to those fields in local code.
+    Sample and exact-cell reads return the role's type. The role is checked against the source image's format.
+    This reuses the existing Texture/Raw precedent instead of a new public type for each format. Bare `[Raw]`
+    retains its earlier behavior. A synchronous GPU helper takes `[Raw(float)] Texture image` or the
+    corresponding role/Texture3D parameter, read-only, and requires a caller with the same role. This preserves
+    the type through helper chains without introducing a separate runtime texture type.
+  - **Portable filtering:** typed numeric reads always use the nearest pixel, with implicit `Filter.Point`
+    or an explicit Point; other filters and SampleGrad are compile errors. Wrap remains Clamp/Repeat/Mirror.
+    Typed numeric images have no mipmaps; SampleLevel is a compile error directing the game to Sample.
+    Filterable compact formats could have been given linear reads and
+    a mip chain, but one rule for numeric image roles avoids optional float32 filtering and accidental ID
+    interpolation, and keeps integer formats bit-exact. Ordinary Color and bare Raw textures keep their filters.
+  - **Multisampling:** R8, Rg8, R16f and Rg16f support their usual sample counts and resolve each numeric
+    channel by the mean. Numeric float4 outputs into Rgba16f use its ordinary mean resolve too. R32f,
+    Rgba32f and R32i require one sample, including when mixed with other images of a target. Optional float32
+    multisampling and an integer sample-zero resolve were weighed against the portable common attachment path;
+    one sample was chosen instead, with a diagnostic for a request above one.
+  - **Clears:** `target.Clear(v0[, v1, v2, v3])` supplies one value per image in format order, of the same
+    accepted types as its frag outputs. Floats may be negative or greater than one; R32i takes an int.
+    Numeric values undergo no tint, alpha multiplication or blending. Depth and stencil reset within the
+    destination's clip as before. A single Color retains the existing broadcast behavior on ordinary color
+    targets. Separate methods for each image were weighed against one clear preserving the destination's
+    depth/stencil reset and the formats' existing in-order rule.
+  - **Portable storage:** kernels and Texture3D support R32f, Rgba32f and R32i alongside the existing
+    Rgba8/Rgba16f storage formats. R8/Rg8/R16f/Rg16f have no portable storage bindings and are refused with
+    guidance to use R32f or another writable format. Numeric stores preserve every channel without alpha work.
+  - **Coverage:** Cutout and Coverage require a Color as the first output. The device takes coverage from
+    that output's alpha; a float4's fourth lane is independent data and an integer output has no alpha.
+    A hidden extra color attachment or repurposing a numeric lane would change the target or its values, so
+    a numeric-only frag uses Discard for cut-outs instead. Other numeric outputs remain unmodified.
 - **A target's samples** (built 2026-10-07; that render targets have multisampling, said with a `samples` argument, is decided, above; everything here is a pick, to confirm):
   - **It's a named argument, the last, where a target is made:** `RenderTarget(width, height, samples: 4)`, `RenderTarget(width, height, pixelsPerUnit, Format.Rgba8, Format.Rgba16f, samples: 4)`, `RenderTarget.Window(samples: 4)`, `RenderTarget.Window(0.5, Format.Rgba16f, samples: 4)`. By name because a target's other arguments are told apart by their types and their order (numbers, then formats), and a bare `4` after them would read as nothing: after `RenderTarget(64, 64` it would be the pixels per unit. It's the one argument of a target's that's named, and it's only written with its name: any other name is an error, and so is `samples:` before another argument.
   - **1, 2, 4 or 8.** 1 is a target that says nothing. A number that's known as the game is compiled and is none of those is an error; one that's only known as it runs is the one of those under it (5 is 4, 100 is 8, 0 is 1), with a line that says so.
   - **A device with fewer draws it with what it has,** and the engine says so once, on the game's output: the most of 8, 4 and 2 that's no more than asked and that the device has for what the target holds. WebGPU has 1 and 4 and nothing else, so there 2 is 4 (more than asked, where the other choice was no smoothing at all) and 8 is 4. Nothing lets a game ask what it got.
   - **What it's for:** each of the target's pixels keeps that many colors, depths and stencils while it's drawn into, and a triangle's edge covers some of them, so the edges of 3D meshes, and of 2D ones, are smooth. A frag still runs once for a pixel a triangle covers, not once a sample. The smooth shapes and text are smooth by themselves, and are as they were.
-  - **Its color images are what its samples come to,** one color a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's, sampled, blitted and blended between pixels the same way, of any format. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
+  - **Its images are what its samples come to,** one value a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's. Color reads keep their filters; typed numeric reads use Point as specified above. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
   - **Its depth is read as any target's** (2026-10-13; the owner asked for the engine to be fixed where a game had worked around the refusal there was, and each rule is a pick, to confirm). `target.depth` of a multisampled target is one depth a pixel: one of the pixel's samples, as they are when the draw that reads it is drawn. It's made of the samples only for a target whose depth a draw reads, and again only once more was drawn into the target, so a target nothing reads the depth of has no texture for it and pays no pass. A sample picked, not their mean or their nearest: an edge is a step, as a target's with no samples is, and the depth is one a surface there really has.
   - **A target of depth alone has none:** `Format.Depth` with `samples` above 1 is an error where both are written, and where either is only known as it runs the target has one sample, with a line that says so.
   - **The window has none.** A game that wants an antialiased frame draws it into `RenderTarget.Window(samples: 4)` and brings it to the window with `Draw.Blit`. The window's own framebuffer would take a setting that's the game's and three ways to ask for it that can each be refused (GLFW's hint before the window is made, the WebGL context's `antialias`, which a browser may ignore, and an EGL config on Android), a canvas on WebGPU has no samples of its own at all, and the GUI, the stats and the smooth shapes drawn there gain nothing from it.
@@ -3962,9 +4004,8 @@ view DrawHud(Arena arena)
 - `verified World`: the confirmed world's other entities, by their handles.
 - Queries in local code: `with ownership` in a query; a local handler's match rows as each event's turn left things, where they're the tick's once it's done. Attached local-field reads and mutable bindings are decided above.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws (decided in part 2026-11-05: see Compute on the GPU, below). What was agreed of the GPU side, built since, is in What the GPU side gains.
-- Target formats beyond the three: floats of 32 bits, which keep a place in a big world where 16 bits don't (WebGPU neither blends them nor reads them blended without features a device may lack, so they'd be read at the nearest pixel and replace what's there, everywhere); images of one or two channels, which take less memory for a mask, a speed or a shadow's two moments; and a byte format that isn't a color's.
-- A blend for each of a frag's outputs (WebGPU has one per color target; the GL backends that had one a draw are gone); a clear's color for each of a target's images, and past 1 for a float one; and whether a game can ask if `Format.Rgba16f` images are floats on this machine (moot since every backend draws into floats).
+- GPU code: the camera without explicit parameters. Numeric outputs, triangle side and compute are built; their rules are above and in Compute on the GPU.
+- A blend for each of a frag's outputs (WebGPU has one per color target; the GL backends that had one a draw are gone).
 - A `DepthTexture` as a draw's own source, for a pass over the screen that reads a scene's depth with no singleton between.
 - The cameras' matrices (see Provisional, The cameras as matrices): a camera's matrix in code the GPU runs with nothing handed over (`pixel` or a built-in for the draw's own camera); the inverses, from clip space back to the world; whether a 2D camera should also give a `float4x4` to clip space, for a 2D shader's own arithmetic.
 - 3D: meshes in the grid's chunks, for voxels.
@@ -3997,13 +4038,13 @@ These are implementation picks, rather than additional owner decisions.
   the eight neighboring cells, with Point for an exact nearest cell. Clamp, Repeat and Mirror apply on all axes.
   There are no volume mipmaps, and no `SampleLevel`, Trilinear or Anisotropic volume filtering: a full chain and
   its three-dimensional downsampling were weighed against a predictable base-level image for simulation and lookup data.
-- **Exact cells:** `volume[int3 at]` reads a `Color` in GPU code, zeros outside. It accompanies continuous
-  `Sample` rather than forcing callers to reconstruct cell-center normalized coordinates. A float grid's volume
+- **Exact cells:** `volume[int3 at]` reads a `Color`, or a typed Raw field's float/float2/float4/int, in GPU code, zeros outside. It accompanies continuous
+  `Sample` rather than forcing callers to reconstruct cell-center normalized coordinates. A float grid's ordinary volume
   reads its value as red, zero green and blue and alpha one.
 - **Portable access:** a kernel that writes an image cannot sample or load it in that run. Use a second image
   and alternate them between runs. Read-write storage, even on a format that offers it, was rejected because
   the core formats supporting it differ across targets. Runtime aliases through different fields are checked too.
-- **Formats:** writes initially accept Rgba8 and Rgba16f. The format of a written field must be inferred
+- **Formats:** writes accept Rgba8, Rgba16f, R32f, Rgba32f and R32i. R8/Rg8/R16f/Rg16f are attachment formats without portable storage writes; use R32f for a scalar written by a kernel. The format of a written field must be inferred
   unambiguously from its constructor assignments; an unknown or ambiguous origin is an error with fixed-constructor
   guidance. Runtime shader variants were weighed and rejected in favor of compile-time format diagnostics.
   A Grid3<float>'s sampled R16f image cannot be a storage destination, because core WebGPU has no R16f storage texture.

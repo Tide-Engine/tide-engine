@@ -1,0 +1,3 @@
+// expect: 32-bit float and integer images have one sample on every device
+scene Main { }
+view Show() { var target=RenderTarget.Window(Format.R32f,samples:4); target.Clear(0.0); }

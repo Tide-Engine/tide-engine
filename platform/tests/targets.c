@@ -2185,9 +2185,8 @@ static void expect_three(const uint8_t *second, const uint8_t *third, const bool
     }
 }
 
-// Backend attachment catalogue: keep the packed format, storage size and
-// actual render attachment creation in agreement for every numeric format.
-// This checks allocation and drawing, not the forthcoming typed readback API.
+// Numeric attachments are loaded back by their bits into RGBA8. This checks exact stored values without
+// asking a display-space canvas to convert floats or signed integers into colors.
 static void check_number_attachments(void)
 {
     const tide_gpu *gpu = tide_window_gpu();
@@ -2195,7 +2194,8 @@ static void check_number_attachments(void)
     static const char vertex[] = TIDE_DEPTH_WGSL
         "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
         "  return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0, 1);\n}\n";
-    for (uint32_t kind = TIDE_GPU_COLOR_R8; kind <= TIDE_GPU_COLOR_R32I; kind++) {
+    const tide_gpu_id probe = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
+    for (uint32_t kind = TIDE_GPU_COLOR_FLOAT; kind <= TIDE_GPU_COLOR_R32I; kind++) {
         const tide_gpu_color color = (tide_gpu_color)kind;
         const tide_gpu_target_format format = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, color);
         const tide_gpu_target_format mixed = tide_gpu_target_with(TIDE_GPU_TARGET_COLOR, color);
@@ -2210,26 +2210,139 @@ static void check_number_attachments(void)
             fprintf(stderr, "numeric attachment %u permits a nonportable resolve\n", kind);
             failures++;
         }
-        char code[512];
-        snprintf(code, sizeof code, "%s%s", vertex, color == TIDE_GPU_COLOR_R32I
-            ? "@fragment fn fragment() -> @location(0) i32 { return -1234567; }\n"
-            : "@fragment fn fragment() -> @location(0) vec4f { return vec4f(0.25, 0.5, 2, 0.125); }\n");
-        const tide_gpu_id target = gpu->target(format, WIDTH, HEIGHT);
+        for (uint32_t round = 0; round < (tide_gpu_color_single_sample(color) ? 1u : 2u); round++) {
+        const tide_gpu_target_format drawn = round ? tide_gpu_target_sampled(format, gpu->target_samples(tide_gpu_target_sampled(format, 4))) : format;
+        const bool integer = color == TIDE_GPU_COLOR_R32I;
+        const bool one = color == TIDE_GPU_COLOR_R8 || color == TIDE_GPU_COLOR_R16F || color == TIDE_GPU_COLOR_R32F;
+        const bool two = color == TIDE_GPU_COLOR_RG8 || color == TIDE_GPU_COLOR_RG16F;
+        const bool unorm = color == TIDE_GPU_COLOR_R8 || color == TIDE_GPU_COLOR_RG8;
+        const char *output = integer ? "i32" : one ? "f32" : two ? "vec2f" : "vec4f";
+        const char *value = integer ? "-16777217" : one ? (unorm ? "1.0" : "1.5")
+            : two ? (unorm ? "vec2f(1, 0)" : "vec2f(1.5, -0.5)") : "vec4f(1.5, -0.5, 2, 0.125)";
+        char code[2048];
+        snprintf(code, sizeof code, "%s@fragment fn fragment() -> @location(0) %s { return %s; }\n", vertex, output, value);
+        const tide_gpu_id target = gpu->target(drawn, WIDTH, HEIGHT);
         const tide_gpu_id pipeline = gpu->pipeline(&(tide_gpu_pipeline_desc){
-            .name = "numeric attachment", .wgsl = code, .into = format, .blend = TIDE_GPU_BLEND_REPLACE,
+            .name = "numeric attachment", .wgsl = code, .into = drawn, .blend = TIDE_GPU_BLEND_ALPHA,
+            .numeric_outputs = 1, .uniform_size = 16,
         });
-        if (!target || !pipeline || !gpu->target_texture(target, 0)) {
+        snprintf(code, sizeof code,
+            "%s@group(0) @binding(1) var image: texture_2d<%s>;\n"
+            "@fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {\n"
+            "  let v = textureLoad(image, vec2i(0), 0); let bits = bitcast<vec4u>(v)[u32(at.x)];\n"
+            "  let data = bits >> select(0u, 24u, (u32(at.y) & 1u) != 0u);\n"
+            "  return vec4f(f32(data & 255u), f32((data >> 8u) & 255u), f32((data >> 16u) & 255u), 255.0) / 255.0;\n}\n",
+            vertex, integer ? "i32" : "f32");
+        const tide_gpu_id reading = gpu->pipeline(&(tide_gpu_pipeline_desc){
+            .name = "numeric attachment exact bits", .wgsl = code, .into = TIDE_GPU_TARGET_COLOR,
+            .blend = TIDE_GPU_BLEND_REPLACE, .texture_count = 1, .reads = {integer ? TIDE_GPU_READ_INT : TIDE_GPU_READ_NUMBER},
+            .uniform_size = 16,
+        });
+        if (!target || !pipeline || !reading || !gpu->target_texture(target, 0)) {
             fprintf(stderr, "numeric attachment %u was not created\n", kind);
             failures++;
         } else {
             gpu->begin(target, true);
-            gpu->use(pipeline);
+            fill(gpu, pipeline);
+            gpu->end();
+            gpu->begin(probe, true);
+            gpu->use(reading);
+            gpu->uniforms((const float[4]){0}, 16);
+            gpu->image(0, gpu->target_texture(target, 0));
             gpu->draw(0, 3, 1);
             gpu->end();
+            uint8_t actual[WIDTH * HEIGHT * 4];
+            gpu->target_read(probe, actual);
+            const float values[4] = {unorm ? 1.0f : 1.5f, two ? (unorm ? 0.0f : -0.5f) : one ? 0.0f : -0.5f,
+                                      one || two ? 0.0f : 2.0f, one || two ? 1.0f : 0.125f};
+            uint32_t expected[4];
+            memcpy(expected, values, sizeof expected);
+            if (integer) { expected[0] = (uint32_t)-16777217; expected[1] = expected[2] = 0; expected[3] = 1; }
+            for (int y = 0; y < HEIGHT; y++) for (int x = 0; x < WIDTH; x++) {
+                const uint8_t *p = actual + 4 * (y * WIDTH + x);
+                const uint32_t got = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16;
+                const uint32_t wanted = y & 1 ? expected[x] >> 24 : expected[x] & 0xFFFFFFu;
+                if (got != wanted) {
+                    fprintf(stderr, "numeric attachment %u channel %d: %08x, expected %08x\n", kind, x, got, wanted);
+                    failures++;
+                }
+            }
         }
+        gpu->pipeline_free(reading);
         gpu->pipeline_free(pipeline);
         gpu->target_free(target);
+        }
     }
+    gpu->target_free(probe);
+}
+
+#define CLEAR_PROBE_WGSL(number) \
+    "struct Uniforms { camera: mat4x4f, screen: vec4f, tint: vec4f, first: vec4u, second: vec4u }\n" \
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n" \
+    "@group(0) @binding(1) var image: texture_2d<" number ">;\n" \
+    "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n" \
+    "@vertex fn vertex(@location(0) position: vec2f, @location(1) uv: vec2f) -> Vertex {\n" \
+    "  return Vertex(u.camera * vec4f(position, 0, 1), uv);\n}\n" \
+    "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n" \
+    "  let size = vec2i(textureDimensions(image));\n" \
+    "  let at = clamp(vec2i(v.uv * vec2f(size)), vec2i(0), size - vec2i(1));\n" \
+    "  let value = bitcast<vec4u>(textureLoad(image, at, 0));\n" \
+    "  var wanted = u.first; if (v.uv.x >= 0.5) { wanted = u.second; }\n" \
+    "  if (all(value == wanted)) { return vec4f(0, 1, 0, 1); }\n" \
+    "  return vec4f(1, 0, 0, 1);\n}\n"
+
+static const tide_shader clear_float_probe = {
+    .name = "typed float clear exact bits", .id = 0x636c656172666c74u, .dims = 2,
+    .vertex_size = sizeof(tide_vertex), .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(tide_vertex, position)}, {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)}},
+    .uniform_floats = 2, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_NUMBER},
+    .wgsl = CLEAR_PROBE_WGSL("f32"),
+};
+static const tide_shader clear_int_probe = {
+    .name = "typed integer clear exact bits", .id = 0x636c656172696e74u, .dims = 2,
+    .vertex_size = sizeof(tide_vertex), .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(tide_vertex, position)}, {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)}},
+    .uniform_floats = 2, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_INT},
+    .wgsl = CLEAR_PROBE_WGSL("i32"),
+};
+
+static void check_render_number_clears(void)
+{
+    const tide_target_format formats[4] = {TIDE_TARGET_R32F, TIDE_TARGET_RG16F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
+    const tide_render_target target = tide_render_target_make_scaled_of(WIDTH * 2, HEIGHT * 2, 1, formats, 4);
+    const tide_clear_value before[4] = {tide_clear_float(3.5f), tide_clear_float2((tide_float2){-2, 4}),
+        tide_clear_float4((tide_float4){5, -6, 7, 0.25f}), tide_clear_int(-2147483647)};
+    const tide_clear_value after[4] = {tide_clear_float(-9.5f), tide_clear_float2((tide_float2){8, -16}),
+        tide_clear_float4((tide_float4){-3, 8, 4, 0.125f}), tide_clear_int(16777217)};
+    uint32_t green[WIDTH * HEIGHT * 4];
+    for (uint32_t k = 0; k < WIDTH * HEIGHT * 4; k++) green[k] = 0x00ff00ffu;
+    for (uint32_t round = 0; round < 2; round++) {
+        for (uint32_t image = 0; image < 4; image++) {
+            tide_draw_reset(&render_list);
+            if (image == 0) {
+                tide_draw_render_target(&render_list, target);
+                tide_draw_set_screen(&render_list);
+                if (round) tide_draw_set_clip(&render_list, (tide_rect){WIDTH, 0, WIDTH, HEIGHT * 2});
+                tide_draw_clear_images(&render_list, round ? after : before, 4);
+                tide_draw_clear_depth(&render_list); // Must preserve every typed image, including the integer one.
+            }
+            tide_draw_to(&render_list, 0, 0, 0);
+            uint32_t words[2][4];
+            memcpy(words[0], before[image].words, 16);
+            memcpy(words[1], (round ? after : before)[image].words, 16);
+            if (image < 2) { // Missing sampled channels are zero, and alpha one.
+                words[0][3] = words[1][3] = UINT32_C(0x3f800000);
+            } else if (image == 3) words[0][3] = words[1][3] = 1;
+            const uint32_t texture = tide_draw_texture_source(&render_list, tide_render_target_color_at(target, (int32_t)image));
+            tide_draw_blit(&render_list, image == 3 ? &clear_int_probe : &clear_float_probe,
+                TIDE_BLEND_REPLACE, NULL, words, &texture, 0);
+            render_expect(green, "typed clear retains exact values, clip and ClearDepth");
+        }
+    }
+    tide_draw_reset(&render_list);
+    tide_draw_forget(&render_list);
+    tide_render_target_dispose(target);
+    tide_render_targets_free();
 }
 
 static void check_colors(void)
@@ -3124,6 +3237,8 @@ static int frame(void *user, const float seconds)
     checked("the renderer's stencil");
     check_number_attachments();
     checked("the backend numeric attachment catalogue");
+    check_render_number_clears();
+    checked("typed image clears");
     check_colors();
     check_colors();
     checked("the backend's targets of several colors");

@@ -1,0 +1,24 @@
+scene Main { }
+local singleton Images
+{
+    RenderTarget mixed;
+    RenderTarget bytes;
+    RenderTarget halves;
+    RenderTarget legacy;
+    int order;
+}
+float Scalar(mut int order) { order = order * 10 + 1; return 3.5; }
+float2 Pair(mut int order) { order = order * 10 + 2; return float2(-2, 4); }
+float4 Full(mut int order) { order = order * 10 + 3; return float4(5, -6, 7, 0.25); }
+int Identity(mut int order) { order = order * 10 + 4; return -2147483647; }
+view ClearImages(mut Images images)
+{
+    images.mixed = RenderTarget(8, 8, 1, Format.R32f, Format.Rg16f, Format.Rgba32f, Format.R32i);
+    images.bytes = RenderTarget.Window(Format.R8, Format.Rg8, samples: 4);
+    images.halves = RenderTarget(8, 8, Format.R16f, Format.Rgba16f);
+    images.legacy = RenderTarget(8, 8);
+    images.mixed.Clear(Scalar(images.order), Pair(images.order), Full(images.order), Identity(images.order));
+    images.bytes.Clear(1.0, float2(0.25, 0.5));
+    images.halves.Clear(4.0, Color(2, 4, 8, 0.5));
+    images.legacy.Clear(Color.red);
+}

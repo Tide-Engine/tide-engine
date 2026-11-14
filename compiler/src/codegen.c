@@ -5552,6 +5552,21 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         else sb_put(o, "))");
         return;
     }
+    if (e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_clear_images") == 0) {
+        sb_put(o, "tide_draw_clear_images(");
+        gen_draw_list(g, o, e);
+        sb_put(o, ", (const tide_clear_value[]){");
+        for (int i = 0; i < e->args.count; i++) {
+            const type t = e->args.items[i]->type;
+            const char *kind = t.kind == TY_COLOR ? "color" : t.kind == TY_FLOAT ? "float"
+                : t.kind == TY_FLOAT2 ? "float2" : t.kind == TY_FLOAT4 ? "float4" : "int";
+            sb_printf(o, "%stide_clear_%s(", i ? ", " : "", kind);
+            gen_as(g, o, e->args.items[i], t);
+            sb_put(o, ")");
+        }
+        sb_printf(o, "}, %d)", e->args.count);
+        return;
+    }
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
@@ -27195,7 +27210,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field), texture->image_color);
             continue;
         }
-        if (texture->read == READ_VOLUME) {
+        if (texture->read == READ_VOLUME || texture->read == READ_NUMBER_VOLUME || texture->read == READ_INT_VOLUME) {
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
             sb_printf(o, "    tide_textures[%d] = tide_draw_volume_source(tide_draw, tide_%sb%d->%s);\n", t,
@@ -27539,6 +27554,8 @@ static void gen_shaders(gen *g)
         shader_put_texture_reads(o, sh);
         // The colors its frag writes, where that's more than the pixel's: one for each color image of a target
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
+        if (shader_numeric_outputs(sh)) sb_printf(o, "    .numeric_outputs = 0x%xu,\n", shader_numeric_outputs(sh));
+        if (shader_numeric_outputs(sh)) sb_printf(o, "    .output_types = 0x%xu,\n", shader_output_types(sh));
         if (sh->blit) sb_put(o, "    .blit = true,\n");
         if (sh->frag && sh->frag->writes_depth) sb_put(o, "    .writes_depth = true,\n");
         if (sh->frag && sh->frag->cutout) sb_put(o, "    .cutout = true,\n"); // Its alpha is its coverage
@@ -27951,6 +27968,7 @@ bool codegen(program *prog, const codegen_options *opts)
     // others' C is as it was
     const int filters = prog->names_anisotropic ? 4 : prog->names_trilinear ? 3 : 2;
     if (prog->filter && prog->filter->members.count > filters) prog->filter->members.count = filters;
+    if (prog->format && prog->format->named_members <= 3) prog->format->members.count = 3;
     if (opts->info) {
         setting_text(opts->info->title, sizeof opts->info->title, prog->title);
         setting_text(opts->info->app_id, sizeof opts->info->app_id, prog->app_id);

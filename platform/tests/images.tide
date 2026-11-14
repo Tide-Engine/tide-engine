@@ -122,3 +122,174 @@ view Show(mut Images images)
 }
 
 scene Main { }
+
+local singleton NumberImages
+{
+    RenderTarget r8;
+    RenderTarget rg8;
+    RenderTarget r16;
+    RenderTarget rg16;
+    RenderTarget r32;
+    RenderTarget rgba16;
+    RenderTarget rgba32;
+    RenderTarget ids;
+    [Raw(float)] Texture one8;
+    [Raw(float2)] Texture two8;
+    [Raw(float)] Texture one16;
+    [Raw(float2)] Texture two16;
+    [Raw(float)] Texture one32;
+    [Raw(float4)] Texture four16;
+    [Raw(float4)] Texture four32;
+    [Raw(int)] Texture integer;
+    [Raw(float)] Texture3D scalarVolume;
+    [Raw(float4)] Texture3D vectorVolume;
+    [Raw(int)] Texture3D integerVolume;
+    [Raw(int)] Texture missingInteger;
+    [Raw(int)] Texture3D missingIntegerVolume;
+    [Raw(float4)] Texture missingNumber;
+    [Raw(float4)] Texture3D missingNumberVolume;
+    List<Vertex> quad;
+    bool made;
+}
+struct NumberProbe { int mode; }
+frag OneNumber(Vertex vertex, out float value) { value = 1.5; }
+frag TwoNumbers(Vertex vertex, out float2 value) { value = float2(1.5, -0.5); }
+frag FourNumbers(Vertex vertex, out float4 value) { value = float4(1.5, -0.5, 2, 0.125); }
+frag IntegerNumber(Vertex vertex, out int value) { value = -16777217; }
+bool SameTwo(float2 a, float2 b) { return a.x == b.x && a.y == b.y; }
+bool SameFour(float4 a, float4 b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
+frag CheckNumbers(Vertex vertex, out Color color, NumberImages images, NumberProbe probe)
+{
+    mut bool good = false;
+    if (probe.mode == 0) good = images.one8.Sample(vertex.uv) == 1;
+    else if (probe.mode == 1) good = SameTwo(images.two8.Sample(vertex.uv), float2(1, 0));
+    else if (probe.mode == 2) good = images.one16.Sample(vertex.uv) == 1.5;
+    else if (probe.mode == 3) good = SameTwo(images.two16.Sample(vertex.uv), float2(1.5, -0.5));
+    else if (probe.mode == 4) good = images.one32.Sample(vertex.uv) == 1.5;
+    else if (probe.mode == 5) good = SameFour(images.four16.Sample(vertex.uv), float4(1.5, -0.5, 2, 0.125));
+    else if (probe.mode == 6) good = SameFour(images.four32.Sample(vertex.uv), float4(1.5, -0.5, 2, 0.125));
+    else if (probe.mode == 7) good = images.integer.Sample(vertex.uv) == -16777217;
+    else if (probe.mode == 8) good = images.one32.Sample(float2(0.0625)) == 9.5;
+    else if (probe.mode == 9) good = SameFour(images.four32.Sample(float2(0.0625)), float4(9.5, -3, 4, 0.25));
+    else if (probe.mode == 10) good = images.integer.Sample(float2(0.0625)) == -33554433;
+    else if (probe.mode == 11) good = images.scalarVolume.Sample(float3(0.75)) == 9.5;
+    else if (probe.mode == 12) good = SameFour(images.vectorVolume.Sample(float3(0.75)), float4(9.5, -3, 4, 0.25));
+    else good = images.integerVolume.Sample(float3(0.75)) == -33554433
+        && images.missingInteger.Sample(vertex.uv) == 0 && images.missingIntegerVolume.Sample(float3(0.5)) == 0
+        && SameFour(images.missingNumber.Sample(vertex.uv), float4(0))
+        && SameFour(images.missingNumberVolume.Sample(float3(0.5)), float4(0));
+    color = good ? Color.green : Color.red;
+}
+[Group(2, 2, 2)]
+compute FillNumberVolumes(NumberImages images)
+{
+    images.scalarVolume[this.at] = 9.5;
+    images.vectorVolume[this.at] = float4(9.5, -3, 4, 0.25);
+    images.integerVolume[this.at] = -33554433;
+}
+[Group(2, 2)]
+compute FillNumbers(NumberImages images)
+{
+    if (this.at.z == 0)
+    {
+        images.one32[this.at.xy] = 9.5;
+        images.four32[this.at.xy] = float4(9.5, -3, 4, 0.25);
+        images.integer[this.at.xy] = -33554433;
+    }
+}
+view ShowNumbers(mut NumberImages images)
+{
+    if (!images.made)
+    {
+        images.r8 = RenderTarget(8, 8, 1, Format.R8);
+        images.rg8 = RenderTarget(8, 8, 1, Format.Rg8);
+        images.r16 = RenderTarget(8, 8, 1, Format.R16f, samples: 4);
+        images.rg16 = RenderTarget(8, 8, 1, Format.Rg16f, samples: 4);
+        images.r32 = RenderTarget(8, 8, 1, Format.R32f);
+        images.rgba16 = RenderTarget(8, 8, 1, Format.Rgba16f);
+        images.rgba32 = RenderTarget(8, 8, 1, Format.Rgba32f);
+        images.ids = RenderTarget(8, 8, 1, Format.R32i);
+        images.one8 = images.r8.color;
+        images.two8 = images.rg8.color;
+        images.one16 = images.r16.color;
+        images.two16 = images.rg16.color;
+        images.one32 = images.r32.color;
+        images.four16 = images.rgba16.color;
+        images.four32 = images.rgba32.color;
+        images.integer = images.ids.color;
+        images.scalarVolume = Texture3D(int3(2), Format.R32f);
+        images.vectorVolume = Texture3D(int3(2), Format.Rgba32f);
+        images.integerVolume = Texture3D(int3(2), Format.R32i);
+        images.quad = [Vertex { position = float2(0, 0), uv = float2(0, 0) },
+                       Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(8, 8), uv = float2(1, 1) },
+                       Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        images.made = true;
+    }
+    images.r8.SetScreen(); images.rg8.SetScreen(); images.r16.SetScreen(); images.rg16.SetScreen();
+    images.r32.SetScreen(); images.rgba16.SetScreen(); images.rgba32.SetScreen(); images.ids.SetScreen();
+    images.r8.Tint(Color(0, 0, 0, 0)) { images.r8.Mesh(images.quad, [0,1,2,0,2,3], OneNumber); }
+    images.rg8.Tint(Color(0, 0, 0, 0)) { images.rg8.Mesh(images.quad, [0,1,2,0,2,3], TwoNumbers); }
+    images.r16.Tint(Color(0, 0, 0, 0)) { images.r16.Mesh(images.quad, [0,1,2,0,2,3], OneNumber); }
+    images.rg16.Tint(Color(0, 0, 0, 0)) { images.rg16.Mesh(images.quad, [0,1,2,0,2,3], TwoNumbers); }
+    images.r32.Tint(Color(0, 0, 0, 0)) { images.r32.Mesh(images.quad, [0,1,2,0,2,3], OneNumber); }
+    images.rgba16.Tint(Color(0, 0, 0, 0)) { images.rgba16.Mesh(images.quad, [0,1,2,0,2,3], FourNumbers); }
+    images.rgba32.Tint(Color(0, 0, 0, 0)) { images.rgba32.Mesh(images.quad, [0,1,2,0,2,3], FourNumbers); }
+    images.ids.Tint(Color(0, 0, 0, 0)) { images.ids.Mesh(images.quad, [0,1,2,0,2,3], IntegerNumber); }
+    for (var i = 0; i < 8; i++)
+        Draw.Transform(float2(float(i % 3) * 8, 24 + float(i / 3) * 8))
+        { Draw.Mesh(images.quad, [0,1,2,0,2,3], CheckNumbers, NumberProbe { mode = i }); }
+    GPU.Run(FillNumbers, int2(2));
+    GPU.Run(FillNumberVolumes, int3(2));
+    for (var i = 0; i < 6; i++)
+        Draw.Transform(float2(float(i % 3) * 8, 48 + float(i / 3) * 8))
+        { Draw.Mesh(images.quad, [0,1,2,0,2,3], CheckNumbers, NumberProbe { mode = 8 + i }); }
+}
+
+local singleton MixedImages
+{
+    RenderTarget target;
+    Texture color;
+    [Raw(float4)] Texture numbers;
+    [Raw(int)] Texture identity;
+    bool made;
+}
+frag FillMixed(Vertex vertex, out Color color, out float4 numbers, out int identity)
+{
+    color = Color(1, 0, 0, 0.5);
+    numbers = float4(1.5, -0.5, 2, 0.125);
+    identity = -16777217;
+}
+frag CheckMixed(Vertex vertex, out Color color, MixedImages images, NumberProbe probe)
+{
+    mut bool good = false;
+    if (probe.mode == 0)
+    {
+        Color stored = images.color.Sample(vertex.uv);
+        good = stored.r == 0.21875 && stored.g == 0 && stored.b == 0 && stored.a == 1;
+    }
+    else if (probe.mode == 1) good = SameFour(images.numbers.Sample(vertex.uv), float4(1.5, -0.5, 2, 0.125));
+    else good = images.identity.Sample(vertex.uv) == -16777217;
+    color = good ? Color.green : Color.red;
+}
+view DrawMixed(mut MixedImages mixed, NumberImages images)
+{
+    if (!mixed.made)
+    {
+        mixed.target = RenderTarget(8, 8, 1, Format.Rgba16f, Format.Rgba32f, Format.R32i);
+        mixed.color = mixed.target.colors[0];
+        mixed.numbers = mixed.target.colors[1];
+        mixed.identity = mixed.target.colors[2];
+        mixed.made = true;
+    }
+    mixed.target.SetScreen();
+    mixed.target.Clear(Color.black, float4(0), 0);
+    mixed.target.Tint(Color(0.5, 1, 1, 0.5))
+    {
+        mixed.target.Mesh(images.quad, [0,1,2,0,2,3], FillMixed);
+        mixed.target.Mesh(images.quad, [0,1,2,0,2,3], FillMixed);
+    }
+    for (var i = 0; i < 3; i++)
+        Draw.Transform(float2(float(i) * 8, 64))
+        { Draw.Mesh(images.quad, [0,1,2,0,2,3], CheckMixed, NumberProbe { mode = i }); }
+}

@@ -46,3 +46,12 @@ TIDE_TEST(shader_names_grow_the_lookup_without_alias_collisions)
     TIDE_CHECK(strstr(map.data, "q4095\tt_secret4095\n") != NULL);
     arena_reset();
 }
+
+TIDE_TEST(shader_names_keep_numeric_output_metadata_for_unity)
+{
+    const char *out = shader_minify_names("// tide numeric outputs: 9\n// tf_secret\nfn tf_secret() {}\n", NULL);
+    TIDE_CHECK(strncmp(out, "// tide numeric outputs: 9\n", 26) == 0);
+    TIDE_CHECK(strstr(out, "tf_secret") == NULL && strstr(out, "fn q0()") != NULL);
+    TIDE_CHECK(strcmp(out, shader_minify_names(out, NULL)) == 0);
+    arena_reset();
+}

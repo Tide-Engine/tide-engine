@@ -2668,8 +2668,8 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .depthTestEnable = desc->depth != TIDE_GPU_DEPTH_NONE,
         .depthWriteEnable = desc->depth == TIDE_GPU_DEPTH_TEST || desc->depth == TIDE_GPU_DEPTH_RESET
-                         || desc->depth == TIDE_GPU_DEPTH_ALONE,
-        .depthCompareOp = desc->depth == TIDE_GPU_DEPTH_RESET   ? VK_COMPARE_OP_ALWAYS
+                         || desc->depth == TIDE_GPU_DEPTH_ALONE || desc->depth == TIDE_GPU_DEPTH_RESET_ALONE,
+        .depthCompareOp = desc->depth == TIDE_GPU_DEPTH_RESET || desc->depth == TIDE_GPU_DEPTH_RESET_ALONE ? VK_COMPARE_OP_ALWAYS
                         : desc->depth == TIDE_GPU_DEPTH_EQUAL ? VK_COMPARE_OP_EQUAL
                                                               : vk.reversed_depth ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL,
         .stencilTestEnable = !(test == TIDE_GPU_STENCIL_ALWAYS && op == TIDE_GPU_STENCIL_KEEP),
@@ -2698,8 +2698,10 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         default:
             break;
         }
+        if (desc->numeric_outputs >> i & 1u) b = (VkPipelineColorBlendAttachmentState){.colorWriteMask = 0xF};
         // Depth alone writes no color: the frag still runs, for its discards and its coverage
-        if (i >= outputs || desc->depth == TIDE_GPU_DEPTH_ALONE) b = (VkPipelineColorBlendAttachmentState){.colorWriteMask = 0};
+        if (i >= outputs || desc->depth == TIDE_GPU_DEPTH_ALONE || desc->depth == TIDE_GPU_DEPTH_RESET_ALONE)
+            b = (VkPipelineColorBlendAttachmentState){.colorWriteMask = 0};
         blends[i] = b;
     }
     m->blend = (VkPipelineColorBlendStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, NULL, 0, VK_FALSE,
@@ -3331,6 +3333,9 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     *(VkViewport *)pc_add(PC_VIEWPORT, sizeof(VkViewport)) = (VkViewport){0.0f, (float)height, (float)width, -(float)height, 0.0f, 1.0f};
     pc_scissor((VkRect2D){{0, 0}, {(uint32_t)width, (uint32_t)height}});
     pc_stencil(0);
+    // A pass starts with no bias, including gpu.h callers that draw without setting it explicitly.
+    float *const bias = pc_add(PC_DEPTH_BIAS, 2u * sizeof(float));
+    bias[0] = bias[1] = 0.0f;
 }
 
 static void vk_end(void)

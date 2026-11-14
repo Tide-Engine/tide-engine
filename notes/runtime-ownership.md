@@ -1,3 +1,13 @@
+## Numeric images and typed clears (2026-11-14)
+
+Within the owner's approved numeric output/image task (2026-11-13, "these make sense, lets do all of these"),
+agents maintain the appended tide_target_format catalogue, compact handle catalogue in draw.h/draw.c,
+tide_draw_clear_images and the tide_clear_value constructors. Generated C calls the typed clear recorder;
+its bounded count is checked against the destination's image count and formats before copying 64 uniform bytes.
+Only Color values premultiply. New draw commands store byte offsets, never borrowed payload pointers; append
+checks both source spans and destination addition. Old target IDs, 16-bit holds and 64 KiB state alignment stay
+unchanged, including native adoption and opaque web reload. Contracts/tests: render-targets.md and shaders.md.
+
 # Pixel readback (2026-11-14)
 
 Within the owner-approved rendering task, agents maintain tide_render_target_read_begin and

@@ -1,0 +1,5 @@
+// expect: an image passed to a numeric image parameter must keep the same [Raw(T)] role
+scene Main { }
+local singleton Images { [Raw(int)] Texture image; }
+float Read([Raw(float)] Texture image, float2 at) { return image.Sample(at); }
+frag Show(Vertex vertex,out Color color,Images images) { color=Color(Read(images.image,vertex.uv),0,0); }
