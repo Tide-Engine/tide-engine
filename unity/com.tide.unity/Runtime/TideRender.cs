@@ -869,6 +869,23 @@ namespace Tide
             image.mips = true;
         }
 
+        // tide_gpu_color, recorded verbatim in TARGET/ARRAY/CUBE commands.
+        static GraphicsFormat AttachmentFormat(int color)
+        {
+            switch (color)
+            {
+                case 2: return GraphicsFormat.R16G16B16A16_SFloat;
+                case 3: return GraphicsFormat.R8_UNorm;
+                case 4: return GraphicsFormat.R8G8_UNorm;
+                case 5: return GraphicsFormat.R16_SFloat;
+                case 6: return GraphicsFormat.R16G16_SFloat;
+                case 7: return GraphicsFormat.R32_SFloat;
+                case 8: return GraphicsFormat.R32G32B32A32_SFloat;
+                case 9: return GraphicsFormat.R32_SInt;
+                default: return GraphicsFormat.R8G8B8A8_UNorm;
+            }
+        }
+
         void MakeCube(uint id, int color, int size, byte* faces)
         {
             size = Math.Max(1, size);
@@ -886,7 +903,7 @@ namespace Tide
                 images[id] = new Image { texture = cube, width = size, height = size, owned = true };
                 return;
             }
-            var rt = new RenderTexture(size, size, 0, color == 2 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
+            var rt = new RenderTexture(size, size, AttachmentFormat(color), GraphicsFormat.None)
             {
                 dimension = TextureDimension.Cube, useMipMap = true, autoGenerateMips = false, hideFlags = HideFlags.HideAndDontSave,
             };
@@ -929,8 +946,7 @@ namespace Tide
                                          owned = true, arrayDepth = depth, arrayDepthId = id };
                 return;
             }
-            var color = new RenderTexture(width, height, 0, (format & 15) == 2 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32,
-                                          RenderTextureReadWrite.Linear)
+            var color = new RenderTexture(width, height, AttachmentFormat((int)(format & 15)), GraphicsFormat.None)
             {
                 dimension = TextureDimension.Tex2DArray, volumeDepth = layers, useMipMap = true, autoGenerateMips = false,
                 hideFlags = HideFlags.HideAndDontSave,
@@ -1082,8 +1098,7 @@ namespace Tide
             {
                 var held = format >> (4 * i) & 15;
                 if (held == 0) break;
-                var rt = new RenderTexture(width, height, 0, held == 2 ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32,
-                    RenderTextureReadWrite.Linear)
+                var rt = new RenderTexture(width, height, AttachmentFormat((int)held), GraphicsFormat.None)
                 {
                     antiAliasing = samples, useMipMap = samples == 1, autoGenerateMips = false, hideFlags = HideFlags.HideAndDontSave,
                 };

@@ -2172,6 +2172,53 @@ static void expect_three(const uint8_t *second, const uint8_t *third, const bool
     }
 }
 
+// Backend attachment catalogue: keep the packed format, storage size and
+// actual render attachment creation in agreement for every numeric format.
+// This checks allocation and drawing, not the forthcoming typed readback API.
+static void check_number_attachments(void)
+{
+    const tide_gpu *gpu = tide_window_gpu();
+    static const uint32_t bytes[] = {0, 4, 8, 1, 2, 2, 4, 4, 16, 4};
+    static const char vertex[] =
+        "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+        "  return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0, 1);\n}\n";
+    for (uint32_t kind = TIDE_GPU_COLOR_R8; kind <= TIDE_GPU_COLOR_R32I; kind++) {
+        const tide_gpu_color color = (tide_gpu_color)kind;
+        const tide_gpu_target_format format = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, color);
+        const tide_gpu_target_format mixed = tide_gpu_target_with(TIDE_GPU_TARGET_COLOR, color);
+        if (tide_gpu_color_bytes(color) != bytes[kind] || tide_gpu_target_colors(format) != 1
+            || tide_gpu_target_color(format, 0) != color || tide_gpu_target_colors(mixed) != 2
+            || tide_gpu_target_color(mixed, 1) != color) {
+            fprintf(stderr, "numeric attachment %u lost its format or byte size\n", kind);
+            failures++;
+        }
+        if (tide_gpu_color_single_sample(color)
+            && gpu->target_samples(tide_gpu_target_sampled(format, 4)) != 1) {
+            fprintf(stderr, "numeric attachment %u permits a nonportable resolve\n", kind);
+            failures++;
+        }
+        char code[512];
+        snprintf(code, sizeof code, "%s%s", vertex, color == TIDE_GPU_COLOR_R32I
+            ? "@fragment fn fragment() -> @location(0) i32 { return -1234567; }\n"
+            : "@fragment fn fragment() -> @location(0) vec4f { return vec4f(0.25, 0.5, 2, 0.125); }\n");
+        const tide_gpu_id target = gpu->target(format, WIDTH, HEIGHT);
+        const tide_gpu_id pipeline = gpu->pipeline(&(tide_gpu_pipeline_desc){
+            .name = "numeric attachment", .wgsl = code, .into = format, .blend = TIDE_GPU_BLEND_REPLACE,
+        });
+        if (!target || !pipeline || !gpu->target_texture(target, 0)) {
+            fprintf(stderr, "numeric attachment %u was not created\n", kind);
+            failures++;
+        } else {
+            gpu->begin(target, true);
+            gpu->use(pipeline);
+            gpu->draw(0, 3, 1);
+            gpu->end();
+        }
+        gpu->pipeline_free(pipeline);
+        gpu->target_free(target);
+    }
+}
+
 static void check_colors(void)
 {
     const tide_gpu *gpu = tide_window_gpu();
@@ -3062,6 +3109,8 @@ static int frame(void *user, const float seconds)
     check_render_stencil(2.0f);
     check_render_stencil(1.0f); // With the pipelines the first frames made
     checked("the renderer's stencil");
+    check_number_attachments();
+    checked("the backend numeric attachment catalogue");
     check_colors();
     check_colors();
     checked("the backend's targets of several colors");

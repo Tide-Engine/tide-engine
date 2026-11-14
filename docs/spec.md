@@ -2913,6 +2913,14 @@ input PlayerInput
 
 ### Decided
 
+- **Numeric frag outputs and image formats** (owner, 2026-11-13: "these make sense, lets do all of these";
+  implementation pending beyond the backend attachment catalogue): a frag can write `out float`, `out float2`,
+  `out float4` and `out int` beside `out Color`. Number outputs are neither tinted nor premultiplied and replace
+  the stored value regardless of the draw's blend; Color keeps its existing behavior. The added formats are
+  `R8`, `Rg8`, `R16f`, `Rg16f`, `R32f`, `Rgba32f` and `R32i`. An incompatible output is a compile error at the
+  draw, explaining the type the format takes. Sample returns an image's own numeric type. Each image has its
+  own clear value, including values past one for float images. A blend for each output remains open.
+
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
 - `[RunInEditor]` on a view includes it in game frames and authored prefab
@@ -3539,6 +3547,11 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **`Draw.Blit`** is its destination's, whatever is set: no blend, tint, depth, cull, stencil, transform, camera or clip changes it. It takes a blend of its own before its frag, `Draw.Blit(source, destination, Blend.Add, frag)`, and replaces what's there without one. So a pass over the screen doesn't change with what an earlier view left set.
   - A setting that's set to what it was, or set and put back with nothing drawn, costs nothing: what's drawn on either side of it is still drawn at once. A tint and a 2D transform are worked into shapes and text as they're recorded, so shapes with a tint or a transform each are still one draw call. A mesh through a `frag` gets its tint and its 2D transform with its draw, so instances with different ones are different draws.
   - In C (`tide/draw.h`), `tide_draw_set_*` are the `Set` forms (`tide_draw_set_camera`, `tide_draw_set_clip`, `tide_draw_set_screen`, `tide_draw_set_blend`, `tide_draw_set_depth`, `tide_draw_set_cull`, `tide_draw_set_stencil`...), `tide_draw_unset_*` the ones with no arguments, and `tide_draw_push_*` with `tide_draw_pop(list, mark)` the blocks. The former `tide_draw_camera`, `tide_draw_camera_3d`, `tide_draw_camera_matrices`, `tide_draw_clip`, `tide_draw_no_clip` and `tide_draw_screen` were renamed to match.
+- **Numeric attachment samples** (Provisional, backend foundation 2026-11-14): R32f, Rgba32f and R32i
+  attachments use one sample. Optional float32 multisampling and resolving integer sample zero were considered;
+  a single-sample baseline keeps attachment support independent of optional WebGPU features and avoids an
+  integer mean. The authored Tide API and its diagnostic remain to be built.
+
 - **Target formats and depth** (built 2026-10-07; that a target says what it holds when it's made, that one can hold depth alone, and that a frag reads a target's depth plainly or compared are decided, above; everything here is a pick, to confirm):
   - **`Format`** is a built-in enum, with two members when this was built: `Format.Rgba8`, a color image beside the depth, which is what a target holds when nothing is said and the name for what targets always were, and `Format.Depth`. (They were `Format.Color` and `Format.DepthOnly` until the formats were named by what they store: see One word for the window, and formats by what they store, above.) (`Format.Rgba16f` joined them with several colors: see Several colors and float images, below.) A game can't declare the name outside a namespace. It's a value like any enum's: a variable or a function's parameter says it too.
   - **It's the last argument where a target is made:** `RenderTarget(width, height, format)`, `RenderTarget(width, height, pixelsPerUnit, format)`, `RenderTarget.Window(format)` and `RenderTarget.Window(factor, format)`. Anywhere else among them is an error that says it comes last. `Resize` keeps it, and so does a hot reload, with the target's size and scale. (That a target's formats are after its size, one for each color image, is decided since.)
@@ -3831,7 +3844,7 @@ view DrawHud(Arena arena)
 - `verified World`: the confirmed world's other entities, by their handles.
 - Queries in local code: `with ownership` in a query; a local handler's match rows as each event's turn left things, where they're the tick's once it's done. Attached local-field reads and mutable bindings are decided above.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws (decided in part 2026-11-05: see Compute on the GPU, below); `while` and `switch` there. What was agreed of the GPU side, built since, is in What the GPU side gains.
+- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws (decided in part 2026-11-05: see Compute on the GPU, below). What was agreed of the GPU side, built since, is in What the GPU side gains.
 - Target formats beyond the three: floats of 32 bits, which keep a place in a big world where 16 bits don't (WebGPU neither blends them nor reads them blended without features a device may lack, so they'd be read at the nearest pixel and replace what's there, everywhere); images of one or two channels, which take less memory for a mask, a speed or a shadow's two moments; and a byte format that isn't a color's.
 - A blend for each of a frag's outputs (WebGPU has one per color target; the GL backends that had one a draw are gone); a clear's color for each of a target's images, and past 1 for a float one; and whether a game can ask if `Format.Rgba16f` images are floats on this machine (moot since every backend draws into floats).
 - A `DepthTexture` as a draw's own source, for a pass over the screen that reads a scene's depth with no singleton between.

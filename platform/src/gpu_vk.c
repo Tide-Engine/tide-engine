@@ -1781,7 +1781,17 @@ static tide_gpu_id vk_cube(const tide_gpu_color color, const int size, const voi
 
 static VkFormat color_format(const tide_gpu_color color)
 {
-    return color == TIDE_GPU_COLOR_FLOAT ? VK_FORMAT_R16G16B16A16_SFLOAT : vk.window_format;
+    switch (color) {
+    case TIDE_GPU_COLOR_FLOAT: return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case TIDE_GPU_COLOR_R8: return VK_FORMAT_R8_UNORM;
+    case TIDE_GPU_COLOR_RG8: return VK_FORMAT_R8G8_UNORM;
+    case TIDE_GPU_COLOR_R16F: return VK_FORMAT_R16_SFLOAT;
+    case TIDE_GPU_COLOR_RG16F: return VK_FORMAT_R16G16_SFLOAT;
+    case TIDE_GPU_COLOR_R32F: return VK_FORMAT_R32_SFLOAT;
+    case TIDE_GPU_COLOR_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case TIDE_GPU_COLOR_R32I: return VK_FORMAT_R32_SINT;
+    default: return vk.window_format;
+    }
 }
 
 // An array: of pixels, or drawn into a layer at a time, with a depth array beside it. One that holds depth alone is
@@ -1934,6 +1944,8 @@ static uint32_t vk_target_samples(const tide_gpu_target_format format)
 {
     uint32_t samples = tide_gpu_target_samples(format);
     if (samples <= 1u || !tide_gpu_target_colors(format)) return 1u;
+    for (uint32_t i = 0; i < tide_gpu_target_colors(format); i++)
+        if (tide_gpu_color_single_sample(tide_gpu_target_color(format, i))) return 1u;
     const VkSampleCountFlags counts = sample_counts(format);
     while (samples > 1u && !(counts & samples)) samples >>= 1;
     return samples > 1u ? samples : 1u;

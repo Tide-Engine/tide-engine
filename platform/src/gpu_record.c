@@ -474,6 +474,8 @@ static int record_target_limit(void)
 
 static uint32_t record_target_samples(const tide_gpu_target_format format)
 {
+    for (uint32_t i = 0; i < tide_gpu_target_colors(format); i++)
+        if (tide_gpu_color_single_sample(tide_gpu_target_color(format, i))) return 1u;
     const uint32_t asked = tide_gpu_target_samples(format);
     return asked >= 8u ? 8u : asked >= 4u ? 4u : asked >= 2u ? 2u : 1u;
 }

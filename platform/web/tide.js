@@ -1735,10 +1735,13 @@
     // none past the last; then, from bit 16, how many samples a pixel of it is drawn with, 4 or none said (1),
     // which a pipeline is made for too. A change to either enum goes here.
     const samplesOf = into => (into >> 16 & 15) > 1 ? 4 : 1;
+    const attachmentFormats = [null, null, 'rgba16float', 'r8unorm', 'rg8unorm', 'r16float', 'rg16float',
+        'r32float', 'rgba32float', 'r32sint']; // tide_gpu_color; slot 1 is the canvas format
+    const colorFormat = color => color === 1 ? gpuFormat : attachmentFormats[color];
     const colorFormats = into => {
         const formats = [];
         for (; formats.length < 4 && (into >> 4 * formats.length & 15); ) {
-            formats.push((into >> 4 * formats.length & 15) === 2 ? 'rgba16float' : gpuFormat);
+            formats.push(colorFormat(into >> 4 * formats.length & 15));
         }
         return formats;
     };

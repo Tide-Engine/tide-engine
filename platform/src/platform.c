@@ -2333,7 +2333,7 @@ static uint64_t format_bytes(const tide_gpu_format format)
 
 static uint64_t color_bytes(const tide_gpu_color color)
 {
-    return color == TIDE_GPU_COLOR_FLOAT ? 8u : 4u;
+    return tide_gpu_color_bytes(color);
 }
 
 // A target's pixel: its color images and 4 bytes of depth and stencil, each `samples` times when it's multisampled, and
