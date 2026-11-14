@@ -226,24 +226,35 @@ static void gen_client_input_filter(gen *g)
               "    // On the heap: an audience of the most players a game takes is 8 KiB\n"
               "    Audience *audience = malloc((size_t)slots * sizeof *audience);\n    bool *found = malloc(slots);\n"
               "    if (!audience || !found) tide_out_of_memory();\n"
-              "    for (uint32_t slot = 0; slot < slots; slot++) {\n        audience[slot] = TIDE_AUDIENCE_ALL;\n        found[slot] = false;\n    }\n");
+              "    for (uint32_t slot = 0; slot < slots; slot++) {\n        audience[slot] = TIDE_AUDIENCE_ALL;\n        found[slot] = false;\n    }\n"
+              "    // Each row where it is, the directory through one view; and a slot nobody may have already is left alone (a\n"
+              "    // world of chunks each a few players have withholds the server's slot after two of them)\n"
+              "    static const Audience nobody = {0};\n"
+              "    tide_visibility_walk walk = {0};\n    tide_map_view_none(&walk.groups);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
+        const bool owned = arch_stores(g, a, prog->owner->index);
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
         sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        if (arch_stores(g, a, prog->owner->index)) {
-            sb_printf(o, "        const int32_t owner_index = tide_player_index(tide_get_%s(w, e).player);\n", type_cname(prog->owner));
+        sb_printf(o, "        const tide_entity e = *%s;\n        const tide_location loc = {%du, row};\n",
+                  arch_cell(g, "w", a, 0, "tide_entity", "row", false), a);
+        if (owned) {
+            sb_printf(o, "        %s owner;\n        memset(&owner, 0, sizeof owner);\n        (void)tide_load_%s_at(w, loc, &owner);\n"
+                         "        const int32_t owner_index = tide_player_index(owner.player);\n", type_cname(prog->owner), type_cname(prog->owner));
             sb_put(o, "        const uint32_t slot = owner_index >= 0 && (uint32_t)owner_index < TIDE_GAME_PLAYERS ? (uint32_t)owner_index : TIDE_GAME_PLAYERS;\n");
         } else sb_put(o, "        const uint32_t slot = TIDE_GAME_PLAYERS;\n");
-        sb_put(o, "        found[slot] = true;\n"
-                  "        audience[slot] = tide_audience_intersect(audience[slot], tide_visibility_audience(w, e, -1));\n");
+        sb_printf(o, "        found[slot] = true;\n"
+                     "        if (memcmp(&audience[slot], &nobody, sizeof nobody) == 0) %s;\n"
+                     "        Visibility policy = {0};\n        bool has_policy = false;\n        int64_t groups[2];\n"
+                     "        const Audience base = tide_visibility_base_at(w, e, loc, &policy, &has_policy, &walk, groups);\n"
+                     "        audience[slot] = tide_audience_intersect(audience[slot], base);\n",
+                  owned ? "continue" : "break");
         for (int c = 0; c < prog->components.count; c++) {
             if (!arch_stores(g, a, c)) continue;
             const decl *d = prog->components.items[c];
             if (!d->visibility_optional) continue;
-            sb_printf(o, "        if (tide_has_%s(w, e)) audience[slot] = tide_audience_intersect(audience[slot], tide_visibility_audience(w, e, %d));\n",
-                      type_cname(d), c);
+            sb_printf(o, "        if (%s) audience[slot] = tide_audience_intersect(audience[slot], tide_visibility_denied_at(w, &policy, has_policy, base, %du));\n",
+                      comp_sparse(g, c) ? presence_cell(g, "w", a, c, "row", false) : "true", (unsigned)c);
         }
         sb_put(o, "    }\n");
     }
@@ -294,54 +305,81 @@ static void gen_client_hash_helpers(gen *g)
               "    uint64_t at; // The container's handle; 0: an empty slot\n"
               "    uint64_t hash;\n    tide_client_page *pages; // Every page its value was read from, and their hashes then\n"
               "    uint32_t type, used, count, room;\n} tide_client_memo_entry;\n"
-              "typedef struct tide_client_memo {\n    const void *world;\n    tide_client_memo_entry *slots;\n"
-              "    uint32_t room, count, call, kept; // kept: entries this call used\n    bool busy; // A thread is hashing with it\n} tide_client_memo;\n"
+              "struct tide_client_kept; // What the world's rows came to, table chunk by table chunk (client_spans_codegen.inc)\n"
+              "TIDE_HELPER void tide_client_kept_free(struct tide_client_kept *k);\n"
+              "typedef struct tide_client_memo {\n    const void *world;\n    tide_client_memo_entry *slots;\n    struct tide_client_kept *rows; // What its rows came to\n"
+              "    uint32_t room, count, call, kept; // kept: entries this call used\n"
+              "    uint32_t swept; // Entries after the last sweep of those whose pages changed\n"
+              "    bool busy; // A thread is hashing with it\n} tide_client_memo;\n"
               "typedef struct tide_client_hasher {\n    tide_writer out;\n    tide_heap *heap;\n    tide_client_memo *memo;\n"
               "    uint32_t *reach; // The pages read so far, by their first places\n"
               "    uint32_t reached, reach_room;\n    uint32_t floor; // Where the container being read started its pages\n    bool poisoned; // Something was read from outside the heap\n} tide_client_hasher;\n\n"
-              "// The process's, for the worlds last hashed: a world is hashed on one thread at a time, and a\n"
-              "// memo is one thread's while it hashes (busy). Globals, so they're never lost with a thread\n"
-              "#define TIDE_CLIENT_MEMOS 8u\n"
-              "static tide_client_memo tide_client_memos[TIDE_CLIENT_MEMOS];\n"
-              "static uint32_t tide_client_memo_calls, tide_client_memo_lock;\n\n");
+              "// The process's, one for each world hashed (a server's, or a player's machine's, whose worlds share one): a\n"
+              "// world is hashed on one thread at a time, and a memo is one thread's while it hashes (busy). Made as they're\n"
+              "// asked for; one nobody asked for in a while goes to another world. Globals, so they're never lost with a thread\n"
+              "#define TIDE_CLIENT_MEMOS_MOST 1024u\n"
+              "static tide_client_memo **tide_client_memos;\n"
+              "static uint32_t tide_client_memo_count, tide_client_memo_calls, tide_client_memo_lock;\n\n");
     sb_put(o, "TIDE_HELPER void tide_client_memo_clear(tide_client_memo *m)\n{\n"
               "    for (uint32_t i = 0; i < m->room; i++) free(m->slots[i].pages);\n"
+              "    if (m->rows) {\n        tide_client_kept_free(m->rows);\n        free(m->rows);\n    }\n"
               "    free(m->slots);\n    memset(m, 0, sizeof *m);\n}\n\n");
-    sb_put(o, "// The world's memo, or the one least recently used, emptied, for it; NULL while every one is busy\n"
+    sb_put(o, "// The world's memo; or one nobody asked for in a while (four times as long as it would take every memo to be\n"
+              "// asked for once), emptied, for it; or a new one. NULL while every one of the most there are is busy\n"
               "TIDE_HELPER tide_client_memo *tide_client_memo_for(const void *world)\n{\n"
               "    while (__atomic_exchange_n(&tide_client_memo_lock, 1u, __ATOMIC_ACQUIRE)) {\n    }\n"
-              "    tide_client_memo *pick = NULL;\n"
-              "    for (uint32_t i = 0; i < TIDE_CLIENT_MEMOS && !pick; i++) {\n"
-              "        if (tide_client_memos[i].world == world && !tide_client_memos[i].busy) pick = &tide_client_memos[i];\n    }\n"
-              "    if (!pick) {\n"
-              "        for (uint32_t i = 0; i < TIDE_CLIENT_MEMOS; i++) {\n"
-              "            tide_client_memo *m = &tide_client_memos[i];\n"
-              "            if (!m->busy && m->world != world && (!pick || m->call < pick->call)) pick = m;\n        }\n"
-              "        if (pick) {\n            tide_client_memo_clear(pick);\n            pick->world = world;\n        }\n    }\n"
+              "    tide_client_memo *pick = NULL, *idle = NULL;\n"
+              "    for (uint32_t i = 0; i < tide_client_memo_count && !pick; i++) {\n"
+              "        tide_client_memo *m = tide_client_memos[i];\n"
+              "        if (m->world == world && !m->busy) pick = m;\n"
+              "        else if (!m->busy && m->world != world && (!idle || m->call < idle->call)) idle = m;\n    }\n"
+              "    const bool stale = idle && tide_client_memo_calls - idle->call > 4u * tide_client_memo_count;\n"
+              "    if (!pick && idle && (stale || tide_client_memo_count >= TIDE_CLIENT_MEMOS_MOST)) {\n"
+              "        tide_client_memo_clear(idle);\n        idle->world = world;\n        pick = idle;\n"
+              "    } else if (!pick && tide_client_memo_count < TIDE_CLIENT_MEMOS_MOST) {\n"
+              "        tide_client_memo **grown = realloc(tide_client_memos, ((size_t)tide_client_memo_count + 1u) * sizeof *grown);\n"
+              "        tide_client_memo *made = calloc(1, sizeof *made);\n"
+              "        if (!grown || !made) tide_out_of_memory();\n"
+              "        tide_client_memos = grown;\n        tide_client_memos[tide_client_memo_count++] = made;\n"
+              "        made->world = world;\n        pick = made;\n    }\n"
               "    if (pick) {\n        pick->busy = true;\n        pick->call = ++tide_client_memo_calls;\n        pick->kept = 0;\n    }\n"
               "    __atomic_store_n(&tide_client_memo_lock, 0u, __ATOMIC_RELEASE);\n"
               "    return pick;\n}\n\n"
-              "// What the call didn't use goes, once it's most of what's kept, and the memo is free again\n"
-              "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m);\n\n");
+              "// Once its entries have doubled since the last time, those whose pages changed go (what they were kept for is\n"
+              "// gone or another value); then the memo is free again\n"
+              "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heap *heap);\n\n");
     sb_put(o, "TIDE_HELPER uint32_t tide_client_memo_slot(const tide_client_memo *m, const uint64_t at, const uint32_t type)\n{\n"
               "    uint32_t i = (uint32_t)tide_client_mix(at * 0x9e3779b97f4a7c15ull + type) & (m->room - 1u);\n"
               "    while (m->slots[i].at && (m->slots[i].at != at || m->slots[i].type != type)) i = (i + 1u) & (m->room - 1u);\n"
               "    return i;\n}\n\n");
-    sb_put(o, "// Into `room` slots: every entry, or those this call used\n");
-    sb_put(o, "TIDE_HELPER void tide_client_memo_rehash(tide_client_memo *m, const uint32_t room, const bool used_only)\n{\n"
+    sb_put(o, "// Whether every page an entry's value was read from is as it was\n"
+              "TIDE_HELPER bool tide_client_memo_holds(const tide_client_memo_entry *e, tide_heap *heap)\n{\n"
+              "    for (uint32_t i = 0; i < e->count; i++) {\n"
+              "        const tide_client_page *p = &e->pages[i];\n"
+              "        if (p->first >= heap->pages) return false;\n"
+              "        const tide_page *page = heap->page[p->first];\n"
+              "        if (!page || page->first != p->first || page->size != p->size\n"
+              "            || tide_heap_block_hash(heap, (uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT) != p->hash) return false;\n    }\n"
+              "    return true;\n}\n\n");
+    sb_put(o, "// Into `room` slots: every entry, or (with a heap) those whose pages are as they were\n");
+    sb_put(o, "TIDE_HELPER void tide_client_memo_rehash(tide_client_memo *m, const uint32_t room, tide_heap *heap)\n{\n"
               "    tide_client_memo_entry *was = m->slots;\n    const uint32_t had = m->room;\n"
               "    m->slots = calloc(room, sizeof *m->slots);\n    if (!m->slots) tide_out_of_memory();\n"
               "    m->room = room;\n    m->count = 0;\n"
               "    for (uint32_t i = 0; i < had; i++) {\n"
               "        if (!was[i].at) continue;\n"
-              "        if (used_only && was[i].used != m->call) {\n            free(was[i].pages);\n            continue;\n        }\n"
+              "        if (heap && !tide_client_memo_holds(&was[i], heap)) {\n            free(was[i].pages);\n            continue;\n        }\n"
               "        m->slots[tide_client_memo_slot(m, was[i].at, was[i].type)] = was[i];\n        m->count++;\n    }\n"
               "    free(was);\n}\n\n");
-    sb_put(o, "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m)\n{\n"
+    sb_put(o, "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heap *heap)\n{\n"
               "    if (!m) return;\n"
-              "    if (m->count > 64u && m->count > m->kept * 2u) {\n"
-              "        uint32_t room = 128u;\n        while (room < m->kept * 4u) room *= 2u;\n"
-              "        tide_client_memo_rehash(m, room, true);\n    }\n"
+              "    // (Not by what this call used: a table chunk kept whole uses none of its rows' entries, which still hold)\n"
+              "    if (heap && m->count > 64u && m->count > m->swept * 2u) {\n"
+              "        uint32_t live = 0;\n"
+              "        for (uint32_t i = 0; i < m->room; i++) live += m->slots[i].at && tide_client_memo_holds(&m->slots[i], heap);\n"
+              "        uint32_t room = 128u;\n        while (room < live * 2u) room *= 2u;\n"
+              "        tide_client_memo_rehash(m, room, heap);\n"
+              "        m->swept = m->count;\n    }\n"
               "    while (__atomic_exchange_n(&tide_client_memo_lock, 1u, __ATOMIC_ACQUIRE)) {\n    }\n"
               "    m->busy = false;\n    __atomic_store_n(&tide_client_memo_lock, 0u, __ATOMIC_RELEASE);\n}\n\n");
     sb_put(o, "TIDE_HELPER void tide_client_reach_page(tide_client_hasher *hs, const uint32_t first)\n{\n"
@@ -393,7 +431,7 @@ static void gen_client_hash_helpers(gen *g)
               "    for (uint32_t i = 0; i < n; i++) if (!unique || r[unique - 1u] != r[i]) r[unique++] = r[i];\n"
               "    hs->reached = from + unique;\n"
               "    tide_client_memo *m = hs->memo;\n    if (!m) return;\n"
-              "    if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, false);\n"
+              "    if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, NULL);\n"
               "    tide_client_memo_entry *e = &m->slots[tide_client_memo_slot(m, at, type)];\n"
               "    if (!e->at) {\n        e->at = at;\n        e->type = type;\n        m->count++;\n    }\n"
               "    if (e->room < unique) {\n"
@@ -495,10 +533,13 @@ static void gen_client_hv(gen *g, const client_codec *codec, const int id)
         const int map = t.decl->index;
         char keep[128];
         snprintf(keep, sizeof keep, "(uint64_t)v->live * sizeof(tide_map%d_entry) >= 256u", map);
+        // Its count and its last order are the map's own, not its pages': outside what's kept by its pages (a
+        // player's machine makes a map again with its live entries alone, and the same pages can then go with
+        // another last order)
+        sb_put(o, "    tide_write_varint(&hs->out, v->live);\n"
+                  "    tide_write_u64(&hs->out, (uint64_t)v->last_order);\n");
         gen_client_hv_begin(g, id, "v->entries.at", keep);
         sb_put(o, "    tide_client_reach_list(hs, v->entries);\n    tide_client_reach_list(hs, v->index);\n"
-                  "    tide_write_varint(&hs->out, v->live);\n"
-                  "    tide_write_u64(&hs->out, (uint64_t)v->last_order);\n"
                   "    int64_t order = 0;\n    int32_t next = 0;\n    int32_t i;\n");
         sb_printf(o, "    while ((i = tide_map_next(*v, &tide_map%d_kind, &order, &next)) >= 0) {\n", map);
         sb_printf(o, "        const tide_map%d_entry *entry = tide_map_entry(*v, i, &tide_map%d_kind);\n", map, map);
@@ -551,6 +592,88 @@ static void gen_client_hvs(gen *g, const client_codec *codec)
     }
 }
 
+// Whether the game's projection hashes go by trees (tide_client_hv<id>): singletons holding anything in the heap
+// go in as their tree hashes, kept while nothing they were read from changed, and so do entities' components, so
+// a chunk's grid is hashed again only when one of its pages changed.
+static bool client_hash_heapy(const gen *g)
+{
+    const program *prog = g->prog;
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (client_singleton(prog, d) && !(d->builtin && str_eq_c(d->name, "tide_command_state"))
+            && client_codec_heapy(prog, (type){TY_SINGLETON, (decl *)d}, 0)) return true;
+    }
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a)) continue;
+        for (int c = 0; c < prog->components.count; c++) {
+            if (arch_stores(g, a, c) && client_codec_heapy(prog, (type){TY_COMPONENT, prog->components.items[c]}, 0)) return true;
+        }
+    }
+    return false;
+}
+
+// An entity's hash is the sum of a term for what says which entity it is and a term for each component it has (0
+// for one it hasn't), so what it hashes to for a recipient denied some of its components is that sum less their
+// terms, and a term can be kept while its component's lanes are as they were (client_spans_codegen.inc). Generated
+// for archetype `a`: tide_client_entity_id<a>, tide_client_term<a>_<c> for each component it stores (a component
+// holding anything in the heap, in a game whose hashes go by trees, takes the hasher and reaches its pages), and
+// tide_client_entity_hash<a>, the sum, with the terms of the components that can be denied in `terms`.
+// (`loc` is where the entity is, which a walk over rows knows: nothing of it is looked up by its handle but its snaps)
+static void gen_client_entity_parts(gen *g, const client_codec *codec, const int a, const bool heapy, const int *deniable, const int n)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    sb_printf(o, "TIDE_HELPER uint64_t tide_client_entity_id%d(const tide_world *w, const tide_entity e, const tide_location loc, tide_writer *out)\n{\n"
+                 "    (void)loc;\n    out->size = 0;\n    tide_write_u32(out, %du);\n"
+                 "    tide_write_u64(out, e.birth);\n    tide_write_u64(out, e.lineage);\n"
+                 "    tide_write_u32(out, tide_entity_snaps(&w->entities, e));\n", a, (unsigned)a);
+    if (arch_scene_column(g, a)) {
+        sb_printf(o, "    {\n        const tide_entity scene = *%s;\n", arch_cell(g, "w", a, 1, "tide_entity", "loc.row", false));
+        sb_put(o, "        tide_write_bytes(out, &scene, sizeof scene);\n    }\n");
+    }
+    sb_put(o, "    if (out->overflow) tide_out_of_memory();\n    return tide_hash(out->data, out->size);\n}\n\n");
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!arch_stores(g, a, c)) continue;
+        const decl *d = prog->components.items[c];
+        const bool tree = heapy && client_codec_heapy(prog, (type){TY_COMPONENT, (decl *)d}, 0);
+        sb_printf(o, "TIDE_HELPER uint64_t tide_client_term%d_%d(const tide_world *w, const tide_entity e, const tide_location loc, const bool present, %s)\n{\n"
+                     "    (void)e;\n    if (!present) return 0;\n",
+                  a, c, tree ? "tide_client_hasher *hs" : "tide_writer *out");
+        if (tree) sb_put(o, "    tide_writer *out = &hs->out;\n");
+        sb_printf(o, "    out->size = 0;\n    %s value;\n    memset(&value, 0, sizeof value);\n    (void)tide_load_%s_at(w, loc, &value);\n",
+                  type_cname(d), type_cname(d));
+        for (int f = 0; f < d->fields.count; f++) { // [Native] fields aren't a recipient's (client_natives)
+            const field *fd = &d->fields.items[f];
+            if (fd->native) sb_printf(o, "    memset(&value.%s, 0, sizeof value.%s);\n", field_cname(fd), field_cname(fd));
+        }
+        if (tree) sb_printf(o, "    tide_client_hv%d(hs, &value, 1u);\n", client_codec_id(codec, (type){TY_COMPONENT, (decl *)d}));
+        else sb_printf(o, "    tide_client_put%d(out, &value, 0);\n", client_codec_id(codec, (type){TY_COMPONENT, (decl *)d}));
+        sb_printf(o, "    if (out->overflow) tide_out_of_memory();\n"
+                     "    return tide_client_mix(tide_hash(out->data, out->size) + 0x9e3779b97f4a7c15ull * %du);\n}\n\n", (unsigned)c + 1u);
+    }
+    sb_printf(o, "TIDE_HELPER uint64_t tide_client_entity_hash%d(const tide_world *w, const tide_entity e, const tide_location loc,\n"
+                 "                                              const uint64_t mask, %s, uint64_t *terms)\n{\n",
+              a, heapy ? "tide_client_hasher *hs" : "tide_writer *out");
+    if (heapy) sb_put(o, "    tide_writer *out = &hs->out;\n    hs->reached = 0;\n    hs->floor = 0;\n    hs->poisoned = false;\n");
+    sb_printf(o, "    (void)mask;\n    (void)terms;\n    uint64_t sum = tide_client_entity_id%d(w, e, loc, out);\n", a);
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!arch_stores(g, a, c)) continue;
+        const decl *d = prog->components.items[c];
+        const bool tree = heapy && client_codec_heapy(prog, (type){TY_COMPONENT, (decl *)d}, 0);
+        int k = -1;
+        for (int i = 0; i < n; i++) if (deniable[i] == c) k = i;
+        char present[256];
+        if (k >= 0) snprintf(present, sizeof present, "((mask >> %d) & 1u) != 0", k);
+        else if (comp_sparse(g, c)) snprintf(present, sizeof present, "%s != 0", presence_cell(g, "w", a, c, "loc.row", false));
+        else snprintf(present, sizeof present, "true");
+        sb_printf(o, "    {\n        const uint64_t term = tide_client_term%d_%d(w, e, loc, %s, %s);\n        sum += term;\n",
+                  a, c, present, tree ? "hs" : "out");
+        if (k >= 0) sb_printf(o, "        terms[%d] = term;\n", k);
+        sb_put(o, "    }\n");
+    }
+    sb_put(o, "    return sum;\n}\n\n");
+}
+
 // Every recipient's projection hash at once (tide_game.client_hashes), and one
 // recipient's as the same sum. What's alike for every recipient is worked out
 // once: the singletons, each input slot, and each entity, both its audiences
@@ -570,14 +693,9 @@ static void gen_client_hashes(gen *g)
     sb_put(o, "TIDE_HELPER uint64_t tide_client_mix(uint64_t h)\n{\n"
               "    h ^= h >> 33;\n    h *= 0xff51afd7ed558ccdull;\n    h ^= h >> 33;\n    h *= 0xc4ceb9fe1a85ec53ull;\n"
               "    h ^= h >> 33;\n    return h;\n}\n\n");
-    // Singletons holding anything in the heap go in as their tree hashes, kept while nothing they were read from changed
-    bool heapy = false;
-    for (int i = 0; i < prog->singletons.count; i++) {
-        const decl *d = prog->singletons.items[i];
-        if (client_singleton(prog, d) && !(d->builtin && str_eq_c(d->name, "tide_command_state"))
-            && client_codec_heapy(prog, (type){TY_SINGLETON, (decl *)d}, 0)) heapy = true;
-    }
+    const bool heapy = client_hash_heapy(g);
     if (heapy) gen_client_hvs(g, &codec);
+    if (heapy) gen_client_span_helpers(g);
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         const int n = client_deniable(g, a, deniable);
@@ -585,44 +703,22 @@ static void gen_client_hashes(gen *g)
             diag_error(prog->components.items[deniable[0]]->at, "an entity has more than 64 components whose visibility is set apart");
             break;
         }
-        sb_printf(o, "TIDE_HELPER uint64_t tide_client_entity_hash%d(const tide_world *w, const tide_entity e, const uint64_t mask, tide_writer *out)\n{\n"
-                     "    (void)mask;\n    out->size = 0;\n    tide_write_u32(out, %du);\n"
-                     "    tide_write_u64(out, e.birth);\n    tide_write_u64(out, e.lineage);\n"
-                     "    tide_write_u32(out, tide_entity_snaps(&w->entities, e));\n", a, (unsigned)a);
-        if (arch_scene_column(g, a)) {
-            sb_put(o, "    {\n        const tide_location loc = tide_entity_location(&w->entities, e);\n");
-            sb_printf(o, "        const uint32_t row = loc.row;\n        const tide_entity scene = *%s;\n", arch_cell(g, "w", a, 1, "tide_entity", "row", false));
-            sb_put(o, "        tide_write_bytes(out, &scene, sizeof scene);\n    }\n");
-        }
-        int k = 0;
-        for (int c = 0; c < prog->components.count; c++) {
-            if (!arch_stores(g, a, c)) continue;
-            const decl *d = prog->components.items[c];
-            sb_put(o, "    {\n");
-            if (comp_sparse(g, c)) {
-                if (d->visibility_optional) sb_printf(o, "        const bool present = ((mask >> %d) & 1u) != 0;\n", k++);
-                else sb_printf(o, "        const bool present = tide_has_%s(w, e);\n", type_cname(d));
-                sb_put(o, "        tide_write_u8(out, present ? 1u : 0u);\n        if (present) {\n");
-            }
-            if (client_natives(d)) {
-                char from[256];
-                snprintf(from, sizeof from, "tide_get_%s(w, e)", type_cname(d));
-                gen_client_bare(g, d, "value", from, "        ");
-            } else sb_printf(o, "        const %s value = tide_get_%s(w, e);\n", type_cname(d), type_cname(d));
-            sb_printf(o, "        tide_client_put%d(out, &value, 0);\n", client_codec_id(&codec, (type){TY_COMPONENT, (decl *)d}));
-            if (comp_sparse(g, c)) sb_put(o, "        }\n");
-            sb_put(o, "    }\n");
-        }
-        sb_put(o, "    if (out->overflow) tide_out_of_memory();\n    return tide_hash(out->data, out->size);\n}\n\n");
+        gen_client_entity_parts(g, &codec, a, heapy, deniable, n);
     }
 
-    sb_put(o, "static void tide_game_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out)\n{\n"
+    // (`again`: nothing kept is used or left: every row read, for TIDE_CLIENT_SPANS_CHECK)
+    sb_put(o, "static void tide_client_hashes_work(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out,\n"
+              "                                    const bool again)\n{\n"
+              "    (void)again;\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
               "    const bool client = w->tide_visibility_state.client != 0;\n"
               "    tide_writer scratch = {.grows = true};\n"
               "    // The singletons, alike for every recipient but the commands, which are each one's own\n");
     if (heapy) {
-        sb_put(o, "    tide_client_hasher hasher = {.out = {.grows = true}, .heap = tide_heaps_of((tide_heaps *)(uintptr_t)&w->heap, 0u), .memo = tide_client_memo_for(world)};\n"
+        // A player's machine hashes a different world each tick, the one it confirmed, of the worlds it keeps: they
+        // share their pages, and a kept hash goes by its pages alone, so they share one memo, the player's
+        sb_put(o, "    const void *memo_of = client ? (const void *)(uintptr_t)(uint32_t)w->tide_visibility_state.client : world;\n"
+                  "    tide_client_hasher hasher = {.out = {.grows = true}, .heap = tide_heaps_of((tide_heaps *)(uintptr_t)&w->heap, 0u), .memo = again ? NULL : tide_client_memo_for(memo_of)};\n"
                   "    tide_client_hasher *hs = &hasher;\n    const uint32_t depth = 0;\n"
                   "    tide_write_u32(&hs->out, 0x33564954u);\n    tide_write_u64(&hs->out, w->tide_identity_clock);\n    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) tide_write_u64(&hs->out, w->tide_lifecycle_occurrences[i]);\n    tide_write_u64(&hs->out, w->tide_main_occurrence);\n");
     } else {
@@ -644,8 +740,7 @@ static void gen_client_hashes(gen *g)
     }
     if (heapy) {
         sb_put(o, "    if (hs->out.overflow) tide_out_of_memory();\n"
-                  "    const uint64_t shared = tide_hash(hs->out.data, hs->out.size);\n"
-                  "    tide_client_memo_done(hs->memo);\n    free(hs->out.data);\n    free(hs->reach);\n");
+                  "    const uint64_t shared = tide_hash(hs->out.data, hs->out.size);\n");
     } else {
         sb_put(o, "    if (scratch.overflow) tide_out_of_memory();\n"
                   "    const uint64_t shared = tide_hash(scratch.data, scratch.size);\n");
@@ -680,31 +775,52 @@ static void gen_client_hashes(gen *g)
                   "    for (uint32_t slot = 0; slot <= TIDE_GAME_PLAYERS; slot++) {\n"
                   "        slot_audience[slot] = TIDE_AUDIENCE_ALL;\n        slot_found[slot] = false;\n    }\n");
     }
-    sb_put(o, "    // Each entity once: who may have it, who may have each component that can be denied, and its hash with all it has\n");
-    for (int a = 0; a < prog->archetypes.count; a++) {
+    if (heapy) {
+        sb_put(o, "    // What the rows came to last time, with the world's memo: its own, or nothing kept where it has none\n"
+                  "    struct tide_client_kept *own = NULL, *kept = again || !hs->memo ? NULL : hs->memo->rows;\n"
+                  "    if (!kept && !again && hs->memo) kept = hs->memo->rows = calloc(1, sizeof *kept);\n"
+                  "    if (!kept) kept = own = calloc(1, sizeof *kept);\n"
+                  "    if (!kept) tide_out_of_memory();\n");
+        int *parts = malloc(((size_t)prog->components.count + 1u) * sizeof *parts);
+        if (!parts) abort();
+        gen_client_hash_rows(g, deniable, parts);
+        free(parts);
+    } else sb_put(o, "    // Each entity once: who may have it, who may have each component that can be denied, and its hash with all it has\n"
+              "    tide_visibility_walk walk = {0};\n    tide_map_view_none(&walk.groups);\n");
+    for (int a = 0; a < prog->archetypes.count && !heapy; a++) {
         if (arch_local(g, a)) continue;
         const int n = client_deniable(g, a, deniable);
         sb_printf(o, "    const uint32_t rows%d = w->%s.count;\n", a, arch_name(g, a));
         sb_printf(o, "    Audience *audience%d = rows%d ? malloc((size_t)rows%d * sizeof *audience%d) : NULL;\n"
-                     "    uint64_t *has%d = rows%d ? malloc((size_t)rows%d * 4u * sizeof *has%d) : NULL;\n"
+                     "    uint64_t *has%d = rows%d ? malloc((size_t)rows%d * 2u * sizeof *has%d) : NULL;\n"
                      "    if (rows%d && (!audience%d || !has%d)) tide_out_of_memory();\n", a, a, a, a, a, a, a, a, a, a, a);
         if (n) {
             sb_printf(o, "    Audience *denied%d = rows%d ? malloc((size_t)rows%d * %du * sizeof *denied%d) : NULL;\n"
-                         "    if (rows%d && !denied%d) tide_out_of_memory();\n", a, a, a, (unsigned)n, a, a, a);
+                         "    uint64_t *terms%d = rows%d ? malloc((size_t)rows%d * %du * sizeof *terms%d) : NULL;\n"
+                         "    if (rows%d && (!denied%d || !terms%d)) tide_out_of_memory();\n", a, a, a, (unsigned)n, a, a, a, a, (unsigned)n, a,
+                      a, a, a);
         }
         sb_printf(o, "    for (uint32_t row = 0; row < rows%d; row++) {\n", a);
         sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_put(o, "        uint64_t mask = 0;\n");
-        for (int k = 0; k < n; k++) sb_printf(o, "        if (tide_has_%s(w, e)) mask |= 1ull << %d;\n", type_cname(prog->components.items[deniable[k]]), k);
-        sb_printf(o, "        // Its hash with all it has, and room for one with less\n"
-                     "        has%d[row * 4u] = mask;\n        has%d[row * 4u + 1u] = tide_client_entity_hash%d(w, e, mask, &scratch);\n"
-                     "        has%d[row * 4u + 2u] = UINT64_MAX;\n        has%d[row * 4u + 3u] = 0;\n", a, a, a, a, a);
-        sb_printf(o, "        audience%d[row] = !client ? tide_visibility_audience(w, e, -1)\n"
+        sb_printf(o, "        const tide_location loc = {%du, row};\n        uint64_t mask = 0;\n", a);
+        for (int k = 0; k < n; k++) {
+            if (comp_sparse(g, deniable[k])) sb_printf(o, "        if (%s) mask |= 1ull << %d;\n", presence_cell(g, "w", a, deniable[k], "row", false), k);
+            else sb_printf(o, "        mask |= 1ull << %d;\n", k);
+        }
+        char terms[64];
+        if (n) snprintf(terms, sizeof terms, "&terms%d[row * %du]", a, (unsigned)n);
+        else snprintf(terms, sizeof terms, "NULL");
+        sb_printf(o, "        // What it has, and its hash's sum with all of it\n"
+                     "        has%d[row * 2u] = mask;\n        has%d[row * 2u + 1u] = tide_client_entity_hash%d(w, e, loc, mask, %s, %s);\n",
+                  a, a, a, heapy ? "hs" : "&scratch", terms);
+        sb_printf(o, "        Visibility policy = {0};\n        bool has_policy = false;\n        int64_t groups[2];\n"
+                     "        audience%d[row] = !client ? tide_visibility_base_at(w, e, loc, &policy, &has_policy, &walk, groups)\n"
                      "            : tide_visibility_client_hidden(w, e) ? (Audience){0} : TIDE_AUDIENCE_ALL;\n", a);
         for (int k = 0; k < n; k++) {
-            sb_printf(o, "        denied%d[row * %du + %du] = client || !((mask >> %d) & 1u) ? TIDE_AUDIENCE_ALL : tide_visibility_audience(w, e, %d);\n",
-                      a, (unsigned)n, (unsigned)k, k, deniable[k]);
+            sb_printf(o, "        denied%d[row * %du + %du] = client || !((mask >> %d) & 1u) ? TIDE_AUDIENCE_ALL\n"
+                         "            : tide_visibility_denied_at(w, &policy, has_policy, audience%d[row], %du);\n",
+                      a, (unsigned)n, (unsigned)k, k, a, (unsigned)deniable[k]);
         }
         if (prog->input) {
             if (arch_stores(g, a, prog->owner->index)) {
@@ -730,29 +846,47 @@ static void gen_client_hashes(gen *g)
         sb_printf(o, ";\n        tide_client_put%d(&scratch, &none, 0);\n        tide_client_put%d(&scratch, &none, 0);\n", input, input);
         sb_put(o, "        if (scratch.overflow) tide_out_of_memory();\n        none_hash = tide_hash(scratch.data, scratch.size);\n    }\n");
     }
-    sb_put(o, "    for (uint32_t i = 0; i < count; i++) {\n        const tide_player_id recipient = recipients[i];\n"
-              "        uint64_t sum = 0, seen = 0;\n");
+    // Each row goes to the recipients who may have it, found from its audience's bits: a world of chunks a few
+    // players each have costs its rows, not its rows for every player
+    sb_put(o, "    uint64_t *sums = calloc(count ? count : 1u, 2u * sizeof *sums);\n"
+              "    int32_t *asked = malloc(TIDE_GAME_PLAYERS * sizeof *asked); // Where each player is in `recipients`, its first place\n"
+              "    if (!sums || !asked) tide_out_of_memory();\n"
+              "    for (uint32_t p = 0; p < TIDE_GAME_PLAYERS; p++) asked[p] = -1;\n"
+              "    for (uint32_t i = 0; i < count; i++) {\n        const int32_t p = tide_player_index(recipients[i]);\n"
+              "        if (p >= 0 && (uint32_t)p < TIDE_GAME_PLAYERS && asked[p] < 0) asked[p] = (int32_t)i;\n    }\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         const int n = client_deniable(g, a, deniable);
-        sb_printf(o, "        for (uint32_t row = 0; row < rows%d; row++) {\n", a);
-        sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove): nothing kept of it above\n",
+        sb_printf(o, "    for (uint32_t row = 0; row < rows%d; row++) {\n", a);
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove): nothing kept of it above\n",
                   arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_printf(o, "            if (!tide_audience_contains(audience%d[row], recipient)) continue;\n", a);
-        sb_printf(o, "            uint64_t mask = has%d[row * 4u], h;\n", a);
-        for (int k = 0; k < n; k++) {
-            sb_printf(o, "            if (!client && ((mask >> %d) & 1u) && !tide_audience_contains(denied%d[row * %du + %du], recipient)) mask &= ~(1ull << %d);\n",
-                      k, a, (unsigned)n, (unsigned)k, k);
+        sb_printf(o, "        uint32_t words[sizeof(Audience) / sizeof(uint32_t)];\n        memcpy(words, &audience%d[row], sizeof words);\n", a);
+        sb_put(o, "        for (uint32_t word = 0; word < sizeof words / sizeof words[0]; word++) {\n"
+                  "            for (uint32_t bits = words[word]; bits; bits &= bits - 1u) {\n"
+                  "                const uint32_t p = word * 32u + (uint32_t)__builtin_ctz(bits);\n"
+                  "                if (p >= TIDE_GAME_PLAYERS || asked[p] < 0) continue;\n"
+                  "                const uint32_t i = (uint32_t)asked[p];\n                const tide_player_id recipient = recipients[i];\n"
+                  "                (void)recipient;\n");
+        sb_printf(o, "                uint64_t h = has%d[row * 2u + 1u];\n", a);
+        int stride = n;
+        if (heapy) {
+            stride = 0;
+            for (int c = 0; c < prog->components.count; c++) stride += arch_stores(g, a, c);
+            if (!stride) stride = 1;
         }
-        sb_printf(o, "            if (mask == has%d[row * 4u]) h = has%d[row * 4u + 1u];\n"
-                     "            else if (mask == has%d[row * 4u + 2u]) h = has%d[row * 4u + 3u];\n"
-                     "            else {\n", a, a, a, a);
-        sb_printf(o, "                const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_printf(o, "                h = tide_client_entity_hash%d(w, e, mask, &scratch);\n"
-                     "                has%d[row * 4u + 2u] = mask;\n                has%d[row * 4u + 3u] = h;\n            }\n"
-                     "            sum += tide_client_mix(h);\n            seen++;\n        }\n", a, a, a);
+        for (int k = 0; k < n; k++) {
+            const int part = heapy ? client_part_of(g, a, deniable[k]) : k;
+            sb_printf(o, "                if (!client && ((has%d[row * 2u] >> %d) & 1u) && !tide_audience_contains(denied%d[row * %du + %du], recipient)) h -= terms%d[(size_t)row * %du + %du];\n",
+                      a, k, a, (unsigned)n, (unsigned)k, a, (unsigned)stride, (unsigned)part);
+        }
+        sb_put(o, "                sums[i * 2u] += tide_client_mix(h);\n                sums[i * 2u + 1u]++;\n            }\n        }\n    }\n");
     }
-    sb_put(o, "        out[i] = tide_client_mix(out[i] ^ tide_client_mix(sum + 0xbf58476d1ce4e5b9ull * seen));\n");
+    sb_put(o, "    for (uint32_t i = 0; i < count; i++) {\n        const tide_player_id recipient = recipients[i];\n"
+              "        // A player asked for twice has its first's\n"
+              "        const int32_t p = tide_player_index(recipient);\n"
+              "        const uint32_t first = p >= 0 && (uint32_t)p < TIDE_GAME_PLAYERS ? (uint32_t)asked[p] : i;\n"
+              "        const uint64_t sum = sums[first * 2u], seen = sums[first * 2u + 1u];\n"
+              "        out[i] = tide_client_mix(out[i] ^ tide_client_mix(sum + 0xbf58476d1ce4e5b9ull * seen));\n");
     if (prog->input) {
         const int input = client_codec_id(&codec, (type){TY_INPUT, prog->input});
         sb_put(o, "        const int32_t own = tide_player_index(recipient);\n        uint64_t inputs = 0;\n"
@@ -768,13 +902,24 @@ static void gen_client_hashes(gen *g)
                   "        out[i] = tide_client_mix(out[i] ^ inputs);\n");
     }
     sb_put(o, "    }\n");
-    for (int a = 0; a < prog->archetypes.count; a++) {
+    for (int a = 0; a < prog->archetypes.count && !heapy; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    free(audience%d);\n    free(has%d);\n", a, a);
-        if (client_deniable(g, a, deniable)) sb_printf(o, "    free(denied%d);\n", a);
+        if (client_deniable(g, a, deniable)) sb_printf(o, "    free(denied%d);\n    free(terms%d);\n", a, a);
     }
     if (prog->input) sb_put(o, "    free(slot_audience);\n    free(slot_found);\n    free(slot_hash);\n");
-    sb_put(o, "    free(scratch.data);\n}\n\n"
+    if (heapy) sb_put(o, "    if (own) {\n        tide_client_kept_free(own);\n        free(own);\n    }\n"
+                         "    tide_client_memo_done(hs->memo, hs->heap);\n    free(hs->out.data);\n    free(hs->reach);\n");
+    sb_put(o, "    free(sums);\n    free(asked);\n    free(scratch.data);\n}\n\n"
+              "static void tide_game_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out)\n{\n"
+              "    tide_client_hashes_work(world, recipients, count, out, false);\n"
+              "#ifdef TIDE_CLIENT_SPANS_CHECK // Every hash again from the rows themselves: what's kept is only ever a shortcut to it\n"
+              "    uint64_t *rows = malloc((size_t)(count ? count : 1u) * sizeof *rows);\n    if (!rows) tide_out_of_memory();\n"
+              "    tide_client_hashes_work(world, recipients, count, rows, true);\n"
+              "    for (uint32_t i = 0; i < count; i++) {\n        if (rows[i] == out[i]) continue;\n"
+              "        fprintf(stderr, \"tide: player %u's projection hash from what's kept (%016llx) isn't its rows' own (%016llx)\\n\",\n"
+              "                recipients[i].id, (unsigned long long)out[i], (unsigned long long)rows[i]);\n        abort();\n    }\n"
+              "    free(rows);\n#endif\n}\n\n"
               "static uint64_t tide_game_client_hash(const void *world, tide_player_id recipient)\n{\n"
               "    uint64_t hash;\n    tide_game_client_hashes(world, &recipient, 1u, &hash);\n    return hash;\n}\n\n");
     free(deniable);
@@ -1041,16 +1186,18 @@ static void gen_client_state(gen *g)
     }
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
-        sb_put(o, "    {\n        uint32_t count = 0;\n");
-        sb_printf(o, "        for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
-        sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_put(o, "            if (tide_visibility_entity(w, e, recipient)) count++;\n"
+        // Its entities in the order of their identities, not of their rows: the bytes say what the recipient
+        // has, the same wherever each world keeps it (a recipient's rows are where its own ticks and its
+        // repairs put them, tide_game_apply_client_changes)
+        sb_printf(o, "    {\n        uint32_t count = 0, tide_key_count = 0;\n        const uint32_t tide_archetype = %du;\n"
+                     "        const tide_entity *tide_keys = tide_entities_ordered_archetypes(&w->entities, &tide_archetype, 1u, &tide_key_count);\n", a);
+        sb_put(o, "        for (uint32_t tide_k = 0; tide_k < tide_key_count; tide_k++) {\n"
+                  "            if (tide_visibility_entity(w, tide_keys[tide_k], recipient)) count++;\n"
                   "        }\n        tide_write_varint(&out, count);\n");
-        sb_printf(o, "        for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
-        sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_put(o, "            if (!tide_visibility_entity(w, e, recipient)) continue;\n"
+        sb_put(o, "        for (uint32_t tide_k = 0; tide_k < tide_key_count; tide_k++) {\n"
+                  "            const tide_entity e = tide_keys[tide_k];\n"
+                  "            if (!tide_visibility_entity(w, e, recipient)) continue;\n"
+                  "            const uint32_t row = tide_entity_location(&w->entities, e).row;\n            (void)row;\n"
                   "            tide_write_u64(&out, e.birth);\n            tide_write_u64(&out, e.lineage);\n"
                   "            tide_write_u32(&out, tide_entity_snaps(&w->entities, e));\n");
         if (arch_scene_column(g, a)) {

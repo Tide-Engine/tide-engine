@@ -1428,7 +1428,8 @@ Provisional (Claude's picks, 2026-11-05):
 - **A value the loop doesn't change** is a constant, or a parameter, local or field that nothing in the loop's body assigns, passes to be changed or sets through a World. It's worked out once before the loop.
 - **Why not**: a loop that isn't indexed says why in `tidec --schedule`, under "Loops that skip rows": no guard, a bound that changes inside the loop, a bound the index can't work out before the loop (a call that does something, a property's getter), the loop setting the query's component through its World, changing its own list, or a list that could change between one run of the loop and the next (a component's, a `mut` singleton's, a parameter's, a local the code writes): its index would be made again each run, which costs more than going through every element, so only `indexed foreach` gets one there. A list's index is kept for a list of a singleton the code only reads, and for one in a local nothing writes after declaring it. A query is also not indexed when the code it's in changes the key's field of its own entity as it goes, as `body.position += body.velocity` beside a loop over `Body` positions does: rows the index was made from would change between one run of the loop and the next. Changing it in a system of its own fixes that.
 - A loop in async code whose body waits (`await`) isn't indexed: the search can't be kept across a wait.
-- **Which keys**: two or three components of one vector bounded both ways (a grid), else an equality, else one number bounded both ways, else one bounded one way.
+- **Which keys**: two or three components of one float or double vector bounded both ways (a grid), else every equality of a whole number as one exact key (below), else an equality, else one number bounded both ways, else one bounded one way.
+- **Exact keys** (Claude's picks, 2026-11-14): an equality of one of the row's whole numbers (an `int`, a `long`, a `byte`, a `char`, an enum, a bool, or a component of an `int2`, `int3` or `int4`) with a whole number the loop doesn't change is exact. The guard's equalities of them, up to eight, are one key, and the loop visits only the rows equal in every one of them, however many rows share some: `if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;` beside `if (row.chunk.dimension != dimension) continue;` visits the chunks at that place in that dimension, not every chunk with that `x`. A `long` is one the same way, so a place packed into one number is found as exactly as the place. Up to three of the guard's other bounds (`row.chunk.heat < limit`, `row.chunk.at.y >= floor`) go beside the key and narrow the rows further. An equality with a float or a double isn't exact (`row.kind == 2.0` with a byte `kind`: the two are compared as floats), nor one of whole numbers held as floats or doubles on the way (`double d = row.chunk.key;`, or a helper that returns a whole number as a `double`), and is bounded as any number is. A query's keys are all of bindings read `previous` or all of bindings that aren't: the first key's kind, with the others left to the guard. `tidec --schedule` names every number of the key: "indexed by row.chunk.at.x, row.chunk.at.y, row.chunk.at.z and row.chunk.dimension as one exact key".
 - An index of a world's rows lasts while the rows it was made from are unchanged, across ticks too: an index of walls that never move is made once.
 - **A key in a `previous` binding** (2026-11-13; Read-only entity queries): the loop finds rows by what they were when the tick started, which nothing changes while its systems run. So it's indexed whatever the system writes, the key's own field of its own entity too, and its index is made at most once a tick: every loop in the game that searches the same query by the same keys, in a system or in a function a system hands its query to, on whatever threads, shares one.
 - **When most rows can pass** (2026-11-12): a search of a world's query that finds more than one row in six saves nothing, so the loop then goes through every row as a plain loop does, which costs less a row, and a loop whose searches keep finding that many leaves the search out for some of its runs. So does a loop over fewer than 32 rows. The results are the same either way; only the cost differs. `indexed` still means what it meant: the loop can be indexed.
@@ -1849,7 +1850,7 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 
 ### Open
 
-- Generating chunks as they're first needed, keeping the regions around players loaded, and sending each player only theirs: an endless voxel world.
+- Generating chunks as they're first needed, keeping the regions around players loaded, and sending each player only theirs: an endless voxel world. `bench/voxels` does it today with chunks as entities, a grid each: made as players come near, each player sent only theirs (State visibility), and kept in the server's store while nobody is near (The server's store, Provisional). That's Claude's pick for the game, not a decision about grids; `notes/voxels.md` says what it measures.
 - Functions that take grids; parallel steps that spawn and send.
 - Skipping what's settled: a parallel loop that only runs where something near changed (what `[Sleeps]` did for chunk systems).
 - `for` loops that run at once when nothing a step does depends on the others.
@@ -1973,6 +1974,62 @@ Built 2026-10-11. That a field can be a `T?` is the owner's (Decided, above); ea
   - `Host`, `Content-Length`, `Connection` and `Transfer-Encoding` are the sender's, and left out of what a request says. A line break in a header's name or value is a space. Redirects follow a browser's rules (a 303, and a POST's 301 or 302, become a GET; a 307 or 308 repeats the request), 5 at the most.
   - The two types are Tide source that comes with the compiler, compiled with a program that names `Web.Request`, `WebRequest` or `WebResponse` and with no other: a program without them generates the C it did. A game's own type of either name clashes with it there.
 - `await Web.Fetch(url)` is the other local async operation, giving a `List<byte>` and failing with `IOError` (see Assets, Provisional, Fetching): local only, as the file operations are, and awaited like `Storage.Flush`.
+
+## The server's store
+
+How a match keeps what it doesn't hold in memory: a chunk of blocks nobody is near, a player's things between visits, a world from one run of the server to the next. Built 2026-11-14 for an endless voxel world; every rule here is Provisional (Claude's picks: the owner hasn't chosen among them), and `notes/voxels.md` says what was built and measured.
+
+### Provisional
+
+- `Storage.Save(key, bytes)`, `Storage.Load(key)`, `Storage.Load(key, entity)` and `Storage.Delete(key)` are match code's: systems, match handlers, match tasks, and the functions they call. The key is text, the bytes a `List<byte>`. They ask the machine that runs the match to keep, find or forget bytes under a key. Nothing of the match changes when they're called, and nothing comes back from the call.
+- **Only the server's own run of a tick asks.** A player's machine that predicts or confirms the same tick asks nothing: its machine has no store, and the same request twice would be two saves. So what a save keeps is the server's value, never a prediction's.
+- **What a load finds comes back as an event,** `Loaded { string key; List<byte> bytes; bool found; bool failed; }`, in a later tick: sent to the entity the load named, or to the world. `found` is false and `bytes` empty where the store has nothing under the key. `failed` is true where something is kept there that couldn't be read (the disk refused it, or it's bigger than a value can be): not the same as nothing, so a game doesn't make it afresh and save over it. It's a tick's input, as a command is: the server gives it to a tick, the tick's frame carries it to every machine that has the whole match, the journal records it, and a replay takes it from there. So `Loaded` handlers run in the same tick on every machine, and the code that handles one is ordinary match code.
+- **Which tick.** With the files the standard hosts keep, an answer is usually the next tick's. In a match that doesn't hide state, an answer of more than about 1 KiB (`TIDE_COMMAND_BYTES` with its key) goes to the players as a download, as a big command does: it reaches a tick once every player has it, and the answers after it wait behind it.
+- `Loaded` is declared by the engine, as Tide code a program whose code has the words `Storage`, `.` and `Load` (comments aside) is compiled with; a program that doesn't has no such event, and a game's own `Loaded` clashes with it there. Its handlers follow the events' rule: one that takes components needs the entity every `Storage.Load` names, and a load that names none is then an error that says so. The engine sends it; a game's own `Send` of it is allowed, as of any event it could declare itself.
+
+```csharp
+// A chunk nobody has had for a while goes, one a player changed into the store first
+system Idle(Seen seen, Chunk chunk, Time time)
+{
+    if (seen.audience != Audience.None || time.tick - seen.emptied < LINGER) return;
+    if (chunk.edits > 0) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    this.Destroy();
+}
+
+// ...and comes back from there as someone next comes near
+var made = Spawn(Chunk { at = at, dimension = dimension.number }, visibility, Seen { group = group });
+Storage.Load(SavedAs(dimension.number, at), made);
+
+event(Loaded loaded) Fill(mut Chunk chunk)
+{
+    if (loaded.failed) return;          // Kept but unreadable: not made afresh over it
+    if (loaded.found) Unpack(chunk.blocks, loaded.bytes);
+    else chunk.stage = Stage.Missing;   // Never saved: made from the seed
+}
+```
+
+`Pack` and `Unpack` are the game's own functions, a grid to a `List<byte>` and back (`bench/voxels` writes runs of one block).
+
+- **In a match that hides state** (State visibility) nothing of a load reaches the players' machines but what its handlers change of what they may have, as with a command: the bytes stay on the server.
+- **Order.** A tick's requests are carried out once it has ended, in the order it made them: a save then a load of one key in one tick finds what was saved. A load asked twice in a tick with one key and one target is answered once. Answers are given to a tick in the order their loads were asked, 64 a tick at the most (more wait for the next), and their `Loaded` handlers run with that tick's other events, after its systems: a system that goes on from what a handler did runs the tick after. Each answer is its own cause: what two answers' handlers spawn in one tick are different entities.
+- What the match's start (its `Spawned` handlers) and a scene's preparation ask is carried out with the first tick that ends after them, before what that tick asks.
+- Code that uses the store keeps its place among code that does, as code that calls C does: a system that saves runs on one thread, in the order its entities come.
+- **Keys and values.** A key is 1 to 256 bytes of any text, and a value at most 32 MiB; past either nothing is kept or asked, and the server's log says which key and what to do instead. Keys are the game's own: a save replaces what its key held.
+- **Where it's kept.** The standard hosts keep each key as a file of its own in `saved/`, in the game's persistent data folder on the machine that runs the match: the hosting player's own, a dedicated server's (its `appId`'s folder, or for a game with none the one its player build has, `dev.tide.<name>`), a page's storage on the web. `/` between a key's parts makes folders. Every byte but small letters, digits, `-` and `_` is written out (`%XX`, capitals too), and `.` too except in the last part after its first byte; a part named as a Windows device is (`con`, `nul`, `com1`...) has its first byte written out. So any key is a file of its own, the same on every system, no folder is another key's file, no two keys are one file on a disk that doesn't tell capitals from small letters, and no key reaches outside the folder. A key with a part too long for a file's name once written out is kept as `saved/%%/` and its SHA-256 instead. Every match a server hosts shares the folder, as every shard of a sharded world does, so a game that hosts several worlds says which in its keys.
+- **A save is whole or not at all.** It's written beside the key's file and moved over it once written, so a server that stops while saving leaves the old value or the new one. What a tick saved and deleted is then flushed to the disk, with nothing waiting for it.
+- The standard hosts read and write between ticks, on the thread that ends the tick: the session's own (the one that draws the frame) where the server's ticks run alongside views.
+- **A match that uses the store doesn't migrate.** What it keeps, and the answers on their way, are the hosting machine's: `hostMigration` in a program that uses `Storage` is an error, and the server offers no handover.
+- **Rewinding a match** (`tide/timeline.h`) drops the answers on their way: the rewound ticks ask again as they run. A load the rewound world asked before the point it went back to, whose answer hadn't come, is never answered.
+- A host with nowhere to keep it (a test's, a benchmark's, C that gives its server no files: `tide_server_desc.io`) keeps nothing: saves go nowhere and every load finds nothing, so the same match plays on.
+- Local code can't use it: a view or a local handler keeps this machine's own files with `File` and `Directory` (Local files), and what a player wants saved of the match goes there as a command. Not input sampling, code the GPU runs or a parallel loop's step either.
+
+### Open
+
+- Awaiting a load in a match task (`var bytes = await Storage.Load(key);`), where the event is the only way now.
+- Any value as bytes and back (`Pack` and `Unpack` of a component, a grid or a struct), where a game writes its own loops now, and listing the keys under a prefix.
+- A store for each match of a server that hosts several, and the hosting service's (managed matches keep nothing yet).
+- A load asked for and not yet answered when a server stops isn't asked again when its match goes on from a save. A shard's checkpoint doesn't carry the answers it hasn't given a tick yet either: a shard started from one without its journal loses them.
+- Reading and writing off the thread that ends the tick.
 
 ## Assets
 
@@ -5188,6 +5245,9 @@ system Collapse(Arena arena)
 - Generic custom local/verified events are produced by the client's permitted simulation, not forwarded as arbitrary authoritative outward events. Games remain responsible for public state and input payloads and for what command handlers expose. An authoritative custom-event audience API remains open.
 - Projected clients cannot currently promote their partial worlds into authoritative hosts. Existing host migration remains available for full-world games; visibility takeover is refused until a trusted complete-state handover is implemented.
 - Current integration uses a canonical per-recipient value stream and bounded delta repair. A hierarchical hash search or game-visible page API is not part of the language API.
+- **What a repair costs goes by what changed** (2026-11-14). A machine whose world differs from the server's is sent the entities that differ for it since the tick it last confirmed, each as what differs from what it had, the entities that came into its sight whole and the names of those that left: not its whole view again. Where that comes to more than 32 KiB and is mostly new values of entities it already had, the server offers block hashes of its view instead, as before, which can cost less. A projection lists its entities by their identities, so a machine's rows may be wherever its own ticks and its repairs put them. Each tick's check hashes a container (a chunk's grid, a list, a map) again only when a page it's kept in changed, and a table's rows again only where their pages, their values' pages or their audiences changed. Nothing a game can observe changes but the cost: a world of thousands of chunks sends a player the chunks they walk into.
+- Not yet in a game that parents transforms (`SetParent` and the other hierarchy operations): its repairs are whole views, and its check hashes its whole view each tick.
+- What a machine's own ticks made that the server hides from it (a spawn into a group it isn't in) goes at each repair, as it went when a whole projection loaded.
 
 ### Open
 

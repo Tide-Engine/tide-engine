@@ -1345,6 +1345,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             .transports = {count(h, wire_endpoint(the_net, &h->port))},
             .jobs = jobs,
             .world = first,
+            .io = d->io,
         };
         h->server = tide_server_create(&server_desc, 0.0);
         if (real->free_world) real->free_world(first); // The server has its own copy

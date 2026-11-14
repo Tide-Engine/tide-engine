@@ -1043,6 +1043,10 @@ static inline void tide_run_debug_views(void)
     tide_run_gui.profile = tide_run_profiling || tide_run_reporting ? profile : NULL;
 }
 
+// Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own
+// files, once they're named (tide_run_bind_io), for a game whose match code uses it
+static const tide_io *tide_run_store;
+
 // A session for tide_run_game, in no match yet. Its matches tick at the game's
 // rate unless the host said otherwise.
 static inline tide_session *tide_run_new_session(void)
@@ -1059,6 +1063,7 @@ static inline tide_session *tide_run_new_session(void)
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,
         .jobs = tide_run_jobs(),      // Ticks on every core
+        .io = tide_run_store,
         // To keep running predicted ticks again within a frame's budget. A run
         // with no window has no clock, so it goes the same on every machine.
         .now_ns = tide_run_headless ? NULL : tide_time_now_ns,
@@ -1099,7 +1104,6 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
 {
     char fallback[512];
     const char *id = tide_run_name_game(game, fallback, sizeof fallback);
-    if (!game->set_io) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;
     if (directory && tide_platform_players() > 1u) {
@@ -1108,7 +1112,11 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
         snprintf(player_directory, size, "%s/player-%u", directory, (unsigned)tide_platform_player());
         directory = player_directory;
     }
-    game->set_io(local, tide_platform_io_init(id, directory));
+    const tide_io *io = tide_platform_io_init(id, directory);
+    if (game->set_io) game->set_io(local, io);
+    // ...and the matches this machine runs keep their store there (Storage.Save in match code), whichever build first
+    // uses it: a session made now hands its servers this provider, which stays the same across reloads
+    tide_run_store = io;
     free(player_directory);
 }
 

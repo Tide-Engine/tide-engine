@@ -36,7 +36,7 @@ event(PlayerJoined joined) Admit(Region region)
 
 `Visibility.Set(group, audience)` replaces the audience for every entity using that group. Build an audience with all interested players before setting it. Changing an `Audience` variable after `CreateGroup` or `Set` does not change the group until another `Set` call.
 
-For a voxel world, use one group per chunk and update its audience as players approach or leave. For distant players on a map, give each player entity its own group and compute the observers in match code. The engine supplies the mechanism; the game chooses distances, teams, occlusion and update frequency.
+For a voxel world, make each chunk an entity with a group of its own, and update the group's audience as players approach or leave. A player's machine is then sent the chunks it walks into and nothing of the rest; chunks nobody is near can be saved and destroyed ([Saving the match](./files.md#saving-the-match)). For distant players on a map, give each player entity its own group and compute the observers in match code. The engine supplies the mechanism; the game chooses distances, teams, occlusion and update frequency.
 
 An entity without `Visibility` is public, subject to its enclosing scene. A default `Visibility` uses an all-player group. `Visibility.DestroyGroup(group)` makes existing references to that group see nobody; a later group does not reuse the stale handle.
 

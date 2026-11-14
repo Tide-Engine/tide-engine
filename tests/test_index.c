@@ -455,6 +455,247 @@ TIDE_TEST(index_handles_many_entries)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Exact keys: whole numbers found by being equal, with doubles beside them
+
+typedef struct exact_entries {
+    uint32_t exact, dims, count;
+    int64_t *whole; // exact each
+    double *keys;   // dims each
+} exact_entries;
+
+static exact_entries make_exact(const uint32_t exact, const uint32_t dims, const uint32_t count)
+{
+    exact_entries e = {exact, dims, count, calloc((size_t)count * exact + 1, sizeof(int64_t)),
+                       calloc((size_t)count * dims + 1, sizeof(double))};
+    return e;
+}
+
+static void free_exact(exact_entries *e)
+{
+    free(e->whole);
+    free(e->keys);
+}
+
+static tide_index *build_exact(const exact_entries *e)
+{
+    tide_index *ix = tide_index_make();
+    tide_index_begin_exact(ix, e->exact, e->dims);
+    for (uint32_t i = 0; i < e->count; i++) {
+        tide_index_add_exact(ix, e->whole + (size_t)i * e->exact, e->keys + (size_t)i * e->dims, ordinal_of(i));
+    }
+    tide_index_end(ix);
+    return ix;
+}
+
+// Checks one search against a scan: every entry whose whole numbers are those and whose doubles are inside the
+// box (or no number), nothing whose whole numbers differ or whose doubles are outside a box widened 4 times more,
+// ascending, once each. The number of hits.
+static uint32_t check_exact(const tide_index *ix, const exact_entries *e, const int64_t *whole, const double *lo,
+                            const double *hi, tide_index_hits *h)
+{
+    tide_index_find_exact(ix, whole, lo, hi, h);
+    bool ascending = true, known = true;
+    for (uint32_t i = 0; i < h->count; i++) {
+        if (i > 0 && h->items[i] <= h->items[i - 1]) ascending = false;
+        if (h->items[i] < 7 || (h->items[i] - 7) % 3 != 0 || (h->items[i] - 7) / 3 >= e->count) known = false;
+    }
+    TIDE_CHECK(ascending);
+    TIDE_CHECK(known);
+    if (!ascending || !known) return h->count;
+    bool *found = calloc(e->count ? e->count : 1, sizeof(bool));
+    for (uint32_t i = 0; i < h->count; i++) found[(h->items[i] - 7) / 3] = true;
+    uint32_t missing = 0, extra = 0;
+    for (uint32_t i = 0; i < e->count; i++) {
+        bool same = true;
+        for (uint32_t k = 0; k < e->exact; k++) same &= e->whole[(size_t)i * e->exact + k] == whole[k];
+        bool must = same, may = same;
+        for (uint32_t d = 0; d < e->dims; d++) {
+            const double k = e->keys[(size_t)i * e->dims + d];
+            if (!isfinite(k) || isnan(lo[d]) || isnan(hi[d])) continue;
+            double wlo, whi;
+            loosen(lo[d], hi[d], &wlo, &whi);
+            must &= within(k, lo[d], hi[d]);
+            may &= within(k, wlo, whi);
+        }
+        if (must && !found[i]) missing++;
+        if (found[i] && !may) extra++;
+    }
+    TIDE_CHECK(missing == 0);
+    TIDE_CHECK(extra == 0);
+    free(found);
+    return h->count;
+}
+
+// Whole numbers of every kind: few values (many entries alike), places in a box, both ends of a long, and longs
+// a double can't tell apart
+static int64_t random_whole(rng *r, const uint32_t kind)
+{
+    switch (kind % 5) {
+    case 0: return (int64_t)(next(r) % 3);
+    case 1: return (int64_t)(next(r) % 41) - 20;
+    case 2: return next(r) % 2 ? INT64_MAX - (int64_t)(next(r) % 3) : INT64_MIN + (int64_t)(next(r) % 3);
+    case 3: return ((int64_t)1 << 62) + (int64_t)(next(r) % 5);
+    default: return (int64_t)next(r);
+    }
+}
+
+static void check_exact_random(const uint32_t exact, const uint32_t dims, const uint32_t count, const uint64_t seed)
+{
+    rng r = {seed};
+    exact_entries e = make_exact(exact, dims, count);
+    for (uint32_t i = 0; i < count; i++) {
+        for (uint32_t k = 0; k < exact; k++) e.whole[(size_t)i * exact + k] = random_whole(&r, k + (uint32_t)seed);
+        for (uint32_t d = 0; d < dims; d++) {
+            double v = between(&r, -100, 100);
+            if (next(&r) % 20 == 0) v = next(&r) % 2 ? NAN : -INFINITY;
+            e.keys[(size_t)i * dims + d] = v;
+        }
+    }
+    tide_index *ix = build_exact(&e);
+    TIDE_CHECK(tide_index_count(ix) == count);
+    tide_index_hits h;
+    tide_index_hits_init(&h);
+    uint32_t hits = 0;
+    for (uint32_t s = 0; s < 400; s++) {
+        int64_t whole[TIDE_INDEX_EXACT];
+        const uint32_t at = count ? (uint32_t)(next(&r) % count) : 0;
+        for (uint32_t k = 0; k < exact; k++) {
+            whole[k] = count && s % 4 != 3 ? e.whole[(size_t)at * exact + k] : random_whole(&r, k + (uint32_t)seed);
+        }
+        double lo[3], hi[3];
+        for (uint32_t d = 0; d < dims; d++) {
+            const uint32_t kind = (uint32_t)(next(&r) % 6);
+            const double c = between(&r, -100, 100);
+            lo[d] = kind == 0 ? -INFINITY : kind == 1 ? NAN : kind == 2 ? c + 5 : c - 30;
+            hi[d] = kind == 0 ? INFINITY : kind == 3 ? c : kind == 2 ? c - 5 : c + 30;
+        }
+        hits += check_exact(ix, &e, whole, lo, hi, &h);
+    }
+    TIDE_CHECK(count == 0 || hits > 0);
+    tide_index_hits_free(&h);
+    tide_index_free(ix);
+    free_exact(&e);
+}
+
+TIDE_TEST(index_finds_exact_keys_as_a_scan_does)
+{
+    for (uint32_t exact = 1; exact <= TIDE_INDEX_EXACT; exact++) {
+        for (uint32_t dims = 0; dims <= 3; dims++) {
+            check_exact_random(exact, dims, 1, 100u + exact * 4u + dims);
+            check_exact_random(exact, dims, 40, 200u + exact * 4u + dims);
+            check_exact_random(exact, dims, 3000, 300u + exact * 4u + dims);
+        }
+    }
+}
+
+// A world of chunks: places in a box, two dimensions, so each x is shared by hundreds. A search for a place
+// gives exactly the one chunk there, and one for a long packed from it the same; doubles can't tell those longs
+// apart.
+TIDE_TEST(index_finds_one_chunk_among_many_with_its_x)
+{
+    const int32_t wide = 32, tall = 5;
+    const uint32_t count = (uint32_t)(wide * wide * tall * 2);
+    exact_entries places = make_exact(4, 0, count), packed = make_exact(1, 0, count);
+    for (uint32_t i = 0; i < count; i++) {
+        const int32_t p = (int32_t)(i / 2), x = p % wide - wide / 2, z = p / wide % wide - wide / 2, y = p / (wide * wide) - 2;
+        int64_t *w = places.whole + (size_t)i * 4;
+        w[0] = x;
+        w[1] = y;
+        w[2] = z;
+        w[3] = i % 2;
+        packed.whole[i] = (int64_t)((uint64_t)1 << 62 | (uint64_t)(x & 0xFFFFF) << 40 | (uint64_t)(y & 0xFFF) << 28 |
+                                    (uint64_t)(z & 0xFFFFF) << 8 | (uint64_t)(i % 2));
+    }
+    tide_index *ix = build_exact(&places), *keyed = build_exact(&packed);
+    tide_index_hits h;
+    tide_index_hits_init(&h);
+    rng r = {81};
+    for (uint32_t s = 0; s < 500; s++) {
+        const uint32_t i = (uint32_t)(next(&r) % count);
+        TIDE_CHECK(check_exact(ix, &places, places.whole + (size_t)i * 4, NULL, NULL, &h) == 1);
+        TIDE_CHECK(h.count == 1 && h.items[0] == ordinal_of(i));
+        TIDE_CHECK(check_exact(keyed, &packed, packed.whole + i, NULL, NULL, &h) == 1);
+        TIDE_CHECK(h.count == 1 && h.items[0] == ordinal_of(i));
+        const int64_t nowhere[4] = {places.whole[(size_t)i * 4], 99, 0, 0};
+        TIDE_CHECK(check_exact(ix, &places, nowhere, NULL, NULL, &h) == 0);
+    }
+    tide_index_hits_free(&h);
+    tide_index_free(ix);
+    tide_index_free(keyed);
+    free_exact(&places);
+    free_exact(&packed);
+}
+
+// Every entry alike (a bool, a team): one slot holds them all, in order. An index begun again with other counts,
+// never built, of nothing, and searched the other way: every entry, never a wrong one.
+TIDE_TEST(index_of_exact_keys_begins_again_and_mixes_safely)
+{
+    tide_index *ix = tide_index_make();
+    tide_index_hits h;
+    tide_index_hits_init(&h);
+    const int64_t zero[TIDE_INDEX_EXACT] = {0}, one[TIDE_INDEX_EXACT] = {1};
+    const double lo[3] = {-INFINITY, -INFINITY, -INFINITY}, hi[3] = {INFINITY, INFINITY, INFINITY};
+    tide_index_find_exact(ix, zero, lo, hi, &h); // Never begun
+    TIDE_CHECK(h.count == 0);
+    tide_index_begin_exact(ix, 1, 0);
+    tide_index_end(ix);
+    tide_index_find_exact(ix, zero, lo, hi, &h);
+    TIDE_CHECK(h.count == 0);
+
+    tide_index_begin_exact(ix, 1, 1);
+    for (uint32_t i = 0; i < 1000; i++) {
+        const int64_t w = i % 10 == 0;
+        const double k = (double)i;
+        tide_index_add_exact(ix, &w, &k, ordinal_of(i));
+    }
+    tide_index_find_exact(ix, one, lo, hi, &h); // Not built: every entry
+    TIDE_CHECK(h.count == 1000);
+    tide_index_end(ix);
+    tide_index_find_exact(ix, one, lo, hi, &h);
+    TIDE_CHECK(h.count == 100 && h.items[0] == ordinal_of(0) && h.items[99] == ordinal_of(990));
+    tide_index_find_exact(ix, zero, lo, hi, &h);
+    TIDE_CHECK(h.count == 900 && h.items[0] == ordinal_of(1) && h.items[899] == ordinal_of(999));
+    const double from = 95, to = 205;
+    tide_index_find_exact(ix, one, &from, &to, &h);
+    TIDE_CHECK(h.count == 11 && h.items[0] == ordinal_of(100) && h.items[10] == ordinal_of(200));
+    tide_index_find_exact(ix, one, &to, &from, &h); // Inside out
+    TIDE_CHECK(h.count == 0);
+    tide_index_find(ix, lo, hi, &h); // Searched as doubles: every entry
+    TIDE_CHECK(h.count == 1000);
+    tide_index_add(ix, &from, ordinal_of(1000)); // Added as doubles: whole numbers of 0
+    tide_index_end(ix);
+    tide_index_find_exact(ix, zero, lo, hi, &h);
+    TIDE_CHECK(h.count == 901 && h.items[900] == ordinal_of(1000));
+
+    tide_index_begin_exact(ix, 99, 7); // Taken as TIDE_INDEX_EXACT and 3
+    for (uint32_t i = 0; i < 300; i++) {
+        int64_t w[TIDE_INDEX_EXACT];
+        for (uint32_t k = 0; k < TIDE_INDEX_EXACT; k++) w[k] = (int64_t)(i % 3) * (int64_t)(k + 1);
+        const double keys[3] = {i, -(double)i, 0};
+        tide_index_add_exact(ix, w, keys, ordinal_of(i));
+    }
+    tide_index_end(ix);
+    int64_t two[TIDE_INDEX_EXACT];
+    for (uint32_t k = 0; k < TIDE_INDEX_EXACT; k++) two[k] = 2 * (int64_t)(k + 1);
+    tide_index_find_exact(ix, two, lo, hi, &h);
+    TIDE_CHECK(h.count == 100 && h.items[0] == ordinal_of(2) && h.items[99] == ordinal_of(299));
+
+    tide_index_begin(ix, 2); // An index of doubles again: searched exactly, every entry
+    for (uint32_t i = 0; i < 50; i++) {
+        const double k[2] = {i, i};
+        tide_index_add_exact(ix, zero, k, ordinal_of(i));
+    }
+    tide_index_end(ix);
+    tide_index_find_exact(ix, zero, lo, hi, &h);
+    TIDE_CHECK(h.count == 50);
+    const double box_lo[2] = {10, 10}, box_hi[2] = {12, 12};
+    tide_index_find(ix, box_lo, box_hi, &h);
+    TIDE_CHECK(h.count == 3 && h.items[0] == ordinal_of(10));
+    tide_index_hits_free(&h);
+    tide_index_free(ix);
+}
+
 TIDE_TEST(index_lock_opens_again)
 {
     uint32_t lock = 0;

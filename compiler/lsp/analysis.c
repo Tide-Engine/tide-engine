@@ -1570,8 +1570,9 @@ void analysis_run(const analysis_file *given, const int given_count)
     const analysis_file *files = given;
     int count = given_count;
     // ...and so are fills', for as long as it shows one
-    bool web = false, fills = false, baked = false;
+    bool web = false, fills = false, baked = false, stored = false;
     for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
+    for (int i = 0; i < given_count && !stored; i++) stored = storage_prelude_wanted(given[i].text, given[i].len);
     if (given_count > 0) {
         const char **texts = arena_alloc(sizeof(char *) * (size_t)given_count);
         size_t *lens = arena_alloc(sizeof(size_t) * (size_t)given_count);
@@ -1582,13 +1583,18 @@ void analysis_run(const analysis_file *given, const int given_count)
         fills = draw_prelude_wanted(texts, lens, given_count);
         baked = baked_prelude_wanted(texts, lens, given_count);
     }
-    if (web || fills || baked) {
-        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 3));
+    if (web || fills || baked || stored) {
+        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 4));
         if (given_count > 0) memcpy(all, given, sizeof(analysis_file) * (size_t)given_count);
         count = given_count;
         if (web) {
             analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
             prelude.text = web_prelude(&prelude.len);
+            all[count++] = prelude;
+        }
+        if (stored) {
+            analysis_file prelude = {"tide:///storage.tide", STORAGE_PRELUDE_PATH, NULL, 0, NULL};
+            prelude.text = storage_prelude(&prelude.len);
             all[count++] = prelude;
         }
         if (fills) {
@@ -2221,6 +2227,18 @@ static const method_form visibility_static_calls[] = {
     {"CreateGroup", "Visibility.CreateGroup(Audience audience) -> VisibilityGroup", "Creates a match-owned shared audience. Group changes are made by match code."},
     {"Set", "Visibility.Set(VisibilityGroup group, Audience audience)", "Changes the shared group's audience for every member, retaining individual component restrictions."},
     {"DestroyGroup", "Visibility.DestroyGroup(VisibilityGroup group)", "Releases the shared group. Stale group handles remain restricted rather than becoming public."},
+};
+// The server's store, from match code (storage_check.inc), and Flush from local async code
+static const method_form storage_calls[] = {
+    {"Save", "Storage.Save(string key, List<byte> bytes)",
+     "Asks the machine that runs the match to keep the bytes under the key, replacing what it kept there. Nothing of the "
+     "match changes; the file is written at the tick's end."},
+    {"Load", "Storage.Load(string key)",
+     "Asks for what the machine that runs the match keeps under the key. Its answer is a `Loaded` event in a later tick: "
+     "its bytes, whether they were found, and whether reading them failed."},
+    {"Load", "Storage.Load(string key, Entity entity)",
+     "Asks for what is kept under the key, answered by a `Loaded` event to the entity in a later tick."},
+    {"Delete", "Storage.Delete(string key)", "Asks the machine that runs the match to forget what it keeps under the key."},
 };
 static const method_form audience_calls[] = {
     {"Add", "Add(PlayerID player)", "Adds a player to this writable audience value."},
@@ -3965,7 +3983,10 @@ static void describe(const occurrence *o, sb *out)
                                                          "match's seconds."
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId, the game's title, and Quit, which ends the program after the frame."
-                      : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
+                      : str_eq_c(o->name, "Storage") ? "\n\nThe server's store: match code saves, loads and deletes bytes under "
+                                                       "keys on the machine that runs the match, and a load's answer is a "
+                                                       "`Loaded` event. Local async code awaits `Storage.Flush()` to confirm "
+                                                       "that preceding changes reached persistent storage."
                       : str_eq_c(o->name, "Web") ? "\n\nThis machine's network: `await Web.Fetch(url)` gives a URL's bytes, from local code, failing with IOError."
                       : str_eq_c(o->name, "Json") ? "\n\nJSON to and from the game's own structs: `Json.Read<T>(json)` gives a `T?`, and `Json.Write(value)` its text. The same on every machine."
                       : str_eq_c(o->name, "Path") ? "\n\nPure lexical path operations, without accessing the filesystem."
@@ -4007,7 +4028,15 @@ static void describe(const occurrence *o, sb *out)
             }
             break;
         }
-        if (o->call == CALL_VISIBILITY || str_eq_c(o->owner, "Audience")) {
+        if (o->call == CALL_VISIBILITY && str_eq_c(o->owner, "Storage")) {
+            // Load's two forms: the one with as many arguments as the call, which the hover's occurrence doesn't keep
+            for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
+                if (!str_eq_c(o->name, storage_calls[i].name)) continue;
+                code_block(out, storage_calls[i].form);
+                sb_printf(out, "\n\n%s", storage_calls[i].doc);
+                if (str_eq_c(o->name, "Load")) break;
+            }
+        } else if (o->call == CALL_VISIBILITY || str_eq_c(o->owner, "Audience")) {
             if (o->kind == OCC_CONSTANT) {
                 sb_printf(&code, "Audience Audience." STR_FMT, STR_ARG(o->name));
                 code_block(out, code.data);
@@ -8106,6 +8135,24 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                 item(c, "Barrier", CK_FUNCTION, "GPU.Barrier()", GPU_BARRIER_DOC, "Barrier();");
             } else if (!gpu && sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION || sc.decl->is_local)) {
                 item(c, "Run", CK_FUNCTION, "GPU.Run(kernel, over[, values])", GPU_RUN_DOC, "Run(${1:kernel}, ${2:over});");
+            }
+            return;
+        }
+        if (n == 1 && str_eq_c(base, "Storage") && !gpu) {
+            // The server's store from match code and the functions it calls; Flush from local async code and functions
+            const bool routine = sc.decl && sc.decl->kind == DECL_FUNCTION;
+            const bool match = sc.decl && sc.decl->kind == DECL_SYSTEM && !sc.decl->is_local && !sc.decl->is_view;
+            if (!sc.in_input && (routine || match)) {
+                for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
+                    if (i && strcmp(storage_calls[i].name, storage_calls[i - 1].name) == 0) continue; // Load's second form
+                    sb snippet = {0};
+                    method_snippet(&storage_calls[i], &snippet);
+                    item(c, storage_calls[i].name, CK_FUNCTION, storage_calls[i].form, storage_calls[i].doc, snippet.data);
+                }
+            }
+            if (sc.decl && sc.decl->is_async && (routine || sc.decl->is_view || sc.decl->is_local)) {
+                builtin_visit v = {c, false};
+                builtin_list_members(base, add_builtin_member, &v); // Flush
             }
             return;
         }
@@ -12502,6 +12549,12 @@ static int call_param_names(const expr *call, str *names, const int max)
     label_list list = {0};
     switch (call->call) {
     case CALL_VISIBILITY: {
+        if (call->visibility_operation & VISIBILITY_STORAGE) { // Storage.Save(key, bytes), Storage.Load(key, entity)
+            for (; count < call->args.count && count < max; count++) {
+                names[count] = str_from(count == 0 ? "key" : str_eq_c(call->name, "Save") ? "bytes" : "entity");
+            }
+            return count;
+        }
         const bool receiver = (call->visibility_operation & VISIBILITY_RECEIVER) != 0u;
         for (; count < call->args.count && count < max; count++) {
             const char *name = receiver && call->object->type.decl == A.prog->audience ? "player"
@@ -12813,6 +12866,10 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb label = {0};
             sb_printf(&label, STR_FMT ".%s", STR_ARG(owner), form->form);
             add_signature(&s, label.data, form->doc);
+        }
+    } else if (str_eq_c(owner, "Storage") && !str_eq_c(name, "Flush")) { // Flush is a builtin, below
+        for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
+            if (str_eq_c(name, storage_calls[i].name)) add_signature(&s, storage_calls[i].form, storage_calls[i].doc);
         }
     } else if (str_eq_c(owner, "Audience") || str_eq_c(owner, "Visibility")) {
         const bool audience = str_eq_c(owner, "Audience");

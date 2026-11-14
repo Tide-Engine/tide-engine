@@ -245,6 +245,33 @@ TIDE_TEST(entity_table_packs_and_unpacks)
     tide_entities_free(&back);
 }
 
+// An erased entity leaves nothing of its key: the table still packs, unpacks and takes the key again
+TIDE_TEST(entity_erase_leaves_a_table_that_packs_and_takes_the_key_again)
+{
+    tide_entities t = {0};
+    tide_entity kept[40];
+    for (uint32_t i = 0; i < 40; i++) kept[i] = tide_entity_create(&t);
+    TIDE_REQUIRE(tide_entity_erase(&t, kept[3]));
+    TIDE_REQUIRE(tide_entity_erase(&t, kept[17]));
+    TIDE_CHECK(!tide_entity_erase(&t, kept[17]));
+    TIDE_CHECK(!tide_entity_alive(&t, kept[3]) && !tide_entity_died_here(&t, kept[3]));
+    const uint32_t size = tide_entities_packed_size(&t);
+    uint8_t *bytes = malloc(size);
+    tide_writer w = {bytes, size, 0, false, false};
+    tide_entities_pack(&t, &w);
+    tide_entities back = {0};
+    tide_reader r = {bytes, size, 0, false};
+    TIDE_REQUIRE(tide_entities_unpack(&back, &r));
+    TIDE_CHECK(tide_entities_hash(1, &back) == tide_entities_hash(1, &t));
+    // Its key can be installed again, in either table, and a slot freed this way is reused
+    TIDE_CHECK(tide_entity_install(&back, kept[17]) && tide_entity_alive(&back, kept[17]));
+    TIDE_CHECK(tide_entity_install(&t, kept[3]) && tide_entity_alive(&t, kept[3]));
+    TIDE_CHECK(tide_entity_slot_index(&t, kept[3]) == 17u);
+    free(bytes);
+    tide_entities_free(&t);
+    tide_entities_free(&back);
+}
+
 TIDE_TEST(entity_logical_keys_ignore_hidden_allocations_and_recycled_slots)
 {
     tide_entities server = {0}, client = {0};

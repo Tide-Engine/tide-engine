@@ -48,6 +48,10 @@ typedef struct ictx {
     int env_count;
     const decl *inlining[MOST_INLINE];
     int inline_depth;
+    // Conversions seen past (a name or an inlined call standing for a value of another type): a count, its value
+    // as the comparison being read began, and how many conditions being read went through one
+    uint32_t converted, converted_mark;
+    int converting;
     const char *why;
     loc why_at;
 } ictx;
@@ -73,8 +77,16 @@ static bool same_kind(const type a, const type b)
 
 static bool is_scalar_key(const type t)
 {
-    if (t.kind == TY_ENUM || t.kind == TY_BOOL || t.kind == TY_CHAR) return true;
+    if (t.kind == TY_ENUM || t.kind == TY_BOOL || t.kind == TY_CHAR || t.kind == TY_LONG) return true;
     return type_dim(t) == 1 && (type_is_float_based(t) || type_is_double_based(t) || type_is_integer(t));
+}
+
+// Whether values of the type are whole numbers a 64-bit integer holds as they are, compared as integers: an
+// equality of two of them is one of int64_ts (Tide has no unsigned integer but byte, which promotes exactly)
+static bool is_exact_type(const type t)
+{
+    return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_CHAR || t.kind == TY_ENUM
+        || t.kind == TY_BOOL;
 }
 
 static bool is_real(const type t) // float or double, scalar or vector: arithmetic on it rounds, never wraps
@@ -128,12 +140,15 @@ static const void *name_target(const expr *e)
     return NULL;
 }
 
-static const expr *env_find(const ictx *c, const expr *e)
+static const expr *env_find(ictx *c, const expr *e)
 {
     const void *target = name_target(e);
     if (!target) return NULL;
     for (int i = c->env_count - 1; i >= 0; i--) {
-        if (c->env_from[i] == target) return c->env_to[i];
+        if (c->env_from[i] != target) continue;
+        // `float f = row.n;`: the name's a float, what it stands for an int, and C compares f as a float
+        if (!same_kind(e->type, c->env_to[i]->type)) c->converted++;
+        return c->env_to[i];
     }
     return NULL;
 }
@@ -203,6 +218,7 @@ static const expr *inline_call(ictx *c, const expr *call)
     const expr *out = ok && pure(c, value) ? subst(c, value) : NULL;
     c->inline_depth--;
     c->env_count = mark;
+    if (out && !same_kind(call->type, out->type)) c->converted++; // `float AsF(int x) { return x; }`
     return out;
 }
 
@@ -661,6 +677,7 @@ static const bound *leaf(ictx *c, const expr *e, const int comp)
     b->op = BOUND_LEAF;
     b->leaf = value;
     b->comp = comp;
+    b->inexact = c->converting > 0 || c->converted != c->converted_mark;
     return b;
 }
 
@@ -675,12 +692,28 @@ static const bound *op2(const bound_op op, const bound *a, const bound *b)
     return out;
 }
 
+// Whether bounds say a key of the type is one value, which is a whole number compared as one: the key and the
+// value are both of exact types (a byte against a float isn't: C compares those as floats). An exact key finds it.
+static bool exact_bound(const type t, const bound *lo, const bound *hi)
+{
+    if (!lo || lo != hi || lo->op != BOUND_LEAF || !lo->leaf || lo->inexact || !is_exact_type(t)) return false;
+    // A component of a vector value (an int3's), or the value itself
+    return lo->comp >= 0 ? type_is_int_based(lo->leaf->type) : is_exact_type(lo->leaf->type);
+}
+
 static void add_constraint(constraints *set, const expr *path, const int comp, const type t, const bound *lo,
                            const bound *hi)
 {
     for (int i = 0; i < set->count; i++) {
         constraint *k = &set->items[i];
         if (k->comp != comp || !same_place(k->path, path)) continue;
+        // A whole number that's one value stays one: other bounds on it would narrow nothing an exact key finds,
+        // and leaving out a bound only ever takes in more rows
+        if (exact_bound(k->type, k->lo, k->hi)) return;
+        if (exact_bound(t, lo, hi)) {
+            k->lo = k->hi = lo;
+            return;
+        }
         if (lo) k->lo = k->lo ? op2(BOUND_MAX, k->lo, lo) : lo;
         if (hi) k->hi = k->hi ? op2(BOUND_MIN, k->hi, hi) : hi;
         return;
@@ -911,16 +944,36 @@ static constraints compare(ictx *c, const expr *a, tok_kind op, const expr *b, c
     constraints out = {0};
     if (!want) op = negated(op); // NaN makes a negated comparison true: rows of NaN keys are candidates always
     if (op == T_NE) return out;
-    if (!relation(c, a, op, b, &out)) relation(c, b, flipped(op), a, &out);
+    // A conversion either side, seen past from here on, makes its bounds inexact (leaf)
+    const uint32_t mark = c->converted_mark;
+    c->converted_mark = c->converted;
+    if (!relation(c, a, op, b, &out)) {
+        c->converted_mark = c->converted; // The other way round reads both sides again, and counts its own
+        relation(c, b, flipped(op), a, &out);
+    }
+    c->converted_mark = mark;
     return out;
 }
 
-// Bounds that hold whenever the condition is `want`.
+static constraints derive_seen(ictx *c, const expr *e, bool want);
+
+// Bounds that hold whenever the condition is `want`. A condition seen through a conversion (an inlined helper
+// whose float local holds an int) makes every bound of it inexact.
 static constraints derive(ictx *c, const expr *e, const bool want)
 {
-    constraints none = {0};
+    const uint32_t before = c->converted;
     e = look(c, e);
-    if (!e) return none;
+    if (!e) return (constraints){0};
+    const bool converted = c->converted != before;
+    c->converting += converted;
+    const constraints out = derive_seen(c, e, want);
+    c->converting -= converted;
+    return out;
+}
+
+static constraints derive_seen(ictx *c, const expr *e, const bool want)
+{
+    constraints none = {0};
     if (e->kind == E_UNARY && e->op == T_NOT) return derive(c, e->lhs, !want);
     if (e->kind == E_BINARY && (e->op == T_AND || e->op == T_OR)) {
         const constraints a = derive(c, e->lhs, want), b = derive(c, e->rhs, want);
@@ -941,6 +994,7 @@ static constraints derive(ictx *c, const expr *e, const bool want)
         b->op = BOUND_LEAF;
         b->leaf = literal;
         b->comp = -1;
+        b->inexact = c->converting > 0;
         constraints out = {0};
         add_constraint(&out, path, comp, t, b, b);
         return out;
@@ -1169,16 +1223,34 @@ static bool calls_expr(const expr *e, const decl *target, decl_list *seen)
 // A query's key must keep its value while the code it's in runs, between one
 // time the loop starts and the next: the index made at one is used at the
 // next while nothing changes the pages it was made from.
+static bool key_still(ictx *c, const decl *component, const field *f);
+
 static bool query_source_still(ictx *c, const loop_index *plan)
 {
-    const decl *component = plan->component;
-    const field *f = path_field(c, plan->keys[0].path);
-    if (!component) {
-        because(c, c->loop->at, "its key isn't a component's field");
-        return false;
+    for (int k = 0; k < plan->count; k++) {
+        if (!path_component(c, plan->keys[k].path)) {
+            because(c, c->loop->at, "its key isn't a component's field");
+            return false;
+        }
     }
     // As the tick started: nothing the code or any other system does changes it
     if (plan->previous) return true;
+    // Each field a key is in, once (an exact key's may be in several fields, of several components)
+    for (int k = 0; k < plan->count; k++) {
+        const decl *component = path_component(c, plan->keys[k].path);
+        const field *f = path_field(c, plan->keys[k].path);
+        bool seen = false;
+        for (int j = 0; j < k; j++) {
+            seen |= path_component(c, plan->keys[j].path) == component && path_field(c, plan->keys[j].path) == f;
+        }
+        if (!seen && !key_still(c, component, f)) return false;
+    }
+    return true;
+}
+
+// ...for the key in `f` of `component` (NULL: the component whole)
+static bool key_still(ictx *c, const decl *component, const field *f)
+{
     if (world_sets(c, component)) {
         because(c, c->loop->at, "the loop sets " STR_FMT " through its World, which changes rows as it goes",
                 STR_ARG(component->name));
@@ -1218,6 +1290,22 @@ static bool query_source_still(ictx *c, const loop_index *plan)
     return true;
 }
 
+// A query's keys are read from one kind of table: the tick's start's (`previous` bindings) or the world's as it
+// is. An exact key's whole numbers and doubles can be in several bindings; those of another kind than the first
+// key's are left to the guard.
+static void keep_alike(const ictx *c, loop_index *plan)
+{
+    const bool first = path_previous(c, plan->keys[0].path);
+    int n = 1, exact = plan->exact ? 1 : 0;
+    for (int k = 1; k < plan->count; k++) {
+        if (path_previous(c, plan->keys[k].path) != first) continue;
+        plan->keys[n++] = plan->keys[k];
+        exact += k < plan->exact;
+    }
+    plan->count = n;
+    plan->exact = exact;
+}
+
 // The loop's list must keep its elements while the loop runs.
 static bool list_source_still(ictx *c)
 {
@@ -1232,8 +1320,10 @@ static bool list_source_still(ictx *c)
     return true;
 }
 
-// Picks the keys: two or three bounded both ways (a grid), else an equality,
-// else one bounded both ways, else one bounded one way.
+// Picks the keys: two or three bounded both ways (a grid), else every whole
+// number that's one value as one exact key, with up to three other bounds
+// beside it, else an equality, else one bounded both ways, else one bounded
+// one way.
 static bool choose(const constraints *set, loop_index *plan)
 {
     int best = -1;
@@ -1256,6 +1346,25 @@ static bool choose(const constraints *set, loop_index *plan)
         }
     }
     if (plan->count >= 2) return true;
+    // An exact key: the whole numbers that are each one value (a chunk's place's three components and its
+    // dimension, a team), in the order the guard says them, then other bounds beside them, both ways first
+    int n = 0;
+    for (int i = 0; i < set->count && n < INDEX_EXACT_MOST; i++) {
+        const constraint *k = &set->items[i];
+        if (exact_bound(k->type, k->lo, k->hi)) plan->keys[n++] = (index_key){k->path, k->comp, k->type, k->lo, k->hi};
+    }
+    if (n > 0) {
+        plan->exact = n;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < set->count && n < plan->exact + 3; i++) {
+                const constraint *k = &set->items[i];
+                if (exact_bound(k->type, k->lo, k->hi) || (pass == 0) != (k->lo && k->hi)) continue;
+                plan->keys[n++] = (index_key){k->path, k->comp, k->type, k->lo, k->hi};
+            }
+        }
+        plan->count = n;
+        return true;
+    }
     for (int pass = 0; pass < 3 && best < 0; pass++) {
         for (int i = 0; i < set->count && best < 0; i++) {
             const constraint *k = &set->items[i];
@@ -1364,6 +1473,7 @@ static void plan_loop(const program *prog, const decl *code, stmt *loop)
         because(&c, loop->at, "its guard puts no bound on a number of the row: compare one of the row's numbers, or its "
                               "distance to a place, with a value the loop doesn't change");
     } else if (choose(&found, plan)) {
+        if (query) keep_alike(&c, plan);
         plan->component = query ? path_component(&c, plan->keys[0].path) : NULL;
         plan->previous = query && path_previous(&c, plan->keys[0].path);
         const bool still = query ? query_source_still(&c, plan) : list_source_still(&c);
@@ -1470,13 +1580,28 @@ const char *loop_index_summary(const stmt *loop)
     }
     const loop_index *plan = loop->index;
     sb_put(&out, "indexed by ");
-    for (int i = 0; i < plan->count; i++) {
+    if (plan->exact) { // "a, b and c as one exact key, and by d and e"
+        for (int part = 0; part < 2; part++) {
+            const int from = part ? plan->exact : 0, to = part ? plan->count : plan->exact;
+            if (from == to) continue;
+            if (part) sb_put(&out, ", and by ");
+            for (int i = from; i < to; i++) {
+                const index_key *k = &plan->keys[i];
+                if (i > from) sb_put(&out, i + 1 == to ? " and " : ", ");
+                describe_path(&out, k->path);
+                if (k->comp >= 0) sb_printf(&out, ".%c", "xyzw"[k->comp & 3]);
+            }
+            if (!part) sb_put(&out, " as one exact key");
+        }
+    }
+    for (int i = 0; i < plan->count && !plan->exact; i++) {
         const index_key *k = &plan->keys[i];
         if (i) sb_put(&out, ", ");
         describe_path(&out, k->path);
         if (k->comp >= 0) sb_printf(&out, ".%c", "xyzw"[k->comp & 3]);
     }
-    if (plan->previous) sb_put(&out, " as the tick started: its index is made once a tick");
+    if (plan->previous) sb_put(&out, plan->exact ? ", as the tick started: its index is made once a tick"
+                                                 : " as the tick started: its index is made once a tick");
     return out.data;
 }
 

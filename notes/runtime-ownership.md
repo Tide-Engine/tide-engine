@@ -265,7 +265,9 @@ New and agent-maintained, like `tide/voice.h`: `engine/include/tide/screen_keybo
 
 New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `engine/src/index.c`
 (`tide_index_make`/`free`/`begin`/`add`/`end`/`count`/`ordinals`/`find`, `tide_index_hits_init`/`free`,
-`tide_index_lock`/`unlock`), which generated code calls for every indexed loop. The caches of indexes are
+`tide_index_lock`/`unlock`; since 2026-11-14 exact keys, `tide_index_begin_exact`/`add_exact`/`find_exact` and
+`TIDE_INDEX_EXACT`, within the voxel-world task that asked for them), which generated code calls for every indexed
+loop. The caches of indexes are
 generated helpers (`index_codegen.inc`: `tide_ix_*`, `tide_index_cache_prepare`/`free`), like the rows cache, over
 existing runtime calls (`tide_page_retain`/`release`, `tide_table_*`, `tide_list_*`, `tide_alloc*`); a game with an
 indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `tide_local`, and defines

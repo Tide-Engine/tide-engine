@@ -44,6 +44,11 @@ typedef struct tide_hosting_desc {
     const tide_game *game;
     tide_transport transport;
     const tide_jobs *jobs;
+    // Where its matches keep their store (Storage.Save and Load in match code:
+    // tide_server_desc.io), unless a match's description names its own. Every
+    // match shares it, so a game that hosts several worlds says which in its
+    // keys. NULL: nowhere.
+    const struct tide_io *io;
     uint32_t max_matches; // 0: 64; at most 4096.
     uint32_t max_connections; // 0: 256; at most TIDE_PLAYERS_MOST (shared with matches).
     double idle_seconds; // Empty matches expire after this; 0: 60 seconds.

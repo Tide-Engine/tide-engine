@@ -38,6 +38,12 @@ void builtins_use_io(const decl *bytes, const decl *paths);
 #define WEB_REQUEST_MAKER "WebRequestTo"
 const char *web_prelude(size_t *len);
 bool web_prelude_wanted(const char *text, size_t len);
+// The server's store (Storage.Save, Load and Delete in match code): the event
+// a load's answer comes as, Loaded, is Tide's own code the same way, which a
+// program that loads compiles (storage_prelude_wanted).
+#define STORAGE_PRELUDE_PATH "<tide>/storage.tide"
+const char *storage_prelude(size_t *len);
+bool storage_prelude_wanted(const char *text, size_t len);
 // Fills' types and functions, which are Tide's own code the same way:
 // Draw.Rect(rect, radius, fill) is DRAW_FILL_RECT's call, and Draw.Shape(shape,
 // fill) DRAW_FILL_SHAPE's, where the last argument is a Func<float2, Color>.

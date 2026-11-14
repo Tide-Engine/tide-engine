@@ -2743,6 +2743,57 @@ bool web_prelude_wanted(const char *text, const size_t len)
         || has_text(text, len, "IOError.TimedOut");
 }
 
+// What a load of the server's store comes back as (STORAGE_PRELUDE_PATH)
+static const char storage_prelude_text[] =
+    "// What Storage.Load asked the server's store for, as it comes back in a later\n"
+    "// tick: sent to the entity the load named, or to the world. `found` is false,\n"
+    "// and `bytes` empty, where the store has nothing under the key. `failed` is\n"
+    "// true where what's under it couldn't be read: not the same as nothing there,\n"
+    "// so a game doesn't make it afresh and save over it.\n"
+    "event Loaded\n"
+    "{\n"
+    "    string key;\n"
+    "    List<byte> bytes;\n"
+    "    bool found;\n"
+    "    bool failed;\n"
+    "}\n";
+
+const char *storage_prelude(size_t *len)
+{
+    *len = sizeof storage_prelude_text - 1;
+    return storage_prelude_text;
+}
+
+static bool word_char(const char ch)
+{
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+// Whether the words `Storage`, `.` and `Load` follow each other in code, with
+// spaces or line breaks between them if any, and not in a comment
+bool storage_prelude_wanted(const char *text, const size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] == '/' && i + 1 < len && text[i + 1] == '/') {
+            while (i < len && text[i] != '\n') i++;
+            continue;
+        }
+        if (text[i] == '/' && i + 1 < len && text[i + 1] == '*') {
+            for (i += 2; i + 1 < len && !(text[i] == '*' && text[i + 1] == '/'); i++) {}
+            i++;
+            continue;
+        }
+        if (text[i] != 'S' || (i > 0 && word_char(text[i - 1])) || len - i < 7 || memcmp(text + i, "Storage", 7) != 0) continue;
+        size_t at = i + 7;
+        while (at < len && (text[at] == ' ' || text[at] == '\t' || text[at] == '\r' || text[at] == '\n')) at++;
+        if (at >= len || text[at] != '.') continue;
+        at++;
+        while (at < len && (text[at] == ' ' || text[at] == '\t' || text[at] == '\r' || text[at] == '\n')) at++;
+        if (len - at >= 4 && memcmp(text + at, "Load", 4) == 0 && (len - at == 4 || !word_char(text[at + 4]))) return true;
+    }
+    return false;
+}
+
 // Whether `name` (`n` bytes) is declared somewhere in the texts as a fill
 // function: "Color Name(float2 ...".
 static bool declares_fill(const char *const *texts, const size_t *lens, const int count, const char *name, const size_t n)

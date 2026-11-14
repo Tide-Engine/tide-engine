@@ -20,6 +20,22 @@ tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST galle
 target_link_libraries(bench_gallery PRIVATE tide_bench)
 add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x15fd48b33afb54c3)
 
+# An endless world of blocks in dimensions: chunks made around players, each
+# machine sent its own, and gone once nobody's near (notes/voxels.md).
+tide_add_game(bench_voxels SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
+target_link_libraries(bench_voxels PRIVATE tide_bench)
+add_test(NAME bench_voxels COMMAND bench_voxels --quick --expect 0x0ae800b4105e3290)
+# The same with every projection hash worked out twice, from what's kept of the rows that didn't change and from
+# the rows themselves: the run stops where the two differ (TIDE_CLIENT_SPANS_CHECK)
+tide_add_game(bench_voxels_checked SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
+target_link_libraries(bench_voxels_checked PRIVATE tide_bench)
+target_compile_definitions(bench_voxels_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect 0x0ae800b4105e3290)
+# Voxels to play: `voxels` in a window, with its views, the mouse and the keys
+if(TIDE_PLATFORM)
+    tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
+endif()
+
 # The home page's planet (examples/earth), its match as it is but for taking
 # up to 256 players rather than the page's 64, to see how far it goes. Its
 # views come too, as the input's Sample reads one of their singletons; bots
@@ -51,15 +67,17 @@ target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
 # Indexes for indexed loops (tide/index.h): building one, and searching it for
-# about 10 entries near a point, against the plain loop over every entry; the
-# test checks both loops find the same entries.
+# about 10 entries near a point, or for a chunk by its place (an exact key),
+# against the plain loop over every entry; the test checks both loops find the
+# same entries.
 add_executable(bench_index index/index.c)
 target_link_libraries(bench_index PRIVATE tide)
 add_test(NAME bench_index COMMAND bench_index --quick)
 
 # Indexed loops: boids looking at their neighbours through a query, agents at
-# obstacles in a list, with the loops' indexes and without (NO_LOOP_INDEXES):
-# `bench_loops --n 10000` against `bench_loops_plain --n 10000`.
+# obstacles in a list, lookers finding chunks by their place (--chunks), with
+# the loops' indexes and without (NO_LOOP_INDEXES): `bench_loops --n 10000`
+# against `bench_loops_plain --n 10000`.
 if(TIDE_PLATFORM)
     foreach(variant "" _plain)
         set(no_indexes "")
