@@ -109,6 +109,8 @@ static bench_flag flags[] = {
     {"dimensions", "dimensions the world has", 2, 2, 0, 1},
     {"hop", "seconds between a bot's changes of dimension; 0 never", 20, 2, 0, 0},
     {"still", "bots of each hundred that stay where they are", 0, 0, 0, 0},
+    {"keep", "ticks between saves of a chunk players changed, while it's held", 600, 90, 0, 1},
+    {"linger", "ticks a chunk nobody has stays before it goes", 120, 30, 0, 0},
 };
 
 static uint32_t mix(uint32_t x)
@@ -128,6 +130,8 @@ static void make_world(const bench_flag *f, void *world, const float dt)
     w->Worlds.near = (int32_t)f[0].value;
     w->Worlds.tall = (int32_t)f[1].value;
     w->Worlds.count = (int32_t)f[2].value;
+    w->Worlds.keep = (int32_t)f[5].value;
+    w->Worlds.linger = (int32_t)f[6].value;
 }
 
 static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick, void *input)

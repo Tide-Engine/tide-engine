@@ -327,8 +327,9 @@ int tide_serve(const tide_serve_desc *desc)
     host.jobs = tide_platform_jobs();
     // What its matches save (Storage.Save in match code) is kept in the game's own folder, as a player's saves are:
     // its appId's, or for a game with none, dev.tide.<its name>, the name its player build goes by (the pack's, less
-    // the "-server" a server's has)
-    if (!host.io) {
+    // the "-server" a server's has). Only for a game that uses the store: the provider makes its folders at once.
+    // (A build that first says Storage in a reload keeps nothing until the server starts again.)
+    if (!host.io && desc->game->stored) {
         char fallback[256];
         const char *id = desc->game->app_id;
         if (!id) {

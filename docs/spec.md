@@ -1989,11 +1989,17 @@ How a match keeps what it doesn't hold in memory: a chunk of blocks nobody is ne
 - `Loaded` is declared by the engine, as Tide code a program whose code has the words `Storage`, `.` and `Load` (comments aside) is compiled with; a program that doesn't has no such event, and a game's own `Loaded` clashes with it there. Its handlers follow the events' rule: one that takes components needs the entity every `Storage.Load` names, and a load that names none is then an error that says so. The engine sends it; a game's own `Send` of it is allowed, as of any event it could declare itself.
 
 ```csharp
-// A chunk nobody has had for a while goes, one a player changed into the store first
-system Idle(Seen seen, Chunk chunk, Time time)
+// A chunk nobody has had for a while goes, one a player changed into the store first: in an event, which runs
+// after the tick's moves, so a player who came back to it in this tick keeps it
+system Idle(Seen seen, Time time)
 {
-    if (seen.audience != Audience.None || time.tick - seen.emptied < LINGER) return;
-    if (chunk.edits > 0) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    if (seen.audience == Audience.None && time.tick - seen.emptied >= LINGER) this.Send(Expire { });
+}
+
+event(Expire) Drop(Seen seen, Chunk chunk)
+{
+    if (seen.audience != Audience.None) return;
+    if (chunk.edits != seen.saved) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
     this.Destroy();
 }
 

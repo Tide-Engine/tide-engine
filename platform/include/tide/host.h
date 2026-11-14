@@ -1104,6 +1104,10 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
 {
     char fallback[512];
     const char *id = tide_run_name_game(game, fallback, sizeof fallback);
+    // The provider makes the game's folders at once: a run with no window (a test's) of a game that uses neither
+    // files nor the store leaves none behind. A window's run has them for its log anyway, and makes the store for
+    // whichever build first uses it, so a reload that adds Storage keeps what it saves.
+    if (tide_run_headless && !game->set_io && !game->game->stored) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;
     if (directory && tide_platform_players() > 1u) {

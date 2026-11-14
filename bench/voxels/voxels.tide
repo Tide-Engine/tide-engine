@@ -5,8 +5,9 @@
 //
 // A dimension is a scene. Its blocks are in chunks, an entity each with a
 // 16-cube grid, made as a player first comes near and gone a while after the
-// last one left: one a player changed is saved first, in the server's store,
-// and comes back from there when someone next comes near. Each player's
+// last one left. One a player changed is kept in the server's store, every
+// while it's held and as it goes, and comes back from there when someone next
+// comes near. Each player's
 // machine has only the chunks around its player (see docs/spec.md, State visibility), and no part
 // in deciding which: the code that makes chunks and says who has them runs for
 // components only the server has (Streamer, Seen), so a player's machine runs
@@ -31,13 +32,13 @@ enum Block : byte
 }
 
 const int SIZE = 16;        // Cells along a chunk's side
-const int LINGER = 120;     // Ticks a chunk nobody has stays before it goes
 const float SPEED = 12;     // Cells a second, flying
 const float WALK = 5;       // ...and on foot
 const float GRAVITY = 24;
 const float JUMP = 8;
 const int REACH = 60;       // Tenths of a cell a player digs and builds from
 const int SEA = 0;          // Water fills up to here
+const int RETRY = 300;      // Ticks before a load that hasn't been answered, or failed, is asked again
 
 scene Main { }
 
@@ -48,10 +49,13 @@ scene Dimension
     int seed;
 }
 
-// A dimension's own, the server's alone: the chunk each player there is in, as last looked at
+// A dimension's own, the server's alone: the chunk each player there is in, as last looked at, and the chunks
+// it has by their places (KeyOf), from the tick each is spawned: two players who come near one place in one
+// tick find the chunk the first one's coming made
 component Streamer
 {
     Map<PlayerID, int3> watching;
+    Map<long, Entity> chunks;
 }
 
 singleton Worlds
@@ -60,6 +64,8 @@ singleton Worlds
     int near = 4;       // Chunks a player has around them, sideways...
     int tall = 2;       // ...and up and down
     int count = 2;      // Dimensions
+    int keep = 600;     // Ticks between saves of a chunk players changed, while it's held
+    int linger = 120;   // Ticks a chunk nobody has stays before it goes
     bool ready;
 }
 
@@ -70,11 +76,12 @@ component Chunk
     int seed;
     Grid3<Block> blocks = Grid3(16, 16, 16);
     Stage stage;
-    int edits;              // Changes players made: a chunk with any is saved as it goes
-    // This machine's own (play.tide): its faces as a mesh, made on a worker, and the edits it was made
-    // at plus one (0: no mesh yet)
+    int edits;              // Changes players made: a chunk with any is kept in the store
+    int stamp;              // Its changes, each mixed in: blocks that differ have another
+    // This machine's own (play.tide): its faces as a mesh, made on a worker, and the stamp they were made at
     local Mesh<Vertex3> mesh;
     local int drawn;
+    local bool meshed;
     local bool meshing;
     local bool blank;       // Its mesh has no faces: a chunk of air, or one buried in stone
 }
@@ -94,6 +101,8 @@ component Seen
     Audience audience;      // Who wants it: the group's audience once it's made
     bool shown;
     int emptied;            // The tick its last player left it
+    int saved;              // Its edits as the store last had them
+    int asked;              // The tick it was last asked for from the store
 }
 
 component Avatar
@@ -106,6 +115,7 @@ component Avatar
     int hops;               // Dimension changes its player has asked for, as taken
     int wait;               // Ticks until it digs or builds again
     bool landed;
+    bool placing;           // Just come into a dimension: rising out of whatever it's in, before it walks
 }
 
 // What this machine's player asked for that isn't a key held down (play.tide)
@@ -146,6 +156,8 @@ input Controls
 event Want { PlayerID player; int3 to; bool has; }
 event Put { int dimension; int3 cell; Block block; }
 event Change { int3 cell; Block block; }
+event Expire { }
+event Gone { int3 at; Entity chunk; }
 
 int3 ChunkOf(float3 position)
 {
@@ -162,6 +174,17 @@ bool Same(int3 a, int3 b)
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 
+// A chunk's place as one number, for a map: 21 bits each way, a million chunks from the middle
+long KeyOf(int3 at)
+{
+    return (long(at.x + (1 << 20)) << 42) | (long(at.y + (1 << 20)) << 21) | long(at.z + (1 << 20));
+}
+
+int SeedOf(int dimension)
+{
+    return 1000 + dimension * 77;
+}
+
 system Setup(mut Worlds worlds)
 {
     if (worlds.ready) return;
@@ -170,7 +193,7 @@ system Setup(mut Worlds worlds)
     {
         mut var hidden = Visibility { };
         hidden.Set<Streamer>(Audience.None);
-        worlds.dimensions.Add(Scene.Load(Dimension { number = i, seed = 1000 + i * 77 }, hidden, Streamer { }));
+        worlds.dimensions.Add(Scene.Load(Dimension { number = i, seed = SeedOf(i) }, hidden, Streamer { }));
     }
 }
 
@@ -254,10 +277,11 @@ void Unpack(mut Grid3<Block> blocks, List<byte> bytes)
     }
 }
 
-// What the store had for a chunk: its blocks as they were saved, or nothing, and it's made from the seed
+// What the store had for a chunk: its blocks as they were saved, or nothing, and it's made from the seed. One
+// whose bytes couldn't be read waits, and is asked for again (Retry): made afresh, it would be saved over them
 event(Loaded loaded) Fill(mut Chunk chunk, mut Seen seen)
 {
-    if (chunk.stage != Stage.Asked) return;
+    if (chunk.stage != Stage.Asked || loaded.failed) return;
     if (!loaded.found)
     {
         chunk.stage = Stage.Missing;
@@ -265,6 +289,7 @@ event(Loaded loaded) Fill(mut Chunk chunk, mut Seen seen)
     }
     Unpack(chunk.blocks, loaded.bytes);
     chunk.edits = 1;
+    seen.saved = 1;
     chunk.stage = Stage.Made;
     seen.shown = true;
     Visibility.Set(seen.group, seen.audience);
@@ -323,6 +348,22 @@ bool Solid(Block block)
     return block != Block.Air && block != Block.Water;
 }
 
+// What a body meets at a cell: a solid block, or a chunk this machine hasn't made, which it can't walk into
+bool Firm(int dimension, int3 cell, query (Chunk chunk) chunks)
+{
+    var at = ChunkOfCell(cell);
+    mut var firm = true;
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+        if (row.chunk.dimension == dimension)
+        {
+            firm = row.chunk.stage != Stage.Made || Solid(row.chunk.blocks[cell.x & 15, cell.y & 15, cell.z & 15]);
+        }
+    }
+    return firm;
+}
+
 int3 CellOf(float3 place)
 {
     return int3(int(Math.Floor(place.x)), int(Math.Floor(place.y)), int(Math.Floor(place.z)));
@@ -335,26 +376,46 @@ bool Blocked(int dimension, float3 feet, query (Chunk chunk) chunks)
         for (var side = 0; side < 4; side++)
         {
             var corner = feet + float3(side % 2 == 0 ? -0.3 : 0.3, h * 0.89, side < 2 ? -0.3 : 0.3);
-            if (Solid(At(dimension, CellOf(corner), chunks))) return true;
+            if (Firm(dimension, CellOf(corner), chunks)) return true;
         }
     return false;
 }
 
+// Whether a cell takes in any of a body with its feet at a place
+bool Inside(int3 cell, float3 feet)
+{
+    return float(cell.x) < feet.x + 0.3 && float(cell.x + 1) > feet.x - 0.3 && float(cell.z) < feet.z + 0.3
+        && float(cell.z + 1) > feet.z - 0.3 && float(cell.y) < feet.y + 1.8 && float(cell.y + 1) > feet.y;
+}
+
 // A player turns, moves, digs and builds, and tells its dimension where it is. On foot it falls, stands on
-// blocks and stops at them, once the chunk it's in is there; a bot flies through everything.
+// blocks and stops at them, once the chunks it's in are there; a bot flies through everything.
 system Move(mut Avatar avatar, Controls controls, Owner owner, Worlds worlds, Time time, query (Chunk chunk) chunks)
 {
     if (!worlds.ready) return;
     var before = avatar.dimension;
     avatar.yaw += controls.look.x;
-    avatar.pitch = Math.Clamp(avatar.pitch + controls.look.y, -1.5, 1.5);
+    avatar.pitch = Math.Clamp(avatar.pitch - controls.look.y, -1.5, 1.5);
     if (controls.hops != avatar.hops)
     {
         avatar.hops = controls.hops;
         avatar.dimension = (avatar.dimension + 1) % worlds.count;
+        // The other dimension's ground is somewhere else: it starts on its seed's ground there, and rises out of
+        // what players built or the hills hold once that's there
+        var column = CellOf(avatar.position);
+        avatar.position.y = Math.Max(avatar.position.y, float(Ground(SeedOf(avatar.dimension), column.x, column.z) + 1));
+        avatar.velocity = float3(0, 0, 0);
+        avatar.placing = !controls.fly;
     }
+    var standing = Has(avatar.dimension, ChunkOf(avatar.position), chunks)
+                && Has(avatar.dimension, ChunkOf(avatar.position + float3(0, 1.8, 0)), chunks);
     if (controls.fly) avatar.position += controls.move * SPEED * time.dt;
-    else if (Has(avatar.dimension, ChunkOf(avatar.position), chunks))
+    else if (standing && avatar.placing)
+    {
+        if (Blocked(avatar.dimension, avatar.position, chunks)) avatar.position.y += 1;
+        else avatar.placing = false;
+    }
+    else if (standing)
     {
         var sin = Math.Sin(avatar.yaw);
         var cos = Math.Cos(avatar.yaw);
@@ -387,19 +448,23 @@ system Move(mut Avatar avatar, Controls controls, Owner owner, Worlds worlds, Ti
     if (avatar.wait > 0 || (!controls.dig && !controls.build)) return;
     var eye = avatar.position + float3(0, 1.6, 0);
     var aim = Math.Forward(quaternion.Euler(float3(avatar.pitch, avatar.yaw, 0)));
+    // From the eye's own cell, which a body buried to its eyes digs; what's built goes in the last cell the ray
+    // went through, never one the body is in
     mut var last = CellOf(eye);
-    for (var i = 1; i <= REACH; i++)
+    mut var through = false;
+    for (var i = 0; i <= REACH; i++)
     {
         var cell = CellOf(eye + aim * (i * 0.1));
-        if (Same(cell, last)) continue;
+        if (through && Same(cell, last)) continue;
         if (Solid(At(avatar.dimension, cell, chunks)))
         {
             if (controls.dig) Send(Put { dimension = avatar.dimension, cell = cell, block = Block.Air });
-            else Send(Put { dimension = avatar.dimension, cell = last, block = Block.Plank });
+            else if (through && !Inside(last, avatar.position)) Send(Put { dimension = avatar.dimension, cell = last, block = Block.Plank });
             avatar.wait = 12;
             break;
         }
         last = cell;
+        through = true;
     }
 }
 
@@ -408,7 +473,7 @@ bool Within(int3 chunk, int3 center, int near, int tall)
     return Math.Abs(chunk.x - center.x) <= near && Math.Abs(chunk.z - center.z) <= near && Math.Abs(chunk.y - center.y) <= tall;
 }
 
-// The chunk at a place, or none: found by its place, which the loop's guard says (an indexed loop)
+// The chunk at a place on this machine, or none: found by its place, which the loop's guard says (an indexed loop)
 Entity Find(int dimension, int3 at, query (Chunk chunk) chunks)
 {
     mut Entity found = default;
@@ -424,7 +489,7 @@ Entity Find(int dimension, int3 at, query (Chunk chunk) chunks)
 // the chunks the box left lose the player and those it took in get them, made
 // first where there's none. Only the server's machine has a Streamer, so only
 // it runs this.
-event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds, Time time, mut World world, query (Chunk chunk) chunks)
+event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds, Time time, mut World world)
 {
     var known = streamer.watching.TryGet(want.player, out var from);
     if (!want.has && !known) return;
@@ -439,8 +504,7 @@ event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds
                 {
                     var at = int3(x, y, z);
                     if (want.has && Within(at, want.to, near, tall)) continue;
-                    var chunk = Find(dimension.number, at, chunks);
-                    if (chunk == default) continue;
+                    if (!streamer.chunks.TryGet(KeyOf(at), out var chunk)) continue;
                     mut var seen = world.Get<Seen>(chunk);
                     seen.audience.Remove(want.player);
                     seen.emptied = time.tick;
@@ -459,8 +523,7 @@ event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds
             {
                 var at = int3(x, y, z);
                 if (known && Within(at, from, near, tall)) continue;
-                var chunk = Find(dimension.number, at, chunks);
-                if (chunk != default)
+                if (streamer.chunks.TryGet(KeyOf(at), out var chunk))
                 {
                     mut var seen = world.Get<Seen>(chunk);
                     seen.audience.Add(want.player);
@@ -474,7 +537,8 @@ event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds
                     mut var visibility = Visibility { group = group };
                     visibility.Set<Seen>(Audience.None);
                     var made = Spawn(Chunk { at = at, dimension = dimension.number, seed = dimension.seed }, visibility,
-                                     Seen { group = group, audience = Audience.Only(want.player) });
+                                     Seen { group = group, audience = Audience.Only(want.player), asked = time.tick });
+                    streamer.chunks[KeyOf(at)] = made;
                     Storage.Load(SavedAs(dimension.number, at), made);
                 }
             }
@@ -496,14 +560,47 @@ event(Change change) Apply(mut Chunk chunk)
     if (chunk.blocks[cell] == change.block) return;
     chunk.blocks[cell] = change.block;
     chunk.edits += 1;
+    chunk.stamp = chunk.stamp * 31 + ((cell.z * SIZE + cell.y) * SIZE + cell.x) * 16 + int(change.block) + 1;
 }
 
-// A chunk nobody has had for a while goes, one a player changed into the server's store first. It writes nothing
-// until then: a chunk that only waits costs the server no hashing
-system Idle(Seen seen, Chunk chunk, Time time)
+// A chunk nobody has had for a while goes. It writes nothing until then: a chunk that only waits costs the
+// server no hashing
+system Idle(Seen seen, Chunk chunk, Worlds worlds, Time time)
 {
-    if (seen.audience != Audience.None || chunk.stage != Stage.Made || time.tick - seen.emptied < LINGER) return;
-    if (chunk.edits > 0) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    if (seen.audience != Audience.None || chunk.stage != Stage.Made || time.tick - seen.emptied < worlds.linger) return;
+    this.Send(Expire { });
+}
+
+// ...in its tick's events, after the Wants of the tick's moves: a player who came back to it this tick keeps it.
+// One players changed goes into the store first.
+event(Expire) Drop(Seen seen, Chunk chunk, Worlds worlds)
+{
+    if (seen.audience != Audience.None) return;
+    if (chunk.edits != seen.saved) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
     Visibility.DestroyGroup(seen.group);
+    worlds.dimensions[chunk.dimension].Send(Gone { at = chunk.at, chunk = this });
     this.Destroy();
+}
+
+event(Gone gone) Forget(mut Streamer streamer)
+{
+    var key = KeyOf(gone.at);
+    if (streamer.chunks.TryGet(key, out var chunk) && chunk == gone.chunk) streamer.chunks.Remove(key);
+}
+
+// What players changed of a chunk they're near is saved every while too, each chunk in a tick of its own: a
+// server that stops loses at most that while of it
+system Keep(mut Seen seen, Chunk chunk, Worlds worlds, Time time)
+{
+    if (chunk.edits == seen.saved || (time.tick + chunk.at.x * 7 + chunk.at.y * 3 + chunk.at.z * 13) % worlds.keep != 0) return;
+    Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    seen.saved = chunk.edits;
+}
+
+// A load whose answer never came (the server stopped, or went back in time, first) or failed is asked again
+system Retry(mut Seen seen, Chunk chunk, Time time)
+{
+    if (chunk.stage != Stage.Asked || time.tick - seen.asked < RETRY) return;
+    seen.asked = time.tick;
+    Storage.Load(SavedAs(chunk.dimension, chunk.at), this);
 }
