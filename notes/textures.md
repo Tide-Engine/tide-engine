@@ -68,6 +68,12 @@ below says where they differ (how a copy is kept fresh, "Pack layout is unchange
      are the formula's, a sweep of every 4,099th float, every byte under every alpha, and what's out of range.
      A change to `tide_pow_f` or the transfer functions fails it; the tables are then made again by bisecting
      the formula for each byte's first float.
+   - **Correction (audit, 2026-11-14):** `tide_transfer_display_byte` tested the saturated value's bits, and
+     saturating keeps -0's sign, so -0 (bits 0x80000000) indexed the 417-entry guesses at 4,544: an
+     out-of-bounds read for a `[Linear]` Color grid cell of -0 (`mesh.c`, any alpha from 1 to 254) or a build
+     function's -0 pixel (`texture_cache.c`'s `marked_byte`, which then memoized the byte for +0 too). It tests
+     the value now (`!(x >= 2^-13)`), and `math_transfer_bytes` checks -0 under every alpha. The read landed in
+     other rodata, so neither ASan nor the old test saw it; the check pins the result, not the read.
    - **Measured** (this machine, 2048 by 2048). The loops alone, `-O2` without sanitizers, old code against
      new on the same buffers: an opaque image's capture 894 ms before and 29 after (floats that are no bytes
      900 and 28), a soft one's 879 and 574 (one pow a channel left: the memo isn't in this loop), a mip chain's
