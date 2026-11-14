@@ -126,7 +126,7 @@ game/render-targets.md, Smooth edges.
   GenerateMips) is the next Unity pass's (unity.md).
 - **Tests.** `tide_platform_kernel_reads` (new: `platform/tests/kernel_reads.tide/.c`), native Vulkan with
   validation and web-debug WebGPU, the device lost and found on the web, and `tide_platform_kernel_reads_none`
-  (web, `gpu=none`): 25 probes in a game where no frag reads a depth, cube or array: no depth, cube, array, array
+  (web, `gpu=none`): 25 probes (26 since the correction below) in a game where no frag reads a depth, cube or array: no depth, cube, array, array
   depth, typed cube/array/image; disposed target color, depth, cube, array (colors and depth), typed image; a depth a
   frag wrote (read and compared), a face, a layer, depth layers; a depth-alone array through `?:`; level 3 of R16f,
   Color, an R16f layer, an R16f face, 4-sample R16f and Color targets, read at the middle of a column of 4 left of a
@@ -136,6 +136,15 @@ game/render-targets.md, Smooth edges.
   probes, without `after_kernel` the redraw probe. `tide_platform_images` gained a 4-sample R16f and Color target's
   level 3 in a frag and a Trilinear read of an R32i image (white, and on WebGPU no validation error). Errors:
   `texture_array_depth_alone_colors`, `_kernel`, `render_target_depth_alone_color`, `_source`.
+- **Correction (review, same day): typed cubes' zeros weren't tested.** Every typed cube and array given no image
+  was `[Raw(float)]`, whose one channel is 0 in the zeros and in the dark cube alike, so dropping `zero_cube` from
+  `make_read_fallbacks` (or `read_fallback`'s `blend && cube` branch) left every suite green: a typed cube would
+  have read (0,0,0,1). kernel_reads' never-given typed cube and array are now `[Raw(float4)]`, checked to be four
+  zeros, and a new probe (row 0, column 15) reads a disposed `[Raw(float4)]` Rgba16f cube and array; images.tide's
+  frag probe of no array and no cube (filtered mode 6) reads four channels too. Not making `zero_cube`, or not
+  choosing it in `read_fallback`, fails the kernel's never-given and disposed probes and the frag's, on Vulkan; not
+  choosing `zero_array` fails the same three. Sanitize (Vulkan) and web-debug (WebGPU, device lost and found;
+  `gpu=none`): kernel_reads and images pass.
 - **Validation** (Windows, Clang 23, Node 24.22.1, hidden): sanitize: 29 renderer `gpu` fixtures (draw, targets,
   compute, images, kernels, kernel_reads, occlusion, cull, shaders, prewarm, readback, depth fallbacks and others),
   draw units 129/129, the embed suite 29/29, the 84 related diagnostics, 73 shader goldens and texture e2es;
