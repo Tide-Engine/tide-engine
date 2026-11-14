@@ -45,6 +45,12 @@ unavailable hardware platforms are recorded in unity.md. No CI was manually disp
 
 # Owned pixel readback (2026-11-14)
 
+Correction (review, 2026-11-14): `await target.Read() is Grid2<Color> pixels` names a scratch grid, and a task's
+frame carried it across a wait as a raw handle (`task_value_handles` has no grid case), so a read or write of
+`pixels` after a later `await` went through reused scratch memory. `check_await` now refuses a wait while a grid
+local is in scope (`errors/read_target_kept_across_wait.tide`); the fixture's own shape, copy then wait, is
+unchanged. With no GPU (`gpu_none`) a read still succeeds with zeroes, as a list's read does there.
+
 Owner-approved 2026-11-13: await target.Read gives an owned Grid2<Color> fails IOError in local async code.
 Picks and alternatives are Provisional in spec.md. It shares the 64 bounded read tickets and gpu.h asynchronous
 buffer_read/done/wait operations with list reads. ReadTargetPixels, an internal Tide kernel, samples exact pixel

@@ -12889,6 +12889,16 @@ static type check_await(checker *c, expr *e)
         diag_note("go through them with 'for' loops, which can wait: 'for (var y = 0; y < cells.size.y; y++) { ... }'");
         return T_ERR;
     }
+    // A grid a task holds is the one 'is' named, from a read: it's in the scratch area, which a wait gives back
+    for (int i = 0; i < c->locals.count; i++) {
+        const stmt *const held = c->locals.items[i];
+        if (held->type.kind != TY_GRID) continue;
+        diag_error(e->at, "a task can't wait while it holds the grid '" STR_FMT "': a local's grid lasts until the task waits",
+                   STR_ARG(held->name));
+        diag_note("copy what's kept into a component or singleton first, like 'state.pixels = " STR_FMT ".Copy();', and wait "
+                  "after the code '" STR_FMT "' is in", STR_ARG(held->name), STR_ARG(held->name));
+        return T_ERR;
+    }
     if (t.kind == TY_ERROR) return T_ERR;
     if (t.kind == TY_STRUCT && t.decl->task_handle) {
         if (!t.decl->task_origin && in_async_function(c)

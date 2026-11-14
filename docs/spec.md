@@ -3321,6 +3321,9 @@ The owner: "these make sense, lets do all of these". `await target.Read()` in lo
 `Grid2<Color>` with `fails IOError`, by the same asynchronous rules as GPUList.Read. It never enters match code.
 It captures the frame drawn after the request, a frame or more later, and fails when the device is lost.
 Colors are straight Color values, as Sample returns, rather than multiplied by alpha.
+The grid `is` names is a local's grid, which lasts until the task next waits, so an `await` while it is in scope
+is a compile error that says to copy what's kept into a component or singleton first (Provisional, Claude,
+2026-11-14: the alternative, carrying the grid across waits as a task carries its lists, is not built).
 
 #### Depth bias (decided 2026-11-13)
 
