@@ -9,6 +9,14 @@ Parser diagnostics explicitly reject local/parameter attributes. The shader capt
 *_source_linear entry point; WGSL itself performs no manual transfer conversion for a marked read.
 Contracts, Provisional picks, importer/cache/alpha details and validation: textures.md top section and spec.md.
 
+## Numeric GPU images (2026-11-14)
+
+The approved frag output types, Format members, typed Texture/Texture3D roles, per-image clears and storage
+format connection are implemented. Checker/parser/codegen contracts and exact shader/compiler tests are in
+shaders.md; resource encoding, clears and reload contracts are in render-targets.md. Existing generated C,
+headers and packs retain their identities apart from compiler-source simulation IDs when none of the new
+features is used (the five-fixture plain/layout comparison is recorded with compiler validation).
+
 ## Awaited render-target pixels (2026-11-14)
 
 RenderTarget.Read is local async, failable Grid2<Color>, lowered through the existing GPU ticket frame field.

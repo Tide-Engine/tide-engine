@@ -1,0 +1,6 @@
+// tide numeric outputs: 1
+@group(0) @binding(0) var<uniform> u: vec4f;
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0, 1);
+}
+@fragment fn fragment() -> @location(0) vec2f { return vec2f(1.5,-0.5); }

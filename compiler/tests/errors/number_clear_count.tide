@@ -1,0 +1,8 @@
+// expect: this target holds 2 images: give Clear exactly one value for each image, in order
+scene Main { }
+local singleton Images { RenderTarget target; }
+view Clear(mut Images images)
+{
+    images.target = RenderTarget(8, 8, Format.R32f, Format.R32i);
+    images.target.Clear(2.5);
+}

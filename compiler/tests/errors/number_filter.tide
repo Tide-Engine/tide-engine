@@ -1,0 +1,4 @@
+// expect: a typed numeric image reads its nearest pixel on every device: use Filter.Point
+scene Main { }
+local singleton Images { [Raw(float)] Texture image; }
+frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.image.Sample(vertex.uv,Filter.Bilinear),0,0); }

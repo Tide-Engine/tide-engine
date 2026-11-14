@@ -1,0 +1,5 @@
+// expect: this image's format isn't a portable storage format
+scene Main { }
+local singleton Images { RenderTarget target; [Raw(float2)] Texture image; }
+compute Fill(Images images) { images.image[this.at.xy] = float2(2.5); }
+view Show(mut Images images) { images.target=RenderTarget(8,8,Format.Rg8); images.image=images.target.color; GPU.Run(Fill,int2(8)); }

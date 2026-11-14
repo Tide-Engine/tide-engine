@@ -5435,7 +5435,7 @@ view LinearSampling(Art art, mut LinearImages images)
     if (art.targetPass != 33) return;
     if (!images.made)
     {
-        images.target = RenderTarget(4, 4, 1);
+        images.target = RenderTarget(4, 4, 1, Format.R32i, Format.Rgba8);
         images.cube = Cubemap(4);
         images.array = TextureArray(4, 4, 2, 1);
         images.cells[0, 0] = Color.black;
@@ -5443,12 +5443,12 @@ view LinearSampling(Art art, mut LinearImages images)
         images.gridImage = images.cells;
         images.layers[1, 0, 1] = images.cells[1, 0];
         images.gridArray = images.layers;
-        images.targetImage = images.target.color;
-        images.originalTarget = images.target.color;
+        images.targetImage = images.target.colors[1];
+        images.originalTarget = images.target.colors[1];
         images.made = true;
     }
     Color paint = Color(images.paint, images.paint, images.paint, 0.5);
-    images.target.SetScreen(); images.target.Clear(paint);
+    images.target.SetScreen(); images.target.Clear(-123, paint);
     for (int i = 0; i < 6; i++) { images.cube.faces[i].SetScreen(); images.cube.faces[i].Clear(paint); }
     for (int i = 0; i < 2; i++) { images.array.layers[i].SetScreen(); images.array.layers[i].Clear(paint); }
     Draw.SetScreen(); Draw.SetClip(); Draw.SetDepth(.None); Draw.Clear(Color.black);

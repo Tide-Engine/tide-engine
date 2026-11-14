@@ -86,10 +86,30 @@ public sealed unsafe class ComputeReplayTests
             Add(Op.PipelineStorage, id, 1, 3, 1);
         }
 
+        public void Numeric(uint id, ulong key, uint read = 0, uint format = 0, bool kernel = false)
+        {
+            Pipeline(id, key, 16, 0, kernel ? new uint[] { read } : null);
+            if (kernel)
+            {
+                Add(Op.PipelineStorage, id, 1, 0, 0);
+                Add(Op.PipelineImages, id, 1, 1, format);
+            }
+        }
+
+        public void IntegerReader(uint id, bool volume)
+        {
+            Pipeline(id, volume ? 0xc0de0051UL : 0xc0de0050UL, 16, 3, new uint[] { volume ? 12u : 10u });
+            Add(Op.PipelineStorage, id, 1, 1, 1);
+        }
+
+        public void NumericMixed(uint id) => Pipeline(id, 0xc0de0024, 16, 0, null, false, 0, 3);
+
+        public void NumericClear(uint id, uint depth) => Pipeline(id, 0xc0de0048, 64, 3, null, false, depth, 4);
+
         public void DepthImage(uint id, uint depth) => Pipeline(id, 0xc0de0012, 32, 3, new uint[] { 1 }, true, depth);
         public void LayeredImage(uint id) => Pipeline(id, 0xc0de0013, 32, 3, new uint[] { 3, 6 }, true);
 
-        void Pipeline(uint id, ulong key, uint uniforms, uint blend, uint[] reads = null, bool sampled = false, uint depth = 0)
+        void Pipeline(uint id, ulong key, uint uniforms, uint blend, uint[] reads = null, bool sampled = false, uint depth = 0, uint outputs = 1)
         {
             var w = new List<uint> { id, (uint)key, (uint)(key >> 32), 0 };
             for (var i = 0; i < 3; i++) w.AddRange(new uint[] { 0, 0 });
@@ -101,7 +121,7 @@ public sealed unsafe class ComputeReplayTests
             w.Add(sampled ? 1u : 0u);
             if (sampled) w.Add(0); // One shared color sampler at binding 2
             if (reads != null) foreach (var _ in reads) w.Add(sampled ? 1u : 0u);
-            w.AddRange(new uint[] { blend, depth, 0, 0, 0, 0, 1, 0 }); // Blend, depth, cull, stencil, into, outputs, alpha_to_coverage
+            w.AddRange(new uint[] { blend, depth, 0, 0, 0, 0, outputs, 0 }); // Blend, depth, cull, stencil, into, outputs, alpha_to_coverage
             w.Add(4);
             w.Add(0x74736574); // "test"
             Add(Op.Pipeline, w.ToArray());
@@ -415,6 +435,185 @@ public sealed unsafe class ComputeReplayTests
         return (Texture)image.GetType().GetField("texture").GetValue(image);
     }
 
+    // Integer Texture readback is not exposed by Unity's OpenGL API. Load to an integer buffer first, using
+    // the same portable shader path as a game, then verify every bit through the replay's ordinary buffer reads.
+    IEnumerator ReadIntegerImage(uint image, bool volume, uint count)
+    {
+        answers.Clear();
+        var c = new Commands();
+        c.Buffer(140, count * 4, null);
+        c.IntegerReader(141, volume);
+        c.Add(Op.ComputeBegin);
+        c.Add(Op.Use, 141);
+        c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+        c.Add(Op.Image, 0, image);
+        c.Add(Op.Storage, 0, 140);
+        c.Add(Op.Dispatch, 1, 1, 1);
+        c.Add(Op.ComputeEnd);
+        c.Add(Op.BufferRead, 1, 140, 0, count * 4);
+        Replay(c);
+        yield return Answers(1);
+        Assert.IsNotNull(answers[1], "integer image load/readback");
+    }
+
+    // These shaders' outputs are numbers, so each replaces its image under Alpha, and a fourth component
+    // remains a number. The large signed ID detects a float conversion on any replay API.
+    [UnityTest]
+    public IEnumerator NumericOutputsKeepTheirExactValues()
+    {
+        foreach (var format in new uint[] { 2, 3, 4, 5, 6, 7, 8, 9 })
+        {
+            var scalar = format == 3 || format == 5 || format == 7;
+            var pair = format == 4 || format == 6;
+            var integer = format == 9;
+            var key = integer ? 0xc0de0023UL : pair ? 0xc0de0022UL : scalar ? 0xc0de0021UL : 0xc0de0020UL;
+            var c = new Commands();
+            c.Add(Op.Target, 100, format, 4, 4, 101, 0, 0, 0, 102);
+            c.Numeric(110, key);
+            c.Add(Op.Begin, 100, 1);
+            c.Add(Op.Use, 110);
+            c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+            c.Add(Op.Draw, 0, 3, 1);
+            c.Add(Op.End);
+            Replay(c);
+            if (integer)
+            {
+                yield return ReadIntegerImage(101, false, 16);
+                foreach (var value in answers[1]) Assert.AreEqual(-16777217, unchecked((int)value), "signed ID stays exact");
+            }
+            else
+            {
+                var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(101), 0, TextureFormat.RGBAFloat);
+                while (!read.done) yield return null;
+                Assert.IsFalse(read.hasError, $"format {format} readback");
+                var values = read.GetData<float>();
+                var expected = new[] { format == 3 || format == 4 ? 1f : 1.5f,
+                    scalar ? 0f : format == 4 ? 0f : -0.5f, scalar || pair ? 0f : 2f, scalar || pair ? 1f : 0.125f };
+                for (var i = 0; i < values.Length; i++) if (i % 4 < (scalar ? 1 : pair ? 2 : 4))
+                    Assert.AreEqual(expected[i % 4], values[i], $"format {format} component {i}");
+            }
+            // New ids replace and release the previous target's attachments through the normal replay path.
+        }
+    }
+
+    [UnityTest]
+    public IEnumerator NumericOutputsReplaceWhileColorStillBlends()
+    {
+        var c = new Commands();
+        c.Add(Op.Target, 300, 0x982, 4, 4, 301, 302, 303, 0, 304);
+        c.NumericMixed(310);
+        c.Add(Op.Begin, 300, 1);
+        c.Add(Op.Use, 310);
+        c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.End);
+        Replay(c);
+        foreach (var id in new uint[] { 301, 302 })
+        {
+            var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(id), 0, TextureFormat.RGBAFloat);
+            while (!read.done) yield return null;
+            Assert.IsFalse(read.hasError);
+            var values = read.GetData<float>();
+            var expected = id == 301 ? new[] { 0.75f, 0f, 0f, 1f } : new[] { 1.5f, -0.5f, 2f, 0.125f };
+            for (var i = 0; i < values.Length; i++) Assert.AreEqual(expected[i % 4], values[i], $"mixed image {id} component {i}");
+        }
+        yield return ReadIntegerImage(303, false, 16);
+        foreach (var value in answers[1]) Assert.AreEqual(-16777217, unchecked((int)value), "mixed signed ID stays exact");
+    }
+
+    [UnityTest]
+    public IEnumerator NumericClearsKeepValuesClipsAndDepthOnly()
+    {
+        var c = new Commands();
+        c.Add(Op.Target, 200, 0x9867, 4, 4, 201, 202, 203, 204, 205);
+        c.NumericClear(210, 3);
+        c.NumericClear(211, 6); // RESET_ALONE clears depth without touching even the integer attachment
+        c.Add(Op.Begin, 200, 1);
+        c.Add(Op.Use, 210);
+        c.Add(Op.Uniforms, 64, Bits(1.5f), 0, 0, 0, Bits(2.5f), Bits(-0.5f), 0, 0,
+            Bits(3.5f), Bits(-0.5f), Bits(2), Bits(0.25f), unchecked((uint)-16777217), 0, 0, 0);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.Scissor, 0, 0, 2, 2);
+        c.Add(Op.Uniforms, 64, Bits(4.5f), 0, 0, 0, Bits(5.5f), Bits(-0.25f), 0, 0,
+            Bits(6.5f), Bits(-0.25f), Bits(4), Bits(0.125f), unchecked((uint)-33554433), 0, 0, 0);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.Scissor, 0, 0, 4, 4);
+        c.Add(Op.Use, 211);
+        c.Add(Op.Uniforms, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.End);
+        Replay(c);
+        for (uint image = 201; image <= 204; image++)
+        {
+            var integer = image == 204;
+            var changed = 0;
+            if (integer)
+            {
+                yield return ReadIntegerImage(image, false, 16);
+                foreach (var word in answers[1])
+                {
+                    var value = unchecked((int)word);
+                    if (value == -33554433) changed++;
+                    else Assert.AreEqual(-16777217, value, "integer clear is exact and depth-only keeps it");
+                }
+            }
+            else
+            {
+                var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(image), 0, TextureFormat.RGBAFloat);
+                while (!read.done) yield return null;
+                Assert.IsFalse(read.hasError, $"clear image {image}");
+                var values = read.GetData<float>();
+                var oldRed = image == 201 ? 1.5f : image == 202 ? 2.5f : 3.5f;
+                for (var i = 0; i < values.Length; i += 4)
+                {
+                    if (values[i] == oldRed + 3) changed++;
+                    else Assert.AreEqual(oldRed, values[i], "float clear past one survives depth-only");
+                    if (image >= 202) Assert.AreEqual(values[i] == oldRed ? -0.5f : -0.25f, values[i + 1]);
+                    if (image == 203) Assert.AreEqual(values[i] == oldRed ? 0.25f : 0.125f, values[i + 3], "fourth channel is a free number");
+                }
+            }
+            Assert.AreEqual(4, changed, $"clear image {image} obeys its two-by-two clip");
+        }
+    }
+
+    [UnityTest]
+    public IEnumerator NumericVolumesKeepTheirExactValues()
+    {
+        foreach (var format in new uint[] { 5, 6, 7 }) // tide_gpu_format R32F, RGBA32F, R32I
+        {
+            var integer = format == 7;
+            var c = new Commands();
+            c.Add(Op.Volume, 120, format, 2, 2, 2);
+            c.Numeric(130, 0xc0de0030UL + format - 5, integer ? 12u : 11u, format, true);
+            c.Add(Op.ComputeBegin);
+            c.Add(Op.Use, 130);
+            c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+            c.Add(Op.Image, 0, 120);
+            c.Add(Op.Dispatch, 2, 2, 2);
+            c.Add(Op.ComputeEnd);
+            Replay(c);
+            if (integer)
+            {
+                yield return ReadIntegerImage(120, true, 8);
+                foreach (var value in answers[1]) Assert.AreEqual(-16777217, unchecked((int)value), "volume signed ID stays exact");
+            }
+            else
+            {
+                var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(120), 0, TextureFormat.RGBAFloat);
+                while (!read.done) yield return null;
+                Assert.IsFalse(read.hasError, $"numeric volume {format} readback");
+                for (var layer = 0; layer < read.layerCount; layer++)
+                {
+                    var values = read.GetData<float>(layer);
+                    var expected = format == 5 ? new[] { 1.5f, 0f, 0f, 1f } : new[] { 1.5f, -0.5f, 2f, 0.125f };
+                    for (var i = 0; i < values.Length; i++) if (format != 5 || i % 4 == 0)
+                        Assert.AreEqual(expected[i % 4], values[i], $"volume {format} component {i}");
+                }
+            }
+        }
+    }
+
     [UnityTest]
     public IEnumerator SrgbImagesDecodeBeforeFilteringAndKeepFormatAcrossUploads()
     {
@@ -544,7 +743,9 @@ public sealed unsafe class ComputeReplayTests
         c.Add(Op.Sampler, 0, 0, 0);
         c.Add(Op.Draw, 0, 3, 1);
         c.Add(Op.End);
+        c.Add(Op.Mipmaps, 51);
         Replay(c);
+        Assert.Greater(ImageTexture(51).mipmapCount, 1, "private sRGB target retains its mip chain");
         var source = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(11), 0);
         var sampled = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(51), 0);
         while (!source.done || !sampled.done) yield return null;

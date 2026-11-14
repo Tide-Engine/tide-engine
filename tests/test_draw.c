@@ -755,7 +755,7 @@ TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
     TIDE_CHECK(tide_render_target_format(TIDE_RENDER_WINDOW) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(tide_render_target_format(TIDE_RENDER_INVALID) == TIDE_TARGET_RGBA8 && tide_render_target_format(0) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(tide_render_target_format(1001) == TIDE_TARGET_RGBA8);
-    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, (tide_target_format)9).id) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, (tide_target_format)99).id) == TIDE_TARGET_RGBA8);
 
     // Its state is found whatever it holds: it's live, resized and disposed like any other
     TIDE_CHECK(tide_render_target_live(shadow.id) && tide_render_target_version(shadow.id) == 1);
@@ -847,7 +847,7 @@ TIDE_TEST(draw_targets_hold_several_colors_and_lend_each)
     TIDE_CHECK(tide_render_target_colors(screen.id) == 3 && screen.size.window == 1.0f);
     TIDE_CHECK(tide_render_target_colors(half.id) == 2 && half.size.window == 0.5f);
     // Four at the most, each a color's: among several, depth alone is a color image, and so is a format there's none of
-    const tide_target_format many[] = {TIDE_TARGET_RGBA16F, TIDE_TARGET_DEPTH, (tide_target_format)9, TIDE_TARGET_RGBA16F,
+    const tide_target_format many[] = {TIDE_TARGET_RGBA16F, TIDE_TARGET_DEPTH, (tide_target_format)99, TIDE_TARGET_RGBA16F,
                                        TIDE_TARGET_RGBA16F, TIDE_TARGET_RGBA16F};
     held = tide_render_target_formats(tide_render_target_make_of(4.0f, 4.0f, many, 6).id);
     TIDE_REQUIRE(held.count == TIDE_TARGET_COLORS);
@@ -2366,4 +2366,88 @@ TIDE_TEST(draw_linear_grid_captures_keep_roles_and_alpha)
     tide_draw_free(&d);
     tide_text_use(NULL, NULL);
     tide_heaps_free(&heap);
+}
+
+TIDE_TEST(draw_numeric_target_formats_keep_images_samples_and_reload)
+{
+    for (int f = TIDE_TARGET_R8; f <= TIDE_TARGET_R32I; f++) {
+        for (int power = 0; power < 4; power++) {
+            const tide_target_format formats[4] = {TIDE_TARGET_RGBA8, (tide_target_format)f, TIDE_TARGET_RGBA16F, (tide_target_format)f};
+            const tide_render_target target = tide_render_target_make_sampled(8, 8, formats, 4, 1 << power);
+            const tide_target_formats held = tide_render_target_formats(target.id);
+            TIDE_REQUIRE(held.count == 4);
+            for (uint32_t i = 0; i < 4; i++) {
+                TIDE_CHECK(held.color[i] == formats[i]);
+                const tide_texture_ref color = tide_render_target_color_at(target, (int32_t)i);
+                TIDE_CHECK(tide_render_target_image(color.target.id) == i);
+                TIDE_CHECK(tide_render_target_whole(color.target.id) == target.id);
+                TIDE_CHECK(tide_render_target_state_of(color.target.id) == tide_render_target_state_of(target.id));
+            }
+            const uint32_t samples = f >= TIDE_TARGET_R32F ? 1u : 1u << power;
+            TIDE_CHECK(tide_render_target_samples(target.id) == samples);
+            tide_render_target opaque = target;
+            opaque.id = TIDE_RENDER_MANAGED | (UINT64_C(0x745) << 16) | (target.id & TIDE_RENDER_BITS);
+            const tide_render_target restored = tide_render_target_recreate(opaque);
+            TIDE_CHECK(tide_render_target_samples(restored.id) == samples);
+            const tide_target_formats again = tide_render_target_formats(restored.id);
+            TIDE_CHECK(memcmp(&held, &again, sizeof held) == 0);
+            for (uint32_t i = 1; i < 4; i++) {
+                const uint64_t named = tide_render_target_color_at(target, (int32_t)i).target.id;
+                const tide_render_target reference = {.id = (opaque.id & ~TIDE_RENDER_BITS) | (named & TIDE_RENDER_BITS), .size = opaque.size};
+                const tide_render_target alias = tide_render_target_recreate(reference);
+                TIDE_CHECK(tide_render_target_whole(alias.id) == restored.id && tide_render_target_image(alias.id) == i);
+            }
+            tide_render_targets_recreated();
+        }
+    }
+    const tide_texture3d_ref volume = tide_texture3d_make((tide_int3){4, 4, 4}, TIDE_TARGET_RGBA32F);
+    TIDE_CHECK(tide_render_target_format(volume.target.id) == TIDE_TARGET_RGBA32F);
+    tide_texture3d_resize(volume, (tide_int3){512, 512, 64}); // 256 MiB: must keep the old extent.
+    TIDE_CHECK(tide_texture3d_resolve(volume).depth == 4);
+    tide_render_targets_free();
+}
+
+TIDE_TEST(draw_typed_clears_keep_float_and_integer_bits_when_appended)
+{
+    tide_draw_list list = {0}, appended = {0};
+    const tide_target_format formats[4] = {TIDE_TARGET_R32F, TIDE_TARGET_RG16F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
+    const tide_render_target target = tide_render_target_make_of(8, 8, formats, 4);
+    tide_draw_render_target(&list, target);
+    const tide_clear_value values[] = {tide_clear_float(3.5f), tide_clear_float2((tide_float2){-2, 4}),
+        tide_clear_float4((tide_float4){5, -6, 7, 0.25f}), tide_clear_int(-2147483647)};
+    tide_draw_clear_images(&list, values, 4);
+    TIDE_REQUIRE(list.count && list.commands[list.count - 1u].kind == TIDE_DRAW_CLEAR_IMAGES);
+    const uint32_t at = list.commands[list.count - 1u].clear_images.uniforms;
+    TIDE_REQUIRE(at <= list.uniform_used && 64 <= list.uniform_used - at);
+    for (uint32_t i = 0; i < 4; i++) TIDE_CHECK(memcmp(list.uniforms + at + 16u * i, values[i].words, 16) == 0);
+    tide_draw_append(&appended, &list);
+    TIDE_REQUIRE(appended.count && appended.commands[appended.count - 1u].kind == TIDE_DRAW_CLEAR_IMAGES);
+    const uint32_t copied = appended.commands[appended.count - 1u].clear_images.uniforms;
+    TIDE_CHECK(memcmp(appended.uniforms + copied, list.uniforms + at, 64) == 0);
+    const uint32_t count = list.count;
+    tide_draw_clear_images(&list, values, 5);
+    tide_draw_clear_images(&list, values, 1);
+    TIDE_CHECK(list.count == count);
+    tide_draw_free(&list); tide_draw_free(&appended);
+    tide_render_targets_free();
+}
+
+TIDE_TEST(draw_numeric_tags_preserve_all_legacy_ids_without_extra_alignment)
+{
+    TIDE_CHECK(TIDE_RENDER_BITS == UINT64_C(65535));
+    for (uint32_t payload = 0; payload < 12046u * 4u; payload++) {
+        const uint32_t tag = tide_render_numeric_tag(payload);
+        TIDE_CHECK(tag <= TIDE_RENDER_BITS && tide_render_target_numeric(tag));
+        TIDE_CHECK(tide_render_numeric_payload(tag) == payload);
+    }
+    for (uint32_t tag = 0; tag <= TIDE_RENDER_BITS; tag++) {
+        bool legacy;
+        (void)tide_render_legacy_before(tag, &legacy);
+        if (!legacy) continue;
+        const uint64_t id = TIDE_RENDER_MANAGED | (UINT64_C(0x711) << 16) | tag;
+        TIDE_CHECK(!tide_render_target_numeric(id));
+        TIDE_CHECK(tide_render_target_samples(id) == (1u << (tag >> 14)));
+        TIDE_CHECK(tide_render_target_image(id) == ((tag >> 12) & 3u));
+        TIDE_CHECK(tide_render_target_whole(id) == (id & ~TIDE_RENDER_IMAGE));
+    }
 }

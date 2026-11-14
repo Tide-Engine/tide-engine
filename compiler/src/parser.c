@@ -1871,6 +1871,26 @@ static void parse_field(parser *p, decl *d)
 static void parse_query_params(parser *p, decl *d);
 
 // (Type name, ...): a method's, function's or operator's parameters.
+static void parse_image_role(parser *p, param *image)
+{
+    if (accept(p, T_LBRACKET)) {
+        const token *role = expect_ident(p, "Raw before a numeric image parameter");
+        if (!str_eq_c(role->text, "Raw")) {
+            diag_error(role->at, "an image parameter's role is [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)]");
+            longjmp(p->fail, 1);
+        }
+        expect(p, T_LPAREN, "'(' and the numeric image type after Raw");
+        image->sample_role = expect_ident(p, "float, float2, float4 or int")->text;
+        if (!str_eq_c(image->sample_role, "float") && !str_eq_c(image->sample_role, "float2")
+            && !str_eq_c(image->sample_role, "float4") && !str_eq_c(image->sample_role, "int")) {
+            diag_error(role->at, "a numeric image's type is float, float2, float4 or int");
+            longjmp(p->fail, 1);
+        }
+        expect(p, T_RPAREN, "')' after the numeric image type");
+        expect(p, T_RBRACKET, "']' after the numeric image role");
+    }
+}
+
 static void parse_routine_params(parser *p, decl *m)
 {
     expect(p, T_LPAREN, "'('");
@@ -1879,6 +1899,7 @@ static void parse_routine_params(parser *p, decl *m)
             refuse_linear_placement(p);
             param prm = {0};
             prm.at = peek(p)->at;
+            parse_image_role(p, &prm);
             if ((at(p, T_MUT) || (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out")))
                 && peek_at(p, 1)->kind == T_IDENT && str_eq_c(peek_at(p, 1)->text, "query")
                 && peek_at(p, 2)->kind == T_LPAREN) {
@@ -2462,6 +2483,7 @@ static void parse_query_params(parser *p, decl *d)
             refuse_linear_placement(p);
             param prm = {0};
             prm.at = peek(p)->at;
+            if (d->kind == DECL_SHADER) parse_image_role(p, &prm);
             const char *what = "parameter type";
             if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")
                 && (peek_at(p, 1)->kind == T_MUT || peek_at(p, 1)->kind == T_IDENT)) {

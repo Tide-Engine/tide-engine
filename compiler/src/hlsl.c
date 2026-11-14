@@ -95,6 +95,7 @@ typedef struct control {
 struct translation {
     arena a;
     const char *text;
+    uint32_t numeric_outputs; // Kept from tidec's WGSL marker; float4 numbers have no Color semantics.
     token *toks;
     int ntok, pos;
     jmp_buf failed;
@@ -2409,7 +2410,8 @@ static void entry_points(translation *x, fdecl *vertex, fdecl *fragment, hs *o)
         hput(o, "    tidehl_targets tidehl_o;\n");
         for (int i = 0; i < nresults; i++) {
             if (results[i].at.builtin == BUILTIN_FRAG_DEPTH) hprintf(o, "    tidehl_o.depth = tidehl_depth_out(%s);\n", results[i].path);
-            else if (results[i].at.location == 0 && results[i].t == t_vec(x, t_simple(x, K_F32), 4)) hprintf(o, "    tidehl_o.c0 = tidehl_output(%s);\n", results[i].path);
+            else if (results[i].at.location == 0 && !(x->numeric_outputs & 1u)
+                     && results[i].t == t_vec(x, t_simple(x, K_F32), 4)) hprintf(o, "    tidehl_o.c0 = tidehl_output(%s);\n", results[i].path);
             else hprintf(o, "    tidehl_o.c%d = %s;\n", results[i].at.location, results[i].path);
         }
         hput(o, "    return tidehl_o;\n");
@@ -3088,17 +3090,26 @@ static void translate(translation *x, hs *out)
     free(entries.s);
 }
 
+static uint32_t numeric_outputs(const char *text)
+{
+    static const char marker[] = "// tide numeric outputs: ";
+    if (strncmp(text, marker, sizeof marker - 1u)) return 0;
+    return (uint32_t)strtoul(text + sizeof marker - 1u, NULL, 10) & 15u;
+}
+
 char *tide_wgsl_to_hlsl(const char *wgsl, char *error, const size_t error_size)
 {
     translation *x = calloc(1, sizeof(translation));
     if (!x) abort();
     x->text = wgsl;
+    x->numeric_outputs = numeric_outputs(wgsl);
     x->error = error;
     x->error_size = error_size;
     if (error && error_size) error[0] = '\0';
     hs out = {0};
     char *result = NULL;
     if (!setjmp(x->failed)) {
+        if (x->numeric_outputs) hprintf(&out, "// tide numeric outputs: %u\n", x->numeric_outputs);
         translate(x, &out);
         result = htake(&out);
     }
@@ -3121,6 +3132,7 @@ char *tide_wgsl_to_hlsl(const char *wgsl, char *error, const size_t error_size)
 char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
 {
     hs o = {0};
+    const uint32_t numbers = numeric_outputs(hlsl);
     hprintf(&o,
             "// Made by tide unity from the game's WGSL. Do not edit: it's made again as the game is built.\n"
             "Shader \"%s\"\n"
@@ -3137,34 +3149,39 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
             "        _TideStencilRef (\"\", Float) = 0\n"
             "        _TideStencilComp (\"\", Float) = 8\n"
             "        _TideStencilPass (\"\", Float) = 0\n"
-            "        _TideAlphaToMask (\"\", Float) = 0\n"
-            "    }\n",
+            "        _TideAlphaToMask (\"\", Float) = 0\n",
             name);
+    if (numbers) hput(&o, "        _TideNumericMask (\"\", Float) = 15\n");
+    hput(&o, "    }\n");
     // One subshader, for GPUs whose shaders read buffers and compute: Unity's OpenGL ES 3.0 and WebGL 2 have no
     // Tide drawing (TideRender.Supported), as Tide itself has no backend that can't compute
-    hput(&o, "    SubShader\n"
-             "    {\n"
-             "        Pass\n"
-             "        {\n"
-             "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n"
-             "            ZTest [_TideZTest]\n"
-             "            ZWrite [_TideZWrite]\n"
-             "            Cull [_TideCull]\n"
-             "            AlphaToMask [_TideAlphaToMask]\n"
-             "            Stencil\n"
-             "            {\n"
-             "                Ref [_TideStencilRef]\n"
-             "                Comp [_TideStencilComp]\n"
-             "                Pass [_TideStencilPass]\n"
-             "            }\n"
-             "            HLSLPROGRAM\n"
-             "            #pragma vertex tidehl_vertex\n"
-             "            #pragma fragment tidehl_fragment\n"
-             "            #pragma target 4.5\n            #pragma exclude_renderers gles3\n");
-    hput(&o, "            #include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
-    hput(&o, hlsl);
-    hput(&o, "            ENDHLSL\n        }\n    }\n");
-    hput(&o, "}\n");
+    hput(&o, "    SubShader\n    {\n");
+    // ShaderLab accepts a dynamic ColorMask only for target zero. A second pass with literal masks keeps all
+    // MRT attachments untouched for depth-only drawing, including integer targets where blending is unavailable.
+    for (uint32_t pass = 0; pass < (numbers ? 2u : 1u); pass++) {
+        hput(&o, "        Pass\n        {\n"
+                 "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n");
+        for (uint32_t i = 0; i < 4u; i++) if (numbers >> i & 1u) hprintf(&o, "            Blend %u One Zero\n", i);
+        if (pass) for (uint32_t i = 0; i < 4u; i++) hprintf(&o, "            ColorMask 0 %u\n", i);
+        hput(&o, "            ZTest [_TideZTest]\n"
+                 "            ZWrite [_TideZWrite]\n"
+                 "            Cull [_TideCull]\n"
+                 "            AlphaToMask [_TideAlphaToMask]\n"
+                 "            Stencil\n"
+                 "            {\n"
+                 "                Ref [_TideStencilRef]\n"
+                 "                Comp [_TideStencilComp]\n"
+                 "                Pass [_TideStencilPass]\n"
+                 "            }\n"
+                 "            HLSLPROGRAM\n"
+                 "            #pragma vertex tidehl_vertex\n"
+                 "            #pragma fragment tidehl_fragment\n"
+                 "            #pragma target 4.5\n            #pragma exclude_renderers gles3\n");
+        hput(&o, "            #include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
+        hput(&o, hlsl);
+        hput(&o, "            ENDHLSL\n        }\n");
+    }
+    hput(&o, "    }\n}\n");
     return htake(&o);
 }
 

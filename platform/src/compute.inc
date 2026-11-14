@@ -545,7 +545,8 @@ static tide_gpu_id empty_image_destination(const tide_shader *shader, const uint
 {
     static struct { uint32_t epoch, format; bool volume; tide_gpu_id image, target; } empty[TIDE_SHADER_TEXTURES];
     const uint32_t epoch = gpu->epoch(), format = shader->image_formats[slot];
-    const bool volume = shader->texture_reads[slot] == TIDE_SHADER_READ_VOLUME;
+    const uint8_t read = shader->texture_reads[slot];
+    const bool volume = read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME || read == TIDE_SHADER_READ_INT_VOLUME;
     if (empty[slot].epoch == epoch && empty[slot].format == format && empty[slot].volume == volume) return empty[slot].image;
     if (empty[slot].epoch == epoch) {
         if (empty[slot].target) free_target(empty[slot].target);
@@ -569,7 +570,10 @@ static tide_gpu_id empty_image_destination(const tide_shader *shader, const uint
 static void retry_images(const tide_draw_list *list, const tide_draw_compute *r)
 {
     bool volume = r->shader->image_writes != 0;
-    for (uint32_t k = 0; k < r->shader->texture_count; k++) volume |= r->shader->texture_reads[k] == TIDE_SHADER_READ_VOLUME;
+    for (uint32_t k = 0; k < r->shader->texture_count; k++) {
+        const uint8_t read = r->shader->texture_reads[k];
+        volume |= read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_VOLUME || read == TIDE_SHADER_READ_INT_VOLUME;
+    }
     if (!volume) return;
     for (uint32_t k = 0; k < r->shader->texture_count; k++) {
         if (!(r->shader->image_writes >> k & 1u)) continue;
@@ -605,7 +609,8 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
     for (uint32_t k = 0; k < shader->texture_count && k < TIDE_SHADER_TEXTURES; k++) {
         prepare_source_target(list, r->textures[k], false);
         images[k] = texture_to_read(list, r->textures[k], gpu_read(shader, k));
-        if (gpu->texture_status && gpu_read(shader, k) == TIDE_GPU_READ_VOLUME) {
+        const tide_gpu_read read = gpu_read(shader, k);
+        if (gpu->texture_status && (read == TIDE_GPU_READ_VOLUME || read == TIDE_GPU_READ_NUMBER_VOLUME || read == TIDE_GPU_READ_INT_VOLUME)) {
             const uint32_t at = r->textures[k];
             const tide_draw_texture *t = at && at <= list->texture_count ? &list->textures[at - 1u] : NULL;
             tide_gpu_id actual = 0;

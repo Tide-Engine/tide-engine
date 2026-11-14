@@ -263,7 +263,10 @@ static void flow_read(flow *f, const expr *e, const field *part, uint8_t *st)
     } else {
         diag_error(e->at, "'" STR_FMT "' is read before it's %s", STR_ARG(name->name), done);
     }
-    if (gpu(f) && f->code->is_frag) {
+    if (gpu(f) && f->code->is_frag && p->type.kind != TY_COLOR) {
+        diag_note("a frag's numeric output starts with no value: write '" STR_FMT " = %s;' before reading it",
+                  STR_ARG(name->name), p->type.kind == TY_FLOAT2 ? "float2(0)" : p->type.kind == TY_FLOAT4 ? "float4(0)" : "0");
+    } else if (gpu(f) && f->code->is_frag) {
         diag_note("a frag's 'out Color' starts with no value, where 'mut Color' started white: write it first, like '" STR_FMT
                   " = Color.white;'", STR_ARG(name->name));
     } else if (gpu(f) && p->place) {
@@ -469,6 +472,9 @@ static void flow_leave(const flow *f, const loc at, const uint8_t *st, const boo
                        which[p->output < 4 ? p->output : 3]);
             diag_note("a frag writes each of its outputs on every path that ends; one that draws nothing leaves the pixel "
                       "with 'this.Discard();'");
+        } else if (gpu(f) && f->code->is_frag && p->type.kind != TY_COLOR) {
+            diag_error(at, "frag '" STR_FMT "' %s without writing its numeric output, %s", STR_ARG(f->code->name), ends, what.data);
+            diag_note("write each numeric output on every path, or leave the pixel with 'this.Discard();'");
         } else if (gpu(f) && f->code->is_frag) {
             diag_error(at, "frag '" STR_FMT "' %s without writing its pixel's color, %s", STR_ARG(f->code->name), ends, what.data);
             diag_note("a frag writes its color on every path that ends; one that draws nothing leaves the pixel with "

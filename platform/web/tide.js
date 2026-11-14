@@ -1555,10 +1555,13 @@
     const MAX_STORAGE = 4;      // TIDE_GPU_MAX_STORAGE
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const READ_ARRAY = 6, READ_DEPTH_ARRAY = 7; // TIDE_GPU_READ_ARRAY, _DEPTH_ARRAY: an array's colors, or its depth
+    const READ_NUMBER = 9, READ_INT = 10, READ_NUMBER_VOLUME = 11, READ_INT_VOLUME = 12;
+    const numericVolume = read => read === READ_NUMBER_VOLUME || read === READ_INT_VOLUME;
+    const integerImage = read => read === READ_INT || read === READ_INT_VOLUME;
     const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES || read === READ_DEPTH_ARRAY;
     // A pipeline's samplers where it says none apart (gpu.h's tide_gpu_samplers): texture i that's sampled has sampler i,
     // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
-    const ownSamplers = reads => reads.map(read => read === READ_SAMPLES ? READ_DATA : read === READ_ARRAY ? 0
+    const ownSamplers = reads => reads.map(read => read === READ_SAMPLES || read >= READ_NUMBER ? READ_DATA : read === READ_ARRAY ? 0
         : read === READ_DEPTH_ARRAY ? 1 : read === 8 ? 0 : read);
     // Samplers: the nearest pixel past no edge first, and after the twelve of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, ANISOTROPIC = 3, FILTERS = 4, COMPARED = 12;
@@ -1608,15 +1611,17 @@
                 if (imageWrites >>> i & 1) {
                     const format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'][imageFormats[i]];
                     entries.push({ binding: 1 + 2 * i, visibility: stages, storageTexture: { access: 'write-only', format,
-                        viewDimension: read === 8 ? '3d' : '2d' } });
+                        viewDimension: read === 8 || numericVolume(read) ? '3d' : '2d' } });
                     return;
                 }
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
                     ? { sampleType: 'float', viewDimension: 'cube' }
-                    : read === 8 ? { sampleType: 'float', viewDimension: '3d' }
+                    : read === 8 || numericVolume(read)
+                    ? { sampleType: integerImage(read) ? 'sint' : read === 8 ? 'float' : 'unfilterable-float', viewDimension: '3d' }
                     : read === READ_ARRAY || read === READ_DEPTH_ARRAY
                     ? { sampleType: read === READ_ARRAY ? 'float' : 'depth', viewDimension: '2d-array' }
-                    : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float',
+                    : { sampleType: read === READ_DATA || integerImage(read) ? 'sint'
+                        : read === READ_NUMBER ? 'unfilterable-float' : readsDepth(read) ? 'depth' : 'float',
                         multisampled: read === READ_SAMPLES } });
             });
             // A depth is whole only at its nearest pixel, which a sampler that blends none reads
@@ -1748,6 +1753,7 @@
         { depthWriteEnabled: true, depthCompare: 'always' },
         { depthWriteEnabled: true, depthCompare: 'less-equal' },
         { depthWriteEnabled: false, depthCompare: 'equal' },
+        { depthWriteEnabled: true, depthCompare: 'always' }, // RESET_ALONE: no color writes
     ];
     const DEPTH_ALONE = 4;
     const culls = ['none', 'back', 'front']; // tide_gpu_cull, of a front that goes clockwise
@@ -2387,7 +2393,7 @@
                 reads: Array.from({ length: textures }, (unused, i) => (i < 8 ? reads >>> 3 * i : readsHigh >>> 3 * (i - 8)) & 7), // Two banks of 3-bit tide_gpu_read values
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
                 into: colorFormats(into), outputs, samples: samplesOf(into), coverage: !!alphaToCoverage,
-                storage: '', compute: false, imageWrites: 0, imageFormats: [] };
+                storage: '', compute: false, imageWrites: 0, imageFormats: [], numericOutputs: 0 };
             building.samplers = ownSamplers(building.reads); // How each sampler reads, unless gpu_pipeline_samplers says
         },
         // Its samplers, apart from its textures (tide_gpu_pipeline_desc.sampler_count): how each reads, 3 bits each
@@ -2406,6 +2412,7 @@
                 (unused, i) => (i < 8 ? low >>> 4 * i : high >>> 4 * (i - 8)) & 15);
             building.samplers = building.samplers.map((read, i) => writes >>> i & 1 ? READ_DATA : read);
         },
+        gpu_pipeline_numbers(outputs) { building.numericOutputs = outputs & 15; },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
         // Its storage buffers, bit i of `writes` set for one it writes, and whether it's a compute pipeline: only
@@ -2445,7 +2452,8 @@
                 // image in its place goes nowhere (into depth alone, that's all of them; the stage still runs,
                 // as it may discard), and an image past them is one the pipeline doesn't write
                 fragment: { module, entryPoint: 'fragment', targets: b.into.map((format, i) =>
-                    i < b.outputs && b.depth !== DEPTH_ALONE ? { format, blend: blends[b.blend] } : { format, writeMask: 0 }) },
+                    i < b.outputs && b.depth !== DEPTH_ALONE && b.depth !== 6
+                        ? { format, blend: b.numericOutputs >>> i & 1 ? undefined : blends[b.blend] } : { format, writeMask: 0 }) },
                 // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
                 primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
                 // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several

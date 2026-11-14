@@ -36,6 +36,40 @@ pixels while retaining the original byte-for-byte; all existing compute/image/or
 tide_wgsl_translate. Gamma D3D11 passes12/12 applicable, including the explicit actionable refusal, with the
 supported-only sRGB witnesses skipped. Other graphics APIs are being checked; Metal requires a Mac.
 
+## Numeric images and outputs (2026-11-14)
+
+Numeric attachment formats, typed nearest reads and the three portable numeric storage formats now replay
+through the existing target, pipeline, image and volume packets. No recorder opcode or embed ABI bump is
+needed. HLSL retains the WGSL numeric-output mask and bypasses the Color conversion for a numeric float4 at
+location zero. ShaderLab uses literal `Blend i One Zero` for each numeric output; the other outputs retain
+Tide's selected blend. The seven new formats have no mip chain, and typed numeric reads use the base level.
+R8/RG8/R16F/RG16F retain mean MSAA resolve; R32F/RGBA32F/R32I remain single-sample.
+
+For numeric shaders, ShaderLab has a second pass with literal `ColorMask 0 i` for every attachment. Replay
+selects it for depth-only draws, including the renderer's reset-depth-without-color clear. A dynamic global
+ColorMask left later MRT attachments writable on Unity Vulkan; per-target dynamic ColorMask is not valid
+ShaderLab. Two passes preserve the fragment's discards and depth while keeping every numeric image intact.
+The ShaderTests fixture now compiles every pass. Games without numeric outputs still produce the earlier
+single-pass shader text.
+
+Missing typed numeric images bind all-zero float or integer resources of the correct dimension. Integer zero
+textures are render textures, initialized by clear or the existing integer volume kernel, because Unity's
+filterable Sample capability check rejects an integer Texture2D on D3D11 even though integer loads work.
+Numeric volume allocation checks LoadStore instead. These are nearest integer reads on every replay API.
+
+ComputeReplayTests pins exact scalar/pair/vector/signed outputs in every new attachment format and RGBA16F,
+a free fourth channel, replacement under Alpha, mixed float/integer clears past one with clipping, depth-only
+preservation, and R32F/RGBA32F/R32I storage volumes. Integer readback uses an integer textureLoad kernel and
+the existing buffer-read callback: OpenGL Core does not expose raw integer texture readback through Unity's
+AsyncGPUReadback texture conversion. The kernel checks every integer word without converting it to float.
+The eleven checked-in numeric WGSL fixtures pass spirv-val for Vulkan 1.3 and FXC SM5 `/WX`.
+
+Validation: the complete 14 ComputeReplayTests, a focused mixed Color/float4/int MRT blend test, and the
+shader compilation EditMode test pass on Windows
+D3D11, D3D12, Vulkan and OpenGL Core, Unity 6000.6.0f1, hidden batch mode with no audio, using a scratch Sample
+whose package points at this checkout. The shader compilation run also includes all sixteen actual renderer
+clear shader variants. Metal and a Unity WebGPU player require machines/build environments unavailable here.
+
 ## Depth-write descriptor flag: ABI 23 (2026-11-14)
 
 The follow-up writes_depth flag keeps explicit Draw.Bounds from re-enabling geometric occlusion testing for

@@ -429,6 +429,199 @@ static const char *const clear_all_wgsl = WGSL(
     "    return Colors(c, c, c, c);\n"
     "}\n");
 
+// Typed image clears: one value per attachment; integer lanes retain their exact bits.
+static const char *const clear_images_0_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: vec4f, @location(2) c2: vec4f, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<vec4f>(u.values[1]), bitcast<vec4f>(u.values[2]), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_1_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: vec4f, @location(2) c2: vec4f, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<vec4f>(u.values[1]), bitcast<vec4f>(u.values[2]), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_2_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: i32, @location(2) c2: vec4f, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<i32>(u.values[1].x), bitcast<vec4f>(u.values[2]), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_3_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: i32, @location(2) c2: vec4f, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<i32>(u.values[1].x), bitcast<vec4f>(u.values[2]), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_4_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: vec4f, @location(2) c2: i32, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<vec4f>(u.values[1]), bitcast<i32>(u.values[2].x), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_5_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: vec4f, @location(2) c2: i32, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<vec4f>(u.values[1]), bitcast<i32>(u.values[2].x), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_6_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: i32, @location(2) c2: i32, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<i32>(u.values[1].x), bitcast<i32>(u.values[2].x), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_7_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: i32, @location(2) c2: i32, @location(3) c3: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<i32>(u.values[1].x), bitcast<i32>(u.values[2].x), bitcast<vec4f>(u.values[3])); }\n");
+
+static const char *const clear_images_8_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: vec4f, @location(2) c2: vec4f, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<vec4f>(u.values[1]), bitcast<vec4f>(u.values[2]), bitcast<i32>(u.values[3].x)); }\n");
+
+static const char *const clear_images_9_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: vec4f, @location(2) c2: vec4f, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<vec4f>(u.values[1]), bitcast<vec4f>(u.values[2]), bitcast<i32>(u.values[3].x)); }\n");
+
+static const char *const clear_images_10_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: i32, @location(2) c2: vec4f, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<i32>(u.values[1].x), bitcast<vec4f>(u.values[2]), bitcast<i32>(u.values[3].x)); }\n");
+
+static const char *const clear_images_11_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: i32, @location(2) c2: vec4f, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<i32>(u.values[1].x), bitcast<vec4f>(u.values[2]), bitcast<i32>(u.values[3].x)); }\n");
+
+static const char *const clear_images_12_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: vec4f, @location(2) c2: i32, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<vec4f>(u.values[1]), bitcast<i32>(u.values[2].x), bitcast<i32>(u.values[3].x)); }\n");
+
+static const char *const clear_images_13_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: vec4f, @location(2) c2: i32, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<vec4f>(u.values[1]), bitcast<i32>(u.values[2].x), bitcast<i32>(u.values[3].x)); }\n");
+
+static const char *const clear_images_14_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: vec4f, @location(1) c1: i32, @location(2) c2: i32, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<vec4f>(u.values[0]), bitcast<i32>(u.values[1].x), bitcast<i32>(u.values[2].x), bitcast<i32>(u.values[3].x)); }\n");
+
+static const char *const clear_images_15_wgsl = WGSL(
+    "// tide numeric outputs: 15\n"
+    TIDE_DEPTH_WGSL
+    "struct Uniforms { values: array<vec4u, 4> }\n"
+    "struct Colors { @location(0) c0: i32, @location(1) c1: i32, @location(2) c2: i32, @location(3) c3: i32 }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, tide_depth(1.0), 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors { return Colors(bitcast<i32>(u.values[0].x), bitcast<i32>(u.values[1].x), bitcast<i32>(u.values[2].x), bitcast<i32>(u.values[3].x)); }\n");
+
 // The renderer's own kernels (compute.inc, notes/compute.md), WGSL alone: no GL backend runs kernels.
 //
 // GPU lists are ranges of a pool (compute.inc): each kernel below binds the pool of the list it works on, and finds
@@ -684,6 +877,22 @@ static const char *const hiz_wgsl = WGSL(
     X(linear_array, linear_array_wgsl, NULL) \
     X(linear_cube, linear_cube_wgsl, NULL) \
     X(clear, clear_wgsl, NULL)                                                                                         \
+    X(clear_images_0, clear_images_0_wgsl, NULL) \
+    X(clear_images_1, clear_images_1_wgsl, NULL) \
+    X(clear_images_2, clear_images_2_wgsl, NULL) \
+    X(clear_images_3, clear_images_3_wgsl, NULL) \
+    X(clear_images_4, clear_images_4_wgsl, NULL) \
+    X(clear_images_5, clear_images_5_wgsl, NULL) \
+    X(clear_images_6, clear_images_6_wgsl, NULL) \
+    X(clear_images_7, clear_images_7_wgsl, NULL) \
+    X(clear_images_8, clear_images_8_wgsl, NULL) \
+    X(clear_images_9, clear_images_9_wgsl, NULL) \
+    X(clear_images_10, clear_images_10_wgsl, NULL) \
+    X(clear_images_11, clear_images_11_wgsl, NULL) \
+    X(clear_images_12, clear_images_12_wgsl, NULL) \
+    X(clear_images_13, clear_images_13_wgsl, NULL) \
+    X(clear_images_14, clear_images_14_wgsl, NULL) \
+    X(clear_images_15, clear_images_15_wgsl, NULL) \
     X(clear_all, clear_all_wgsl, NULL)                                                                                 \
     X(run_size, run_size_wgsl, NULL)                                                                                   \
     X(add_offsets, add_offsets_wgsl, NULL)                                                                             \

@@ -44,12 +44,14 @@ static int frame(void *user, const float seconds)
     }
 #endif
     tide_draw_reset(&list);
-    tide_gui_begin(&gui, &devices, tide_f2(24, 24), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(24, 72), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
-    const tide_float2 places[9] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20}};
-    uint32_t pixels[9];
-    tide_platform_read_pixels_as(&list, 24, 24, 1, places, 9, pixels);
+    const tide_float2 places[26] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
+        {4,28},{12,28},{20,28},{4,36},{12,36},{20,36},{4,44},{12,44},
+        {4,52},{12,52},{20,52},{4,60},{12,60},{20,60},{4,68},{12,68},{20,68}};
+    uint32_t pixels[26];
+    tide_platform_read_pixels_as(&list, 24, 72, 1, places, 26, pixels);
     if (++warm < 3) return TIDE_KEEP_RUNNING;
     check(pixels[0], 0, 0, 0, "a draw before the image write sees the earlier black image");
     check(pixels[1], 0, 0, 255, "a draw between writes sees the exact first HDR color with alpha undone");
@@ -60,6 +62,13 @@ static int frame(void *user, const float seconds)
     blended(pixels[6], local.Images.frames % 2 ? 159 : 128, 128, 128, "a changed Grid3 of colors converts to a blended volume");
     check(pixels[7], 255, 0, 0, "a Grid3 of floats converts to a blended numeric volume");
     check(pixels[8], 255, 0, 255, "an exact volume cell read survives out-of-range stores");
+    static const char *const numeric[] = {"R8 scalar", "Rg8 pair", "R16f scalar MSAA", "Rg16f pair MSAA", "R32f scalar",
+        "Rgba16f free fourth channel", "Rgba32f free fourth channel", "R32i exact ID", "R32f image store", "Rgba32f image store",
+        "R32i image store", "R32f volume store", "Rgba32f volume store", "R32i volume store"};
+    for (unsigned i = 0; i < 14; i++) check(pixels[9 + i], 0, 255, 0, numeric[i]);
+    check(pixels[23], 0, 255, 0, "mixed MRT retains ordinary Color tint, alpha and blend");
+    check(pixels[24], 0, 255, 0, "mixed MRT float4 replaces without tint or premultiplication");
+    check(pixels[25], 0, 255, 0, "mixed MRT integer replaces with exact bits");
     if (local.Images.revision <= 0 || (stage == 2 && local.Images.revision == revision)) failures++;
 #ifdef __wasm__
     if (stage == 0 && !failures) {
@@ -78,7 +87,7 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 24, .hidden = true});
+    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 72, .hidden = true});
     printf("renderer: %s\n", tide_platform_renderer());
     tide_platform_run(frame, NULL);
 }

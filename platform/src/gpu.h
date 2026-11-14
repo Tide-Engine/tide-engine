@@ -165,7 +165,10 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // sampler's read (sampler_reads) is COLOR, DEPTH or COMPARE for them.
 typedef enum tide_gpu_read {
     TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA,
-    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME
+    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME,
+    // Numeric images are loaded at the nearest cell without a sampler. Float32 filtering is optional on
+    // WebGPU, so NUMBER uses an unfilterable-float binding even for formats that can be filtered.
+    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME
 } tide_gpu_read;
 
 // The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.
@@ -174,7 +177,7 @@ enum { TIDE_GPU_MAX_LAYERS = 256 };
 // How a sampler reads a texture that's read as `read`, where a pipeline's samplers are its textures' own.
 static inline uint8_t tide_gpu_sampler_read(const uint8_t read)
 {
-    return read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : (read == TIDE_GPU_READ_ARRAY || read == TIDE_GPU_READ_VOLUME) ? (uint8_t)TIDE_GPU_READ_COLOR
+    return read == TIDE_GPU_READ_SAMPLES || read >= TIDE_GPU_READ_NUMBER ? (uint8_t)TIDE_GPU_READ_DATA : (read == TIDE_GPU_READ_ARRAY || read == TIDE_GPU_READ_VOLUME) ? (uint8_t)TIDE_GPU_READ_COLOR
          : read == TIDE_GPU_READ_DEPTH_ARRAY ? (uint8_t)TIDE_GPU_READ_DEPTH : read;
 }
 
@@ -218,6 +221,7 @@ typedef enum tide_gpu_depth {
     TIDE_GPU_DEPTH_RESET, // Written whatever is there: for clears
     TIDE_GPU_DEPTH_ALONE, // As TIDE_GPU_DEPTH_TEST, and no color is written: a depth pre-pass
     TIDE_GPU_DEPTH_EQUAL, // Shows only where its depth is the one there, and nothing is written: lit after a pre-pass
+    TIDE_GPU_DEPTH_RESET_ALONE, // Clear depth within the clip, leaving every color attachment untouched.
 } tide_gpu_depth;
 
 // Which side of a triangle a pipeline doesn't draw. The front is the side its
@@ -365,6 +369,7 @@ typedef struct tide_gpu_pipeline_desc {
     // images past them are left as they were: the `@location(i)`s of what
     // `fragment` returns.
     uint32_t outputs;
+    uint8_t numeric_outputs; // Bit i: output i replaces its image, regardless of blend; no alpha semantics.
     // Alpha to coverage: the alpha of its first output is the share of each
     // pixel's samples it draws into, depth and stencil too, and what it
     // leaves of them is as it was. Only for targets of colors and samples
@@ -720,7 +725,8 @@ static inline uint32_t tide_gpu_texture_samplers(const tide_gpu_pipeline_desc *d
 {
     if (i >= TIDE_GPU_MAX_TEXTURES || i >= desc->texture_count || (desc->image_writes >> i & 1u)) return 0;
     if (desc->sampler_count) return desc->texture_samplers[i];
-    return desc->reads[i] == TIDE_GPU_READ_DATA || desc->reads[i] == TIDE_GPU_READ_SAMPLES ? 0u : 1u << i;
+    return desc->reads[i] == TIDE_GPU_READ_DATA || desc->reads[i] == TIDE_GPU_READ_SAMPLES
+        || desc->reads[i] >= TIDE_GPU_READ_NUMBER ? 0u : 1u << i;
 }
 
 // Texture `slot` and sampler `slot` together, for a pipeline whose samplers are its textures' own (sampler_count 0).

@@ -25,6 +25,19 @@ The audit fixed retrying a private copy whose GPU image/face allocation failed, 
 and quantized grid alpha before marked RGB premultiplication (the grid unit pins alpha 0.001 rounding to clear);
 these changes require the parent's final compilation/unit check. No other-device coverage claimed.
 
+## Numeric image rendering (2026-11-14)
+
+The language feature above the attachment groundwork is complete (render-targets.md, shaders.md). Numeric
+read kinds 9–12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
+2D formats reuse the existing portable storage API. Shader numeric_outputs selects replace blending per
+attachment; output_types guards dynamically supplied incompatible targets before pipeline creation.
+The internal RESET_ALONE depth mode resets depth with every color write disabled. Sixteen static clear
+variants handle every integer-output mask while retaining clips and the selected forward/reversed convention.
+Vulkan begins each pass with zero dynamic depth bias, including direct gpu.h fixtures that bypass draw state.
+Recorder and none accept the same appended read/depth values; no new GPU function or packet is needed.
+Vulkan ASan and software WebGPU exact pixels, storage/volume writes, mixed outputs and clear tests pass;
+Unity's API-specific replay validation is in unity.md. No platform-dependent numeric filtering fallback exists.
+
 ## Reversed float depth (2026-11-14)
 
 Owner approved the investigation's recommendations: "go with recommendations". Production Vulkan prefers

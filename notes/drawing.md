@@ -1,3 +1,13 @@
+## Per-image typed clears (2026-11-14)
+
+tide_draw_clear_images records at most four type-checked values into the draw list's uniform bytes, retaining
+float and signed-int bits. Its TIDE_DRAW_CLEAR_IMAGES command stores a checked offset, so list growth and
+append keep payload ownership. The renderer selects a precompiled typed clear, preserving clipping and the
+selected depth convention. Numeric ClearDepth uses RESET_ALONE to retain all attachment values. Legacy
+single-Color clear recording remains unchanged. Shader output_types metadata guards unknown dynamic target
+formats before pipeline creation, including built-in Color draws, with a diagnostic instead of an invalid
+GPU pipeline. The statically known mismatch remains a compiler error. Details/tests: render-targets.md.
+
 ## Depth precision with conservative forward occlusion (2026-11-14)
 
 Reversed float storage changes only the final GPU clip conversion. Public matrices, WorldToClip, screen/depth

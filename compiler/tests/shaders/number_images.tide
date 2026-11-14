@@ -1,0 +1,91 @@
+scene Main { }
+const Format ScalarFormat = Format.R32f;
+
+local singleton Images
+{
+    RenderTarget scalar;
+    RenderTarget pair;
+    RenderTarget full;
+    RenderTarget ids;
+    RenderTarget mixed;
+    [Raw(float)] Texture value;
+    [Raw(float2)] Texture velocity;
+    [Raw(float4)] Texture channels;
+    [Raw(int)] Texture identity;
+    [Raw(float)] Texture3D volume;
+    [Raw(float4)] Texture3D vectors;
+    [Raw(int)] Texture3D integers;
+    Grid2<float> heights = Grid2(2, 2);
+    Grid3<float> density = Grid3(2, 2, 2);
+    [Raw(float)] Texture grid;
+    [Raw(float)] Texture3D gridVolume;
+}
+
+frag Scalar(Vertex vertex, out float value) { value = vertex.uv.x + 2.5; }
+frag Pair(Vertex vertex, out float2 value) { value = vertex.uv + float2(-2, 4); }
+frag Full(Vertex vertex, out float4 value) { value = float4(vertex.uv, 3.5, 0.25); }
+frag Id(Vertex vertex, out int value) { value = 16777217 + int(vertex.uv.x); }
+float Number([Raw(float)] Texture image, float2 uv) { return image.Sample(uv); }
+int Identity([Raw(int)] Texture3D image, float3 uv) { return image.Sample(uv); }
+void Store([Raw(int)] Texture3D image, int3 at, int value) { image[at] = value; }
+frag ReadSource(Vertex vertex, out Color color, [Raw(float)] Texture source)
+{
+    color = Color(source.Sample(vertex.uv), 0, 0);
+}
+frag Mixed(Vertex vertex, out Color color, out float value, out float2 pair, out int id)
+{
+    color = Color(vertex.uv.x, vertex.uv.y, 0, 0.5);
+    value = 2.5;
+    pair = float2(-4, 8);
+    id = -2147483647;
+}
+frag Read(Vertex vertex, out Color color, Images images)
+{
+    mut float value = Number(images.value, vertex.uv);
+    float2 pair = images.velocity.Sample(vertex.uv, Filter.Point, Wrap.Repeat);
+    mut float4 full = images.channels.Sample(vertex.uv, Filter.Point, Wrap.Mirror);
+    mut int id = images.identity.Sample(vertex.uv);
+    value += images.volume.Sample(float3(vertex.uv, 0.5));
+    value += images.grid.Sample(vertex.uv) + images.gridVolume.Sample(float3(vertex.uv, 0.5));
+    full += images.vectors[int3(0)];
+    id += Identity(images.integers, float3(vertex.uv, 0.5));
+    color = Color(value + pair.x, full.w, id == 16777217 ? 1 : 0, 1);
+}
+[Group(2, 2, 2)]
+compute Write(Images images)
+{
+    images.volume[this.at] = 3.5;
+    images.vectors[this.at] = float4(2, 3, 4, 0.25);
+    Store(images.integers, this.at, -2147483647);
+    images.identity[this.at.xy] = 16777217;
+}
+view Show(mut Images images)
+{
+    images.scalar = RenderTarget(8, 8, 1, ScalarFormat);
+    images.pair = RenderTarget.Window(Format.Rg16f, samples: 4);
+    images.full = RenderTarget(8, 8, Format.Rgba32f);
+    images.ids = RenderTarget(8, 8, Format.R32i);
+    images.mixed = RenderTarget(8, 8, Format.Rgba8, Format.R16f, Format.Rg8, Format.R32i);
+    images.value = images.scalar.color;
+    images.velocity = images.pair.color;
+    images.channels = images.full.color;
+    images.identity = images.ids.color;
+    images.volume = Texture3D(int3(2), Format.R32f);
+    images.vectors = Texture3D(int3(2), Format.Rgba32f);
+    images.integers = Texture3D(int3(2), Format.R32i);
+    images.grid = images.heights;
+    images.gridVolume = images.density;
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.scalar.Mesh(quad, [0, 1, 2], Scalar);
+    images.pair.Mesh(quad, [0, 1, 2], Pair);
+    images.full.Mesh(quad, [0, 1, 2], Full);
+    images.ids.Mesh(quad, [0, 1, 2], Id);
+    images.mixed.Mesh(quad, [0, 1, 2], Mixed);
+    var mask = RenderTarget(8, 8, Format.R8);
+    mask.Mesh(quad, [0, 1, 2], Scalar);
+    var half = RenderTarget(8, 8, Format.Rgba16f, samples: 4);
+    half.Mesh(quad, [0, 1, 2], Full);
+    GPU.Run(Write, int3(2));
+    Draw.Mesh(quad, [0, 1, 2], Read);
+    Draw.Blit(images.value, Draw.window, ReadSource);
+}

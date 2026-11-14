@@ -1,0 +1,3 @@
+// expect: Cutout and Coverage need a Color as the frag's first output
+scene Main { }
+frag Mask(Vertex vertex, out float value) { this.Coverage(vertex.uv.x); value=2; }
