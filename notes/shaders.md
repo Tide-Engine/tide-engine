@@ -1,3 +1,11 @@
+## Unity's ShaderLab masks the images a frag doesn't write (2026-11-14)
+
+`tide_hlsl_unity_shader` (`compiler/src/hlsl.c`) writes `ColorMask 0 i` in a shader's first pass for each of a
+target's four images the fragment stage has no `SV_Target<i>` for (`written_outputs`), and none for a stage
+with no color output. Unity's OpenGL Core wrote the first output's color into every image of the target
+otherwise; Direct3D and Vulkan left them alone. Found by the readback fixture in Unity (unity.md, top).
+The hlsl, wgsl, unity and `tide_cli` tests pass (native debug).
+
 ## Linear-light image sources (2026-11-14)
 
 [Linear] is static source metadata on singular Texture/TextureArray/Cubemap assets and fields, preserved
