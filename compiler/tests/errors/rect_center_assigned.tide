@@ -1,0 +1,3 @@
+// expect: a Rect's center is read from its x, y, width and height: it can't be assigned
+scene Main { }
+view Corner() { mut var r = Rect(0, 0, 10, 10); r.center.x = 4; }

@@ -21,6 +21,14 @@ local singleton Probe
     float2 artSize;
     int frames;
     Func<float2, Color> kept;
+    float3 rgb;
+    float2[3] parts;
+    bool[3] inside;
+    Rect inset;
+    Rect crushed;
+    float[8] towards;
+    float2 walked;
+    float3 eased;
 }
 
 view Paint(mut Probe probe)
@@ -63,6 +71,28 @@ view Paint(mut Probe probe)
     probe.seen[12] = Color.red.WithAlpha(0.25);
     probe.moved = Rect(90, -5, 20, 20).MoveInside(Rect(0, 0, 100, 100));
     probe.screen = Screen.rect;
+    // A color's rgb, and a rect's corner, size and middle, read as vectors
+    probe.rgb = tint.rgb * 2;
+    var slot = Rect(10, 20, 100, 40);
+    probe.parts[0] = slot.position;
+    probe.parts[1] = slot.size;
+    probe.parts[2] = slot.center + Rect(0, 0, 2, 2).center;
+    probe.inside[0] = slot.Contains(float2(10, 20));     // Its left and top edges are in
+    probe.inside[1] = slot.Contains(float2(110, 30));    // ...its right one out
+    probe.inside[2] = slot.Contains(slot.center) && !slot.Contains(float2(Math.Sqrt(-1), 30));
+    probe.inset = slot.Inset(4);
+    probe.crushed = slot.Inset(30);                      // Too small: no height, at its middle
+    // A value on its way to another
+    probe.towards[0] = Math.MoveTowards(1, 5, 1.5);
+    probe.towards[1] = Math.MoveTowards(1, 2, 3);        // Never past it
+    probe.towards[2] = Math.MoveTowards(5, 1, 1.5);
+    probe.towards[3] = Math.DeltaAngle(6.2, 0.1);        // The short way round
+    probe.towards[4] = Math.WrapAngle(4);
+    probe.towards[5] = Math.MoveTowardsAngle(0.1, 6.2, 0.05);
+    probe.towards[6] = Math.Damp(2, 10, 0, 1) + Math.Damp(0, 10, Math.Sqrt(-1), 1);
+    probe.towards[7] = Math.Damp(0, 10, 1000, 1);
+    probe.walked = Math.MoveTowards(float2(0, 0), float2(3, 4), 2.5);
+    probe.eased = Math.Damp(float3(0), float3(2, 4, 8), Math.Log(2), 1);
     probe.eases[0] = Math.EaseIn(0.5);
     probe.eases[1] = Math.EaseOut(0.5);
     probe.eases[2] = Math.EaseInOut(0.25);

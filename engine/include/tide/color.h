@@ -40,6 +40,9 @@ static inline tide_color tide_color_with_alpha(const tide_color c, const float a
     return (tide_color){c.r, c.g, c.b, alpha};
 }
 
+// color.rgb: its red, green and blue as a float3.
+static inline tide_float3 tide_color_rgb(const tide_color c) { return (tide_float3){c.r, c.g, c.b}; }
+
 static inline tide_color tide_add_color(const tide_color a, const tide_color b)
 {
     return (tide_color){a.r + b.r, a.g + b.g, a.b + b.b, a.a + b.a};

@@ -270,6 +270,10 @@ view Buttons()
 
 `color.WithAlpha(a)` is the color with another alpha, its red, green and blue as they are: a glow of an item's color, `rarity.WithAlpha(0.4)`. It works in a fill, and in any GPU code, too.
 
+`color.rgb` is its red, green and blue as a `float3`, for the math a light or a blend does on them: `Color(tint.rgb * shade, tint.a)`. It's read, never assigned, and works in GPU code.
+
+A `Rect` reads as vectors too: `rect.position` is its top left corner, `rect.size` its width and height and `rect.center` its middle, each a `float2`, so a label goes at `slot.center` with `Anchor.MiddleCenter`. `rect.Contains(point)` says whether a point is in it, like the pointer over a slot (its left and top edges are in, its right and bottom ones out, so slots side by side share no point), and `rect.Inset(amount)` is the rect with every edge moved in by that much, or out by an amount under 0: `Draw.Rect(slot.Inset(1), 4, fill)` inside a border.
+
 Each takes two, three or four colors, spread evenly: `Gradient.Vertical(a, b, c)` is `b` at the middle. Colors blend with their alpha, so a gradient to `Color.clear` fades without darkening.
 
 - **A fill is a value.** Keep one in a field, pass it to a helper, or write your own: a function `Color Name(float2 uv)` named where a fill goes, or a lambda, which can use the variables around it: `Draw.Rect(rect, 8, (float2 uv) => tint * (1 - uv.y * 0.3))`. Calling one on the CPU gives the color a pixel there gets.

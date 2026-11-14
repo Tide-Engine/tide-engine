@@ -7263,6 +7263,10 @@ static type member_type(const type t, const str member)
                               || str_eq_c(member, "height"))) {
         return (type){TY_FLOAT, NULL};
     }
+    if (t.kind == TY_COLOR && str_eq_c(member, "rgb")) return (type){TY_FLOAT3, NULL};
+    if (t.kind == TY_RECT && (str_eq_c(member, "position") || str_eq_c(member, "size") || str_eq_c(member, "center"))) {
+        return (type){TY_FLOAT2, NULL};
+    }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
     if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
     if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
@@ -7757,6 +7761,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "g", CK_PROPERTY, "float", "Green, 0 to 1.", NULL);
         item(c, "b", CK_PROPERTY, "float", "Blue, 0 to 1.", NULL);
         item(c, "a", CK_PROPERTY, "float", "Alpha, 0 to 1.", NULL);
+        item(c, "rgb", CK_PROPERTY, "float3", "Red, green and blue as a vector, without the alpha. Read only.", NULL);
     }
     if (t.kind == TY_LIST) item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
     if (t.kind == TY_MAP || t.kind == TY_SET) item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
@@ -7773,6 +7778,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "y", CK_PROPERTY, "float", "The top side, from the screen's top.", NULL);
         item(c, "width", CK_PROPERTY, "float", NULL, NULL);
         item(c, "height", CK_PROPERTY, "float", NULL, NULL);
+        item(c, "position", CK_PROPERTY, "float2", "Its top left corner: (x, y). Read only.", NULL);
+        item(c, "size", CK_PROPERTY, "float2", "Its width and height. Read only.", NULL);
+        item(c, "center", CK_PROPERTY, "float2", "Its middle. Read only.", NULL);
     }
     if (t.kind == TY_QUATERNION) item(c, "value", CK_PROPERTY, "float4", "(x, y, z) is the vector part.", NULL);
     const int n = matrix_dim(t);

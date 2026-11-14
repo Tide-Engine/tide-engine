@@ -266,6 +266,31 @@ static inline tide_rect tide_rect_move_inside(const tide_rect r, const tide_rect
                        tide_rect_inside_axis(r.y, r.height, bounds.y, bounds.height), r.width, r.height};
 }
 
+// rect.position, rect.size and rect.center: its top left corner, its width and height, and its middle.
+static inline tide_float2 tide_rect_position(const tide_rect r) { return (tide_float2){r.x, r.y}; }
+static inline tide_float2 tide_rect_size(const tide_rect r) { return (tide_float2){r.width, r.height}; }
+static inline tide_float2 tide_rect_center(const tide_rect r)
+{
+    return (tide_float2){r.x + r.width * 0.5f, r.y + r.height * 0.5f};
+}
+
+// rect.Contains(point): whether the point is in it, its left and top edges in and its right and bottom ones
+// out, as Unity's, so rects side by side share no point. A number that isn't one is in nothing.
+static inline bool tide_rect_contains(const tide_rect r, const tide_float2 point)
+{
+    return point.x >= r.x && point.x < r.x + r.width && point.y >= r.y && point.y < r.y + r.height;
+}
+
+// rect.Inset(amount): the rect with every edge moved in by `amount`, out by one under 0, about the same
+// middle. One too small for it is left with no width or height at its middle, never a negative one.
+static inline tide_rect tide_rect_inset(const tide_rect r, const float amount)
+{
+    const float in = amount == amount ? amount : 0.0f;
+    const float width = r.width - in * 2.0f > 0.0f ? r.width - in * 2.0f : 0.0f;
+    const float height = r.height - in * 2.0f > 0.0f ? r.height - in * 2.0f : 0.0f;
+    return (tide_rect){r.x + (r.width - width) * 0.5f, r.y + (r.height - height) * 0.5f, width, height};
+}
+
 // A place of a box, named as Unity's TextAnchor: which of a text's is at its
 // position, and where GUILayout.Area puts an area on the screen. Tide's
 // Anchor enum has the same values. Upper is towards the top of the screen.

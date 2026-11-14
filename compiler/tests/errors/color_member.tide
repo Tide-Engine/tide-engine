@@ -1,4 +1,4 @@
-// expect: Color has r, g, b and a, not 'x'
+// expect: Color has r, g, b and a, and rgb (a float3), not 'x'
 component Tint { Color color; }
 scene Main { }
 
