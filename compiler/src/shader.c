@@ -3659,15 +3659,65 @@ bool field_is_raw(const field *f)
     return false;
 }
 
+// Where an image's static role comes from, beyond its declaration's own name (a field, an asset, a parameter): an
+// element of a marked glob's list or map (`maps[i]`, `maps["a.png"]`) or of a marked borrowed collection, the
+// variable of a `foreach` over one, a local that isn't mut (its initializer's), and a `?:` or a switch whose every
+// arm has the role. `raw` picks [Raw] (and the typed [Raw(T)]), else [Linear]. A role is never added or dropped
+// along the way: what has none of these has the role of its declaration alone.
+static bool declared_role(const expr *e, const bool raw, const int depth);
+
+bool texture_collection(const type t)
+{
+    if ((t.kind != TY_LIST && t.kind != TY_MAP) || !t.decl) return false;
+    if (t.kind == TY_MAP && (t.decl->fields.count < 2 || t.decl->fields.items[0].type.kind != TY_STRING)) return false;
+    return t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type.kind == TY_TEXTURE;
+}
+
+static bool role_of_collection(const expr *e, const bool raw)
+{
+    if (!e) return false;
+    if (e->bind == BIND_ASSET && e->constant && e->constant->asset_many)
+        return raw ? e->constant->sample_raw : e->constant->sample_linear;
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param && texture_collection(e->param->type))
+        return raw ? e->param->raw_role : e->param->linear_role;
+    return false;
+}
+
+static bool declared_role(const expr *e, const bool raw, const int depth)
+{
+    if (!e || depth > 16) return false;
+    if (e->bind == BIND_PARAM && e->param && !e->image_place) {
+        if (texture_collection(e->param->type)) return false; // Its elements have the role, not the collection
+        return raw ? e->param->sample_role.len || e->param->raw_role : e->param->linear_role;
+    }
+    if (e->bind == BIND_ASSET && e->constant) return !e->constant->asset_many && (raw ? e->constant->sample_raw : e->constant->sample_linear);
+    if (e->kind == E_INDEX && role_of_collection(e->object, raw)) return true;
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local) {
+        const stmt *local = e->local;
+        if (local->kind == S_FOREACH) return local->type.kind == TY_TEXTURE && role_of_collection(local->value, raw);
+        return local->kind == S_VAR && !local->is_mut && !local->assigned && !local->delayed && !local->out_decl
+            && declared_role(local->value, raw, depth + 1);
+    }
+    // `entry.value` of a foreach over a marked glob's map
+    if (e->kind == E_MEMBER && e->object && e->object->kind == E_NAME && e->object->bind == BIND_LOCAL && e->object->local
+        && e->object->local->kind == S_FOREACH && str_eq_c(e->member, "value") && e->type.kind == TY_TEXTURE)
+        return role_of_collection(e->object->local->value, raw);
+    if (e->kind == E_CONDITIONAL) return declared_role(e->lhs, raw, depth + 1) && declared_role(e->rhs, raw, depth + 1);
+    if (e->kind == E_SWITCH) {
+        for (int i = 0; i < e->args.count; i++) if (!declared_role(e->args.items[i], raw, depth + 1)) return false;
+        return e->args.count > 0;
+    }
+    if (!e->field) return false;
+    if (raw) {
+        return (e->type.kind == TY_GRID || e->type.kind == TY_TEXTURE || e->type.kind == TY_TEXTURE3D || e->type.kind == TY_TEXTURE_ARRAY
+                || e->type.kind == TY_CUBEMAP) && field_is_raw(e->field);
+    }
+    return field_is_linear(e->field);
+}
+
 bool declared_raw(const expr *texture)
 {
-    if (!texture) return false;
-    if (texture->bind == BIND_PARAM && texture->param && texture->param->sample_role.len) return true;
-    if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_raw;
-    return texture->field
-           && (texture->type.kind == TY_GRID || texture->type.kind == TY_TEXTURE || texture->type.kind == TY_TEXTURE3D || texture->type.kind == TY_TEXTURE_ARRAY
-               || texture->type.kind == TY_CUBEMAP)
-           && field_is_raw(texture->field);
+    return declared_role(texture, true, 0);
 }
 
 bool field_is_linear(const field *f)
@@ -3680,9 +3730,7 @@ bool field_is_linear(const field *f)
 
 bool declared_linear(const expr *texture)
 {
-    if (!texture) return false;
-    if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_linear;
-    return texture->field && field_is_linear(texture->field);
+    return declared_role(texture, false, 0);
 }
 
 type raw_sample_type(const field *image)

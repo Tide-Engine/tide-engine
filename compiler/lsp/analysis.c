@@ -3733,13 +3733,15 @@ static void describe(const occurrence *o, sb *out)
             }
             if (o->decl->sample_linear) {
                 sb_put(out, "\n\nIt's `[Linear]`: sRGB color storage, sampled and filtered in linear light. "
-                            "Alpha is unchanged. Keep it in `[Linear]` fields or borrow its source in a read-only GPU helper.");
+                            "Alpha is unchanged. Keep it in `[Linear]` fields, `[Linear]` parameters and locals that aren't `mut`, or "
+                            "borrow its source in a read-only GPU helper.");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them. It can initialize "
                             "`[Raw] Texture` fields and be borrowed by GPU sampling and metadata helpers, preserving the "
-                            "original source's Raw role. `.size` is readable on the CPU and GPU. It cannot be drawn or "
-                            "escape to ordinary Texture storage, CPU arguments or returns.");
+                            "original source's Raw role, and goes on through `[Raw]` parameters and locals that aren't `mut`. "
+                            "`.size` is readable on the CPU and GPU. It cannot be drawn by the engine's own shader or "
+                            "escape to ordinary Texture storage, unmarked parameters or returns.");
             }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
                 sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
@@ -4285,9 +4287,11 @@ static void describe(const occurrence *o, sb *out)
              "field, and no two fields of a struct have one key."},
             {"Linear", "[Linear]",
              "This Texture, TextureArray or Cubemap stores sRGB color and GPU reads return linear light. Filtering and "
-             "mipmaps operate in linear light; alpha stays coverage. It goes before one asset or a resource field, "
-             "not parameters or locals. Keep values in [Linear] fields, or borrow their source in a read-only GPU "
-             "helper. Color grids and RGBA8 runtime images can initialize marked fields. Float, single-channel, "
+             "mipmaps operate in linear light; alpha stays coverage. It goes before an asset (one, or a glob's "
+             "List<Texture> or Map<string, Texture>, each element marked), a resource field, a read-only image "
+             "parameter of a function or a frag's Texture source, not a local: a local that isn't mut keeps its "
+             "initializer's mark, and a ?: or switch of marked images keeps it. Keep values in [Linear] fields and "
+             "parameters, or borrow their source in a read-only GPU helper. Color grids and RGBA8 runtime images can initialize marked fields. Float, single-channel, "
              "depth and numeric formats have no sRGB counterpart. [Raw] and [Linear] cannot be combined."},
             {"Raw", "[Raw]",
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
@@ -4296,8 +4300,11 @@ static void describe(const occurrence *o, sb *out)
              "before an asset that's one `Texture` or one `Grid2<Color>`, or before `Texture` fields and `Grid2<Color>` "
              "fields. `[Raw] Texture` fields accept Raw Texture or Raw Grid2<Color> assets and fields, or `default`, "
              "and keep their Raw role. A frag or a vert samples them directly or through GPU sampling and metadata "
-             "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
-             "escape to ordinary Texture storage, CPU arguments or returns, or draws. "
+             "helpers that borrow the original source. `.size` is readable on the CPU and GPU. A glob's `List<Texture>` "
+             "or `Map<string, Texture>` takes it for every image, read by element or foreach; a local that isn't "
+             "`mut` keeps the role of what it's given, a `?:` or switch of Raw images keeps it, and a function or a "
+             "frag takes one as a `[Raw] Texture` parameter or source. Raw textures cannot escape to ordinary Texture "
+             "storage, unmarked parameters, returns, or the engine's own draws. "
              "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
              "the image's numeric Sample result; a TextureArray or Cubemap takes the three float roles. Typed images read "
              "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
@@ -10463,10 +10470,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Linear", CK_FUNCTION, "[Linear]",
-                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
-                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
+                 "Marks a Texture, TextureArray or Cubemap asset (or a glob's List<Texture> or Map<string, Texture>), field or "
+                 "read-only parameter as sRGB storage sampled in linear light. Alpha is unchanged. Keep the mark in fields, "
+                 "parameters, locals that aren't mut or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "Marks Texture or Grid2<Color> assets and fields as numeric data. [Raw] Texture fields keep their Raw role; "
+                 "Marks Texture or Grid2<Color> assets (and globs of Textures), fields and read-only parameters as numeric data. [Raw] Texture fields keep their Raw role; "
                  "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
                  "Raw textures cannot be drawn or escape as ordinary Texture values.",
                  "Raw");
@@ -10505,10 +10513,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Linear", CK_FUNCTION, "[Linear]",
-                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
-                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
+                 "Marks a Texture, TextureArray or Cubemap asset (or a glob's List<Texture> or Map<string, Texture>), field or "
+                 "read-only parameter as sRGB storage sampled in linear light. Alpha is unchanged. Keep the mark in fields, "
+                 "parameters, locals that aren't mut or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "Marks Texture fields or Grid2<Color> fields as numeric data. [Raw] Texture fields accept Raw Texture or "
+                 "Marks Texture fields or Grid2<Color> fields (and assets, globs of Textures and read-only parameters) as numeric data. [Raw] Texture fields accept Raw Texture or "
                  "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "
                  "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values. "
                  "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture/Texture3D fields or read-only GPU helper parameters declare "

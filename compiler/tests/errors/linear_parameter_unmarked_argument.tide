@@ -1,0 +1,6 @@
+// expect: 'Bind' takes a [Linear] Texture for 'albedo', and this one isn't [Linear]
+asset Texture colors = "../e2e/assets/hero.png";
+local singleton Material { [Linear] Texture albedo; }
+scene Main { }
+void Bind(mut Material m, [Linear] Texture albedo) { m.albedo = albedo; }
+view V(mut Material m) { Bind(m, colors); }

@@ -1,0 +1,4 @@
+// expect: 'normal' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or hand on
+local singleton Material { Texture plain; }
+scene Main { }
+void Bind(mut Material m, [Raw] Texture normal) { m.plain = normal; }

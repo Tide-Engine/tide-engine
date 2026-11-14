@@ -1013,6 +1013,8 @@ static void run_raw_checks(const char *when)
         {1, 0.5f, 0.25f, "a [Raw] grid's cell with no alpha is its numbers"},
         {0, 0, 0, "and the same cell of a grid of colors is none"},
         {0.5f, 0.5f, 0.5f, "between two cells, a [Raw] grid's numbers blend as numbers, whatever their alpha"},
+        {210 / 255.0f, 200 / 255.0f, 100 / 255.0f, "a [Raw] glob's image, through a local, is a [Raw] frag source's numbers"},
+        {1, 0.5f, 0.25f, "a [Raw] grid as a [Raw] frag source keeps its clear cell's numbers"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 16;
@@ -1023,7 +1025,7 @@ static void run_raw_checks(const char *when)
     local.Art.targetPass = 0;
     tide_float2 points[COUNT];
     uint32_t got[COUNT];
-    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(24.0f + 40.0f * (float)i, 24.0f);
+    for (int i = 0; i < COUNT; i++) points[i] = i < 6 ? tide_f2(24.0f + 40.0f * (float)i, 24.0f) : tide_f2(24.0f + 40.0f * (float)(i - 6), 64.0f);
     tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
     for (int i = 0; i < COUNT; i++) {
         const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};

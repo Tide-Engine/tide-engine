@@ -391,6 +391,7 @@ tide_e2e_test(number_grids) # Grids of float2s, float4s, ints and bytes as textu
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(texture_compression)
 tide_e2e_test(linear_textures LAYOUT)
+tide_e2e_test(marked_globs) # [Raw] and [Linear] on globs, elements, locals, choices, parameters and frag sources
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code

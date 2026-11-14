@@ -541,7 +541,7 @@ static uint64_t textures_room(const uint8_t *region, const uint64_t size, const 
     uint64_t room = 0;
     for (uint32_t i = 0; i < count; i++) {
         const tide_pack_entry *e = &entries[i];
-        if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
+        if (e->kind == TIDE_PACK_LIST && (e->extra & ~TIDE_PACK_LINEAR) == TIDE_PACK_TEXTURE) {
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(tide_handle)) * sizeof(tide_texture_ref));
         } else if (e->kind == TIDE_PACK_TEXTURES) {
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(handle_entry)) * sizeof(texture_entry));
@@ -640,17 +640,24 @@ static void lay_textures(const uint64_t file)
         if (e->kind == TIDE_PACK_TEXTURE) {
             const uint64_t named = texture_name(e->name, ALONE, NULL, 0);
             if (note_texture(named, e->offset, file).image.version) texture_place(named)->linear = (e->extra & TIDE_PACK_LINEAR) != 0;
-        } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
+        } else if (e->kind == TIDE_PACK_LIST && (e->extra & ~TIDE_PACK_LINEAR) == TIDE_PACK_TEXTURE) {
+            // A [Linear] glob's images were packed for that reading: each says so, as a single asset's does (pack_reads)
+            const bool linear = (e->extra & TIDE_PACK_LINEAR) != 0;
+            e->extra = TIDE_PACK_TEXTURE;
             const uint32_t count = count_at(pack.region, file, e->offset, sizeof(tide_handle));
             const uint64_t at = lay_block(count, (uint64_t)count * sizeof(tide_texture_ref));
             const tide_handle *handles = (const tide_handle *)(const void *)(pack.region + e->offset + sizeof(tide_block));
             tide_texture_ref *out = (tide_texture_ref *)(void *)(pack.region + at + sizeof(tide_block));
             for (uint32_t k = 0; k < count; k++) {
-                out[k] = note_texture(texture_name(e->name, k, NULL, 0), place_of(handles[k], file), file);
+                const uint64_t named = texture_name(e->name, k, NULL, 0);
+                out[k] = note_texture(named, place_of(handles[k], file), file);
+                if (out[k].image.version) texture_place(named)->linear = linear;
             }
             e->offset = at;
             e->size = count;
         } else if (e->kind == TIDE_PACK_TEXTURES) {
+            const bool linear = (e->extra & TIDE_PACK_LINEAR) != 0; // Its count's top bit: a [Linear] glob's map
+            e->extra &= ~TIDE_PACK_LINEAR;
             const uint32_t count = count_at(pack.region, file, e->offset, sizeof(handle_entry));
             const uint64_t at = lay_block(count, (uint64_t)count * sizeof(texture_entry));
             const handle_entry *from = (const handle_entry *)(const void *)(pack.region + e->offset + sizeof(tide_block));
@@ -660,7 +667,9 @@ static void lay_textures(const uint64_t file)
                 const uint8_t *key = text_at(pack.region, file, place_of(from[k].key, file), &key_size);
                 out[k].live = from[k].live;
                 out[k].key = from[k].key;
-                out[k].value = note_texture(texture_name(e->name, KEYED, key, key_size), place_of(from[k].value, file), file);
+                const uint64_t named = texture_name(e->name, KEYED, key, key_size);
+                out[k].value = note_texture(named, place_of(from[k].value, file), file);
+                if (out[k].value.image.version) texture_place(named)->linear = linear;
             }
             e->offset = at;
             e->extra = e->extra > count ? count : e->extra; // Its live count

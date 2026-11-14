@@ -325,6 +325,11 @@ typedef struct device_leaf {
 
 typedef struct param {
     str sample_role; // [Raw(T)]: the numeric type sampled or stored through this image parameter.
+    // `[Raw] Texture masks`, `[Linear] Texture albedo` (and a borrowed asset collection's, `[Raw] List<Texture>
+    // maps`): a read-only parameter that carries the role, which every call's argument has and which its own uses
+    // keep (check.c, check_raw_uses and check_linear_uses)
+    bool raw_role, linear_role;
+    loc role_at;
     // A function's image parameter: what its body assigns it, and the places of the calls it hands it to as `out` or
     // `mut`, which a caller's `out` or `mut` argument then holds (field.image_assignments)
     image_origins image_assignments;
@@ -1294,6 +1299,7 @@ struct expr {
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
+    bool role_noted;       // ...and that it's among the role's uses already (check.c, note_role_use): once each
     // An image origin note_image_place made for an `out` or `mut` argument (check.c): what the callee assigns its
     // parameter, `param` (NULL where that can't be seen: C's, a built-in's, a function value's, an override's)
     bool image_place;
@@ -2102,6 +2108,7 @@ bool declared_raw(const expr *texture);
 type raw_sample_type(const field *image);
 type declared_image_type(const expr *image);
 type param_sample_type(const param *p); // A [Raw(T)] parameter's T, Color for one with no typed role
+bool texture_collection(type t);        // A List<Texture> or a Map<string, Texture>: a glob's, or a parameter of one
 bool image_role_fits(const expr *given, type want); // An image read as `want`: its own role, or a float grid's float
 unsigned shader_numeric_outputs(const shader *sh);
 unsigned shader_output_types(const shader *sh);

@@ -110,9 +110,10 @@ component Sign
 For color images used by lighting, declare `[Linear] asset Texture albedo = "art/albedo.png";`.
 The same mark works on a singular `TextureArray` or `Cubemap` asset. GPU reads then return
 linear light, with filtering and mipmaps in that space, while alpha stays unchanged.
-Unmarked images keep their existing display-number behavior. `[Linear]` does not go on a
-CPU-readable grid or a glob's List/Map; declare each sampled source separately. See
-[Linear-light color](./shaders.md#linear-light-color) for fields and helper functions.
+Unmarked images keep their existing display-number behavior. A glob's `List<Texture>` or
+`Map<string, Texture>` takes the mark for every image it holds, each packed for that reading;
+`[Linear]` does not go on a CPU-readable grid or a glob of grids. See
+[Linear-light color](./shaders.md#linear-light-color) for fields, parameters and helper functions.
 `[Raw, Linear]` is refused; `[Linear, Lossless]` keeps a color image uncompressed.
 
 Marked DDS images rebuild their mip chain from the base image in linear light, so authored
@@ -150,7 +151,7 @@ view Show(mut Player player)
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
 
-For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and retain it in a `[Raw] Texture` field, or sample the asset by name in a shader. Raw images preserve all channels and stay out of ordinary color draws and `Texture` values. See [Textures that are numbers](./shaders.md#textures-that-are-numbers) for field assignments and GPU helper forwarding.
+For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and retain it in a `[Raw] Texture` field, or sample the asset by name in a shader. A folder of them is a glob's `[Raw] asset List<Texture> normals = "art/normals/*.png";` (or a `Map<string, Texture>`), each image kept as numbers and each element a Raw image. Raw images preserve all channels and stay out of ordinary color draws and `Texture` values. See [Textures that are numbers](./shaders.md#textures-that-are-numbers) for field assignments, parameters and GPU helper forwarding.
 
 ### GPU compression
 
