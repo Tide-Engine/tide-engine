@@ -90,6 +90,10 @@ Nothing let match state reach a disk on a server: file calls are local code's, a
 - `Storage.Load` beside `Loaded` handlers that take components follows the events' rule (every load names an entity), checked in `check_sends`.
 - The first game's `Idle` counted in every chunk each tick; see above.
 
+## Docs
+
+- `docs/game/endless-worlds.md` (Simulation, after State visibility): the game's shape for users, from chunks as entities to what it costs. `docs/game/files.md` (Saving the match) and `docs/spec.md` (The server's store) have the store's rules.
+
 ## Tests
 
 - `bench_voxels` (`--quick --expect`): 3 bots, 8 s, `linger` 30 and `keep` 90 ticks, so chunks are saved (8 saves) and loaded again (3 found); the server's hash is the same on 1 thread and 12. `bench_voxels_checked`: the same with every projection hash worked out twice.
@@ -116,3 +120,4 @@ What a game of this kind still works around or lacks, most telling first.
 - Worker priorities (near chunks before far ones) are proposed in the spec, not built.
 - `Transform` and physics are floats: a game this size keeps positions relative to something, as `float3 position` here would lose precision far out. `double3` exists for a game's own positions.
 - Host migration is refused for games with visibility and for games that use the store, so a world a player hosts ends with them; what they saved stays on their machine.
+- **No identity of a player that outlasts the server's run, for match code.** A player's things between visits want a key that's theirs: `PlayerID` comes back only through a cookie the same running server gave, and the account a trusted identity host supplies (`tide_server_desc.identity`, `tide_server_player_identity`) stays in C. A game can have each machine send an ID of its own (a file it keeps) as a command and key its saves by it, unverified, as offline game servers do. A verified one in match code (`Storage.Save(player, key, bytes)` kept under the player's account, say) is the owner's to decide.
