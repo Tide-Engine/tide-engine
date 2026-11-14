@@ -1,4 +1,4 @@
-## Banded reads, parts and volumes: embed ABI 25 (2026-11-14, not run in Unity)
+## Banded reads, parts and volumes: embed ABI 26 (2026-11-14, not run in Unity)
 
 A read of a target or a Texture3D now runs its kernel over a band of rows at a time, each band a storage buffer of
 its own bound where the kernel's list's pool goes, read back on its own (render-targets.md, top section). It records
@@ -6,11 +6,25 @@ as before: buffers, a compute pipeline, uniforms, images, storage, a 2D dispatch
 Every read kernel's uniforms changed (the part's width, the band's rows and first, the part's first pixel, the
 image's size, then the table: 48 bytes) and four kernels were added (ReadVolumeColor/Float/Float4/Int), so `tide
 unity` writes 21 computes. The shared read table grew (`from`, `size`, `depth`): embed ABI and `TideLibrary.Abi` are
-25. The Sample's hand-made read kernels (`00000000c0de0014`, `c0de0061` to `c0de0068`.compute) were written again from
+26 (25 was the grids of numbers', below, made the same day). The Sample's hand-made read kernels (`00000000c0de0014`, `c0de0061` to `c0de0068`.compute) were written again from
 the new `read_pixels_wgsl.h` with `tide_wgsl_translate --hlsl` (the old WGSL gave the checked-in files byte for byte
 but for c0de0014, which was already stale), and ComputeReplayTests' `ReadKernel` and
 `PixelReadKernelReturnsStraightHdrThroughBufferReads` record the new layout. Neither the C# nor the assets were
 compiled or replayed in an editor here (the owner's Unity is off limits to this work): the next Unity run checks them.
+
+## For the next Unity pass: a multisampled target's smaller images (2026-11-14)
+
+Vulkan and now WebGPU make a chain of a multisampled target's resolved colors when a read needs one
+(render-targets.md, Kernels read every kind of image). `TideRender.cs` was left alone in that work; Unity's replay
+still reads the resolved image alone there, as `MakeTarget` gives a target colors with mips only where `samples ==
+1` and `Mipmaps()` returns for an RT without them. What the recorder hands it is already all it needs:
+`TIDE_EMBED_RENDER_TARGET` carries the target's format with its samples (bit 16 on) and names each resolved color
+id, and `TIDE_EMBED_RENDER_MIPMAPS` names such an id whenever a read (a frag, a vert or now a kernel) needs its
+chain after more was drawn, never for an R32f/Rgba32f/R32i image (`embed_render_multisampled_target_mipmaps` in
+`platform/tests/embed.c` pins both). The replay's part: give each blendable color of a multisampled target a
+one-sample companion RT with `useMipMap` (made once), and on Mipmaps of its id resolve the MSAA surface into it
+(`CommandBuffer.ResolveAntiAliasedSurface` or a blit), `GenerateMips`, and bind the companion for that id's reads.
+No ABI change is needed for it.
 
 ## Read kernels, number images and [Linear] run in Unity: three replay fixes (2026-11-14)
 
@@ -128,6 +142,16 @@ on Direct3D 11, Direct3D 12, Vulkan and OpenGL Core: 41 pass of 44 on each, the 
 in the Sample's Gamma color space as before. Before the fix ScaleTests failed (0 quiet frames of 120). Not
 run: EditMode (no editor code changed), Metal, a Unity WebGPU player. Note for the next run: without a
 `-force-` flag this machine's editor picks Direct3D 12, not 11.
+
+## Grids of numbers: embed ABI 25 (2026-11-14)
+
+A Grid2<float2>'s texture is the recorder's pixel format 9, `TIDE_GPU_RG16F` (two halves a pixel), which
+TideRender's `TextureFormat` makes `R16G16_SFloat` (`PixelBytes` 4, as before for unknown numbers); a Grid2<float4>'s is
+the existing Rgba16f (4) and a Grid2<int>'s or Grid2<byte>'s the existing R32i (7), now also 2D textures of the
+TEXTURE packet. `NewTexture` gives integer images (3 and 7) no mip chain, as nothing reads one between levels.
+Packets keep their shape; TIDE_EMBED_ABI and TideLibrary.Abi go from 24 to 25 together, so an older replay can't
+take format 9 for RGBA8. `embed_render_number_grid_textures` pins the packets (formats, bytes, a part's rows). Not
+run in Unity: there is no Unity on this machine for this work.
 
 ## [Linear] texture replay: embed ABI 24 (2026-11-14)
 

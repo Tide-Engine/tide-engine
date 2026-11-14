@@ -5,7 +5,8 @@
 // of the runs that kept any, in order, then none. Where the device takes draws' first instances, runs one after
 // another that draw alike are one call. One setting has the field behind a wall, testing occlusion: the same pixels,
 // some instances hidden, its runs at their levels still joined and their records those of what occlusion's culling
-// kept. The stats' vertices and draws, read back from the GPU a frame or more later, are the CPU's culling's. Then
+// kept. Another draws a list twice, under a depth bias and then none, over the same boxes in another color: the second
+// draw covers them, as it does only with a bias of its own (a call it joined would draw it with the first's). The stats' vertices and draws, read back from the GPU a frame or more later, are the CPU's culling's. Then
 // the device is lost, and it's all again on the next.
 // Under TIDE_GPU_CULLING=decide the renderer has the CPU decide the recorded runs, and draws the same.
 // On the web with `fail-pipeline=CullListed,pyramid` in the page's address (the test
@@ -29,7 +30,7 @@
 #include "gpu_vk.h"   // ...and Vulkan's
 #endif
 
-enum { WIDTH = 160, HEIGHT = 96, PIXELS = WIDTH * HEIGHT, CAMERAS = 3, SETTINGS = 6, OCCLUSION = 5 };
+enum { WIDTH = 160, HEIGHT = 96, PIXELS = WIDTH * HEIGHT, CAMERAS = 3, SETTINGS = 7, OCCLUSION = 5, BIASED = 6 };
 
 static tide_world world;
 static tide_local local;
@@ -133,6 +134,14 @@ static bool shots(const char *when, const bool computes)
             snprintf(what, sizeof what, "camera %d, setting %d: culled on the %s, the same pixels as on the CPU (%u differ)",
                      camera, setting, report.runs ? "GPU" : "CPU", differ);
             expect(differ == 0, what, when);
+            if (camera == 0 && setting == BIASED) { // The middle box's middle: red, the list drawn last with no bias
+                for (int way = 0; way < 2; way++) {
+                    const uint32_t pixel = (way ? plain : culled)[(HEIGHT / 2) * WIDTH + WIDTH / 2];
+                    snprintf(what, sizeof what, "camera 0, setting %d, %s: a list drawn again with no bias covers what its biased "
+                             "draw couldn't (%08x)", setting, way ? "on the CPU" : "culled", pixel);
+                    expect((pixel >> 24 & 255u) > 0 && (pixel >> 16 & 255u) == 0 && (pixel >> 8 & 255u) == 0, what, when);
+                }
+            }
         }
     }
     const tide_gpu *gpu = tide_window_gpu();

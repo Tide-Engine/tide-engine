@@ -230,6 +230,17 @@ static void check_more(void)
     }
     (void)back;
     check(good, "a written depth of 0.1 comes back within 2^-24, as 1 - (1 - 0.1) is in floats");
+    // A 4K window's image, 8,294,400 pixels in four bands: its corners, and the last row of a band and the next's
+    const float step = 0.5f / 255.0f;
+    const tide_color base = {0.2f, 0.4f, 0.6f, 1};
+    const struct { tide_color got, want; } uhd[] = {{m->uhdFirst, base}, {m->uhdLast, {1, 1, 1, 1}}, {m->uhdSeam, {0, 1, 0, 1}},
+                                                    {m->uhdAfter, base}};
+    good = m->uhdSize.x == 3840 && m->uhdSize.y == 2160;
+    for (int i = 0; i < 4; i++) {
+        good = good && fabsf(uhd[i].got.r - uhd[i].want.r) <= step && fabsf(uhd[i].got.g - uhd[i].want.g) <= step
+            && fabsf(uhd[i].got.b - uhd[i].want.b) <= step && uhd[i].got.a == 1.0f;
+    }
+    check(good, "a 3840x2160 target, a 4K window's, is read whole");
 }
 
 // The target read on its way back, if one is

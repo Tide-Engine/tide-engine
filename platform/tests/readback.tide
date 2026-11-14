@@ -81,6 +81,7 @@ local singleton MoreState
     [Raw(int)] Texture3D ids;
     [Raw(float4)] Texture3D wides;
     RenderTarget tenth;  // Depth alone, a frag's 0.1: a depth that 1 - depth rounds
+    RenderTarget uhd;    // 3840 by 2160, a 4K window's: 127 MiB of Colors, in four bands
     bool started; bool moreStarted; bool lose; bool lostStarted; bool again; bool againStarted;
 }
 local singleton MoreResult
@@ -89,6 +90,7 @@ local singleton MoreResult
     Grid2<int> one; Grid2<Color> clamped; Grid2<float> depthPart; Grid2<Color> facePart; Grid2<float> layerPart;
     Grid3<Color> colors; Grid3<float> numbers; Grid3<int> ids; Grid3<float4> wides; Grid3<float> box;
     Grid2<float> tenth;
+    int2 uhdSize; Color uhdFirst; Color uhdLast; Color uhdSeam; Color uhdAfter; // Its last pixel, a band's last row's and the next's
     bool outsideFailed; bool emptyFailed; bool done; bool failed;
     bool lostFailed; bool lostDone; Grid2<int> again; Grid2<Color> againColor; bool againDone;
 }
@@ -120,6 +122,16 @@ async void ReadMore(CopyState state, MoreState more, mut MoreResult result)
     if (await more.wides.Read<float4>() is Grid3<float4> wides) result.wides = wides.Copy(); else result.failed = true;
     if (await more.numbers.Read<float>(int3(1, 0, 1), int3(5, 5, 5)) is Grid3<float> box) result.box = box.Copy(); else result.failed = true;
     if (await more.tenth.ReadDepth() is Grid2<float> tenth) result.tenth = tenth.Copy(); else result.failed = true;
+    // A 4K window's image whole, read where it's kept (no copy of its 127 MiB)
+    if (await more.uhd.Read() is Grid2<Color> uhd)
+    {
+        result.uhdSize = uhd.size;
+        result.uhdFirst = uhd[0, 0];
+        result.uhdLast = uhd[3839, 2159];
+        result.uhdSeam = uhd[3839, 545];
+        result.uhdAfter = uhd[3839, 546];
+    }
+    else result.failed = true;
     result.done = true;
 }
 // The device goes as this read is on its way back: it fails, and nothing more
@@ -147,11 +159,16 @@ view PaintMore(CopyState state, mut MoreState more, mut MoreResult result, CopyR
         more.ids = Texture3D(int3(3, 2, 2), Format.R32i);
         more.wides = Texture3D(int3(3, 2, 2), Format.Rgba32f);
         more.tenth = RenderTarget(2, 2, 1, Format.Depth);
+        more.uhd = RenderTarget(3840, 2160, 1);
         more.started = true;
     }
     more.big.SetScreen(); more.big.SetBlend(.Replace);
     more.big.Clear(Color(0.2, 0.4, 0.6, 1));
     more.big.Rect(float2(2095, 1995), float2(10, 10), Color.white);
+    more.uhd.SetScreen(); more.uhd.SetBlend(.Replace);
+    more.uhd.Clear(Color(0.2, 0.4, 0.6, 1));
+    more.uhd.Rect(float2(3830, 2150), float2(20, 20), Color.white);
+    more.uhd.Rect(float2(3830, 545.5), float2(20, 1), Color.green);
     more.floats.SetScreen();
     more.floats.Clear(1.5);
     more.floats.Clip(Rect(2099, 1999, 1, 1)) { more.floats.Clear(-3.0); }

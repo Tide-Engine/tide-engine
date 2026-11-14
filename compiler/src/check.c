@@ -29,6 +29,10 @@ typedef struct checker {
     VEC(expr *) raw_uses;     // Raw Texture sources: sampled, inspected, stored in a Raw field or rejected (check_raw_uses).
     const expr *raw_value;    // The direct initializer/assignment of a statically [Raw] Texture field.
     const expr *texture_arg;  // Texture argument conversions whose Raw permission waits for GPU call propagation.
+    // A Grid2 of numbers going where a typed [Raw(T)] Texture is wanted (a field's value, a typed parameter's argument),
+    // whose T is then checked against the grid's: anywhere else a Texture goes, it's refused (refuse_number_grid)
+    const expr *number_grid_value;
+    type number_grid_role;    // ...that role's T
     bool raw_mesh; // Resolving an imported mesh payload rather than its stable value handle.
     bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
@@ -274,6 +278,14 @@ static void note_conversion(const type want, const type have)
         diag_note("a char is one character in single quotes, like 'a', and a text's is 'text[i]'");
     } else if (want.kind == TY_STRING && have.kind == TY_CHAR) {
         diag_note("text is written in double quotes, and a char joins it with '+': '\"\" + c'");
+    } else if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
+        diag_note("a Texture is a Grid2<Color> or a Grid2<float> anywhere, and a Grid2<float2>, Grid2<float4>, Grid2<int> or "
+                  "Grid2<byte> where a [Raw(float2)], [Raw(float4)] or [Raw(int)] Texture is wanted; read other grids cell "
+                  "by cell, or copy their cells into one of those");
+    } else if ((want.kind == TY_TEXTURE_ARRAY || want.kind == TY_TEXTURE3D) && have.kind == TY_GRID) {
+        diag_note("a %s is a Grid3<Color> or a Grid3<float>", type_name(want));
+    } else if (want.kind == TY_TEXTURE && have.kind != TY_TEXTURE) {
+        diag_note("a Texture is an asset's, a RenderTarget's color image ('target.color'), or a grid of colors or floats");
     }
 }
 
@@ -2848,6 +2860,35 @@ static bool refuse_raw_grid(const expr *e)
     return false;
 }
 
+// The role a Grid2 of numbers is read through, as written: "float2", "float4" or "int".
+static const char *number_grid_role_name(const type grid)
+{
+    const type role = type_number_grid_role(grid);
+    return role.kind == TY_FLOAT2 ? "float2" : role.kind == TY_FLOAT4 ? "float4" : "int";
+}
+
+// A Grid2<float2>, <float4>, <int> or <byte> where a Texture goes that no [Raw(T)] of its T takes (`want` the
+// role that does take it there, TY_ERROR for none): false, and said. A grid of numbers keeps them only where the
+// role that reads them is known; a plain Texture would draw them as colors.
+static bool refuse_number_grid(const expr *e, const type grid, const type want)
+{
+    const type role = type_number_grid_role(grid);
+    if (role.kind == TY_ERROR || (want.kind == role.kind)) return true;
+    const char *t = number_grid_role_name(grid);
+    if (want.kind != TY_ERROR) {
+        diag_error(e->at, "this is a %s, which a [Raw(%s)] Texture reads, and this one is [Raw(%s)]", type_name(grid), t,
+                   type_name(want));
+        diag_note("a [Raw(float2)] Texture takes a Grid2<float2>, a [Raw(float4)] one a Grid2<float4>, a [Raw(int)] one a "
+                  "Grid2<int> or a Grid2<byte>, and a [Raw(float)] one a Grid2<float>: change the role, or the grid's cells");
+        return false;
+    }
+    diag_error(e->at, "a %s is a Texture only where a [Raw(%s)] Texture is wanted, which reads its numbers as they are",
+               type_name(grid), t);
+    diag_note("assign it to a '[Raw(%s)] Texture' field, or hand it to a '[Raw(%s)] Texture' parameter of a function the "
+              "GPU runs, or to a frag's; a plain Texture takes a Grid2<Color> or a Grid2<float>", t, t);
+    return false;
+}
+
 // A sprite's texture, checked: a grid of numbers is none, as for a mesh (check_mesh_draw). And the Filter and
 // Wrap it takes after the rest, which a call is resolved with.
 static bool check_sprite_args(const checker *c, const expr *e)
@@ -2903,8 +2944,8 @@ static bool image_kind(const type t)
 }
 
 // Where an image field gets its value: an assignment's or a struct literal's. Format inference ([Linear] sources,
-// storage images, numeric outputs) reads every one, so a way to give a field an image that isn't recorded here
-// has to say the field's origin is unknown instead (note_image_place).
+// storage images, numeric outputs and reads) reads every one, so a way to give a field an image that isn't recorded
+// here has to be noted as a place instead (note_image_place).
 static void note_image_origin(const field *to, const expr *value)
 {
     if (!to || !image_kind(to->type)) return;
@@ -2912,12 +2953,35 @@ static void note_image_origin(const field *to, const expr *value)
     vec_push(f->image_assignments, value);
 }
 
-// An image field a call makes ('out') or may change ('mut'): the callee's assignments are to its parameter, so
-// nothing here knows what format the field then holds.
-static void note_image_place(const checker *c, const expr *arg)
+// ...and where a function's image parameter does, in its body: what a caller's `out` or `mut` argument then holds.
+static void note_param_origin(const param *to, const expr *value)
 {
-    if (!arg->field || !image_kind(arg->type) || !image_kind(arg->field->type)) return;
-    vec_push(c->prog->image_places, arg->field);
+    if (!to || !to->function_param || !image_kind(to->type)) return;
+    param *p = (param *)(uintptr_t)to;
+    vec_push(p->image_assignments, value);
+}
+
+// An image field (or a function's image parameter, handed on) that a call makes ('out') or may change ('mut'): it
+// then holds whatever the callee assigns its parameter, an origin of its own (expr.image_place) that format
+// inference follows into the callee's assignments. Where the callee's body can't be seen (`callee` NULL: a
+// built-in's out, C's, a virtual function's, which an override may replace), the place has no known format.
+static void note_image_place(const expr *arg, const decl *callee, const int index)
+{
+    if (!image_kind(arg->type)) return;
+    image_origins *origins = arg->field && image_kind(arg->field->type) ? &((field *)(uintptr_t)arg->field)->image_assignments
+                           : arg->kind == E_NAME && arg->bind == BIND_PARAM && arg->param && arg->param->function_param
+                               && image_kind(arg->param->type) ? &arg->param->image_assignments : NULL;
+    if (!origins) return;
+    const bool seen = callee && !callee->is_extern && !callee->is_virtual && !callee->is_override && index >= 0
+                   && index < callee->params.count;
+    expr *place = NEW(expr);
+    place->kind = E_NAME;
+    place->bind = BIND_PARAM;
+    place->image_place = true;
+    place->param = seen ? &callee->params.items[index] : NULL;
+    place->type = arg->type;
+    place->at = arg->at;
+    vec_push(*origins, place);
 }
 
 // Sampling copies admit RGBA8 storage only. Check every assignment, including later
@@ -2927,6 +2991,14 @@ static int linear_source_format(const program *prog, const expr *e, const int co
 {
     if (!e || e->kind == E_DEFAULT) return 0;
     if (depth > 32) return -1;
+    if (e->image_place) { // What the callee assigns its parameter (note_image_place)
+        if (!e->param) return -1;
+        for (int i = 0; i < e->param->image_assignments.count; i++) {
+            const int got = linear_source_format(prog, e->param->image_assignments.items[i], color, depth + 1, reason);
+            if (got) return got;
+        }
+        return 0;
+    }
     if (declared_linear(e) || e->bind == BIND_ASSET) return 0;
     if (e->type.kind == TY_GRID && e->type.decl && e->type.decl->fields.count) {
         if (e->type.decl->fields.items[0].type.kind == TY_COLOR) return 0;
@@ -2948,9 +3020,8 @@ static int linear_source_format(const program *prog, const expr *e, const int co
     }
     if (e->field) {
         const field *f = e->field;
-        // Every image a field can hold is one of its recorded origins (note_image_origin); a place a call makes or
-        // changes holds whatever the callee gave it, which is no fixed format.
-        for (int i = 0; i < prog->image_places.count; i++) if (prog->image_places.items[i] == f) return -1;
+        // Every image a field can hold is one of its recorded origins (note_image_origin), and a place a call makes
+        // or changes holds what the callee assigns its parameter (note_image_place)
         for (int i = -1; i < f->image_assignments.count; i++) {
             const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
             const int got = linear_source_format(prog, origin, color, depth + 1, reason);
@@ -2987,8 +3058,9 @@ static void check_linear_uses(const checker *c)
             diag_note("use Format.Rgba8 for display-encoded colors, or remove [Linear] for floating-point light and single-channel data");
         } else if (format < 0) {
             diag_error(e->at, "this [Linear] source's format is not fixed by its constructor assignments");
-            diag_note("assign a Format.Rgba8 image to its field directly, not through an 'out' or 'mut' argument, a list or a "
-                      "function's result, and keep images of different formats in separate fields");
+            diag_note("assign a Format.Rgba8 image made with its constructor to its field, there or in a function it's handed "
+                      "to as 'out' or 'mut'; an image from C, a list, a function's result or another parameter has no format "
+                      "the compiler can see. Keep images of different formats in separate fields");
         }
     }
     for (int i = 0; i < c->calls.count; i++) {
@@ -3116,6 +3188,9 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         return e->type = inner;
     }
     if (raw_kind(inner) && c->raw_value != e && c->texture_arg != e && !refuse_raw_grid(e)) return e->type = T_ERR;
+    if (inner.kind == TY_TEXTURE
+        && !refuse_number_grid(e, t, c->number_grid_value == e ? c->number_grid_role : (type){TY_ERROR, NULL}))
+        return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
     if (inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(e, &value) && value >= 0 && value <= 255) {
@@ -3168,7 +3243,17 @@ static type check_field_value(checker *c, expr *e, const field *f)
     const expr *saved = c->raw_value;
     const bool raw = f && raw_kind(f->type) && field_is_raw(f);
     c->raw_value = raw ? e : NULL;
+    // A typed [Raw(T)] Texture field takes a grid of the numbers its T reads (refuse_number_grid)
+    const expr *saved_grid = c->number_grid_value;
+    const type saved_role = c->number_grid_role;
+    const type role = raw && f->type.kind == TY_TEXTURE ? raw_sample_type(f) : (type){TY_COLOR, NULL};
+    if (role.kind != TY_COLOR) {
+        c->number_grid_value = e;
+        c->number_grid_role = role;
+    }
     const type t = check_expr_want(c, e, f ? f->type : T_ERR);
+    c->number_grid_value = saved_grid;
+    c->number_grid_role = saved_role;
     c->raw_value = saved;
     if (f && linear_kind(f->type) && field_is_linear(f)) return check_linear_field_value(c, e, t);
     return raw && raw_sample_type(f).kind == TY_COLOR ? check_raw_field_value(e, t) : t;
@@ -5082,14 +5167,21 @@ static void begin_out_arg(checker *c, expr *arg)
 // ...and once it is: `out var health` and `out _` take the parameter's type,
 // or none when the parameter isn't an `out` one, which is said where the
 // arguments are checked against the parameters.
-static void finish_out_arg(checker *c, expr *arg, const type want)
+static void finish_out_variable(checker *c, expr *arg, const type want)
 {
     if (out_untyped(arg)) {
         arg->out_local->type = want;
         arg->type = want;
     }
     if (holds_heap(arg->type)) c->prog->uses_text = true; // In the scratch area, until it goes somewhere
-    note_image_place(c, arg);
+}
+
+// ...for a call whose callee's body isn't checked here (a built-in's, a function value's): an image it makes has
+// no format known. A function's or method's argument is its parameter's place (check_arg_types).
+static void finish_out_arg(checker *c, expr *arg, const type want)
+{
+    finish_out_variable(c, arg, want);
+    note_image_place(arg, NULL, -1);
 }
 
 // `out` before an argument of a call that takes none: a constructor's, a
@@ -5362,9 +5454,10 @@ static void check_method_args(checker *c, expr *e, decl *m)
     for (int i = 0; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         const param *p = param_of[i] >= 0 ? &m->params.items[param_of[i]] : NULL;
-        if (arg->is_out) { // The variable an `out` parameter makes
+        if (arg->is_out) { // The variable an `out` parameter makes; its image's place is noted with the parameter's
             begin_out_arg(c, arg);
-            finish_out_arg(c, arg, p && p->is_out ? p->type : T_ERR);
+            finish_out_variable(c, arg, p && p->is_out ? p->type : T_ERR);
+            if (!p) note_image_place(arg, NULL, -1);
             continue;
         }
         // Devices passed on are read where they go: the callee's reads count. So does what's reached through the World.
@@ -5384,7 +5477,16 @@ static void check_method_args(checker *c, expr *e, decl *m)
             if (p && type_is_asset_collection(p->type)) c->asset_value = arg;
             const expr *previous_texture = c->texture_arg;
             if (p && p->type.kind == TY_TEXTURE) c->texture_arg = arg;
+            // A [Raw(T)] Texture parameter takes a grid of the numbers its T reads (refuse_number_grid)
+            const expr *previous_grid = c->number_grid_value;
+            const type previous_role = c->number_grid_role;
+            if (p && p->type.kind == TY_TEXTURE && p->sample_role.len) {
+                c->number_grid_value = arg;
+                c->number_grid_role = param_sample_type(p);
+            }
             check_expr_want(c, arg, p ? p->type : T_ERR);
+            c->number_grid_value = previous_grid;
+            c->number_grid_role = previous_role;
             c->texture_arg = previous_texture;
             c->input_value = previous;
             c->asset_value = previous_asset;
@@ -5513,7 +5615,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             continue;
         }
         const bool exact = p->type.kind == arg->type.kind && p->type.decl == arg->type.decl;
-        if (p->is_out || p->mode == PARAM_MUT) note_image_place(c, arg);
+        if (p->is_out || p->mode == PARAM_MUT) note_image_place(arg, m, i);
         if (!check_out_param(c, m, p, arg) || p->is_out) continue;
         if (p->mode == PARAM_MUT && arg->type.kind != TY_ERROR && p->type.kind != TY_ERROR && !exact) {
             diag_error(arg->at, "'" STR_FMT "' changes its '" STR_FMT "', which must be %s, not %s", STR_ARG(m->name),
@@ -7538,9 +7640,18 @@ static type check_blit(checker *c, expr *e)
     }
     const type source = e->args.items[0]->type;
     bool ok = refuse_raw_grid(e->args.items[0]);
-    if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
+    if (type_number_grid_role(source).kind != TY_ERROR) { // A grid of numbers, for a frag whose [Raw(T)] reads them
+        type role = {TY_ERROR, NULL};
+        for (int p = 1; frag && frag->is_frag && p < frag->params.count; p++) {
+            const param *from = &frag->params.items[p];
+            if (from->type.kind == TY_TEXTURE && from->sample_role.len) role = param_sample_type(from);
+        }
+        ok = refuse_number_grid(e->args.items[0], source, role) && ok;
+    } else if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
         diag_error(e->args.items[0]->at, "Blit's source is a Texture, which a Grid2<Color> and a Grid2<float> are too, not %s",
                    type_name(source));
+        diag_note("a Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> is the source of a frag whose Texture is "
+                  "[Raw(float2)], [Raw(float4)] or [Raw(int)]");
         ok = false;
     }
     if (e->args.items[1]->type.kind != TY_RENDER_TARGET && e->args.items[1]->type.kind != TY_ERROR) {
@@ -7871,13 +7982,25 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
 
-    // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn
+    // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn. A grid of numbers
+    // is the source of a frag whose Texture parameter's [Raw(T)] reads them
     for (int i = 2; i < count; i++) {
         const expr *arg = e->args.items[i];
         if (!refuse_raw_grid(arg)) return T_ERR;
         if (arg->type.kind != TY_GRID || type_is_texture_grid(arg->type)) continue;
+        if (type_number_grid_role(arg->type).kind != TY_ERROR) {
+            type source = {TY_ERROR, NULL};
+            for (int p = 1; e->frag && p < e->frag->params.count; p++) {
+                const param *from = &e->frag->params.items[p];
+                if (from->type.kind == TY_TEXTURE && from->sample_role.len) source = param_sample_type(from);
+            }
+            if (!refuse_number_grid(arg, arg->type, source)) return T_ERR;
+            continue;
+        }
         diag_error(arg->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(arg->type));
-        diag_note("a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red");
+        diag_note("a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red; a "
+                  "Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> goes to a frag whose Texture is [Raw(float2)], "
+                  "[Raw(float4)] or [Raw(int)]");
         return T_ERR;
     }
 
@@ -12370,8 +12493,11 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
         return T_ERR;
     }
-    if (grid.kind == TY_GRID && !type_is_texture_grid(grid)) {
+    // A grid of numbers (Grid2<float2>, <float4>, <int>, <byte>) is sampled as its cells are, as a [Raw(T)] Texture is
+    if (grid.kind == TY_GRID && !type_is_texture_grid(grid) && type_number_grid_role(grid).kind == TY_ERROR) {
         diag_error(e->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(grid));
+        diag_note("a Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> is sampled too, as its numbers; other grids are "
+                  "read cell by cell, 'grid[x, y]'");
         return T_ERR;
     }
     e->object->raw_sampled = true; // A [Raw] Texture asset is read here, and nowhere else (check_raw_uses)
@@ -14560,6 +14686,8 @@ static void check_assign(checker *c, const stmt *s)
     s->target->raw_sampled = true; // A Raw field's destination is not an escaping read of its pixels.
     const type value = s->target->field ? check_field_value(c, s->value, s->target->field) : check_expr_want(c, s->value, target);
     if (s->target->field && s->op == T_ASSIGN && image_kind(target)) note_image_origin(s->target->field, s->value);
+    if (s->target->kind == E_NAME && s->target->bind == BIND_PARAM && s->op == T_ASSIGN && image_kind(target))
+        note_param_origin(s->target->param, s->value); // What a caller's `out` or `mut` argument then holds
     if (target.kind == TY_ERROR) return;
     if (s->target->property) {
         if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {

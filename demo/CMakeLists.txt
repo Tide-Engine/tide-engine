@@ -10,4 +10,7 @@ elseif(NOT TIDE_ANDROID)
     # Opens a hidden window, so it needs a desktop session with Vulkan.
     add_test(NAME demo_smoke COMMAND demo --smoke)
     tide_gpu_test(demo_smoke)
+else()
+    # ...and on Android, the app demo.apk, started with --smoke
+    tide_android_app_test(demo GPU NAME demo_smoke_app ARGS --smoke)
 endif()

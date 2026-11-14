@@ -1,0 +1,5 @@
+// expect: this is a Grid2<float4>, which a [Raw(float4)] Texture reads, and this one is [Raw(float2)]
+scene Main { }
+local singleton Art { Grid2<float4> vectors = Grid2(4, 4); }
+frag Copy(Vertex vertex, out Color color, [Raw(float2)] Texture source) { color = Color(source.Sample(vertex.uv).x, 0, 0); }
+view Show(Art art) { Draw.Blit(art.vectors, Draw.window, Copy); }

@@ -321,6 +321,16 @@ bool type_is_texture_grid(const type t)
     return cell == TY_COLOR || cell == TY_FLOAT;
 }
 
+// A Grid2 of numbers that's a Texture only where a typed [Raw(T)] role takes it: the T a read of it gives (float2,
+// float4, or int for a grid of ints or of bytes), TY_ERROR for any other type.
+type type_number_grid_role(const type t)
+{
+    if (t.kind != TY_GRID || !t.decl || t.decl->dims != 2 || t.decl->fields.count < 1) return (type){TY_ERROR, NULL};
+    const type_kind cell = t.decl->fields.items[0].type.kind;
+    return (type){cell == TY_FLOAT2 ? TY_FLOAT2 : cell == TY_FLOAT4 ? TY_FLOAT4 : cell == TY_INT || cell == TY_BYTE ? TY_INT
+                  : TY_ERROR, NULL};
+}
+
 // A Grid3 of colors or of floats: what's a TextureArray where one is wanted, its layers its z.
 bool type_is_array_grid(const type t)
 {
@@ -417,7 +427,9 @@ bool type_assignable(const type to, const type from)
     if (from.kind == TY_BYTE && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     // A char goes where an int does, as its code point; an int becomes a char only with char(n)
     if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
-    if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
+    // A grid of colors or of floats is a texture, and one of numbers too, where the checker sees a [Raw(T)] role of
+    // its T take it (check.c, refuse_number_grid)
+    if (to.kind == TY_TEXTURE) return type_is_texture_grid(from) || type_number_grid_role(from).kind != TY_ERROR;
     if (to.kind == TY_TEXTURE_ARRAY) return type_is_array_grid(from); // ...and one of three dimensions an array
     if (to.kind == TY_TEXTURE3D) return type_is_array_grid(from);
     if (type_is_double_based(to)) {
