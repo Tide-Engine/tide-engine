@@ -1,3 +1,24 @@
+# Triangle side (2026-11-14)
+
+Owner-approved 2026-11-13: `this.front`, a frag's read-only bool. WGSL uses
+`front_facing`; the existing SPIR-V and HLSL translators carry it as FrontFacing
+and SV_IsFrontFace. Unity's HLSL already corrects render-texture projection flips.
+The GPU's front is fixed while renderer culling swaps for mirrors: the shader
+therefore XORs the rasterized side with the model determinant's sign (one flat
+integer varying) and camera sign. `shaded_uniforms.screen.z` keeps physical height
+with camera mirroring encoded in its sign; captured per draw, not the final camera.
+No new GPU API, recorder packet, generated C descriptor or gpu_none operation.
+Only frags reading the member generate the builtin, private bool and varying.
+The extra varying counts toward 15. 2D reports rasterized winding (Provisional).
+Helpers take the bool explicitly, following the implicit-this rule.
+
+Tests: triangle_side WGSL golden, spirv-val, FXC; readonly and vert error fixtures;
+LSP pixel completion; platform shaders pass 28 pins front/back, model mirrors,
+camera mirrors and Cull.Back agreement, including prewarmed draws. Native ASan
+Vulkan and web-debug SwiftShader WebGPU pass; all 59 existing WGSL goldens remain
+unchanged. Docs build and LSP completion are checked with this change.
+Unity replay and Metal require separate verification; no Unity run claimed.
+
 # Code the GPU runs: frags and verts
 
 ## Invariant positions (2026-11-06)

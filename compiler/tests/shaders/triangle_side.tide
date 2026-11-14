@@ -1,0 +1,11 @@
+scene Main { }
+struct Corner { float3 position; }
+local singleton Art { List<Corner> vertices; List<int> indices; }
+frag Side(Corner vertex, out Color color)
+{
+    color = this.front ? Color.red : Color.blue;
+}
+view Show(Art art)
+{
+    Draw.Cull(.None) { Draw.Mesh(art.vertices, art.indices, float4x4.identity, Side); }
+}

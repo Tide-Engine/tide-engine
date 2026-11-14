@@ -1,0 +1,2 @@
+// expect: front
+vert Side(mut Vertex vertex) { var side = this.front; }

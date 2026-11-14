@@ -19757,7 +19757,7 @@ static void add_builtins(program *prog)
     // A frag's implicit pixel `this`, with position, depth and world; and
     // Instance { float4x4 transform; }, how the mesh was drawn, as a parameter.
     // Not declarations: a game's own Pixel or Instance is the game's.
-    static const char *const pixel_fields[][2] = {{"position", "float2"}, {"depth", "float"}, {"world", "float3"}};
+    static const char *const pixel_fields[][2] = {{"position", "float2"}, {"depth", "float"}, {"world", "float3"}, {"front", "bool"}};
     decl *pixel = NEW(decl);
     pixel->kind = DECL_RECORD;
     pixel->name = str_from("Pixel");

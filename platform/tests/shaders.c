@@ -1905,6 +1905,29 @@ static void run_prepass_checks(const char *when)
     if (!shared) failures++;
 }
 
+static void run_triangle_side_checks(const char *when)
+{
+    local.Art.targetPass = 28;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[16];
+    uint32_t got[16];
+    for (int row = 0; row < 2; row++)
+        for (int i = 0; i < 8; i++) points[row * 8 + i] = tide_f2(16.5f + 32.0f * (float)i, 16.5f + 32.0f * (float)row);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 16, got);
+    for (int i = 0; i < 16; i++) {
+        const int col = i % 8;
+        const uint32_t want = col >= 6 ? 0x000000FFu : col % 4 < 2 ? 0xFF0000FFu : 0x0000FFFFu;
+        const bool ok = got[i] == want;
+        printf("%s: triangle side %d, mirrored instances and cameras agree with Cull%s (0x%08X)\n",
+               ok ? "ok" : "FAIL", i, when, (unsigned)got[i]);
+        if (!ok) failures++;
+    }
+}
+
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
 // as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
 // draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
@@ -1946,6 +1969,7 @@ static void run_prewarmed_checks(void)
     run_place_checks(when);
     run_size_checks(when);
     run_prepass_checks(when);
+    run_triangle_side_checks(when);
     const uint32_t after = tide_platform_shader_pipelines();
     printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
            (unsigned)after);
@@ -1980,6 +2004,7 @@ static void run_again(const int roll, const char *when)
     run_place_checks(when);
     run_size_checks(when);
     run_prepass_checks(when);
+    run_triangle_side_checks(when);
 }
 #endif
 
@@ -2056,6 +2081,7 @@ static int frame(void *user, const float seconds)
     run_place_checks(", again");
     run_size_checks("");
     run_prepass_checks("");
+    run_triangle_side_checks("");
     run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__
