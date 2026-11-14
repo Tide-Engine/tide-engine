@@ -211,6 +211,7 @@ vert Snap(mut Corner corner, out float4 clip, Lens lens)
 - **Both are in clip space**, where [`Draw.WorldToClip()`](./cameras.md#a-camera-as-matrices) ends: `x / w` and `y / w` go from -1 to 1 across what's drawn into, left to right and bottom to top, and `z / w` from -1 at the camera's near plane to 1 at its far limit. `w` is 1 under a camera with no perspective, and grows with distance under one that has it, which is why `Snap` divides by it and multiplies it back.
 - **Its depth goes with it:** a vert that writes another `z` is drawn in front of, or behind, what its place in the world says.
 - **The frag's `this.world` is still the vertex's own place in the world**, wherever its vert put it in the frame, so light and shadows worked out from it don't move with it. `this.position` and `this.depth` are where the pixel was drawn.
+
 - A 2D mesh's is through the 2D camera or the screen, with [`Draw.Transform`](./draw-settings.md) in it.
 
 `this` in a vert has that one field, and it can't be assigned: what a vert writes is `out`. An ordinary function a vert calls has no `this`: pass it `this.clip` as a value.
@@ -999,6 +1000,7 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
   - `this.world`, a `float3`: where on the mesh the pixel is, in the world.
   - `this.position`, a `float2`: where it is in the destination's logical pixels from the top left, as [`Draw.Screen`](./views.md#on-the-screen)'s.
   - `this.depth`: how far it is, from 0 at the camera's near side to 1.
+  - `this.front`, a read-only bool: whether the pixel is on the triangle's front by `Draw.Cull`'s winding, including mirrored model and camera transforms, even under `Cull.None`. In 3D it uses one of the 15 carried values; in 2D it reports rasterized winding. Pass the bool to a helper that needs it.
   - `this.Discard()` leaves the pixel undrawn, and ends the frag there: for holes. Nothing is written for it: no color, no depth and no [stencil](./draw-settings.md#stencil). For an edge cut out of a texture, [`this.Cutout`](#cut-outs) is smoother.
   - `this.Cutout(alpha)` and `this.Coverage(share)` say how much of the pixel the frag covers: see [Cut-outs](#cut-outs).
   - `this.Ddx(v)`, `this.Ddy(v)` and `this.Fwidth(v)` say how fast a value changes across the pixel: see [How fast a value changes](#how-fast-a-value-changes).

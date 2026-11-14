@@ -978,6 +978,7 @@ typedef struct decl {
     VEC(const field *) gpu_writes; // ...and every one it writes
     bool cutout;                  // A frag that says how much of its pixel it covers (this.Cutout or this.Coverage): drawn with alpha to coverage
     bool raw_coverage;            // ...with this.Coverage(share): the share as given, not sharpened
+    bool pixel_front;             // A frag reads this.front
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
     bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
@@ -1637,6 +1638,7 @@ typedef struct shader {
     // number, which its generators are made of), or reads Random.seed (seed_at: the word that's the seed); -1 for neither
     int rolled_at, seed_at;
     bool *frag_fields;          // By the vertex's field: whether its pixels read it
+    bool frag_front;            // The frag reads the triangle side
     bool frag_world;            // ...and whether they read where they are in the world
     bool frag_normals;          // ...and whether they call instance.Normal: the vertex stage passes on what normals go through
     const char *name;           // For messages: "Wave and Shade on BoxVertex"

@@ -2848,6 +2848,8 @@ static void ex_pixel(emit *em, const expr *e)
 {
     if (str_eq_c(e->member, "position")) { // The screen's pixels from the top left, as the GUI's
         sb_put(em->o, "(tide_at.xy / tide_block.tide_screen.xy)");
+    } else if (str_eq_c(e->member, "front")) {
+        sb_put(em->o, "tide_front");
     } else if (str_eq_c(e->member, "depth")) {
         sb_put(em->o, "tide_at.z");
     } else {
@@ -2922,6 +2924,7 @@ static void ex_member(emit *em, const expr *e)
     }
     if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->pixel) {
         if (em->checking && str_eq_c(e->member, "world")) em->root->pixel_world = true;
+        if (em->checking && str_eq_c(e->member, "front")) em->root->pixel_front = true;
         ex_pixel(em, e);
         return;
     }
@@ -5961,6 +5964,7 @@ static void put_varyings(emit *em, sb *o)
             sb_printf(o, "    @location(%d) tide_h%d_%d: %s,\n", location++, h, i, t);
         }
     }
+    if (sh->frag_front && sh->dims == 3) sb_printf(o, "    @location(%d) @interpolate(flat) tide_mirror: i32,\n", location++);
     if (sh->frag_world) sb_printf(o, "    @location(%d) tide_world: vec3f,\n", location++);
     for (int i = 0; sh->frag_normals && i < 3; i++) // The columns of what normals go through (ex_normal), an instance's own
         sb_printf(o, "    @location(%d) @interpolate(flat) tide_normals%d: vec3f,\n", location++, i);
@@ -6149,6 +6153,16 @@ static void put_vertex_main(emit *em, sb *o)
             sb_printf(o, "    %stide_h%d_%d = tide_handed%d.%s;\n", out, h, i, h, field_name(&handed->type->fields.items[i]));
         }
     }
+    if (sh->frag_front && sh->dims == 3) {
+        sb_put(o, "    let tide_model = ");
+        put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
+        sb_put(o, ";\n");
+        // The same ordered determinant as draw.c's mirrors(), including singular transforms.
+        sb_put(o, "    let tide_det = tide_model[0].x * (tide_model[1].y * tide_model[2].z - tide_model[1].z * tide_model[2].y)"
+                  " + tide_model[0].y * (tide_model[1].z * tide_model[2].x - tide_model[1].x * tide_model[2].z)"
+                  " + tide_model[0].z * (tide_model[1].x * tide_model[2].y - tide_model[1].y * tide_model[2].x);\n"
+                  "    out.tide_mirror = select(0, 1, tide_det < 0.0);\n");
+    }
     if (sh->frag_world) sb_printf(o, "    %stide_world = tide_place.xyz;\n", out);
     if (sh->frag_normals) { // What the frag's instance.Normal multiplies by, worked out here, once a vertex
         need(em, H_NORMALS);
@@ -6315,6 +6329,7 @@ static void put_wgsl_inputs(const shader *sh, sb *o)
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(o, "var<private> tide_f%d: vec4f;\n", i);
     for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(o, "var<private> tide_g%d: vec4i;\n", i);
     sb_put(o, "var<private> tide_at: vec4f;\nvar<private> tide_world: vec3f;\n");
+    if (sh->frag_front) sb_put(o, "var<private> tide_front: bool;\n");
     for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(o, "var<private> tide_normals%d: vec3f;\n", i);
 }
 
@@ -6515,13 +6530,17 @@ static void write_wgsl(program *prog, shader *sh)
     // The fragment stage, the same for the listed vertex stage and the other
     sb entry = {0};
     const int outputs = shader_outputs(sh);
+    const char *front = sh->frag_front ? ", @builtin(front_facing) tide_facing: bool" : "";
     if (outputs == 1) {
-        sb_put(&entry, "@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n");
+        sb_printf(&entry, "@fragment fn fragment(in: tide_corner%s) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n", front);
     } else { // Several colors, each to the color image of a target that's its place
         sb_put(&entry, "struct tide_colors {\n");
         for (int k = 0; k < outputs; k++) sb_printf(&entry, "    @location(%d) %s: vec4f,\n", k, output_name(k));
-        sb_put(&entry, "}\n@fragment fn fragment(in: tide_corner) -> tide_colors {\n    tide_at = in.tide_at;\n");
+        sb_printf(&entry, "}\n@fragment fn fragment(in: tide_corner%s) -> tide_colors {\n    tide_at = in.tide_at;\n", front);
     }
+    if (sh->frag_front) sb_put(&entry, sh->dims == 3
+        ? "    tide_front = tide_facing != ((in.tide_mirror != 0) != (tide_block.tide_screen.z < 0.0));\n"
+        : "    tide_front = tide_facing;\n");
     if (sh->frag_world) sb_put(&entry, "    tide_world = in.tide_world;\n");
     for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(&entry, "    tide_normals%d = in.tide_normals%d;\n", i, i);
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(&entry, "    tide_f%d = in.tide_f%d;\n", i, i);
@@ -6604,6 +6623,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
 {
     if (!code) return;
     if (code->is_frag && code->pixel_world) sh->frag_world = true;
+    if (code->is_frag && code->pixel_front) sh->frag_front = true;
     if (code->is_frag && code->world_normal && sh->dims == 3) sh->frag_normals = true;
     for (int i = code->is_compute ? 0 : 1; i < code->params.count; i++) { // A kernel has no vertex first
         const param *p = &code->params.items[i];
@@ -6870,7 +6890,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     // What the vert writes for the frag, each struct it takes as `out`, and what
     // of it the frag's parameter of that type reads: only that goes on
-    int varyings = (sh->frag_world ? 1 : 0) + (sh->frag_normals ? 3 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints)
+    int varyings = (sh->frag_front && sh->dims == 3 ? 1 : 0) + (sh->frag_world ? 1 : 0) + (sh->frag_normals ? 3 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints)
                  + (stage_rolls(sh, STAGE_FRAG) ? 1 : 0);
     for (int i = 1; sh->vert && i < sh->vert->params.count; i++) {
         const param *from = &sh->vert->params.items[i];

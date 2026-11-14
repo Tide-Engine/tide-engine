@@ -3258,6 +3258,12 @@ view Sparks(Spark spark, Hud hud)
 }
 ```
 
+#### Triangle side (decided 2026-11-13)
+
+Owner: "these make sense, lets do all of these". A frag reads `this.front`, a read-only bool:
+whether its pixel is on the triangle's front by the winding `Draw.Cull` uses, including
+mirrored instance and camera transforms. It does not require culling to be enabled.
+
 #### What the GPU side gains (agreed, built in part)
 
 Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build any technique itself (shadow maps were what started it), with no lighting or shadows of the engine's own. Nearly every technique draws into an image and reads that image in a later frag, so the pieces are what an image holds, what a draw's state is, what a frag reads and what it writes.
@@ -3274,6 +3280,12 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - Open: a `shader Name { ... }` block that groups a vert and a frag under one name, maybe with the two unnamed inside. It would only add a name for a pair that's checked already, so it can come once naming two at a draw gets tedious.
 
 ### Provisional
+
+- Triangle side (built 2026-11-14): in 3D, the GPU's side is corrected by the signs of the
+  instance and camera determinants, even when `Cull.None` mixes mirrored instances in one draw.
+  This costs one flat varying, included in the existing 15-value limit. In 2D, `this.front`
+  reports the rasterized winding; `Draw.Cull` still changes nothing around 2D draws.
+  A helper cannot read a frag's implicit `this`, as with `Discard`; pass the bool to it.
 
 - Alpha and color space (the owner picked both 2026-10-07, from a proposal with pictures: "go with your recommendations, we will polish if we find out it wasnt ideal after all"; built the same day). Decided: colors are premultiplied under the hood, with everything a game writes staying a color as it is; and colors are the display's values, blended as such, with nothing sRGB-aware. The rules below are picks made to build it, to confirm:
   - **A game never multiplies.** A `Color` is its color and how much of it there is, in a draw, a tint, a vertex, a grid's cell, a PNG, C's pixels and what a frag writes. The engine works the alpha into the color on the way to the GPU: in a texture's bytes (an asset `Texture`'s as the pack is built, a grid's and C's pixels as they're copied for the GPU), and in every pixel a shader writes, after its tint.

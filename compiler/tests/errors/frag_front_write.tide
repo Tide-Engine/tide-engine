@@ -1,0 +1,6 @@
+// expect: a frag's pixel can only be read
+frag Side(Vertex vertex, out Color color)
+{
+    this.front = false;
+    color = Color.white;
+}

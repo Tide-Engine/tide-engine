@@ -1,3 +1,11 @@
+## Triangle side (2026-11-14)
+
+`this.front` uses the translator's existing front_facing / SV_IsFrontFace path;
+`tidehl_facing` corrects projection flips. The generated vertex stage carries the
+model mirror sign; the renderer supplies camera mirroring in screen.z's sign.
+No replay packet change. Runtime replay on Unity graphics APIs is not yet verified
+for this member; FXC validates the generated HLSL on this machine.
+
 # Unity as a front end
 
 ## A game laid out otherwise in a player: its C# for both (2026-11-10)

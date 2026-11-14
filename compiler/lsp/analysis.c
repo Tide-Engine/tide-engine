@@ -2588,6 +2588,7 @@ static const char *builtin_field_doc(const decl *d, const str name)
         if (str_eq_c(name, "depth")) {
             return "How deep the pixel is, as the depth test has it: from 0, the nearest the camera draws, to 1, the farthest.";
         }
+        if (str_eq_c(name, "front")) return "Whether this pixel is on the triangle's front, as Draw.Cull sees it, including mirrored transforms.";
         if (str_eq_c(name, "world")) return "Where the pixel is in the world.";
     }
     if (d && d == A.prog->invocation) {

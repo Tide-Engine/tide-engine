@@ -5233,3 +5233,32 @@ view Anisotropics(Art art, mut Along along)
         Draw.Mesh(along.strip, art.faces, along.kept, AlongSquare);
     }
 }
+
+frag TriangleSide(Corner3 vertex, out Color color)
+{
+    color = this.front ? Color.red : Color.blue;
+}
+
+[After(Anisotropics)]
+view TriangleSides(Art art)
+{
+    if (art.targetPass != 28) return;
+    Draw.Clear(Color.black);
+    Draw.SetClip();
+    Draw.SetDepth(.None);
+    Draw.SetCull(.None);
+    for (int camera = 0; camera < 2; camera++)
+    {
+        var cam = float4x4.Scale(float3(camera == 0 ? 1 : -1, 1, 1));
+        Draw.SetCamera(cam, float4x4.Ortho(256, 256, 0.1, 100));
+        for (int i = 0; i < 8; i++)
+        {
+            var pos = float3((32 * i - 112) * (camera == 0 ? 1 : -1), 112 - 32 * camera, 5);
+            var model = float4x4.TRS(pos, quaternion.identity, float3(i % 2 == 0 ? 1 : -1, 1, 1));
+            if (i >= 4) Draw.SetCull(.Back);
+            else Draw.SetCull(.None);
+            if (i % 4 < 2) Draw.Mesh(art.quad, art.faces, model, TriangleSide);
+            else Draw.Mesh(art.quad, [0, 2, 1, 0, 3, 2], model, TriangleSide);
+        }
+    }
+}

@@ -1584,7 +1584,7 @@ typedef enum tide_shader_read {
 //   units the draw is in, through the 2D camera or the screen, and the
 //   transform the draw is in), then `tide_screen`, a float4: the target's
 //   pixels in a logical one across and down, the target's height in its own
-//   pixels, and 1 where the draw multiplies what's there (TIDE_BLEND_MULTIPLY:
+//   pixels (negative for a mirrored 3D camera), and 1 where the draw multiplies what's there (TIDE_BLEND_MULTIPLY:
 //   its color goes to white as its alpha goes to 0) or 0, or for a cut-out
 //   (`cutout`), -1 where its target has one sample; then `tide_tint`,
 //   a float4 the pixel's color is multiplied by (see tide_draw_set_tint). A 3D

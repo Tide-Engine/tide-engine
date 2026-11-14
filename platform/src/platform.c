@@ -1013,6 +1013,7 @@ enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, S
        STEP_GPU_OP }; // A GPU list's Set, Clear or SetCount (tide_draw_list.gpu_ops, `first`), outside passes
 
 typedef struct draw_step {
+    bool camera_mirrored;
     uint32_t kind;    // STEP_*
     uint32_t blend;   // How it goes over what's there: tide_blend
     uint32_t depth;   // STEP_MESH_3D, and a STEP_SHADED through a 3D shader: what it does with depth, tide_depth
@@ -2241,7 +2242,7 @@ typedef struct mesh_3d_uniforms {
 // What the uniforms of a shader of the game's start with (see tide_shader),
 // before a run's own: `tide_camera`, from the units its mesh is in to clip
 // space, `tide_screen`, the target's pixels in a logical one, across and
-// down, its height in its own pixels, and 1 where the draw multiplies what's
+// down, its height in its own pixels (negative for a mirrored 3D camera), and 1 where the draw multiplies what's
 // there, and `tide_tint`, what its pixels' colors are multiplied by.
 typedef struct shaded_uniforms {
     tide_float4x4 camera;
@@ -5305,7 +5306,7 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
         block.engine.camera = tide_mul_f4x4(block.engine.camera, moved);
     }
     block.engine.screen[0] = scale.x, block.engine.screen[1] = scale.y;
-    block.engine.screen[2] = (float)draw_pixel_height;
+    block.engine.screen[2] = (float)draw_pixel_height * (shader->dims == 3 && s->camera_mirrored ? -1.0f : 1.0f);
     block.engine.screen[3] = shader->cutout && !covers_by_samples(frame_targets[s->target].into) ? -1.0f // It cuts itself
                            : s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f;
     block.engine.tint[0] = run->tint.r, block.engine.tint[1] = run->tint.g;
@@ -5669,6 +5670,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             s->profile_geometry = c->profile_geometry;
             s->mesh = c->mesh3.mesh;
             s->camera = f->camera_3d;
+            s->camera_mirrored = f->mirrored;
             s->camera_data = f->camera_data;
             s->fit = f->fit;
             s->tint = c->color;
@@ -5684,6 +5686,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             s->profile_geometry = c->profile_geometry;
             s->first = c->shaded.run;
             s->camera = f->camera_3d;
+            s->camera_mirrored = f->mirrored;
             s->camera_data = f->camera_data;
             s->fit = f->fit;
             s->through = *cam;
