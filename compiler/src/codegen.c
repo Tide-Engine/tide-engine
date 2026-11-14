@@ -2365,6 +2365,15 @@ static void gen_mesh_of_asset(gen *g, sb *o, const expr *e, const type want)
     sb_put(o, ").id})");
 }
 
+// A Grid2 of numbers' cells as tide/mesh.h's TIDE_TEXTURE_CELLS_* says them (3 float2s, 4 float4s, 5 ints, 6 bytes):
+// 0 for any other type.
+static unsigned number_grid_cells(const type grid)
+{
+    if (type_number_grid_role(grid).kind == TY_ERROR) return 0;
+    const type_kind cell = grid.decl->fields.items[0].type.kind;
+    return cell == TY_FLOAT2 ? 3u : cell == TY_FLOAT4 ? 4u : cell == TY_INT ? 5u : 6u;
+}
+
 static void gen_as(gen *g, sb *o, expr *e, const type want)
 {
     const type have = e->type;
@@ -2421,6 +2430,14 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_put(o, "tide_texture_array_of_grid(");
         gen_expr(g, o, e);
         sb_printf(o, ", &%s, %s)", grid_shape_name(have.decl), declared_raw(e) ? "true" : "false");
+        return;
+    }
+    if (want.kind == TY_TEXTURE && have.kind == TY_GRID && number_grid_cells(have)) {
+        // A grid of numbers where a [Raw(T)] Texture goes: the texture it is, its cells' kind in the value, since
+        // a shape's bytes don't tell a Grid2<float4> from a Grid2<Color> (tide_texture_grid_cells)
+        sb_put(o, "tide_texture_of_grid_cells(");
+        gen_expr(g, o, e);
+        sb_printf(o, ", &%s, %uu, %uu)", grid_shape_name(have.decl), number_grid_cells(have), declared_sampling_bits(e));
         return;
     }
     if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
@@ -27323,19 +27340,18 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
         int b = 0;
         while (sh->bound.items[b] != texture->source) b++;
         if (texture->field->type.kind == TY_TEXTURE) {
-            if (field_is_raw(texture->field)) {
-                sb_printf(o, "    tide_grid tide_raw_grid%d;\n    tide_grid_shape tide_raw_shape%d;\n"
-                             "    tide_textures[%d] = tide_texture_grid(tide_%sb%d->%s, &tide_raw_grid%d, &tide_raw_shape%d)\n"
-                             "        ? tide_draw_grid_texture_raw(tide_draw, tide_raw_grid%d, &tide_raw_shape%d)\n"
-                             "        : tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n",
-                          t, t, t, texture->field->is_local ? "l" : "", b, field_cname(texture->field), t, t, t, t,
-                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-            } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source%s(tide_draw, tide_%sb%d->%s);\n", t, linear,
-                             texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            // A [Raw] or [Raw(T)] field's: a grid's colors as numbers, and a grid of numbers as its cells are
+            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source%s(tide_draw, tide_%sb%d->%s);\n", t,
+                      field_is_raw(texture->field) ? "_raw" : linear, texture->field->is_local ? "l" : "", b,
+                      field_cname(texture->field));
         }
         else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY)
             sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+        else if (number_grid_cells(texture->field->type)) // A grid of numbers, sampled by its name
+            sb_printf(o, "    tide_textures[%d] = tide_draw_grid_number_texture(tide_draw, tide_%sb%d->%s, &%s, %uu);\n", t,
+                      texture->field->is_local ? "l" : "", b, field_cname(texture->field),
+                      grid_shape_name(texture->field->type.decl), number_grid_cells(texture->field->type));
         else
             sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, tide_%sb%d->%s, &%s);\n", t,
                       field_is_raw(texture->field) ? "_raw" : "", texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
@@ -27494,7 +27510,8 @@ static void gen_kernel(gen *g, const shader *sh, const int s)
         const type source_type = texture->asset ? texture->asset->return_type : texture->field->type;
         if (source_type.kind == TY_GRID) {
             sb converted = {0};
-            sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
+            if (number_grid_cells(source_type)) sb_printf(&converted, "tide_texture_of_grid_cells(%s, &%s, %uu, 0u)", from.data, grid_shape_name(source_type.decl), number_grid_cells(source_type));
+            else sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
             from = converted;
         }
         if (source_type.kind == TY_TEXTURE3D) {
@@ -27793,7 +27810,8 @@ static void gen_shaders(gen *g)
                                    : texture->field ? texture->field->type : (type){TY_TEXTURE, NULL};
             if (source_type.kind == TY_GRID) {
                 sb converted = {0};
-                sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
+                if (number_grid_cells(source_type)) sb_printf(&converted, "tide_texture_of_grid_cells(%s, &%s, %uu, 0u)", from.data, grid_shape_name(source_type.decl), number_grid_cells(source_type));
+                else sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
                 from = converted;
             }
             if (source_type.kind == TY_TEXTURE3D) {

@@ -1,0 +1,4 @@
+// expect: this is a Grid2<float2>, which a [Raw(float2)] Texture reads, and this one is [Raw(int)]
+scene Main { }
+local singleton Art { Grid2<float2> flow = Grid2(4, 4); [Raw(int)] Texture ids; }
+view Show(mut Art art) { art.ids = art.flow; }

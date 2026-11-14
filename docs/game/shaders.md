@@ -227,6 +227,25 @@ An ordinary Texture parameter still samples Color; the explicit role keeps numer
 A frag's direct image source can carry the role too, such as `[Raw(int)] Texture source`; give that frag a
 matching numeric image in the draw's Texture argument.
 
+A CPU grid of numbers is an image of its role as well: a `Grid2<float>` reads through `[Raw(float)]` (or as a
+color's `r`), a `Grid2<float2>` through `[Raw(float2)]`, a `Grid2<float4>` through `[Raw(float4)]`, and a
+`Grid2<int>` or `Grid2<byte>` through `[Raw(int)]`. It goes into a field, a helper's parameter or a frag's source of
+that role, and a frag samples it by its name as those numbers (see [Grids of other
+numbers](./meshes-and-textures.md#grids-of-other-numbers)):
+
+```csharp
+local singleton Wind { Grid2<float2> flow = Grid2(128, 128); Grid2<int> zones = Grid2(128, 128); }
+
+float2 Push([Raw(float2)] Texture flow, float2 uv) { return flow.Sample(uv, Filter.Bilinear); }
+
+frag Drift(Vertex vertex, out Color color, Wind wind)
+{
+    float2 push = Push(wind.flow, vertex.uv);
+    int zone = wind.zones.Sample(vertex.uv);
+    color = Color(push.x, push.y, zone == 3 ? 1 : 0);
+}
+```
+
 R8, Rg8, R16f and Rg16f support multisampling and resolve each channel by its mean. R32f, Rgba32f and R32i
 require a single-sample target. Numeric `float4` into Rgba16f supports that format's ordinary mean resolve.
 
@@ -749,7 +768,7 @@ view Crates(Models models)
 }
 ```
 
-- **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes.
+- **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes (and a grid of other numbers, read as [its numbers](#number-images)).
 - **`Sample` gives the color itself**, with its alpha beside it, blended between pixels so that a clear pixel counts for none of the color (see [Alpha](./draw-settings.md#alpha)). A pixel with no alpha reads as `Color(0, 0, 0, 0)`. What a frag writes is a color as it is too: `Color(1, 0, 0, 0.5)` is red, half clear.
 - **An asset**, by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(uv)` (see [Assets](./assets.md#images-to-draw-with)).
 - **Its own `Texture` parameter**, one at the most, which is whatever texture the draw gives after its mesh: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./render-targets.md#post-processing)'s source is its frag's.

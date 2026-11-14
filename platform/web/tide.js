@@ -2043,8 +2043,9 @@
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4][format];
-            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb'][format];
+            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4, 4][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb',
+                'rg16float'][format];
             const texture = device.createTexture({ size: [width, height], format, usage });
             const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
@@ -2351,7 +2352,7 @@
                 return;
             }
             const levels = 1 + Math.floor(Math.log2(Math.max(t.width, t.height)));
-            if (!t.format || levels < 2) return;
+            if (!t.format || levels < 2 || t.format === 'r32sint' || t.format === 'rgba32sint') return; // No GPU blends ints
             const pipeline = mipPipeline(t.format);
             if (!t.levels) {
                 // A texture has as many images as it was made with, so the first time, one with room for them

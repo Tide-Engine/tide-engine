@@ -1,3 +1,45 @@
+# Grids of numbers as textures (2026-11-14)
+
+From an audit (only `Grid2<Color>` and `Grid2<float>` converted, so a flow field had to be split into float grids).
+The rules and the picks weighed are Provisional in spec.md (Views and drawing, Textures, Grids of other numbers);
+users: game/meshes-and-textures.md (Grids of other numbers), game/shaders.md (Number images).
+
+- **tidec.** `type_number_grid_role` (types.c): a Grid2 of float2, float4, int or byte reads as float2, float4 or
+  int. `type_assignable` takes it to `Texture`, and the checker refuses it wherever no `[Raw(T)]` of its T takes it
+  (`refuse_number_grid` from `check_expr_want_any`, with `checker.number_grid_value`/`_role` set by
+  `check_field_value` for a typed Texture field and by `check_method_args` for a typed parameter; the draw and
+  blit checks look at the frag's `[Raw(T)]` Texture). `declared_image_type` gives such a grid its role, so a Sample
+  by its name is a typed read (`check_grid_sample`), `typed_through_sampler` blends a float2/float4 grid's
+  (`READ_NUMBER_BLEND`, which no longer gets `tide_straight` even where the source is a grid handed to a helper),
+  and `image_role_fits` lets a `Grid2<float>` be a `[Raw(float)]` source too. `image_target_format` gives them
+  Rg16f, Rgba16f and R32i for the format checks; `image_origin_format` refuses a kernel's store into any Grid2's
+  Texture (-7). `note_conversion` names the accepted grids for a Texture that isn't one.
+- **Generated C.** `gen_as` writes `tide_texture_of_grid_cells(grid, &shape, cells, sampling)` (cells 3 to 6,
+  `number_grid_cells`); a grid field sampled by name is `tide_draw_grid_number_texture`; a `[Raw]`/`[Raw(T)]`
+  Texture field's capture is now `tide_draw_texture_source_raw`, where it was an inline `tide_texture_grid ?
+  tide_draw_grid_texture_raw : tide_draw_texture_source` (which would have read a float4 grid's shape as colors).
+  Games with neither change byte for byte except that capture's text, and no header changes.
+- **Runtime.** A grid's Texture keeps its cells' kind in bits 32 to 39 (`TIDE_TEXTURE_CELLS_*`, mesh.h) as it kept
+  1 or 2; `tide_texture_grid` takes kinds 1 to 6 and gives the shape the right cell bytes, and
+  `tide_texture_grid_cells` says which, since 16 bytes is a Color or a float4 and 4 a float or an int.
+  `texture_source` (draw.c) sends kinds 3 to 6 to `tide_draw_grid_number_texture` (mesh.c), which validates as
+  `grid_texture` does (`see_grid_texture`, shared) and writes through `grid_cells` with `halves_cells` or
+  `ints_cells`: `TIDE_TEXELS_HALF2`, `_HALF4` and `_INT` (draw.h), changed chunks only, a writer kind of its own
+  for each cell kind. A linear capture of a number grid is none.
+- **Renderer.** `texture_for` makes `TIDE_GPU_RG16F` (new, gpu.h), `RGBA16F` and `R32I`; `texture_to_read_as`
+  gives an integer read the `TIDE_TEXELS_INT` images alone and no other read those; `mipmaps_needed` makes no
+  smaller images of an int texture (Vulkan's `blits` and WebGPU's `gpu_mipmaps` refuse them too). Vulkan
+  `R16G16_SFLOAT`, WebGPU `rg16float` (`tide.release.js` regenerated), Unity `R16G16_SFloat` and integer textures
+  without a mip chain (`NewTexture`), embed ABI 25 (unity.md).
+- **Tests:** `tidec_e2e_number_grids` (each value's cells, the list's halves and ints byte for byte, a million as
+  65504, one changed cell the only area, a forged kind no texture, no linear capture; native and WASI);
+  `textures`' forged-handle sweep now takes all six kinds; golden `shaders/number_grids` (spirv-val, fxc); errors
+  `number_grid_*` (9), `texture_grid_other_cells`, `gpu_sample_grid_type` (now a Grid2<bool>);
+  `embed_render_number_grid_textures`; six pixel probes in `platform/tests/images.tide` (NumberGrids: blended and
+  exact float2s, float4s by name and at a level, exact ints through a helper, bytes by name and as a frag's source,
+  a cell changed every frame) on Vulkan with the validation layer and WebGPU with device loss. Unity's replay was
+  not run (no Unity here): its change is the format's mapping and the mip flags.
+
 # Image origins through `out` and `mut` (2026-11-14)
 
 From an audit: `program.image_places` (an image field given as an `out` or `mut` argument) was read by
@@ -924,7 +966,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A `Grid2<float>` is `TIDE_TEXELS_HALF` in the draw list** (`tide_draw_texture.format`, `tide_draw_texture_slot_as`: 2 bytes a pixel) and `TIDE_GPU_R16F` on the GPU (`platform/src/gpu.h`; `GL_R16F` with `GL_HALF_FLOAT` in `gpu_gl.c` and `gl.h`, whose WebGL upload takes a `Uint16Array`: `pixels` in `tide.js`; `r16float` in `tide.js`'s `gpu_texture`, by `tide_gpu_format`'s numbers). Picked over 32 bits because every backend blends a half between pixels with nothing asked, where a float of 32 needs `OES_texture_float_linear` on WebGL 2 and `float32-filterable` on WebGPU, whose bind group layouts would then depend on the texture a frag is given. So no device falls back. `tide_half_from_float` (`mesh.c`) rounds to the nearest, ties to even, with 65504 for what's past it and for an infinity, and 0 for NaN. A shader reads it as `(r, 0, 0, 1)`, which is what each backend gives a one-channel texture: no shader text depends on it. The platform's texture cache tells a texture by its format too (`gpu_texture.format` in `platform.c`).
   - **A hot reload keeps a `Texture` of the pack's or of a grid's**, and a target's with its sampling (`gen_resource_fields`): only one of C's own pixels, or of a target that isn't the game's, is zeroed. (It zeroed the pack's too before, which nobody had noticed.) After a migration to another layout a grid's `Texture` may name another place; nothing clears it.
   - **Generated C:** 20 of 246 games differ from what the compiler before wrote (old and new tidec over every game's source list, with `--layout` and without), all in their `.c` and none in a header, so no game's hash moved: textured draws convert their grid at the argument and call the one function, shader functions take one reference and work their sampling out, and reloads carry sampling. The 224 others are byte for byte what they were.
-  - **Not built:** a way to change a `Texture`'s sampling in Tide outside a draw; a `Texture`'s size; grids of other cells and `Grid3` as textures; a `Grid2<float>` asset; clearing a grid's `Texture` when its grid goes or when a reload migrates; a live docs example of a float grid.
+  - **Not built:** a way to change a `Texture`'s sampling in Tide outside a draw; a `Texture`'s size (built since); grids of other cells and `Grid3` as textures (`Grid3` built 2026-11-05, grids of float2s, float4s, ints and bytes 2026-11-14: top); a `Grid2<float>` asset; clearing a grid's `Texture` when its grid goes or when a reload migrates; a live docs example of a float grid.
   - **Tests:** `compiler/tests/e2e/textures` (a grid as a texture drawn, kept, passed, returned, in 3D, instanced and into a target; sampling carried from a grid's field and a target's, and a draw's over it; frags whose runs carry it, one shader in three runs; a float grid's halves and the conversion's rounding; every offset of a heap, and past it, as a grid's handle), natively and under Node; `compiler/tests/e2e/asset_textures` (a kept asset draws as declared, in a mesh and in a frag); pass 12 of `platform/tests/shaders.tide` with `run_height_checks` in `shaders.c` (a float grid in a frag, with no frag, blended, numbers past 1 and under 0, a kept `Texture` with and without the draw's wrap) and pass 10's kept image, the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/errors/` for the messages that changed; `lsp_wrap`, `lsp_meshes`, `lsp_asset_textures_and_declared_sampling`. Not run: Android, and OpenGL on a Mac.
 - **Mipmaps are a filter, `Filter.Trilinear`** (item 6 of the reshaping, built 2026-10-07; that the drawing side gets mipmaps and that the card designs how a mipmapped sample is written where code samples in a branch are the owner's; each rule is Claude's pick, Provisional in `docs/spec.md`, Views and drawing, Mipmaps, with the options that were weighed). `docs/game/meshes-and-textures.md` (Drawn smaller) and `docs/game/shaders.md` (Textures) are the users' pages. What's built, and what code relies on:
   - **The filter's numbers**: `tide_filter` has `TIDE_FILTER_TRILINEAR` (2) after point and bilinear, with `tide_filter_of`, which makes any number one (what's none is bilinear). A mesh command's `filter` is that number, as it was. A texture reference's sampling has bit 1 for it beside bit 0 for the nearest pixel (`tide_sampling_bits`, `tide_texture_filter`; `tide_texture_filtered` replaces both and `tide_texture_wrapped` keeps both), so a zeroed reference is still blended. A shader run's `sampling` has bit `TIDE_SAMPLING_MIPS` (24) + i for texture i, set with its blended bit i (`tide_sampling_filtered`, `tide_sampling_filter`), so the word generated C writes for a game with no Trilinear is the text it was, and code that only asks `tide_sampling_blended` reads it as blended.

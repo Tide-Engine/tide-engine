@@ -3700,13 +3700,29 @@ type raw_sample_type(const field *image)
     return (type){TY_COLOR, NULL};
 }
 
+// Whether image `given` fits where a texture is read as `want` (declared_image_type): the same role, or a
+// Grid2<float>'s, which a Color read takes as (r, 0, 0, 1) and a [Raw(float)] one as its number.
+bool image_role_fits(const expr *given, const type want)
+{
+    if (declared_image_type(given).kind == want.kind) return true;
+    return given && want.kind == TY_FLOAT && type_is_texture_grid(given->type)
+        && given->type.decl->fields.items[0].type.kind == TY_FLOAT;
+}
+
+type param_sample_type(const param *p)
+{
+    if (!p || !p->sample_role.len) return (type){TY_COLOR, NULL};
+    const str role = p->sample_role;
+    return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2 : str_eq_c(role, "int") ? TY_INT : TY_FLOAT4, NULL};
+}
+
 type declared_image_type(const expr *image)
 {
     if (declared_linear(image)) return (type){TY_COLOR, NULL};
-    if (image && image->bind == BIND_PARAM && image->param && image->param->sample_role.len) {
-        const str role = image->param->sample_role;
-        return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2 : str_eq_c(role, "int") ? TY_INT : TY_FLOAT4, NULL};
-    }
+    if (image && image->bind == BIND_PARAM && image->param && image->param->sample_role.len) return param_sample_type(image->param);
+    // A Grid2 of numbers is read as its cells are (Grid2<float2> as float2s...), wherever it's read as a texture
+    const type numbers = image ? type_number_grid_role(image->type) : (type){TY_ERROR, NULL};
+    if (numbers.kind != TY_ERROR) return numbers;
     return raw_sample_type(image ? image->field : NULL);
 }
 
@@ -4149,7 +4165,7 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
         const expr *of = s.param < 0 ? s.asset : arg ? spec[s.param].sampled : NULL;
         const int mine = arg ? own[s.param] : -1;
         const expr parameter = {.bind = BIND_PARAM, .param = s.param >= 0 ? &fn->params.items[s.param] : NULL};
-        if (arg && declared_image_type(arg).kind != declared_image_type(&parameter).kind) {
+        if (arg && !image_role_fits(arg, declared_image_type(&parameter))) {
             refuse(em, arg->at, "an image passed to a numeric image parameter must keep the same [Raw(T)] role");
             continue;
         }
@@ -4319,7 +4335,7 @@ static bool typed_through_sampler(const expr *e)
     const type typed = declared_image_type(e->object);
     if (typed.kind == TY_COLOR || typed.kind == TY_INT) return false;
     if (held.kind == TY_TEXTURE_ARRAY || held.kind == TY_CUBEMAP) return true;
-    if (held.kind != TY_TEXTURE) return false;
+    if (held.kind != TY_TEXTURE && type_number_grid_role(held).kind == TY_ERROR) return false; // A Grid2<float2>'s or <float4>'s too
     return str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")
         || (e->args.count > 1 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number != 0);
 }
@@ -4351,7 +4367,7 @@ static void ex_sample_read(emit *em, const expr *e)
     const bool number = !sampled && declared_image_type(e->object).kind != TY_COLOR;
     const bool integer = e->type.kind == TY_INT;
     const shader_read read = number ? (volume ? (integer ? READ_INT_VOLUME : READ_NUMBER_VOLUME) : integer ? READ_INT : READ_NUMBER)
-                           : sampled && held.kind == TY_TEXTURE ? READ_NUMBER_BLEND
+                           : sampled && (held.kind == TY_TEXTURE || held.kind == TY_GRID) ? READ_NUMBER_BLEND
                            : volume ? READ_VOLUME : cube ? READ_CUBE : held.kind == TY_TEXTURE_ARRAY ? READ_ARRAY
                            : held.kind == TY_DEPTH_TEXTURE_ARRAY ? (compares ? READ_COMPARE_ARRAY : READ_DEPTH_ARRAY)
                            : held.kind != TY_DEPTH_TEXTURE ? READ_COLOR : compares ? READ_COMPARE : READ_DEPTH;
@@ -4451,7 +4467,8 @@ static void ex_sample_read(emit *em, const expr *e)
         return;
     }
     // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
-    const bool straight = base == READ_COLOR && !declared_raw(of);
+    // A typed image's through a sampler (READ_NUMBER_BLEND) are too: a grid of numbers handed to a helper's [Raw(T)]
+    const bool straight = base == READ_COLOR && read != READ_NUMBER_BLEND && !declared_raw(of);
     if (straight) {
         need(em, H_STRAIGHT);
         sb_put(em->o, "tide_straight(");
@@ -7116,7 +7133,7 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
                     value = declared_image_type(&parameter);
                 }
             }
-            if (source && value.kind != declared_image_type(source).kind) {
+            if (source && !image_role_fits(source, value)) {
                 diag_error(call->at, "a frag's Texture source must keep its [Raw(T)] numeric role: pass an image with the same role as the source parameter");
                 return false;
             }
