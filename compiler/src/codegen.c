@@ -10080,7 +10080,11 @@ static void gen_header(gen *g)
         if (prog->shards) sb_put(o, "    tide_kept_worlds tide_available_shards[2];\n");
     }
     gen_task_tables(g, true);
-    if (world_has_tasks(g, true)) sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
+    if (world_has_tasks(g, true)) {
+        sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
+        // Another match's entities have the same handles: a local task of the match's entities ends with its match
+        sb_put(o, "    uint32_t tide_match_over;  // Local tasks started before this many had, for the match's entities, end: its match is over\n");
+    }
     sb_put(o, "    float tide_frame_seconds;  // This frame's length (tide_local_frame_time): Frame.dt, which local tasks count down\n");
     if (prog->rolls_local) sb_put(o, "    tide_random tide_dice;     // What local code rolls with (Random.NextInt and the like)\n");
     if (prog->seed_local) sb_put(o, "    int32_t tide_match_seed;   // Random.seed for local code: the match's, as the last frame had it; 0 with none\n");
@@ -17200,9 +17204,11 @@ static bool heap_defaults(const decl *d)
 
 // Whether a view writes a component's local fields into a row made for it up
 // front, rather than a copy of the defaults that's only kept if it changed.
+// One that starts a task with them shares the row with the task, which finds
+// it as it runs until it first waits (gen_task_resume).
 static bool attaches_first(const param *p)
 {
-    return p->local_shared || (p->mode == PARAM_MUT && heap_defaults(local_part_of(p->type)));
+    return p->local_shared || p->task_fields || (p->mode == PARAM_MUT && heap_defaults(local_part_of(p->type)));
 }
 
 // Whether a component's local fields have generators the engine seeds (gen_seeding).
@@ -18374,6 +18380,11 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
         const param *p = &fn->params.items[i];
         if (p->type.kind == TY_COMPONENT && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) {
             sb_printf(o, ", %s *%s", c_type(p->type), local_cname(g, p->name));
+            // ...with its local fields, where the local world keeps the entity's (a local task's alone)
+            if (has_fields_ptr(p)) {
+                sb_printf(o, ", %s%s *%s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
+                          fields_name(g, p->name));
+            }
         }
     }
     sb_put(o, ")\n{\n");
@@ -18400,14 +18411,27 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
         const char *name = local_cname(g, p->name);
         if (p->type.kind == TY_COMPONENT) {
             line(g, o, "(void)%s;", name);
+            if (has_fields_ptr(p)) line(g, o, "(void)%s;", fields_name(g, p->name));
             continue;
         }
         if (p->type.kind == TY_SINGLETON) {
             const decl *d = p->type.decl;
             const char *ct = c_type(p->type);
             if (!d->is_local && local) line(g, o, "if (!tide_w) return TIDE_TASK_GONE;");
-            line(g, o, "%s%s *%s = &%s->%s;", p->mode == PARAM_MUT ? "" : "const ", ct, name, d->is_local ? "tide_l" : "tide_w", ct);
+            if (!d->is_local && local && p->mode == PARAM_MUT) {
+                // A local task's `mut` of the match's: it writes the local fields alone, so its match fields are a
+                // copy, as a view's are
+                line(g, o, "%s tide_s%d = tide_w->%s;", ct, i, ct);
+                line(g, o, "%s *%s = &tide_s%d;", ct, name, i);
+            } else {
+                line(g, o, "%s%s *%s = &%s->%s;", p->mode == PARAM_MUT ? "" : "const ", ct, name, d->is_local ? "tide_l" : "tide_w", ct);
+            }
             line(g, o, "(void)%s;", name);
+            if (has_fields_ptr(p)) { // Its local fields: the local world's own, as a view's
+                const char *part = type_cname(local_part_of(p->type));
+                line(g, o, "%s%s *%s = &tide_l->%s;", p->mode == PARAM_MUT ? "" : "const ", part, fields_name(g, p->name), part);
+                line(g, o, "(void)%s;", fields_name(g, p->name));
+            }
             continue;
         }
         line(g, o, "%s %s;", c_type(p->type), name);
@@ -18459,11 +18483,26 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
             sb_printf(o, "    tide_c%d = tide_copy_%s(tide_c%d);\n", i, type_cname(d), i);
         }
         sb_printf(&body, ", &tide_c%d", i);
+        if (has_fields_ptr(p)) sb_printf(&body, ", tide_lf%d", i);
+    }
+    // The local fields of the entity's components, once it has them all: its own row, made as it first goes on
+    // with them, so what it writes is the entity's, as a view's is, and no row is made while it runs (the cell
+    // stays where it is). Another task of the entity, or the view that starts it, finds the same row.
+    for (int i = 0; i < fn->params.count; i++) {
+        const param *p = &fn->params.items[i];
+        if (p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT) || !has_fields_ptr(p)) continue;
+        const decl *part = local_part_of(p->type);
+        const char *type = type_cname(part), *table = fields_table(part), *columns = fields_columns(part);
+        sb_printf(o, "    uint32_t tide_lr%d = tide_attached_find(&tide_l->%s, %s, tide_this);\n", i, table, columns);
+        sb_printf(o, "    if (tide_lr%d == TIDE_ATTACHED_NONE) tide_lr%d = tide_attach_%s(tide_l, tide_this, "
+                     "tide_entity_born(&tide_w->entities, tide_this));\n", i, i, type);
+        sb_printf(o, "    %s *tide_lf%d = tide_attached_cell(&tide_l->%s, %s, tide_lr%d);\n", type, i, table, columns, i);
     }
     sb_printf(o, "    const int32_t tide_r = %s);\n", body.data);
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
         if (p->type.kind != TY_COMPONENT || p->mode != PARAM_MUT) continue;
+        if (!p->type.decl->is_local && local) continue; // A local task's `mut` of the match's writes its local fields alone
         sb_printf(o, "    tide_store_%s(%s, tide_this, &tide_c%d);\n", type_cname(p->type.decl), p->type.decl->is_local ? "tide_l" : "tide_w",
                   i);
     }
@@ -18561,6 +18600,22 @@ static int task_shift(const task_info *ti)
     return shift;
 }
 
+// Whether a task takes the match's components or singletons, itself or in
+// what it awaits, whose frames are part of its own: a local one of those is
+// its match's, which ends with it.
+static bool task_takes_match(const decl *fn, const int depth)
+{
+    for (int k = 0; k < fn->params.count; k++) {
+        const param *p = &fn->params.items[k];
+        if ((p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) && !p->type.decl->is_local
+            && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) return true;
+    }
+    for (int k = 0; depth < 32 && k < fn->awaits.count; k++) { // An await of itself is refused; the depth bounds the walk
+        if (task_takes_match(fn->awaits.items[k], depth + 1)) return true;
+    }
+    return false;
+}
+
 // A world's task pass, at the end of its tick (or frame): the tasks whose time
 // has come go on, in the order they started. A task whose owner is gone ends
 // with it, whether its time has come or not. Ended tasks leave their tables
@@ -18592,8 +18647,22 @@ static void gen_task_pass(gen *g, const bool local)
         sb_printf(o, "        const tide_task_%s *tide_t = tide_table_get(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_i, 0);\n", id, w, id, id);
         sb_put(o, "        const tide_entity tide_owner = tide_t->task.owner;\n");
         if (local) {
-            sb_put(o, "        const bool tide_alive = tide_entity_is_null(tide_owner) || (tide_t->task.owner_local ? "
-                      "tide_entity_alive(&tide_l->entities, tide_owner) : tide_w && tide_entity_alive(&tide_w->entities, tide_owner));\n");
+            // One of the match's entities' ends with it, and with its match (tide_local_disconnected), and so does
+            // one of the world's that takes the match's components or singletons
+            const bool of_match = task_takes_match(ti->fn, 0);
+            // ...and one of a match entity's ends as the entity loses a component it takes, waiting or not: what it
+            // would go on with is another instance's local fields, if the component came back meanwhile
+            sb has = {0};
+            for (int k = 0; k < ti->fn->params.count; k++) {
+                const param *p = &ti->fn->params.items[k];
+                if (p->type.kind != TY_COMPONENT || p->type.decl->is_local || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
+                sb_printf(&has, " && tide_has_%s(tide_w, tide_owner)", type_cname(p->type.decl));
+            }
+            sb_printf(o, "        const bool tide_alive = tide_entity_is_null(tide_owner) %s (tide_t->task.owner_local ? "
+                         "tide_entity_alive(&tide_l->entities, tide_owner)%s : tide_w && tide_t->task.order >= tide_l->tide_match_over "
+                         "&& tide_entity_alive(&tide_w->entities, tide_owner)%s);\n",
+                      of_match ? "? tide_t->task.order >= tide_l->tide_match_over :" : "||",
+                      of_match ? " && tide_t->task.order >= tide_l->tide_match_over" : "", has.data ? has.data : "");
         } else {
             sb_put(o, "        const bool tide_alive = tide_entity_is_null(tide_owner) || tide_entity_alive(&tide_w->entities, tide_owner);\n");
         }
@@ -26389,6 +26458,8 @@ static void gen_game_api(gen *g)
     // The match is over: what was kept for its entities goes at the next frame,
     // whatever match that frame sees, as another's entities have the same handles
     if (prog->local_parts.count) sb_put(o, "    local->tide_forget = 1u;\n");
+    // ...and so do the local tasks of its entities, at the next frame's task pass, whose views may start others
+    if (world_has_tasks(g, true)) sb_put(o, "    local->tide_match_over = local->tide_task_order;\n");
     sb_printf(o, "    tide_cmd_send_%s(local, (tide_entity){0}, (%s){.%s = (int32_t)reason});\n}\n\n", disconnected,
               disconnected, field_cname(&prog->disconnected->fields.items[0]));
 

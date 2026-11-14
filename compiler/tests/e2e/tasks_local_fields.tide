@@ -1,0 +1,183 @@
+// Local tasks and local fields: a task a view starts for one of the match's
+// entities reads and writes that entity's local fields, as the view does, and
+// gets them again with its component each time it goes on. tasks_local_fields_test.c
+// waits for its worker, destroys its entity while it waits, and runs one for
+// each of two entities.
+
+component Chunk
+{
+    int number;
+    int edits;
+    local List<int> faces;
+    local int drawn;            // The edits its faces were made at, plus one: 0 for none yet
+    local bool meshing;         // ...which its task makes, until it's done
+    local LocalTask job;        // ...whose handle says whether it's still going on
+    local int steps;            // How far its tasks got: one before the wait, ten after it
+    local string label = "new"; // A default the heap holds
+}
+
+// Only local fields: a tag in the match, which an entity can lose
+component Glow
+{
+    local int lit;
+}
+
+// Only local fields too, whose task waits long: an entity that loses it while the task waits, and gets it back
+// before the wait is over, has new local fields and no task
+component Ember
+{
+    local int lit;
+}
+
+singleton Arena
+{
+    int size = 4;
+    local int painted;
+    local bool painting;
+}
+
+// What the test's C sets, for the match to do
+singleton Rules
+{
+    int drop;   // The chunk of this number is destroyed
+    int edit;   // ...and this one is changed
+    int shed;   // ...and this one loses its Glow
+    int quench; // ...and this one its Ember
+    int kindle; // ...and this one gets an Ember
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Chunk { number = 1 }, Glow, Ember);
+    Spawn(Chunk { number = 2 }, Glow);
+}
+
+system Drop(Chunk chunk, Rules rules)
+{
+    if (chunk.number == rules.drop) this.Destroy();
+}
+
+system Edit(mut Chunk chunk, Rules rules)
+{
+    if (chunk.number == rules.edit) chunk.edits += 1;
+}
+
+system Shed(Chunk chunk, Rules rules, with Glow)
+{
+    if (chunk.number == rules.shed) this.Remove(Glow);
+}
+
+system Quench(Chunk chunk, Rules rules, with Ember)
+{
+    if (chunk.number == rules.quench) this.Remove(Ember);
+}
+
+system Kindle(Chunk chunk, Rules rules, without Ember)
+{
+    if (chunk.number == rules.kindle) this.Add(Ember);
+}
+
+struct Built
+{
+    List<int> faces;
+    int version;
+}
+
+local worker Built Faces(int number, int version)
+{
+    mut List<int> faces = [];
+    for (var i = 0; i < number * 3; i++) faces.Add(number * 100 + i);
+    return Built { faces = faces, version = version };
+}
+
+// A function the task passes its component to gets its local fields with it
+void Apply(mut Chunk chunk, Built built)
+{
+    chunk.faces = built.faces;
+    chunk.drawn = built.version;
+}
+
+int Faced(Chunk chunk)
+{
+    return chunk.faces.count;
+}
+
+// Makes a chunk's faces off the frame, and puts them in its local fields
+async void Remesh(mut Chunk chunk, int version)
+{
+    chunk.steps += 1; // As the view starts it, in the view's run for the chunk
+    var built = await Faces(chunk.number, version);
+    chunk.steps += 10;
+    Apply(chunk, built);
+    chunk.label = $"chunk {chunk.number} at {version}, {Faced(chunk)} faces";
+    chunk.meshing = false;
+}
+
+// Reads them only, a frame later
+async void Light(Glow glow, mut Stats stats)
+{
+    await Wait.Frames(1);
+    stats.lit += glow.lit + 1;
+}
+
+// Writes them after a long wait, unless its entity lost the Ember meanwhile
+async void Fade(mut Ember ember)
+{
+    await Wait.Frames(20);
+    ember.lit = 99;
+}
+
+// A singleton's local fields, with its match fields read
+async void Paint(mut Arena arena)
+{
+    await Wait.Frames(2);
+    arena.painted += arena.size;
+    arena.painting = false;
+}
+
+local singleton Stats
+{
+    int forgotten;
+    int lastSteps;
+    int lit;
+    int glows;
+}
+
+// A chunk whose faces are older than its edits gets a task, unless one is going on: one that ended with
+// its entity gone from this machine's prediction is started again when the server says it wasn't
+view Chunks(mut Chunk chunk)
+{
+    if (chunk.job.isRunning || chunk.drawn == chunk.edits + 1) return;
+    chunk.meshing = true;
+    chunk.job = Remesh(chunk, chunk.edits + 1);
+}
+
+view Glows(mut Glow glow, mut Stats stats)
+{
+    if (glow.lit != 0) return;
+    glow.lit = 5;
+    stats.glows += 1;
+    Light(glow, stats);
+}
+
+view Embers(mut Ember ember)
+{
+    if (ember.lit != 0) return;
+    ember.lit = 1;
+    Fade(ember);
+}
+
+view Painter(mut Arena arena)
+{
+    if (arena.painting || arena.painted != 0) return;
+    arena.painting = true;
+    Paint(arena);
+}
+
+local event(Forgotten) Free(Chunk chunk, mut Stats stats)
+{
+    stats.forgotten += 1;
+    stats.lastSteps = chunk.steps;
+}

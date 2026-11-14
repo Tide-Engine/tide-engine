@@ -82,7 +82,7 @@ component Chunk
     local Mesh<Vertex3> mesh;
     local int drawn;
     local bool meshed;
-    local bool meshing;
+    local LocalTask job;    // Its faces being made
     local bool blank;       // Its mesh has no faces: a chunk of air, or one buried in stone
 }
 

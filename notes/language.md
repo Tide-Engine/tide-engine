@@ -1,3 +1,118 @@
+## Local tasks use local fields (2026-11-14)
+
+The voxel world's gap (`notes/voxels.md`, section 5): a local task couldn't use a match component's local
+fields ("a task can't use local fields yet"), so `bench/voxels/play.tide` had its mesher leave each chunk's
+faces in a local singleton's list for the chunk's view to find. Now an async function that's local code
+reads and writes the local fields of the match components and singletons it takes, through its own
+parameter, as a view does, and gets them again with the component each time it goes on. Every rule is
+Provisional, Claude's picks (spec: Local state, Local tasks and local fields; Tasks, the two notes dated
+2026-11-14).
+
+**Checker** (`check.c`).
+
+- `local_fields_param` takes a task's own `task_ref` parameter: it's the entity's, got again each time,
+  not a copy. That one change lets `check_local_field`, helper calls and the propagation see tasks.
+- `check_local_field`: in an async function whose world is the match (`task_side == TASK_MATCH`), "'f' is a
+  local field of 'C': it's this machine's, and 'F' is a match task, which can't see it", with a note at what
+  made it the match's; otherwise `note_side(TASK_LOCAL)` at the use. A match async handler keeps the
+  "the match can't see it" error. Local async handlers take only local state (a local handler of a match
+  event can't be async), so no handler reaches a match component's local fields.
+- `check_async_decl`: `mut` on a match component or singleton **with a local part** no longer makes the
+  task the match's at its signature. `check_writable` notes TASK_MATCH where the task's own such parameter
+  has a match field written, unless it already uses the local fields: then the both-ways error, which
+  `check_local_field_calls` words for a task ("... but a task runs in one world", split it in two). `mut`
+  on one without local fields is TASK_MATCH at the signature, as before.
+- `spread_local_field_use` is the old first loop of `check_local_field_calls`, now with async callers
+  (it skipped them). `settle_task_local_fields` runs it before `check_acts` and `resolve_tasks`, then notes
+  each task's side from its parameters' `local_use`/`match_write`, so a task's world counts what helpers,
+  awaited tasks and started tasks do with its parameter; `check_local_field_calls` runs it again after
+  `plan_shaders` (it only sets flags). A match task that reaches local fields through a helper gets
+  `note_side`'s "uses local state here, and changes the match on line N" at the argument.
+- The old "uses the local fields of 'C', and a task can't yet" error is gone. A match system starting a
+  local-field task gets `resolve_tasks`' "uses local state, on line N, so the match can't start it" alone.
+  A view's or local handler's own parameter passed to a task that uses local fields gets `param.task_fields`.
+
+**Codegen** (`codegen.c`).
+
+- `gen_task_resume`: the body takes `C_local *tide_lf_<name>` (const when read-only) after each component
+  that `has_fields_ptr`; a singleton's is `&tide_l-><S>_local`, as a view's. The wrapper loads every
+  component first (`TIDE_TASK_GONE` without one), then finds or attaches the entity's row
+  (`tide_attach_<C>_local` with `tide_entity_born` of the world views draw) and passes the cell. A local
+  task's `mut` match component isn't stored back (its world is const, and it wrote local fields alone); a
+  `mut` match singleton is a copy, as a view's is.
+- **Shared rows.** A task's first segment runs inside the view's call, while the view holds a pointer to
+  the entity's local fields. A view's `mut` parameter normally points at a copy of the defaults
+  (`tide_ln<i>`) and adds a row after the row's run if the copy changed, which would duplicate the key the
+  task just attached. `attaches_first` now includes `task_fields`, so such a view attaches before the run
+  and both write one cell. A local handler of a match event does the same.
+- **Cell stability.** Adding a row can move the first chunk's cells (`tide_table_add` doubles it). Within
+  one resume only the task's own entity is touched (its wrapper, awaited children, tasks it starts, which
+  all belong to it), and the row exists before the body runs, so nothing adds under the pointer. No pointer
+  is kept across a wait: the wrapper finds the row again each time.
+- **A match that's over** (`tide_local.tide_match_over`, a fix for every local task, not just these):
+  `tide_local_disconnected` records `tide_task_order`, and the local task pass treats a task of one of the
+  match's entities, or a world task whose function takes a match component or singleton, started before it
+  as gone. Before, a task of the old match's entity went on for the next match's entity with the same
+  handle (another match's identities start over), writing its local fields. Tasks started in the next
+  frame's views have later orders and go on.
+
+**Rules** (spec, Local tasks and local fields): what the task reads of the match is the predicted world's,
+unblended; local fields aren't in the frame, so rollback and hot reload need nothing new; the task ends
+when its entity leaves the world views draw (existing rule), and the fields go when it's in neither world,
+so a task never outlives them and never writes for an entity this machine no longer has; hidden is gone;
+losing the component ends the task (its load fails) and takes the fields; Forgotten-while-waiting can't
+happen (forgetting is at frame start, the task pass after the views ends the task the same frame).
+
+**Tests.** `e2e/tasks_local_fields` (7 cases): the view's write before the start and the task's before its
+wait share the row, a worker's result through a helper and text in the fields, two entities' tasks, an edit
+remeshing one; an entity destroyed while its task waits (Forgotten sees the task's first step; no row comes
+back); a component lost; a match singleton's fields; a destroy predicted and undone (fields kept, task gone,
+the view starts another because its `local LocalTask job` handle isn't running); the match over with the
+next match's entities at the same handles (fails without `tide_match_over`: checked by zeroing it after
+`tide_local_disconnected`); the local state's bytes with tasks waiting (workers drained and restarted).
+Errors: `local_field_task` (now a match task, by `Wait.Ticks`), `local_field_task_helper`,
+`local_field_task_both`, `local_field_task_from_system`, `local_field_task_copy`.
+
+**Validation** (Windows, release, warning-free): all 2,546 `tidec_error_*`/diagnostics tests; the
+e2e, safety, platform and package tests of every game whose C changed and of local fields and tasks
+(38: `tidec_e2e_{tasks_local_fields, tasks_local, tasks, tasks_flow, task_handles, task_visibility,
+function_tasks, local_workers, worker_grids, worker_handles, worker_values, local_fields,
+local_fields_net, local_fields_plain, query_local_fields, fetch, io, frame_time, rolls, render_targets,
+target_reads, transforms}`, `tidec_safety_{tasks, gpu_lists, query_local_fields}`,
+`tide_platform_{kernels, migrate, occlusion, readback}` (GPU), `tide_lobby_{menu, own, relay}`,
+`tide_steam_lobby`, `bench_workers`, `bench_voxels`, `tidels_{tests, stdio, pipe}`); under ASan
+(`sanitize`) `tidec_e2e_{tasks_local_fields, tasks_local, local_workers, local_fields,
+query_local_fields, function_tasks, task_handles}`. `voxels` built and ran headless (`notes/voxels.md`, section 5). Web,
+other platforms and the full suites are left to CI and the coordinator.
+
+**Generated C** of every game in `build/release` (551 source lists, prototypes included) with the old and
+new tidec, the output folder and simulation identity left out: 522 the same; the 27 with local tasks
+differ by the `tide_match_over` field, its line in `tide_local_disconnected`, the pass's condition (91
+tables, 2 of them world tasks that take a match singleton) and so their layout hash; `voxels` and this
+fixture compile only with the new one. So the checker's earlier propagation and the deferred `mut` side
+change nothing else.
+
+**After its review** (merged into t3/minecraft-scale-world-readiness, 2026-11-14): the local task pass
+(`gen_task_pass`) ended a task of a match entity only when the entity was gone; a waiting task whose
+entity lost a component it takes stayed in its table, and if the component came back before the wake it
+went on with the new instance's local fields, after `Forgotten` had run for the old. Now the pass also
+requires `tide_has_<C>(tide_w, owner)` for each match component the task takes, waiting or due, so the
+spec's "ends with it" and "Forgotten while it waited can't be" hold. A task owned by a local entity that
+takes the match's components or singletons now ends with its match too (`owner_local` and
+`tide_match_over`), as docs/game/tasks.md said. `tasks_local_fields_end_with_their_component_while_they_wait`
+(Ember: `Wait.Frames(20)`, the component removed and added back) fails without the first. The docs
+example and `bench/voxels/play.tide` keep the task's handle (`local LocalTask job`) instead of a flag the
+task clears, which stayed set where a task ended with its fields kept; local-state.md says a view that can
+start such a task makes the entity's fields its own.
+
+**Gaps.** A destroy this machine predicted ends the task even when the server undoes it (the fields stay):
+a task could instead wait while only the confirmed world has its entity, which changes when existing
+local tasks end, so it's left for the owner. A local handler of a match event that starts a local task
+with its match component hands it no match world (`tide_local_start_*(NULL, ...)`), so the task ends at
+once; that's older than this. A view that starts a local-field task makes every entity's row as it runs
+for it, written or not. A sharded game's views of other shards' worlds start tasks whose entities the home
+world hasn't got, which end at once (older too).
+
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 
 Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is

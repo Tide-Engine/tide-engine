@@ -1,0 +1,19 @@
+// expect: 'Bake' uses its 'box''s local fields, and this is a copy of the component's value, which has none
+component Box
+{
+    float3 pos;
+    local int bakes;
+}
+scene Main { }
+
+void Bake(mut Box box)
+{
+    box.bakes += 1;
+}
+
+async void Rebake(Box box)
+{
+    await Wait.Frames(1);
+    mut var copy = box;
+    Bake(copy);
+}

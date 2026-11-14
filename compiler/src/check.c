@@ -10674,7 +10674,8 @@ static param *local_fields_param(const expr *object, const decl *d)
     if (object->kind != E_NAME || object->bind != BIND_PARAM) return NULL;
     param *p = object->param;
     const bool data = p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON;
-    return data && p->type.decl == d && !p->task_ref ? p : NULL;
+    // A task's, which it gets again with the entity's local fields each time it goes on, is one too
+    return data && p->type.decl == d ? p : NULL;
 }
 
 // Whether a place is in a local field: box.verts, box.verts[i], box.stats.hp.
@@ -10715,8 +10716,8 @@ static bool is_forgotten_param(const checker *c, const param *p)
 
 // box.verts, where `verts` is a local field of the match's `Box`: this
 // machine's, read and written in place through the parameter of a view, of a
-// local handler of Forgotten, or of a function they pass it to. The match
-// never sees it, and a copy of the component hasn't got it.
+// local handler of Forgotten, of a local task, or of a function they pass it
+// to. The match never sees it, and a copy of the component hasn't got it.
 static type check_local_field(const checker *c, expr *e, field *f, const type obj)
 {
     const decl *d = obj.decl;
@@ -10728,10 +10729,14 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
                   STR_FMT " %s) { ... }'", STR_ARG(d->name), example_name(d));
         return T_ERR;
     }
-    if (async_code(c)) {
-        diag_error(e->at, "a task can't use local fields yet, and '" STR_FMT "' is one of '" STR_FMT "''s", STR_ARG(f->name),
-                   STR_ARG(d->name));
-        diag_note("read and write them in a view, and keep what the task needs in local state of its own");
+    // An async function that uses one is a local task, which gets them again with its entity's component each
+    // time it goes on; one that changes the match can't (a task runs in one world)
+    decl *task = in_async_function(c) ? c->method : NULL;
+    if (task && task->task_side == TASK_MATCH) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "': it's this machine's, and '" STR_FMT "' is a "
+                   "match task, which can't see it", STR_ARG(f->name), STR_ARG(d->name), STR_ARG(task->name));
+        diag_note_at(task->task_side_at, "it changes the match on line %d; a task that uses local fields is this machine's, "
+                     "and only reads the match: split it in two", task->task_side_at.line);
         return T_ERR;
     }
     if (c->method && c->method->kind != DECL_FUNCTION && c->method->kind != DECL_SHADER && !row_binding(e->object)) {
@@ -10775,6 +10780,7 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
             return T_ERR;
         }
     }
+    if (task) note_side(task, TASK_LOCAL, e->at);
     if (!p->local_use) p->local_use_at = e->at;
     p->local_use = true;
     e->field = f;
@@ -13865,6 +13871,9 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             if (!passed_on && !p->match_write) {
                 p->match_write = true;
                 p->match_write_at = target->at;
+                // A task's: one that changes the match's fields is a match task, unless it uses the local fields
+                // too, which check_local_field_calls says is an error
+                if (p->task_ref && in_async_function(c) && !p->local_use) note_task_side(c, TASK_MATCH, target->at);
             }
         } else if (!c->method && is_local_code(c->system) && !passed_on) {
             const char *what = local_code_what(c->system);
@@ -18814,8 +18823,10 @@ static void check_async_decl(decl *fn)
         if (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) {
             p->task_ref = true;
             const decl *d = p->type.decl;
+            // `mut` on one with local fields lets a local task write those: what the code writes says its world
+            // (check_writable, check_local_field, settle_task_local_fields)
             if (d->is_local) note_side(fn, TASK_LOCAL, p->type_at.line ? p->type_at : p->at);
-            else if (p->mode == PARAM_MUT) note_side(fn, TASK_MATCH, p->at);
+            else if (p->mode == PARAM_MUT && !d->local_part) note_side(fn, TASK_MATCH, p->at);
             continue;
         }
         if (p->type.kind == TY_RECORD) {
@@ -23636,13 +23647,15 @@ static void mark_query_fields(decl *code, const bool shared)
     for (int i = 0; i < code->methods.count; i++) mark_query_fields(code->methods.items[i], shared);
 }
 
-static void check_local_field_calls(const checker *c)
+// What a function does with its parameter's local fields, and with its match fields, the code that passes its
+// own parameter to it does too, through helper chains, task starts and awaits: until nothing more changes.
+static void spread_local_field_use(const checker *c)
 {
     for (bool changed = true; changed;) {
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
-            if ((site->to->kind != DECL_FUNCTION && site->to->kind != DECL_METHOD) || site->from->is_async) continue;
+            if (site->to->kind != DECL_FUNCTION && site->to->kind != DECL_METHOD) continue;
             for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
                 const param *q = &site->to->params.items[k];
                 const expr *arg = site->call->args.items[k];
@@ -23680,12 +23693,45 @@ static void check_local_field_calls(const checker *c)
             }
         }
     }
+}
+
+// A task that uses its component's or singleton's local fields, itself or
+// through what it passes it to, is local code; one that changes the match's
+// fields of it is the match's (check_local_field and check_writable say so as
+// they meet its own code). One that does both is check_local_field_calls'
+// error. Before the tasks' worlds are settled (check_acts, resolve_tasks).
+static void settle_task_local_fields(const checker *c)
+{
+    spread_local_field_use(c);
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *fn = c->prog->decls.items[i];
+        if (fn->kind != DECL_FUNCTION || !fn->is_async) continue;
+        for (int k = 0; k < fn->params.count; k++) {
+            const param *p = &fn->params.items[k];
+            if (!p->task_ref || p->type.decl->is_local || !p->type.decl->local_part || (p->local_use && p->match_write)) continue;
+            if (p->local_use) note_side(fn, TASK_LOCAL, p->local_use_at);
+            else if (p->match_write && p->mode == PARAM_MUT) note_side(fn, TASK_MATCH, p->match_write_at);
+        }
+    }
+}
+
+static void check_local_field_calls(const checker *c)
+{
+    spread_local_field_use(c);
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *fn = c->prog->decls.items[i];
         if (fn->kind != DECL_FUNCTION) continue;
         for (int k = 0; k < fn->params.count; k++) {
             const param *p = &fn->params.items[k];
             if (!p->local_use || !p->match_write) continue;
+            if (fn->is_async) {
+                diag_error(p->at, "'" STR_FMT "' changes the match's fields of its '" STR_FMT "' and uses its local fields, "
+                           "but a task runs in one world", STR_ARG(fn->name), STR_ARG(p->name));
+                diag_note_at(p->match_write_at, "it changes the match on line %d, which a local task can't", p->match_write_at.line);
+                diag_note_at(p->local_use_at, "and uses a local field on line %d, which a match task can't", p->local_use_at.line);
+                diag_note("split it in two: the match's part, and a local one that reads the match");
+                continue;
+            }
             diag_error(p->at, "'" STR_FMT "' changes the match's fields of its '" STR_FMT "' and uses its local fields, so "
                        "nothing could call it", STR_ARG(fn->name), STR_ARG(p->name));
             diag_note_at(p->match_write_at, "it changes the match on line %d, which views can't", p->match_write_at.line);
@@ -23728,15 +23774,12 @@ static void check_local_field_calls(const checker *c)
             }
             if (!q->local_use) continue;
             const decl *d = q->type.decl;
+            if (from->kind == DECL_SYSTEM && !local_code && to->is_async) continue; // A local task: resolve_tasks says it
             if (from->kind == DECL_SYSTEM && !local_code) {
                 diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which are this machine's, "
                            "and the match can't see them", STR_ARG(to->name), STR_ARG(d->name));
                 diag_note_at(q->local_use_at, "it does on line %d", q->local_use_at.line);
                 diag_note("the match runs the same on every machine: call it from a view");
-            } else if (from->is_async) {
-                diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', and a task can't yet",
-                           STR_ARG(to->name), STR_ARG(d->name));
-                diag_note("call it from a view, and keep what the task needs in local state of its own");
             } else if (from->kind != DECL_SYSTEM && from->kind != DECL_FUNCTION && !(from->kind == DECL_METHOD && row_binding(arg))) {
                 diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which only views, local "
                            "handlers and the functions they call have", STR_ARG(to->name), STR_ARG(d->name));
@@ -23749,6 +23792,9 @@ static void check_local_field_calls(const checker *c)
                 if (!bound->local_use) bound->local_use_at = arg->at;
                 bound->local_use = true;
                 bound->local_written |= q->local_written;
+                // A task it starts finds the entity's local fields itself, as it runs until it first waits: they're
+                // the entity's own row from the start, which both write (codegen's attaches_first)
+                if (to->is_async) bound->task_fields = true;
             }
         }
     }
@@ -25272,6 +25318,7 @@ bool check(program *prog)
         }
     }
     settle_heap_passes(&c);
+    settle_task_local_fields(&c); // A task's world, from what it does with its components' local fields
     check_acts(&c);
     for (int i = 0; prog->preparing && i < prog->handlers.count; i++) {
         decl *handler = prog->handlers.items[i];

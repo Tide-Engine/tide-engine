@@ -100,7 +100,7 @@ For now:
 
 A task belongs to a world, like the code that starts it. A system's or a match handler's tasks are the match's: they're part of it, in snapshots, state hashes and rollback, they go to players who join, and they carry on when the match changes hands. A view's or a local handler's tasks are this machine's, in its local state.
 
-An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, or reading [`Frame.dt`](./local-state.md#time), makes it local. A [function it calls](../language/functions.md#sending-and-spawning) that sends or spawns counts as its own doing. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
+An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, the [local fields](#local-fields) of the match's components among it, or reading [`Frame.dt`](./local-state.md#time), makes it local. A [function it calls](../language/functions.md#sending-and-spawning) that sends or spawns counts as its own doing. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
 
 ## What a task keeps
 
@@ -122,12 +122,48 @@ system StartDash(mut Body body, Controls controls)
 
 An async function's `mut` parameters are its components and singletons; it can't keep the caller's other variables while it waits, so it returns what it works out instead. For the same reason it has no `out` parameters: a struct returns several values.
 
+### Local fields
+
+A local task reads and writes the [local fields](./local-state.md#local-fields) of the match components and singletons it takes, as a view does. They come with the component each time the task goes on, from where this machine keeps the entity's, so the task sees what views wrote while it waited, and what it writes is there for the next frame's views:
+
+```csharp
+component Chunk
+{
+    float3 corner;
+    Grid3<Block> blocks = Grid3(16, 16, 16);
+    int edits;
+    local Mesh<Vertex3> mesh;
+    local int drawn;        // The edits its mesh was made at, plus one
+    local LocalTask job;    // The task making it, while it does
+}
+
+async void Remesh(mut Chunk chunk, int version)
+{
+    var built = await Faces(chunk.blocks); // A local worker
+    chunk.mesh = Mesh(built.vertices, built.indices);
+    chunk.drawn = version;
+}
+
+view Chunks(mut Chunk chunk)
+{
+    if (!chunk.job.isRunning && chunk.drawn != chunk.edits + 1) chunk.job = Remesh(chunk, chunk.edits + 1);
+    if (chunk.drawn > 0) Draw.Mesh(chunk.mesh, float4x4.Translate(chunk.corner));
+}
+```
+
+- **It's this machine's task.** Using local fields makes an async function local, so a view or a local handler starts it, never a system. `mut` on a match component lets it write the local fields alone: a task that also changes the component's match fields is an error, as it would run in both worlds.
+- **The view and the task share them.** What the view wrote before it started the task, the task reads, and the other way round. They're the entity's own from then on.
+- **It ends with the entity**, once the world this machine draws no longer has it, and the entity's local fields go once neither that world nor the one the server confirmed has it. So a task never writes for an entity that's gone. If the server undoes a destroy this machine predicted, the local fields come back as the task left them, but the task doesn't. That's why the example keeps the task's handle rather than a flag the task clears: `job.isRunning` is false once the task has ended, however it ended, so the view starts another.
+- **Hidden or without the component**, the same: an entity this machine's player can no longer see is gone, with its local fields and its task, and comes back with its defaults; a task that takes a component the entity loses ends at the next frame, whether it was waiting or due to go on, and that component's local fields go. If the component comes back, it comes with new local fields and no task.
+- **Rollback and reloads** leave them as they are: a task that goes on after a correction reads its component as corrected, and its local fields as this machine left them. A task that carries over a hot reload finds them where the new build keeps them.
+
 ## When tasks go on, and when they end
 
 Tasks whose time has come go on at the end of the tick (or frame), after its changes and events, in the order they started; what they change, spawn and send then applies too. A task ends when its code does, and:
 
 - **with what started it**: a task started by code that runs for an entity belongs to that entity, and ends when the entity is destroyed. A task started by a task belongs to the same entity, and one a function starts belongs to what the code that called the function runs for. Code that runs for no entity starts tasks that belong to the world, which last as long as it does.
 - **without its components**: a task whose entity no longer has the components it takes ends.
+- **with its match**, for a local task of one of the match's entities, or one that takes the match's components or singletons: once this machine leaves the match, it ends at the next frame, even if the next match has an entity with the same handle.
 
 Immediate nested awaits can share a private frame. A kept handle identifies a separate started operation; its existing entity/world ownership still applies. An async function can't immediately await itself, as its private frame would hold itself; it can start another operation and keep its handle.
 
@@ -193,8 +229,9 @@ Start `Rebuild(visual)` from a view or local handler when the input changes and
 `building` is false. Advance the local generation whenever that meshing input
 changes, including neighboring boundaries and rollback corrections; discard an
 outdated result and request the latest input. For many chunks, keep a local queue
-and schedule the visible chunks first. This example uses a local singleton;
-local tasks retain their existing component and local-field access rules.
+and schedule the visible chunks first. This example uses a local singleton; for
+one of the match's entities, the task can keep the result in the entity's
+[local fields](#local-fields) instead.
 
 Workers receive independent copies of their inputs and return independent
 values. Numbers, text, lists, maps, sets, ordinary structs, fixed arrays and
