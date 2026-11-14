@@ -8,8 +8,10 @@
 
 // The loaded world's own hash, pages and heap alike, as the codecs read lists
 // one element at a time (tidec before runs, 2026-11-02): reading them in runs
-// must leave every block where it was.
-#define LOADED_WORLD_HASH UINT64_C(0xfceec78bc1ff1776)
+// must leave every block where it was. (Moved 2026-11-14, when a game that
+// hides state got a heap for each owner: Bulk's and Carried's values are read
+// into their own heaps, each block where one at a time leaves it there.)
+#define LOADED_WORLD_HASH UINT64_C(0x3cc784a2895668f1)
 
 static uint8_t *project(const tide_world *w, uint32_t *size)
 {

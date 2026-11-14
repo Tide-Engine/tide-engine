@@ -296,11 +296,17 @@ static int client_deniable(const gen *g, const int a, int *out)
 // container nothing changed costs a comparison a page. What's kept, by heap
 // place and codec, is for the eight worlds last hashed, whichever thread hashes
 // them; it's only ever a shortcut to the hash the value has, never another one.
-// Values read from outside the match's heap (the pack's) aren't kept.
+// Values read from outside the match's heaps (the pack's) aren't kept.
+//
+// A world has a heap for each owner, and an owner's has runs (tide/heap.h), so
+// a page is named by its place in the heap its block's handle says: the heap's
+// id and run (a `where` without its world, as tide_heaps_of takes them) above
+// 32 bits, the page's first place below (tide_client_place). A value's blocks
+// can be in several heaps (a row's grid in a run's heap, its text in another's).
 static void gen_client_hash_helpers(gen *g)
 {
     sb *o = &g->c;
-    sb_put(o, "typedef struct tide_client_page { uint32_t first, size; uint64_t hash; } tide_client_page;\n"
+    sb_put(o, "typedef struct tide_client_page { uint64_t place; uint32_t size, zero; uint64_t hash; } tide_client_page;\n"
               "typedef struct tide_client_memo_entry {\n"
               "    uint64_t at; // The container's handle; 0: an empty slot\n"
               "    uint64_t hash;\n    tide_client_page *pages; // Every page its value was read from, and their hashes then\n"
@@ -311,9 +317,34 @@ static void gen_client_hash_helpers(gen *g)
               "    uint32_t room, count, call, kept; // kept: entries this call used\n"
               "    uint32_t swept; // Entries after the last sweep of those whose pages changed\n"
               "    bool busy; // A thread is hashing with it\n} tide_client_memo;\n"
-              "typedef struct tide_client_hasher {\n    tide_writer out;\n    tide_heap *heap;\n    tide_client_memo *memo;\n"
-              "    uint32_t *reach; // The pages read so far, by their first places\n"
-              "    uint32_t reached, reach_room;\n    uint32_t floor; // Where the container being read started its pages\n    bool poisoned; // Something was read from outside the heap\n} tide_client_hasher;\n\n"
+              "typedef struct tide_client_hasher {\n    tide_writer out;\n    tide_heaps *heaps; // The world's\n    tide_client_memo *memo;\n"
+              "    uint64_t *reach; // The pages read so far, by their places (tide_client_place)\n"
+              "    uint32_t reached, reach_room;\n    uint32_t floor; // Where the container being read started its pages\n    bool poisoned; // Something was read from outside the heaps\n} tide_client_hasher;\n\n"
+              "// A page's place: its heap (the id and run of a `where`) above 32 bits, its first place in that heap below\n"
+              "TIDE_HELPER uint64_t tide_client_place(const uint32_t heap, const uint32_t first)\n{\n"
+              "    return (uint64_t)heap << 32 | first;\n}\n\n"
+              "// The heap a handle's block is in, as a page's place names it (tide_heaps_of's id and run)\n"
+              "TIDE_HELPER uint32_t tide_client_heap_of(const tide_handle at)\n{\n"
+              "    return tide_handle_where(at) >> TIDE_WHERE_HEAP_SHIFT;\n}\n\n"
+              "// A world's heap with that id and run, where there is one: none is made here (the world is only read)\n"
+              "TIDE_HELPER tide_heap *tide_client_heap(tide_heaps *heaps, const uint32_t heap)\n{\n"
+              "    tide_heap *all = __atomic_load_n(&heaps->all, __ATOMIC_ACQUIRE);\n"
+              "    if (!all) return NULL;\n"
+              "    tide_heap *h = all + tide_heap_slots[heap & (TIDE_HEAP_IDS - 1u)];\n"
+              "    const uint32_t run = heap >> TIDE_HEAP_ID_BITS & (TIDE_HEAP_RUNS - 1u);\n"
+              "    if (!run) return h;\n"
+              "    tide_heap *runs = __atomic_load_n(&h->runs, __ATOMIC_ACQUIRE);\n"
+              "    return runs ? runs + (run - 1u) : NULL;\n}\n\n"
+              "// The size and hash of the page at a place (tide_client_place), where a page starts there\n"
+              "TIDE_HELPER bool tide_client_place_hash(tide_heaps *heaps, const uint64_t place, uint32_t *size, uint64_t *hash)\n{\n"
+              "    tide_heap *h = tide_client_heap(heaps, (uint32_t)(place >> 32));\n"
+              "    const uint32_t first = (uint32_t)place;\n"
+              "    if (!h || first >= h->pages) return false;\n"
+              "    const tide_page *page = h->page[first];\n"
+              "    if (!page || page->first != first) return false;\n"
+              "    *size = page->size;\n"
+              "    *hash = tide_heap_block_hash(h, (uint64_t)first << TIDE_HEAP_PAGE_SHIFT);\n"
+              "    return true;\n}\n\n"
               "// The process's, one for each world hashed (a server's, or a player's machine's, whose worlds share one): a\n"
               "// world is hashed on one thread at a time, and a memo is one thread's while it hashes (busy). Made as they're\n"
               "// asked for; one nobody asked for in a while goes to another world. Globals, so they're never lost with a thread\n"
@@ -347,85 +378,80 @@ static void gen_client_hash_helpers(gen *g)
               "    return pick;\n}\n\n"
               "// Once its entries have doubled since the last time, those whose pages changed go (what they were kept for is\n"
               "// gone or another value); then the memo is free again\n"
-              "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heap *heap);\n\n");
+              "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heaps *heaps);\n\n");
     sb_put(o, "TIDE_HELPER uint32_t tide_client_memo_slot(const tide_client_memo *m, const uint64_t at, const uint32_t type)\n{\n"
               "    uint32_t i = (uint32_t)tide_client_mix(at * 0x9e3779b97f4a7c15ull + type) & (m->room - 1u);\n"
               "    while (m->slots[i].at && (m->slots[i].at != at || m->slots[i].type != type)) i = (i + 1u) & (m->room - 1u);\n"
               "    return i;\n}\n\n");
     sb_put(o, "// Whether every page an entry's value was read from is as it was\n"
-              "TIDE_HELPER bool tide_client_memo_holds(const tide_client_memo_entry *e, tide_heap *heap)\n{\n"
+              "TIDE_HELPER bool tide_client_memo_holds(const tide_client_memo_entry *e, tide_heaps *heaps)\n{\n"
               "    for (uint32_t i = 0; i < e->count; i++) {\n"
               "        const tide_client_page *p = &e->pages[i];\n"
-              "        if (p->first >= heap->pages) return false;\n"
-              "        const tide_page *page = heap->page[p->first];\n"
-              "        if (!page || page->first != p->first || page->size != p->size\n"
-              "            || tide_heap_block_hash(heap, (uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT) != p->hash) return false;\n    }\n"
+              "        uint32_t size;\n        uint64_t hash;\n"
+              "        if (!tide_client_place_hash(heaps, p->place, &size, &hash) || size != p->size || hash != p->hash) return false;\n    }\n"
               "    return true;\n}\n\n");
-    sb_put(o, "// Into `room` slots: every entry, or (with a heap) those whose pages are as they were\n");
-    sb_put(o, "TIDE_HELPER void tide_client_memo_rehash(tide_client_memo *m, const uint32_t room, tide_heap *heap)\n{\n"
+    sb_put(o, "// Into `room` slots: every entry, or (with heaps) those whose pages are as they were\n");
+    sb_put(o, "TIDE_HELPER void tide_client_memo_rehash(tide_client_memo *m, const uint32_t room, tide_heaps *heaps)\n{\n"
               "    tide_client_memo_entry *was = m->slots;\n    const uint32_t had = m->room;\n"
               "    m->slots = calloc(room, sizeof *m->slots);\n    if (!m->slots) tide_out_of_memory();\n"
               "    m->room = room;\n    m->count = 0;\n"
               "    for (uint32_t i = 0; i < had; i++) {\n"
               "        if (!was[i].at) continue;\n"
-              "        if (heap && !tide_client_memo_holds(&was[i], heap)) {\n            free(was[i].pages);\n            continue;\n        }\n"
+              "        if (heaps && !tide_client_memo_holds(&was[i], heaps)) {\n            free(was[i].pages);\n            continue;\n        }\n"
               "        m->slots[tide_client_memo_slot(m, was[i].at, was[i].type)] = was[i];\n        m->count++;\n    }\n"
               "    free(was);\n}\n\n");
-    sb_put(o, "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heap *heap)\n{\n"
+    sb_put(o, "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heaps *heaps)\n{\n"
               "    if (!m) return;\n"
               "    // (Not by what this call used: a table chunk kept whole uses none of its rows' entries, which still hold)\n"
-              "    if (heap && m->count > 64u && m->count > m->swept * 2u) {\n"
+              "    if (heaps && m->count > 64u && m->count > m->swept * 2u) {\n"
               "        uint32_t live = 0;\n"
-              "        for (uint32_t i = 0; i < m->room; i++) live += m->slots[i].at && tide_client_memo_holds(&m->slots[i], heap);\n"
+              "        for (uint32_t i = 0; i < m->room; i++) live += m->slots[i].at && tide_client_memo_holds(&m->slots[i], heaps);\n"
               "        uint32_t room = 128u;\n        while (room < live * 2u) room *= 2u;\n"
-              "        tide_client_memo_rehash(m, room, heap);\n"
+              "        tide_client_memo_rehash(m, room, heaps);\n"
               "        m->swept = m->count;\n    }\n"
               "    while (__atomic_exchange_n(&tide_client_memo_lock, 1u, __ATOMIC_ACQUIRE)) {\n    }\n"
               "    m->busy = false;\n    __atomic_store_n(&tide_client_memo_lock, 0u, __ATOMIC_RELEASE);\n}\n\n");
-    sb_put(o, "TIDE_HELPER void tide_client_reach_page(tide_client_hasher *hs, const uint32_t first)\n{\n"
-              "    if (hs->reached > hs->floor && hs->reach[hs->reached - 1u] == first) return;\n"
+    sb_put(o, "TIDE_HELPER void tide_client_reach_page(tide_client_hasher *hs, const uint64_t place)\n{\n"
+              "    if (hs->reached > hs->floor && hs->reach[hs->reached - 1u] == place) return;\n"
               "    if (hs->reached == hs->reach_room) {\n"
               "        hs->reach_room = hs->reach_room ? hs->reach_room * 2u : 256u;\n"
               "        hs->reach = realloc(hs->reach, (size_t)hs->reach_room * sizeof *hs->reach);\n"
               "        if (!hs->reach) tide_out_of_memory();\n    }\n"
-              "    hs->reach[hs->reached++] = first;\n}\n\n");
-    sb_put(o, "// The page a block is in, read; false (and nothing kept) for one outside the match's heap\n");
-    sb_put(o, "// ...by the block's offset in the heap, as a list's chunks and a grid's are kept\n"
-              "TIDE_HELPER bool tide_client_reach_block(tide_client_hasher *hs, const uint64_t block)\n{\n"
+              "    hs->reach[hs->reached++] = place;\n}\n\n");
+    sb_put(o, "// The page a block is in, read; false (and nothing kept) for one outside the match's heaps\n");
+    sb_put(o, "// ...by the heap it's in and its offset there, as a list's chunks and a grid's are kept\n"
+              "TIDE_HELPER bool tide_client_reach_block(tide_client_hasher *hs, const uint32_t heap, const uint64_t block)\n{\n"
+              "    const tide_heap *h = tide_client_heap(hs->heaps, heap);\n"
               "    const uint64_t place = block >> TIDE_HEAP_PAGE_SHIFT;\n"
-              "    if (!block || place >= hs->heap->pages) {\n        hs->poisoned = true;\n        return false;\n    }\n"
-              "    tide_client_reach_page(hs, hs->heap->page[place]->first);\n    return true;\n}\n\n"
+              "    if (!block || !h || place >= h->pages) {\n        hs->poisoned = true;\n        return false;\n    }\n"
+              "    tide_client_reach_page(hs, tide_client_place(heap, h->page[place]->first));\n    return true;\n}\n\n"
               "TIDE_HELPER bool tide_client_reach(tide_client_hasher *hs, const tide_handle at)\n{\n"
               "    if (!at) return false;\n"
-              "    if (tide_handle_where(at) != TIDE_IN_MATCH) {\n        hs->poisoned = true;\n        return false;\n    }\n"
-              "    return tide_client_reach_block(hs, tide_handle_offset(at));\n}\n\n");
-    sb_put(o, "// A list's block and its chunks'\n");
+              "    if (tide_handle_world(at) != TIDE_IN_MATCH) {\n        hs->poisoned = true;\n        return false;\n    }\n"
+              "    return tide_client_reach_block(hs, tide_client_heap_of(at), tide_handle_offset(at));\n}\n\n");
+    sb_put(o, "// A list's block and its chunks', which are in its block's heap (tide/list.h)\n");
     sb_put(o, "TIDE_HELPER void tide_client_reach_list(tide_client_hasher *hs, const tide_list l)\n{\n"
               "    if (!tide_client_reach(hs, l.at)) return;\n"
-              "    const tide_block *b = tide_heap_block(hs->heap, tide_handle_offset(l.at));\n"
+              "    const uint32_t heap = tide_client_heap_of(l.at);\n"
+              "    const tide_block *b = tide_heap_block(tide_client_heap(hs->heaps, heap), tide_handle_offset(l.at));\n"
               "    if (b->b == TIDE_LIST_ASSET || !(b->b & TIDE_LIST_CHUNKED)) return;\n"
               "    const uint32_t chunks = b->b & ~TIDE_LIST_CHUNKED;\n"
               "    const uint64_t *at = (const uint64_t *)(const void *)(b + 1);\n"
-              "    for (uint32_t i = 0; i < chunks; i++) (void)tide_client_reach_block(hs, at[i]);\n}\n\n");
+              "    for (uint32_t i = 0; i < chunks; i++) (void)tide_client_reach_block(hs, heap, at[i]);\n}\n\n");
     sb_put(o, "// The container at `at`'s hash, when every page it was read from is as it was\n");
     sb_put(o, "TIDE_HELPER bool tide_client_memo_get(tide_client_hasher *hs, const uint64_t at, const uint32_t type, uint64_t *hash)\n{\n"
               "#ifdef TIDE_CLIENT_MEMO_OFF // For tests: every hash made again\n    (void)hs; (void)at; (void)type; (void)hash;\n    return false;\n#endif\n"
               "    tide_client_memo *m = hs->memo;\n    if (!m || !m->room) return false;\n"
               "    tide_client_memo_entry *e = &m->slots[tide_client_memo_slot(m, at, type)];\n    if (!e->at) return false;\n"
-              "    for (uint32_t i = 0; i < e->count; i++) {\n"
-              "        const tide_client_page *p = &e->pages[i];\n"
-              "        if (p->first >= hs->heap->pages) return false;\n"
-              "        const tide_page *page = hs->heap->page[p->first];\n"
-              "        if (!page || page->first != p->first || page->size != p->size\n"
-              "            || tide_heap_block_hash(hs->heap, (uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT) != p->hash) return false;\n    }\n"
+              "    if (!tide_client_memo_holds(e, hs->heaps)) return false;\n"
               "    if (e->used != m->call) {\n        e->used = m->call;\n        m->kept++;\n    }\n"
-              "    for (uint32_t i = 0; i < e->count; i++) tide_client_reach_page(hs, e->pages[i].first);\n"
+              "    for (uint32_t i = 0; i < e->count; i++) tide_client_reach_page(hs, e->pages[i].place);\n"
               "    *hash = e->hash;\n    return true;\n}\n\n");
     sb_put(o, "static int tide_client_place_order(const void *a, const void *b)\n{\n"
-              "    const uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;\n    return (x > y) - (x < y);\n}\n\n");
+              "    const uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;\n    return (x > y) - (x < y);\n}\n\n");
     sb_put(o, "// Keeps the container at `at`'s hash, with the pages read since `from`, which are left once each\n");
     sb_put(o, "TIDE_HELPER void tide_client_memo_put(tide_client_hasher *hs, const uint64_t at, const uint32_t type, const uint64_t hash, const uint32_t from)\n{\n"
-              "    uint32_t *r = hs->reach + from;\n    const uint32_t n = hs->reached - from;\n"
+              "    uint64_t *r = hs->reach + from;\n    const uint32_t n = hs->reached - from;\n"
               "    if (n > 1u) qsort(r, n, sizeof *r, tide_client_place_order);\n"
               "    uint32_t unique = 0;\n"
               "    for (uint32_t i = 0; i < n; i++) if (!unique || r[unique - 1u] != r[i]) r[unique++] = r[i];\n"
@@ -438,8 +464,10 @@ static void gen_client_hash_helpers(gen *g)
               "        free(e->pages);\n        e->pages = malloc((size_t)unique * sizeof *e->pages);\n"
               "        if (!e->pages) tide_out_of_memory();\n        e->room = unique;\n    }\n"
               "    for (uint32_t i = 0; i < unique; i++) {\n"
-              "        const tide_page *page = hs->heap->page[r[i]];\n"
-              "        e->pages[i] = (tide_client_page){r[i], page->size, tide_heap_block_hash(hs->heap, (uint64_t)r[i] << TIDE_HEAP_PAGE_SHIFT)};\n    }\n"
+              "        // (Each a page's first place, as it was reached: tide_client_reach_block)\n"
+              "        tide_client_page *p = &e->pages[i];\n        p->place = r[i];\n        p->zero = 0;\n"
+              "        if (!tide_client_place_hash(hs->heaps, r[i], &p->size, &p->hash)) {\n"
+              "            p->size = UINT32_MAX; // No page's size: the entry never holds\n            p->hash = 0;\n        }\n    }\n"
               "    e->count = unique;\n    e->hash = hash;\n"
               "    if (e->used != m->call) {\n        e->used = m->call;\n        m->kept++;\n    }\n}\n\n");
     sb_put(o, "// A container's hash: from the memo when nothing it was read from changed, else made from\n");
@@ -467,7 +495,7 @@ static void gen_client_hv_call(gen *g, const client_codec *codec, const type t, 
 // What a container's tide_client_hv starts with: its hash kept, when it's big enough to keep
 static void gen_client_hv_begin(gen *g, const int id, const char *handle, const char *keep)
 {
-    sb_printf(&g->c, "    const bool keep = %s && tide_handle_where(%s) == TIDE_IN_MATCH && (%s);\n"
+    sb_printf(&g->c, "    const bool keep = %s && tide_handle_world(%s) == TIDE_IN_MATCH && (%s);\n"
                      "    uint64_t kept;\n"
                      "    if (keep && tide_client_memo_get(hs, %s, %du, &kept)) {\n"
                      "        tide_client_write(&hs->out, &kept, sizeof kept);\n        return;\n    }\n"
@@ -563,7 +591,8 @@ static void gen_client_hv(gen *g, const client_codec *codec, const int id)
                   "        if (dir->records) memcpy(records, tide_grid_records(dir), (size_t)dir->records * sizeof *records);\n"
                   "        if (dir->records > 1u) qsort(records, dir->records, sizeof *records, tide_client_grid_compare);\n"
                   "        for (uint32_t i = 0; i < dir->records; i++) {\n"
-                  "            if (tide_handle_where(v->at) == TIDE_IN_MATCH) (void)tide_client_reach_block(hs, records[i].block);\n"
+                  "            // (Its chunks are in its directory's heap: tide/grid.h)\n"
+                  "            if (tide_handle_world(v->at) == TIDE_IN_MATCH) (void)tide_client_reach_block(hs, tide_client_heap_of(v->at), records[i].block);\n"
                   "            tide_write_bytes(&hs->out, records[i].chunk, sizeof records[i].chunk);\n");
         sb_printf(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), records[i].block);\n"
                      "            for (uint32_t k = 0; k < tide_grid_chunk_bytes(&%s) / sizeof(%s); k++) {\n",
@@ -718,7 +747,7 @@ static void gen_client_hashes(gen *g)
         // A player's machine hashes a different world each tick, the one it confirmed, of the worlds it keeps: they
         // share their pages, and a kept hash goes by its pages alone, so they share one memo, the player's
         sb_put(o, "    const void *memo_of = client ? (const void *)(uintptr_t)(uint32_t)w->tide_visibility_state.client : world;\n"
-                  "    tide_client_hasher hasher = {.out = {.grows = true}, .heap = tide_heaps_of((tide_heaps *)(uintptr_t)&w->heap, 0u), .memo = again ? NULL : tide_client_memo_for(memo_of)};\n"
+                  "    tide_client_hasher hasher = {.out = {.grows = true}, .heaps = (tide_heaps *)(uintptr_t)&w->heap, .memo = again ? NULL : tide_client_memo_for(memo_of)};\n"
                   "    tide_client_hasher *hs = &hasher;\n    const uint32_t depth = 0;\n"
                   "    tide_write_u32(&hs->out, 0x33564954u);\n    tide_write_u64(&hs->out, w->tide_identity_clock);\n    for (uint32_t i = 0; i < TIDE_GAME_PLAYERS; i++) tide_write_u64(&hs->out, w->tide_lifecycle_occurrences[i]);\n    tide_write_u64(&hs->out, w->tide_main_occurrence);\n");
     } else {
@@ -909,7 +938,7 @@ static void gen_client_hashes(gen *g)
     }
     if (prog->input) sb_put(o, "    free(slot_audience);\n    free(slot_found);\n    free(slot_hash);\n");
     if (heapy) sb_put(o, "    if (own) {\n        tide_client_kept_free(own);\n        free(own);\n    }\n"
-                         "    tide_client_memo_done(hs->memo, hs->heap);\n    free(hs->out.data);\n    free(hs->reach);\n");
+                         "    tide_client_memo_done(hs->memo, hs->heaps);\n    free(hs->out.data);\n    free(hs->reach);\n");
     sb_put(o, "    free(sums);\n    free(asked);\n    free(scratch.data);\n}\n\n"
               "static void tide_game_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out)\n{\n"
               "    tide_client_hashes_work(world, recipients, count, out, false);\n"
@@ -954,9 +983,10 @@ static void gen_client_load_rows(gen *g, const client_codec *codec, const int a)
             sb_printf(o, "                %s = present;\n", presence_cell(g, "next", a, c, "row", true));
             sb_put(o, "                if (present) {\n");
         }
+        // Into its owner's heap, as its own code would make it (decl_where)
         sb_printf(o, "                %s value = {0};\n", type_cname(d));
-        sb_printf(o, "                if (!tide_client_get%d(&in, &value, TIDE_IN_MATCH, 0, &budget)) goto invalid;\n",
-                  client_codec_id(codec, (type){TY_COMPONENT, (decl *)d}));
+        sb_printf(o, "                if (!tide_client_get%d(&in, &value, %s, 0, &budget)) goto invalid;\n",
+                  client_codec_id(codec, (type){TY_COMPONENT, (decl *)d}), decl_where(d));
         sb_printf(o, "                %s;\n", comp_put(g, "next", a, c, "row", "value"));
         if (comp_sparse(g, c)) sb_put(o, "                }\n");
         sb_put(o, "            }\n");
@@ -972,20 +1002,22 @@ static void gen_client_load_rows(gen *g, const client_codec *codec, const int a)
 // their snaps as they were. The values come out as a fresh load's would; only
 // where the heap keeps them differs, which nothing reads.
 // Lets go of what a value of `d` at `value` (a place, "next->X" or "value")
-// holds in the match's heap, as tide_release_<d> does: built-in singletons
-// and components have no such function of their own.
+// holds in its owner's heap (decl_where: whichever run's, each block through
+// its own), as tide_release_<d> does: built-in singletons and components have
+// no such function of their own.
 static void gen_client_release(gen *g, const decl *d, const char *value, const char *indent)
 {
     sb *o = &g->c;
     path_list paths = {0};
     text_paths(d, "", &paths);
+    const char *where = decl_where(d);
     for (int k = 0; k < paths.count; k++) {
         const heap_path *hp = &paths.items[k];
-        if (hp->list) sb_printf(o, "%stide_list%d_release(&%s.%s, TIDE_IN_MATCH);\n", indent, hp->list->index, value, hp->path);
-        else if (hp->array) sb_printf(o, "%stide_array%d_release(&%s.%s, TIDE_IN_MATCH);\n", indent, hp->array->index, value, hp->path);
-        else if (hp->map) sb_printf(o, "%stide_map%d_release(&%s.%s, TIDE_IN_MATCH);\n", indent, hp->map->index, value, hp->path);
-        else if (hp->grid) sb_printf(o, "%stide_grid_release(&%s.%s, &%s, TIDE_IN_MATCH);\n", indent, value, hp->path, grid_shape_name(hp->grid));
-        else sb_printf(o, "%stide_text_release(&%s.%s, TIDE_IN_MATCH);\n", indent, value, hp->path);
+        if (hp->list) sb_printf(o, "%stide_list%d_release(&%s.%s, %s);\n", indent, hp->list->index, value, hp->path, where);
+        else if (hp->array) sb_printf(o, "%stide_array%d_release(&%s.%s, %s);\n", indent, hp->array->index, value, hp->path, where);
+        else if (hp->map) sb_printf(o, "%stide_map%d_release(&%s.%s, %s);\n", indent, hp->map->index, value, hp->path, where);
+        else if (hp->grid) sb_printf(o, "%stide_grid_release(&%s.%s, &%s, %s);\n", indent, value, hp->path, grid_shape_name(hp->grid), where);
+        else sb_printf(o, "%stide_text_release(&%s.%s, %s);\n", indent, value, hp->path, where);
     }
 }
 
@@ -1001,8 +1033,8 @@ static void gen_client_reload_values(gen *g, const client_codec *codec)
         const decl *d = prog->singletons.items[i];
         if (!client_singleton(prog, d)) continue;
         sb_printf(o, "    if (!value_same[%d]) {\n        tide_reader in = {data, value_to[%d], value_from[%d], false};\n"
-                     "        if (!tide_client_get%d(&in, &next->%s, TIDE_IN_MATCH, 0, &budget) || in.at != value_to[%d]) goto invalid;\n    }\n",
-                  n, n, n, client_codec_id(codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d), n);
+                     "        if (!tide_client_get%d(&in, &next->%s, %s, 0, &budget) || in.at != value_to[%d]) goto invalid;\n    }\n",
+                  n, n, n, client_codec_id(codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d), decl_where(d), n);
         n++;
     }
 }
@@ -1256,8 +1288,8 @@ static void gen_client_state(gen *g)
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
         if (!client_singleton(prog, d)) continue;
-        sb_printf(o, "    if (!tide_client_get%d(&in, &next->%s, TIDE_IN_MATCH, 0, &budget)) goto invalid;\n",
-                  client_codec_id(&codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d));
+        sb_printf(o, "    if (!tide_client_get%d(&in, &next->%s, %s, 0, &budget)) goto invalid;\n",
+                  client_codec_id(&codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d), decl_where(d));
     }
     if (prog->input) {
         const int input = client_codec_id(&codec, (type){TY_INPUT, prog->input});

@@ -10,6 +10,20 @@ aliases, reject oversized RGBA32f volumes and invalid clear counts, and compare 
 
 # No Tide code can corrupt memory
 
+## Projections reading heaps per owner (2026-11-14, later)
+
+What reads values for players in a game that hides state now reaches pages of any of the world's heaps and runs
+(netcode.md, top section). What keeps that safe: a page is looked up by the heap a block's own handle names, its id
+masked to 12 bits and its run to 5 (`tide_client_heap`), which reads the heap set's array and a heap's runs as they
+are and gives NULL for a set or a run never made, where `tide_heaps_of` would allocate one in a world being only
+read; a place is a page's only where `first < pages`, the page is there and starts at that place; anything else makes
+the value "poisoned", kept by nothing, as a value read outside the heap was. A memo entry or a kept page never holds
+a pointer, only a place and the hash it had, checked again before it's used. Loads and repairs make values in their
+owner's heap through the same codecs and bounds as before; only the `where` changed. The logged group sets
+(`tide_visibility_set_logged`) read back fixed-size entries of a task's log, each checked for its tag, size and room
+before it's copied. Tested by `tidec_e2e_visibility_runs` and its checked and memo-off builds in release; the
+sanitize run (ASan, `TIDE_HEAP_CHECKS`) is CI's for this change.
+
 ## What a cached function keeps and hands out (2026-11-13)
 
 A `cached` function's table (notes/pure-functions.md, cached_codegen.inc) is outside every world, used by any

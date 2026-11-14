@@ -1409,6 +1409,7 @@ static void note_heap_writer(decl *sys, const loc at, const decl *owner)
 {
     if (!sys->writes_text) sys->writes_text_at = at; // The first: what the schedule names
     sys->writes_text = true;
+    if (!owner) sys->match_heap_written = true;
     note_heap_owner(sys, owner);
 }
 
@@ -23799,9 +23800,10 @@ static bool type_in_heap(const type t, const int depth)
 //   hands, whole or in part, to a `mut` or `out` parameter of a function that
 //   reaches C. C says TIDE_IN_MATCH for whatever it writes, and what it writes
 //   isn't the compiler's to know;
-// - every owner of a game that's split across servers or hides state from
-//   players: their code packs and reads a world's one heap (shard_*.inc,
-//   client_state_codegen.inc).
+// - every owner of a game that's split across servers: its code packs and
+//   reads a world's one heap (shard_*.inc). A game that hides state from
+//   players has an owner's heap as any other: its projections read a value
+//   wherever its handle says (client_state_codegen.inc).
 // Two owners whose names make the same id share that heap, and so do those
 // with id 0: systems that change either's wait for each other.
 static void assign_heaps(checker *c)
@@ -23826,7 +23828,7 @@ static void assign_heaps(checker *c)
             if ((p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) && p->mode == PARAM_MUT) p->type.decl->c_written = true;
         }
     }
-    const bool one = prog->shards || prog->visibility_state;
+    const bool one = prog->shards;
     bool taken[TIDE_HEAP_IDS] = {false};
     decl **const lists[] = {prog->components.items, prog->singletons.items, prog->events.items};
     const int counts[] = {prog->components.count, prog->singletons.count, prog->events.count};
@@ -23851,7 +23853,10 @@ static void assign_heaps(checker *c)
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
         if (!system_heap_runs(sys)) continue;
-        for (int k = 0; k < sys->heap_owners.count; k++) sys->heap_owners.items[k]->heap_runs = true;
+        // (NULL, the match's own heap: the visibility groups its rows log, system_logs_groups; it has no runs)
+        for (int k = 0; k < sys->heap_owners.count; k++) {
+            if (sys->heap_owners.items[k]) sys->heap_owners.items[k]->heap_runs = true;
+        }
     }
     prog->heap_ids.count = 0;
     vec_push(prog->heap_ids, (uint16_t)0);

@@ -859,6 +859,11 @@ typedef struct decl {
     // ...and whose they are: components, singletons and events that hold some, and NULL for the match's own
     // (note_heap_owner in check.c). A function's or method's: what it sends, spawns or adds holding some.
     VEC(struct decl *) heap_owners;
+    // A system's: whether its own code sets visibility groups' audiences (Visibility.Set(group, audience)), which in
+    // runs on threads its rows log for its `done` to set in its entities' order (VISIBILITY_LOGGED); and whether
+    // anything else of it changes the match's own heap (a NULL owner above), which keeps its rows in order
+    bool sets_groups;
+    bool match_heap_written;
     // A component's, singleton's or event's: the id of the heap its text, lists and grids are in, 0 for the
     // match's own (assign_heaps in check.c), and whether C can write it, which keeps it there
     uint16_t heap_id;
@@ -1141,7 +1146,10 @@ typedef enum builtin_call {
 } builtin_call;
 
 // (VISIBILITY_STORAGE: a call of the server's store, Storage.Save and its kin, which takes the world the same way)
-enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8, VISIBILITY_STORAGE = 16 };
+// VISIBILITY_LOGGED: a group's audience set in a per-entity system's own code, which its rows log in runs on threads
+// (sets_groups)
+enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8, VISIBILITY_STORAGE = 16,
+       VISIBILITY_LOGGED = 32 };
 
 // What a GUI call needs besides its arguments, and which form of a draw
 // setting a call is (expr.gui).
@@ -2002,6 +2010,7 @@ bool system_splits_in_order(const decl *sys);
 // shares of the order.
 bool system_heap_runs(const decl *sys);
 bool system_heap_runs_scattered(const decl *sys);
+bool system_logs_groups(const decl *sys);
 
 // For a per-entity system written in Tide whose entities don't go across
 // threads: the first thing in it that keeps them in order on one, as "it

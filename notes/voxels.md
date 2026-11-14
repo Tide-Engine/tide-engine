@@ -85,6 +85,17 @@ Nothing let match state reach a disk on a server: file calls are local code's, a
 - The `Loaded` prelude is added where a file's code has `Storage`, `.` and `Load` as words, spaces and line breaks allowed between them, not in comments (`storage_prelude_wanted`).
 - The 64 answers a tick is what paces a view's worth of new chunks: 845 chunks are asked for in one tick and made over 14.
 
+### 5. Chunks made on every core (`compiler/src/check.c`, `parallel.c`, `visibility_check.inc`, `visibility_codegen.inc`, the client codegen)
+
+A game that hides state kept every owner in the match's one heap, as what goes to players read containers through heap 0 only, so `Generate` ran its chunks one after another. Now (schedule-and-threads.md, top section, has the whole of it):
+
+- Owners have heaps of their own and runs as in any game (`assign_heaps`: only shards keep one heap).
+- What goes to players reads each value wherever its handle says: a page the hashes are kept by is its heap (id and run) and its place there (`tide_client_place`), and a projection, a reload and a repair make each value in its owner's heap (netcode.md, top section).
+- `Generate` ends with `Visibility.Set(seen.group, seen.audience)`, which writes the directory in the match's own heap. A per-entity system's own `Set` no longer keeps its rows in order: on threads they log what they set and the system's end sets it in the entities' order (`tide_visibility_set_logged`), which is what one thread setting each comes to, as nothing reads a group's audience back.
+- `tidec --schedule`: `Generate` was "on one thread: it changes the text, lists or grids of Chunk, which are in the match's one heap"; now "across threads: the visibility groups' audiences its entities set are set after them, in their order".
+- Measured (8 bots, 12 threads, four alternating rounds, median): server simulate 29.8 to 26.6 ms a second, update p99 10.1 to 8.2 ms (median 1.38 to 1.40), snapshot 1.5 to 2.7 ms a second, a client's simulate 18.5 to 20.8; what's sent and repaired the same byte for byte. `Generate` alone, one thread against the pool in the same build (the test game `visibility_runs`, 40 chunks a tick): 1.32-1.58 ms a tick to 0.34-0.44.
+- Pins: `bench_voxels --quick --expect` `0x0ae17b8a639f1fe3` (was `0x0ae800b4105e3290`; a world's hash covers each heap's pages, and the values are in other heaps), the same on 1, 4 and 12 threads, checked and memo off. Projection hashes didn't move.
+
 ### 4. Things found on the way
 
 - `Storage.Load` beside `Loaded` handlers that take components follows the events' rule (every load names an entity), checked in `check_sends`.
@@ -93,6 +104,7 @@ Nothing let match state reach a disk on a server: file calls are local code's, a
 ## Tests
 
 - `bench_voxels` (`--quick --expect`): 3 bots, 8 s, chunks saved and loaded again; the server's hash is the same on 1 thread and 12. `bench_voxels_checked`: the same with every projection hash worked out twice.
+- `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`): heaps per owner and runs in a game that hides state; one thread's world on threads, projections the same wherever values are, a shared group's audience by the entities' order, a player's world repaired by what changed into its own heaps (section 5).
 - `tidec_e2e_storage` (`compiler/tests/e2e/storage.tide`, `storage_test.c`): a host with files kept in memory and a guest without, over a lossy loopback: saves (each a write of `.new` and a move), a load asked twice, a key that needs writing out, a Windows device's name (`con`), keys whose folders would clash with files (`a` and `a.bin/x`), a key the provider refuses to read (`failed`), a 5,000-byte value (by download), a delete, a load after it; the guest's world has what the host's has and neither resyncs. Without files every load finds nothing and none fails. `tide_storage_path` for keys that would leave the folder, dots in folders, device names, and a key too long for a file's name.
 - `entity_erase_leaves_a_table_that_packs_and_takes_the_key_again` (`tests/test_entity.c`, in `tide_tests`): a table an entity was erased from packs, unpacks, and installs the key again (the free list's null-key slots, `rebuild_index`).
 - The repairs and hashes are under every visibility test there was: `tidec_e2e_visibility_*`, `tests/test_visibility_session.c` (in `tide_tests`), `earth_tests`, `bench_earth*`, `tidec_e2e_net_alone_seen`, `tidec_e2e_shards_visibility`.
@@ -103,7 +115,7 @@ Nothing let match state reach a disk on a server: file calls are local code's, a
 What a game of this kind still works around or lacks, most telling first.
 
 - **Hashing still walks every row each tick a table's pages change.** Rows are compared one by one (their pages, their groups) rather than skipped a table chunk at a time where nothing a chunk's rows read changed. With 8 bots moving the server spends 44 ms a second hashing 6,490 chunks, a third of what it did. Next: group numbers are in order of making, so the changed groups could rule out whole table chunks.
-- **A system that writes grids runs on one thread in a game with visibility** (`tidec --schedule` says so of `Generate`: "the match hides state from players", one heap). Chunks are made one after another, 64 a tick at the most here. A generator that costs a millisecond a chunk needs either grids written across threads or a match `worker` (reserved, not built).
+- **A system that writes grids ran on one thread in a game with visibility**: closed 2026-11-14 (section 5), `Generate` goes across threads. What's left of it: `Idle` stays on one thread (`Visibility.DestroyGroup` and `Storage.Save` change the match's own heap); on a tick with nothing to make `Generate` still goes out in 24 pieces, which costs a client about 15 µs a tick on threads (schedule-and-threads.md, top section, Gaps); a generator past a few milliseconds a chunk would still want a match `worker` (reserved, not built).
 - **A local task can't use a match component's local fields** ("a task can't use local fields yet"). A chunk's mesh belongs in its `local` fields, and the task that awaits the worker can't put it there: `play.tide` has the task leave it in a local singleton's list (`Meshing.ready`) for the chunk's own view to take.
 - **A load's answer is an event only.** No `await Storage.Load(key)`, no listing of keys, no `Pack`/`Unpack` of a value (the game writes loops over cells), and the files are read and written between ticks on the thread that ends the tick (the session's own, which draws the frame, where ticks run alongside views).
 - **A big answer waits for every player** in a game without visibility: past `TIDE_COMMAND_BYTES` it's a download, and the answers behind it wait until everyone has it.

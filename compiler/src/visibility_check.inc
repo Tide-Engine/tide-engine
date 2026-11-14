@@ -16,8 +16,14 @@ static bool visibility_typed_receiver(checker *c, const expr *object)
     return value.kind == TY_COMPONENT && value.decl == c->prog->visibility;
 }
 
-static bool visibility_match(checker *c, const expr *e)
+// `*logged`: a group's audience set by a per-entity system's own code, outside its parallel loops' steps and the
+// blocks it hands to functions. Nothing of a system reads the directory back (its code can only change it), so where
+// its rows go to threads in runs (system_heap_runs) they log what they set and its `done` sets it, in its entities'
+// order (VISIBILITY_LOGGED): the directory comes out as one thread leaves it. Anything else of a system that changes
+// the directory keeps its rows in order, as it did.
+static bool visibility_match(checker *c, const expr *e, const bool set, bool *logged)
 {
+    *logged = false;
     if (c->in_input || (!c->system && !c->method)) {
         diag_error(e->at, "visibility groups are changed by match code, not input sampling or defaults");
         return false;
@@ -29,6 +35,17 @@ static bool visibility_match(checker *c, const expr *e)
     } else if (c->method || local_code(c)) {
         diag_error(e->at, "visibility groups are the match's to change; local code only reads permitted state");
         return false;
+    }
+    decl *sys = c->system;
+    if (set && sys && sys->kind == DECL_SYSTEM && !c->method && sys->per_entity && !sys->is_view && !sys->is_handler && !c->parallel
+        && !c->block_depth && !c->prog->shards) {
+        // The shared directory is in the match's own heap; what its rows set there is set from their log
+        if (!sys->writes_text) sys->writes_text_at = e->at;
+        sys->writes_text = true;
+        sys->sets_groups = true;
+        note_heap_owner(sys, NULL);
+        *logged = true;
+        return true;
     }
     note_text_write(c, true, e->at, NULL, true); // The shared directory is in the match's own heap.
     return true;
@@ -81,8 +98,9 @@ static type check_visibility_static(checker *c, expr *e)
         check_expr_want(c, e->args.items[i], want);
         vec_push(e->arg_want, want);
     }
-    if (!audience && !visibility_match(c, e)) return T_ERR;
-    e->visibility_operation = audience ? 0 : VISIBILITY_WORLD | VISIBILITY_MUT;
+    bool logged = false;
+    if (!audience && !visibility_match(c, e, str_eq_c(e->name, "Set"), &logged)) return T_ERR;
+    e->visibility_operation = audience ? 0 : VISIBILITY_WORLD | VISIBILITY_MUT | (logged ? VISIBILITY_LOGGED : 0u);
     e->call = CALL_VISIBILITY;
     return result;
 }

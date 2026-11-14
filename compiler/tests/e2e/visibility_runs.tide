@@ -1,0 +1,156 @@
+// A game that hides state from players (State visibility) with per-entity
+// systems that change their own rows' grids, lists and text in runs on threads
+// (row_grids.tide, row_heaps.tide): its owners have heaps of their own as in
+// any other game, and what goes to players (projections, their hashes, repairs
+// by what changed) reads each value wherever its handle says, in whichever
+// owner's heap and run. The test (visibility_runs_test.c) checks the world is
+// one thread's on any threads, and a player's projection the same however its
+// values are laid out: the server's, a world it's loaded into, and a player's
+// own run of a tick, which runs the same systems on its own heaps.
+//
+// Chunks come into a world each tick, each in a group of its own but every
+// fifth pair, which share one; who has a group changes every few ticks, set by
+// the rows of a system in runs (Shift), so two rows set one group's audience in
+// one tick: the last in the entities' order is what it comes to, on any
+// threads (its rows log what they set, and the system's end sets it in order).
+
+settings { maxPlayers = 4; }
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Dirt,
+    Grass,
+    Sand
+}
+
+const int SIZE = 16;
+const int LIFE = 9; // Ticks a chunk stays
+
+component Chunk
+{
+    int id;
+    int3 at;
+    int seed;
+    int born;
+    Grid3<Block> blocks = Grid3(32, 16, 16); // Two chunks of the grid's along x: the second made later
+    List<int> heights;
+    string name;
+    int stage;     // 0 until Generate made it
+    int edits;
+}
+
+// Who has a chunk: the server's alone, as bench/voxels' Seen is
+component Seen
+{
+    VisibilityGroup group;
+    Audience audience;
+    int player;    // Whose it is now
+    int solid;     // What Shift counted
+}
+
+// The test's: still, nothing comes, goes or changes hands, and a player's own run of a tick is the server's
+singleton Control { bool still; }
+
+singleton Streams
+{
+    int next;
+    List<int> made; // A singleton's heap of its own too
+}
+
+scene Main { }
+
+int Ground(int seed, int x, int z)
+{
+    var wide = Math.Perlin(float2(x * 0.01, z * 0.01), seed) * 12;
+    var fine = Math.Perlin(float2(x * 0.07, z * 0.07), seed + 1) * 3;
+    return int(Math.Floor(wide + fine)) + 4;
+}
+
+Block Natural(int3 cell, int ground)
+{
+    if (cell.y > ground) return Block.Air;
+    if (cell.y < ground - 2) return Block.Stone;
+    return cell.y == ground ? Block.Grass : Block.Dirt;
+}
+
+// Chunks come: 40 a tick, a group each, but each fifth pair shares one
+system Stream(mut Streams streams, Control control, Time time)
+{
+    if (control.still) return;
+    for (var i = 0; i < 40; i++)
+    {
+        var id = streams.next + i;
+        mut var group = Visibility.CreateGroup(Audience.None);
+        var shared = id % 10 == 1;
+        for (var k = 0; k < (shared ? 2 : 1); k++)
+        {
+            mut var visibility = Visibility { group = group };
+            visibility.Set<Seen>(Audience.None);
+            Spawn(Chunk { id = id * 2 + k, at = int3(id % 13 - 6, 0, id / 13 % 13 - 6), seed = 500 + id % 4 * 31, born = time.tick },
+                  visibility, Seen { group = group, player = (id + k) % 4 });
+        }
+    }
+    streams.next += 40;
+    streams.made.Add(streams.next);
+}
+
+// A new chunk's blocks from its seed, then its players have it (as bench/voxels makes its chunks)
+system Generate(mut Chunk chunk, mut Seen seen)
+{
+    if (chunk.stage != 0) return;
+    chunk.stage = 1;
+    var origin = chunk.at * SIZE;
+    for (var z = 0; z < SIZE; z++)
+    {
+        for (var x = 0; x < SIZE; x++)
+        {
+            var ground = Ground(chunk.seed, origin.x + x, origin.z + z);
+            chunk.heights.Add(ground);
+            for (var y = 0; y < SIZE; y++)
+            {
+                var block = Natural(int3(x, y, z), ground);
+                if (block != Block.Air) chunk.blocks[x, y, z] = block;
+            }
+        }
+    }
+    chunk.name = $"chunk {chunk.id} at {chunk.at.x}, {chunk.at.z}";
+    seen.audience = Audience.Only(PlayerID(seen.player));
+    Visibility.Set(seen.group, seen.audience);
+}
+
+// Every third tick a chunk goes to another player, and its group with it: a pair's two rows (ids 2n and 2n + 1)
+// set their one group in the same tick, each to another audience
+system Shift(mut Seen seen, Chunk chunk, Control control, Time time)
+{
+    if (control.still || chunk.stage == 0 || (time.tick + chunk.id / 2) % 3 != 0) return;
+    mut var solid = 0;
+    for (var z = 0; z < SIZE; z++)
+        for (var x = 0; x < SIZE; x++)
+            if (chunk.blocks[x, 2, z] != Block.Air) solid += 1;
+    seen.solid = solid;
+    seen.player = (seen.player + 1 + chunk.id % 2) % 4;
+    seen.audience = Audience.Only(PlayerID(seen.player));
+    if (chunk.id % 7 == 3) seen.audience.Add(PlayerID((seen.player + 2) % 4));
+    Visibility.Set(seen.group, seen.audience);
+}
+
+// Every machine changes the chunks it has: a cell, the grid's second chunk now and then, a height, the name
+system Grow(mut Chunk chunk, Time time)
+{
+    if (chunk.stage == 0) return;
+    var t = time.tick - chunk.born;
+    chunk.edits += 1;
+    chunk.blocks[(t * 5 + chunk.id) % 16, 15, t % 16] = Block.Sand;
+    if (t == 3 && chunk.id % 3 == 0) chunk.blocks[20 + t, 1, 2] = Block.Stone;
+    if (t == 5) chunk.blocks[t, 14, 3] = Block.Air;
+    chunk.heights[t % chunk.heights.count] += 1;
+    if (t % 4 == 2) chunk.heights.Add(t);
+    if (t % 5 == 4) chunk.name = $"chunk {chunk.id}, {chunk.edits} edits";
+}
+
+system Leave(Chunk chunk, Control control, Time time)
+{
+    if (!control.still && time.tick - chunk.born >= LIFE) this.Destroy();
+}

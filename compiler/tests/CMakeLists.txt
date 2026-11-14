@@ -129,6 +129,21 @@ tide_add_game(tidec_e2e_visibility_hash_memo_off SOURCES e2e/visibility_hash_mem
 target_include_directories(tidec_e2e_visibility_hash_memo_off PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(tidec_e2e_visibility_hash_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 add_test(NAME tidec_e2e_visibility_hash_memo_off COMMAND tidec_e2e_visibility_hash_memo_off)
+# Heaps of their own and runs on threads in a game that hides state: one thread's world, projections the same
+# wherever values are; again with every projection hash worked out twice, and with nothing kept between hashes
+tide_e2e_test(visibility_runs)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_visibility_runs PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_visibility_runs PRIVATE TIDE_VISIBILITY_RUNS_THREADS=1)
+endif()
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_runs_${variant} SOURCES e2e/visibility_runs.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_runs_test.c")
+    target_include_directories(tidec_e2e_visibility_runs_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_runs_${variant} COMMAND tidec_e2e_visibility_runs_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_runs_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_runs_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region
