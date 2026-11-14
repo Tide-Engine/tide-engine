@@ -1,3 +1,52 @@
+## Symbols read by code: defined(NAME), define(NAME, default) and --define NAME=value (2026-11-14)
+
+The owner approved "a define with a value, readable as an expression" ("go with your recommendations"); the
+spelling and every rule are my picks, Provisional in spec.md (Conditional compilation). Mount & Rifle has ~300
+`#if` lines, many only to pick a constant (`#if NO_PREPASS / const bool PREPASS = false; / #else ... #endif`,
+three army sizes by `#if ARMY_50 / #elif ARMY_BIG / #else`); each is now one line.
+
+- **Lexer** (`lexer.c`, the symbols block): `build_symbols` keeps `{name, value}` (`build_symbol`; `value` NULL for
+  none), `lex_define("NAME=value")` splits at the first `=` (`lex_define_name_length`) and a name defined again
+  takes the later value. `lex_define_ok` is the command lines' check (the name as `lex_symbol_ok` takes it, any
+  value). `lex_symbol` (what `lex_symbols_read` lists) gained `value`; `read_build_symbol` records it whenever the
+  symbol has one, however it was read. A file's own `#define`/`#undef` are also kept past its lexing
+  (`kept_symbols`, by `loc.file`, the last word standing; a file lexed again first forgets its own, and
+  `lex_symbols_reset` clears them), so `lex_read_symbol(name, file, &value)` answers as `#if` would in that file:
+  the file's own, then tide's versions, then the build's (noted). -1 for a `TIDE_` name that's no version.
+  `cond_equality` refuses a number, text, `'`, `-` or `.` after `==`/`!=` with a note pointing at `define`.
+- **Checker** (`check_symbol_call`, just before `check_call`, which sends `defined`/`define` there first): the
+  call becomes the literal it reads as (`check_has`'s way), so `fold_int`, `is_constant` (which also takes the
+  unchecked calls), array sizes and `switch` cases see a literal. `defined` → `E_BOOL`, its args dropped.
+  `define`: the default is `is_constant` (with a check that a member chain's root isn't a local, a parameter or a
+  field: `army.start` reads like `Combat.MAX` until checked) and checked by `check_constant_expr`, with
+  `c->define_want` (set in `check_expr_want_any` for a `define` call) when that's a define type the default
+  converts to. Not defined: `*e = *default`. A value: `define_literal` makes an `E_INT` (with `is_long` for a
+  long; byte through the existing "int constant fits a byte" rule), an `E_FLOAT` (text as written, `d` added for a
+  double, a negative one as `E_UNARY` minus, finite by `strtof`/`strtod`), an `E_STRING` (escaped for
+  `gen_text_literal`, UTF-8 checked), an `E_BOOL`, or `.Member` shorthand for an enum, then `check_expr_want`.
+  `defined`/`define` are in `is_builtin_name`.
+- **Identity** (`gen_header`): a symbol with a value is `NAME="value"` in the symbols comment (quotes, backslashes,
+  `?` and anything outside printable ASCII escaped, so the comment's line can't end early or splice); one without
+  is `NAME=0/1` as before, so a game reading no valued symbol has the header it had.
+- **Command lines:** tidec's `add_define` and `tide`'s `--define` take `lex_define_ok`; `tide` keeps one entry per
+  name (the later), so C's `-D` is said once (`c_defines` passes `NAME=value` as clang reads it). `tide.packages`
+  conditions (`compiler/lsp/packages.c`) compare names up to `=`. CMake `DEFINES` pass `NAME=value` through to
+  tidec as they are.
+- **Tests:** `compiler/tests/e2e/defines` (now `DEFINES FAST WIDE SIDE=50 BIG=-9223372036854775808 SMALL=255
+  SCALE=-2.5 FAR=0.1 "TITLE=..." EMPTY= SLOW=false ARMY=Huge`: every type, a value's escapes, an empty one, an int
+  default read as a float, a valueless symbol as a bool, a file's own and another file's, an array field's
+  default and a system's body), `tidec_lexer` (`lexer_symbols_with_values_are_read_by_file_and_noted`), error
+  fixtures `define_value_int/range/float/bool/enum`, `define_no_value`, `define_arguments`, `defined_arguments`,
+  `define_not_constant(_call)`, `define_type`, `defined_tide`, `define_function_name` and
+  `directive_compare_value` (`expect_error.cmake` reads `// define: <S>` lines after the first as `--define`),
+  `lsp_directives`, and the CLI's `tide_cli_build_report` (C gets `-D BATTLE_TEST=7`, the header says it, another
+  value is another identity, the later of two wins, a bad value's error and fix, `--define =7` refused) and
+  `tide_cli_packages` (`--define STEAM=480` takes the `#if STEAM` branch).
+- **Not built / gaps:** a file's `#define NAME value` (a file's symbols stay valueless: a value there is a
+  `const`); `#if` reading values; `char` and vector values; a settings or `tide.packages` place to list defines.
+  On Windows a value outside ASCII given on a command line arrives in the console's code page, not UTF-8, and is
+  refused with the "has to be UTF-8" note (seen through CMake's command); `tide` and tidec read narrow `argv`.
+
 ## Vectors, colors, quaternions, sets and maps by a number in JSON (2026-11-14)
 
 The owner approved arrays for vectors, colors and quaternions ("go with your recommendations"); the rules are my
@@ -5188,7 +5237,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A build's symbol that a condition read is in the game's hash:** `read_build_symbol` notes each, by name, with whether it was defined (`lex_symbols_read`, in order of the names), and `gen_header` writes them as a comment after `#pragma once`, only when there are any. So builds that read one differently are different games, which no session connects, and a game whose conditions read none (or only versions and their files' own) generates the header it did. A hot reload that adds the first `#if DEBUG` changes the hash once, and migrates by name.
   - **Editors:** `#define` and `#undef` lines are directive lines (`LINE_DIRECTIVE`), which the formatter leaves and the folding of `#if` branches passes by; the grammar has both words.
   - **Tests:** `compiler/tests/e2e/defines` (a file's own, `#undef` of a build's, a build's in another file, `DEBUG` by the build's configuration, a package that's there and one that isn't), `compiler/tests/errors/directive_define_*` and `directive_undef_package`, and `lsp_directives`.
-  - **Not built:** values, package versions as symbols, a place in the game's folder to list defines (so an editor knows them), `DEBUG` for a game's C.
+  - **Not built:** values (built 2026-11-14 for code, `define(NAME, default)`: the section at the top), package versions as symbols, a place in the game's folder to list defines (so an editor knows them), `DEBUG` for a game's C.
 
 - **Combined animation imports and writable names** (2026-10-11): `check_asset_decl` records resolved constant path expressions in `decl.asset_paths`; only plain `Animations` accepts a literal file list or a glob as one combined inferred catalog. `[Name("source")]` on singular `Animation` selects a unique original clip; implicit selection requires exactly one clip. The checker, codegen and editor share cleaned members and flattened source ordinals, with filename prefixes for cross-source alias collisions. Contract matching remains first-letter-only or exact `[Name]`; dynamic `Find` remains exact and ambiguity-sensitive. `Animation` retains its existing raw model data/index ABI. `Animations.data` is now a nested source-byte list; the generated private catalog adapters borrow a model blob for direct operations and wrap it only when a catalog escapes. Ordinary nested-list ownership supplies snapshots/serialization without engine changes. Inferred conversions check source ordinals before carrying indexed members to a different catalog type. See `notes/assets-and-files.md` for fixtures and validation.
 

@@ -1,0 +1,5 @@
+// expect: 'TIDE_0_4' isn't a symbol Tide knows
+// expect: a version of tide is written like TIDE_0_3_OR_NEWER, true in tide 0.3 and newer
+const bool NEW = defined(TIDE_0_4);
+singleton Version { bool newer = NEW; }
+scene Main { }

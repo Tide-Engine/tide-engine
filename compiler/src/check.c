@@ -1,9 +1,11 @@
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "asset_files.h"
+#include "lexer.h" // What defined(NAME) and define(NAME, default) read of the build's symbols
 #include "build_report.h"
 #include "humanoid_assets.h"
 #include "assets.h"
@@ -86,6 +88,7 @@ typedef struct checker {
     bool grid_param;         // Resolving a function's parameter, which can be a grid: one code the GPU runs passes it
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
     decl *generic;           // The instantiation of a generic function being checked: its type parameters' names are types
+    type define_want;        // Where a define(NAME, default) about to be checked goes: the type its value reads as
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -3109,7 +3112,9 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         null_error(e, want);
         return e->type = T_ERR;
     }
+    if (!checked && e->kind == E_CALL && str_eq_c(e->name, "define")) c->define_want = inner; // const float S = define(S, 1)
     const type t = checked ? e->type : check_expr_any(c, e);
+    c->define_want = (type){0}; // Taken by that define, and by nothing after it
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && e->bind == BIND_ASSET
         && type_asset_reference_accepts(inner.decl, e->constant->return_type)) {
         e->asset_reference = true;
@@ -6316,8 +6321,282 @@ static type check_self_call(checker *c, expr *e, decl *m)
 
 static type check_gpu_list_make(checker *c, expr *e);
 
+// ---------------------------------------------------------------------------
+// defined(NAME) and define(NAME, default): what the build's --define, or the
+// file's own #define, says of a symbol, read by code as a constant (see
+// docs/spec.md, Conditional compilation). The call becomes the literal it
+// reads as, so it goes anywhere a constant does.
+
+static void suggest_constant(const checker *c, const expr *value);
+
+// The types define(NAME, default) gives: a value a command line's text says.
+static bool define_kind(const type t)
+{
+    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT
+        || t.kind == TY_DOUBLE || t.kind == TY_STRING || t.kind == TY_ENUM;
+}
+
+// A whole number in decimal, with a '-' before it if it's negative, from `least` to `most`.
+static bool define_integer(const char *s, const int64_t least, const int64_t most, int64_t *out)
+{
+    const bool negative = *s == '-';
+    if (negative) s++;
+    if (!*s) return false;
+    uint64_t u = 0;
+    for (; *s; s++) {
+        if (!isdigit((unsigned char)*s)) return false;
+        const uint64_t d = (uint64_t)(*s - '0');
+        if (u > (UINT64_MAX - d) / 10u) return false;
+        u = u * 10u + d;
+    }
+    const uint64_t lowest = (uint64_t)INT64_MAX + 1u;
+    if (negative ? u > lowest : u > (uint64_t)INT64_MAX) return false;
+    const int64_t v = !negative ? (int64_t)u : u == lowest ? INT64_MIN : -(int64_t)u;
+    if (v < least || v > most) return false;
+    *out = v;
+    return true;
+}
+
+// A number as a float's or a double's text is written in decimal: digits, a point and digits, or both, after a '-'
+// if it's negative, and an exponent.
+static bool define_number(const char *s)
+{
+    if (*s == '-') s++;
+    int digits = 0;
+    for (; isdigit((unsigned char)*s); s++) digits++;
+    if (*s == '.') {
+        for (s++; isdigit((unsigned char)*s); s++) digits++;
+    }
+    if (!digits) return false;
+    if (*s == 'e' || *s == 'E') {
+        s++;
+        if (*s == '+' || *s == '-') s++;
+        if (!isdigit((unsigned char)*s)) return false;
+        while (isdigit((unsigned char)*s)) s++;
+    }
+    return *s == '\0';
+}
+
+// Text as a string literal's is written between its quotes, escapes and all, into `*out`; false for text that isn't
+// UTF-8 or has a control character other than a tab or a line break.
+static bool define_text(const char *value, str *out)
+{
+    sb b = {0};
+    for (const unsigned char *p = (const unsigned char *)value; *p;) {
+        const unsigned char ch = *p;
+        if (ch < 0x80) {
+            if (ch == '\\' || ch == '"') sb_printf(&b, "\\%c", ch);
+            else if (ch == '\n') sb_put(&b, "\\n");
+            else if (ch == '\r') sb_put(&b, "\\r");
+            else if (ch == '\t') sb_put(&b, "\\t");
+            else if (ch < ' ' || ch == 0x7F) return false;
+            else sb_putn(&b, (const char *)p, 1);
+            p++;
+            continue;
+        }
+        const int more = ch >= 0xF0 && ch < 0xF5 ? 3 : ch >= 0xE0 && ch < 0xF0 ? 2 : ch >= 0xC2 && ch < 0xE0 ? 1 : -1;
+        if (more < 0) return false;
+        uint32_t code = more == 3 ? ch & 0x07u : more == 2 ? ch & 0x0Fu : ch & 0x1Fu;
+        for (int i = 1; i <= more; i++) {
+            if ((p[i] & 0xC0u) != 0x80u) return false; // The NUL that ends it is no continuation byte either
+            code = code << 6 | (p[i] & 0x3Fu);
+        }
+        if ((more == 2 && code < 0x800u) || (more == 3 && code < 0x10000u) || code > 0x10FFFFu || (code >= 0xD800u && code < 0xE000u)) {
+            return false;
+        }
+        sb_putn(&b, (const char *)p, (size_t)more + 1u);
+        p += more + 1;
+    }
+    *out = b.data ? (str){b.data, (int)b.len} : str_from("");
+    return true;
+}
+
+// What a value of `t` is called where a define's value isn't one: "an int".
+static const char *define_kind_name(const type t)
+{
+    switch (t.kind) {
+    case TY_BOOL: return "a bool";
+    case TY_BYTE: return "a byte";
+    case TY_INT: return "an int";
+    case TY_LONG: return "a long";
+    case TY_FLOAT: return "a float";
+    case TY_DOUBLE: return "a double";
+    case TY_STRING: return "text";
+    default: {
+        sb b = {0};
+        sb_printf(&b, "a member of %s", type_name(t));
+        return b.data;
+    }
+    }
+}
+
+// The literal `value` (a --define's text) reads as, a value of `t`, checked; NULL, said, when it's no such value.
+static expr *define_literal(checker *c, const expr *e, const str name, const type t, const char *value)
+{
+    expr *lit = NEW(expr);
+    lit->at = e->at;
+    bool ok = true;
+    const char *number = value[0] == '-' ? value + 1 : value;
+    switch (t.kind) {
+    case TY_BOOL:
+        ok = strcmp(value, "true") == 0 || strcmp(value, "false") == 0;
+        lit->kind = E_BOOL;
+        lit->bool_value = ok && value[0] == 't';
+        break;
+    case TY_BYTE:
+    case TY_INT:
+    case TY_LONG: {
+        const int64_t least = t.kind == TY_BYTE ? 0 : t.kind == TY_INT ? INT32_MIN : INT64_MIN;
+        const int64_t most = t.kind == TY_BYTE ? 255 : t.kind == TY_INT ? INT32_MAX : INT64_MAX;
+        lit->kind = E_INT;
+        ok = define_integer(value, least, most, &lit->int_value);
+        lit->is_long = t.kind == TY_LONG;
+        lit->text = str_from(value);
+        break;
+    }
+    case TY_FLOAT:
+    case TY_DOUBLE: {
+        ok = define_number(value);
+        if (ok) ok = t.kind == TY_FLOAT ? isfinite(strtof(number, NULL)) : isfinite(strtod(number, NULL));
+        lit->kind = E_FLOAT;
+        sb text = {0};
+        sb_printf(&text, "%s%s", number, t.kind == TY_DOUBLE ? "d" : "");
+        lit->text = (str){text.data, (int)text.len};
+        lit->is_double = t.kind == TY_DOUBLE;
+        if (ok && value[0] == '-') { // As the source says one, -2.5: the minus an operator
+            expr *minus = NEW(expr);
+            minus->kind = E_UNARY;
+            minus->at = e->at;
+            minus->op = T_MINUS;
+            minus->lhs = lit;
+            lit = minus;
+        }
+        break;
+    }
+    case TY_STRING:
+        lit->kind = E_STRING;
+        ok = define_text(value, &lit->text);
+        break;
+    default: { // An enum: a member's name, as .Member would be
+        ok = false;
+        for (int i = 0; i < t.decl->members.count && !ok; i++) ok = str_eq_c(t.decl->members.items[i].name, value);
+        lit->kind = E_MEMBER;
+        lit->member = str_from(value);
+        lit->enum_shorthand = true;
+        lit->object = NEW(expr);
+        lit->object->kind = E_NAME;
+        lit->object->at = e->at;
+        lit->object->name = str_from("");
+        break;
+    }
+    }
+    if (!ok) {
+        diag_error(e->at, "the build gives '" STR_FMT "' the value '%s', and 'define(" STR_FMT ", ...)' reads %s here",
+                   STR_ARG(name), value, STR_ARG(name), define_kind_name(t));
+        switch (t.kind) {
+        case TY_BOOL: diag_note("give true or false: '--define " STR_FMT "=true'", STR_ARG(name)); break;
+        case TY_BYTE: diag_note("give a whole number from 0 to 255: '--define " STR_FMT "=12'", STR_ARG(name)); break;
+        case TY_INT:
+            diag_note("give a whole number from -2147483648 to 2147483647, in digits: '--define " STR_FMT "=500'", STR_ARG(name));
+            break;
+        case TY_LONG: diag_note("give a whole number a long holds, in digits: '--define " STR_FMT "=500'", STR_ARG(name)); break;
+        case TY_FLOAT:
+        case TY_DOUBLE:
+            diag_note("give a number %s holds, in decimal: '--define " STR_FMT "=2.5' or '--define " STR_FMT "=-1e3'",
+                      define_kind_name(t), STR_ARG(name), STR_ARG(name));
+            break;
+        case TY_STRING:
+            diag_note("text from the command line has to be UTF-8, with no control characters but tabs and line breaks");
+            break;
+        default: {
+            sb members = {0};
+            for (int i = 0; i < t.decl->members.count && i < 8; i++) {
+                sb_printf(&members, "%s'" STR_FMT "'", i ? ", " : "", STR_ARG(t.decl->members.items[i].name));
+            }
+            if (t.decl->members.count > 8) sb_put(&members, ", ...");
+            diag_note("give one of its members' names, as written: %s", members.data ? members.data : "it has none");
+            break;
+        }
+        }
+        return NULL;
+    }
+    check_expr_want(c, lit, t);
+    return lit;
+}
+
+static type check_symbol_call(checker *c, expr *e)
+{
+    const type want = c->define_want;
+    c->define_want = (type){0};
+    const bool valued = str_eq_c(e->name, "define");
+    if (e->args.count != (valued ? 2 : 1) || e->args.items[0]->kind != E_NAME || e->type_args.count > 0) {
+        if (valued) diag_error(e->at, "define takes a symbol's name and the value it has when the build gives it none: 'define(ARMY_SIDE, 500)'");
+        else diag_error(e->at, "defined takes one symbol's name: 'defined(DEBUG)'");
+        diag_note("a symbol is what '#if' reads: the build's '--define NAME' or '--define NAME=value', or the file's '#define NAME'");
+        return e->type = T_ERR;
+    }
+    const str name = e->args.items[0]->name;
+    const char *value = NULL;
+    const int defined = lex_read_symbol(name, e->at.file, &value);
+    if (defined < 0) {
+        diag_error(e->args.items[0]->at, "'" STR_FMT "' isn't a symbol Tide knows", STR_ARG(name));
+        diag_note("a version of tide is written like TIDE_0_3_OR_NEWER, true in tide 0.3 and newer");
+        return e->type = T_ERR;
+    }
+    if (!valued) {
+        e->kind = E_BOOL;
+        e->bool_value = defined == 1;
+        e->args.count = 0;
+        return e->type = T_BOOL_;
+    }
+    expr *const fallback = e->args.items[1];
+    // A constant, checked where only constants are in scope, as a constant's value is. army.start reads like
+    // Combat.MAX until it's checked: a chain from a local, a parameter or a field isn't one
+    const expr *root = fallback;
+    while (root->kind == E_MEMBER && root->object) root = root->object;
+    const bool variable = root->kind == E_NAME && (find_local(c, root->name) || find_param(c, root->name) || field_in_scope(c, root->name));
+    if (variable || !is_constant(c, fallback)) {
+        diag_error(fallback->at, "define's second argument is a constant, the value '" STR_FMT "' has when the build gives "
+                                 "it none: 'define(" STR_FMT ", 500)'", STR_ARG(name), STR_ARG(name));
+        suggest_constant(c, fallback);
+        return e->type = T_ERR;
+    }
+    const type given = check_constant_expr(c, fallback, define_kind(want), want);
+    if (given.kind == TY_ERROR) return e->type = T_ERR;
+    // Where a float goes, define(SCALE, 1)'s value is a float's
+    const type t = define_kind(want) && (same_type(want, given) || (type_is_numeric(want) && type_is_numeric(given))) ? want : given;
+    if (!define_kind(t)) {
+        diag_error(fallback->at, "define gives a bool, a byte, an int, a long, a float, a double, a string or an enum, "
+                                 "what a command line's text can say, and this is %s", type_name(given));
+        diag_note("read the parts it's made from, each a define of its own: 'float3(define(X, 0), define(Y, 0), 0)'");
+        return e->type = T_ERR;
+    }
+    if (defined == 0) { // Not defined: its default, as written
+        *e = *fallback;
+        return e->type;
+    }
+    if (!value) { // Defined, with no value
+        if (t.kind == TY_BOOL) {
+            e->kind = E_BOOL;
+            e->bool_value = true;
+            e->args.count = 0;
+            return e->type = T_BOOL_;
+        }
+        diag_error(e->at, "'" STR_FMT "' is defined with no value, and 'define(" STR_FMT ", ...)' reads %s here",
+                   STR_ARG(name), STR_ARG(name), define_kind_name(t));
+        diag_note("give it one, '--define " STR_FMT "=<value>'; a symbol alone, or a file's '#define', is for "
+                  "'defined(" STR_FMT ")' and '#if " STR_FMT "'", STR_ARG(name), STR_ARG(name), STR_ARG(name));
+        return e->type = T_ERR;
+    }
+    expr *lit = define_literal(c, e, name, t, value);
+    if (!lit) return e->type = T_ERR;
+    *e = *lit;
+    return e->type;
+}
+
 static type check_call(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "defined") || str_eq_c(e->name, "define")) return check_symbol_call(c, e);
     if (str_eq_c(e->name, "GPUList") && e->type_args.count && !find_local(c, e->name) && !find_param(c, e->name))
         return check_gpu_list_make(c, e);
     const stmt *call_local = find_local(c, e->name);
@@ -15801,6 +16080,8 @@ static bool is_constant(const checker *c, const expr *e)
         }
         return true;
     case E_CALL: // A built-in type's constructor, an enum's conversion, a grid's size, and a Random's seed
+        if (str_eq_c(e->name, "defined")) return true; // What the build says of a symbol, before it's checked into a literal
+        if (str_eq_c(e->name, "define")) return e->args.count == 2 && is_constant(c, e->args.items[1]);
         return (resolve_builtin_alias(c, e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)
                 || find_type(c, e->name, e->at) == c->prog->random
                 || (authored_alias(c, e->name, e->at) && resolve_alias_type(c, authored_alias(c, e->name, e->at)).kind == TY_GRID))
@@ -21436,7 +21717,7 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug")
         || str_eq_c(name, "Transform") || str_eq_c(name, "Visibility") || str_eq_c(name, "VisibilityGroup") || str_eq_c(name, "Audience")
-        || str_eq_c(name, "Shards");
+        || str_eq_c(name, "Shards") || str_eq_c(name, "defined") || str_eq_c(name, "define");
 }
 
 static void c_name_of(const decl *d, sb *out)

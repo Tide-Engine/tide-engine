@@ -320,17 +320,45 @@ static bool version_symbol(const str name, int v[3])
 }
 
 // The symbols a build defines for every file (see docs/spec.md, Conditional
-// compilation): what its command line named, DEBUG, and PACKAGE_<NAME> for
-// each package the game builds with. And those of them conditions read, with
-// what each was: builds that differ in one are different games.
-static VEC(const char *) build_symbols;
+// compilation): what its command line named, with a value if it gave one,
+// DEBUG, and PACKAGE_<NAME> for each package the game builds with. And those
+// of them conditions and code read, with what each was: builds that differ in
+// one are different games.
+typedef struct build_symbol {
+    str name;
+    const char *value; // NULL for none
+} build_symbol;
+
+static VEC(build_symbol) build_symbols;
 static VEC(lex_symbol) read_symbols;
+
+// Each file's own symbols, as its #define and #undef lines left them, for code
+// that reads them once the file is lexed (lex_read_symbol): by the file's
+// name, the last word standing.
+typedef struct kept_symbol {
+    int file; // As diag_add_source numbered it
+    str name;
+    bool defined;
+} kept_symbol;
+
+static VEC(kept_symbol) kept_symbols;
 
 // Their arrays are the arena's, which whoever compiles again has reset: nothing of them is kept.
 void lex_symbols_reset(void)
 {
     memset(&build_symbols, 0, sizeof build_symbols);
     memset(&read_symbols, 0, sizeof read_symbols);
+    memset(&kept_symbols, 0, sizeof kept_symbols);
+}
+
+// A file lexed again says its symbols again: what it said before goes.
+static void forget_file_symbols(const int file)
+{
+    int kept = 0;
+    for (int i = 0; i < kept_symbols.count; i++) {
+        if (kept_symbols.items[i].file != file) kept_symbols.items[kept++] = kept_symbols.items[i];
+    }
+    kept_symbols.count = kept;
 }
 
 static bool reserved_symbol(const str name)
@@ -360,17 +388,37 @@ bool lex_symbol_ok(const char *name)
     return strcmp(name, "true") != 0 && strcmp(name, "false") != 0 && !reserved_symbol((str){name, (int)strlen(name)});
 }
 
-static bool build_defines(const str name)
+int lex_define_name_length(const char *spec)
 {
-    for (int i = 0; i < build_symbols.count; i++) {
-        if (str_eq_c(name, build_symbols.items[i])) return true;
-    }
-    return false;
+    const char *equals = strchr(spec, '=');
+    return equals ? (int)(equals - spec) : (int)strlen(spec);
 }
 
-void lex_define(const char *name)
+bool lex_define_ok(const char *spec)
 {
-    if (!build_defines((str){name, (int)strlen(name)})) vec_push(build_symbols, name);
+    const int n = lex_define_name_length(spec);
+    if (n == 0 || n > 255) return false;
+    char name[256];
+    memcpy(name, spec, (size_t)n);
+    name[n] = '\0';
+    return lex_symbol_ok(name);
+}
+
+static build_symbol *build_defines(const str name)
+{
+    for (int i = 0; i < build_symbols.count; i++) {
+        if (str_eq(name, build_symbols.items[i].name)) return &build_symbols.items[i];
+    }
+    return NULL;
+}
+
+void lex_define(const char *spec)
+{
+    const int n = lex_define_name_length(spec);
+    const build_symbol symbol = {{spec, n}, spec[n] == '=' ? spec + n + 1 : NULL};
+    build_symbol *there = build_defines(symbol.name);
+    if (there) there->value = symbol.value; // The later one, as a file's last #define or #undef stands
+    else vec_push(build_symbols, symbol);
 }
 
 void lex_define_package(const char *package)
@@ -392,10 +440,13 @@ const lex_symbol *lex_symbols_read(int *count)
     return read_symbols.items;
 }
 
-// What a condition reads a build's symbol as, noted by name, in order of the names.
-static bool read_build_symbol(const str name)
+// What a condition or code reads a build's symbol as, noted by name, in order
+// of the names, with its value: `*value`, when that's asked for.
+static bool read_build_symbol(const str name, const char **value)
 {
-    const bool defined = build_defines(name);
+    const build_symbol *symbol = build_defines(name);
+    const bool defined = symbol != NULL;
+    if (value) *value = symbol ? symbol->value : NULL;
     int at = 0;
     for (; at < read_symbols.count; at++) {
         const char *other = read_symbols.items[at].name;
@@ -409,7 +460,7 @@ static bool read_build_symbol(const str name)
     char *copy = arena_alloc((size_t)name.len + 1);
     memcpy(copy, name.ptr, (size_t)name.len);
     copy[name.len] = '\0';
-    const lex_symbol read = {copy, defined};
+    const lex_symbol read = {copy, defined, symbol ? symbol->value : NULL};
     vec_push(read_symbols, read);
     for (int i = read_symbols.count - 1; i > at; i--) read_symbols.items[i] = read_symbols.items[i - 1];
     read_symbols.items[at] = read;
@@ -423,6 +474,19 @@ typedef struct file_symbol {
 } file_symbol;
 
 typedef VEC(file_symbol) file_symbols;
+
+int lex_read_symbol(const str name, const int file, const char **value)
+{
+    *value = NULL;
+    int v[3];
+    if (version_symbol(name, v)) return tide_version_at_least(v[0], v[1], v[2]) ? 1 : 0;
+    if (name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0) return -1;
+    for (int i = kept_symbols.count - 1; i >= 0; i--) {
+        const kept_symbol *k = &kept_symbols.items[i];
+        if (k->file == file && str_eq(k->name, name)) return k->defined ? 1 : 0;
+    }
+    return read_build_symbol(name, value) ? 1 : 0;
+}
 
 static bool cond_or(cond_reader *c);
 
@@ -476,7 +540,7 @@ static bool cond_primary(cond_reader *c)
         for (int i = own ? own->count - 1 : -1; i >= 0; i--) {
             if (str_eq(own->items[i].name, name)) return own->items[i].defined;
         }
-        return read_build_symbol(name);
+        return read_build_symbol(name, NULL);
     }
     if (c->ok) {
         diag_error(cond_here(c), "'%c' can't go in a condition", *c->p);
@@ -487,7 +551,8 @@ static bool cond_primary(cond_reader *c)
     return false;
 }
 
-// == and !=, both sides read whatever the first says, as with && and ||.
+// == and !=, both sides read whatever the first says, as with && and ||. They
+// compare whether symbols are defined: a symbol's value is code's to read.
 static bool cond_equality(cond_reader *c)
 {
     bool value = cond_primary(c);
@@ -497,6 +562,18 @@ static bool cond_equality(cond_reader *c)
         const bool ne = c->p + 1 < c->end && c->p[0] == '!' && c->p[1] == '=';
         if (!eq && !ne) return value;
         c->p += 2;
+        cond_space(c);
+        if (c->p < c->end && (isdigit((unsigned char)*c->p) || *c->p == '"' || *c->p == '\'' || *c->p == '-' || *c->p == '.')) {
+            if (c->ok) {
+                diag_error(cond_here(c), "a condition compares whether symbols are defined, not their values: '#if' can't read "
+                                         "what a '--define NAME=value' gave");
+                diag_note("read the value in code, as a constant with a default: 'const int SIDE = define(SIDE, 500);', then "
+                          "'if (SIDE == 3)'; for a choice of code, define a symbol for each, '#if SIDE_3'");
+            }
+            c->ok = false;
+            c->p = c->end;
+            return false;
+        }
         const bool other = cond_primary(c);
         value = eq ? value == other : value != other;
     }
@@ -663,7 +740,9 @@ static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans, file_symbo
         cond_space(&c);
         if (name.len == 0 || !is_ident_start(*start) || c.p < c.end) {
             diag_error(name_at, "'#" STR_FMT "' takes one symbol's name, like '#" STR_FMT " FAST'", STR_ARG(word), STR_ARG(word));
-            diag_note("a symbol is defined or it isn't: it has no value");
+            diag_note("a file's own symbol is defined or it isn't, with no value: a value is a constant's, "
+                      "'const int SIDE = 500;', or comes from the build, '--define SIDE=500', which code reads as "
+                      "'define(SIDE, 500)'");
             ok = false;
         } else if (str_eq_c(name, "true") || str_eq_c(name, "false")) {
             diag_error(name_at, "'" STR_FMT "' is a condition's own word, so no symbol can have the name", STR_ARG(name));
@@ -681,6 +760,8 @@ static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans, file_symbo
         } else {
             const file_symbol said = {name, word.len == 6};
             vec_push(*own, said);
+            const kept_symbol kept = {lx->file, name, word.len == 6}; // For code's defined(NAME), once the file is lexed
+            vec_push(kept_symbols, kept);
         }
     } else {
         diag_error(at, "'#" STR_FMT "' isn't a directive", STR_ARG(word));
@@ -773,6 +854,7 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
     VEC(text_value) values = {0}; // Innermost last
     cond_stack conds = {0};       // #ifs not ended yet, innermost last
     file_symbols own = {0};       // The file's #defines and #undefs
+    forget_file_symbols(src->file);
 
     // Editors on Windows often start UTF-8 files with a byte-order mark.
     if (src->len >= 3 && memcmp(src->text, "\xEF\xBB\xBF", 3) == 0) {

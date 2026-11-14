@@ -4289,6 +4289,20 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(!has(branches, "\"startLine\":0"));
     open_document("scene Main { }\n#define LATE\n");
     TIDE_CHECK(has(sent[0], "comes after code"));
+
+    // Code reads symbols too: defined(NAME), and define(NAME, default), which editors read as its default (a command
+    // line's value they can't know), with no diagnostic; the formatter leaves the calls as they're written
+    static const char read[] = "#define MINE\n"
+                               "scene Main { }\n"
+                               "const bool PREPASS = !defined(NO_PREPASS);\n"
+                               "const bool OURS = defined(MINE) && defined(DEBUG);\n"
+                               "const int ARMY_SIDE = define(ARMY_SIDE, 500);\n"
+                               "singleton Army { int side = ARMY_SIDE; bool prepass = PREPASS; bool ours = OURS; }\n";
+    open_document(read);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(format_reply(read), "\"result\":[]"));
+    open_document("scene Main { }\nconst int SIDE = define(SIDE);\n");
+    TIDE_CHECK(has(sent[0], "define takes a symbol's name and the value it has when the build gives it none"));
 }
 
 TIDE_TEST(lsp_folding)

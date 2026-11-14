@@ -6026,14 +6026,30 @@ Implemented, awaiting approval:
 
 Symbols beyond tide's versions (the owner, 2026-10-07: `#if` with no `#define` isn't much, symbols from the command line, `#if DEBUG`, and knowing whether a package is installed; everything below is Claude's pick of how):
 
-- A symbol is defined or not, with no value, as in C#. One that nothing defines is false, and no error: `#if STEAM` has to compile in the build that doesn't define it.
+- To `#if`, a symbol is defined or not, as in C#: a value a build gives it (below) changes nothing there. One that nothing defines is false, and no error: `#if STEAM` has to compile in the build that doesn't define it.
 - `#define NAME` and `#undef NAME` are C#'s: for the file they're in, and before its first token, as they're for all of it; after code they're an error. `#undef` takes away a build's symbol too, in that file. A line in a branch that's left out isn't read.
-- `--define NAME` on `tide run`, `build`, `schedule` and `shaders` (and tidec, and a line of its `@list`; `DEFINES` in `tide_add_game`) defines a symbol for every file of the game and its packages. No `-D`, no `NAME=value`, no setting or `tide.packages` line for it.
+- `--define NAME` on `tide run`, `build`, `schedule` and `shaders` (and tidec, and a line of its `@list`; `DEFINES` in `tide_add_game`) defines a symbol for every file of the game and its packages, and `--define NAME=value` defines it with a value (below). No `-D`, no setting or `tide.packages` line for it.
 - `DEBUG` is defined in `tide`'s default debug mode, and undefined with `--release` or `--distribution` (in this repo's CMake builds: in the Debug configuration). Nothing else is predefined: no `RELEASE`, no symbols for `--web` or `--android`, and none for platforms, as a game is one code for all of them.
 - `PACKAGE_<NAME>` is defined for each package the game builds with: its name (the `package Name` of its `tide.packages`, its namespace) in capitals, anything that's no letter or digit as `_`. No versions of packages.
 - `TIDE_` and `PACKAGE_` names, `true` and `false` can't be defined, by a file or a command line.
 - **The build's symbols that conditions read are part of the game's identity.** Each one a condition reads (not a file's own, not tide's versions) is listed in the generated header with whether it's defined, so it's in the game's hash: a debug and a release build of a game that says `#if DEBUG`, or builds with other `--define`s that the game reads, are different games and join none of each other's matches, where they'd otherwise connect and correct each other every tick. A game that reads none has the header it had. The alternative that was weighed: refusing those symbols in match code, which a lexer can't tell.
 - Editors read `DEBUG` as defined and know the game's packages; what a command line defines they don't, and read as not defined.
+
+Symbols read by code, with values (built 2026-11-14; the owner approved "a define with a value, readable as an expression", "go with your recommendations", and each rule below is Claude's pick):
+
+```csharp
+const bool PREPASS = !defined(NO_PREPASS);
+const int ARMY_SIDE = define(ARMY_SIDE, 500); // tide run --define ARMY_SIDE=1000
+```
+
+- **`defined(NAME)`** is a constant `bool`: whether `#if NAME` would be true in that file (its own `#define` and `#undef` first, then the build's symbols, tide's versions too). A `TIDE_` name that's no version is the error it is in `#if`.
+- **`define(NAME, default)`** is a constant: the value the build's `--define NAME=value` gave, or `default`, a constant, when the build gives NAME none. The spelling pairs with `defined`: `define` reads the value a define gave. Its type is the default's, or the type where it goes when that's one too and the default converts to it (`define(SCALE, 1)` in a `float`: its value reads as a float). That type is `bool` (`true` or `false`), `byte`, `int` or `long` (decimal digits, with `-` before a negative one, fitting the type; no hex, no `_`), `float` or `double` (decimal, `2.5`, `-1e3`, finite in the type), `string` (the text as it is: UTF-8, with no control characters but tabs and line breaks), or an enum (a member's name, as written, an alias's too). Anything else, a vector say, is an error that says to read its parts, each a define. A value that isn't one is an error at the `define`, naming the symbol, the value and the type, with a note that shows a value that would be (`--define ARMY_SIDE=500`).
+- **A symbol defined with no value** (`--define FAST`, or a file's `#define FAST`, which never has one) reads as `true` where the type is `bool`, and is an error anywhere else, which says to give it one. A symbol defined with an empty value (`--define TITLE=`) has the empty value.
+- **The call becomes the literal it reads as** while checking (`check_symbol_call`), so it goes anywhere a constant does: a `const`, a field's default, an array's size, a `switch` case, a GPU function, a function's body. A game declares no function or type called `defined` or `define`: they're the language's names.
+- **`#if` never reads a value.** `#if SIDE == 3` (a number, text or a `-` after `==` or `!=`) is an error that says to compare the constant in code or define a symbol for each choice; `==` and `!=` between symbols compare whether each is defined, as before.
+- **Command lines.** `--define NAME=value` splits at the first `=`, so a value can hold `=`; the name is what `--define NAME` takes, and `NAME=` is an empty value. A name given twice takes the later value: the lexer's last word stands, and `tide` passes the C compiler that one `-D`. Handwritten game and package C gets `-D NAME=value` as clang reads it (the value as C tokens, not a string); a symbol with no value is 1 there, as before. `tide.packages` `#if` lines read a symbol with a value as defined.
+- **Identity.** Every build symbol a condition or code reads is in the generated header's comment with what it was, `NAME=0`, `NAME=1` or, with a value, `NAME="value"` (quotes and backslashes escaped, bytes outside printable ASCII and `?` as `\xNN`), so it's in the game's hash: builds that read different values are different games, as builds that read a symbol differently are. A game that reads no valued symbol has the header it had. The generation cache's key and custom C's identity already held each `--define` as written, value and all.
+- Editors know no command line, so `define(NAME, default)` reads as its default there, and `defined(NAME)` as `#if` reads NAME.
 
 ## Open
 

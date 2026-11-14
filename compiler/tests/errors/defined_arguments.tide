@@ -1,0 +1,4 @@
+// expect: defined takes one symbol's name: 'defined(DEBUG)'
+const bool QUICK = defined("QUICK");
+singleton Draws { bool quick = QUICK; }
+scene Main { }

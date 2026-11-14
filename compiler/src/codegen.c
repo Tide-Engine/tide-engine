@@ -9682,13 +9682,27 @@ static void gen_header(gen *g)
     // Maps' entry representation is opaque in public structs, but must still distinguish builds.
     if (prog->maps.count) sb_put(o, "// Map ABI: signed 64-bit insertion order (2).\n\n");
     if (prog->uses_heap) sb_put(o, "// Heap ABI: retained immutable asset lists (1), 64-bit handles (1).\n\n");
-    // The build's symbols its #if conditions read: in the header, so in the game's hash
+    // The build's symbols its #if conditions and defined()/define() read: in the header, so in the game's hash
     int symbols = 0;
     const lex_symbol *read = lex_symbols_read(&symbols);
     if (symbols) {
         sb_put(o, "// The symbols of this build that the game's #if conditions read (--define's, DEBUG, PACKAGE_...),\n");
         sb_put(o, "// and whether each is defined: builds that differ in one are different games.\n//");
-        for (int i = 0; i < symbols; i++) sb_printf(o, " %s=%d", read[i].name, read[i].defined ? 1 : 0);
+        for (int i = 0; i < symbols; i++) {
+            if (!read[i].value) {
+                sb_printf(o, " %s=%d", read[i].name, read[i].defined ? 1 : 0);
+                continue;
+            }
+            // A value given, in quotes, nothing in it that ends the comment's line: what's no printable ASCII by its
+            // number, and '?', which could start a trigraph
+            sb_printf(o, " %s=\"", read[i].name);
+            for (const unsigned char *p = (const unsigned char *)read[i].value; *p; p++) {
+                if (*p == '"' || *p == '\\') sb_printf(o, "\\%c", *p);
+                else if (*p >= ' ' && *p < 0x7F && *p != '?') sb_printf(o, "%c", *p);
+                else sb_printf(o, "\\x%02X", *p);
+            }
+            sb_put(o, "\"");
+        }
         sb_put(o, "\n\n");
     }
     if (prog->task_handles.count) sb_put(o, "#include <stdint.h>\n\ntypedef struct tide_task_handle_value {\n"
