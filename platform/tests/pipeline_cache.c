@@ -9,7 +9,11 @@
 //   pipeline_cache cut       the file cut short: left out too
 //   pipeline_cache outgrown  the file bigger than one is read at: left out, and written over with the run's own
 //
-// Each draws what the renderer has pipelines for, and reads it back.
+// Each draws what the renderer has pipelines for, and reads it back. A file
+// holds the driver's pipelines after the two headers, and a warm run reads
+// them, where the driver keeps them (tide_gpu_vk_pipeline_cache_keeps, asked
+// of the driver apart from the device's own cache): a driver that keeps its
+// header alone, as the Android emulator's does, has files of the headers.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -91,20 +95,29 @@ static int frame(void *user, const float seconds)
     }
     const size_t read = tide_gpu_vk_pipeline_cache_read();
     const bool wants = strcmp(mode, "warm") == 0;
+    // What a file holds past Tide's header (24 bytes) and the driver's (32): the pipelines, where the driver keeps
+    // them. One that keeps none, as the Android emulator's, is said as such, and its files are the two headers alone
+    const bool keeps = tide_gpu_vk_pipeline_cache_keeps();
+    printf("pipeline cache: this device's driver keeps %s\n", keeps ? "its pipelines" : "no pipelines, only its 32-byte header");
+    const size_t headers = 24u + 32u;
     if (strcmp(mode, "outgrown") == 0) { // A whole file of this device's, which a warm run would read
         char *file = cache_file();
         size_t size = 0;
         uint8_t *bytes = file ? tide_file_read_whole(file, SIZE_MAX, &size) : NULL;
-        printf("%s: the file left out is one a run would read (%zu bytes)\n", size >= 24u + 32u ? "ok" : "FAIL", size);
+        const bool whole = keeps ? size > headers : size == headers;
+        printf("%s: the file left out is one a run would read (%zu bytes, where %s)\n", whole ? "ok" : "FAIL", size,
+               keeps ? "the driver's pipelines follow the headers" : "the driver keeps its header alone");
         free(bytes);
         free(file);
-        if (size < 24u + 32u) return 1;
+        if (!whole) return 1;
     }
+    // A warm run takes the driver's pipelines, not its header alone, where it keeps them
+    const bool took = wants ? read > (keeps ? 32u : 0u) : read == 0;
     const bool drew = got == 0xFF0000FFu;
-    printf("%s: a %s run read %zu bytes of pipelines, where it reads %s\n", read > 0 == wants ? "ok" : "FAIL", mode, read,
-           wants ? "some" : "none");
+    printf("%s: a %s run read %zu bytes of pipelines, where it reads %s\n", took ? "ok" : "FAIL", mode, read,
+           !wants ? "none" : keeps ? "more than the driver's header" : "the driver's header");
     printf("%s: and drew with them (0x%08X)\n", drew ? "ok" : "FAIL", got);
-    return read > 0 == wants && drew ? 0 : 1;
+    return took && drew ? 0 : 1;
 }
 
 int main(const int argc, char **argv)

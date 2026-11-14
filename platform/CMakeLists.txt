@@ -176,7 +176,8 @@ endfunction()
 # front: run_android.mjs --steps). NAME: the test's, for another test of the
 # same app (the target's by default). ARGS: what the app starts with, as main's arguments.
 # ENVIRONMENT: Tide's settings, in the app's environment as in a desktop
-# test's (the intent's tide.env, which a debuggable app sets). RUNS: the app
+# test's (the intent's tide.env, which a debuggable app sets, saying each it
+# set: the test fails where the app didn't say each of them). RUNS: the app
 # started once for each, in order, with its arguments (words apart, in one
 # string), keeping its cache folder between them, as a script runs a desktop
 # test's program again. Apps take the screen, so they run one at a time.

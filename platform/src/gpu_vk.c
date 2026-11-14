@@ -4231,6 +4231,50 @@ size_t tide_gpu_vk_pipeline_cache_read(void)
     return vk.cache_read;
 }
 
+bool tide_gpu_vk_pipeline_cache_keeps(void)
+{
+    if (!vk.device) return false;
+    // A compute shader that does nothing, in a group of one: `void main() {}`, as SPIR-V 1.0
+    static const uint32_t code[] = {
+        0x07230203u, 0x00010000u, 0u, 5u, 0u, // Magic, version, generator, ids under 5, schema
+        0x00020011u, 1u,                      // OpCapability Shader
+        0x0003000Eu, 0u, 1u,                  // OpMemoryModel Logical GLSL450
+        0x0005000Fu, 5u, 1u, 0x6E69616Du, 0u, // OpEntryPoint GLCompute %1 "main"
+        0x00060010u, 1u, 17u, 1u, 1u, 1u,     // OpExecutionMode %1 LocalSize 1 1 1
+        0x00020013u, 2u,                      // %2 = OpTypeVoid
+        0x00030021u, 3u, 2u,                  // %3 = OpTypeFunction %2
+        0x00050036u, 2u, 1u, 0u, 3u,          // %1 = OpFunction %2 None %3
+        0x000200F8u, 4u,                      // %4 = OpLabel
+        0x000100FDu,                          // OpReturn
+        0x00010038u,                          // OpFunctionEnd
+    };
+    const VkPipelineCacheCreateInfo cache_info = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, NULL, 0, 0, NULL};
+    const VkShaderModuleCreateInfo module_info = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, NULL, 0, sizeof code, code};
+    const VkPipelineLayoutCreateInfo layout_info = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, NULL, 0, 0, NULL, 0, NULL};
+    VkPipelineCache cache = VK_NULL_HANDLE;
+    VkShaderModule module = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    size_t size = 0;
+    if (vkCreatePipelineCache(vk.device, &cache_info, NULL, &cache) == VK_SUCCESS
+        && vkCreateShaderModule(vk.device, &module_info, NULL, &module) == VK_SUCCESS
+        && vkCreatePipelineLayout(vk.device, &layout_info, NULL, &layout) == VK_SUCCESS) {
+        const VkComputePipelineCreateInfo info = {
+            VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, NULL, 0,
+            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", NULL},
+            layout, VK_NULL_HANDLE, -1};
+        if (vkCreateComputePipelines(vk.device, cache, 1, &info, NULL, &pipeline) != VK_SUCCESS
+            || vkGetPipelineCacheData(vk.device, cache, &size, NULL) != VK_SUCCESS) {
+            size = 0;
+        }
+    }
+    if (pipeline) vkDestroyPipeline(vk.device, pipeline, NULL);
+    if (layout) vkDestroyPipelineLayout(vk.device, layout, NULL);
+    if (module) vkDestroyShaderModule(vk.device, module, NULL);
+    if (cache) vkDestroyPipelineCache(vk.device, cache, NULL);
+    return size > 16u + VK_UUID_SIZE; // More than its header (VkPipelineCacheHeaderVersionOne)
+}
+
 static void destroy_device(void)
 {
     if (!vk.device) return;
