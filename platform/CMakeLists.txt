@@ -1281,8 +1281,10 @@ if(NOT TIDE_ANDROID)
     endforeach()
 endif()
 
-if(TIDE_PLATFORM)
-    tide_add_game(tide_platform_readback SOURCES tests/readback.tide NAME game HOST tests/readback.c)
+# Not on Android: a window there is an app's (tide_android_app), and this
+# program started through adb waits for one for good.
+if(TIDE_PLATFORM AND NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_readbackSOURCES tests/readback.tide NAME game HOST tests/readback.c)
     target_include_directories(tide_platform_readback PRIVATE src)
     target_link_libraries(tide_platform_readback PRIVATE tide_platform)
     if(TIDE_WEB)

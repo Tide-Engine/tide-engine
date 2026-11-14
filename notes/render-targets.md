@@ -67,6 +67,12 @@ Typed numeric reads return the declaration's numeric type through Sample with Po
 SampleGrad are refused with guidance to use Sample. No numeric CPU Grid2 conversion is implied by the Color
 readback API.
 
+Android (correction, 2026-11-14): `tide_platform_readback` was registered there too, as a program started
+through adb. It opens a window, which on Android only an app has, so it waited for good and CTest's timeout
+didn't end it: the Android job hung on every Build run from a5b50cd74 on. The fixture is now left out of
+Android builds, as the other window fixtures are. Readback on Android has no fixture: it would need an app
+(`tide_android_app_test`), not built.
+
 Validation: native ASan Vulkan and web-debug SwiftShader WebGPU readback fixtures pin a 4x3 MSAA-resolved
 image, prior-frame ownership, row order, straight alpha, HDR 2.0 and exact frame-5 completion of sequential reads.
 Existing GPU-list kernel fixtures pass on both; native E2E compute passes. Draw units 130/130, shader LSP 11/11,
