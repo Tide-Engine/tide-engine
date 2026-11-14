@@ -862,8 +862,8 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(request("textDocument/hover"), "Draw.list: DrawList"));
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, $\n}\n");
     const char *indices = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])\""));
-    TIDE_CHECK(!has(indices, "\"label\":\"Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]...][, vert][, frag][, values])\""));
+    TIDE_CHECK(!has(indices, "\"label\":\"Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]...][, vert][, frag])\""));
     TIDE_CHECK(has(indices, "\"activeSignature\":0,\"activeParameter\":1"));
     TIDE_CHECK(has(indices, "{\"label\":[20,27],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], $\n}\n");
@@ -1213,7 +1213,7 @@ TIDE_TEST(lsp_wrap)
                                                  "Wrap wrap = the texture's)"));
     open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, $"));
     const char *after = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(after, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])\""));
+    TIDE_CHECK(has(after, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]...][, vert][, frag][, values])\""));
     TIDE_CHECK(has(after, "\"activeParameter\":4") && has(after, "What a `uv` past 0 or 1 reads, written after the filter"));
     open_document(IN_VIEW("Draw.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
@@ -1895,8 +1895,8 @@ TIDE_TEST(lsp_shaders_signature_help)
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, $"));
     const char *frag = request("textDocument/signatureHelp");
     TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":7"));
-    TIDE_CHECK(has(frag, "{\"label\":[70,74],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
-    TIDE_CHECK(has(frag, "{\"label\":[78,82],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
+    TIDE_CHECK(has(frag, "{\"label\":[73,77],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
+    TIDE_CHECK(has(frag, "{\"label\":[81,85],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
     TIDE_CHECK(has(frag, "A vert and a frag, named last, run on the GPU"));
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wa$ve, Shade);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":6"));
@@ -6309,7 +6309,7 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(request("textDocument/hover"), "RenderTarget.Clear"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Mesh([], [], $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter[, wrap]]]"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter[, wrap]]...]"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Resize(16, $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(float width, float height)"));
@@ -6484,9 +6484,15 @@ TIDE_TEST(lsp_textures_in_functions)
                                       "    Debug.Log(Sunlit(lamp.shadow, float3(0)));\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "reads a render target's depth, which only code the GPU runs does"));
+    // A singleton's depth, sampled by a function it's given to; a plain struct's is no GPU value
     snprintf(program, sizeof program, "%sfloat Sunlit(Lamp lamp, float3 at) { return lamp.shadow.Compare(at.xy, at.z); }\n", types);
     open_document(program);
-    TIDE_CHECK(has(last_sent(), "a function samples a DepthTexture it takes as a parameter of its own"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    snprintf(program, sizeof program, "%sstruct Held { DepthTexture shadow; }\n"
+                                      "float Sunlit(Held held, float3 at) { return held.shadow.Compare(at.xy, at.z); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a function samples a DepthTexture it takes as a parameter of its own, or a field of a "
+                                "component or singleton it takes"));
 }
 
 // A target of several color images: a format each, `colors`, and a frag's outputs after the pixel's color.
@@ -12415,7 +12421,7 @@ TIDE_TEST(lsp_asset_meshes)
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Mesh(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);
     const char *help = request_at(uri_main, "textDocument/signatureHelp", 14, 20, "");
-    TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])"));
+    TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])"));
     TIDE_CHECK(has(help, "\"activeParameter\":1") && has(help, "A `Mesh<V>`: its vertices and its indices as one"));
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Instanced(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);

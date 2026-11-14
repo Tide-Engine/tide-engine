@@ -1,0 +1,6 @@
+// expect: 'Sunlit' reads a render target's depth, which only code the GPU runs does
+// A function that samples a singleton's texture is the GPU's alone, as one that samples a texture it takes is
+scene Main { }
+local singleton Stage { RenderTarget map; DepthTexture shadow; float3 sun; }
+float3 Sunlit(Stage stage, float3 at) { return stage.sun * stage.shadow.Compare(at.xy, at.z); }
+view Show(Stage stage) { Debug.Log($"{Sunlit(stage, float3(0))}"); }

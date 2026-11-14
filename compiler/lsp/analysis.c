@@ -2507,7 +2507,7 @@ static const method_form target_calls[] = {
 };
 
 #define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
-#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color. A struct's value after the frag is this blit's values, which the frag reads through a parameter of its type: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`."
+#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. A frag that takes several is given them in its order, before the destination: `Draw.Blit(source, lut, destination, Grade)`. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color. A struct's value after the frag is this blit's values, which the frag reads through a parameter of its type: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`."
 
 // What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
 // Vertex3 (builtins.c): the checker takes those itself.
@@ -9554,7 +9554,7 @@ static type names_type(const scope *sc, const int first, const int last)
 }
 
 // Draw.Mesh's parameters, in the order they're written:
-// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]...][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
 enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
        MESH_VALUES, MESH_WHOLE, MESH_SKINNED, MESH_POSE, MESH_LOD, MESH_PARAMS };
@@ -12395,19 +12395,19 @@ static void collect_label(void *user, const char *label, const char *doc)
 // a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
-    "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])",
-    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])",
+    "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]...][, vert][, frag][, values])",
+    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])",
 };
 
 static const char *const instanced_labels[2] = {
-    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
-    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]...][, vert][, frag][, values])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])",
 };
 
 // ...and the forms a Mesh asset is drawn by: the Mesh where its vertices and its indices go.
-static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
-static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
-static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform[, pose][, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
+static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])";
+static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])";
+static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform[, pose][, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])";
 
 // Each of its parameters: what it's called in those, and what it takes, in a
 // 2D mesh and, where that differs, in a 3D one.
@@ -12422,7 +12422,8 @@ static const struct {
     [MESH_TRANSFORM] = {"transform", {"A `float4x4`: where the mesh is in the world."}},
     [MESH_TEXTURE] = {"texture",
                       {"A `Texture`, read at each corner's `uv`: an asset's, a render target's color, or a `Grid2<Color>` or "
-                       "`Grid2<float>`, which is one here. A frag or vert with a Texture parameter receives it as its source."}},
+                       "`Grid2<float>`, which is one here. A frag's and a vert's Texture parameters receive the textures a draw "
+                       "gives, in order: the frag's first, then the vert's own; a filter and a wrap after one are its alone."}},
     [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear`, `Filter.Point`, `Filter.Trilinear` or `Filter.Anisotropic`: the texture's own "
                                 "where the draw leaves it out."}},
     [MESH_WRAP] = {"wrap",

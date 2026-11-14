@@ -1,3 +1,74 @@
+## Several textures a draw gives; textures of what a function is given (2026-11-14)
+
+Owner-approved 2026-11-14 ("go with your recommendations"), both Provisional in the spec (Views and drawing: Several
+textures a draw gives; A function samples the textures of a singleton or a component it's handed). Users' pages:
+docs/game/shaders.md, Several textures and In a function.
+
+**Several textures.** A frag and a vert take any number of read-only `Texture` parameters (check.c's "takes one
+explicit Texture source" error is gone). The draw's textures are `shader_given_texture`/`shader_given_textures`
+(shader.c, exported in ast.h for check.c): the frag's in order, then the vert's whose names the frag doesn't take;
+a vert's and a frag's of one name are one texture. Picked over the vert's first (a vert displacing by the frag's
+height map would reorder the material) and over per-stage position (a vert's `height` and a frag's `colour` would
+collide). `shader_texture.given` is the place in that order for a `direct` texture; `plan_reads` sets it from the
+root's sample, `key_of`/`texture_is` (sample_slot, texture_number) and `plan_reads`' dedupe compare it, so each is
+a binding with samplers of its own. `shader.given_textures` counts them (1 for a no-frag textured draw, whose pixels
+use the first). Codegen names them `tide_texture`, `tide_texture1`... (`given_texture_name`, before
+shader_prep_codegen.inc), so a game with one texture generates the C it did; `gen_shader_textures`, the sizes loop,
+the carried sampling bits and `shader_prep_from` go by `given`. A filter and wrap after a texture wrap that
+argument (`gen_draw_texture`, unchanged: it already looked two arguments past each texture), so they're that
+texture's alone. check_mesh_draw reads textures in a loop (`textures_at`/`textures_end`, `arg_want` TY_TEXTURE
+for each) and checks the count against `shader_given_textures` (`say_given_textures`, `given_texture_names`; the
+old one-texture messages stay where they fit). check_blit takes the leading textures before the destination
+(`sources`, at most `last - 1`), and codegen's blit passes TIDE_BLEND_REPLACE where no Blend argument was given
+(it counted arguments). `check_raw_uses` marks each texture argument raw-sampled by the parameter it goes to
+(`given_param`), not every argument of a frag with any numeric parameter; with no frag the first is drawn as color
+and not marked. A vert's and a frag's same-named Texture with different `[Raw(T)]` roles is an error.
+`check_image_sources` finds each direct texture's argument and parameter by `given`. Only `Texture` (grids
+convert): DepthTexture/TextureArray/Cubemap/Texture3D parameters stay errors that point at fields, which
+functions now take whole (below). LSP: draw labels say `[, texture[, filter[, wrap]]...]`, MESH_TEXTURE and
+BLIT_DOC describe the order; `lsp_shaders_signature_help`'s label offsets moved by those three characters.
+
+**Textures of what's given.** `holds_data` (shader.c) is true for a component or singleton with a sampled field
+(main or local part), so such a parameter is "given" as one that holds a list: no WGSL parameter, reads by type and
+field. In a function, `texture_of` returns `given_field`: the `E_MEMBER` of a function parameter of component or
+singleton type, or, for a `given_self` method's implicit field (`BIND_FIELD`), an `E_MEMBER` made on a stand-in
+receiver param (`tide_self`, not among the method's params). `key_of` takes `of->object->param->type.decl` and the
+field, so writing resolves it to the frag's texture. While checking, the function notes it as a `function_sample`
+with param -1 and `asset` = that member (`same_named` dedupes by field); `pass_samples` maps it through
+`named_by_call` to the call's argument (`passed.field`), the call's receiver (`E_METHOD`), or keeps it for a bare
+call of another method of the same type, then notes it on the calling function or samples it in the root as a
+frag's own field. `sample_slot` returns 0 while checking in a function for anything but an asset (it used param
+indices of the root). `asset_usage.c` queues only `BIND_ASSET` names from `gpu_samples`. check.c's
+`function_samples` accepts `holder` (param field) and `receiver` (method field of a component/singleton);
+`check_local_field_calls` lets a frag or vert hand a function local fields (DECL_SHADER callers were refused,
+though the shader side already passed `given_local_reads`). `held_word` makes the messages say "holds a texture"
+where the type holds no list.
+
+Tests: shader goldens `given_textures` (three textures with per-texture filter/wrap into a target, a helper given
+two, vert sharing one and adding a Raw one, a vert alone drawing with its first, a blit of two with and without a
+blend, Instanced over a list, SkinnedMesh after a pose, Instanced over a GPU list) and `given_struct_textures`
+(a singleton's depth compared, sampled, sized and passed on, Texture and Cubemap fields, a method calling a
+method on its receiver, a function passing the singleton on, a match singleton's and a component's local
+textures, the same through a vert), each with spirv-val and FXC; e2e `given_textures` (each run's textures in
+order by pixel address, the second texture's sampler blended or not by the draw's filter, blit, instanced, a
+singleton's texture through a function and a method), native ASan and wasm; error fixtures
+`texture_mesh_too_few`, `texture_mesh_too_many`, `texture_mesh_missing_sources`, `texture_mesh_no_frag_two`,
+`texture_blit_too_few`, `texture_shared_role`, `gpu_given_texture_cpu_call`, `gpu_given_texture_local`;
+`render_depth_function`, `texture_function_field` and `cubemap_sample_function` now pin a plain struct's field
+(the singleton forms are valid), `texture_duplicate_shader` is gone. `tide_platform_shaders` pass 34 (three
+textures in order and reordered, a draw's Point filter against a blended default at 0.3/0.7, a vert's own texture
+moving its quad a cell and its shared one leaving it, a two-texture blit into a target, a singleton's texture by a
+function, a method and a function passing it on) and pass 8 (the floor's shade averaged with a function handed
+the Shadow singleton; the readout's lower right through one): native ASan Vulkan and web-debug WebGPU pass, with
+the device loss/recreation rerun on the web. Every existing shader golden, error/warning fixture, the listed e2e
+tests and LSP 279/279 pass unchanged but the two LSP edits above.
+
+Not built: DepthTexture/TextureArray/Cubemap/Texture3D as draw arguments; a texture of a struct a singleton holds
+(`stage.lamps.shadow`); a texture in a draw's values struct (argued against in the spec). No generated-C or WGSL
+identity run over every game's sources was made; the goldens and tests above are the evidence. A game whose GPU
+function took a match component or singleton with only `local` textures (a value before: its main part had no
+texture) now gets it given, which changes that function's WGSL, not its result.
+
 ## Linear-light image sources (2026-11-14)
 
 [Linear] is static source metadata on singular Texture/TextureArray/Cubemap assets and fields, preserved
@@ -496,8 +567,8 @@ what holds a list.
   (a local, a literal, a result: `type_fits`'s message for `holds_data`, and
   `ex_name` for a function's parameter named whole).
 - Not built: one that's a field of another (`keep.poses.rows` read in a frag:
-  `data_of` resolves one level), and a `Texture` field of one sampled in a
-  function (`texture_of` still wants the frag's own parameter).
+  `data_of` resolves one level). A `Texture` field of one sampled in a
+  function was built on 2026-11-14 (top: Textures of what's given).
 - Tests: `compiler/tests/shaders/given_structs` (a method calling a method, a
   singleton through two functions reading its list, map and grid, a foreach,
   a field nothing reads unsent; GLSL/WGSL pins, SPIR-V and HLSL), errors
@@ -1200,7 +1271,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     - **A game that gives no values generates the C it did, byte for byte** (old and new tidec over every game's source list, with `--layout` and without: 204 games the same; the four that use it, Duel, its tests, the shaders test and the new e2e test, only compile with the new one). Duel's blur is the worked example: `BlurStep { along }` at each of its four Blits, where `Lens.along` was written before each; its picture in a run with no window is the same bytes before and after.
     - **Editors** (`compiler/lsp/analysis.c`): a frag's or vert's struct parameter that some draw of the game gives as values (`draw_gives`, `values_param`: the draw isn't known at the declaration) says so on hover, and is listed with what's sent for each draw; the signature help of `Mesh` and `Instanced` ends in `[, values]` (`MESH_VALUES`), and `Blit`'s form too; and completion after a name offers the structs that frag or vert takes, as `Swell { }` to fill in (`complete_draw_values`, in a Blit too).
     - **Tests:** `compiler/tests/e2e/draw_values` (two blits of one frag with two values, a blend before the frag, meshes whose vert and frag read different fields, the same values twice as one run, a field nothing reads, a value from a local and from a call, instances beside values, a vert alone in 2D, and what's sent, word for word); `compiler/tests/shaders/values`; `compiler/tests/errors/draw_values_*.tide` and `vert_struct_not_supplied.tide`, a file a diagnostic (`instanced_multiple_data.tide` is the draw's error now); pass 12 of `platform/tests/shaders.tide` with `run_values_checks` in `shaders.c` (pixels, and the runs by shader), the same on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `lsp_draw_values`.
-    - **Not built:** values for a draw with no vert and no frag, more than one struct a draw, a value that isn't a struct, and a texture in the values.
+    - **Not built:** values for a draw with no vert and no frag, more than one struct a draw, a value that isn't a struct, and a texture in the values (several textures go as the draw's Texture arguments since 2026-11-14: top of this file).
   - **A mesh's normal in the world is `instance.Normal(normal)`** (built 2026-10-08. The owner asked for a built-in way, as `Math.Rotate(instance.transform, normal)`, which the docs taught, is wrong for a mesh scaled more one way than another, and nothing says so; of the three ways offered, a member of `Instance`, a `Math` function of any matrix and a normal matrix the engine sends beside the transform, the owner picked the member. What it gives in each case is Claude's pick, Provisional in `docs/spec.md`, Views and drawing, Code the GPU runs). `docs/game/shaders.md` (Where the pixel is) is the users' page. What's built, and what code relies on:
     - **No inverse is worked out, anywhere.** A normal goes through the inverse of the transform's 3 by 3, transposed, and that matrix is the cross products of pairs of the transform's columns over its determinant (`tide_inverse_f3x3`'s rows). The result is normalized, so only the determinant's sign is kept: `tide_normals(mat4)` (`H_NORMALS` in `compiler/src/shader.c`) is the three cross products, turned round where the determinant is under 0. So nothing is divided, a mirrored mesh's normals point out of it, and a mesh flattened along an axis, which has no inverse, has that axis for its normals (the other two cross products are zero). A scale of 0 on two axes leaves no normal, and the normalize gives zero.
     - **The GPU works it out, from the transform that's sent anyway**, so nothing in `engine/` or `platform/` changed, an instance is the bytes it was, and `Draw.Transform` is in it already (the list multiplies it into each instance's transform as it's recorded). A normal matrix sent with each instance was the other way: 48 bytes an instance and 3 of the 16 vertex attributes, to save the vertex stage three cross products.
@@ -1304,7 +1375,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A grid parameter is still one of the shader's textures of numbers, read or not** (`data_of` notes it where the argument is resolved): one that's only sampled costs a binding of the 8 and its size's ints, with no texture behind it. A function that only samples takes a `Texture`.
   - **Editors** (`compiler/lsp/analysis.c`): completion offers `Sample` and `Compare` on a `DepthTexture`, `Sample` on a `Texture` and on a `Cubemap`, in any function or method (`samples`), where they were a frag's, a vert's and a `gpu_only` function's; the hovers of the three types and of their reads say a function takes one.
   - **Sumo and Tag have one lookup each** (`Sunlight` in `examples/sumo/light.tide`; `SunlightAcross`, two looks, and `Sunlight`, two of those, in `examples/samples/tag/light.tide`). Sumo's picture is the same bytes before and after (`sumo --frames 240 --size 640 480 --capture`); Tag's differs from itself run to run by 15 pixels of 307,200, one level of 255, and by 14 and 1 across the change: its four looks are summed in another order, two diagonals where they were one row after the other.
-  - **Not built:** a texture's local (`var shadow = lamp.shadow;`); Trilinear through a function, which would take working the uv out at the frag's start from the call's arguments; a `[Raw]` texture passed to a function (it's read by its name there); a function that samples a field of a singleton it takes.
+  - **Not built:** a texture's local (`var shadow = lamp.shadow;`); Trilinear through a function, which would take working the uv out at the frag's start from the call's arguments; a `[Raw]` texture passed to a function (it's read by its name there; built since, Raw Texture field specialization). A function that samples a field of a singleton it takes was built on 2026-11-14 (top of this file).
   - **Tests:** `compiler/tests/shaders/texture_params` pins both languages (a depth through two functions and two targets, a function with nothing read, a method, both stages, a `Texture` from a field, a grid, an asset and the frag's own, an asset and a `[Raw]` one by name, a grid's cells beside its Sample, a cube's field and asset); `compiler/tests/errors/render_depth_function` (a singleton's field in a function), `render_depth_function_cpu_call`, `texture_function_cpu_call`, `cubemap_function_cpu_call`, `texture_function_field`, `cubemap_sample_function`, `gpu_texture_picked`, `gpu_sample_function_trilinear`, `gpu_sample_function_trilinear_declared`, `gpu_sample_function_trilinear_warned` (a texture declared Trilinear after one that only may be), `cubemap_function_trilinear`, and `render_depth_gpu_value`, which is a local in a function now; `compiler/tests/warnings/gpu_sample_function_trilinear_carried`; `lsp_textures_in_functions`; and in `tide_platform_shaders`, with the pixels it expected before: the shadow pass's floor through two functions and half its readout through one (pass 8), the images' frags' right halves through a function each, an asset by name, the frag's own `Texture` with its wrap left to it, and a grid as a `Texture` (pass 10), and two of the cubes' reads (pass 17), the same on OpenGL 3.3, WebGL 2 and WebGPU. Not run: Android, and OpenGL on a Mac.
 
 ## T? fields (2026-10-11)

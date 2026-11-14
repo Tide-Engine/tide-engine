@@ -1,0 +1,9 @@
+// expect: this draw gives 2 textures, and its frag takes 3: 'colour', 'normal' and 'orm'
+// expect: a draw gives its frag's Texture parameters and then its vert's in their order, after the mesh's arguments
+scene Main { }
+local singleton Art { Texture colour; Texture normal; List<Vertex3> mesh; }
+frag Lit(Vertex3 vertex, out Color color, Texture colour, Texture normal, Texture orm)
+{
+    color = colour.Sample(vertex.uv) * normal.Sample(vertex.uv) * orm.Sample(vertex.uv);
+}
+view Show(Art art) { Draw.Mesh(art.mesh, [0, 1, 2], float4x4.identity, art.colour, Filter.Point, art.normal, Lit); }

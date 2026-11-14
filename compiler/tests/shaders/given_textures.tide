@@ -1,0 +1,123 @@
+scene Main { }
+
+// Several textures a draw gives its frag and vert, in order after the mesh's
+// arguments: the frag's Texture parameters, then the vert's that the frag
+// doesn't take by the same name. Each is a texture of the shader's, a binding
+// of its own, read through samplers of its own where the Sample leaves its
+// filter or its wrap to the Texture given: the draw says them after each.
+
+struct Part
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+struct Look
+{
+    Color tint;
+    float bump;
+}
+
+struct Patch
+{
+    float4x4 transform;
+    float2 offset;
+}
+
+local singleton Art
+{
+    Texture colour;
+    Texture normal;
+    Texture orm;
+    [Raw(float)] Texture height;
+    Texture lut;
+    Grid2<Color> paint = Grid2(2, 2);
+    RenderTarget target;
+    List<Part> parts;
+    List<int> faces;
+    List<Patch> patches;
+    List<Vertex> flat;
+    Texture shared;
+}
+
+// A material of three images, which the draw gives as three textures
+frag Lit(Part part, out Color color, Texture colour, Texture normal, Texture orm, Look look)
+{
+    float3 n = normal.Sample(part.uv).rgb * 2 - 1;
+    Color base = colour.Sample(part.uv) * look.tint;
+    float rough = orm.Sample(part.uv, Filter.Point).g;
+    color = Color(base.rgb * (Math.Saturate(n.z) * (1 - rough)), base.a);
+}
+
+// A function it calls samples the ones it's passed, as it would one
+Color Mix(Texture a, Texture b, float2 uv, float t) { return a.Sample(uv) * (1 - t) + b.Sample(uv) * t; }
+
+frag Mixed(Part part, out Color color, Texture colour, Texture orm, Look look)
+{
+    color = Mix(colour, orm, part.uv, look.bump) + Mix(orm, colour, part.uv, 1 - look.bump);
+}
+
+// A vert's and a frag's of one name are one texture; the vert's own comes after the frag's
+vert Raise(mut Part part, Texture normal, [Raw(float)] Texture height, Look look)
+{
+    part.position += part.normal * (height.Sample(part.uv) * look.bump + normal.Sample(part.uv).a);
+}
+
+// A vert alone draws its pixels with the first texture it's given, which is its own first
+vert Wave(mut Vertex vertex, Texture shared, Texture lut)
+{
+    vertex.position.y += shared.Sample(vertex.uv).r + lut.Sample(vertex.uv, Filter.Point, Wrap.Repeat).g;
+}
+
+// A blit's source, and more before its destination
+frag Grade(Vertex vertex, out Color color, Texture source, Texture lut)
+{
+    Color seen = source.Sample(vertex.uv);
+    color = Color(lut.Sample(float2(seen.r, 0.5), Filter.Bilinear, Wrap.Clamp).r, seen.g, seen.b, seen.a);
+}
+
+// An instance's struct beside its textures
+frag Patched(Part part, out Color color, Patch patch, Texture colour, Texture orm)
+{
+    color = colour.Sample(part.uv + patch.offset) * orm.Sample(part.uv);
+}
+
+// A skinned model's, after its pose
+asset SkinnedMesh<Vertex3> model = "../../../platform/tests/skinned.gltf";
+frag Skin(Vertex3 corner, out Color color, Texture colour, Texture orm)
+{
+    color = colour.Sample(corner.uv) * orm.Sample(corner.uv).g;
+}
+
+// Instances a GPU list holds, drawn indirect, with the textures after the list
+struct Spot
+{
+    float4x4 transform;
+    float2 offset;
+}
+
+local singleton Spots
+{
+    GPUList<Spot> spots;
+}
+
+frag Spotted(Part part, out Color color, Spot spot, Texture colour, Texture orm)
+{
+    color = colour.Sample(part.uv + spot.offset) * orm.Sample(part.uv);
+}
+
+view Show(Art art, Spots spots)
+{
+    Draw.SkinnedMesh(model, float4x4.identity, model.skeleton.RestPose(), art.colour, Filter.Point, art.orm, Skin);
+    Draw.Instanced(art.parts, art.faces, spots.spots, art.colour, art.orm, Filter.Point, Spotted);
+    art.target.Mesh(art.parts, art.faces, float4x4.identity, art.colour, art.normal, Filter.Point, Wrap.Repeat, art.orm, Lit,
+                    Look { tint = Color.white, bump = 0.5 });
+    Draw.Mesh(art.parts, art.faces, float4x4.identity, art.colour, Filter.Bilinear, Wrap.Mirror, art.orm, Mixed, Look { bump = 0.25 });
+    Draw.Mesh(art.parts, art.faces, float4x4.identity, art.colour, art.normal, art.orm, art.height, Raise, Lit,
+              Look { tint = Color.red, bump = 1 });
+    Draw.Mesh(art.flat, [0, 1, 2], art.shared, art.paint, Wave);
+    Draw.Blit(art.target.color, art.lut, Draw.window, Grade);
+    Draw.Blit(art.paint, art.lut, Draw.window, Blend.Add, Grade);
+    Draw.Instanced(art.parts, art.faces, art.patches, art.colour, art.orm, Filter.Point, Patched);
+}

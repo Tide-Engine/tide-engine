@@ -1877,15 +1877,29 @@ float LampShade(DepthTexture depth, float3 world, float4x4 toLamp)
     return 0.25 + 0.75 * Sunlit(depth, FromLamp(world, toLamp));
 }
 
+// ...and the same again in a function handed the singleton, which samples its depth itself: half of the floor's
+// shade each way, so a wrong depth either way shows
+float ShadowShade(Shadow shadow, float3 world)
+{
+    float3 at = FromLamp(world, shadow.toLamp);
+    return 0.25 + 0.75 * Sunlit(shadow.depth, at);
+}
+
 frag ShadowedThrough(Vertex3 vertex, out Color color, Shadow shadow)
 {
-    float shade = LampShade(shadow.depth, this.world, shadow.toLamp);
+    float shade = (LampShade(shadow.depth, this.world, shadow.toLamp) + ShadowShade(shadow, this.world)) * 0.5;
     color = Color(vertex.color.r * shade, vertex.color.g * shade, vertex.color.b * shade);
 }
 
 float Far(DepthTexture depth, float2 uv)
 {
     return depth.Sample(uv);
+}
+
+// A function handed the singleton reads its depth as a number (ShadowShade compares it, through Sunlit)
+float FarOf(Shadow shadow, float2 uv)
+{
+    return shadow.depth.Sample(uv);
 }
 
 // What a caster with holes in it is: its color goes nowhere in the lamp's
@@ -1896,11 +1910,13 @@ frag Grate(Vertex3 vertex, out Color color)
     color = Color.magenta;
 }
 
-// Its left half read here, and its right half in a function
+// Its left half read here, and its right half in a function: given the depth at the top, the singleton below,
+// where the grate's depth is checked
 frag LampDepth(Vertex vertex, out Color color, Shadow shadow)
 {
     mut float depth = shadow.depth.Sample(vertex.uv);
-    if (vertex.uv.x >= 0.5) depth = Far(shadow.depth, vertex.uv);
+    if (vertex.uv.x >= 0.5 && vertex.uv.y < 0.5) depth = Far(shadow.depth, vertex.uv);
+    if (vertex.uv.x >= 0.5 && vertex.uv.y >= 0.5) depth = FarOf(shadow, vertex.uv);
     color = Color(depth, depth, depth);
 }
 
@@ -5485,4 +5501,94 @@ view LinearSampling(Art art, mut LinearImages images)
         images.which = i;
         Draw.Transform(float2((i % 8) * 32, (i / 8) * 32)) { Draw.Mesh(quad, art.faces, LinearReads); }
     }
+}
+
+// Several textures a draw gives its frag and vert, in order, each with the
+// filter the draw says after it, and a singleton's texture sampled by a
+// function it's handed and by its own method (pass 34).
+local singleton Sources
+{
+    Grid2<Color> reds = Grid2(2, 2);
+    Grid2<Color> greens = Grid2(2, 2);
+    Grid2<Color> blues = Grid2(2, 2);
+    Grid2<Color> halves = Grid2(2, 2); // Red on the left, blue on the right
+    RenderTarget target;
+    Texture held;
+    bool made;
+
+    Color HeldAt(float2 uv) { return held.Sample(uv, .Point); }
+}
+
+struct Picked
+{
+    int which;
+    float across;
+}
+
+// The frag's three, in its order; whichever the values say
+frag PickOf(Vertex vertex, out Color color, Texture first, Texture second, Texture third, Picked picked)
+{
+    float2 at = float2(picked.across, 0.25);
+    color = picked.which == 0 ? first.Sample(at) : picked.which == 1 ? second.Sample(at) : third.Sample(at);
+}
+
+// A vert's of the frag's name is the frag's, and its own comes after the frag's: it moves the mesh a cell right where
+// it's red, and down two where the frag's second is
+vert Shove(mut Vertex vertex, Texture second, Texture push)
+{
+    vertex.position.x += push.Sample(float2(0.5), .Point).r * 32;
+    vertex.position.y += second.Sample(float2(0.5), .Point).r * 64;
+}
+
+// A blit's source and the texture after it
+frag Combine(Vertex vertex, out Color color, Texture source, Texture lut)
+{
+    color = Color(source.Sample(float2(0.5), .Point).r, lut.Sample(float2(0.5), .Point).g, 0);
+}
+
+Color HeldOf(Sources sources, float2 uv) { return sources.held.Sample(uv, .Point); }
+Color Tiled(Texture image, float2 uv) { return image.Sample(uv, .Point); }
+Color HeldOn(Sources sources, float2 uv) { return Tiled(sources.held, uv); }
+
+frag ReadHeld(Vertex vertex, out Color color, Sources sources, Picked picked)
+{
+    color = picked.which == 0 ? HeldOf(sources, float2(0.25)) : picked.which == 1 ? sources.HeldAt(float2(0.75)) : HeldOn(sources, float2(0.25, 0.75));
+}
+
+[After(LinearSampling)]
+view GivenTextures(Art art, mut Sources sources)
+{
+    if (art.targetPass != 34) return;
+    if (!sources.made)
+    {
+        sources.made = true;
+        sources.target = RenderTarget(4, 4, 1);
+        for (int y = 0; y < 2; y++)
+        {
+            for (int x = 0; x < 2; x++)
+            {
+                sources.reds[x, y] = Color.red;
+                sources.greens[x, y] = Color.green;
+                sources.blues[x, y] = Color.blue;
+                sources.halves[x, y] = x == 0 ? Color.red : Color.blue;
+            }
+        }
+        sources.held = sources.greens;
+    }
+    Draw.Blit(sources.reds, sources.greens, sources.target, Combine);
+    Draw.SetScreen(); Draw.SetClip(); Draw.SetDepth(.None); Draw.Clear(Color.black);
+    List<Vertex> quad = [Vertex {}, Vertex { position = float2(16, 0) }, Vertex { position = float2(16) }, Vertex { position = float2(0, 16) }];
+    Draw.Transform(float2(0, 0)) { Draw.Mesh(quad, art.faces, sources.reds, sources.greens, sources.blues, PickOf, Picked { which = 0, across = 0.25 }); }
+    Draw.Transform(float2(32, 0)) { Draw.Mesh(quad, art.faces, sources.reds, sources.greens, sources.blues, PickOf, Picked { which = 1, across = 0.25 }); }
+    Draw.Transform(float2(64, 0)) { Draw.Mesh(quad, art.faces, sources.reds, sources.greens, sources.blues, PickOf, Picked { which = 2, across = 0.25 }); }
+    Draw.Transform(float2(96, 0)) { Draw.Mesh(quad, art.faces, sources.blues, sources.reds, sources.greens, PickOf, Picked { which = 0, across = 0.25 }); }
+    // The second texture's filter, the draw's to say: its nearest pixel, then blended
+    Draw.Transform(float2(128, 0)) { Draw.Mesh(quad, art.faces, sources.reds, sources.halves, Filter.Point, sources.blues, PickOf, Picked { which = 1, across = 0.6 }); }
+    Draw.Transform(float2(160, 0)) { Draw.Mesh(quad, art.faces, sources.reds, sources.halves, sources.blues, PickOf, Picked { which = 1, across = 0.6 }); }
+    // ...and a vert's: the frag's three, then the vert's own, red, which moves it from the seventh cell to the eighth
+    Draw.Transform(float2(192, 0)) { Draw.Mesh(quad, art.faces, sources.reds, sources.greens, sources.blues, sources.reds, Shove, PickOf, Picked { which = 1, across = 0.25 }); }
+    Draw.Transform(float2(0, 32)) { Draw.Mesh(quad, art.faces, sources.target.color, TargetCopy); }
+    Draw.Transform(float2(32, 32)) { Draw.Mesh(quad, art.faces, ReadHeld, Picked { which = 0 }); }
+    Draw.Transform(float2(64, 32)) { Draw.Mesh(quad, art.faces, ReadHeld, Picked { which = 1 }); }
+    Draw.Transform(float2(96, 32)) { Draw.Mesh(quad, art.faces, ReadHeld, Picked { which = 2 }); }
 }

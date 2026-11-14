@@ -619,6 +619,7 @@ tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
 tide_e2e_test(compute) # GPU.Run, GPU lists' operations and indirect draws: what they record, in frame order
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(draw_values) # A draw's values: a struct after its vert and frag, sent once for the draw
+tide_e2e_test(given_textures) # Several textures a draw gives, in order with their filters; a singleton's a function samples
 tide_e2e_test(draw_helpers) # Shaded helpers bind only explicit parameters, forwarding attached local fields
 tide_add_game(tidec_e2e_nested_split_debug SPLIT_CODE SPLIT_PLUMBING SOURCES e2e/nested.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/nested_test.c)

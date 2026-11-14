@@ -1,3 +1,11 @@
+## Several textures a draw gives (2026-11-14)
+
+`Mesh`, `Instanced`, `SkinnedMesh`, a target's forms and `Blit` give a frag and a vert as many Textures as they
+take, in the frag's order then the vert's own, each with its filter and wrap after it; a blit's go before its
+destination. No draw-list, runtime or backend change: `tide_shade_<n>` takes `tide_texture`, `tide_texture1`...
+and fills `tide_textures` as it did for one, and runs split by texture as they did. Compiler details, tests and
+gaps: shaders.md (top).
+
 ## Per-image typed clears (2026-11-14)
 
 tide_draw_clear_images records at most four type-checked values into the draw list's uniform bytes, retaining

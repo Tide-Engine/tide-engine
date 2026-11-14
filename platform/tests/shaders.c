@@ -2038,6 +2038,51 @@ static void run_linear_checks(const char *when)
     }
 }
 
+// Several textures a draw gives (pass 34): a quad a cell, 16 pixels across from the cell's corner.
+static void run_given_checks(const char *when)
+{
+    static const struct {
+        float x, y;
+        float r, g, b;
+        const char *what;
+    } wanted[] = {
+        {8, 8, 1, 0, 0, "a frag's first of three textures a draw gives"},
+        {40, 8, 0, 1, 0, "its second"},
+        {72, 8, 0, 0, 1, "its third"},
+        {104, 8, 0, 0, 1, "the same frag given them in another order"},
+        {136, 8, 0, 0, 1, "the filter a draw says after a texture is that texture's: its nearest pixel"},
+        {168, 8, 0.3f, 0, 0.7f, "and with none, as the texture says: blended"},
+        {200, 8, 0, 0, 0, "a vert's own texture, after the frag's, moves its mesh away"},
+        {232, 8, 0, 1, 0, "to the next cell, and the texture it shares with the frag by name is the frag's"},
+        {8, 40, 1, 1, 0, "a blit's source and the texture after it, before its destination"},
+        {40, 40, 0, 1, 0, "a function handed a singleton samples its texture"},
+        {72, 40, 0, 1, 0, "and so does the singleton's method"},
+        {104, 40, 0, 1, 0, "and a function handed it passes its texture on to one that takes a Texture"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 34;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -8 && d <= 8;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
 // as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
 // draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
@@ -2085,6 +2130,7 @@ static void run_prewarmed_checks(void)
     run_written_depth_checks(when);
     run_bias_checks(when);
     run_linear_checks(when);
+    run_given_checks(when);
     const uint32_t after = tide_platform_shader_pipelines();
     printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
            (unsigned)after);
@@ -2125,6 +2171,7 @@ static void run_again(const int roll, const char *when)
     run_written_depth_checks(when);
     run_bias_checks(when);
     run_linear_checks(when);
+    run_given_checks(when);
 }
 #endif
 
@@ -2211,6 +2258,8 @@ static int frame(void *user, const float seconds)
     run_linear_checks(", with runtime colors changed");
     local.LinearImages.paint = 0.5f;
     run_linear_checks(", and changed back");
+    run_given_checks("");
+    run_given_checks(", again");
     run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__

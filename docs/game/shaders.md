@@ -752,7 +752,7 @@ view Crates(Models models)
 - **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes.
 - **`Sample` gives the color itself**, with its alpha beside it, blended between pixels so that a clear pixel counts for none of the color (see [Alpha](./draw-settings.md#alpha)). A pixel with no alpha reads as `Color(0, 0, 0, 0)`. What a frag writes is a color as it is too: `Color(1, 0, 0, 0.5)` is red, half clear.
 - **An asset**, by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(uv)` (see [Assets](./assets.md#images-to-draw-with)).
-- **Its own `Texture` parameter**, one at the most, which is whatever texture the draw gives after its mesh: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./render-targets.md#post-processing)'s source is its frag's.
+- **Its own `Texture` parameters**, as many as it takes, which are whatever textures the draw gives after its mesh, in order: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./render-targets.md#post-processing)'s source is its frag's first (see [Several textures](#several-textures)).
 
 `uv` is as a mesh's: (0, 0) is the outer corner of the texture's first pixel and (1, 1) the outer corner of its last. Verts sample too. A `Grid2<float>` gives its number as the color's `r`, with `g` and `b` 0 and `a` 1 (see [One channel](./meshes-and-textures.md#one-channel)).
 
@@ -771,7 +771,32 @@ Past 0 and 1, `uv` reads what the [wrap](./meshes-and-textures.md#past-the-edges
 - A filter and a wrap written at a `Sample` are written out, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs. Where they come with the texture, the engine tells it for each draw.
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: corner.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
 - One texture can be read several ways in one frag, clamped here and repeated there. It counts once among the 16 textures a draw reads, however it's read. Each way of reading takes a sampler, and a draw has 16 of those too: textures read the same way share one, and the same way twice is one. A `Texture` parameter or field whose `Sample` leaves its filter or wrap to the texture has a sampler of its own for that, since the texture says how at each draw; so there, a `Sample` that says nothing and one that says the default are two samplers.
-- A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
+- A draw gives as many textures as its frag and vert take, and none to a frag that takes none: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter, and so is a draw that gives fewer or more than its frag takes.
+
+### Several textures
+
+A frag takes as many `Texture` parameters as it reads, and the draw gives them in the same order after its mesh. A material of three images is one frag, drawn with each part's images:
+
+```csharp
+frag Lit(PartVertex vertex, out Color color, Texture colour, Texture normal, Texture orm, Look look)
+{
+    float3 n = normal.Sample(vertex.uv).rgb * 2 - 1;
+    Color orms = orm.Sample(vertex.uv);
+    color = colour.Sample(vertex.uv) * look.tint * Math.Saturate(n.z) * (1 - orms.g);
+}
+
+view Parts(Kit kit, Look look)
+{
+    kit.target.Mesh(kit.barrel, kit.transform, kit.metalColour, kit.metalNormal, kit.metalOrm, Lit, look);
+    kit.target.Mesh(kit.stock, kit.transform, kit.woodColour, kit.woodNormal, Filter.Point, kit.woodOrm, Lit, look);
+}
+```
+
+- **In the frag's order.** The first texture after the mesh's arguments (a 3D mesh's transform, an `Instanced` draw's list) is the frag's first `Texture` parameter, and so on. Every draw form takes them so: `Mesh`, `Instanced`, `SkinnedMesh` and a target's own, over the CPU's lists or a GPU list's.
+- **A filter and a wrap go after the texture they're for**, and are that texture's alone for this draw: above, the wood's normal map is read at its nearest pixels, and its colour and ORM as they say. A texture with nothing after it is read as it says itself, or as the frag's `Sample` says.
+- **A vert takes them too.** Its `Texture` parameters are the draw's as well: one of the same name as a frag's is that one texture, and one of its own comes after all of the frag's. `vert Raise(mut PartVertex vertex, Texture normal, Texture height)` drawn with `Lit` takes `colour, normal, orm, height`. With no frag, the first texture is what the mesh's pixels are drawn with.
+- **A blit gives them before its destination**: `Draw.Blit(source, lut, Draw.window, Grade)` for `frag Grade(Vertex vertex, out Color color, Texture source, Texture lut)`.
+- **Each is a texture of the draw's own**, among the 16 it reads, with samplers of its own where its `Sample` leaves the filter or wrap to the texture. A draw that gives fewer or more textures than its frag and vert take is an error that names the ones they take, in order.
 
 `Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./meshes-and-textures.md#drawn-smaller):
 
@@ -854,6 +879,39 @@ frag Shade(Corner corner, out Color color, Models models, Texture source)
 - **A function that samples is the GPU's alone**: frags, verts and the functions they call call it. A view or a system that calls one is an error that says so, as nothing on the CPU reads a texture's pixels. A function that only takes a texture and passes it to C, say, is still everyone's.
 - **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, sample in the frag, or use `SampleGrad` with explicit derivatives passed from the frag.
 - **A [`[Raw]`](#textures-that-are-numbers) source keeps numeric sampling through GPU helpers.** Pass the original Raw asset, Raw texture field or Raw grid field expression to the helper's `Texture` parameter. The compiler specializes the helper for that source; this does not allow a Raw texture to escape through an ordinary CPU `Texture` value.
+
+A function can take the component or the singleton that holds the textures, too, and sample its fields, so a lighting helper reads a stage's shadows and sky without a parameter for each:
+
+```csharp
+local singleton Stage
+{
+    RenderTarget near;
+    DepthTexture shadow;
+    Cubemap sky;
+    float4x4 toLamp;
+    float3 sun;
+
+    Color Above(float3 way) { return sky.Sample(way); }   // A method samples its own fields
+}
+
+float3 Sunlit(Stage stage, float3 world, float3 normal)
+{
+    float3 at = FromLamp(world, stage.toLamp);
+    float lit = stage.shadow.Compare(at.xy, at.z - 0.001);
+    return stage.sun * lit * Math.Saturate(normal.y) + stage.Above(normal).rgb * 0.25;
+}
+
+frag Ground(Corner corner, out Color color, Stage stage)
+{
+    float3 light = Sunlit(stage, this.world, corner.normal);
+    color = Color(light.x, light.y, light.z);
+}
+```
+
+- **What the frag or vert was given, by its name**: its own component or singleton parameter, or a function's parameter that stands for one, as for [what holds a list](#passing-on-what-holds-a-list). Nothing is passed for it while it runs: each texture of it is the shader's, by its type and its field, and the function is written once however many calls it has.
+- **Everything a function does with its own `Texture` it does with a field**: `Sample` with or without a filter and a wrap, a depth's `Compare`, a cube's and an array's reads, `.size`, and passing `stage.shadow` on to a function that takes a `DepthTexture`. A method of the singleton samples its fields by their names, `sky.Sample(way)`, and calls its other methods on the same one. A component's textures are each entity's, as a frag reads them. Local fields work the same.
+- **It's still a name, not a value**: a copy of the singleton in a local, `var kept = stage;`, is an error, as it is for one that holds a list. A plain struct carries no texture to the GPU, so a function that samples a struct's field is an error that says to take the component or singleton, or the texture itself.
+- **It's the GPU's alone**, as any function that samples is: a view that calls `Sunlit` is an error.
 
 ### Textures that are numbers
 

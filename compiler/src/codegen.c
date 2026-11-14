@@ -5377,13 +5377,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "tide_shade_%d(", sh->index);
             if (sh->blit) sb_put(o, "tide_draw");
             else gen_draw_list(g, o, e);
-            int given = 0; // The arguments before its vert and frag
+            bool blended = false; // A blit's enum is how it blends, which it always takes
             for (int i = 0; i < e->args.count && e->args.items[i]->bind != BIND_SHADER; i++) {
                 expr *arg = e->args.items[i];
-                given++;
-                // A mesh's filter and wrap went with its texture (a blit's enum is how it blends, which it always takes)
+                // A mesh's filter and wrap went with its texture
                 const bool sampling = arg->type.kind == TY_ENUM && (arg->type.decl == g->prog->filter || arg->type.decl == g->prog->wrap);
                 if (sampling && !sh->blit) continue;
+                blended |= sh->blit && arg->type.kind == TY_ENUM && arg->type.decl == g->prog->blend;
                 sb_put(o, ", ");
                 if (e->arg_want.items[i].kind == TY_TEXTURE) {
                     // The texture it's given, which says how it's sampled: as the draw says, where it does
@@ -5412,7 +5412,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                     sb_put(o, ").transforms, false");
                 } else if (!sh->instanced) sb_put(o, ", (tide_list){0}, (tide_list){0}, true");
             }
-            if (sh->blit && given < 3) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
+            if (sh->blit && !blended) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
             if (sh->values_type) { // What it gives its vert and frag, after their names
                 sb_put(o, ", ");
                 gen_as(g, o, e->values, e->values->type);
@@ -21601,6 +21601,16 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
     sb_printf(o, "tide_fallback:\n    tide_task_%s_slow(tide_world_v, tide_task, tide_pieces);\n}\n\n", name);
 }
 
+// The name tide_shade_<n> has for the draw's texture `given`, of those it gives in order: tide_texture, then
+// tide_texture1, tide_texture2... (shader.c, Several textures a draw gives).
+static const char *given_texture_name(const int given)
+{
+    if (given <= 0) return "tide_texture";
+    sb name = {0};
+    sb_printf(&name, "tide_texture%d", given);
+    return name.data;
+}
+
 #include "shader_prep_codegen.inc"
 
 static void gen_system_run(gen *g, const decl *sys)
@@ -27200,7 +27210,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
         const bool filter_carried = sampler->carried && (own || !sampler->filter_said);
         const bool wrap_carried = sampler->carried && (own || !sampler->wrap_said);
         sb from = {0}; // The Texture it's given: the draw's, or the field's
-        if (sampler->carried && !texture->source) sb_put(&from, "tide_texture");
+        if (sampler->carried && !texture->source) sb_put(&from, given_texture_name(texture->given));
         else if (sampler->carried) {
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
@@ -27305,8 +27315,8 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       grid_shape_name(texture->asset->return_type.decl));
             continue;
         }
-        if (!texture->source) { // The one the draw was given
-            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_texture);\n", t);
+        if (!texture->source) { // One the draw was given
+            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, given_texture_name(texture->given));
             continue;
         }
         int b = 0;
@@ -27694,7 +27704,7 @@ static void gen_shaders(gen *g)
         if (sh->gpu_instances) sb_put(o, ", tide_gpu_list tide_items");
         else if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
-        if (sh->direct_texture || sh->textured) sb_put(o, ", tide_texture_ref tide_texture");
+        for (int t = 0; t < sh->given_textures; t++) sb_printf(o, ", tide_texture_ref %s", given_texture_name(t));
         if (sh->skinned) {
             sb_put(o, ", tide_list tide_model_data");
             if (!sh->instanced) sb_put(o, ", tide_list tide_pose_data, tide_list tide_pose_transforms, bool tide_default_pose");
@@ -27726,7 +27736,7 @@ static void gen_shaders(gen *g)
                 sb_put(o, ")) return;\n");
             }
         }
-        if (sh->direct_texture || sh->textured) sb_put(o, "    (void)tide_texture;\n");
+        for (int t = 0; t < sh->given_textures; t++) sb_printf(o, "    (void)%s;\n", given_texture_name(t));
         if (sh->gpu_instances) {
             sb_printf(o, "    if (%s || %s) return;\n", no_vertices, no_indices);
         } else if (sh->instanced) {
@@ -27772,7 +27782,7 @@ static void gen_shaders(gen *g)
             const shader_texture *texture = &sh->sizes.items[t];
             sb from = {0};
             if (texture->asset) sb_put(&from, asset_cname(texture->asset));
-            else if (texture->direct) sb_put(&from, "tide_texture");
+            else if (texture->direct) sb_put(&from, given_texture_name(texture->given));
             else {
                 int b = 0;
                 while (sh->bound.items[b] != texture->source) b++;

@@ -1,0 +1,74 @@
+scene Main { }
+
+// A function code the GPU runs reaches can take a component or a singleton
+// that holds textures and sample them: what it's given is the frag's or
+// vert's own, so each of its textures is one of the shader's, by its type and
+// field, and the function is written once, with no parameter for it.
+
+local singleton Stage
+{
+    RenderTarget map;
+    DepthTexture shadow;
+    Texture sky;
+    Cubemap room;
+    float3 sun;
+    List<Vertex3> mesh;
+    List<int> faces;
+
+    // A method samples its receiver's, and calls another on the same one
+    float Lamp(float2 uv) { return shadow.Compare(uv, 0.5); }
+    Color Above(float3 way) { return room.Sample(way, Filter.Point) * Lamp(way.xy); }
+}
+
+singleton Weather
+{
+    float wind;
+    local Texture clouds;
+}
+
+component Painted
+{
+    float gloss;
+    local Texture albedo;
+}
+
+float Shadowed(DepthTexture shadow, float2 uv) { return shadow.Compare(uv, 0.5); }
+
+// Its depth sampled both ways, passed on to a function that takes a depth, its size, a Texture and a Cubemap
+float3 Sunlit(Stage stage, float3 at)
+{
+    int2 size = stage.shadow.size;
+    float lit = Shadowed(stage.shadow, at.xy) * stage.shadow.Sample(at.xy + float2(1.0 / size.x, 0));
+    return stage.sun * lit * stage.sky.Sample(at.xy, Filter.Point, Wrap.Repeat).rgb * stage.room.Sample(at).rgb;
+}
+
+// ...through another function, and a method called on what it's given
+float3 Twice(Stage stage, float3 at) { return Sunlit(stage, at) + Sunlit(stage, at * 2) + stage.Above(at).rgb; }
+
+// A singleton's local field, and a component's
+float Cloud(Weather weather, float2 uv) { return weather.clouds.Sample(uv + weather.wind).a; }
+Color Paint(Painted painted, float2 uv) { return painted.albedo.Sample(uv) * painted.gloss; }
+
+frag Lit(Vertex3 vertex, out Color color, Stage stage, Weather weather, Painted painted)
+{
+    float3 lit = Twice(stage, this.world) * Cloud(weather, vertex.uv);
+    color = Paint(painted, vertex.uv) * Color(lit.x, lit.y, lit.z, 1) + stage.Above(this.world);
+}
+
+// A vert reaches one the same way, for the same texture
+vert Sink(mut Vertex3 vertex, Stage stage)
+{
+    vertex.position.y -= Sunlit(stage, vertex.position).x;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Painted);
+}
+
+view Show(mut Stage stage, with Painted)
+{
+    stage.shadow = stage.map.depth;
+    Draw.Mesh(stage.mesh, stage.faces, float4x4.identity, Lit);
+    Draw.Mesh(stage.mesh, stage.faces, float4x4.identity, Sink, Lit);
+}

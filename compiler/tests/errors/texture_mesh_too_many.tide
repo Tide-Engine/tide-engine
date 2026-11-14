@@ -1,0 +1,7 @@
+// expect: this draw gives 3 textures, and its vert and frag take 2: 'colour' and 'height'
+// A vert's and a frag's Texture of one name are one texture: these take two
+scene Main { }
+local singleton Art { Texture colour; Texture height; Texture extra; List<Vertex3> mesh; }
+vert Raise(mut Vertex3 vertex, Texture height, Texture colour) { vertex.position.y += height.Sample(vertex.uv).r * colour.Sample(vertex.uv).a; }
+frag Lit(Vertex3 vertex, out Color color, Texture colour) { color = colour.Sample(vertex.uv); }
+view Show(Art art) { Draw.Mesh(art.mesh, [0, 1, 2], float4x4.identity, art.colour, art.height, art.extra, Raise, Lit); }
