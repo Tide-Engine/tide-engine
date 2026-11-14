@@ -38,13 +38,26 @@ meshes-and-textures.md, views.md and language/math.md. No sRGB target Format or 
   settings or unmarked resources. The actual Gamma GPU strips sRGB storage despite explicit formats;
   notes/unity.md records the measured limitation and Unity replay validation.
 
-Compiler validation so far: Windows Clang23 ASan, 17 base placement/flow diagnostics plus 3 float-origin
-refusals; Linear shader golden through WGSL, spirv-val and FXC; linear BC mip oracle and texture importer
-E2E (encoded premultiplied bytes, compression variants, no opaque interpretation alias, marked DDS rebuild);
-linear_textures E2E (marked asset/Color-grid captures, packed-local references, changed pack under the same
-asset name, static layout role). LSP lsp_linear_textures passes. Existing Math CPU tests and native Vulkan/
-SwiftShader WebGPU CPU-against-GPU pixel witnesses passed in the first commit. Parent integration records
-combined native/web and actual backend/Unity results before merge.
+Final integration after merging typed numeric images from origin/dev: Windows Clang 23.1.2 ASan
+passes 65 focused CTests; Node 24.22.1/web-debug passes 57 focused CTests. These include 37 Linear
+placement/flow/format/write diagnostics, Linear/Math/numeric/image/cube/array WGSL and SPIR-V checks
+(and FXC on native), importer/mip units and E2Es, marked asset replacement/local serialization, recorder
+packets, target/compute checks, and marked pixel paths. Pass 33 of platform/tests/shaders covers 20 cases:
+marked/unmarked known point and filtered midpoint, premultiplied soft alpha, Color grids, target images,
+cubes/arrays, BC1/BC3 and mixed block layers, lossless GPU mips, SampleGrad/SampleLevel and borrowed GPU
+helpers. The target source is color image one of a mixed R32i/Rgba8 target; changed colors and the original
+unmarked image verify converted copies neither go stale nor modify source storage. Native Vulkan validation
+and software WebGPU pass, including prewarming, device recreation, BC-to-RGBA fallback and forward-depth
+fallback. Draw units pass 124/124 on native and WASI; the CLI shader catalogue and LSP Linear protocol checks
+pass, and the merged docs production build passes. Math CPU values/round trips and CPU/GPU agreement passed
+on native and WASI/WebGPU as recorded with the transfer helpers.
+
+Unity 6000.6.0f1 actual replay and strict shader tests pass after the numeric-image merge on D3D11, D3D12,
+Vulkan and OpenGL Core (18 applicable replay cases and all shader passes each); Gamma D3D11 passes its 16
+applicable cases, including the actionable prerequisite error. Details and the Unity-specific mip workaround
+are in unity.md. Metal, Android hardware, other operating systems and Unity WebGPU player were not run on
+this Windows machine. Full suites remain in Actions per the owner's 2026-11-14 instruction; local checks
+remain focused, including merge overlap. No simulation hashes or random expectations were changed.
 
 # Explicit mip reads (2026-11-14)
 

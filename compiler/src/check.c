@@ -3004,7 +3004,9 @@ static type check_linear_field_value(checker *c, expr *e, const type t)
         return e->type = T_ERR;
     }
     // Runtime image construction and target images are validated for their format separately.
-    const bool runtime = e->resource_operation || e->target_colors || (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET);
+    const bool runtime = e->resource_operation || e->target_colors
+        || (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET)
+        || (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors);
     if (!declared_linear(e) && !grid && !runtime) {
         diag_error(e->at, "a [Linear] field takes a [Linear] image or a Color grid, not an unmarked image");
         diag_note("mark the source field or asset [Linear], or remove [Linear] from the destination; the mark is never silently added or removed");

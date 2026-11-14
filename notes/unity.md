@@ -11,30 +11,37 @@ new format values as ordinary bytes. The C recorder's embed_render_srgb_images_r
 pins unmodified upload bytes, host BC support, marked block descriptors and RGBA-array fallback descriptors.
 
 **Provisional Unity prerequisite:** Player Color Space must be Linear for [Linear] resources. This is a real
-Unity constraint: in a Gamma scratch Sample, explicit GraphicsFormat SRGB Texture2D, Texture2DArray and
-Cubemap constructors returned UNorm, and marked gray128 sampled as128 rather than linear55. The replay
+Unity constraint: in a Gamma scratch Sample, explicit GraphicsFormat SRGB Texture2D and Cubemap
+constructors returned UNorm, and marked gray 128 sampled as 128 rather than linear 55. The replay
 refuses marked images/arrays/cubes/internal targets and reports once, naming Project Settings > Player >
 Other Settings > Color Space > Linear. It never changes the project's setting, and unmarked Gamma resources
 continue normally. Refused internal targets and their faces/layers cannot fall through into camera drawing.
 The package README and language/user docs state this prerequisite.
 
 **Mips:** even in a Linear project, Unity Texture.Apply(true) and RenderTexture GenerateMips averaged sRGB
-bytes (gray128 + white255 produced191 rather than the correct encoded linear mean205). The replay therefore
+bytes (gray 128 + white 255 produced 191 rather than the correct encoded linear mean 205). The replay therefore
 uses Resources/TideSrgbMip.shader to sample the previous level through its sRGB format, draw into a separate
 sRGB attachment, and copy the encoded result back. One 2D scratch render texture is retained while its shape
 matches; a shape change defers the old one with other renderer resources, and reset releases scratch/material.
 Arrays are processed by layer, cubes by face. CPU upload mirrors retain the base as stored; GPU mips are
 regenerated after changed uploads. Immutable prepared block chains bypass this operation and keep their levels.
-There is no per-pixel CPU conversion in a frame's mip path.
+There is no per-pixel CPU conversion in a frame's mip path. On Unity OpenGL Core, texture-owned sampler
+state can still be Point from an earlier draw. The mip shader uses that texture's named sampler, reads exact
+texel centers and interpolates explicitly there, without changing the earlier draw's state. Other APIs use
+one bilinear SampleLevel. Numeric attachments stay unmipped; private sRGB color 10 retains its chain.
 
-**Actual Unity checks:** hidden/noAudio Unity6000.6.0f1 scratch Sample, automatic Tide builds disabled.
-Linear D3D11 and Vulkan ComputeReplayTests pass14/14 applicable (Gamma-only witness skipped): known marked
-and unmarked point/midpoint pixels; GPU mip bytes for 2D, both array layers and all six cube faces; sRGB block
-formats and mip counts; production linear_texture_wgsl replay converting soft-alpha premultiplied target
-pixels while retaining the original byte-for-byte; all existing compute/image/order cases. The source of
-00000000c0de0015.shader is the production linear_texture_wgsl from linear_wgsl.h, translated by this checkout's
-tide_wgsl_translate. Gamma D3D11 passes12/12 applicable, including the explicit actionable refusal, with the
-supported-only sRGB witnesses skipped. Other graphics APIs are being checked; Metal requires a Mac.
+**Actual Unity checks:** hidden/noAudio Unity 6000.6.0f1 scratch Sample, automatic Tide builds disabled.
+After merging numeric image work, Linear D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests each
+pass 18/18 applicable (Gamma-only witness skipped): known marked/unmarked point and midpoint pixels; GPU
+mip bytes for 2D, both array layers and all six cube faces; sRGB block formats and retained authored levels;
+production linear_texture_wgsl replay converting soft-alpha premultiplied target pixels while retaining the
+original byte-for-byte, including the private target's mip chain; all existing and incoming numeric/compute/
+image/order cases. ShaderTests passes 1/1 on each API, explicitly compiling every pass of TideSrgbMip, all
+numeric shader passes, the production-copy fixture and existing renderer/game shaders with no warnings.
+The source of 00000000c0de0015.shader is production linear_texture_wgsl from linear_wgsl.h, translated by
+this checkout's tide_wgsl_translate. Integrated Gamma D3D11 passes 16/16 applicable, including actionable
+refusal and unchanged unmarked/numeric behavior; the three supported-only sRGB witnesses are skipped.
+Metal and a Unity WebGPU player require other machines/build environments and were not run here.
 
 ## Numeric images and outputs (2026-11-14)
 

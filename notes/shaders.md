@@ -9,6 +9,9 @@ original-target/frag fix. Rendering to a marked cube's face or array's layer sti
 The sampled copy conversion, backend formats, alpha representation, API picks and validation are recorded in
 textures.md (top section) and rendering.md. linear_textures pins helper forwarding plus texture/array/cube
 reads through WGSL golden, SPIR-V validation and FXC.
+After merging typed image reads, declared_image_type returns Color for Linear sources before considering
+numeric Raw roles. Invalid combined annotations and typed-helper/direct-draw role mismatches are diagnosed;
+no numeric textureLoad path is substituted for a valid marked color read.
 
 ## Typed numeric outputs and image roles (2026-11-14)
 

@@ -8,6 +8,10 @@ Header role comments and [Linear] layout field names make role changes migrate t
 Parser diagnostics explicitly reject local/parameter attributes. The shader capture wrapper selects the
 *_source_linear entry point; WGSL itself performs no manual transfer conversion for a marked read.
 Contracts, Provisional picks, importer/cache/alpha details and validation: textures.md top section and spec.md.
+Numeric-role integration retains Color for every Linear source. [Raw(T), Linear] is refused, numeric helper
+parameters cannot borrow a Linear color source, and numeric direct-draw consumption cannot erase its mark.
+All seven numeric target formats have explicit no-sRGB-counterpart diagnostics. Typed numeric SampleLevel
+remains refused; Linear color SampleLevel keeps the ordinary color path.
 
 ## Numeric GPU images (2026-11-14)
 

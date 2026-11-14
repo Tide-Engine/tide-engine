@@ -1,5 +1,9 @@
 ## [Linear] image captures (2026-11-14)
 
+The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and
+`tide_todisplay_f`, `_f3`, `_c`, used by generated Math calls and image preparation.
+They use the existing deterministic Pow primitive; alpha is copied by the Color wrappers.
+
 Within the owner-approved [Linear] task, agents maintain `tide_draw_texture_source_linear`,
 `tide_draw_array_source_linear`, `tide_draw_cube_source_linear` (same arguments as their ordinary captures),
 `tide_draw_grid_texture_linear`, `tide_draw_grid_array_texture_linear`, and the internal
