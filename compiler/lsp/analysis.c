@@ -2464,6 +2464,7 @@ static const method_form depth_array_calls[] = {
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
+    {"Read", "Read() -> Grid2<Color> fails IOError", "Await in local async code for an owned copy of the first resolved color image, a frame or more later. Straight Color values, including HDR. At most 4,000,000 pixels; device loss fails."},
 };
 
 #define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
@@ -7415,7 +7416,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             for (size_t i = 0; i < sizeof target_calls / sizeof target_calls[0]; i++)
                 item(c, target_calls[i].name, CK_METHOD, target_calls[i].form, target_calls[i].doc,
-                     i == 0 ? "Resize($1, $2)" : "Dispose()");
+                     i == 0 ? "Resize($1, $2)" : strcmp(target_calls[i].name, "Read") == 0 ? "Read()" : "Dispose()");
         }
         if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) {
             builtin_list_members(str_from("Draw"), add_target_member, c); // The window's, as its own

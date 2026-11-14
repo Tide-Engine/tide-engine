@@ -17,7 +17,7 @@ test('startup waits for background scene pipelines and a fresh drawn frame', asy
     const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
     const pipelineBegin = source.indexOf('    function addPipeline(');
     const pipelineEnd = source.indexOf('\n    // A compute pipeline', pipelineBegin);
-    const frameBegin = source.indexOf('    function frame()');
+    const frameBegin = source.indexOf('    let waitReadFrames =');
     const frameEnd = source.indexOf('\n    // The audio device:', frameBegin);
     assert.ok(pipelineBegin >= 0 && pipelineEnd > pipelineBegin && frameBegin >= 0 && frameEnd > frameBegin);
     const pending = [];

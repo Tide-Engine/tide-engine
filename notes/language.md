@@ -1,3 +1,10 @@
+## Awaited render-target pixels (2026-11-14)
+
+RenderTarget.Read is local async, failable Grid2<Color>, lowered through the existing GPU ticket frame field.
+Direct awaited/default-unwrapped grid results count as fresh; is Grid2<T> can unwrap a failable grid, and named
+grid aliases still require Copy when stored. Read argument/unawaited/window diagnostics pin the fix. Pixel
+fixtures exercise generated async C and grid ownership; contracts and backend tests are in render-targets.md.
+
 ## Texture3D and kernel image writes (2026-11-14)
 
 `TY_TEXTURE3D` is appended after TY_GPU_LIST to preserve every existing type identity. It is a local

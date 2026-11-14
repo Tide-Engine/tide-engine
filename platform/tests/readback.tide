@@ -1,0 +1,27 @@
+scene Main {}
+local singleton CopyState { RenderTarget target; RenderTarget high; bool started; int frame; }
+local singleton CopyResult { Grid2<Color> pixels; Grid2<Color> hdr; bool done; bool failed; }
+async void ReadImages(CopyState state, mut CopyResult result) {
+    if (await state.target.Read() is Grid2<Color> pixels) result.pixels = pixels.Copy();
+    else result.failed = true;
+    if (await state.high.Read() is Grid2<Color> hdr) result.hdr = hdr.Copy();
+    else result.failed = true;
+    result.done = true;
+}
+view Paint(mut CopyState state, mut CopyResult result) {
+    if (!state.started) {
+        state.target = RenderTarget(4, 3, 1, samples: 4);
+        state.high = RenderTarget(2, 2, 1, Format.Rgba16f);
+        state.started = true;
+        ReadImages(state, result);
+    }
+    state.target.SetScreen(); state.target.SetBlend(.Replace);
+    state.target.Clear(state.frame == 0 ? Color.red : Color.blue);
+    state.target.Rect(float2(1, 1), float2(2, 2), Color.green);
+    state.high.SetScreen(); state.high.SetBlend(.Replace); state.high.Clear(Color.black);
+    List<Vertex> quad = [Vertex {}, Vertex { position = float2(2, 0) }, Vertex { position = float2(2) }, Vertex { position = float2(0, 2) }];
+    state.high.Mesh(quad, [0,1,2,0,2,3], HighColor);
+    state.frame += 1;
+}
+
+frag HighColor(Vertex vertex, out Color color) { color = Color(2, 0.5, 0.25, 0.5); }

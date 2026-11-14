@@ -1,0 +1,8 @@
+scene Main {}
+local singleton PixelReadSource { Texture image; GPUList<Color> pixels; int width; int height; }
+[Group(64)]
+compute ReadTargetPixels(PixelReadSource source) {
+    if (this.at.x >= source.width * source.height) return;
+    source.pixels[this.at.x] = source.image.SampleLevel((float2(this.at.x % source.width, this.at.x / source.width) + float2(0.5)) / float2(source.width, source.height), 0, Filter.Point);
+}
+view PixelReadKernel() { GPU.Run(ReadTargetPixels, 64); }

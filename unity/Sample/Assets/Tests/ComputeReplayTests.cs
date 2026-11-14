@@ -78,6 +78,11 @@ public sealed unsafe class ComputeReplayTests
             }
         }
 
+        public void PixelRead(uint id) {
+            Pipeline(id, 0xc0de0014, 16, 3, new uint[] { 0 }, true);
+            Add(Op.PipelineStorage, id, 1, 3, 1);
+        }
+
         public void DepthImage(uint id, uint depth) => Pipeline(id, 0xc0de0012, 32, 3, new uint[] { 1 }, true, depth);
         public void LayeredImage(uint id) => Pipeline(id, 0xc0de0013, 32, 3, new uint[] { 3, 6 }, true);
 
@@ -678,4 +683,28 @@ public sealed unsafe class ComputeReplayTests
             UnityEngine.Object.Destroy(target);
         }
     }
+    [UnityTest]
+    public IEnumerator PixelReadKernelReturnsStraightHdrThroughBufferReads()
+    {
+        var c = ImageObjects(0, 2);
+        ImageQuad(c, 10, 0, 0, 64, 64, 0, 0, 0, -1, new Color(1, 0.25f, 0.125f, 0.5f));
+        const int count = 64 * 64;
+        var words = new uint[4 + count * 4]; words[0] = words[1] = count;
+        c.Buffer(1, (uint)words.Length * 4, words);
+        c.Buffer(2, 16, new uint[4]);
+        c.Buffer(3, 32, new uint[] { 64, 1, 1, count, count, 1, 1, 0 });
+        c.PixelRead(32);
+        c.Add(Op.ComputeBegin); c.Add(Op.Use, 32);
+        c.Add(Op.Uniforms, 16, 64, 64, 0, count);
+        c.Add(Op.Image, 0, 11); c.Add(Op.Sampler, 0, 0, 0);
+        c.Add(Op.Storage, 0, 1); c.Add(Op.Storage, 1, 2); c.Add(Op.Storage, 2, 3);
+        c.Add(Op.Dispatch, 64, 1, 1); c.Add(Op.ComputeEnd);
+        c.Add(Op.BufferRead, 1, 1, 16, count * 16);
+        Replay(c);
+        yield return Answers(1);
+        Assert.AreEqual(count * 4, answers[1].Length);
+        var wanted = new uint[] { Bits(2), Bits(0.5f), Bits(0.25f), Bits(0.5f) };
+        for (var i = 0; i < count * 4; i++) Assert.AreEqual(wanted[i % 4], answers[1][i], "pixel word " + i);
+    }
+
 }

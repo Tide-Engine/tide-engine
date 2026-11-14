@@ -234,3 +234,25 @@ view Make(mut Lamp lamp)
 Every target has one, with color or without, and `Draw.window` has none to read. A depth is how far the nearest thing drawn at a pixel is, from 0 at the camera's near plane to 1 at its far limit, and 1 where nothing was drawn since the target was cleared.
 
 A draw into a target can't read that target's depth, any more than its color: the draw is passed by, with a line that says so. Draw what reads it into another target, or the window.
+
+## Reading pixels in local code
+
+In a local async function, `await target.Read()` returns `Grid2<Color> fails IOError`, an owned copy of the
+first color image after the requested frame draws. For example:
+
+```tide
+async void SavePixels(RenderTarget target)
+{
+    if (await target.Read() is Grid2<Color> pixels)
+    {
+        // pixels.size is the physical image size; pixels[x, y] is a straight Color.
+    }
+}
+```
+
+It takes a frame or more and can fail if the device is lost or the image exceeds the limits. Never read it in
+match code. Multisampled targets read their resolved color. Float images retain colors above one, and alpha
+is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership.
+Reads share 64 slots with GPU list reads. An image can contain up to 4,000,000 pixels; outstanding pixel results
+are limited to 128 MiB. Window, depth, cube faces and array layers cannot be read this way. Draw into an
+ordinary RGBA8 or RGBA16f target first.

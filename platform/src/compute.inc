@@ -1,3 +1,5 @@
+static bool target_read_prepare(tide_gpu_read_request *request);
+static tide_gpu_id pixel_read_pipeline;
 // Compute in the renderer (notes/compute.md): GPU lists' ranges in two pools, kernels' runs and the engine's own
 // kernels around them (shaders.h: a run over a GPU list's count, ordered Add's offsets and scatter, and a range
 // zeroed), list operations in frame order, indirect draws, and reads back. Included by platform.c, which turns the
@@ -23,6 +25,8 @@ typedef struct gpu_range {
     uint32_t at;    // Its first word there
     uint32_t words; // 0 for none
 } gpu_range;
+static gpu_range pixel_read_ranges[TIDE_GPU_READS];
+static uint32_t pixel_read_serials[TIDE_GPU_READS];
 
 typedef struct pool_span {
     uint32_t at, words;
@@ -221,10 +225,12 @@ static void forget_compute(void)
     scratch_count = scratch_used = 0;
     kernel_pipeline_count = 0;
     run_size_pipeline = add_offsets_pipeline = add_scatter_pipeline = zero_words_pipeline = 0;
+    pixel_read_pipeline = 0;
+    memset(pixel_read_ranges, 0, sizeof pixel_read_ranges);
     forget_culling();
     tide_gpu_read_request *reads = tide_gpu_read_requests();
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
-        if (reads[i].state == TIDE_GPU_READ_BEGUN) tide_gpu_read_finished(&reads[i], false);
+        if (reads[i].state == TIDE_GPU_READ_BEGUN || (reads[i].target.id && reads[i].data && reads[i].state == TIDE_GPU_READ_ASKED)) tide_gpu_read_finished(&reads[i], false);
     }
 }
 
@@ -368,6 +374,13 @@ static void compute_frame_start(const tide_draw_list *list)
     add_scratch_used[0] = add_scratch_used[1] = 0;
     if (list->epoch != gpu_list_epoch) gpu_list_epoch = list->epoch; // Records of the last epoch are named again, or go
     tide_gpu_reads_frame();
+    // A canceled capture that never got a read token can release its range too.
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        const tide_gpu_read_request *r = &tide_gpu_read_requests()[i];
+        if (pixel_read_ranges[i].words && (pixel_read_serials[i] != r->serial || r->state == TIDE_GPU_READ_FREE)) {
+            pool_give(pixel_read_ranges[i]); pixel_read_ranges[i] = (gpu_range){0};
+        }
+    }
     // Reads begun last frame are done once its work is, which headless runs wait for: they repeat exactly
     tide_gpu_read_request *reads = tide_gpu_read_requests();
     if (headless && gpu->buffer_read_wait) {
@@ -379,7 +392,10 @@ static void compute_frame_start(const tide_draw_list *list)
         tide_gpu_read_request *r = &reads[i];
         if (r->state != TIDE_GPU_READ_BEGUN) continue;
         const int done = gpu->buffer_read_done(r->token, r->data);
-        if (done) tide_gpu_read_finished(r, done > 0);
+        if (done) {
+            if (r->target.id) { pool_give(pixel_read_ranges[i]); pixel_read_ranges[i] = (gpu_range){0}; }
+            tide_gpu_read_finished(r, done > 0);
+        }
     }
 }
 
@@ -394,14 +410,16 @@ static void compute_frame_end(void)
             tide_gpu_read_finished(r, false);
             continue;
         }
-        const gpu_list_buffer *b = gpu->buffer_read ? list_range(r->list, true) : NULL;
-        if (!b) {
+        if (r->target.id && !pixel_read_ranges[i].words && !target_read_prepare(r)) continue;
+        const gpu_list_buffer *b = !r->target.id && gpu->buffer_read ? list_range(r->list, true) : NULL;
+        const gpu_range range = r->target.id ? pixel_read_ranges[i] : b ? b->range : (gpu_range){0};
+        if (!range.words || !gpu->buffer_read) {
             tide_gpu_read_finished(r, false);
             continue;
         }
         // Its range, as far as what was asked for goes (the rest of what it's read into stays zeros)
-        const uint64_t bytes = (uint64_t)b->range.words * 4u < r->bytes ? (uint64_t)b->range.words * 4u : r->bytes;
-        r->token = gpu->buffer_read(pool_buffer(b->range.pool), (size_t)b->range.at * 4u, (size_t)bytes);
+        const uint64_t bytes = (uint64_t)range.words * 4u < r->bytes ? (uint64_t)range.words * 4u : r->bytes;
+        r->token = gpu->buffer_read(pool_buffer(range.pool), (size_t)range.at * 4u, (size_t)bytes);
         if (r->token) r->state = TIDE_GPU_READ_BEGUN; // Or asked again next frame
     }
     uint32_t kept = 0;

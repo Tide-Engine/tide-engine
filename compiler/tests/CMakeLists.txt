@@ -1182,3 +1182,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
                 "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/debugger_lldb" -P "${CMAKE_CURRENT_SOURCE_DIR}/debugger/lldb_test.cmake")
     endif()
 endif()
+
+if(TIDE_NODE)
+    add_test(NAME tidec_read_target_builtin COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/read_target_builtin.mjs" "${TIDEC_PATH}" "${PROJECT_SOURCE_DIR}")
+endif()

@@ -654,7 +654,17 @@
         }
     }
     document.addEventListener('visibilitychange', followVisibility);
+    let waitReadFrames = false, waitingForReads = false;
     function frame() {
+        if (waitingForReads) return;
+        if (waitReadFrames) {
+            const pending = [...bufferReads.values()].filter(read => !read.bytes && !read.lost).map(read => read.ready);
+            if (pending.length) {
+                waitingForReads = true;
+                Promise.all(pending).then(() => { waitingForReads = false; frame(); });
+                return;
+            }
+        }
         if (stopped) {
             looping = false;
             return;
@@ -839,6 +849,7 @@
 
     const platform = {
         init_canvas(width, height, resizable) {
+            waitReadFrames = !resizable; // Hidden/fixed test frames wait between frames, never inside WASM.
             size.width = width;
             size.height = height;
             size.fill = !!resizable;
@@ -2756,7 +2767,7 @@
             do bufferReadToken = (bufferReadToken + 1) >>> 0; while (!bufferReadToken || bufferReads.has(bufferReadToken));
             const token = bufferReadToken, read = { size, bytes: null, lost: false };
             bufferReads.set(token, read);
-            readback.mapAsync(GPUMapMode.READ).then(() => {
+            read.ready = readback.mapAsync(GPUMapMode.READ).then(() => {
                 read.bytes = new Uint8Array(readback.getMappedRange()).slice();
                 readback.destroy();
             }, () => { // The device went away, or the read was let go of

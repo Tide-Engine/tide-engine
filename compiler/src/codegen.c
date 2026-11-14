@@ -6290,14 +6290,17 @@ static void gen_await(gen *g, expr *e, const char *name)
         task_declare(g, name, e->type);
         return;
     }
-    if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT) {
+    if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT || call->gpu == GPU_TARGET_READ) {
         // await list.Read(): a ticket of the frame's until the GPU is done with the frame drawn next (tide/draw.h)
         line(g, o, "tide_f->tide_gpu_ticket = 0;");
         line(g, o, "tide_gpu_resume%d:;", k);
         indent(g, o);
-        sb_put(o, "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
+        sb_put(o, call->gpu == GPU_TARGET_READ
+            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin("
+            : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
         gen_expr(g, o, call->object);
-        sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
+        if (call->gpu == GPU_TARGET_READ) sb_put(o, ");\n");
+        else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
         line(g, o, "tide_gpu_read_result tide_read%d;", k);
         line(g, o, "if (!tide_gpu_list_read_poll((uint32_t)tide_f->tide_gpu_ticket, &tide_read%d)) {", k);
         g->indent++;
@@ -6306,7 +6309,10 @@ static void gen_await(gen *g, expr *e, const char *name)
         line(g, o, "return tide_l->tide_frames + 1;");
         g->indent--;
         line(g, o, "}");
-        if (call->gpu == GPU_READ)
+        if (call->gpu == GPU_TARGET_READ)
+            line(g, o, "%s %s = {.ok = tide_read%d.ok, .error = (IOError)(tide_read%d.ok ? 0 : 10), .value = tide_render_target_read_grid(tide_read%d, &%s)};",
+                 c_type(e->type), name, k, k, k, grid_shape_name(e->type.decl->fields.items[0].type.decl));
+        else if (call->gpu == GPU_READ)
             line(g, o, "%s %s = {.ok = tide_read%d.ok, .error = (IOError)(tide_read%d.ok ? 0 : 10), .value = tide_gpu_list_of_%d(tide_read%d)};",
                  c_type(e->type), name, k, k, call->object->type.decl->index, k);
         else

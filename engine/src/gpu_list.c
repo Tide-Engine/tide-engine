@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include "tide/page.h"
+#include "tide/text.h"
+#include "tide/grid.h"
 
 // GPU lists' states (tide/draw.h, GPU lists), and reads of them back. What's
 // on the GPU is the renderer's (platform.c, compute.inc), which finds a list's
@@ -134,9 +136,11 @@ void tide_gpu_lists_recreated(void)
 }
 
 static void reads_lose(uint64_t id);
+static void pixel_reads_unload(void);
 
 void tide_gpu_lists_free(void)
 {
+    pixel_reads_unload();
     while (gpu_lists) {
         tide_gpu_list_state *s = gpu_lists;
         gpu_lists = s->next;
@@ -200,6 +204,41 @@ uint32_t tide_gpu_list_read_begin(const tide_gpu_list list, const bool count_onl
     return 0;
 }
 
+static void pixel_reads_unload(void)
+{
+    // An asked-for target still points into this build's image registry. A begun read owns its GPU copy.
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        tide_gpu_read_request *r = &reads_now->requests[i];
+        if (r->target.id && r->state == TIDE_GPU_READ_ASKED) tide_gpu_read_finished(r, false);
+    }
+}
+
+uint32_t tide_render_target_read_begin(const tide_render_target target)
+{
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        tide_gpu_read_request *r = &reads_now->requests[i];
+        if (r->state != TIDE_GPU_READ_FREE) continue;
+        if (++reads_now->serial >= (UINT32_MAX >> 6)) reads_now->serial = 1;
+        *r = (tide_gpu_read_request){.target = target, .serial = reads_now->serial, .state = TIDE_GPU_READ_ASKED};
+        if (!target.id || !tide_render_target_live(target.id) || !tide_render_target_colors(target.id)) r->state = TIDE_GPU_READ_FAILED;
+        return ticket_of(i);
+    }
+    return 0;
+}
+
+tide_grid tide_render_target_read_grid(const tide_gpu_read_result result, const tide_grid_shape *shape)
+{
+    if (!result.ok || result.width <= 0 || result.height <= 0 || result.stride != 4u || !result.words) return (tide_grid){0};
+    tide_grid grid = tide_grid_new(2u, result.width, result.height, 0);
+    tide_grid_cache cache = {0};
+    for (int32_t y = 0; y < result.height; y++) for (int32_t x = 0; x < result.width; x++) {
+        const uint32_t *words = result.words + ((size_t)y * (size_t)result.width + (size_t)x) * 4u;
+        void *cell = tide_grid_cached_poke(&cache, &grid, x, y, 0, shape, true, TIDE_IN_SCRATCH);
+        if (cell) memcpy(cell, words, sizeof(tide_color));
+    }
+    return grid;
+}
+
 void tide_gpu_read_finished(tide_gpu_read_request *r, const bool ok)
 {
     if (r->forgotten) { // Nobody waits for it any more: its place goes free now that the GPU wrote nothing more
@@ -217,6 +256,11 @@ bool tide_gpu_list_read_poll(const uint32_t ticket, tide_gpu_read_result *out)
     if (!r) return ticket != 0; // Another build's, or let go: failed. No ticket yet: not done
     if (r->state == TIDE_GPU_READ_ASKED || r->state == TIDE_GPU_READ_BEGUN) return false;
     if (r->state == TIDE_GPU_READ_FAILED || !r->data) return true;
+    if (r->target.id) {
+        *out = (tide_gpu_read_result){.ok = true, .count = r->width * r->height, .width = r->width,
+            .height = r->height, .stride = 4u, .words = r->data + TIDE_GPU_LIST_HEADER_WORDS};
+        return true;
+    }
     const tide_gpu_list_state *s = tide_gpu_list_state_of(r->list);
     if (!s) return true; // Its list was freed with the build that made it: failed
     const uint32_t stride = s->stride;

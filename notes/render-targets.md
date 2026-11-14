@@ -1,3 +1,36 @@
+# Owned pixel readback (2026-11-14)
+
+Owner-approved 2026-11-13: await target.Read gives an owned Grid2<Color> fails IOError in local async code.
+Picks and alternatives are Provisional in spec.md. It shares the 64 bounded read tickets and gpu.h asynchronous
+buffer_read/done/wait operations with list reads. ReadTargetPixels, an internal Tide kernel, samples exact pixel
+centers with Point, unpremultiplies through ordinary SampleLevel, and writes a temporary pool range. Resolved
+color image zero is read; RGBA16f retains HDR. Checked dimensions cap an image at 4,000,000 pixels and outstanding
+CPU pixel data at 128 MiB. Ranges return after GPU completion; canceled slots use serials, with no per-read
+GPUList tombstones. Generated C builds an owned scratch grid through its generated shape and checked cache.
+Grid is-pattern unwrapping and fresh await/default results complete the existing ownership API.
+
+Pending captures fail before build resources are freed; begun copies own their GPU data. Device reset fails
+captures already begun or prepared. Empty/disposed/depth, window and face/layer targets fail without invalid
+bindings. Numeric Format members were absent on dev: Read explicitly admits RGBA8/RGBA16f; typed numeric reads
+remain to connect with that feature. Unity's generated shader catalogue includes read_pixels_wgsl.h, copied
+from --kernels and checked against the actual Tide source by tidec_read_target_builtin. CLI tests pin its
+compute asset. Embed ABI 22 covers the shared read table's target/dimension fields. Recorder and none reuse
+compute and buffer-read operations; no new GPU function or readback opcode.
+
+The absent public numeric connection is specifically Format.R8, Rg8, R16f, Rg16f, R32f, Rgba32f and R32i:
+their typed sampling checker and shader bindings must connect SampleLevel's result and filtering rules, and
+Read must select a typed Grid2 result/conversion kernel or issue the format-specific diagnostic. No numeric
+format is silently interpreted as a Color image here.
+
+Validation: native ASan Vulkan and web-debug SwiftShader WebGPU readback fixtures pin a 4x3 MSAA-resolved
+image, prior-frame ownership, row order, straight alpha, HDR 2.0 and exact frame-5 completion of sequential reads.
+Existing GPU-list kernel fixtures pass on both; native E2E compute passes. Draw units 130/130, shader LSP 11/11,
+shared grammar 381/381, web runtime 15/15, CLI Unity shader writing and embedded recorder tests pass. All 207
+selected compiler/shader/diagnostic/GPU checks pass after reversed-depth integration (WGSL goldens, SPIR-V and FXC included). Unity's added real
+pixel-read kernel replay validates every float word: ComputeReplayTests 11/11 each on D3D11, D3D12, Vulkan and
+OpenGL Core, Unity 6000.6.0f1 hidden batch with no audio. Docs build passes. Native Vulkan and WebGPU shader pixels also pass the forced forward-depth fallback; Metal needs a Mac.
+
+
 ## Float depth storage and forward public reads (2026-11-14)
 
 Targets, depth-only images, depth arrays, cube-face attachments and MSAA/resolved depth now share the device's

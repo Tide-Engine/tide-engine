@@ -913,3 +913,23 @@ TIDE_TEST(draw_depth_bias_restores_and_repairs)
     TIDE_CHECK(d.place.depth_bias.x == 0 && d.place.depth_bias.y == 0);
     tide_draw_free(&d);
 }
+
+TIDE_TEST(draw_pixel_reads_bound_slots_and_reject_disposal)
+{
+    tide_gpu_reads table = {0};
+    tide_gpu_reads_share(&table);
+    const tide_render_target target = tide_render_target_make(1, 1);
+    uint32_t tickets[TIDE_GPU_READS];
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        tickets[i] = tide_render_target_read_begin(target);
+        TIDE_CHECK(tickets[i] != 0);
+    }
+    TIDE_CHECK(tide_render_target_read_begin(target) == 0);
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) tide_gpu_list_read_forget(tickets[i]);
+    tide_render_target_dispose(target);
+    const uint32_t ticket = tide_render_target_read_begin(target);
+    tide_gpu_read_result result;
+    TIDE_CHECK(ticket && tide_gpu_list_read_poll(ticket, &result) && !result.ok);
+    tide_gpu_list_read_forget(ticket);
+    tide_gpu_reads_share(NULL);
+}

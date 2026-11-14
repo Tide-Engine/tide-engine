@@ -6356,7 +6356,7 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
 
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.$\n}\n", types);
     const char *members = complete(program);
-    TIDE_CHECK(offers(members, "depth") && offers(members, "color") && has(members, "DepthTexture"));
+    TIDE_CHECK(offers(members, "depth") && offers(members, "color") && offers(members, "Read") && has(members, "DepthTexture"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    var shadow = lamp.map.depth;\n    lamp.shadow = sha$dow;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "DepthTexture"));

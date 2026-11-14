@@ -1075,6 +1075,7 @@ typedef enum gpu_op {
     GPU_SET_COUNT,   // list.SetCount(n)
     GPU_READ,        // await list.Read()
     GPU_READ_COUNT,  // await list.ReadCount()
+    GPU_TARGET_READ, // await target.Read()
     GPU_ADD,         // list.Add(v), in a kernel: in invocation order
     GPU_ATOMIC,      // list.AtomicAdd(i, v) and the rest, on a GPUList<int>; `name` says which
     GPU_SHARED_ATOMIC, // ...on an element of a kernel's `shared int[N]`

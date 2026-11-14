@@ -2996,45 +2996,7 @@ mut void Enter(Stance next)
   - Each field that something snaps gets a hidden int counting its snaps, after the type's fields, which `Snap()` increments (wrapping). Views blend the field only between two ticks with the same count. The counter is ordinary match data: snapshots, rollback, packing, the match hash, host migration and hot reload carry it, and it changes the type's layout, and so the match's compatibility, only in a game that snaps that field. It costs nothing for fields never snapped and next to nothing in network bytes, as it rarely changes.
   - `verified` views and view queries follow the same rule over their own endpoints.
 
-#### Provisional: depth bias (2026-11-14)
-
-Constant is a number of GPU depth precision steps, truncated toward zero to match WebGPU's integer factor.
-With integer depth a step is its smallest representable interval. With floating depth it follows the
-primitive's largest stored-depth exponent; it is not a fixed fraction of the forward range. Slope multiplies
-the largest absolute pixel-depth slope. Positive pushes away; negative pulls nearer. Bias is GPU raster state,
-so WriteDepth replaces it. Magnitudes can differ across depth formats; the visibility direction is portable.
-A fixed forward interval was considered, but core WebGPU exposes precision-scaled constant bias rather than
-that interval; doing it in shaders would change depth testing and add fragment work to every affected draw.
-Constants outside [-65536,65536], slopes outside [-16,16], NaN and infinities restore zero for that factor.
-No depth-bias clamp is exposed. Vulkan uses dynamic state; WebGPU keeps at most 32 bias variants per logical
-pipeline, evicting the least recently used, with zero bias reusing the original. Logical renderer pipeline
-counts are unchanged; these device pipeline variants are additional. Occlusion tests of biased instances
-are disabled because their geometric depth is not the rasterized depth.
-
-### Provisional: a frag writes depth (2026-11-14)
-
-WriteDepth is a statement in the frag itself, following Discard's implicit-this rule. A helper returns its
-computed depth for the frag to write. The last write on the path wins; a path without a write keeps triangle
-depth. Values clamp to [0, 1], with NaN becoming zero. `this.depth` continues to report rasterized depth.
-Depth tests use the replacement: Equal compares it, Only writes it without color, and multisampling applies
-it to each covered sample. The shader makes no early-test promise, allowing the device to test after writing.
-Automatic geometry-bound culling is disabled for these shaders: their triangle bounds cannot predict their
-depth. Actual stored depth still contributes to occlusion of later ordinary draws. A matching prepass must
-run the same depth-writing frag. Chosen over conservative-depth restrictions, which would limit the feature,
-and over an error under Equal/Only, which would prevent useful prepasses.
-
-### Provisional: explicit mip level (2026-11-14)
-
-NaN levels become zero; negative infinity clamps to zero and positive infinity to the last image.
-Level zero is the original image, one halves each dimension, and fractional levels blend with Trilinear or
-Anisotropic. Point and Bilinear retain their base-image sampler contract. Levels clamp to 0..31 and the sampler's
-available chain; an image with no smaller images reads level zero. TextureArray uses
-`SampleLevel(uv, layer, level[, filter[, wrap]])`: layer precedes level to keep Sample's argument order.
-Chosen over level-before-layer, which would make a positional float level look like the existing integer layer.
-Cubemaps have no Wrap, as faces continue into one another. Drawing into a chosen mip level is not provided.
-No new backend API or recorder packet is needed: WGSL explicit-level sampling already translates to SPIR-V and HLSL.
-
-### Provisional correction smoothing
+#### Provisional correction smoothing
 
 **Provisional.** `[Position]` and `[Rotation]` describe how a match field is presented when prediction is corrected. The names and contract may change as games test them.
 
@@ -3337,6 +3299,13 @@ Owner: "these make sense, lets do all of these". A struct a vert hands its frag 
 hold ints and int vectors, carried unblended from the triangle's first corner. A float
 field stays blended, and all read fields count toward the existing 15 carried values.
 
+#### Pixel readback (decided 2026-11-13)
+
+The owner: "these make sense, lets do all of these". `await target.Read()` in local async code gives an owned
+`Grid2<Color>` with `fails IOError`, by the same asynchronous rules as GPUList.Read. It never enters match code.
+It captures the frame drawn after the request, a frame or more later, and fails when the device is lost.
+Colors are straight Color values, as Sample returns, rather than multiplied by alpha.
+
 #### Depth bias (decided 2026-11-13)
 
 The owner: "these make sense, lets do all of these". `Draw.DepthBias(constant, slope) { ... }` and
@@ -3373,10 +3342,64 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - Built since: a frag's color as `out Color color` and a vert's struct for its frag, which are in the rules above (Code the GPU runs), which side of a triangle draws, which is among the Draw settings, above (`Draw.Cull`), and stencil, which is among them too (`Draw.Stencil`). Their picks are under Provisional.
 - Built since: mipmaps, as a filter, `Filter.Trilinear`, with the level's derivatives asked as a frag starts so that code still samples in any branch. What was picked to build it is under Provisional (Mipmaps).
 - Built since: cube maps, as a type of their own, `Cubemap`: an asset's six files, or six faces a view draws into, read by a direction. It was item 9 of the drawing surface's reshaping, the last. What was picked to build it is under Provisional (Cubemaps).
-- Left for later: reading a target's pixels back into Tide.
+- Built since: asynchronous pixel readback with `await target.Read()`, described above.
 - Open: a `shader Name { ... }` block that groups a vert and a frag under one name, maybe with the two unnamed inside. It would only add a name for a pair that's checked already, so it can come once naming two at a draw gets tedious.
 
 ### Provisional
+
+#### Provisional: pixel readback (2026-11-14)
+
+Read takes no arguments and reads color image zero, including its resolved image for multisampling. An image
+index was considered; the first-image form keeps the basic call small, with other images left for a later API.
+RGBA8 preserves its stored quantization; RGBA16f preserves HDR values above one. Transparent pixels give zero.
+Grid dimensions are physical pixels, with x right and y down. A copied grid uses `.Copy()` under ordinary grid
+ownership rules; a directly awaited return is fresh. `is Grid2<Color> pixels` can unwrap this failable result.
+There are 64 read slots shared with list reads, at most 4,000,000 pixels per image and 128 MiB of outstanding
+pixel results. Exceeding the image/byte limit fails; occupied slots wait, as list reads do. Headless native runs
+wait at the next frame's start. Hidden fixed-size web test frames wait between WASM frames for pending mappings,
+so scripted frame counts agree without blocking the browser thread. Ordinary resizable web games remain async.
+No window, depth, cube-face or array-layer read is provided; use an ordinary color RenderTarget. Unsupported
+formats fail before binding a shader. Numeric Format members were not on dev at implementation time: their
+future typed image-read path must explicitly connect these methods; Read currently accepts RGBA8/RGBA16f only.
+
+#### Provisional: depth bias (2026-11-14)
+
+Constant is a number of GPU depth precision steps, truncated toward zero to match WebGPU's integer factor.
+With integer depth a step is its smallest representable interval. With floating depth it follows the
+primitive's largest stored-depth exponent; it is not a fixed fraction of the forward range. Slope multiplies
+the largest absolute pixel-depth slope. Positive pushes away; negative pulls nearer. Bias is GPU raster state,
+so WriteDepth replaces it. Magnitudes can differ across depth formats; the visibility direction is portable.
+A fixed forward interval was considered, but core WebGPU exposes precision-scaled constant bias rather than
+that interval; doing it in shaders would change depth testing and add fragment work to every affected draw.
+Constants outside [-65536,65536], slopes outside [-16,16], NaN and infinities restore zero for that factor.
+No depth-bias clamp is exposed. Vulkan uses dynamic state; WebGPU keeps at most 32 bias variants per logical
+pipeline, evicting the least recently used, with zero bias reusing the original. Logical renderer pipeline
+counts are unchanged; these device pipeline variants are additional. Occlusion tests of biased instances
+are disabled because their geometric depth is not the rasterized depth.
+
+#### Provisional: a frag writes depth (2026-11-14)
+
+WriteDepth is a statement in the frag itself, following Discard's implicit-this rule. A helper returns its
+computed depth for the frag to write. The last write on the path wins; a path without a write keeps triangle
+depth. Values clamp to [0, 1], with NaN becoming zero. `this.depth` continues to report rasterized depth.
+Depth tests use the replacement: Equal compares it, Only writes it without color, and multisampling applies
+it to each covered sample. The shader makes no early-test promise, allowing the device to test after writing.
+Automatic geometry-bound culling is disabled for these shaders: their triangle bounds cannot predict their
+depth. Actual stored depth still contributes to occlusion of later ordinary draws. A matching prepass must
+run the same depth-writing frag. Chosen over conservative-depth restrictions, which would limit the feature,
+and over an error under Equal/Only, which would prevent useful prepasses.
+
+#### Provisional: explicit mip level (2026-11-14)
+
+NaN levels become zero; negative infinity clamps to zero and positive infinity to the last image.
+Level zero is the original image, one halves each dimension, and fractional levels blend with Trilinear or
+Anisotropic. Point and Bilinear retain their base-image sampler contract. Levels clamp to 0..31 and the sampler's
+available chain; an image with no smaller images reads level zero. TextureArray uses
+`SampleLevel(uv, layer, level[, filter[, wrap]])`: layer precedes level to keep Sample's argument order.
+Chosen over level-before-layer, which would make a positional float level look like the existing integer layer.
+Cubemaps have no Wrap, as faces continue into one another. Drawing into a chosen mip level is not provided.
+No new backend API or recorder packet is needed: WGSL explicit-level sampling already translates to SPIR-V and HLSL.
+
 
 - Integral handed fields (built 2026-11-14): bytes, bools and enums use the same flat
   path as ints and int vectors. Bools travel as integer 0/1. The first corner is the
@@ -4019,7 +4042,7 @@ Claude proposed this after the Mount & Rifle performance pass, and the owner ans
   - Compute is guaranteed on every render backend, and a backend that can't run it is removed (Backends, below).
   - The `compute` declaration, with `this.index`, `this.at`, `this.local`, `this.group` and `[Group(...)]`.
   - `GPU.Run` in drawing code, ordered with draws as if serial.
-  - Readback only by `await list.Read()` in local async code.
+  - Readback by `await list.Read()` or `await target.Read()` in local async code.
   - Any draw over a GPU list is indirect, with nothing more written.
   - The engine's own culling is written as a Tide kernel.
   - The order of work (the owner's): compute shaders, then indirect drawing, then GPU culling.

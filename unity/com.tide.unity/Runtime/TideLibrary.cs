@@ -50,7 +50,7 @@ namespace Tide
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 21;
+        public const uint Abi = 22;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.Android ? AndroidLibrary

@@ -1,5 +1,6 @@
 #pragma once
 #include "depth.h"
+#include "read_pixels_wgsl.h"
 
 // The renderer's shaders (platform.c), in WGSL: WebGPU's on the web and, as
 // SPIR-V, Vulkan's on desktop and Android, translated as the platform layer
@@ -682,6 +683,7 @@ static const char *const hiz_wgsl = WGSL(
     X(run_size, run_size_wgsl, NULL)                                                                                   \
     X(add_offsets, add_offsets_wgsl, NULL)                                                                             \
     X(add_scatter, add_scatter_wgsl, NULL)                                                                             \
+    X(target_pixels, target_pixels_wgsl, NULL)                                                                         \
     X(zero_words, zero_words_wgsl, NULL)                                                                               \
     X(hiz_one, hiz_one_wgsl, hiz_wgsl)                                                                                 \
     X(hiz_samples, hiz_samples_wgsl, hiz_wgsl)

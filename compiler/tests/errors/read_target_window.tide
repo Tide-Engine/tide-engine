@@ -1,0 +1,4 @@
+// expect: window cannot be read
+scene Main {}
+local singleton State { RenderTarget target; }
+async void Read() { var pixels = await Draw.window.Read(); }

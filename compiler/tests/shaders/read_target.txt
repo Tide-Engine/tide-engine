@@ -1,0 +1,95 @@
+// compute ReadTargetPixels: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<f32>;
+@group(0) @binding(2) var sampler0: sampler;
+@group(0) @binding(33) var<storage, read_write> tide_words: array<u32>;
+@group(0) @binding(35) var<storage, read> tide_run: array<u32>;
+var<private> tide_inv_index: i32;
+var<private> tide_inv_at: vec3i;
+var<private> tide_inv_local: vec3i;
+var<private> tide_inv_group: vec3i;
+var<private> tide_inv_count: vec3i;
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_min1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a < b) { return a; }
+    return b;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn tide_clamp1(a: f32, b: f32, c: f32) -> f32 {
+    if (tide_nan(a)) { return b; }
+    return tide_max1(b, tide_min1(c, a));
+}
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
+fn tide_base0() -> u32 {
+    return u32(tide_block.tide_v0.z);
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_words[tide_base0() + tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), u32(tide_block.tide_v0.w)));
+}
+
+fn tide_get0(tide_i: i32) -> vec4f {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return vec4f();
+    }
+    let tide_b = 4u + u32(tide_i) * 4u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    return tide_p0;
+}
+
+fn tide_put0(tide_i: i32, tide_v: vec4f) {
+    if (tide_i < 0 || tide_i >= tide_capacity0()) {
+        return;
+    }
+    let tide_b = tide_base0() + 4u + u32(tide_i) * 4u;
+    tide_words[tide_b + 0u] = bitcast<u32>((tide_v).x);
+    tide_words[tide_b + 1u] = bitcast<u32>((tide_v).y);
+    tide_words[tide_b + 2u] = bitcast<u32>((tide_v).z);
+    tide_words[tide_b + 3u] = bitcast<u32>((tide_v).w);
+}
+
+fn ts_ReadTargetPixels() {
+    if ((tide_inv_at.x >= (tide_block.tide_v0.x * tide_block.tide_v0.y))) {
+        return;
+    }
+    tide_put0(tide_inv_at.x, tide_straight(textureSampleLevel(pixels0, sampler0, ((vec2f(f32((tide_inv_at.x % tide_block.tide_v0.x)), f32((tide_inv_at.x / tide_block.tide_v0.x))) + vec2f(0.5)) / vec2f(f32(tide_block.tide_v0.x), f32(tide_block.tide_v0.y))), tide_clamp1(0.0, 0.0, 31.0))));
+}
+
+@compute @workgroup_size(64, 1, 1) fn compute(@builtin(global_invocation_id) tide_gid: vec3u, @builtin(local_invocation_id) tide_lid: vec3u, @builtin(local_invocation_index) tide_lix: u32, @builtin(workgroup_id) tide_wid: vec3u, @builtin(num_workgroups) tide_groups: vec3u) {
+    let tide_size = vec3u(tide_run[4], tide_run[5], tide_run[6]);
+    tide_inv_at = vec3i(tide_gid);
+    tide_inv_local = vec3i(tide_lid);
+    tide_inv_group = vec3i(tide_wid);
+    tide_inv_count = vec3i(tide_size);
+    tide_inv_index = i32(tide_gid.x + tide_size.x * (tide_gid.y + tide_size.y * tide_gid.z));
+    if (all(tide_gid < tide_size)) {
+        ts_ReadTargetPixels();
+    }
+}
+

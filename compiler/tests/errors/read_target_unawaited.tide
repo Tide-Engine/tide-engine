@@ -1,0 +1,4 @@
+// expect: Read takes no arguments
+scene Main {}
+local singleton State { RenderTarget target; }
+view Show(State state) { state.target.Read(); }

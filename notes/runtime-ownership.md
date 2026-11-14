@@ -1,3 +1,10 @@
+# Pixel readback (2026-11-14)
+
+Within the owner-approved rendering task, agents maintain tide_render_target_read_begin and
+_tide_render_target_read_grid, generated async lowering, shared read request extensions, pool capture and
+internal kernel. No new gpu.h function. Contracts and lifetimes: render-targets.md.
+
+
 # Depth-bias draw state (2026-11-14)
 
 Within the owner-approved rendering task, agents maintain tide_draw_set_depth_bias, _unset_depth_bias,

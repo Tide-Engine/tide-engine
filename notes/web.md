@@ -1,3 +1,10 @@
+# Fixed-frame GPU reads (2026-11-14)
+
+Hidden fixed-size canvases (init_canvas resizable=false, used by headless fixtures) defer the next WASM frame
+until outstanding buffer map promises settle. No browser thread blocks; ordinary resizable pages keep polling
+asynchronously. Vulkan uses buffer_read_wait at the same boundary. Release runtime regenerated. Pixel-read
+and kernel fixtures cover exact frame counts, RGBA16f and resolved colors; contracts: render-targets.md.
+
 ## Storage images and Texture3D (2026-11-14)
 
 Backend contracts and validation are in rendering.md, Storage images and volumes. `tide.js` creates `dimension:'3d'`

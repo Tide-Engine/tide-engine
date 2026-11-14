@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+const [compiler, root] = process.argv.slice(2);
+const generated = fs.readFileSync(path.join(root, 'platform/src/read_pixels_wgsl.h'), 'utf8');
+const bytes = generated.match(/target_pixels_wgsl\[\] = \{([\s\S]*?)\};/)[1].match(/\d+/g).map(Number);
+while (bytes.at(-1) === 0) bytes.pop();
+const text = Buffer.from(bytes).toString('utf8');
+const result = spawnSync(compiler, ['--shaders', path.join(root, 'platform/src/cull.tide'), path.join(root, 'platform/src/occlusion.tide')], {encoding:'utf8'});
+if (result.status || !result.stdout.replaceAll("\r\n", "\n").includes(text.trim())) throw new Error(result.stderr || 'Unity pixel-read WGSL is stale: regenerate it from cull_kernels.h');

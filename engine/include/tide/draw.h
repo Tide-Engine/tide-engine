@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 #include "tide/color.h"
+typedef struct tide_grid tide_grid;
+typedef struct tide_grid_shape tide_grid_shape;
 #include "tide/font.h"
 #include "tide/math.h"
 
@@ -2013,9 +2015,12 @@ enum { TIDE_GPU_READS = 64 };
 typedef struct tide_gpu_read_result {
     bool ok;
     int32_t count;
+    int32_t width, height; // Pixel reads
     uint32_t stride;
     const uint32_t *words;
 } tide_gpu_read_result;
+uint32_t tide_render_target_read_begin(tide_render_target target);
+tide_grid tide_render_target_read_grid(tide_gpu_read_result result, const tide_grid_shape *shape);
 uint32_t tide_gpu_list_read_begin(tide_gpu_list list, bool count_only);
 bool tide_gpu_list_read_poll(uint32_t ticket, tide_gpu_read_result *out);
 void tide_gpu_list_read_forget(uint32_t ticket);
@@ -2025,6 +2030,8 @@ void tide_gpu_list_read_forget(uint32_t ticket);
 // (tide_gpu_read_finished), with `data` filled, or failed.
 enum { TIDE_GPU_READ_FREE, TIDE_GPU_READ_ASKED, TIDE_GPU_READ_BEGUN, TIDE_GPU_READ_DONE, TIDE_GPU_READ_FAILED };
 typedef struct tide_gpu_read_request {
+    tide_render_target target; // Nonzero: color image zero, in a transient GPU list
+    int32_t width, height;
     uint64_t list;
     uint32_t bytes;
     uint32_t token; // The renderer's (gpu.h's buffer_read), once begun

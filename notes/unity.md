@@ -1,3 +1,13 @@
+## Pixel readback kernel (2026-11-14)
+
+Embed ABI 22 extends the host-shared read table, with no new GPU command. The engine's pixel-read kernel uses
+ordinary sampled images, compute storage and asynchronous buffer reads. CLI shader output includes its Unity
+compute asset; the copied WGSL is checked against the Tide source by tidec_read_target_builtin. The Sample's
+PixelReadKernelReturnsStraightHdrThroughBufferReads replays an RGBA16f target draw, samples it with the actual
+kernel and checks every float word returned by the existing buffer-read callback. ComputeReplayTests pass
+11/11 each on Windows D3D11, D3D12, Vulkan and OpenGL Core, including after reversed-depth integration
+(6000.6.0f1, hidden batch, no audio). Metal needs a Mac.
+
 ## Reversed-depth replay and float attachments (2026-11-14)
 
 The replay prefers D32_SFloat_S8_UInt attachments, with D24 where the device cannot render D32. Unity retains

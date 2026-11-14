@@ -9274,6 +9274,27 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_RENDER_TARGET) {
+        if (str_eq_c(e->name, "Read")) {
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            if (e->args.count || c->awaiting != e) {
+                diag_error(e->at, "Read takes no arguments and finishes later: 'var pixels = await target.Read();' in local async code");
+                return T_ERR;
+            }
+            if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
+                diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
+                return T_ERR;
+            }
+            if (in_async_function(c)) {
+                if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
+            } else if (!local_code(c)) {
+                diag_error(e->at, "a render target belongs to this machine: read it in local async code, never match code");
+                return T_ERR;
+            }
+            decl *code = reading_code(c);
+            if (code) code->uses_gpu_read = true;
+            e->gpu = GPU_TARGET_READ;
+            return result_of(c->prog, grid_of(c->prog, (type){TY_COLOR, NULL}, 2), (type){TY_ENUM, c->prog->io_error}, false);
+        }
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
             const bool resize = str_eq_c(e->name, "Resize");
             for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_FLOAT_);
@@ -10368,6 +10389,11 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
+        if (str_eq_c(e->object->name, "Draw") && str_eq_c(e->member, "window")
+            && c->awaiting && str_eq_c(c->awaiting->name, "Read") && c->awaiting->object == e) {
+            diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
+            return T_ERR;
+        }
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
         if (str_eq_c(e->object->name, "Frame") && refuse_frame_clock(c, e->at, e->member, false)) return T_ERR;
         const type member = resolve_builtin_member(e->object->name, e);
@@ -11743,6 +11769,7 @@ static bool is_new_grid(const expr *e)
 static bool fresh_grid(const expr *e, const bool returning)
 {
     if (e->kind == E_CONDITIONAL) return fresh_grid(e->lhs, returning) && fresh_grid(e->rhs, returning);
+    if (e->kind == E_AWAIT || e->kind == E_DEFAULTED) return fresh_grid(e->lhs, returning);
     if (e->kind == E_DEFAULT || e->kind == E_CALL || e->kind == E_METHOD) return true;
     return returning && e->kind == E_NAME && e->bind == BIND_LOCAL;
 }
@@ -12523,10 +12550,6 @@ static type is_pattern_type(checker *c, const expr *e, const enum_member **membe
         }
     }
     const type t = resolve_type(c, r, PLACE_IS, at);
-    if (t.kind == TY_GRID) {
-        diag_error(at, "'is' can't look for a grid");
-        return T_ERR;
-    }
     return t;
 }
 
@@ -12645,7 +12668,7 @@ static type check_await(checker *c, expr *e)
     }
     if (call->call == CALL_WAIT) return T_VOID_;
     if (call->storage_flush || call->web_fetch) return t;
-    if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT) return t; // A GPU list's read back
+    if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT || call->gpu == GPU_TARGET_READ) return t; // A GPU list's read back
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && (call->method->is_async || call->method->is_worker)) return t;
     diag_error(e->at, "'await' needs a task handle or an async call, like 'await Wait.Ticks(30)'");
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION) {
@@ -14943,7 +14966,7 @@ static bool stands_alone(const expr *e)
     const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
     const builtin_call call = called->call;
     // A GPU list's changes, a run, a barrier, and an atomic, whose old value a statement drops
-    if (called->gpu >= GPU_RESIZE && called->gpu != GPU_READ && called->gpu != GPU_READ_COUNT) return true;
+    if (called->gpu >= GPU_RESIZE && called->gpu != GPU_READ && called->gpu != GPU_READ_COUNT && called->gpu != GPU_TARGET_READ) return true;
     return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_PARENT
                                          // A Draw call that gives a value only measures or converts
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
