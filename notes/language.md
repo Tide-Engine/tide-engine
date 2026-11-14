@@ -1,3 +1,48 @@
+## Array and list constants written out (2026-11-14)
+
+Owner approved the recommendation ("go with your recommendations"); the rules are picks, Provisional in spec.md
+(Constants; Arrays and Lists lost their "not a constant yet"). Before, only build code made a list constant
+(`const List<int> X = F()`, the pack's) and arrays were refused outright.
+
+- **Checker.** `constant_type` no longer refuses arrays or lists; `constant_element_ok` says what a table holds:
+  plain values (no `holds_heap`/`holds_grid`, resources, callables, `Mesh`, entities, ECS types or `T?`), with a
+  switch-expression note for text. Maps, sets and grids keep "can't be a ... yet", now with a note naming arrays
+  and lists. A list's value must be a list literal or another list constant (`settle_list_constant`, after the
+  value is checked): it keeps the literal in `decl.list_literal` and `array_of(element, count)` in
+  `decl.list_array` (named; TY_ERROR for `[]`), through any chain of list constants. Anything else (a `switch`
+  of lists, say) is an error naming build code. Built list constants are unchanged (no literal, the pack's).
+- **Constants of them:** `is_constant` takes `E_INDEX` of constant operands. `fold_int` folds an element of a
+  constant table by a constant index (`constant_items` follows constants to the literal; the element type's zero
+  past either end; a byte element's low bits) and `Enum.Values()[i]`, and an array's or a list constant's `.count`.
+  So `const int THIRD = QUAD[2];`, `case QUAD[5]:` and `int[QUAD.count] seen;` work. `check_member` gives a list
+  constant's `.count` a `c_constant`, as arrays' have, so neither C nor WGSL evaluates the list for it.
+- **C.** An array constant is its value where read, as before for any constant (`gen_as` of the E_LIST:
+  `((tide_arrayN){{...}})`, indexed through `tide_arrayN_get`, which takes it by value; clang's optimizer turns the
+  compound literal into constant data). A list constant's `QUAD[i]` is `gen_listed_element`: the same compound
+  literal of `decl.list_array`, through `tide_arrayN_get`, or `((void)(i), zero)` for an empty one; `pointerable`
+  is false for it, so `MORE[i].kind` reads a value, and `open_loop_views` skips it (no `tide_list_loop` made from a
+  scratch list nobody reads). A whole read is unchanged: its literal, a scratch list (`tide_list_from`), which
+  `foreach`, `Contains`, arguments, `Draw.Mesh` and assignment take as any list.
+- **GPU** (shader.c): `listed_constant`, `put_listed` (`array<T, N>(...)`), `ex_listed_index` (`tide_el<n>`, the
+  arrays' bounds-checked reader), `.count` as an int, `foreach` through `st_foreach`'s array path; an array
+  constant was already an array value there. A list constant read whole, or passed to a function taking a list
+  (`refuse_whole_list`, also in the call's data argument), is an error naming `QUAD[i]`, `.count` and `foreach`;
+  an empty one, or one over 4096 values (`SHADER_LISTED_MOST`), is refused where it's read.
+- Tests: `tidec_e2e_constant_tables` (float/int2/float3/struct/enum/byte/nested arrays and lists, `Values()`, type
+  aliases, by `int(kind)`, past either end, `[]`, a list constant naming another, folded elements in constants, a
+  `case` and an array length, a field default, Contains/IndexOf, a function taking a `List<int>`, a world copy
+  that's its own, a view, a `local worker`, `Draw.Mesh` of two list constants), `shaders/constant_tables`
+  (golden, spirv-val, FXC), `platform/tests/shaders.tide` Sink checks against CPU Marks, errors
+  `constant_list_of_text`, `constant_array_of_text`, `constant_list_of_lists`, `constant_list_of_entities`,
+  `constant_array_count`, `constant_list_not_written_out`, `constant_list_write`, `constant_array_write`,
+  `constant_map`, `constant_index_variable`, `gpu_constant_list_whole`, `gpu_constant_list_empty`. Removed, as they
+  pinned the lifted refusals: `array_const`, `const_list`, `alias_const_array`, `alias_const_list` (their aliases
+  are in the e2e now).
+- Gaps: text in tables (arrays of strings; the note names a switch expression); `foreach` over a list constant on
+  the CPU copies its literal into scratch once per loop (an array constant's doesn't); a list constant read whole
+  is a scratch list made where it's read, not a shared one; on the GPU the table is written inline at each read,
+  not as a module-scope `const`; no `==` between tables.
+
 ## Enum ordering and `Enum.Values()` (2026-11-14)
 
 Owner approved the recommendation ("go with your recommendations"); the rules are picks, Provisional in spec.md

@@ -888,6 +888,11 @@ typedef struct decl {
     struct decl *build_fn;    // An asset or a constant: the function that makes its value, or NULL
     struct decl *build_owner; // That function: the asset or constant it makes
     struct build_value *built; // An asset or a constant: what its code made, once it has run (build_code.h)
+    // A list constant written out, `const List<int> QUAD = [0, 1, 2];`, directly or through the constant it names: its
+    // [a, b, c], whose elements C and the GPU read where it's indexed (no list is made for `QUAD[i]` or `QUAD.count`),
+    // and the array type of as many (`int[3]`; TY_ERROR for an empty list), which they index it as.
+    struct expr *list_literal;
+    type list_array;
     // Purity (compiler/src/purity.c, docs/spec.md, Pure functions): a function or method with code is pure when
     // its result comes from its arguments alone and running it leaves nothing changed. Worked out once every
     // body is checked (infer_purity); `impure_why` says the first thing that keeps it from being pure

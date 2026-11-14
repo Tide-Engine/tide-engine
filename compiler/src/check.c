@@ -11136,7 +11136,15 @@ static type check_member(checker *c, expr *e)
     }
     if (obj.kind == TY_GPU_LIST) return check_gpu_list_member(c, e, obj);
     if (obj.kind == TY_LIST) {
-        if (str_eq_c(e->member, "count")) return T_INT_;
+        if (str_eq_c(e->member, "count")) {
+            const decl *k = e->object->bind == BIND_CONST ? e->object->constant : NULL;
+            if (k && k->list_literal) { // A list constant written out: as many as it was written with, a constant
+                sb count = {0};
+                sb_printf(&count, "%d", k->list_literal->args.count);
+                e->c_constant = count.data;
+            }
+            return T_INT_;
+        }
         diag_error(e->at, "a list has 'count' and methods like Add(...), not '" STR_FMT "'", STR_ARG(e->member));
         suggestion sg = suggest_start(e->member);
         suggest_consider_c(&sg, "count");
@@ -14844,6 +14852,21 @@ int switch_choice(const expr *e)
     return -1;
 }
 
+// The [a, b, c] a constant array or list is, through the constants it names: NULL for one made some other way
+// (build code's, another expression's).
+static const expr *constant_items(const expr *e)
+{
+    for (int depth = 0; e && depth < 64; depth++) {
+        if (e->kind == E_LIST) return e;
+        if ((e->kind != E_NAME && e->kind != E_MEMBER) || e->bind != BIND_CONST) return NULL;
+        const decl *k = e->constant;
+        if (k->index != 2 || k->build_fn) return NULL;
+        if (k->list_literal) return k->list_literal;
+        e = k->value;
+    }
+    return NULL;
+}
+
 static bool fold_int(const expr *e, int64_t *out)
 {
     int64_t l;
@@ -14852,6 +14875,24 @@ static bool fold_int(const expr *e, int64_t *out)
     case E_SWITCH: {
         const int choice = switch_choice(e);
         return choice >= 0 && fold_int(e->args.items[choice], out);
+    }
+    case E_INDEX: { // CARDS[2] and Phase.Values()[1], of a constant: that element, or the zero past either end
+        if (!type_is_integer(e->type) && e->type.kind != TY_ENUM && e->type.kind != TY_CHAR) return false;
+        if (!fold_int(e->lhs, &l)) return false;
+        if (e->object->kind == E_METHOD && e->object->call == CALL_ENUM_VALUES) {
+            const decl *d = e->object->type_decl;
+            *out = l >= 0 && l < d->members.count ? d->members.items[l].number : 0;
+            return true;
+        }
+        const expr *items = constant_items(e->object);
+        if (!items) return false;
+        if (l < 0 || l >= items->args.count) {
+            *out = 0;
+            return true;
+        }
+        if (!fold_int(items->args.items[l], out)) return false;
+        if (e->type.kind == TY_BYTE) *out = (uint8_t)*out; // As the element is kept
+        return true;
     }
     case E_INT:
         *out = e->int_value; // Within int's range unless it's a long
@@ -14870,6 +14911,17 @@ static bool fold_int(const expr *e, int64_t *out)
         if (e->kind == E_MEMBER && e->enum_member) {
             *out = e->enum_member->number;
             return true;
+        }
+        if (e->kind == E_MEMBER && str_eq_c(e->member, "count")) { // An array's count, and a list constant's
+            if (e->object->type.kind == TY_ARRAY && e->object->type.decl) {
+                *out = e->object->type.decl->array_length;
+                return true;
+            }
+            const expr *items = e->object->type.kind == TY_LIST ? constant_items(e->object) : NULL;
+            if (items) {
+                *out = items->args.count;
+                return true;
+            }
         }
         return false;
     case E_CONDITIONAL: {
@@ -15873,6 +15925,8 @@ static bool is_constant(const checker *c, const expr *e)
         return true;
     case E_LIST:
         return all_constant(c, e);
+    case E_INDEX: // SIZES[2], Phase.Values()[i]: an element of a constant array or list, by a constant index
+        return is_constant(c, e->object) && is_constant(c, e->lhs);
     default:
         return false;
     }
@@ -15942,32 +15996,61 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
     return t;
 }
 
+// What an array or a list constant holds: plain values, the build's bytes alone, which every machine has the same
+// (numbers, bools, chars, vectors, matrices, quaternions, colors, rects, enums, arrays and structs of those). True
+// when it's one; otherwise false, and said, with `what` the array or the list.
+static bool constant_element_ok(const type element, const char *what, const loc at)
+{
+    if (element.kind == TY_ERROR) return false;
+    if (holds_heap(element) || holds_grid(element)) {
+        diag_error(at, "a constant %s holds plain values, not %s: they're the build's bytes, the same on every machine",
+                   what, type_name(element));
+        if (element.kind == TY_STRING) diag_note("for text, a switch expression on the index picks one: "
+                                                 "'i switch { 0 => \"Easy\", 1 => \"Hard\", _ => \"\" }'");
+        else diag_note("keep what it holds in plain fields of a struct, or make the value in code where it's used");
+        return false;
+    }
+    if (holds_callable(element) || holds_resource_but_font(element) || element.kind == TY_MESH) {
+        diag_error(at, "a constant %s can't hold %s: it belongs to this machine's rendering, in local state", what,
+                   type_name(element));
+        return false;
+    }
+    if (element.kind == TY_ENTITY || element.kind == TY_LOCAL_ENTITY) {
+        diag_error(at, "a constant %s of %s would only ever hold the null entity", what, type_name(element));
+        return false;
+    }
+    if (element.kind == TY_COMPONENT || element.kind == TY_SINGLETON || element.kind == TY_EVENT || element.kind == TY_INPUT
+        || element.kind == TY_OPTIONAL) {
+        diag_error(at, "a constant %s holds plain values, not %s", what, type_name(element));
+        return false;
+    }
+    return true;
+}
+
 static type constant_type(const checker *c, const decl *k, const bool built)
 {
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
     const type_ref *const r = type_ref_or_text(k->return_type_ref, k->return_type_name);
-    if (r->sizes.count > 0) {
-        diag_error(at, "a constant can't be an array yet");
-        return T_ERR;
-    }
     if (str_eq_c(r->name, "GPUList")) {
         diag_error(at, "a GPUList is this machine's, made in local code: a constant can't be one");
         diag_note("keep it in a local field or a local singleton, and make it there: 'GPUList<float4>(1024)'");
         return T_ERR;
     }
-    if (r->args.count > 0 && !str_eq_c(r->name, "Mesh") && !(built && str_eq_c(r->name, "List"))) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
-        const char *what = str_eq_c(r->name, "List") ? "list" : str_eq_c(r->name, "Map") ? "map" : str_eq_c(r->name, "Set") ? "set" : "grid";
+    if (r->args.count > 0 && !str_eq_c(r->name, "Mesh") && !str_eq_c(r->name, "List")) { // Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
+        const char *what = str_eq_c(r->name, "Map") ? "map" : str_eq_c(r->name, "Set") ? "set" : "grid";
         diag_error(at, "a constant can't be a %s yet", what);
+        diag_note("a constant can be an array, 'const int[3] SIZES = [1, 2, 4];', or a list, 'const List<int> SIZES = [1, 2, 4];'");
         return T_ERR;
     }
     const type t = resolve_type(c, r, PLACE_CONST, at);
     switch (t.kind) {
-    case TY_ARRAY:
-        diag_error(at, "a constant can't be an array yet");
-        return T_ERR;
-    case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
-        if (built && t.kind == TY_LIST) return t; // build_constant_type_ok says what it holds
-        diag_error(at, "a constant can't be a %s yet", t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
+    case TY_ARRAY: // const float[4] SIZES = [1.5, 2, 2.5, 4];: written wherever it's read, as any constant is
+        return constant_element_ok(array_element(t), "array", at) ? t : T_ERR;
+    case TY_LIST: // Written out, [1, 2, 3], or made by build code; build_constant_type_ok says what that one holds
+        if (built) return t;
+        return constant_element_ok(list_element(t), "list", at) ? t : T_ERR;
+    case TY_MAP: case TY_SET: case TY_GRID:
+        diag_error(at, "a constant can't be a %s yet", t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
         return T_ERR;
     case TY_OPTIONAL:
         diag_error(at, "a constant can't be a T? yet");
@@ -16009,6 +16092,30 @@ static type constant_type(const checker *c, const decl *k, const bool built)
     }
 }
 
+// const List<int> QUAD = [0, 1, 2, 0, 2, 3];: a list written out, or another list constant, whose literal it keeps
+// (decl.list_literal) with the array type of as many (decl.list_array), so `QUAD[i]` and `QUAD.count` read the
+// elements where they're written. One that build code makes is the pack's, and has neither.
+static void settle_list_constant(checker *c, decl *k)
+{
+    const expr *v = k->value;
+    if (v->kind == E_LIST) {
+        k->list_literal = (expr *)v;
+        if (v->args.count > 0) {
+            k->list_array = array_of(c->prog, list_element(k->return_type), v->args.count, v->at);
+            if (!c->prog->quiet_names) k->list_array.decl->named = true; // Generated C indexes its elements as one
+        }
+        return;
+    }
+    if ((v->kind == E_NAME || v->kind == E_MEMBER) && v->bind == BIND_CONST && v->constant->return_type.kind == TY_LIST) {
+        k->list_literal = v->constant->list_literal;
+        k->list_array = v->constant->list_array;
+        return;
+    }
+    diag_error(v->at, "a constant list is written out, like '[1, 2, 3]', or is another list constant");
+    diag_note("to work its elements out with code, call a function that returns the list: build code makes it, "
+              "'const List<int> SQUARES = Squares(16);'");
+}
+
 // const int MAX_HEALTH = 100;: its type, and a value worked out from constants
 // alone. A constant is checked before anything reads it: one that names
 // another checks that one first (index: 0 not yet, 1 checking, 2 done).
@@ -16038,6 +16145,8 @@ static void check_constant(checker *c, decl *k)
             diag_error(k->value->at, "constant '" STR_FMT "' is %s, not %s", STR_ARG(k->name), type_name(k->return_type),
                        type_name(t));
             note_conversion(k->return_type, t);
+        } else if (k->return_type.kind == TY_LIST && t.kind == TY_LIST) {
+            settle_list_constant(c, k);
         }
     }
     c->unit = outer;

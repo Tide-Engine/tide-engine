@@ -263,6 +263,8 @@ An array of plain values is its holder's bytes and nothing more, so a system's l
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
 
+An array or a list of plain values can be a constant, a table every machine has the same: `const float[4] SIZES = [1.5, 2, 2.5, 4];`, `const List<int> QUAD = [0, 1, 2, 0, 2, 3];`. Read it by index, count and `foreach` anywhere, frags and verts included; see [Tables](./basics.md#tables).
+
 Lists, arrays and map values also hold `Clip`, `Texture`, `DepthTexture`, `Cubemap`, `RenderTarget`, `Sound`, and structs holding them. These collections belong in local state, just like their elements. Copies and helper parameters follow the ordinary collection rules:
 
 ```csharp

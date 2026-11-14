@@ -126,9 +126,32 @@ system Regenerate(mut Health health, Time time)
 - Constants are named in FULL_CASE.
 - A constant is the same on every machine. Any code can read one: systems, views, handlers, functions and other constants. Reading one never makes a system wait for another.
 - They work anywhere a constant value is needed: field defaults, `[Clamp]` bounds, `case` labels and the values of enum members. In the last two, int constants and operators on them work: `case MAX_LEVEL + 1:`.
-- A constant can be a number, vector, matrix, quaternion, `bool`, `Color`, `Rect`, `PlayerID`, text, struct or enum. It can't be a list or an entity.
+- A constant can be a number, vector, matrix, quaternion, `bool`, `Color`, `Rect`, `PlayerID`, text, struct or enum, or a table of them: an array or a list written out (below). It can't be an entity, a map or a set.
 - A constant in a namespace belongs to it: code outside writes `Combat.CRIT_MULTIPLIER` (see [Namespaces and files](./namespaces.md)).
 - Changing a constant under `tide run` reloads the game and keeps the match where it is.
+
+### Tables
+
+An array or a list can be a constant, written out: a table of values every machine has the same.
+
+```csharp
+enum TreeKind { Pine, Oak, Birch }
+
+const float[3] HEIGHTS = [6, 4.5, 3];             // One per TreeKind, by int(kind)
+const List<int> QUAD = [0, 1, 2, 0, 2, 3];        // A quad's two triangles
+const int2[4] NEIGHBORS = [int2(1, 0), int2(0, 1), int2(-1, 0), int2(0, -1)];
+const TreeKind[3] PLANTED = [.Birch, .Pine, .Oak];
+
+float HeightOf(TreeKind kind) { return HEIGHTS[int(kind)]; }
+```
+
+- What a table holds is plain values: numbers, bools, chars, vectors, matrices, quaternions, colors, rects, enums, arrays, and structs of those. Text, lists inside a table, entities and resources are errors; for text, a switch expression on the index picks one.
+- An array constant has exactly as many values as its type says. A list constant is written out (`[...]`, `[]` too) or names another list constant; one that code works out is made by [build code](../game/build-code.md), `const List<int> SQUARES = Squares(16);`.
+- `HEIGHTS[i]` reads an element, and gives the element type's zero past either end, as any array or list does; `.count` is how many it has. `foreach` goes through one, and a list constant goes wherever a `List<T>` is read: `Draw.Mesh(corners, QUAD)`, a function's parameter, `QUAD.Contains(2)`, or copied into a field, which then has a list of its own.
+- Its elements are worked out while compiling, so an element read with a constant index is a constant too: `const int THIRD = QUAD[2];`, a `case`, an array's length (`int[QUAD.count] seen;`).
+- Nothing can change one: `QUAD[0] = 1` and `QUAD.Add(4)` are errors. Copy it into a `mut var` to change the copy.
+- They're no part of the match: reading one makes no system wait, and costs what reading the element costs. Frags and verts read them too, by index, `.count` and `foreach`.
+- `TreeKind.Values()` is one already: every member of an enum, as `TreeKind[3]` ([Every member](#every-member)).
 
 ## Settings
 
@@ -350,7 +373,7 @@ foreach (var kind in TreeKind.Values()) // Pine, Oak, Birch
 TreeKind second = TreeKind.Values()[1]; // Oak
 ```
 
-- It's an array, `TreeKind[3]` here: index it, read its `.count`, keep it in a field (`TreeKind[3] kinds = TreeKind.Values();`). It's made while compiling, so it costs nothing, and works in match code, views, workers, frags and verts alike.
+- It's an array, `TreeKind[3]` here: index it, read its `.count`, keep it in a field (`TreeKind[3] kinds = TreeKind.Values();`) or a [constant](#tables). It's made while compiling, so it costs nothing, and works in match code, views, workers, frags and verts alike.
 - A member declared with another's number is there at its own place: in `enum Size { Small = 1, Little = 1, Big }`, `Size.Values()` is `Small, Little, Big`, whose first two are one value. Go through `Count()` places, as `Count()` counts both.
 - It takes no arguments; a member you declare named `Values` stays `Phase.Values`.
 

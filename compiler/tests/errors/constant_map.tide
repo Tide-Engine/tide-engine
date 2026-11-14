@@ -1,0 +1,4 @@
+// expect: a constant can't be a map yet
+// expect: a constant can be an array, 'const int[3] SIZES = [1, 2, 4];', or a list
+const Map<int, int> COSTS = [];
+scene Main { }

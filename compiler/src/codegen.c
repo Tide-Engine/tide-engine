@@ -2144,6 +2144,8 @@ static const char *loop_view_of(const gen *g, const expr *e)
     return NULL;
 }
 
+static const decl *listed_constant(const expr *e);
+
 // Views of the lists loop `loop` indexes and keeps the shape of, found before
 // it, in a block of their own where `block` says the loop has none. Whether
 // there are any.
@@ -2160,6 +2162,7 @@ static bool open_loop_views(gen *g, const stmt *loop, const bool block)
     for (int i = 0; i < scan.uses.count; i++) {
         const lv_use *u = &scan.uses.items[i];
         if (u->kind != LV_ELEMENT || !loop_viewed(list_elem(u->list->type.decl))) continue;
+        if (listed_constant(u->list)) continue; // A list constant's elements are read where they're written
         bool known = false;
         for (int k = 0; k < g->lv_keys.count && !known; k++) known = strcmp(g->lv_keys.items[k], u->key) == 0;
         if (known) continue; // An outer loop's, or one made here already
@@ -2909,6 +2912,15 @@ static bool is_fresh(const expr *e)
     return e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_LIST || e->kind == E_LITERAL || e->kind == E_DEFAULT;
 }
 
+// A list constant written out (`const List<int> QUAD = [0, 1, 2];`), when `e` names one: the constant, whose
+// literal and array type (decl.list_literal, decl.list_array) its elements are read through. NULL otherwise.
+static const decl *listed_constant(const expr *e)
+{
+    if ((e->kind != E_NAME && e->kind != E_MEMBER) || e->bind != BIND_CONST || e->hoisted) return NULL;
+    const decl *k = e->constant;
+    return k && !k->build_fn && k->list_literal && e->type.kind == TY_LIST ? k : NULL;
+}
+
 // Whether `e` names a place C can point at as it is, for a read: a variable,
 // a parameter or a field through those, or an element of a list, a map or an
 // array of those, which tide_list%d_cat, tide_map%d_at and tide_array%d_ref
@@ -2925,6 +2937,7 @@ static bool pointerable(const expr *e)
             && !e->enum_member && e->object->type.kind != TY_RENDER_TARGET && pointerable(e->object);
     case E_INDEX:
         if (e->skin_operation == SKIN_OP_POSE_INDEX) return true;
+        if (listed_constant(e->object)) return false; // Its element is a value of its own (gen_listed_element)
         if (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP) return true;
         return e->object->type.kind == TY_ARRAY && pointerable(e->object);
     default: return false;
@@ -4601,6 +4614,30 @@ static bool gen_gpu(gen *g, sb *o, const expr *e)
     }
 }
 
+// QUAD[i] of a list constant written out (listed_constant): the element of its values as an array C works out while compiling, or the element
+// type's zero past either end, as a list's; an empty one is that zero, the index still worked out.
+static void gen_listed_element(gen *g, sb *o, const decl *k, const expr *e)
+{
+    const expr *items = k->list_literal;
+    const type element = list_elem(k->return_type.decl);
+    if (k->list_array.kind != TY_ARRAY) {
+        sb_put(o, "((void)(");
+        gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+        sb_put(o, "), ");
+        gen_default(g, o, element);
+        sb_put(o, ")");
+        return;
+    }
+    sb_printf(o, "tide_array%d_get(((%s){{", k->list_array.decl->index, c_type(k->list_array));
+    for (int i = 0; i < items->args.count; i++) {
+        if (i) sb_put(o, ", ");
+        gen_as(g, o, items->args.items[i], element);
+    }
+    sb_put(o, "}}), ");
+    gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+    sb_put(o, ")");
+}
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
     if (e->gpu && !e->hoisted && gen_gpu(g, o, e)) return;
@@ -4782,6 +4819,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ", ");
             gen_expr(g, o, e->lhs);
             sb_put(o, ")");
+            break;
+        }
+        if (listed_constant(e->object)) { // QUAD[i] of a list constant written out: its elements as an array, no list
+            gen_listed_element(g, o, listed_constant(e->object), e);
             break;
         }
         const char *lv = loop_view_of(g, e->object);

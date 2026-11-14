@@ -728,6 +728,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_test(NAME tidec_e2e_fails_visualizers COMMAND tidec_e2e_fails_visualizers)
 endif()
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
+tide_e2e_test(constant_tables) # Array and list constants written out, read by index, count and foreach in match code, views and workers
 tide_e2e_test(settings SOURCES e2e/settings.tide e2e/settings_more.tide) # Several blocks, in two files, are one list
 tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What ticks and frames say to a host's profiler
 tide_e2e_test(handover)

@@ -125,6 +125,12 @@ singleton Marks
     bool shadesInOrder = Shade.Light < Shade.Mid && Shade.Dark >= Shade.Mid;
     bool wrappedAfter = Shade(-1) > Shade.Dark; // 255, a byte's low bits
     Shade[3] shades = Shade.Values();
+    // Array and list constants' elements and counts, as the CPU reads them
+    float stepAt2 = STEPS[2];
+    int orderSum = ORDER[0] + ORDER[1] + ORDER[2] + ORDER[3] + ORDER[4];
+    int orderCount = ORDER.count;
+    float2 lastTurn = TURNS[1];
+    int shadeFirst = int(SHADE_ORDER[0]);
 }
 
 local singleton Art
@@ -431,6 +437,11 @@ struct Pair
 
 const float HALF = 0.5;
 const int THREE = 3;
+// Tables: array and list constants, read on the GPU as the CPU reads them (Marks)
+const float[4] STEPS = [0.25, 0.5, 1, 2];
+const List<int> ORDER = [3, 1, 4, 1, 5];
+const List<float2> TURNS = [float2(1, 0), float2(0, -1)];
+const Shade[3] SHADE_ORDER = [.Dark, .Light, .Mid];
 
 float Twice(float x)
 {
@@ -580,6 +591,13 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
         place++;
     }
     if (after != 3 || place != Shade.Count() || Mode.Values()[number] != Mode.Bright) ok = false;
+
+    // Array and list constants: elements by an index the GPU works out, counts, foreach, and zeros past either end
+    if (STEPS[number + 1] != marks.stepAt2 || ORDER.count != marks.orderCount || TURNS[number] != marks.lastTurn) ok = false;
+    mut int ordered = 0;
+    foreach (var o in ORDER) ordered += o;
+    if (ordered != marks.orderSum || ORDER[number - 2] != 0 || ORDER[number + 9] != 0 || STEPS[number + 3] != 0) ok = false;
+    if (int(SHADE_ORDER[number - 1]) != marks.shadeFirst || SHADE_ORDER[int(Shade.Mid) + number] != Shade.Mid) ok = false;
 
     // Colors
     Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;
