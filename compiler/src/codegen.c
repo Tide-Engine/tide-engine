@@ -4614,8 +4614,9 @@ static bool gen_gpu(gen *g, sb *o, const expr *e)
     }
 }
 
-// QUAD[i] of a list constant written out (listed_constant): the element of its values as an array C works out while compiling, or the element
-// type's zero past either end, as a list's; an empty one is that zero, the index still worked out.
+// QUAD[i] of a list constant written out (listed_constant): the element of its values as an array C works out
+// while compiling, or the element type's zero past either end, as a list's; an empty one is that zero, the index
+// still worked out.
 static void gen_listed_element(gen *g, sb *o, const decl *k, const expr *e)
 {
     const expr *items = k->list_literal;

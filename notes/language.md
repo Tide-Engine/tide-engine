@@ -43,6 +43,15 @@ Owner approved the recommendation ("go with your recommendations"); the rules ar
   is a scratch list made where it's read, not a shared one; on the GPU the table is written inline at each read,
   not as a module-scope `const`; no `==` between tables.
 
+Validation of the three 2026-11-14 completions above (vector equality, enum order and `Values()`, constant tables),
+Windows, Clang 23.1.2, Node 24.22.1: `sanitize` passes the three new E2Es, the related `constants`,
+`constant_flow`, `build_code`, `worker_values`, `arrays`, `lists`, `lists_held`, `maps`, `nested`, `defaults`,
+`default_value`, `math`, `switch_values`, `commands`, `text_arrays`, `optional_fields`, `type_aliases`,
+`alias_assets` and `indexed_loops` E2Es, all 2,824 error, warning, shader golden, SPIR-V, FXC, schedule and outline
+checks, the 280 LSP tests and `tide_platform_shaders` on Vulkan; `web-debug` passes the three new E2Es on WASI and
+`tide_platform_shaders` on WebGPU. The new tidec compiles all 548 `.sources` lists of the sanitize build, but for
+four whose build code needs `--build-cc` (built and passing through CMake). The docs production build passes.
+
 ## Enum ordering and `Enum.Values()` (2026-11-14)
 
 Owner approved the recommendation ("go with your recommendations"); the rules are picks, Provisional in spec.md
