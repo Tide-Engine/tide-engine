@@ -1234,3 +1234,9 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 ## T? fields (2026-10-11)
 
 Code the GPU runs has no values that may be missing, so a `T?` field read there is the error any `T?` is (`type_fits` in `compiler/src/shader.c`). A component or a singleton that has one still gives a frag or a vert its other fields, as only the parts code reads are sent. A struct that has one, or holds a struct that does (`optional_field_in`), isn't a GPU value at all: a local of it, a parameter, a draw's values or `sun.tone.gain` through it is an error that names the field, since the struct the field is kept as would have to be declared in GLSL and WGSL, and is no type of the language's to read. A mesh's vertex with one is refused by the vertex rules. Goldens are unchanged. `compiler/tests/errors/optional_field_gpu_struct`, `optional_field_gpu_read` and `optional_field_vertex`.
+
+## WriteDepth diagnostic fixture correction (2026-11-14)
+
+Build 43582979490 found three older error fixtures still pinning the complete pixel-method list without
+WriteDepth. Their expected message now includes the new method; the generated diagnostic already explained
+it correctly. The three native sanitizer compiler error tests pass. No implementation change.
