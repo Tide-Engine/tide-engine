@@ -1,3 +1,109 @@
+## world.Edit, and `with ownership` on command handlers (2026-11-14)
+
+The owner approved both on 2026-11-14 ("go with your recommendations"), from Mount & Rifle's campaign (79
+`world.Set<` calls, 25 `mut var x = found;` re-copies, one-field wrappers like AddMoney that exist to hold a
+Get/Set pair, and 35 command handlers opening with `if (sender != owner.player) return;`) and bannerlord-duel
+(150 Gets, 75 Sets). Everything below the two approvals is my pick, Provisional in spec.md (The World;
+Commands, Provisional).
+
+**`world.Edit<T>(entity, name) { ... }`**
+
+- **Syntax.** A World call that takes a block, the binding a bare name in the argument list, as
+  `items.Sort(a, b) { ... }` names its elements: the one block call that already declared names. Not
+  `mut var party` (the parser refuses `mut` at a call: "only 'out' is written at a call"), not `out mut var
+  party` (out says the call only gives the variable a value), not a new statement keyword (the task asked for
+  the block-call shape, and stacking with commas then works for free: `world.Edit<A>(a, x), world.Edit<B>(b,
+  y) { }`). `<T>` is required, as for Get/Set/TryGet. No `else` form and no bool result: a block call is a
+  statement, and an else would be a second block every one of the ~120 walkers of `expr.block` (check.c,
+  codegen.c, purity.c, indexing.c, the lane analyses, the language server) would have to learn; `Has` before
+  it says the same.
+- **Checker** (`check_world_call` with `edit`, `edit_allowed`, `edit_conflict`, `check_edit_block` in
+  check.c). The binding is a synthetic `param` (NEW, never in any decl's `params`) with `mode = PARAM_MUT`,
+  the component's type and `param.edit` = the call; `expr.edit_binding` points at it. `find_param` looks in
+  `checker.edits` (a stack of `edit_scope`: binding, call, and the `parallel`/`compare` in force as the Edit
+  began) before the code's params, so the name resolves as BIND_PARAM, "already declared" covers it, and
+  every rule for a `mut` component parameter applies: writes, `mut` arguments, methods with `this`
+  (`component_binding` takes it as attached), heap/C lends (`world_place`). The block is checked by
+  `check_edit_block`, never by check_stmt's generic call-block branch (S_EXPR skips an Edit by name and
+  World object; error paths check it through `check_world_args`), with no `block_depth` (it's ordinary code
+  that runs once: queries, Sorts and loops inside are fine). Effects as a Set: `world->written`,
+  `note_world_use(..., true)`, `note_text_write`, `stands_alone`/`call_acts`, indexing.c's world_sets.
+  Refusals: no block or not a statement; second argument not a bare name; read-only World; a view's match
+  component; inside a parallel step or a comparison; `await` inside (check_await, as `edits.count`); the
+  binding read from a parallel step or comparison started inside the block (check_name, by the scope's
+  recorded parallel/compare; lambdas already refuse capturing a component); the binding handed to a task's
+  component parameter (task_ref: "own" excludes it); `Edit<T>(this, ...)` where the code takes T as a
+  parameter, or in T's own method; Get/TryGet/Set/Edit of T inside the block whose handle is the Edit's as
+  written (`same_handle_written`: `this`, one read-only local or parameter, or the same fields of one;
+  GetPrevious is exempt). A binding nothing names warns ("never used, so the Edit changes nothing").
+- **Codegen** (`gen_world_edit`; `tide_world_edit_<C>` in gen_component_access, behind
+  `decl.world_edit_used`). The entity once into a temporary; `T *name = tide_world_edit_T(world,
+  tide_bindings, e, &row)`: the active binding tide_bound_component finds (the code's own `mut` parameter of
+  that entity, an enclosing Edit of it, through helpers), else `row` loaded from the lanes, else NULL (gone, no
+  T, another shard's) and the block is skipped. Inside the `if`, a new `tide_component_binding` for it heads
+  a block-local `tide_bindings` (shadowing the outer one), so a helper's Set or Edit of that entity finds and
+  replaces or aliases it, exactly as for a `mut` parameter; `tide_owner_entity_/world_<name>` give methods
+  their entity and world (gen_component_owner, component_owner_world). The store, `tide_store_T` (lanes that
+  differ, tide_table_scatter; preparation state kept), is pushed as a `gen_open` cleanup, so `closing()`
+  emits it before every `return`, `break`, `continue`, `try` and `fail` leaving the block, as a GUI container
+  is closed. The binding E_NAME is `(*name)`/`name->` (is_pointer_param), `place_where` gives the
+  component's heap, so list/text/grid writes go to its own memory with no copy; `call_operands` skips the
+  name argument. Borrowing: with lanes there's no row in memory to point at, so a copy of the lanes is
+  unavoidable; everything else is borrowed (the containers, an active binding).
+- **Semantics settled by that**: an Edit is a Get-change-Set that can't miss its Set, plus aliasing that
+  Get/Set lacked: Pay(this) through a helper changes the system's own `mut` binding (+10, +1, +100 is 111,
+  where Set would have discarded the unfinished 10); two Edits of one entity are one component. A Set of the
+  edited entity inside the block (through a helper) replaces the binding whole, as for a `mut` parameter. Get
+  and queries of it inside the block read what's stored.
+- **Schedule**: a World Set, whole component (`world_use.writes`), one thread for a per-entity system. Field
+  granularity was weighed and not built: Edit's load and store would have to touch only lane masks the lane
+  analyses compute for the binding (they're per system parameter, `code_reads(sys, i)`), and `world_use`
+  would need masks; it changes no threading (a Set keeps the system in order anyway), only which other
+  systems wait. Gap below.
+- **Editors**: `world_calls` has Edit (hover, completion with a block snippet); completion in the block
+  knows the name's type (collect_locals pushes a synthetic local for `edit_binding`).
+
+**`with ownership` on command handlers**
+
+- **Spelling**: the existing filter, not a new word. `ownership` already means "the player this code is
+  for": a view's is this machine's; a command handler's is its sender, which the connection names and every
+  machine agrees on. Match code has no machine, so there's nothing for the local meaning to be confused with
+  there; systems and event handlers still refuse it. Also the owner's word ("don't rename it").
+- **Checker** (`check_ownership`): `command` (a non-local handler of a command) passes both of its
+  refusals; `with` adds Owner to `need_mask` as for views. The sender is optional in the parser now
+  (`parse_handler`: none when `)` follows the trigger); a handler with neither a named sender nor an
+  ownership filter is an error at the check of its parameters. Three printers that took params[1] as the
+  sender (put_override_start, the language server's two headers) check its mode.
+- **Codegen**: nothing new but `tide_me`. The dispatcher's per-entity case already ran `gen_chunk_columns`
+  and `gen_row_filter`, which filter by `tide_owner.player == tide_me`; for a command handler `tide_me` is
+  `*tide_sender` (the dispatcher's argument, `&c->sender`) instead of `tide_l->Session.player`. A dropped
+  command is a skipped case: handled, sequence consumed. Command handlers can't be async, so the task-start
+  path has no filter.
+- **Editors**: hover on `ownership` in a command handler says it's the sender's; completion offers it after
+  `with`/`without` in a command handler's parameters (`command_handler`).
+
+Tests: `e2e/world_edit` (3,000 parties in two archetypes with a sparse filter: the ring Give, by Edit,
+equals GiveTwin, the same code by Get/Set, field by field, lists and text included, every tick, in place
+and beside a snapshot, replayed, packed and unpacked, and on the platform's threads; continue/break/return
+out of the block and a function's `return p.gold`; a gone entity and one without Party skipped; the code's
+own binding through a helper and two Edits of one entity; a Bag's list grown into chunks, text and a map,
+then a Set of the same entity through a helper inside the block; a grid's cells a chunk apart; an event
+handler, an async handler before and after its wait, a command handler, and a view's Edit of a local
+component; `Self()` on the binding is the edited entity), `e2e/command_ownership` (three counters, player
+0's, player 1's and nobody's; pokes and steals from both players with and without the filter and the
+sender's name: run, dropped, sequence consumed, resend refused, replay equal), `schedule/world_edit`,
+seventeen error fixtures (`world_edit_*`, `command_unnamed_sender`), the warning fixture
+`world_edit_unused`, LSP `lsp_world_edit`, `lsp_command_ownership`; `world_unknown_method` lists Edit.
+
+Gaps: no `else`; schedule by fields for an Edit's binding (above); Edit of the code's own entity is refused
+where knowable rather than aliased (aliasing does happen through helpers); an Edit's binding read inside a
+parallel step or comparison is refused rather than captured; Mount & Rifle and bannerlord-duel weren't
+changed to use either (read-only references).
+
+Validation: native sanitize (Windows ASan, heap checks): the two e2e targets, world/world_set_*/
+world_functions/commands/ownership/ownership_events/handler_queries e2e, all 2,607 error, warning and
+schedule fixtures, `tidels_tests`; web-debug: the two e2e targets. Linux/macOS/MinGW/Android are CI's.
+
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 
 Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is

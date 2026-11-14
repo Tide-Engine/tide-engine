@@ -1,0 +1,10 @@
+// expect: 'other' is the component an Edit's block changes, which a comparison can't take
+component Health { int value; Entity target; List<int> marks; }
+scene Main { }
+system Hurt(mut Health health, mut World world)
+{
+    world.Edit<Health>(health.target, other)
+    {
+        health.marks.Sort(a, b) { return a + other.value < b; }
+    }
+}

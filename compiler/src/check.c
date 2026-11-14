@@ -22,6 +22,17 @@
 // Semantic analysis: resolves names and types, enforces access and mutability
 // rules, and derives the archetype list from spawn, add and remove sites.
 
+// A `world.Edit<Party>(id, party) { ... }` whose block is being checked: its
+// binding is in scope there, as a parameter (find_param), and what was being
+// checked as it began, which code started inside its block can't take it into
+// (a parallel loop's step and a comparison are functions of their own in C).
+typedef struct edit_scope {
+    param *binding;
+    const expr *call;
+    const struct stmt *parallel;
+    const expr *compare;
+} edit_scope;
+
 typedef struct checker {
     program *prog;
     VEC(expr *) linear_sources; // Validate formats after every body has contributed its field assignments.
@@ -64,6 +75,7 @@ typedef struct checker {
     const expr *awaiting;     // The call an `await` is checking: an async call it waits for, not a task it starts
     const expr *statement_call; // The call a statement makes: an async one starts a task
     int block_depth;          // Inside a block written after a call, which runs where the function runs it
+    VEC(edit_scope) edits;    // world.Edit blocks being checked, innermost last
     VEC(struct task_call) task_calls; // Calls of async functions: awaited, or starting tasks
     const stmt *parallel;     // Checking a parallel loop's step: the loop
     int grid_loops;           // Foreach loops over grids being checked, which go through cells without waiting
@@ -825,6 +837,9 @@ static param *find_param(const checker *c, const str name)
 {
     if (!c->system) return NULL; // Field defaults are checked outside any system.
     if (c->in_sanitize) return NULL; // Sample's parameters aren't Sanitize's
+    for (int i = c->edits.count - 1; i >= 0; i--) { // An Edit's binding, in its block
+        if (str_eq(c->edits.items[i].binding->name, name)) return c->edits.items[i].binding;
+    }
     for (int i = 0; i < c->system->params.count; i++) {
         param *p = &c->system->params.items[i];
         if (p->name.len > 0 && str_eq(p->name, name)) return p;
@@ -6125,8 +6140,15 @@ static void check_task_call(checker *c, expr *e, decl *fn)
         const param *p = &fn->params.items[i];
         const expr *arg = e->args.items[i];
         if (!p->task_ref || arg->type.kind == TY_ERROR) continue;
-        const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && (!arg->param->function_param || arg->param->task_ref);
+        const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && !arg->param->edit
+            && (!arg->param->function_param || arg->param->task_ref);
         if (own) continue;
+        if (arg->kind == E_NAME && arg->bind == BIND_PARAM && arg->param->edit) {
+            diag_error(arg->at, "'" STR_FMT "' gets its '" STR_FMT "' again each time it goes on, from the entity it belongs to, and '"
+                       STR_FMT "' is the component an Edit changes", STR_ARG(fn->name), STR_ARG(p->name), STR_ARG(arg->name));
+            diag_note("pass the task the values it needs, or start it from code that runs for that entity");
+            continue;
+        }
         // A function's or method's own singleton is the world's when every call of it passes its own (check_task_params)
         const bool handed = arg->kind == E_NAME && arg->bind == BIND_PARAM && inherits(c) && !awaited;
         if (handed && arg->param->type.kind == TY_SINGLETON) {
@@ -8095,14 +8117,19 @@ static void note_world_use(const checker *c, decl *component, const bool writes,
 }
 
 // The arguments of a World call that's wrong already, for what's in them: an
-// `out` one is TryGet's, whatever else is wrong.
+// `out` one is TryGet's, whatever else is wrong. An Edit's second is the name
+// it gives its block, and its block is checked here, without that name, as
+// the statement leaves an Edit's block to it (check_stmt, S_EXPR).
 static void check_world_args(checker *c, const expr *e)
 {
+    const bool edit = str_eq_c(e->name, "Edit");
     for (int i = 0; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
+        if (edit && i == 1 && arg->kind == E_NAME) continue;
         if (arg->is_out) begin_out_arg(c, arg);
         else check_expr(c, arg);
     }
+    if (edit && e->block) check_stmt(c, e->block);
 }
 
 static param *component_world(checker *c, const loc at)
@@ -8126,6 +8153,164 @@ static param *component_world(checker *c, const loc at)
     m->uses_owner_world = m->borrows_owner_world = m->uses_this = true;
     m->this_at = at;
     return m->owner_world;
+}
+
+// Whether two handles are one entity as they're written, whatever runs between them: `this`, a variable nothing
+// can change (a read-only local or parameter), or the same fields of one. What this can't tell may still be one.
+static bool same_handle_written(const expr *a, const expr *b)
+{
+    if (!a || !b || a->kind != b->kind) return false;
+    switch (a->kind) {
+    case E_THIS: return true;
+    case E_NAME:
+        if (a->bind != b->bind) return false;
+        if (a->bind == BIND_LOCAL) return a->local && a->local == b->local && !a->local->is_mut;
+        if (a->bind == BIND_PARAM) return a->param && a->param == b->param && a->param->mode != PARAM_MUT;
+        return false;
+    case E_MEMBER:
+        return a->field && a->field == b->field && !a->swizzle_len && !a->property && !b->property
+            && same_handle_written(a->object, b->object);
+    default: return false;
+    }
+}
+
+// A Get, TryGet, Set or Edit, inside an Edit's block, of the component that
+// Edit changes, on the entity it changes as it's written: the binding is that
+// component already, and the World's is what it was before the block. A
+// handle this can't tell is the same is one the binding's rules cover (see
+// docs/spec.md, The World). Whether it said so.
+static bool edit_conflict(const checker *c, const expr *e, const decl *d)
+{
+    if (e->args.count == 0 || str_eq_c(e->name, "Has")) return false; // It has it: the block runs
+    for (int i = c->edits.count - 1; i >= 0; i--) {
+        const edit_scope *s = &c->edits.items[i];
+        if (s->call->type_decl != d || !same_handle_written(s->call->args.items[0], e->args.items[0])) continue;
+        const str name = s->binding->name;
+        if (str_eq_c(e->name, "Edit")) {
+            diag_error(e->at, "this entity's " STR_FMT " is '" STR_FMT "' already: the Edit around this one changes it",
+                       STR_ARG(d->name), STR_ARG(name));
+            diag_note("change '" STR_FMT "' here", STR_ARG(name));
+        } else if (str_eq_c(e->name, "Set")) {
+            diag_error(e->at, "the Edit around this Set changes this entity's " STR_FMT " as '" STR_FMT "'", STR_ARG(d->name),
+                       STR_ARG(name));
+            diag_note("assign it there: '" STR_FMT " = value;', which the Edit puts back as its block ends", STR_ARG(name));
+        } else {
+            diag_error(e->at, "the Edit around this " STR_FMT " changes this entity's " STR_FMT " as '" STR_FMT "', which is put back "
+                       "as its block ends: this would read it as it was before", STR_ARG(e->name), STR_ARG(d->name), STR_ARG(name));
+            diag_note("read '" STR_FMT "'", STR_ARG(name));
+        }
+        return true;
+    }
+    return false;
+}
+
+// What an Edit needs beside what every World call does: a block, a name for
+// its component, the right to change it (a `mut World`, and not a view's of the
+// match), and code that goes in order. Says what's wrong, and whether it's fine.
+static bool edit_allowed(checker *c, const expr *e, const decl *d, const param *world)
+{
+    const decl *code = c->system;
+    const bool helper = c->method != NULL;
+    const char *code_what = !helper ? system_what(code) : code->kind == DECL_FUNCTION ? "function" : "method";
+    char example[64];
+    snprintf(example, sizeof example, STR_FMT, STR_ARG(d->name));
+    example[0] = (char)tolower((unsigned char)example[0]);
+    const expr *name = e->args.items[1];
+    if (!e->block || c->statement_call != e) {
+        diag_error(e->at, "Edit changes the entity's component in a block written after it: '" STR_FMT ".Edit<" STR_FMT ">(entity, %s) "
+                   "{ ... }'", STR_ARG(world->name), STR_ARG(d->name), example);
+        diag_note("the block is where its name is the component, and what it changes is put back on the entity as the block ends");
+        return false;
+    }
+    if (name->kind != E_NAME || name->is_out) {
+        diag_error(name->at, "Edit names the component its block changes: '" STR_FMT ".Edit<" STR_FMT ">(entity, %s) { ... }'",
+                   STR_ARG(world->name), STR_ARG(d->name), example);
+        diag_note("the name is new, declared by the call: in the block it's the entity's component itself, as a 'mut' parameter is");
+        return false;
+    }
+    if (!d->is_local && !helper && code->is_view) {
+        diag_error(e->at, "a view reads the match, and 'Edit<" STR_FMT ">' would change it", STR_ARG(d->name));
+        diag_note("views draw: a system changes the match");
+        return false;
+    }
+    if (world->mode != PARAM_MUT) {
+        diag_error(e->object->at, "'" STR_FMT "' is read-only", STR_ARG(world->name));
+        diag_note("Edit changes an entity's component: declare the parameter as 'mut World " STR_FMT "' to call it",
+                  STR_ARG(world->name));
+        const fix f = {.kind = FIX_ADD_MUT, .at = e->object->at, .param = world};
+        vec_push(c->prog->fixes, f);
+        return false;
+    }
+    if (c->parallel) {
+        diag_error(e->at, "a parallel loop's steps run at once, so each changes only its own place (a grid's cell "
+                          "or block, a list's element or block), and the variables it declares");
+        diag_note("work it out in the step, or in a 'for' loop, which goes in order");
+        return false;
+    }
+    if (c->compare) {
+        diag_error(e->at, "a comparison runs again and again as the list sorts, so it changes nothing outside it");
+        diag_note("work it out before the sort, or in the variables the comparison declares");
+        return false;
+    }
+    if (e->args.items[0]->kind == E_THIS) { // The code's own entity, whose component it may have already
+        for (int i = 0; !helper && i < code->params.count; i++) {
+            const param *p = &code->params.items[i];
+            if (p->type.kind != TY_COMPONENT || p->type.decl != d || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
+            diag_error(e->args.items[0]->at, "this entity's " STR_FMT " is the %s's parameter '" STR_FMT "' already", STR_ARG(d->name),
+                       code_what, STR_ARG(p->name));
+            if (p->mode == PARAM_MUT) diag_note("change '" STR_FMT "' itself, which is put back as the %s ends", STR_ARG(p->name), code_what);
+            else diag_note("take it as 'mut " STR_FMT " " STR_FMT "' and change it there", STR_ARG(d->name), STR_ARG(p->name));
+            return false;
+        }
+        if (helper && c->method->owner == d) {
+            diag_error(e->args.items[0]->at, "this method is " STR_FMT "'s, so its fields are this entity's " STR_FMT " already",
+                       STR_ARG(d->name), STR_ARG(d->name));
+            diag_note("make it a 'mut' method and change its fields");
+            return false;
+        }
+    }
+    return true;
+}
+
+// An Edit's block: its name, the entity's component, is in scope there as a
+// `mut` parameter of the component's (param.edit), and nowhere else. A wrong
+// Edit's block is checked with the name too where it's a name, so what's in it
+// is checked as written.
+static void check_edit_block(checker *c, expr *e, decl *d)
+{
+    if (!e->block) return;
+    expr *name = e->args.count > 1 ? e->args.items[1] : NULL;
+    if (!name || name->kind != E_NAME || name->is_out) {
+        check_stmt(c, e->block);
+        return;
+    }
+    param *binding = NEW(param);
+    binding->name = name->name;
+    binding->name_at = binding->at = name->at;
+    binding->type_name = d->name;
+    binding->type_at = binding->type_qual_at = e->type_arg_at;
+    binding->type = decl_type(d);
+    binding->mode = PARAM_MUT;
+    binding->edit = e;
+    check_reserved(name->name, name->at);
+    if (find_local(c, name->name) || find_param(c, name->name)) {
+        diag_error(name->at, "'" STR_FMT "' is already declared", STR_ARG(name->name));
+        diag_note("the name an Edit gives its component is a new one, for its block");
+    }
+    name->bind = BIND_PARAM;
+    name->param = binding;
+    name->type = binding->type;
+    e->edit_binding = binding;
+    const edit_scope scope = {binding, e, c->parallel, c->compare};
+    vec_push(c->edits, scope);
+    push_scope(c);
+    check_stmt(c, e->block);
+    pop_scope(c);
+    c->edits.count--;
+    if (!binding->read && builds(c->prog)) {
+        diag_warning(name->at, "'" STR_FMT "' is never used, so the Edit changes nothing", STR_ARG(name->name));
+        diag_note("change it in the block, or remove the Edit");
+    }
 }
 
 // world.Get<Health>(e), Has, TryGet and Set: any entity's component by handle through the World parameter. Get gives a copy, or the component's zero value
@@ -8169,10 +8354,11 @@ static type check_world_call(checker *c, expr *e, param *world)
     if (previous) e->name = str_from(str_eq_c(e->name, "GetPrevious") ? "Get" : str_eq_c(e->name, "HasPrevious") ? "Has" : "TryGet");
     const bool set = str_eq_c(e->name, "Set");
     const bool try_get = str_eq_c(e->name, "TryGet");
-    if (set) world->written = true;
-    if (!set && !try_get && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
+    const bool edit = str_eq_c(e->name, "Edit"); // world.Edit<Party>(id, party) { ... } (check_world_edit)
+    if (set || edit) world->written = true;
+    if (!set && !try_get && !edit && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
         check_world_args(c, e);
-        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, GetPrevious, HasPrevious, TryGetPrevious, Parent, ParentToWorld and LocalToWorld", STR_ARG(e->name));
+        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, Edit, GetPrevious, HasPrevious, TryGetPrevious, Parent, ParentToWorld and LocalToWorld", STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "GetPrevious");
         suggest_consider_c(&s, "TryGetPrevious");
@@ -8181,12 +8367,13 @@ static type check_world_call(checker *c, expr *e, param *world)
         suggest_consider_c(&s, "Has");
         suggest_consider_c(&s, "TryGet");
         suggest_consider_c(&s, "Set");
+        suggest_consider_c(&s, "Edit");
         suggest_consider_c(&s, "Parent");
         suggest_consider_c(&s, "LocalToWorld");
         suggest_note(&s);
         return T_ERR;
     }
-    const char *usage = set ? "(entity, value)" : try_get ? "(entity, out var value)" : "(entity)";
+    const char *usage = set ? "(entity, value)" : try_get ? "(entity, out var value)" : edit ? "(entity, health) { ... }" : "(entity)";
     if (e->type_arg.len == 0) {
         check_world_args(c, e);
         diag_error(e->at, STR_FMT " takes the component in '<>': '" STR_FMT "." STR_FMT "<Health>%s'", STR_ARG(e->name),
@@ -8260,16 +8447,26 @@ static type check_world_call(checker *c, expr *e, param *world)
             check_expr_want(c, arg, decl_type(d));
         }
     }
-    for (int i = set || try_get ? 2 : 1; i < e->args.count; i++) {
+    for (int i = set || try_get || edit ? 2 : 1; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         if (arg->is_out) begin_out_arg(c, arg);
         else check_expr(c, arg);
     }
-    if (e->args.count != (set || try_get ? 2 : 1)) {
+    if (e->args.count != (set || try_get || edit ? 2 : 1)) {
         diag_error(e->at, set       ? STR_FMT " takes an entity's handle and its new component: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
                           : try_get ? STR_FMT " takes an entity's handle and the variable its component goes to: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
+                          : edit    ? STR_FMT " takes an entity's handle and a name for its component, which its block changes: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
                                     : STR_FMT " takes one entity's handle: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'",
                    STR_ARG(e->name), STR_ARG(world->name), STR_ARG(e->name), STR_ARG(d->name), usage);
+        if (edit) check_edit_block(c, e, d);
+        return T_ERR;
+    }
+    if (edit && !edit_allowed(c, e, d, world)) {
+        check_edit_block(c, e, d);
+        return T_ERR;
+    }
+    if (ok && !previous && edit_conflict(c, e, d)) { // (What the tick started with is no Edit's)
+        if (edit) check_edit_block(c, e, d);
         return T_ERR;
     }
     if (try_get) {
@@ -8351,10 +8548,13 @@ static type check_world_call(checker *c, expr *e, param *world)
         if (helper || code->is_handler) c->prog->keeps_previous_entities = true;
         return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
     }
-    if (ok) note_world_use(c, d, set, e->at);
+    // An Edit reads the entity's component and puts it back, as a Set does: through the World, any entity's
+    if (ok) note_world_use(c, d, set || edit, e->at);
     if (set && builds(c->prog)) d->world_set_used = true;
-    if (set) note_text_write(c, decl_holds_text(d), e->at, d, false); // Its text and lists go into its heap
-    if (set) return T_VOID_;
+    if (edit && builds(c->prog)) d->world_edit_used = true;
+    if (set || edit) note_text_write(c, decl_holds_text(d), e->at, d, false); // Its text and lists go into its heap
+    if (edit) check_edit_block(c, e, d);
+    if (set || edit) return T_VOID_;
     return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
 }
 
@@ -11271,6 +11471,15 @@ static type check_name(checker *c, expr *e)
     param *p = find_param(c, e->name);
     if (!p && str_eq_c(e->name, "world") && !field_in_scope(c, e->name)
         && !(c->method && find_property(c->method->owner, e->name))) p = component_world(c, e->at);
+    for (int i = 0; p && p->edit && i < c->edits.count; i++) {
+        const edit_scope *scope = &c->edits.items[i];
+        if (scope->binding != p || (c->parallel == scope->parallel && c->compare == scope->compare)) continue;
+        // A step and a comparison are functions of their own, handed what they read of the code around them
+        diag_error(e->at, "'" STR_FMT "' is the component an Edit's block changes, which %s can't take", STR_ARG(e->name),
+                   c->compare != scope->compare ? "a comparison" : "a parallel loop's step");
+        diag_note("copy what it needs into a local before the %s", c->compare != scope->compare ? "sort" : "loop");
+        return T_ERR;
+    }
     if (p) {
         if (p->call_binding && !e->binding_object) {
             expr *object = NEW(expr);
@@ -13040,6 +13249,13 @@ static type check_await(checker *c, expr *e)
     if (c->block_depth > 0) {
         diag_error(e->at, "a task can't wait inside a block written after a call: the function runs it");
         diag_note("move the wait before or after the call, or replace the callback with ordinary async control flow");
+        return T_ERR;
+    }
+    if (c->edits.count > 0) { // The edit is put back as its block ends, in the tick it began in
+        const param *binding = c->edits.items[c->edits.count - 1].binding;
+        diag_error(e->at, "a task can't wait inside an Edit's block: '" STR_FMT "' is put back on its entity as the block ends, in "
+                   "the tick the block began in", STR_ARG(binding->name));
+        diag_note("end the Edit before the wait, and Edit the entity again after it");
         return T_ERR;
     }
     if (c->grid_loops > 0) {
@@ -15389,7 +15605,7 @@ static bool stands_alone(const expr *e)
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
         || (call == CALL_GRID && !str_eq_c(called->name, "Sample") && !str_eq_c(called->name, "SampleGrad") && !str_eq_c(called->name, "SampleLevel"))
-        || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
+        || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet") || str_eq_c(called->name, "Edit")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0
         || (call == CALL_VISIBILITY && (called->visibility_operation & VISIBILITY_MUT))
@@ -15655,6 +15871,9 @@ static void check_stmt(checker *c, stmt *s)
         }
         if (e->block && call == CALL_LIST && str_eq_c(called->name, "Sort")) {
             // A Sort's comparison: checked with the call, as code of its own (check_sort)
+        } else if (e->block && called->kind == E_METHOD && str_eq_c(called->name, "Edit") && called->object
+                   && called->object->type.kind == TY_WORLD) {
+            // An Edit's block: checked with the call, with its name in scope (check_edit_block)
         } else if (e->block) {
             // The block after a call: the caller's own code, run where the function runs it.
             const bool takes = (call == CALL_GUI && (e->gui & GUI_CONTAINER)) || (call == CALL_FUNCTION && e->method->takes_action)
@@ -19363,15 +19582,17 @@ static void check_ownership(const checker *c, decl *sys, param *p)
     const bool with = p->mode == PARAM_WITH;
     const char *word = with ? "with" : "without";
     p->type = (type){TY_VOID, NULL};
-    if (!is_local_code(sys)) {
+    // A command handler's player is the one who sent it, whom the connection names: the same on every machine
+    const bool command = sys->is_handler && !sys->is_local && sys->event && sys->event->is_command;
+    if (!is_local_code(sys) && !command) {
         diag_error(p->type_at, "the match runs the same on every machine, so %s can't filter by '%s ownership'",
                    sys->is_handler ? "an event handler" : "a system", word);
-        diag_note("ownership is whether this machine's player owns the entity, which views ask; for entities that have "
-                  "%s owner, write '%s Owner'", with ? "any" : "no", word);
+        diag_note("ownership is whether this machine's player owns the entity, which views ask, or a command's sender, which "
+                  "command handlers ask; for entities that have %s owner, write '%s Owner'", with ? "any" : "no", word);
         suggest_replacement(p->type_name, "Owner");
         return;
     }
-    if (!sys->is_view && (!sys->is_handler || !sys->event || sys->event->is_local || sys->event == c->prog->forgotten)) {
+    if (!command && !sys->is_view && (!sys->is_handler || !sys->event || sys->event->is_local || sys->event == c->prog->forgotten)) {
         diag_error(p->type_at, "'%s ownership' filters match entities in views and local handlers of match events", word);
         diag_note("local entities live on this machine, and no player owns them");
         return;
@@ -20156,6 +20377,15 @@ static void check_params(const checker *c, decl *sys)
         p->query_rows = !p->query_local && (sys->is_view || sys->listens);
     }
 
+    // A command handler names its sender, to check what it may do, or leaves that to `with ownership`, which runs it only
+    // for the sender's own entities (or `without ownership`, only for others')
+    if (sys->is_handler && sys->is_command && !sys->ownership
+        && (sys->params.count < 2 || sys->params.items[1].mode != PARAM_SENDER)) {
+        diag_error(sys->at, "command handler '" STR_FMT "' doesn't name its sender, so nothing it does can depend on who sent it",
+                   STR_ARG(sys->name));
+        diag_note("name it, 'command(" STR_FMT " ...)' with ', PlayerID sender' after the command, and check it; or take 'with "
+                  "ownership', which runs the handler only for an entity its sender owns", STR_ARG(sys->params.items[0].type_name));
+    }
     // A handler that takes components reads the entity its event is sent to,
     // so every Send of that event must name one (see check_sends).
     if (sys->is_handler && sys->event && sys->per_entity) {
@@ -20273,7 +20503,7 @@ static bool call_acts(const expr *e)
         || skinned_changes_pose(e->skin_operation);
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
-    case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
+    case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet") || str_eq_c(e->name, "Edit");
     case CALL_VISIBILITY: return (e->visibility_operation & VISIBILITY_MUT) != 0;
     case CALL_FUNCTION:
     case CALL_METHOD: {
@@ -24430,7 +24660,8 @@ static void put_override_start(sb *out, const decl *v)
         sb_printf(out, "%s%s%s(%s" STR_FMT, v->is_local ? "local " : "", v->is_async ? "async " : "", v->is_command ? "command" : "event",
                   trigger->verified ? "verified " : "", STR_ARG(trigger->type_name));
         if (trigger->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(trigger->name));
-        if (v->is_command && v->params.count > 1) sb_printf(out, ", PlayerID " STR_FMT, STR_ARG(v->params.items[1].name));
+        if (v->is_command && v->params.count > 1 && v->params.items[1].mode == PARAM_SENDER)
+            sb_printf(out, ", PlayerID " STR_FMT, STR_ARG(v->params.items[1].name));
         sb_put(out, ")");
     }
 }

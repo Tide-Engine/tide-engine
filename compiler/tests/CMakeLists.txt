@@ -107,6 +107,11 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_world_set_mut PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_world_set_mut PRIVATE TIDE_SET_MUT_THREADS=1)
 endif()
+tide_e2e_test(world_edit) # world.Edit<T>(e, name) { ... }: in place, put back however the block is left; Get/Set's results
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_world_edit PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_world_edit PRIVATE TIDE_EDIT_THREADS=1)
+endif()
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(properties)
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
@@ -422,6 +427,8 @@ tide_e2e_test(events_lookup) # Verified event target rows and fallback after str
 tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
 tide_e2e_test(events_runs) # Runs of events taken in their own loop: found, moved, other and gone targets, against C
 tide_e2e_test(commands)
+# `with ownership` and `without ownership` on command handlers: by the sender, from two players, with and without its name
+tide_e2e_test(command_ownership)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)
 set_tests_properties(tidec_e2e_commands_channels PROPERTIES TIMEOUT 300)

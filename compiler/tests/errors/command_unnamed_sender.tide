@@ -1,0 +1,5 @@
+// expect: command handler 'Rename' doesn't name its sender, so nothing it does can depend on who sent it
+component Name { string value; }
+command SetName { string text; }
+scene Main { }
+command(SetName set) Rename(mut Name name) { name.value = set.text; }

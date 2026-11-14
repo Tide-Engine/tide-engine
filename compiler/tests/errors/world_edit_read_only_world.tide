@@ -1,0 +1,7 @@
+// expect: Edit changes an entity's component: declare the parameter as 'mut World world' to call it
+component Health { int value; Entity target; }
+scene Main { }
+system Hurt(Health health, World world)
+{
+    world.Edit<Health>(health.target, other) { other.value -= 1; }
+}

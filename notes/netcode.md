@@ -1,5 +1,16 @@
 # Netcode: sessions, prediction, commands
 
+## A command handler's `with ownership`: the sender's own entity (2026-11-14)
+
+`command(Rename rename) RenamePlayer(mut Name name, with ownership)` runs only when the target's
+`Owner.player` is the command's sender; `without ownership` only when it isn't (no Owner included). Nothing
+in the session, the wire or the world changed: the dispatcher's per-entity case filters as a view's rows do,
+with `tide_me = *tide_sender` (the `&c->sender` it's handed) where a view has `Session.player`. A command the
+filter drops is handled as a guard's `return` is: its sequence is consumed, a resend is refused, replay
+drops it again. The sender may go unnamed in the trigger when the handler filters; otherwise naming it is
+still required. Checker, codegen, editors and tests: language.md, world.Edit, and `with ownership` on
+command handlers.
+
 ## The host's tick beside its frame (2026-11-12)
 
 A session whose host asks (`tide_session_desc.alongside`, the `ticksAlongsideViews` setting) runs the last tick

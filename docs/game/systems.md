@@ -207,15 +207,33 @@ system Reset(mut Health health, mut World world)
 
 Between the `Set` and the final write-back, `Get` and queries read the published value of 20. An explicit copy made before `Set` keeps its old value.
 
-What `Get` gives is a copy, as a list's element is, so changing another entity's component is taking it out, changing it and putting it back:
+What `Get` gives is a copy, as a list's element is. To change another entity's component, `Edit` it where it is: the block after the call names the component, and what the block changes is put back on the entity as the block ends.
 
 ```csharp
 system Heal(Healer healer, mut World world)
 {
-    mut var health = world.Get<Health>(healer.patient);
-    health.value += 1;
-    world.Set<Health>(healer.patient, health);
+    world.Edit<Health>(healer.patient, health)
+    {
+        if (health.value >= 100) return;
+        health.value += 1;
+        health.lastHealer = this;
+    }
 }
+```
+
+- In the block, `health` is the entity's `Health` itself, as a `mut` parameter is the component of the entity a system runs for: its fields change where they are, its lists and text too, with nothing copied, and a function's `mut` parameter can take it. The name is new, and only the block has it.
+- It's put back however the block is left: at its end, or by a `return`, or a `break` or `continue` of a loop the `Edit` is in. There's no `Set` to forget on an early `return`.
+- An entity that's gone, or has no `Health`, skips the block, as `Set` does nothing then. Check `world.Has<Health>(e)` first for what to do instead.
+- It needs `mut World`, like `Set`, and the schedule counts it as `Set`: it reads and writes every entity's `Health`, and keeps the system on one thread.
+- Inside the block, read and change `health`, not `world.Get<Health>` of the same entity: the compiler says so where it can tell they're the same, and a task can't `await` there.
+- `world.Edit<Purse>(from, a), world.Edit<Purse>(to, b) { ... }` edits two entities in one block, as other calls that take a block are listed. If they turn out to be one entity, `a` and `b` are the same component, and both changes land.
+
+Taking it out, changing it and putting it back is what `Edit` does for you, and still works:
+
+```csharp
+mut var health = world.Get<Health>(healer.patient);
+health.value += 1;
+world.Set<Health>(healer.patient, health);
 ```
 
 ### As the tick started, by handle
@@ -232,7 +250,7 @@ system Chase(mut Body body, Bot bot, World world)
 
 Like a [`previous` binding](#as-the-tick-started), they read nothing the tick can change: the system waits for no system that changes `Body`, none waits for it, and its entities go across threads though it changes `Body` itself, where `world.Get<Body>` would keep them on one. An entity that wasn't there when the tick started (spawned this tick) has no `Body` then: `HasPrevious` is false and `GetPrevious` gives the zero value. Systems, match handlers and the functions they hand their World to can call them; views and tasks can't.
 
-The signature doesn't say which components a system reaches this way: the engine reads it off the calls. Each counts as access to every entity's component, so the system is scheduled like one that touches them all, and one that calls `Set` runs on one thread. [The schedule](./schedule.md#through-the-world) and your editor show what each system reads and writes through its `World`. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
+The signature doesn't say which components a system reaches this way: the engine reads it off the calls. Each counts as access to every entity's component, so the system is scheduled like one that touches them all, and one that calls `Set` or `Edit` runs on one thread. [The schedule](./schedule.md#through-the-world) and your editor show what each system reads and writes through its `World`. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
 
 A function or method can take the `World` too, and the system passes its own:
 
@@ -248,7 +266,7 @@ system Aim(mut Attacker attacker, World world)
 }
 ```
 
-What the function reaches through it counts as the system's own, through however many functions it's passed, so nothing about the schedule changes: `Aim` reads every entity's `Health`. A function that calls `Set` takes `mut World`, and so does the system that passes it. The parameter rules above apply through helpers too, and a view can't call one that changes the match.
+What the function reaches through it counts as the system's own, through however many functions it's passed, so nothing about the schedule changes: `Aim` reads every entity's `Health`. A function that calls `Set` or `Edit` takes `mut World`, and so does the system that passes it. The parameter rules above apply through helpers too, and a view can't call one that changes the match.
 
 Views and event handlers take a `World` too; a view only reads the match through it, and can change local entities with `mut World`. A [local handler](./events.md#local-handlers) of one of the match's events takes none: it hears the match as the event left it, and the `World` is the match as it is now.
 
@@ -330,7 +348,7 @@ stage 2  Move  (per entity)
          after Steer: both write Body
 ```
 
-Declaring more than a system uses makes others wait for nothing, so it's a warning: a parameter that's never used, or a `mut` one that's never written (a `mut World` that never calls `Set` too). A component that's only there to pick entities belongs in `with`. The editors offer quick fixes for these.
+Declaring more than a system uses makes others wait for nothing, so it's a warning: a parameter that's never used, or a `mut` one that's never written (a `mut World` that never calls `Set` or `Edit` too). A component that's only there to pick entities belongs in `with`. The editors offer quick fixes for these.
 
 ## Written in C
 

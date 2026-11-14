@@ -1953,12 +1953,13 @@ static void format_header(const decl *d, sb *out)
     if (d->is_handler && d->params.count > 0) {
         sb_put(out, d->is_command ? "command(" : "event(");
         format_param(&d->params.items[0], out);
-        if (d->is_command && d->params.count > 1) {
+        const bool sender = d->is_command && d->params.count > 1 && d->params.items[1].mode == PARAM_SENDER;
+        if (sender) {
             sb_put(out, ", ");
             format_param(&d->params.items[1], out);
         }
         sb_printf(out, ") " STR_FMT "(", STR_ARG(d->name));
-        first = d->is_command ? 2 : 1;
+        first = sender ? 2 : 1;
     } else {
         sb_printf(out, "%s%s " STR_FMT "(", d->extern_system ? "extern " : "", decl_keyword(d), STR_ARG(d->name));
     }
@@ -2760,6 +2761,12 @@ static const method_form world_calls[] = {
     {"Set", "Set<T>(Entity entity, T value)",
      "Puts the component back on the entity, right away; nothing happens when the entity has none. It needs "
      "`mut World`, counts as writing every entity's, and keeps a system on one thread."},
+    {"Edit", "Edit<T>(Entity entity, T value) { ... }",
+     "Changes the entity's component where it is: in the block, the name is the component itself, as a `mut` "
+     "parameter is, and what the block changes is put back on the entity as the block ends, however it's left "
+     "(`return`, `break`, `continue`). An entity that's gone, or has none, skips the block: "
+     "`world.Edit<Health>(target, health) { health.value -= 5; }`. Like `Set`, it needs `mut World`, counts as "
+     "writing every entity's, and keeps a system on one thread."},
 };
 
 static const method_form singleton_calls[] = {
@@ -3610,6 +3617,14 @@ static void describe(const occurrence *o, sb *out)
         const bool with = o->param->mode == PARAM_WITH;
         const bool listener = o->param_of && o->param_of->listens;
         code_block(out, with ? "with ownership" : "without ownership");
+        if (o->param_of && o->param_of->is_handler && !o->param_of->is_local && o->param_of->event && o->param_of->event->is_command) {
+            sb_put(out, with ? "\n\nFilter: the command handler runs for the entities the player who sent the command owns: "
+                               "those with an `Owner` whose `player` is the sender. A command sent for any other entity is "
+                               "dropped, as a guard would drop it. For entities any player owns, write `with Owner`."
+                             : "\n\nFilter: the command handler runs for the entities the player who sent the command doesn't "
+                               "own: another player's, and those with no `Owner`. A command sent for the sender's own is dropped.");
+            break;
+        }
         sb_printf(out, "\n\nFilter: the %s runs for ", listener ? "local handler" : "view");
         sb_put(out, with ? "the entities this machine's player owns: those with an `Owner` "
                            "whose `player` is `Session.player`. For entities any player owns, write `with Owner`."
@@ -7094,6 +7109,17 @@ static void collect_list(stmt *const *stmts, const int count, const loc at, scop
             for (int k = 0; k < 2; k++) { // items.Sort(a, b) { ... }: its two elements
                 if (s->value->compare[k]) vec_push(sc->locals, s->value->compare[k]);
             }
+            const param *edited = s->value->edit_binding;
+            if (edited) { // world.Edit<Party>(id, party) { ... }: its name, the entity's component, as a local of its type is
+                stmt *local = arena_alloc(sizeof *local);
+                memset(local, 0, sizeof *local);
+                local->kind = S_VAR;
+                local->name = edited->name;
+                local->name_at = edited->name_at;
+                local->type = edited->type;
+                local->is_mut = true;
+                vec_push(sc->locals, local);
+            }
             collect_locals(s->value->block, at, sc);
         }
         if (s->kind == S_SWITCH && loc_cmp(at, s->end) <= 0) {
@@ -7800,6 +7826,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb snippet = {0};
             if (strcmp(forms[i].name, "TryGet") == 0) sb_put(&snippet, "TryGet<${1:Component}>(${2:entity}, out var ${3:value})");
             else if (strcmp(forms[i].name, "TryGetPrevious") == 0) sb_put(&snippet, "TryGetPrevious<${1:Component}>(${2:entity}, out var ${3:value})");
+            else if (strcmp(forms[i].name, "Edit") == 0) sb_put(&snippet, "Edit<${1:Component}>(${2:entity}, ${3:value})\n{\n\t$0\n}");
             else sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
             item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
         }
@@ -9088,12 +9115,14 @@ static void complete_overrides(completion *c)
                 sb_printf(&header, "%s%s%s(", v->is_local ? "local " : "", v->is_async ? "async " : "",
                           v->is_command ? "command" : "event");
                 put_param_here(&header, &v->params.items[0]);
-                if (v->is_command && v->params.count > 1) {
+                // A command handler's sender, where it names one (one that filters by ownership may not)
+                const bool sender = v->is_command && v->params.count > 1 && v->params.items[1].mode == PARAM_SENDER;
+                if (sender) {
                     sb_put(&header, ", ");
                     put_param_here(&header, &v->params.items[1]);
                 }
                 sb_put(&header, ") ");
-                first = v->is_command ? 2 : 1;
+                first = sender ? 2 : 1;
             } else if (v->kind == DECL_SYSTEM) {
                 sb_put(&header, v->is_view ? "view " : "system ");
             } else if (v->kind == DECL_SHADER) {
@@ -9337,6 +9366,18 @@ static bool local_match_handler(const int open)
         if (str_eq(event->name, DOC->toks[name].text) && event->is_local) return false;
     }
     return !str_eq_c(DOC->toks[name].text, "Forgotten");
+}
+
+// A command handler's parameter header, `command(Rename rename) RenamePlayer(`: its filters are by the sender's ownership.
+static bool command_handler(const int open)
+{
+    if (open < 3 || DOC->toks[open - 2].kind != T_RPAREN) return false;
+    int depth = 1, trigger = open - 3;
+    for (; trigger >= 0; trigger--) {
+        if (DOC->toks[trigger].kind == T_RPAREN) depth++;
+        if (DOC->toks[trigger].kind == T_LPAREN && --depth == 0) break;
+    }
+    return trigger >= 1 && DOC->toks[trigger - 1].kind == T_IDENT && str_eq_c(DOC->toks[trigger - 1].text, "command");
 }
 
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
@@ -10703,10 +10744,13 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 complete_param_name(&c, prev->text);
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
-            // Views and local match-event handlers can filter by this machine's player.
+            // Views and local match-event handlers can filter by this machine's player, and command handlers by the sender.
             if (view || (f.header == HEADER_SYSTEM && local_match_handler(f.open))) {
                 item(&c, "ownership", CK_KEYWORD,
                      pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
+            } else if (f.header == HEADER_SYSTEM && command_handler(f.open)) {
+                item(&c, "ownership", CK_KEYWORD,
+                     pk == T_WITH ? "Entities the command's sender owns" : "Entities the command's sender doesn't own", NULL, NULL);
             }
             if (view) {
                 // ...and with verified Dead: by the world the server has confirmed, which only they see

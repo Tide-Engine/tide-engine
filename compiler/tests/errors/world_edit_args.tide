@@ -1,0 +1,7 @@
+// expect: Edit takes an entity's handle and a name for its component, which its block changes: 'world.Edit<Health>(entity, health) { ... }'
+component Health { int value; Entity target; }
+scene Main { }
+system Hurt(Health health, mut World world)
+{
+    world.Edit<Health>(health.target) { }
+}

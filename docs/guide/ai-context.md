@@ -49,7 +49,7 @@ system CountBalls(query (with Ball) balls, mut Score score)
 }
 ```
 
-This fragment assumes the `Ball` tag and `Score` singleton above. Query bindings are read-only match data; a row exposes its bound values and `.entity`. An ordinary explicit `World world` parameter supports handle lookups, for example `world.Get<Body>(entity)` (a copy) and `world.Has<Body>(entity)`. A `mut World world` parameter permits `world.Set<Body>(entity, replacement)`. Look up the [query and World rules](../game/systems.md#another-set-of-entities) before building cross-entity changes; do not invent `world.Entities`, `GetComponent` or writable query bindings.
+This fragment assumes the `Ball` tag and `Score` singleton above. Query bindings are read-only match data; a row exposes its bound values and `.entity`. An ordinary explicit `World world` parameter supports handle lookups, for example `world.Get<Body>(entity)` (a copy) and `world.Has<Body>(entity)`. A `mut World world` parameter permits `world.Set<Body>(entity, replacement)`, and changing another entity's component in place with `world.Edit<Body>(entity, body) { body.velocity.y = 5; }`: in the block, `body` is that entity's component, put back when the block ends, even on `return` or `continue`; an entity without one skips the block. Prefer `Edit` to a `Get`, a change and a `Set`. Look up the [query and World rules](../game/systems.md#another-set-of-entities) before building cross-entity changes; do not invent `world.Entities`, `GetComponent` or writable query bindings.
 
 ## Input and submitted actions
 
@@ -84,16 +84,15 @@ view ReadyButton(Ready ready, with ownership)
         this.Send(SetReady { value = !ready.value });
 }
 
-command(SetReady action, PlayerID sender) ApplyReady(Owner owner, mut Ready ready)
+command(SetReady action) ApplyReady(mut Ready ready, with ownership)
 {
-    if (sender != owner.player) return;
     ready.value = action.value;
 }
 ```
 
-Spawn `Ready` alongside each player's `Owner` to use this fragment. The connection supplies the sender; never trust a sender ID in the payload. Validate ownership and game rules before writing state. Handlers return void, with ordinary guard clauses. They have no acceptance method or transaction. A global command uses `Send(...)`; an entity-targeted command uses `entity.Send(...)`. See [Commands](../game/commands.md) and [GUI](../game/gui.md).
+Spawn `Ready` alongside each player's `Owner` to use this fragment. In a command handler, `with ownership` runs it only for an entity the command's sender owns (`without ownership`, only for others'); a handler without it names the sender, `command(SetReady action, PlayerID sender)`, and checks it, such as `if (sender != owner.player) return;`. The connection supplies the sender; never trust a sender ID in the payload. Validate ownership and game rules before writing state. Handlers return void, with ordinary guard clauses. They have no acceptance method or transaction. A global command uses `Send(...)`; an entity-targeted command uses `entity.Send(...)`. See [Commands](../game/commands.md) and [GUI](../game/gui.md).
 
-Initialize multiplayer entities in `PlayerJoined`, and clean up their entities/state in `PlayerLeft` when the game needs it. **Treat `PlayerID` as an opaque identity, not a display index:** retain `joined.player` or read an entity's `Owner.player`; do not assume the players are `PlayerID(1)` and `PlayerID(2)`. When the game needs ordered seats (left and right paddle, wallet slots), assign them in the `PlayerJoined` handler from a singleton, such as `mut Seats seats` holding each seat's `PlayerID`, and free them in `PlayerLeft`. Do not count the entities spawned for earlier players instead: spawns apply at the end of the tick, and two players can join in the same tick. `with ownership` selects this machine's entities in local code; match systems use `with Owner`. Write separate filters as `with Wallet, with ownership`.
+Initialize multiplayer entities in `PlayerJoined`, and clean up their entities/state in `PlayerLeft` when the game needs it. **Treat `PlayerID` as an opaque identity, not a display index:** retain `joined.player` or read an entity's `Owner.player`; do not assume the players are `PlayerID(1)` and `PlayerID(2)`. When the game needs ordered seats (left and right paddle, wallet slots), assign them in the `PlayerJoined` handler from a singleton, such as `mut Seats seats` holding each seat's `PlayerID`, and free them in `PlayerLeft`. Do not count the entities spawned for earlier players instead: spawns apply at the end of the tick, and two players can join in the same tick. `with ownership` selects this machine's entities in local code, and the command sender's in a command handler; match systems use `with Owner`. Write separate filters as `with Wallet, with ownership`.
 
 All machines in a match must execute identical simulation rules. Read [Matches](../multiplayer/matches.md) before implementing room setup, admission or migration. Optional [Rooms](../packages/rooms.md) supplies a Play/Host/Join menu; it is not automatically included in a new folder.
 

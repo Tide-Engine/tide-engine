@@ -1,0 +1,14 @@
+// warnings: 1
+// expect: 'other' is never used, so the Edit changes nothing
+// expect: change it in the block, or remove the Edit
+component Health { int value; Entity target; }
+singleton Tally { int edits; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+system Hurt(Health health, mut Tally tally, mut World world)
+{
+    world.Edit<Health>(health.target, other) { tally.edits++; }
+    world.Edit<Health>(health.target, used) { used.value -= 1; }
+}

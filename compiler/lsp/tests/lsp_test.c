@@ -10079,6 +10079,39 @@ TIDE_TEST(lsp_functions_send_and_spawn)
 #undef ACTS
 }
 
+TIDE_TEST(lsp_world_edit)
+{
+    start();
+    open_document(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                 "    world.Edit<Health>(healer.patient, health) { health.value += 1; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(10, 11), "Edit<Health>(Entity entity, Health value) { ... }"));
+    TIDE_CHECK(has(hover_at(10, 11), "is put back on the entity as the block ends"));
+    TIDE_CHECK(has(hover_at(10, 50), "Health health")); // The block's name: the entity's component
+    const char *members = complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world) { world.$ }\n");
+    TIDE_CHECK(offers(members, "Edit"));
+    TIDE_CHECK(has(members, "Edit<${1:Component}>(${2:entity}, ${3:value})"));
+    // In its block, the name's fields
+    TIDE_CHECK(offers(complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                              "    world.Edit<Health>(healer.patient, health) { health.$ }\n}\n"), "value"));
+    // The formatter leaves an Edit as it's written: a call, its <>, and its block's braces on lines of their own
+    TIDE_CHECK(has(format_reply(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                               "    world.Edit<Health>(healer.patient, health)\n    {\n"
+                                               "        health.value += 1;\n    }\n}\n"), "\"result\":[]"));
+}
+
+TIDE_TEST(lsp_command_ownership)
+{
+    start();
+    open_document("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
+                  "command(SetName set) Rename(mut Name name, with ownership) { name.value = set.text; }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Name, Owner { player = PlayerID(0) }); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(3, 49), "the entities the player who sent the command owns"));
+    TIDE_CHECK(offers(complete("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
+                               "command(SetName set) Rename(mut Name name, with $) { }\n"), "ownership"));
+}
+
 TIDE_TEST(lsp_world_in_functions)
 {
     start();

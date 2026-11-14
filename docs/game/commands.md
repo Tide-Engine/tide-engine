@@ -49,6 +49,29 @@ command(Rename rename, PlayerID sender) RenamePlayer(
 
 The engine supplies `sender` from the player's connection. It is not a field that the player sends. `Owner` identifies the target's owner; targeting an entity does not grant permission to change it.
 
+### Only the sender's own entities
+
+Most handlers that take a target begin by checking that the sender owns it. `with ownership` says that in the signature, and the guard and the `Owner` parameter go:
+
+```csharp
+command(Rename rename) RenamePlayer(mut Name name, with ownership)
+{
+    if (rename.name.length == 0 || rename.name.length > 32) return;
+    name.value = rename.name;
+}
+```
+
+The handler runs only when the entity the command was sent to has an `Owner` whose `player` is the command's sender. A command sent for any other entity is dropped, as the guard dropped it: it counts as handled, a resend of it is refused, and nothing changes. `without ownership` is the other side, any entity the sender doesn't own, another player's or nobody's, for something like an attack:
+
+```csharp
+command(Steal steal, PlayerID sender) Take(mut Purse purse, without ownership)
+{
+    purse.coins -= steal.amount;
+}
+```
+
+It's the word a [view](./views-and-the-match.md) filters with, where it means this machine's player; in a command handler, the player is the one who sent the command. A handler that filters this way can leave its sender out of the first parentheses, or name it to read it. One that does neither is an error, since nothing it did could depend on who sent it. Systems and event handlers can't filter by ownership: nothing there is a player's, so write `with Owner` for entities any player owns.
+
 Below are two machines in one match, each with a badge its player owns. Click the name's field in a frame, type one, and press **Rename my badge**: the command goes to the server, which picks its tick, and both machines run the handler. **Rename theirs** sends the same command for the other player's badge. Nothing stops a machine from sending it, so the handler looks at who did, refuses, and counts.
 
 ::: tide-match commands A command, and a handler that says no
