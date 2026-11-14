@@ -24,6 +24,11 @@ add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x15fd48b33af
 # machine sent its own, and gone once nobody's near (notes/voxels.md).
 tide_add_game(bench_voxels SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
 target_link_libraries(bench_voxels PRIVATE tide_bench)
+add_test(NAME bench_voxels COMMAND bench_voxels --quick --expect 0x0ae800b4105e3290)
+# Voxels to play: `voxels` in a window, with its views, the mouse and the keys
+if(TIDE_PLATFORM)
+    tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
+endif()
 
 # The home page's planet (examples/earth), its match as it is but for taking
 # up to 256 players rather than the page's 64, to see how far it goes. Its

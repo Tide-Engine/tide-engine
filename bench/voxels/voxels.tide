@@ -1,6 +1,7 @@
 // Voxels: an endless world of blocks in several dimensions, the open-world
 // benchmark. Bots walk and fly across it, dig and build, and hop between
-// dimensions.
+// dimensions. play.tide makes it a game people play: it draws the chunks
+// this machine has and what's past them.
 //
 // A dimension is a scene. Its blocks are in chunks, an entity each with a
 // 16-cube grid, made as a player first comes near and gone a while after the
@@ -31,7 +32,11 @@ enum Block : byte
 
 const int SIZE = 16;        // Cells along a chunk's side
 const int LINGER = 120;     // Ticks a chunk nobody has stays before it goes
-const float SPEED = 12;     // Cells a second
+const float SPEED = 12;     // Cells a second, flying
+const float WALK = 5;       // ...and on foot
+const float GRAVITY = 24;
+const float JUMP = 8;
+const int REACH = 60;       // Tenths of a cell a player digs and builds from
 const int SEA = 0;          // Water fills up to here
 
 scene Main { }
@@ -66,6 +71,12 @@ component Chunk
     Grid3<Block> blocks = Grid3(16, 16, 16);
     Stage stage;
     int edits;              // Changes players made: a chunk with any is saved as it goes
+    // This machine's own (play.tide): its faces as a mesh, made on a worker, and the edits it was made
+    // at plus one (0: no mesh yet)
+    local Mesh<Vertex3> mesh;
+    local int drawn;
+    local bool meshing;
+    local bool blank;       // Its mesh has no faces: a chunk of air, or one buried in stone
 }
 
 // A chunk is asked for from the store first, made from the seed if it isn't there, and only then anyone's
@@ -87,28 +98,48 @@ component Seen
 
 component Avatar
 {
-    [Position] float3 position;
+    [Position] float3 position; // Its feet
+    float3 velocity;
+    float yaw;
+    float pitch;
     int dimension;
     int hops;               // Dimension changes its player has asked for, as taken
+    int wait;               // Ticks until it digs or builds again
+    bool landed;
+}
+
+// What this machine's player asked for that isn't a key held down (play.tide)
+local singleton Travel
+{
+    int hops;
 }
 
 input Controls
 {
+    bool fly;           // A bot's way: straight through everything, along `move`
     float3 move;        // At most 1 long
+    float2 walk;        // On foot: to the right and ahead, as the avatar faces
+    float2 look;        // How far it turns this tick
+    bool jump;
     bool dig;
     bool build;
     int hops;           // Counts dimension changes asked for
 
-    Sample(Devices devices)
+    Sample(Devices devices, Travel travel)
     {
         var keys = devices.keyboard;
-        if (keys.d.pressed) move.x += 1;
-        if (keys.a.pressed) move.x -= 1;
-        if (keys.w.pressed) move.z += 1;
-        if (keys.s.pressed) move.z -= 1;
-        if (keys.space.pressed) move.y += 1;
-        dig = devices.mouse.left.pressed;
-        build = devices.mouse.right.pressed;
+        if (keys.d.pressed) walk.x += 1;
+        if (keys.a.pressed) walk.x -= 1;
+        if (keys.w.pressed) walk.y += 1;
+        if (keys.s.pressed) walk.y -= 1;
+        jump = keys.space.pressed;
+        if (Cursor.locked)
+        {
+            look = devices.mouse.delta * 0.003;
+            dig = devices.mouse.left.pressed;
+            build = devices.mouse.right.pressed;
+        }
+        hops = travel.hops;
     }
 }
 
@@ -145,7 +176,7 @@ system Setup(mut Worlds worlds)
 
 event(PlayerJoined joined) Join()
 {
-    Spawn(Avatar { position = float3(0, 24, 0) }, Owner { player = joined.player });
+    Spawn(Avatar { position = float3(0.5, 40, 0.5) }, Owner { player = joined.player });
 }
 
 event(PlayerLeft left) Leave(Worlds worlds, query (Owner owner, with Avatar) avatars)
@@ -262,22 +293,114 @@ system Generate(mut Chunk chunk, mut Seen seen)
     Visibility.Set(seen.group, seen.audience);
 }
 
-// A player moves, digs and builds, and tells its dimension where it is
-system Move(mut Avatar avatar, Controls controls, Owner owner, Worlds worlds, Time time)
+// The block at a cell, on this machine: air where it has no chunk there
+Block At(int dimension, int3 cell, query (Chunk chunk) chunks)
+{
+    var at = ChunkOfCell(cell);
+    mut var found = Block.Air;
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+        if (row.chunk.dimension == dimension) found = row.chunk.blocks[cell.x & 15, cell.y & 15, cell.z & 15];
+    }
+    return found;
+}
+
+// Whether this machine has a chunk, made
+bool Has(int dimension, int3 at, query (Chunk chunk) chunks)
+{
+    mut var has = false;
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+        if (row.chunk.dimension == dimension && row.chunk.stage == Stage.Made) has = true;
+    }
+    return has;
+}
+
+bool Solid(Block block)
+{
+    return block != Block.Air && block != Block.Water;
+}
+
+int3 CellOf(float3 place)
+{
+    return int3(int(Math.Floor(place.x)), int(Math.Floor(place.y)), int(Math.Floor(place.z)));
+}
+
+// Whether a body with its feet at a place is in a block: 0.6 across and 1.8 tall
+bool Blocked(int dimension, float3 feet, query (Chunk chunk) chunks)
+{
+    for (var h = 0; h < 3; h++)
+        for (var side = 0; side < 4; side++)
+        {
+            var corner = feet + float3(side % 2 == 0 ? -0.3 : 0.3, h * 0.89, side < 2 ? -0.3 : 0.3);
+            if (Solid(At(dimension, CellOf(corner), chunks))) return true;
+        }
+    return false;
+}
+
+// A player turns, moves, digs and builds, and tells its dimension where it is. On foot it falls, stands on
+// blocks and stops at them, once the chunk it's in is there; a bot flies through everything.
+system Move(mut Avatar avatar, Controls controls, Owner owner, Worlds worlds, Time time, query (Chunk chunk) chunks)
 {
     if (!worlds.ready) return;
     var before = avatar.dimension;
-    avatar.position += controls.move * SPEED * time.dt;
+    avatar.yaw += controls.look.x;
+    avatar.pitch = Math.Clamp(avatar.pitch + controls.look.y, -1.5, 1.5);
     if (controls.hops != avatar.hops)
     {
         avatar.hops = controls.hops;
         avatar.dimension = (avatar.dimension + 1) % worlds.count;
     }
+    if (controls.fly) avatar.position += controls.move * SPEED * time.dt;
+    else if (Has(avatar.dimension, ChunkOf(avatar.position), chunks))
+    {
+        var sin = Math.Sin(avatar.yaw);
+        var cos = Math.Cos(avatar.yaw);
+        avatar.velocity.x = (controls.walk.x * cos + controls.walk.y * sin) * WALK;
+        avatar.velocity.z = (controls.walk.y * cos - controls.walk.x * sin) * WALK;
+        avatar.velocity.y = Math.Max(avatar.velocity.y - GRAVITY * time.dt, -40);
+        if (controls.jump && avatar.landed) avatar.velocity.y = JUMP;
+        var step = avatar.velocity * time.dt;
+        if (!Blocked(avatar.dimension, avatar.position + float3(step.x, 0, 0), chunks)) avatar.position.x += step.x;
+        if (!Blocked(avatar.dimension, avatar.position + float3(0, 0, step.z), chunks)) avatar.position.z += step.z;
+        avatar.landed = false;
+        if (!Blocked(avatar.dimension, avatar.position + float3(0, step.y, 0), chunks)) avatar.position.y += step.y;
+        else
+        {
+            avatar.landed = step.y < 0;
+            avatar.velocity.y = 0;
+        }
+    }
     if (before != avatar.dimension) worlds.dimensions[before].Send(Want { player = owner.player });
     worlds.dimensions[avatar.dimension].Send(Want { player = owner.player, to = ChunkOf(avatar.position), has = true });
-    var cell = int3(int(Math.Floor(avatar.position.x)), int(Math.Floor(avatar.position.y)) - 2, int(Math.Floor(avatar.position.z)));
-    if (controls.dig) Send(Put { dimension = avatar.dimension, cell = cell, block = Block.Air });
-    if (controls.build) Send(Put { dimension = avatar.dimension, cell = cell + int3(0, 4, 0), block = Block.Plank });
+    if (controls.fly)
+    {
+        var under = CellOf(avatar.position) - int3(0, 2, 0);
+        if (controls.dig) Send(Put { dimension = avatar.dimension, cell = under, block = Block.Air });
+        if (controls.build) Send(Put { dimension = avatar.dimension, cell = under + int3(0, 4, 0), block = Block.Plank });
+        return;
+    }
+    // On foot: the first block along where it looks is dug, or built on
+    avatar.wait = Math.Max(avatar.wait - 1, 0);
+    if (avatar.wait > 0 || (!controls.dig && !controls.build)) return;
+    var eye = avatar.position + float3(0, 1.6, 0);
+    var aim = Math.Forward(quaternion.Euler(float3(avatar.pitch, avatar.yaw, 0)));
+    mut var last = CellOf(eye);
+    for (var i = 1; i <= REACH; i++)
+    {
+        var cell = CellOf(eye + aim * (i * 0.1));
+        if (Same(cell, last)) continue;
+        if (Solid(At(avatar.dimension, cell, chunks)))
+        {
+            if (controls.dig) Send(Put { dimension = avatar.dimension, cell = cell, block = Block.Air });
+            else Send(Put { dimension = avatar.dimension, cell = last, block = Block.Plank });
+            avatar.wait = 12;
+            break;
+        }
+        last = cell;
+    }
 }
 
 bool Within(int3 chunk, int3 center, int near, int tall)

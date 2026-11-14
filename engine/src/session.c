@@ -7341,6 +7341,7 @@ static void start_shards(tide_session *s, const void *start, const uint8_t *chec
         .transports = shard_transports,
         .user = s,
         .jobs = s->desc.jobs,
+        .io = s->desc.io,
     };
     s->shards = checkpoint ? tide_shards_load(&shards, checkpoint, size, now) : tide_shards_create(&shards, now);
     // From a checkpoint, the shards take its players back (a round applies

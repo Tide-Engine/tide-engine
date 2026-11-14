@@ -300,6 +300,7 @@ uint64_t tide_hosting_start(tide_hosting *h, const tide_server_desc *desc)
     tide_server_desc d = *desc;
     d.game = h->desc.game;
     d.jobs = h->desc.jobs;
+    if (!d.io) d.io = h->desc.io;
     d.entropy = h->desc.entropy;
     d.local_first = false;
     d.identity_user = m;

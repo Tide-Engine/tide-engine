@@ -33,6 +33,29 @@ selects a separate persistent directory. Scripted runs otherwise use the normal
 saves. The override changes relative paths and `Application.persistentDataPath`;
 explicit absolute paths still reach the files they name.
 
+## Saving the match
+
+Match code can't touch files: they're this machine's, and the match is the same on every machine. What a match needs kept, it asks the machine that runs it to keep, with `Storage`:
+
+```csharp
+// As a chunk nobody is near goes
+Storage.Save($"chunks/{chunk.at.x}_{chunk.at.z}", Pack(chunk.blocks));
+
+// As someone next comes near: the answer is an event, a tick later
+Storage.Load($"chunks/{at.x}_{at.z}", chunk);
+
+event(Loaded loaded) Fill(mut Chunk chunk)
+{
+    if (loaded.found) Unpack(chunk.blocks, loaded.bytes);
+}
+```
+
+`Storage.Save(key, bytes)` keeps a `List<byte>` under a key, replacing what was there. `Storage.Load(key)` asks for it back: the answer is a `Loaded` event in a later tick, with the `key`, the `bytes` and whether it was `found`, sent to the entity the load names (`Storage.Load(key, entity)`) or to the world. `Storage.Delete(key)` forgets it.
+
+Only the server asks: a player's machine that runs the same tick saves and loads nothing. With the standard hosts, each key is a file in `saved/` in the game's persistent data folder, on the machine that runs the match: the hosting player's, or a dedicated server's. A key is any text up to 256 bytes, with `/` for folders, and a value up to 32 MiB. Every match a server hosts shares the folder, so a game with several worlds puts the world's name in its keys.
+
+`Storage.Flush` is local code's, and about this machine's own files.
+
 ## Logs and crashes
 
 A game run with a window keeps its log and its crashes in its persistent data directory (`Application.persistentDataPath`), beside its saves, so a player's problem can be looked into once they send them:

@@ -1838,7 +1838,7 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 
 ### Open
 
-- Generating chunks as they're first needed, keeping the regions around players loaded, and sending each player only theirs: an endless voxel world.
+- One grid whose far parts aren't in memory. An endless voxel world is chunks instead, an entity each with a grid of its own: made as players come near, each player sent only theirs (State visibility), and kept in the server's store while nobody is near (The server's store). `bench/voxels` is one, and `notes/voxels.md` says what it measures.
 - Functions that take grids; parallel steps that spawn and send.
 - Skipping what's settled: a parallel loop that only runs where something near changed (what `[Sleeps]` did for chunk systems).
 - `for` loops that run at once when nothing a step does depends on the others.
@@ -1962,6 +1962,53 @@ Built 2026-10-11. That a field can be a `T?` is the owner's (Decided, above); ea
   - `Host`, `Content-Length`, `Connection` and `Transfer-Encoding` are the sender's, and left out of what a request says. A line break in a header's name or value is a space. Redirects follow a browser's rules (a 303, and a POST's 301 or 302, become a GET; a 307 or 308 repeats the request), 5 at the most.
   - The two types are Tide source that comes with the compiler, compiled with a program that names `Web.Request`, `WebRequest` or `WebResponse` and with no other: a program without them generates the C it did. A game's own type of either name clashes with it there.
 - `await Web.Fetch(url)` is the other local async operation, giving a `List<byte>` and failing with `IOError` (see Assets, Provisional, Fetching): local only, as the file operations are, and awaited like `Storage.Flush`.
+
+## The server's store
+
+How a match keeps what it doesn't hold in memory: a chunk of blocks nobody is near, a player's things between visits, a world from one run of the server to the next. Built 2026-11-14 for an endless voxel world; every rule here is Provisional (Claude's picks: the owner hasn't chosen among them), and `notes/voxels.md` says what was built and measured.
+
+### Provisional
+
+- `Storage.Save(key, bytes)`, `Storage.Load(key)`, `Storage.Load(key, entity)` and `Storage.Delete(key)` are match code's: systems, match handlers, match tasks, and the functions they call. The key is text, the bytes a `List<byte>`. They ask the machine that runs the match to keep, find or forget bytes under a key. Nothing of the match changes when they're called, and nothing comes back from the call.
+- **Only the server's own run of a tick asks.** A player's machine that predicts or confirms the same tick asks nothing: its machine has no store, and the same request twice would be two saves. So what a save keeps is the server's value, never a prediction's.
+- **What a load finds comes back as an event,** `Loaded { string key; List<byte> bytes; bool found; }`, in a later tick: sent to the entity the load named, or to the world. `found` is false and `bytes` empty where the store has nothing under the key. With the files the standard hosts keep, that's the next tick. It's a tick's input, as a command is: the server gives it to a tick, the tick's frame carries it to every machine that has the whole match, the journal records it, and a replay takes it from there. So `Loaded` handlers run in the same tick on every machine, and the code that handles one is ordinary match code.
+- `Loaded` is declared by the engine, as Tide code a program that calls `Storage.Load` is compiled with; a program that doesn't has no such event. Its handlers follow the events' rule: one that takes components needs the entity every `Storage.Load` names, and a load that names none is then an error that says so. The engine sends it; a game's own `Send` of it is allowed, as of any event it could declare itself.
+
+```csharp
+// A chunk nobody has had for a while goes, one a player changed into the store first
+system Idle(Seen seen, Chunk chunk, Time time)
+{
+    if (seen.audience != Audience.None || time.tick - seen.emptied < LINGER) return;
+    if (chunk.edits > 0) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    this.Destroy();
+}
+
+// ...and comes back from there as someone next comes near
+var made = Spawn(Chunk { at = at, dimension = dimension.number }, visibility, Seen { group = group });
+Storage.Load(SavedAs(dimension.number, at), made);
+
+event(Loaded loaded) Fill(mut Chunk chunk)
+{
+    if (loaded.found) Unpack(chunk.blocks, loaded.bytes);
+    else chunk.stage = Stage.Missing;   // Never saved: made from the seed
+}
+```
+
+- **In a match that hides state** (State visibility) nothing of a load reaches the players' machines but what its handlers change of what they may have, as with a command: the bytes stay on the server.
+- **Order.** A tick's requests are carried out once it has ended, in the order it made them: a save then a load of one key in one tick finds what was saved. A load asked twice in a tick with one key and one target is answered once. Answers reach a tick in the order their loads were asked, before the tick's systems, 64 a tick at the most; more wait for the next. Each answer is its own cause: what two answers' handlers spawn in one tick are different entities.
+- Code that uses the store keeps its place among code that does, as code that calls C does: a system that saves runs on one thread, in the order its entities come.
+- **Keys and values.** A key is 1 to 256 bytes of any text, and a value at most 32 MiB; past either nothing is kept or asked, and the server's log says which key and what to do instead. Keys are the game's own: a save replaces what its key held.
+- **Where it's kept.** The standard hosts keep each key as a file of its own in `saved/`, in the game's persistent data folder on the machine that runs the match: the hosting player's own, a dedicated server's, a page's storage on the web. `/` in a key makes folders, and every other byte a file's name can't safely have is written out (`%XX`, capitals too), so any key is a file, no two keys are one file on a disk that doesn't tell capitals from small letters, and no key reaches outside the folder. Every match a server hosts shares the folder, as every shard of a sharded world does, so a game that hosts several worlds says which in its keys.
+- A host with nowhere to keep it (a test's, a benchmark's, C that gives its server no files: `tide_server_desc.io`) keeps nothing: saves go nowhere and every load finds nothing, so the same match plays on.
+- Local code can't use it: a view or a local handler keeps this machine's own files with `File` and `Directory` (Local files), and what a player wants saved of the match goes there as a command. Not input sampling, code the GPU runs or a parallel loop's step either.
+
+### Open
+
+- Awaiting a load in a match task (`var bytes = await Storage.Load(key);`), where the event is the only way now.
+- Any value as bytes and back (`Pack` and `Unpack` of a component, a grid or a struct), where a game writes its own loops now, and listing the keys under a prefix.
+- A store for each match of a server that hosts several, and the hosting service's (managed matches keep nothing yet).
+- A load asked for and not yet answered when a server stops isn't asked again when its match goes on from a save.
+- Reading and writing off the tick's thread: the standard hosts read and write between ticks, on the thread that ran the tick.
 
 ## Assets
 
@@ -5012,6 +5059,8 @@ system Collapse(Arena arena)
 - Generic custom local/verified events are produced by the client's permitted simulation, not forwarded as arbitrary authoritative outward events. Games remain responsible for public state and input payloads and for what command handlers expose. An authoritative custom-event audience API remains open.
 - Projected clients cannot currently promote their partial worlds into authoritative hosts. Existing host migration remains available for full-world games; visibility takeover is refused until a trusted complete-state handover is implemented.
 - Current integration uses a canonical per-recipient value stream and bounded delta repair. A hierarchical hash search or game-visible page API is not part of the language API.
+- **What a repair costs goes by what changed** (2026-11-14). A machine whose world differs from the server's is sent the entities that differ for it since the tick it last confirmed, each as what differs from what it had, the entities that came into its sight whole and the names of those that left: not its whole view again. A projection lists its entities by their identities, so a machine's rows may be wherever its own ticks and its repairs put them. Each tick's check hashes a container (a chunk's grid, a list, a map) again only when a page it's kept in changed. Nothing a game can observe changes but the cost: a world of thousands of chunks sends a player the chunks they walk into.
+- What a machine's own ticks made that the server hides from it (a spawn into a group it isn't in) goes at each repair, as it went when a whole projection loaded.
 
 ### Open
 

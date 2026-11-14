@@ -133,6 +133,7 @@ static void make_world(const bench_flag *f, void *world, const float dt)
 static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick, void *input)
 {
     Controls *c = input;
+    c->fly = true;
     const uint32_t hop = f[3].value * 60u;
     c->hops = hop ? (int32_t)((tick + mix(bot) % hop) / hop) : 0;
     if (mix(bot * 7919u + 1u) % 100u < f[4].value) return;
@@ -188,7 +189,7 @@ int main(int argc, char **argv)
         .name = "voxels",
         .game = &tide_game_api,
         .full = {.players = 8, .join_every = 0.5, .seconds = 30.0, .latency = 0.05, .jitter = 0.01, .loss = 0.01},
-        .quick = {.players = 3, .join_every = 0.25, .seconds = 3.0, .latency = 0.05, .jitter = 0.01, .loss = 0.01},
+        .quick = {.players = 3, .join_every = 0.25, .seconds = 8.0, .latency = 0.05, .jitter = 0.01, .loss = 0.01},
         .flags = flags,
         .flag_count = sizeof flags / sizeof flags[0],
         .make_world = make_world,
