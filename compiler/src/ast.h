@@ -1316,7 +1316,8 @@ struct expr {
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool world_previous;  // CALL_WORLD: world.GetPrevious, TryGetPrevious, HasPrevious: `name` is Get, TryGet or Has, of the tick's start (previous_codegen.inc)
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
-    bool placement_local; // `local Spawn(...)`: explicit machine-local placement
+    bool placement_local; // `local Spawn(...)`: explicit machine-local placement; on `Scene`, `local Scene.Load(...)`
+    bool switches_scene;  // CALL_LOAD: Scene.Switch, which unloads its world's scenes first
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
     struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
     bool postfix;         // ...written after its variable: the value is what the variable held before

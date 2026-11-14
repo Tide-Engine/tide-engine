@@ -1,0 +1,54 @@
+// A menu that switches to a lobby through a function, and a local startup that
+// only comes back while this machine is offline with nothing asked of the session.
+
+local scene Main;
+
+local scene Lobby
+{
+    int seats;
+}
+
+component Button
+{
+    int id;
+}
+
+local singleton Frames
+{
+    int count;
+    int mains;
+    int lobbies;
+    int seats;
+    LocalEntity lobby;
+}
+
+local event(Spawned) Open(with Main, mut Frames frames)
+{
+    frames.mains += 1;
+    local Spawn(Button { id = 1 });
+}
+
+local event(Spawned) Seat(Lobby lobby, mut Frames frames)
+{
+    frames.lobbies += 1;
+    frames.seats = lobby.seats;
+    local Spawn(Button { id = 2 });
+    local Spawn(Button { id = 3 });
+}
+
+LocalEntity GoToLobby(int seats)
+{
+    return Scene.Switch(Lobby { seats = seats });
+}
+
+void Close(LocalEntity scene)
+{
+    Scene.Unload(scene);
+}
+
+view Drive(mut Frames frames)
+{
+    frames.count += 1;
+    if (frames.count == 1) frames.lobby = GoToLobby(4);
+    if (frames.count == 3) Close(frames.lobby);
+}

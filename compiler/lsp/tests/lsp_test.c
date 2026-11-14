@@ -3594,8 +3594,15 @@ TIDE_TEST(lsp_scenes)
     open_document("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main) { Scene.Lo$ad(Arena); }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Loads a scene and returns its entity"));
 
+    // A switch, and a function that loads as its caller would
+    open_document("scene Arena { }\nscene Main { }\nEntity Next() { return Scene.Sw$itch(Arena); }\n"
+                  "event(Spawned) Setup(with Main) { Next(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Unloads every scene loaded in this world"));
+
     const char *calls = complete("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main)\n{\n    Scene.$\n}\n");
     TIDE_CHECK(offers(calls, "Load"));
+    TIDE_CHECK(offers(calls, "Switch"));
     TIDE_CHECK(offers(calls, "Unload"));
     TIDE_CHECK(offers(calls, "IsPrepared"));
     TIDE_CHECK(!offers(calls, "AddPlayer"));

@@ -1,0 +1,88 @@
+// Scene.Switch: the scenes loaded by its turn unload and another loads, from a
+// system and from the functions it calls, which load and unload as it would.
+
+scene Main;
+
+scene Arena
+{
+    int round;
+}
+
+scene Hud;
+
+component Wall { }
+component Prop { }
+
+singleton Stats
+{
+    int step;
+    int mains;
+    int arenas;
+    int huds;
+    int hudsGone;
+    int propsGone;
+    int round;
+    Entity kept;
+}
+
+event(Spawned) SetupMain(with Main, mut Stats stats)
+{
+    stats.mains += 1;
+}
+
+// The props join their arena, and go with it.
+event(Spawned) SetupArena(Arena arena, mut Stats stats)
+{
+    stats.arenas += 1;
+    stats.round = arena.round;
+    Spawn(Prop);
+    Spawn(Prop);
+}
+
+event(Spawned) SetupHud(with Hud, mut Stats stats)
+{
+    stats.huds += 1;
+}
+
+event(Destroyed) HudGone(with Hud, mut Stats stats)
+{
+    stats.hudsGone += 1;
+}
+
+event(Destroyed) PropGone(with Prop, mut Stats stats)
+{
+    stats.propsGone += 1;
+}
+
+Entity Open()
+{
+    return Scene.Load(Hud);
+}
+
+Entity Advance(int round)
+{
+    return Scene.Switch(Arena { round = round });
+}
+
+void Drop(Entity scene)
+{
+    Scene.Unload(scene);
+}
+
+system Drive(mut Stats stats)
+{
+    stats.step += 1;
+    if (stats.step == 1)
+    {
+        Open();
+        Spawn(Wall); // In no scene: a switch leaves it
+    }
+    if (stats.step == 2) stats.kept = Advance(1);
+    if (stats.step == 3)
+    {
+        // Loaded before the switch's turn, so it goes with the rest
+        Scene.Load(Hud);
+        stats.kept = Scene.Switch(Arena { round = 2 });
+    }
+    if (stats.step == 4) Drop(stats.kept);
+}

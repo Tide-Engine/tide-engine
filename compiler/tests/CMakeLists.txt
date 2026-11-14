@@ -462,6 +462,8 @@ tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)
 tide_e2e_test(scenes_fallback)
+tide_e2e_test(scenes_switch) # Scene.Switch, and functions that load, switch and unload
+tide_e2e_test(scenes_switch_local) # ...in local code, where the startup scene only comes back offline
 tide_e2e_test(scene_filters) # with scene, without scene: systems, views and handlers by an entity's scene
 tide_e2e_test(gui)
 tide_e2e_test(gui_custom)

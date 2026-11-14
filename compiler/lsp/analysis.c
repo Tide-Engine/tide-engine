@@ -2202,6 +2202,8 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
 static const method_form scene_calls[] = {
     {"Load", "Scene.Load(scene, components...)",
      "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
+    {"Switch", "Scene.Switch(scene, components...)",
+     "Unloads every scene loaded in this world, then loads this one and returns its entity, at the end of the tick. Entities in no scene stay."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
     {"IsPrepared", "Scene.IsPrepared(scene[, player]) -> bool",
      "Whether this machine has prepared the scene, or the server has acknowledged a player's readiness. Games choose their own waiting and timeout policy."},
