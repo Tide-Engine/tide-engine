@@ -909,6 +909,10 @@ static const char *const hiz_wgsl = WGSL(
     X(target_face_numbers, target_face_numbers_wgsl, NULL)                                                             \
     X(target_layer_numbers, target_layer_numbers_wgsl, NULL)                                                           \
     X(target_layer_ints, target_layer_ints_wgsl, NULL)                                                                 \
+    X(volume_color, volume_color_wgsl, NULL)                                                                           \
+    X(volume_float, volume_float_wgsl, NULL)                                                                           \
+    X(volume_float4, volume_float4_wgsl, NULL)                                                                         \
+    X(volume_int, volume_int_wgsl, NULL)                                                                               \
     X(zero_words, zero_words_wgsl, NULL)                                                                               \
     X(hiz_one, hiz_one_wgsl, hiz_wgsl)                                                                                 \
     X(hiz_samples, hiz_samples_wgsl, hiz_wgsl)

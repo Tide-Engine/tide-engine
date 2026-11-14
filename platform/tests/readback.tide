@@ -83,6 +83,120 @@ async void ReadImages(CopyState state, mut CopyResult result) {
     result.done = true;
 }
 
+// Reads past what one dispatch reached (a target of 4,200,000 pixels, read in bands), parts of images, and a
+// Texture3D's cells; then a read the device loses as it's on its way back, and reads on the next device
+local singleton MoreState
+{
+    RenderTarget big;    // 2100 by 2000 Rgba8, a white square at its bottom right
+    RenderTarget floats; // 2100 by 2000 R32f, its last pixel another
+    Texture3D colors;    // 3 by 2 by 2, written by FillVolumes
+    [Raw(float)] Texture3D numbers;
+    [Raw(int)] Texture3D ids;
+    [Raw(float4)] Texture3D wides;
+    RenderTarget tenth;  // Depth alone, a frag's 0.1: a depth that 1 - depth rounds
+    RenderTarget uhd;    // 3840 by 2160, a 4K window's: 127 MiB of Colors, in four bands
+    bool started; bool moreStarted; bool lose; bool lostStarted; bool again; bool againStarted;
+}
+local singleton MoreResult
+{
+    Grid2<Color> big; Grid2<Color> corner; Grid2<float> floats;
+    Grid2<int> one; Grid2<Color> clamped; Grid2<float> depthPart; Grid2<Color> facePart; Grid2<float> layerPart;
+    Grid3<Color> colors; Grid3<float> numbers; Grid3<int> ids; Grid3<float4> wides; Grid3<float> box;
+    Grid2<float> tenth;
+    int2 uhdSize; Color uhdFirst; Color uhdLast; Color uhdSeam; Color uhdAfter; // Its last pixel, a band's last row's and the next's
+    bool outsideFailed; bool emptyFailed; bool done; bool failed;
+    bool lostFailed; bool lostDone; Grid2<int> again; Grid2<Color> againColor; bool againDone;
+}
+[Group(2, 2, 2)]
+compute FillVolumes(MoreState more)
+{
+    more.colors[this.at] = Color(this.at.x * 0.5, this.at.y, this.at.z, 1);
+    more.numbers[this.at] = float(this.at.x + 10 * this.at.y + 100 * this.at.z);
+    more.ids[this.at] = -(this.at.x + 10 * this.at.y + 100 * this.at.z) - 7;
+    more.wides[this.at] = float4(this.at.x, this.at.y, this.at.z, 1000000);
+}
+async void ReadMore(CopyState state, MoreState more, mut MoreResult result)
+{
+    if (await more.big.Read() is Grid2<Color> big) result.big = big.Copy(); else result.failed = true;
+    if (await more.big.Read(int2(2000, 1900), int2(200, 200)) is Grid2<Color> corner) result.corner = corner.Copy(); else result.failed = true;
+    if (await more.floats.Read<float>() is Grid2<float> floats) result.floats = floats.Copy(); else result.failed = true;
+    // Parts of images: one pixel, one clamped to the image, one past it, and one of nothing
+    if (await state.several.Read<int>(3, int2(1, 0), int2(1, 1)) is Grid2<int> one) result.one = one.Copy(); else result.failed = true;
+    if (await state.several.Read(int2(-2, -1), int2(4, 2)) is Grid2<Color> clamped) result.clamped = clamped.Copy(); else result.failed = true;
+    if (await state.several.ReadDepth(int2(3, 1), int2(10, 10)) is Grid2<float> depthPart) result.depthPart = depthPart.Copy(); else result.failed = true;
+    if (await state.cube.faces[0].Read(int2(1, 0), int2(1, 1)) is Grid2<Color> facePart) result.facePart = facePart.Copy(); else result.failed = true;
+    if (await state.shadows.layers[1].ReadDepth(int2(0, 1), int2(1, 1)) is Grid2<float> layerPart) result.layerPart = layerPart.Copy(); else result.failed = true;
+    if (await state.several.Read(int2(4, 0), int2(1, 1)) is Grid2<Color> outside) result.failed = true; else result.outsideFailed = true;
+    if (await state.several.Read(int2(0, 0), int2(0, 1)) is Grid2<Color> empty) result.failed = true; else result.emptyFailed = true;
+    // A Texture3D's cells, as its format's type, whole and a box clamped to it
+    if (await more.colors.Read() is Grid3<Color> colors) result.colors = colors.Copy(); else result.failed = true;
+    if (await more.numbers.Read<float>() is Grid3<float> numbers) result.numbers = numbers.Copy(); else result.failed = true;
+    if (await more.ids.Read<int>() is Grid3<int> ids) result.ids = ids.Copy(); else result.failed = true;
+    if (await more.wides.Read<float4>() is Grid3<float4> wides) result.wides = wides.Copy(); else result.failed = true;
+    if (await more.numbers.Read<float>(int3(1, 0, 1), int3(5, 5, 5)) is Grid3<float> box) result.box = box.Copy(); else result.failed = true;
+    if (await more.tenth.ReadDepth() is Grid2<float> tenth) result.tenth = tenth.Copy(); else result.failed = true;
+    // A 4K window's image whole, read where it's kept (no copy of its 127 MiB)
+    if (await more.uhd.Read() is Grid2<Color> uhd)
+    {
+        result.uhdSize = uhd.size;
+        result.uhdFirst = uhd[0, 0];
+        result.uhdLast = uhd[3839, 2159];
+        result.uhdSeam = uhd[3839, 545];
+        result.uhdAfter = uhd[3839, 546];
+    }
+    else result.failed = true;
+    result.done = true;
+}
+// The device goes as this read is on its way back: it fails, and nothing more
+async void ReadLost(CopyState state, mut MoreResult result)
+{
+    if (await state.several.Read<int>(3) is Grid2<int> lost) result.failed = true; else result.lostFailed = true;
+    result.lostDone = true;
+}
+// ...and the next device reads as the first did
+async void ReadAgain(CopyState state, MoreState more, mut MoreResult result)
+{
+    if (await state.several.Read<int>(3) is Grid2<int> again) result.again = again.Copy(); else result.failed = true;
+    if (await more.big.Read(int2(2090, 1990), int2(20, 20)) is Grid2<Color> againColor) result.againColor = againColor.Copy(); else result.failed = true;
+    result.againDone = true;
+}
+frag TenthCard(Vertex3 vertex, out Color color) { color = vertex.color; this.WriteDepth(0.1); }
+view PaintMore(CopyState state, mut MoreState more, mut MoreResult result, CopyResult copy)
+{
+    if (!more.started)
+    {
+        more.big = RenderTarget(2100, 2000, 1);
+        more.floats = RenderTarget(2100, 2000, 1, Format.R32f);
+        more.colors = Texture3D(int3(3, 2, 2));
+        more.numbers = Texture3D(int3(3, 2, 2), Format.R32f);
+        more.ids = Texture3D(int3(3, 2, 2), Format.R32i);
+        more.wides = Texture3D(int3(3, 2, 2), Format.Rgba32f);
+        more.tenth = RenderTarget(2, 2, 1, Format.Depth);
+        more.uhd = RenderTarget(3840, 2160, 1);
+        more.started = true;
+    }
+    more.big.SetScreen(); more.big.SetBlend(.Replace);
+    more.big.Clear(Color(0.2, 0.4, 0.6, 1));
+    more.big.Rect(float2(2095, 1995), float2(10, 10), Color.white);
+    more.uhd.SetScreen(); more.uhd.SetBlend(.Replace);
+    more.uhd.Clear(Color(0.2, 0.4, 0.6, 1));
+    more.uhd.Rect(float2(3830, 2150), float2(20, 20), Color.white);
+    more.uhd.Rect(float2(3830, 545.5), float2(20, 1), Color.green);
+    more.floats.SetScreen();
+    more.floats.Clear(1.5);
+    more.floats.Clip(Rect(2099, 1999, 1, 1)) { more.floats.Clear(-3.0); }
+    GPU.Run(FillVolumes, int3(3, 2, 2));
+    List<Vertex3> card = [Vertex3 { position = float3(-1, -1, 0.5) }, Vertex3 { position = float3(1, -1, 0.5) },
+                          Vertex3 { position = float3(1, 1, 0.5) }, Vertex3 { position = float3(-1, 1, 0.5) }];
+    more.tenth.Clear(Color.black);
+    more.tenth.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+    more.tenth.SetCull(.None); more.tenth.SetDepth(.ReadWrite);
+    more.tenth.Mesh(card, [0,1,2,0,2,3], float4x4.identity, TenthCard);
+    if (copy.done && !more.moreStarted) { more.moreStarted = true; ReadMore(state, more, result); }
+    if (more.lose && !more.lostStarted) { more.lostStarted = true; ReadLost(state, result); }
+    if (more.again && !more.againStarted) { more.againStarted = true; ReadAgain(state, more, result); }
+}
+
 frag HighColor(Vertex vertex, out Color color) { color = Color(2, 0.5, 0.25, 0.5); }
 frag DepthCard(Vertex3 vertex, out Color color, CopyState state) { color = vertex.color; this.WriteDepth(state.depth); }
 

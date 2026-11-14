@@ -16,7 +16,9 @@
 // `upright` back, send it `home` and bring it to the `front` again (the
 // screen's turn is put back as it was at the end). --env: Tide's settings for
 // it, as a program's environment has them (the intent's tide.env, which a
-// debuggable app sets before main). --run, once or more: the app is started
+// debuggable app sets before main), each of which it must say it set
+// (`setting: TIDE_<NAME>=<value>`), or the run fails: a test of a setting
+// that never arrived would pass as the test without it. --run, once or more: the app is started
 // once for each, one after the other, with those arguments (words apart) in
 // place of the others, and every run must end with 0; what it keeps (its
 // cache folder) stays from one to the next.
@@ -178,17 +180,27 @@ function startApp(words) {
     // Its process: the activity manager says which it started, and Zygote how it ended. The test's timeout
     // is how long that may take.
     let pid, code, stepped = 0;
+    // The settings it said it set (intent_env in platform/android/activity.c), taken from every look: they're its
+    // first lines, which a long run's output could push out of the log's ring before it ends
+    const took = new Set();
+    const heard = lines => {
+        for (const line of lines) {
+            const setting = line[3] === 'tide' && line[4].match(/^setting: (\S+)$/)?.[1];
+            if (setting) took.add(setting);
+        }
+    };
     while (code === undefined) {
         const log = run(['logcat', '-d', '-T', since, 'ActivityManager:I', 'Zygote:I', 'tide:I', '*:S']).stdout || '';
         pid ??= log.match(new RegExp(`Start proc (\\d+):${pattern(app)}/`))?.[1];
+        const own = pid ? log.split(/\r?\n/).map(logLine).filter(line => line && line[1] === pid) : [];
+        heard(own);
         const ended = pid && log.match(new RegExp(`Process ${pid} exited (?:cleanly \\((\\d+)\\)|due to signal (\\d+))`));
         if (ended) {
             code = ended[1] !== undefined ? Number(ended[1]) : 128 + Number(ended[2]);
             break;
         }
         // Each step the app asked for since the last look, once, in order
-        const asked = steps && pid ? log.split(/\r?\n/).map(logLine)
-            .filter(line => line && line[1] === pid && line[3] === 'tide')
+        const asked = steps ? own.filter(line => line[3] === 'tide')
             .map(line => line[4].match(/^step: (\S+)$/)?.[1]).filter(what => what) : [];
         for (; stepped < asked.length; stepped++) {
             if (!step(asked[stepped])) {
@@ -211,10 +223,19 @@ function startApp(words) {
     const lines = (run(['logcat', '-d', '-T', since]).stdout || '').split(/\r?\n/).map(logLine)
         .filter(line => line && line[1] === pid);
     print(lines.filter(line => line[3] === 'tide').map(line => `${line[4]}\n`).join(''));
+    heard(lines);
     const fatal = lines.filter(line => line[2] === 'F');
     if (fatal.length) {
         console.error(`run_android: ${app} (pid ${pid}) crashed, and ended with ${code}:`);
         for (const line of fatal) console.error(`  ${line[3]}: ${line[4]}`);
+        return code || 1;
+    }
+    const missing = environment.filter(setting => !took.has(setting));
+    if (missing.length) {
+        console.error(`run_android: ${app} never said it set ${missing.join(' ')} (a line 'setting: <it>' of its output), `
+            + `so it ran without ${missing.length > 1 ? 'them' : 'it'}. Only an app built to be debugged takes the `
+            + "intent's tide.env (platform/android/activity.c, intent_env), as every app but tide build --android "
+            + "--distribution's is; one built before it said so needs building again.");
         return code || 1;
     }
     return code;

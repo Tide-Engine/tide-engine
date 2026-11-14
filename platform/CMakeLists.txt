@@ -176,7 +176,8 @@ endfunction()
 # front: run_android.mjs --steps). NAME: the test's, for another test of the
 # same app (the target's by default). ARGS: what the app starts with, as main's arguments.
 # ENVIRONMENT: Tide's settings, in the app's environment as in a desktop
-# test's (the intent's tide.env, which a debuggable app sets). RUNS: the app
+# test's (the intent's tide.env, which a debuggable app sets, saying each it
+# set: the test fails where the app didn't say each of them). RUNS: the app
 # started once for each, in order, with its arguments (words apart, in one
 # string), keeping its cache folder between them, as a script runs a desktop
 # test's program again. Apps take the screen, so they run one at a time.
@@ -1440,13 +1441,16 @@ endif()
 # shaders' checks are.
 if(TIDE_PLATFORM AND TIDE_ANDROID)
     tide_add_game(tide_platform_readback_app SOURCES tests/readback.tide NAME game HOST tests/readback.c WINDOW)
-    target_include_directories(tide_platform_readback_app PRIVATE src)
+    target_include_directories(tide_platform_readback_app PRIVATE src third_party) # Vulkan's headers, for src/gpu_vk.h
     tide_android_app_test(tide_platform_readback_app GPU)
     tide_android_app_test(tide_platform_readback_app GPU NAME tide_platform_readback_app_depth_fallback
         ENVIRONMENT TIDE_TEST_DEPTH_FALLBACK=1)
 elseif(TIDE_PLATFORM)
     tide_add_game(tide_platform_readback SOURCES tests/readback.tide NAME game HOST tests/readback.c)
     target_include_directories(tide_platform_readback PRIVATE src)
+    if(NOT TIDE_WEB)
+        target_include_directories(tide_platform_readback PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
+    endif()
     target_link_libraries(tide_platform_readback PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_readback SHELL web/test_shell.html)

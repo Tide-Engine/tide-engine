@@ -189,6 +189,11 @@ driver at every start, and past `CACHE_MOST` (256 MiB, which the owner's file wa
   has an `outgrown` run: a whole file a run would read, with the size set under it, is read as 0 bytes, and the
   run after reads the file that was written over it. Passing under ASan on Windows with `tide_platform_prewarm`,
   `_loading` and `_draw`.
+- Since 2026-11-14 the size set is one byte under the driver's data in the last run's file, and the test asks the
+  driver whether it keeps pipelines at all (`tide_gpu_vk_pipeline_cache_keeps`, gpu_vk.h: a compute pipeline that
+  does nothing, compiled into an empty cache of its own): where it does, a file must hold more than the two headers
+  and a warm run read more than the driver's header; the Android emulator's keeps its header alone, and its files
+  are the headers exactly (`notes/android-and-mingw.md`, Every window fixture an app).
 - The fallback folder's file (`%TEMP%/dev.tide.game/pipelines.vulkan`, which games with no name yet shared) is no
   longer read by the standard host; what's there is the owner's to delete.
 
@@ -786,9 +791,9 @@ results and stale callback cancellation. Report/schema coverage is recorded
 in standard-host.md. Other OSes and Android were not run locally.
 
 
-## Match updates during desktop Vulkan frame waits (2026-11-03)
+## Match updates during Vulkan frame waits (2026-11-03; Android 2026-11-14)
 
-The desktop's `tide_gpu_vk_present_updating` polls the next frame slot's fence
+A window's `tide_gpu_vk_present_updating` (desktop's, and Android's since 2026-11-14) polls the next frame slot's fence
 after submission and presentation. If it is still pending, the platform may
 run the host's match-only callback between timed waits. The callback receives
 elapsed time since the render frame began and returns its next update delay
@@ -803,8 +808,10 @@ poll input/events, render, reload, or change GPU/window resources. Desktop
 GLFW supplies it, and since 2026-11-14 Android's activity too (Claude's pick,
 Provisional: it presented without an updater, so a phone's match waited out
 every GPU-bound frame's fence; `tide_platform_gpu_wait_app` found it,
-`notes/android-and-mingw.md`, Every window fixture an app); OpenGL/web are
-unchanged. Headless runs never call the host updater, so
+`notes/android-and-mingw.md`, Every window fixture an app; the public comment
+in `tide/platform.h`, `gpu_vk.h` and `window.h` say so since 2026-11-14 too,
+and `docs/spec.md` has it under Sessions, Provisional); the web is unchanged.
+Headless runs never call the host updater, so
 their made-up time and scripted frame boundaries remain unchanged.
 
 Two frame slots remain in flight. Fence completion still precedes garbage

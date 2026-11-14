@@ -808,6 +808,11 @@ parallel foreach in a system skips them.
 world's heap (runtime-ownership.md). Calls passing a field's grid to a non-`mut` parameter pass the handle, as build
 functions did.
 
+**A task's grids across its waits** (2026-11-14, render-targets.md top section; the `grid_async_local` error below is
+gone): a task's grid local, a name `is` gives, a failable or `T?` local holding one and a statement's earlier await's
+grid go into its frame as `tide_grid_carry` copies, come back as the frame's, and are copied by `tide_grid_mine`
+(`place_where`) before the task writes them; match tasks keep theirs in the match heap. `tidec_e2e_task_grids`.
+
 **What stays refused.** Structs with grids in locals, returns and copies; `Grid2(...)` as an argument (functions take
 no new grid in `arg_fits`); lambdas capturing a grid (a stored callable captures plain values); worker code keeping a
 grid local (worker_check.inc), so a worker can't call a helper that makes one; grids in lists and maps.

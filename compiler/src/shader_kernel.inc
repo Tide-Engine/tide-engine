@@ -365,6 +365,7 @@ static void check_target_read(program *prog, const expr *call)
     const int kind = call->read_kind, image = call->read_image;
     if (kind > 4) return; // ReadDepth: every target has depth
     const expr *target = call->object;
+    const char *grid = call->read_volume ? "Grid3" : "Grid2", *what = call->read_volume ? "volume" : "target";
     if (target->kind == E_INDEX && target->object && target->object->kind == E_MEMBER && target->object->target_colors
         && target->object->object && target->object->object->type.kind != TY_RENDER_TARGET) {
         // cube.faces[i], array.layers[i]: one image, of the format its cube or array was made with
@@ -389,6 +390,13 @@ static void check_target_read(program *prog, const expr *call)
     }
     if (format < 0) {
         if (kind == 0) return;
+        if (call->read_volume) {
+            diag_error(call->at, "%s gives a Grid3<%s> of the volume's own numbers, and this volume's format isn't fixed by its "
+                                 "constructor assignments", reads[kind], cells[kind]);
+            diag_note("make the volume one way wherever it's assigned, 'Texture3D(int3(32), Format.R32f)', and read the field "
+                      "or local it's kept in; a Texture3D parameter's format isn't known here");
+            return;
+        }
         diag_error(call->at, "%s gives a Grid2<%s> of the image's own numbers, and this target's format for image %d isn't fixed "
                              "by its constructor assignments", reads[kind], cells[kind], image);
         diag_note("make the target one way wherever it's assigned, with a Format for each image, 'RenderTarget(width, height, "
@@ -403,9 +411,16 @@ static void check_target_read(program *prog, const expr *call)
                    : format == 8 ? 3 : 4;
     char index[16] = "";
     if (image) snprintf(index, sizeof index, "%d", image);
-    diag_error(call->at, "%s gives a Grid2<%s>, but this target's image %d is Format." STR_FMT ", which holds %s: write 'await "
-                         "target.%s(%s)'", reads[kind], cells[kind], image, STR_ARG(prog->format->members.items[format].name),
-               format == 2 ? "Color or float4" : cells[want], reads[want], index);
+    if (call->read_volume) {
+        diag_error(call->at, "%s gives a %s<%s>, but this volume is Format." STR_FMT ", which holds %s: write 'await "
+                             "volume.%s()'", reads[kind], grid, cells[kind], STR_ARG(prog->format->members.items[format].name),
+                   format == 2 ? "Color or float4" : cells[want], reads[want]);
+    } else {
+        diag_error(call->at, "%s gives a %s<%s>, but this %s's image %d is Format." STR_FMT ", which holds %s: write 'await "
+                             "target.%s(%s)'", reads[kind], grid, cells[kind], what, image,
+                   STR_ARG(prog->format->members.items[format].name), format == 2 ? "Color or float4" : cells[want], reads[want],
+                   index);
+    }
     if (format == 2) diag_note("'Read<float4>(%s)' gives an Rgba16f image's four numbers as stored; 'Read(%s)' gives them as a "
                                "Color, its alpha undone", index, index);
 }

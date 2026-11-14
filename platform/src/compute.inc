@@ -1,13 +1,49 @@
 static bool target_read_prepare(tide_gpu_read_request *request);
-// The renderer's kernels that read a target's image into a range (cull.tide, ReadTarget...): the first five are
-// tide_target_read's color kinds, in its order.
+// The renderer's kernels that read a target's image into a list (cull.tide, ReadTarget... and ReadVolume...): the
+// first five are tide_target_read's color kinds, in its order.
 enum { PIXEL_READ_COLOR, PIXEL_READ_FLOAT, PIXEL_READ_FLOAT2, PIXEL_READ_FLOAT4, PIXEL_READ_INT, PIXEL_READ_DEPTH,
        PIXEL_READ_FACE, PIXEL_READ_LAYER, PIXEL_READ_FACE_NUMBERS, PIXEL_READ_LAYER_NUMBERS, PIXEL_READ_LAYER_DEPTH,
-       PIXEL_READ_LAYER_INTS, PIXEL_READS };
+       PIXEL_READ_LAYER_INTS, PIXEL_READ_VOLUME_COLOR, PIXEL_READ_VOLUME_FLOAT, PIXEL_READ_VOLUME_FLOAT4, PIXEL_READ_VOLUME_INT,
+       PIXEL_READS };
 _Static_assert(PIXEL_READ_COLOR == (int)TIDE_TARGET_READ_COLOR && PIXEL_READ_FLOAT == (int)TIDE_TARGET_READ_FLOAT
                && PIXEL_READ_FLOAT2 == (int)TIDE_TARGET_READ_FLOAT2 && PIXEL_READ_FLOAT4 == (int)TIDE_TARGET_READ_FLOAT4
                && PIXEL_READ_INT == (int)TIDE_TARGET_READ_INT, "a color read's kernel is its kind's");
 static tide_gpu_id pixel_read_pipelines[PIXEL_READS];
+
+// A target's read is of its part's rows a band at a time, each band a buffer of its own that its kernel's list is in
+// (bound where the list's pool goes) and that's read back on its own, so a read of any size fits whatever one buffer a
+// device binds, and no GPU list's pool grows for it. Every band is drawn from the same frame's image: their kernels
+// run one after another once the frame is recorded. The data a read is let go of with is the request's; its bands
+// are the renderer's, let go of once each is back, or with the request where none began.
+enum { PIXEL_BAND_BYTES = 32u << 20, PIXEL_BAND_ROWS = 65535u }; // A band's most, and a dispatch's most rows
+// What a read's results can hold together, the CPU's copies of reads not yet let go of: a 5K window's Color (225 MiB)
+// fits, and an 8K one's alone.
+#define PIXEL_READ_PENDING_MOST (512ull << 20)
+typedef struct pixel_band {
+    tide_gpu_id buffer; // Its list: the header, then its pixels' words
+    uint32_t token;     // Its read back, once begun (gpu.h's buffer_read)
+    uint32_t at;        // Its first word in the request's data
+    uint32_t words;     // ...and how many: its pixels' words
+    bool done;          // Back, or failed
+} pixel_band;
+typedef struct pixel_read {
+    uint32_t serial;  // The request's these bands are, by its serial
+    uint32_t count;   // Bands
+    bool failed;      // One came back failed: the read fails once every one begun is back
+    pixel_band *band;
+} pixel_read;
+static pixel_read pixel_reads[TIDE_GPU_READS];
+
+// A read's bands let go of: their buffers, which no read back is waiting on (on a device that's gone, their ids alone).
+static void pixel_read_drop(const uint32_t i, const bool device_gone)
+{
+    pixel_read *p = &pixel_reads[i];
+    for (uint32_t k = 0; !device_gone && k < p->count; k++) {
+        if (p->band[k].buffer) free_buffer(p->band[k].buffer);
+    }
+    free(p->band);
+    *p = (pixel_read){0};
+}
 // Compute in the renderer (notes/compute.md): GPU lists' ranges in two pools, kernels' runs and the engine's own
 // kernels around them (shaders.h: a run over a GPU list's count, ordered Add's offsets and scatter, and a range
 // zeroed), list operations in frame order, indirect draws, and reads back. Included by platform.c, which turns the
@@ -33,8 +69,6 @@ typedef struct gpu_range {
     uint32_t at;    // Its first word there
     uint32_t words; // 0 for none
 } gpu_range;
-static gpu_range pixel_read_ranges[TIDE_GPU_READS];
-static uint32_t pixel_read_serials[TIDE_GPU_READS];
 
 typedef struct pool_span {
     uint32_t at, words;
@@ -234,11 +268,14 @@ static void forget_compute(void)
     kernel_pipeline_count = 0;
     run_size_pipeline = add_offsets_pipeline = add_scatter_pipeline = zero_words_pipeline = 0;
     memset(pixel_read_pipelines, 0, sizeof pixel_read_pipelines);
-    memset(pixel_read_ranges, 0, sizeof pixel_read_ranges);
     forget_culling();
     tide_gpu_read_request *reads = tide_gpu_read_requests();
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
-        if (reads[i].state == TIDE_GPU_READ_BEGUN || (reads[i].target.id && reads[i].data && reads[i].state == TIDE_GPU_READ_ASKED)) tide_gpu_read_finished(&reads[i], false);
+        // A target's read whose kernels ran (its bands made) or that began reading back went with the device: it fails
+        const bool banded = pixel_reads[i].count != 0 && pixel_reads[i].serial == reads[i].serial;
+        pixel_read_drop(i, true);
+        if (reads[i].state == TIDE_GPU_READ_BEGUN || (reads[i].target.id && banded && reads[i].state == TIDE_GPU_READ_ASKED))
+            tide_gpu_read_finished(&reads[i], false);
     }
 }
 
@@ -382,15 +419,15 @@ static void compute_frame_start(const tide_draw_list *list)
     add_scratch_used[0] = add_scratch_used[1] = 0;
     if (list->epoch != gpu_list_epoch) gpu_list_epoch = list->epoch; // Records of the last epoch are named again, or go
     tide_gpu_reads_frame();
-    // A canceled capture that never got a read token can release its range too.
+    // A target's read let go of or failed before any of its bands began reading back lets them go too: none is
+    // waited on (a read begun stays begun until every band is back, whoever let go of it)
+    tide_gpu_read_request *reads = tide_gpu_read_requests();
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
-        const tide_gpu_read_request *r = &tide_gpu_read_requests()[i];
-        if (pixel_read_ranges[i].words && (pixel_read_serials[i] != r->serial || r->state == TIDE_GPU_READ_FREE)) {
-            pool_give(pixel_read_ranges[i]); pixel_read_ranges[i] = (gpu_range){0};
-        }
+        const tide_gpu_read_request *r = &reads[i];
+        if (pixel_reads[i].count && (pixel_reads[i].serial != r->serial || (r->state != TIDE_GPU_READ_ASKED && r->state != TIDE_GPU_READ_BEGUN)))
+            pixel_read_drop(i, false);
     }
     // Reads begun last frame are done once its work is, which headless runs wait for: they repeat exactly
-    tide_gpu_read_request *reads = tide_gpu_read_requests();
     if (headless && gpu->buffer_read_wait) {
         bool begun = false;
         for (uint32_t i = 0; i < TIDE_GPU_READS; i++) begun |= reads[i].state == TIDE_GPU_READ_BEGUN;
@@ -399,11 +436,36 @@ static void compute_frame_start(const tide_draw_list *list)
     for (uint32_t i = 0; gpu->buffer_read_done && i < TIDE_GPU_READS; i++) {
         tide_gpu_read_request *r = &reads[i];
         if (r->state != TIDE_GPU_READ_BEGUN) continue;
-        const int done = gpu->buffer_read_done(r->token, r->data);
-        if (done) {
-            if (r->target.id) { pool_give(pixel_read_ranges[i]); pixel_read_ranges[i] = (gpu_range){0}; }
-            tide_gpu_read_finished(r, done > 0);
+        if (!r->target.id) {
+            const int done = gpu->buffer_read_done(r->token, r->data);
+            if (done) tide_gpu_read_finished(r, done > 0);
+            continue;
         }
+        // A target's: each band into its place in the data, and the read done once every one is back
+        pixel_read *p = &pixel_reads[i];
+        if (p->serial != r->serial || !p->count) { // Its bands are gone (another program's renderer had them): it fails
+            tide_gpu_read_finished(r, false);
+            continue;
+        }
+        bool all = true;
+        for (uint32_t k = 0; k < p->count; k++) {
+            pixel_band *b = &p->band[k];
+            if (!b->done && b->token) {
+                const int done = gpu->buffer_read_done(b->token, r->data + b->at);
+                if (done) {
+                    b->done = true;
+                    b->token = 0;
+                    p->failed |= done < 0;
+                    free_buffer(b->buffer);
+                    b->buffer = 0;
+                }
+            }
+            all &= b->done;
+        }
+        if (!all) continue;
+        const bool failed = p->failed;
+        pixel_read_drop(i, false);
+        tide_gpu_read_finished(r, !failed);
     }
 }
 
@@ -413,14 +475,42 @@ static void compute_frame_end(void)
     tide_gpu_read_request *reads = tide_gpu_read_requests();
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
         tide_gpu_read_request *r = &reads[i];
+        if (r->target.id && (r->state == TIDE_GPU_READ_ASKED || r->state == TIDE_GPU_READ_BEGUN)) {
+            // A target's: its bands' kernels run once, then each band's read back begins, as soon as one can
+            if (r->state == TIDE_GPU_READ_ASKED && r->forgotten) {
+                tide_gpu_read_finished(r, false);
+                continue;
+            }
+            pixel_read *p = &pixel_reads[i];
+            if (r->state == TIDE_GPU_READ_ASKED && (!p->count || p->serial != r->serial)) {
+                if (p->count) pixel_read_drop(i, false);
+                if (!target_read_prepare(r)) continue;
+            }
+            if (!gpu->buffer_read || p->serial != r->serial || !p->count) {
+                if (r->state == TIDE_GPU_READ_ASKED) tide_gpu_read_finished(r, false);
+                continue;
+            }
+            for (uint32_t k = 0; k < p->count; k++) {
+                pixel_band *b = &p->band[k];
+                if (b->done || b->token) continue;
+                if (r->forgotten) { // Let go of while begun: what isn't on its way back stays on the GPU
+                    b->done = true;
+                    free_buffer(b->buffer);
+                    b->buffer = 0;
+                    continue;
+                }
+                b->token = gpu->buffer_read(b->buffer, (size_t)TIDE_GPU_LIST_HEADER_WORDS * 4u, (size_t)b->words * 4u);
+                if (b->token) r->state = TIDE_GPU_READ_BEGUN; // Or asked again next frame
+            }
+            continue;
+        }
         if (r->state != TIDE_GPU_READ_ASKED) continue;
         if (r->forgotten) {
             tide_gpu_read_finished(r, false);
             continue;
         }
-        if (r->target.id && !pixel_read_ranges[i].words && !target_read_prepare(r)) continue;
-        const gpu_list_buffer *b = !r->target.id && gpu->buffer_read ? list_range(r->list, true) : NULL;
-        const gpu_range range = r->target.id ? pixel_read_ranges[i] : b ? b->range : (gpu_range){0};
+        const gpu_list_buffer *b = gpu->buffer_read ? list_range(r->list, true) : NULL;
+        const gpu_range range = b ? b->range : (gpu_range){0};
         if (!range.words || !gpu->buffer_read) {
             tide_gpu_read_finished(r, false);
             continue;

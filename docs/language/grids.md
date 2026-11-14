@@ -85,7 +85,7 @@ system Generate(mut Terrain terrain)
 - A local holds a new grid, a copy (`cells.Copy()`) or what a function returns. `var copy = terrain.heights;` is an error that says to copy it: two names for one grid would change each other.
 - A function returns a new grid, a copy, or a local of its own. A field takes the same, and a field's grid is the world's: snapshotted, hashed and sent as any field is.
 - A function takes a grid to read, or `mut` to change it where it is. Its writes are the caller's, so a system that passes `terrain.heights` as `mut` writes `Terrain`.
-- A local's grid lasts until the system, view or handler that made it is done. A [task](../game/tasks.md) can't keep one while it waits, and a lambda can't capture one.
+- A local's grid lasts until the system, view or handler that made it is done, and a lambda can't capture one. A [task](../game/tasks.md) keeps one across its waits as it keeps its lists: a copy of its own, which it reads as it was and changes as its own after the wait, a read's grid and an asset's among them.
 
 ## What a grid costs
 

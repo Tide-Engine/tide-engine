@@ -85,7 +85,7 @@ static int frame(void *user, const float seconds)
     static const char *const filtered[] = {"R8 blends to the midpoint between two pixels", "R16f blends through a helper, and Point stays exact",
         "R8 and R16f mip levels are means of what was drawn", "R16f gradients choose the smallest image",
         "Rg16f pair blends and reads a level", "Rgba16f four free channels blend and read a level",
-        "blended reads of no image, no array and no cube are zero", "an R16f array layer: cleared, blended and exact",
+        "blended reads of no image, no array and no cube are zero, alpha too", "an R16f array layer: cleared, blended and exact",
         "an R16f array layer's mip level through a helper", "an Rg8 array layer blends both channels",
         "an R16f cube face: blended, cleared faces exact", "a cube face's mip level, and an Rg16f cube face",
         "a 4-sample R16f target's mip level is the mean of what its samples came to",

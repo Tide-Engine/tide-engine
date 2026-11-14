@@ -325,11 +325,31 @@ async void SavePixels(RenderTarget target)
 }
 ```
 
-It takes a frame or more and can fail if the device is lost or the image exceeds the limits. Never read it in
-match code. Multisampled targets read their resolved color. Float images retain colors above one, and alpha
-is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership.
-Reads share 64 slots with GPU list reads. An image can contain up to 4,000,000 pixels; outstanding pixel results
-are limited to 128 MiB.
+It takes a frame or more and can fail if the device is lost or what reads hold together passes the limit. Never
+read it in match code. Multisampled targets read their resolved color. Float images retain colors above one, and
+alpha is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership, or keep
+it in the task: a task keeps a grid across its later waits as it keeps its lists, so `pixels` can still be read
+after another `await`. Reads share 64 slots with GPU list reads. An image of any size is read, a 4K or 5K window's
+too; what reads hold together, until they're let go of, is at most 512 MiB.
+
+### A part of an image
+
+A read takes a part of the image after its number, if it has one: its first pixel and how many pixels across and
+down, in the image's own pixels, as the grid is. The part is clamped to the image, and the grid is what's inside it,
+from that part's first pixel; a part with nothing of the image in it fails. Reading one pixel under the mouse copies
+one pixel, and a big image can be read in tiles.
+
+```tide
+local singleton Picked { RenderTarget ids; int id; }
+
+async void PickAt(mut Picked picked, int2 pixel)
+{
+    // ids: RenderTarget.Window(Format.R32i), each object drawn with its number
+    if (await picked.ids.Read<int>(pixel, int2(1, 1)) is Grid2<int> one) picked.id = one[0, 0];
+}
+```
+
+`ReadDepth(from, size)` and a face's or a layer's reads take a part the same way.
 
 ### Which image, and as what
 
@@ -375,8 +395,10 @@ async void ReadIds(mut Picking picking)
 `await target.ReadDepth()` returns `Grid2<float> fails IOError`: each pixel's depth, 0 at the near plane and 1
 at the far limit, as [`this.depth` and a depth's `Sample`](#a-target-s-depth) give it, whichever way the device
 stores it. Every target has one, a target of depth alone too. A multisampled target gives one depth a pixel.
-Where depth is stored as floats the depths a frag wrote come back exactly; on a device with 24-bit depth they
-come back to the nearest of its steps.
+Where depth is stored as floats (reversed, as most devices store it), a depth a frag wrote comes back exactly when
+it's 0.5 or more, or a multiple of 2^-24; otherwise to the nearest such step, about 6e-8 (0.1 comes back as
+0.10000002). On a device with 24-bit depth it comes back to the nearest of that format's steps. Compare with a
+tolerance, not `==`.
 
 ### Cube faces and array layers
 
@@ -386,6 +408,21 @@ image, with its rows from the top as it was drawn, of the format its cube or arr
 `Cubemap(256, Format.R16f)` is read with `Read<float>()`, a layer of a `Format.Rg8` array with `Read<float2>()`,
 an `R32i` face or layer with `Read<int>()`, by the table above. A face of a `Cubemap(size, Format.Depth)` has its
 depth alone: `ReadDepth()`.
+
+### A volume's cells
+
+A `Texture3D` is read the same way, into a `Grid3` of its format's type: `await volume.Read()` for an `Rgba8` or
+`Rgba16f` volume, `Read<float>()` for `R32f`, `Read<float4>()` for `Rgba32f`, `Read<int>()` for `R32i`, each cell as a
+kernel's `volume[at]` reads it. A box of it is its first cell and how many along each axis, `int3`s:
+
+```tide
+local singleton Fluid { [Raw(float)] Texture3D pressure; Grid3<float> slice; }
+
+async void Probe(mut Fluid fluid)
+{
+    if (await fluid.pressure.Read<float>(int3(0, 0, 8), int3(32, 32, 1)) is Grid3<float> slice) fluid.slice = slice.Copy();
+}
+```
 
 ### How many images
 

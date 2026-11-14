@@ -9,6 +9,20 @@ render-targets.md (top) built 32-bit array layers and cube faces, typed array lo
 now; the engine binds its own recorded fallbacks, so it isn't reached); the catalogue's new ReadTargetLayerInts and
 changed ReadTargetLayerNumbers (a load now), which `tide unity` writes. Their HLSL compiles under fxc.
 
+## Banded reads, parts and volumes: embed ABI 26 (2026-11-14, not run in Unity)
+
+A read of a target or a Texture3D now runs its kernel over a band of rows at a time, each band a storage buffer of
+its own bound where the kernel's list's pool goes, read back on its own (render-targets.md, top section). It records
+as before: buffers, a compute pipeline, uniforms, images, storage, a 2D dispatch and buffer reads, so no new packet.
+Every read kernel's uniforms changed (the part's width, the band's rows and first, the part's first pixel, the
+image's size, then the table: 48 bytes) and four kernels were added (ReadVolumeColor/Float/Float4/Int), so `tide
+unity` writes 21 computes. The shared read table grew (`from`, `size`, `depth`): embed ABI and `TideLibrary.Abi` are
+26 (25 was the grids of numbers', below, made the same day). The Sample's hand-made read kernels (`00000000c0de0014`, `c0de0061` to `c0de0068`.compute) were written again from
+the new `read_pixels_wgsl.h` with `tide_wgsl_translate --hlsl` (the old WGSL gave the checked-in files byte for byte
+but for c0de0014, which was already stale), and ComputeReplayTests' `ReadKernel` and
+`PixelReadKernelReturnsStraightHdrThroughBufferReads` record the new layout. Neither the C# nor the assets were
+compiled or replayed in an editor here (the owner's Unity is off limits to this work): the next Unity run checks them.
+
 ## For the next Unity pass: a multisampled target's smaller images (2026-11-14)
 
 Vulkan and now WebGPU make a chain of a multisampled target's resolved colors when a read needs one

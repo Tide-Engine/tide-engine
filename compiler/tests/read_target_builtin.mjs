@@ -17,6 +17,8 @@ const kernels = [
     ['ReadTargetFace', 'target_face'], ['ReadTargetLayer', 'target_layer'], ['ReadTargetLayerDepth', 'target_layer_depth'],
     ['ReadTargetFaceNumbers', 'target_face_numbers'], ['ReadTargetLayerNumbers', 'target_layer_numbers'],
     ['ReadTargetLayerInts', 'target_layer_ints'],
+    ['ReadVolumeColor', 'volume_color'], ['ReadVolumeFloat', 'volume_float'], ['ReadVolumeFloat4', 'volume_float4'],
+    ['ReadVolumeInt', 'volume_int'],
 ];
 const file = path.join(root, 'platform/src/read_pixels_wgsl.h');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tide-read-kernels-'));

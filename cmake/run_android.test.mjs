@@ -135,7 +135,10 @@ test('program failure keeps its exit code and does not overwrite the host fixtur
 
 // --app: an app installed, started and waited for, its end as Zygote saw it,
 // and the fatal lines of its process in the log.
-function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false, slow = false, needs = false, asks = [] } = {}) {
+// `settings`: what the app says it set (`setting: ...`), in every look at the log, and in its last read but with
+// `ring`, where its first lines are gone from the log by its end.
+function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false, slow = false, needs = false, asks = [],
+                        settings = [], ring = false } = {}) {
     const before = { argv: process.argv, android: process.env.ANDROID_HOME };
     const root = mkdtempSync(join(tmpdir(), 'tide-android-app-'));
     const sdk = join(root, 'sdk');
@@ -173,6 +176,8 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
         if (args[0] === 'logcat' && args[3] === '1793873769.783') {
             if (args.length > 4) { // The activity manager's, Zygote's and the app's
                 const lines = [line(689, 'I', 'ActivityManager', 'Start proc 2500:dev.tide.game/u0a156 for next-top-activity')];
+                for (const setting of settings) lines.push(line(2500, 'I', 'tide    ', `setting: ${setting}`));
+                lines.push(line(2600, 'I', 'tide    ', 'setting: TIDE_GPU_CULLING=decide')); // Another app's, no word of this one's
                 // What it asks for comes a line a look, as a frame's output would, and it ends after the last
                 looks++;
                 for (const what of asks.slice(0, looks)) lines.push(line(2500, 'I', 'tide    ', `step: ${what}`));
@@ -187,6 +192,8 @@ function appDevice(t, { exited = 'cleanly (0)', fatal = [], incompatible = false
             }
             return { ...ok, stdout: [
                 '--------- beginning of main',
+                ...(ring ? [] : settings.map(setting => line(2500, 'I', 'tide    ', `setting: ${setting}`))),
+                line(2600, 'I', 'tide    ', 'setting: TIDE_GPU_CULLING=decide'),
                 line(2500, 'I', 'tide    ', 'ok: drew'),
                 line(2600, 'I', 'tide    ', 'another app'),
                 line(2600, 'F', 'libc    ', 'Fatal signal 11 (SIGSEGV) in another app'),
@@ -281,11 +288,34 @@ test('--vulkan stops and fails an app at once when it says it needs Vulkan 1.3',
     assert.deepEqual(screen.messages, []);
 });
 
-test("--env gives the app Tide's settings, and refuses anything else", async t => {
-    const d = appDevice(t);
-    assert.equal(await d.invoke('--env', 'TIDE_TEST_DEPTH_FALLBACK=1', '--env', 'TIDE_GPU_CULLING=decide'), 0);
+test("--env gives the app Tide's settings, each of which it must say it set, and refuses anything else", async t => {
+    const both = ['TIDE_TEST_DEPTH_FALLBACK=1', 'TIDE_GPU_CULLING=decide'];
+    const d = appDevice(t, { settings: both });
+    assert.equal(await d.invoke('--env', both[0], '--env', both[1]), 0);
     assert.ok(d.calls.some(args => args[1] === 'am start -W -n dev.tide.game/android.app.NativeActivity '
         + "--es tide.args '--frames 5' --es tide.env 'TIDE_TEST_DEPTH_FALLBACK=1 TIDE_GPU_CULLING=decide'"));
+    assert.deepEqual(d.messages, []);
+    // Said only while it ran: a long run's first lines are gone from the log's ring by its end
+    const early = appDevice(t, { settings: both, ring: true });
+    assert.equal(await early.invoke('--env', both[0], '--env', both[1]), 0);
+    assert.deepEqual(early.messages, []);
+    // One it never said it set (an app built to ship, or the extra lost on the way) fails the run, which names it,
+    // however the app ended; another app's word for it is none of this one's
+    const unsaid = appDevice(t, { settings: [both[0]] });
+    assert.equal(await unsaid.invoke('--env', both[0], '--env', both[1]), 1);
+    assert.match(unsaid.messages[0], /never said it set TIDE_GPU_CULLING=decide \(a line 'setting: <it>' of its output\), so it ran without it/);
+    assert.doesNotMatch(unsaid.messages[0], /TIDE_TEST_DEPTH_FALLBACK/);
+    assert.deepEqual(unsaid.calls.at(-1), ['uninstall', 'dev.tide.game']);
+    const none = appDevice(t, { exited: 'cleanly (3)' });
+    assert.equal(await none.invoke('--env', both[0], '--env', both[1]), 3);
+    assert.match(none.messages[0], /never said it set TIDE_TEST_DEPTH_FALLBACK=1 TIDE_GPU_CULLING=decide .*without them/);
+    // Set to another value isn't set as asked
+    const other = appDevice(t, { settings: ['TIDE_GPU_CULLING=0'] });
+    assert.equal(await other.invoke('--env', 'TIDE_GPU_CULLING=decide'), 1);
+    // Without --env, nothing is asked of it
+    const plain = appDevice(t);
+    assert.equal(await plain.invoke(), 0);
+    assert.deepEqual(plain.messages, []);
     for (const wrong of ['PATH=/tmp', 'TIDE_RELAY=a b', 'tide_hidden=1', 'TIDE_X']) {
         const refused = appDevice(t);
         assert.equal(await refused.invoke('--env', wrong), 2);
@@ -335,4 +365,11 @@ test('--run starts the app once for each, in order, installed once, and stops at
     const both = appDevice(t);
     assert.equal(await both.invokeWith(['--run', 'fresh'], ['warm']), 2);
     assert.match(both.messages[0], /either each --run's or after the APK, not both/);
+    // Each run is given the settings, and each must say it set them
+    const set = appDevice(t, { settings: ['TIDE_X=1'] });
+    assert.equal(await set.invokeWith(['--env', 'TIDE_X=1', '--run', 'fresh', '--run', 'warm'], []), 0);
+    assert.equal(set.calls.filter(args => args[1]?.startsWith('am start') && args[1].endsWith(" --es tide.env 'TIDE_X=1'")).length, 2);
+    const unset = appDevice(t);
+    assert.equal(await unset.invokeWith(['--env', 'TIDE_X=1', '--run', 'fresh', '--run', 'warm'], []), 1);
+    assert.equal(unset.calls.filter(args => args[1]?.startsWith('am start')).length, 1);
 });
