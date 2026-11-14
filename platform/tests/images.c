@@ -43,17 +43,26 @@ static int frame(void *user, const float seconds)
         stage = 2; warm = 0;
     }
 #endif
+    // images.tide's Mismatched, once its view made it: its volume re-made as R32i behind the code's back, so only the
+    // renderer's guard stands between the kernel's rgba8 storage binding and an integer image; and its [Raw(int)]
+    // field handed a float grid's R16F image, which an int binding must never be given
+    static bool remade;
+    if (!remade && local.Mismatched.made) {
+        local.Mismatched.volume = tide_texture3d_make((tide_int3){2, 2, 2}, TIDE_TARGET_R32I);
+        local.Mismatched.numbers = local.Mismatched.floats;
+        remade = true;
+    }
     tide_draw_reset(&list);
-    tide_gui_begin(&gui, &devices, tide_f2(24, 120), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(24, 128), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
-    const tide_float2 places[43] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
+    const tide_float2 places[44] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
         {4,28},{12,28},{20,28},{4,36},{12,36},{20,36},{4,44},{12,44},
         {4,52},{12,52},{20,52},{4,60},{12,60},{20,60},{4,68},{12,68},{20,68},
         {4,76},{12,76},{20,76},{4,84},{12,84},{20,84},{4,92},{12,92},{20,92},{4,100},{12,100},{20,100},
-        {4,108},{12,108},{4,116},{12,116},{20,116}};
-    uint32_t pixels[43];
-    tide_platform_read_pixels_as(&list, 24, 120, 1, places, 43, pixels);
+        {4,108},{12,108},{4,116},{12,116},{20,116},{4,124}};
+    uint32_t pixels[44];
+    tide_platform_read_pixels_as(&list, 24, 128, 1, places, 44, pixels);
     if (++warm < 3) return TIDE_KEEP_RUNNING;
     check(pixels[0], 0, 0, 0, "a draw before the image write sees the earlier black image");
     check(pixels[1], 0, 0, 255, "a draw between writes sees the exact first HDR color with alpha undone");
@@ -82,7 +91,8 @@ static int frame(void *user, const float seconds)
     for (unsigned i = 0; i < 14; i++) check(pixels[26 + i], 0, 255, 0, filtered[i]);
     check(pixels[40], 255, 255, 255, "a Color read handed an integer image reads as no image");
     check(pixels[41], 0, 0, 0, "a Color volume read and a kernel's Color store never reach an integer volume");
-    check(pixels[42], 255, 255, 255, "a Trilinear read handed an integer image reads as no image, and has no smaller images made");
+    check(pixels[42], 0, 255, 0, "an int read handed a float grid's image reads as no image");
+    check(pixels[43], 255, 255, 255, "a Trilinear read handed an integer image reads as no image, and has no smaller images made");
     if (local.Images.revision <= 0 || (stage == 2 && local.Images.revision == revision)) failures++;
 #ifdef __wasm__
     if (stage == 0 && !failures) {
@@ -101,7 +111,7 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 120, .hidden = true});
+    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 128, .hidden = true});
     printf("renderer: %s\n", tide_platform_renderer());
     tide_platform_run(frame, NULL);
 }

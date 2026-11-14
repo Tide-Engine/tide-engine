@@ -203,6 +203,12 @@ static bool one_image(const shader_read a, const shader_read b)
         || ((a == READ_DEPTH_ARRAY || a == READ_COMPARE_ARRAY) && (b == READ_DEPTH_ARRAY || b == READ_COMPARE_ARRAY));
 }
 
+// A read of a target's or an array's depth: another image than its colors.
+static bool depth_image_read(const shader_read read)
+{
+    return read == READ_DEPTH || read == READ_COMPARE || read == READ_DEPTH_ARRAY || read == READ_COMPARE_ARRAY;
+}
+
 static bool numeric_read(const shader_read read)
 {
     return read == READ_NUMBER || read == READ_INT || read == READ_NUMBER_VOLUME || read == READ_INT_VOLUME;
@@ -3090,15 +3096,10 @@ static void ex_member(emit *em, const expr *e)
         }
         return;
     }
-    // A field of the frag's or vert's own vertex: which ones it reads decides what the mesh's corners pass on
+    // A field of the frag's or vert's own vertex: which ones it reads decides what the mesh's corners pass on. A frag's
+    // int fields come from the triangle's first corner, unblended, as a vert's handed ints do (put_varyings)
     if (em->checking && em->code == em->root && obj->kind == E_NAME && obj->bind == BIND_PARAM && e->field && obj->param->reads) {
         em->root->params.items[param_index(em->root, obj->param)].reads[field_index(obj->param->type.decl, e->field)] = true;
-        if (em->root->is_frag && param_index(em->root, obj->param) == 0 && type_is_int_based(e->type)) {
-            refuse(em, e->at, "'" STR_FMT "' is made of ints, which don't blend across a triangle, so a frag can't read it",
-                   STR_ARG(e->member));
-            diag_note("a vert can read it; for the pixels, keep it as a float in the vertex");
-            return;
-        }
         sb_printf(em->o, is_pointer(obj->param) ? "(*%s).%s" : "%s.%s", local_name(obj->param->name), field_name(e->field));
         return;
     }
@@ -6225,15 +6226,17 @@ static void put_dice(emit *em, sb *o, const int stage, const char *nth)
 // What the vertex stage passes on to the pixels, as members of the stage's
 // struct: the vertex's fields the pixels read, the fields they read of what
 // the vert wrote for them, where they are in the world, and the instance's
-// float4s and int4s, which don't blend.
+// float4s and int4s, which don't blend. A vertex's ints and int vectors are the
+// triangle's first corner's, flat, as a vert's handed ones are.
 static void put_varyings(emit *em, sb *o)
 {
     const shader *sh = em->sh;
     int location = 0;
     for (int i = 0; i < sh->vertex->fields.count; i++) {
         if (!sh->frag_fields[i]) continue;
-        const char *t = ty(em, as_float(sh->vertex->fields.items[i].type));
-        sb_printf(o, "    @location(%d) tide_s%d: %s,\n", location++, i, t);
+        const type t = sh->vertex->fields.items[i].type;
+        const bool flat = type_is_int_based(t);
+        sb_printf(o, "    @location(%d) %stide_s%d: %s,\n", location++, flat ? "@interpolate(flat) " : "", i, ty(em, t));
     }
     for (int h = 0; h < sh->handed.count; h++) {
         const shader_handed *handed = &sh->handed.items[h];
@@ -7014,6 +7017,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
             add_bound(sh, p->type.decl);
         }
     }
+    bool conflict_said = false;
     for (int i = 0; i < code->samples.count; i++) {
         const shader_sample *s = &code->samples.items[i];
         const decl *source = s->asset ? NULL : code->params.items[s->param].type.decl;
@@ -7033,10 +7037,18 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
             if (s->read == READ_SIZE) vec_push(sh->sizes, t);
             else vec_push(sh->textures, t);
         }
-        if (k < sh->textures.count && s->read != READ_SIZE) {
-            shader_texture *image = &sh->textures.items[k];
-            if (image->write != s->write) {
+        // A kernel that writes an image can't read it in that run, whichever way it's read: a typed [Raw(T)] read
+        // (READ_NUMBER, READ_INT_VOLUME...) is another entry of the same image than the store's READ_COLOR or
+        // READ_VOLUME, so the image is compared, not the entry. A target's depth is another image than its colors.
+        if (k < sh->textures.count && s->read != READ_SIZE && !conflict_said) {
+            for (int j = 0; j < sh->textures.count; j++) {
+                const shader_texture *image = &sh->textures.items[j];
+                if (image->direct != t.direct || image->source != t.source || image->field != t.field || image->asset != t.asset
+                    || image->image_color != t.image_color || image->write == s->write || depth_image_read(image->read)
+                    || depth_image_read(t.read) || image->read == READ_DATA || t.read == READ_DATA) continue;
                 diag_error(code->at, "a kernel can't read and write the same image in one run: read a second image and write into this one, then swap them in local code");
+                conflict_said = true;
+                break;
             }
         }
         if (source) add_bound(sh, (decl *)source);
@@ -7137,7 +7149,9 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
             return false;
         }
         if (format == -6 && value.kind != TY_COLOR && value.kind != TY_FLOAT) {
-            diag_error(call->at, "a Grid3<float> volume takes [Raw(float)]: declare its numeric image role as float");
+            diag_error(call->at, "image '" STR_FMT "' holds a %s, which is read as Color or with [Raw(float)]: declare its numeric "
+                       "image role as float", STR_ARG(t->field->name),
+                       t->field->type.kind == TY_TEXTURE3D ? "Grid3<float> volume" : "Grid2<float>'s image");
             return false;
         }
         // Format.Depth's image has no colors: a target's or an array's of depth alone (its depth is read apart)
@@ -7347,7 +7361,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         const field *f = &vertex->fields.items[i];
         if (sh->frag) {
             const param *p = &sh->frag->params.items[0];
-            sh->frag_fields[i] = (p->whole || (p->reads && p->reads[i])) && !type_is_int_based(f->type);
+            sh->frag_fields[i] = p->whole || (p->reads && p->reads[i]); // Ints too, flat (put_varyings)
         } else {
             sh->frag_fields[i] = str_eq_c(f->name, "color") || (textured && str_eq_c(f->name, "uv"));
         }

@@ -2903,8 +2903,8 @@ static bool image_kind(const type t)
 }
 
 // Where an image field gets its value: an assignment's or a struct literal's. Format inference ([Linear] sources,
-// storage images, numeric outputs) reads every one, so a way to give a field an image that isn't recorded here
-// has to say the field's origin is unknown instead (note_image_place).
+// storage images, numeric outputs and reads) reads every one, so a way to give a field an image that isn't recorded
+// here has to be noted as a place instead (note_image_place).
 static void note_image_origin(const field *to, const expr *value)
 {
     if (!to || !image_kind(to->type)) return;
@@ -2912,12 +2912,35 @@ static void note_image_origin(const field *to, const expr *value)
     vec_push(f->image_assignments, value);
 }
 
-// An image field a call makes ('out') or may change ('mut'): the callee's assignments are to its parameter, so
-// nothing here knows what format the field then holds.
-static void note_image_place(const checker *c, const expr *arg)
+// ...and where a function's image parameter does, in its body: what a caller's `out` or `mut` argument then holds.
+static void note_param_origin(const param *to, const expr *value)
 {
-    if (!arg->field || !image_kind(arg->type) || !image_kind(arg->field->type)) return;
-    vec_push(c->prog->image_places, arg->field);
+    if (!to || !to->function_param || !image_kind(to->type)) return;
+    param *p = (param *)(uintptr_t)to;
+    vec_push(p->image_assignments, value);
+}
+
+// An image field (or a function's image parameter, handed on) that a call makes ('out') or may change ('mut'): it
+// then holds whatever the callee assigns its parameter, an origin of its own (expr.image_place) that format
+// inference follows into the callee's assignments. Where the callee's body can't be seen (`callee` NULL: a
+// built-in's out, C's, a virtual function's, which an override may replace), the place has no known format.
+static void note_image_place(const expr *arg, const decl *callee, const int index)
+{
+    if (!image_kind(arg->type)) return;
+    image_origins *origins = arg->field && image_kind(arg->field->type) ? &((field *)(uintptr_t)arg->field)->image_assignments
+                           : arg->kind == E_NAME && arg->bind == BIND_PARAM && arg->param && arg->param->function_param
+                               && image_kind(arg->param->type) ? &arg->param->image_assignments : NULL;
+    if (!origins) return;
+    const bool seen = callee && !callee->is_extern && !callee->is_virtual && !callee->is_override && index >= 0
+                   && index < callee->params.count;
+    expr *place = NEW(expr);
+    place->kind = E_NAME;
+    place->bind = BIND_PARAM;
+    place->image_place = true;
+    place->param = seen ? &callee->params.items[index] : NULL;
+    place->type = arg->type;
+    place->at = arg->at;
+    vec_push(*origins, place);
 }
 
 // Sampling copies admit RGBA8 storage only. Check every assignment, including later
@@ -2927,6 +2950,14 @@ static int linear_source_format(const program *prog, const expr *e, const int co
 {
     if (!e || e->kind == E_DEFAULT) return 0;
     if (depth > 32) return -1;
+    if (e->image_place) { // What the callee assigns its parameter (note_image_place)
+        if (!e->param) return -1;
+        for (int i = 0; i < e->param->image_assignments.count; i++) {
+            const int got = linear_source_format(prog, e->param->image_assignments.items[i], color, depth + 1, reason);
+            if (got) return got;
+        }
+        return 0;
+    }
     if (declared_linear(e) || e->bind == BIND_ASSET) return 0;
     if (e->type.kind == TY_GRID && e->type.decl && e->type.decl->fields.count) {
         if (e->type.decl->fields.items[0].type.kind == TY_COLOR) return 0;
@@ -2948,9 +2979,8 @@ static int linear_source_format(const program *prog, const expr *e, const int co
     }
     if (e->field) {
         const field *f = e->field;
-        // Every image a field can hold is one of its recorded origins (note_image_origin); a place a call makes or
-        // changes holds whatever the callee gave it, which is no fixed format.
-        for (int i = 0; i < prog->image_places.count; i++) if (prog->image_places.items[i] == f) return -1;
+        // Every image a field can hold is one of its recorded origins (note_image_origin), and a place a call makes
+        // or changes holds what the callee assigns its parameter (note_image_place)
         for (int i = -1; i < f->image_assignments.count; i++) {
             const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
             const int got = linear_source_format(prog, origin, color, depth + 1, reason);
@@ -2987,8 +3017,9 @@ static void check_linear_uses(const checker *c)
             diag_note("use Format.Rgba8 for display-encoded colors, or remove [Linear] for floating-point light and single-channel data");
         } else if (format < 0) {
             diag_error(e->at, "this [Linear] source's format is not fixed by its constructor assignments");
-            diag_note("assign a Format.Rgba8 image to its field directly, not through an 'out' or 'mut' argument, a list or a "
-                      "function's result, and keep images of different formats in separate fields");
+            diag_note("assign a Format.Rgba8 image made with its constructor to its field, there or in a function it's handed "
+                      "to as 'out' or 'mut'; an image from C, a list, a function's result or another parameter has no format "
+                      "the compiler can see. Keep images of different formats in separate fields");
         }
     }
     for (int i = 0; i < c->calls.count; i++) {
@@ -5082,14 +5113,21 @@ static void begin_out_arg(checker *c, expr *arg)
 // ...and once it is: `out var health` and `out _` take the parameter's type,
 // or none when the parameter isn't an `out` one, which is said where the
 // arguments are checked against the parameters.
-static void finish_out_arg(checker *c, expr *arg, const type want)
+static void finish_out_variable(checker *c, expr *arg, const type want)
 {
     if (out_untyped(arg)) {
         arg->out_local->type = want;
         arg->type = want;
     }
     if (holds_heap(arg->type)) c->prog->uses_text = true; // In the scratch area, until it goes somewhere
-    note_image_place(c, arg);
+}
+
+// ...for a call whose callee's body isn't checked here (a built-in's, a function value's): an image it makes has
+// no format known. A function's or method's argument is its parameter's place (check_arg_types).
+static void finish_out_arg(checker *c, expr *arg, const type want)
+{
+    finish_out_variable(c, arg, want);
+    note_image_place(arg, NULL, -1);
 }
 
 // `out` before an argument of a call that takes none: a constructor's, a
@@ -5362,9 +5400,10 @@ static void check_method_args(checker *c, expr *e, decl *m)
     for (int i = 0; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         const param *p = param_of[i] >= 0 ? &m->params.items[param_of[i]] : NULL;
-        if (arg->is_out) { // The variable an `out` parameter makes
+        if (arg->is_out) { // The variable an `out` parameter makes; its image's place is noted with the parameter's
             begin_out_arg(c, arg);
-            finish_out_arg(c, arg, p && p->is_out ? p->type : T_ERR);
+            finish_out_variable(c, arg, p && p->is_out ? p->type : T_ERR);
+            if (!p) note_image_place(arg, NULL, -1);
             continue;
         }
         // Devices passed on are read where they go: the callee's reads count. So does what's reached through the World.
@@ -5513,7 +5552,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             continue;
         }
         const bool exact = p->type.kind == arg->type.kind && p->type.decl == arg->type.decl;
-        if (p->is_out || p->mode == PARAM_MUT) note_image_place(c, arg);
+        if (p->is_out || p->mode == PARAM_MUT) note_image_place(arg, m, i);
         if (!check_out_param(c, m, p, arg) || p->is_out) continue;
         if (p->mode == PARAM_MUT && arg->type.kind != TY_ERROR && p->type.kind != TY_ERROR && !exact) {
             diag_error(arg->at, "'" STR_FMT "' changes its '" STR_FMT "', which must be %s, not %s", STR_ARG(m->name),
@@ -14514,6 +14553,8 @@ static void check_assign(checker *c, const stmt *s)
     s->target->raw_sampled = true; // A Raw field's destination is not an escaping read of its pixels.
     const type value = s->target->field ? check_field_value(c, s->value, s->target->field) : check_expr_want(c, s->value, target);
     if (s->target->field && s->op == T_ASSIGN && image_kind(target)) note_image_origin(s->target->field, s->value);
+    if (s->target->kind == E_NAME && s->target->bind == BIND_PARAM && s->op == T_ASSIGN && image_kind(target))
+        note_param_origin(s->target->param, s->value); // What a caller's `out` or `mut` argument then holds
     if (target.kind == TY_ERROR) return;
     if (s->target->property) {
         if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {

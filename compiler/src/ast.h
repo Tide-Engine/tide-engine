@@ -269,6 +269,9 @@ typedef struct attribute {
 // ---------------------------------------------------------------------------
 // Declarations
 
+// The values an image field or an image parameter is given (field.image_assignments, param.image_assignments).
+typedef VEC(const expr *) image_origins;
+
 typedef struct field {
     str name;
     str type_name;
@@ -295,7 +298,10 @@ typedef struct field {
     // `since.Snap()` somewhere: it counts its own snaps in a hidden int after the fields, tide_snaps_<name>,
     // and views draw it as it is between two ticks whose counts differ
     bool snap_counted;
-    VEC(const expr *) image_assignments; // Resource origins, for portable storage-image format inference
+    // Every value an image field can hold, as far as the compiler sees, for format inference (storage images, numeric
+    // outputs and reads, [Linear] sources): assignments, struct literals' initializers, and an `out` or `mut`
+    // argument's place (expr.image_place). The default is an origin too, apart
+    image_origins image_assignments;
 } field;
 
 typedef enum param_mode {
@@ -319,6 +325,9 @@ typedef struct device_leaf {
 
 typedef struct param {
     str sample_role; // [Raw(T)]: the numeric type sampled or stored through this image parameter.
+    // A function's image parameter: what its body assigns it, and the places of the calls it hands it to as `out` or
+    // `mut`, which a caller's `out` or `mut` argument then holds (field.image_assignments)
+    image_origins image_assignments;
     const struct field *call_binding; // A shader function slot, stored in its named binding value.
     const struct expr *capture_source; // Compiler-only source identity of a lambda capture.
     bool owner_context; // Entity identity borrowed from an attached component argument.
@@ -1285,6 +1294,9 @@ struct expr {
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
+    // An image origin note_image_place made for an `out` or `mut` argument (check.c): what the callee assigns its
+    // parameter, `param` (NULL where that can't be seen: C's, a built-in's, a function value's, an override's)
+    bool image_place;
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
                            // ...and cube.faces: a Cubemap's faces, of which an index is one as a RenderTarget (cube.faces[2])
     // await target.Read<T>(image), await target.ReadDepth() (GPU_TARGET_READ): which color image, from 0, and as what
@@ -1814,7 +1826,6 @@ typedef struct program {
     VEC(decl *) local_parts; // The local parts of the match's components and singletons (decl.local_part), in their order
     VEC(decl *) start_scenes; // Scenes Session.Start starts matches in
     bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements
-    VEC(const field *) image_places; // Image fields a call made or may have changed (`out`, `mut`): what they hold isn't known
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
     // ...and the entities' places as it began: a match handler reads the tick's start, or a function does through its

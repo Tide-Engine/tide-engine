@@ -22,7 +22,7 @@ static tide_draw_list list, overlay, offscreen;
 static tide_render_target target;
 static int pass_samples, seen_passes;
 static int empty_window_samples;
-static uint32_t window_width, window_height;
+static uint32_t window_width, window_height, read_width, read_height;
 static int failures, frames, samples, rounds, since;
 static bool supported;
 
@@ -48,7 +48,10 @@ static void collect_pass(void *user, const tide_gpu_pass_sample *sample)
             && strstr(sample->shaders, "Builtin clear") && strstr(sample->shaders, "Builtin shapes");
     }
     if (sample->pass == 1) valid = valid && sample->target != 0 && sample->width == 32 && sample->height == 16;
-    if (sample->pass == 2) valid = valid && sample->target == 0 && sample->width == window_width && sample->height == window_height;
+    // The window's own pixels, or, where the frame is read back (tide_platform_read_pixels), its logical ones at a scale
+    // of 1: the same on a display of a scale of 1, not on a phone's
+    if (sample->pass == 2) valid = valid && sample->target == 0 && ((sample->width == window_width && sample->height == window_height)
+        || (sample->width == read_width && sample->height == read_height));
     if (!valid && failures == 0) fprintf(stderr, "pass=%u target=%llu size=%ux%u calls=%llu vertices=%llu shaders=%s\n",
         (unsigned)sample->pass, (unsigned long long)sample->target, (unsigned)sample->width, (unsigned)sample->height,
         (unsigned long long)sample->draw_calls, (unsigned long long)sample->vertices, sample->shaders);
@@ -75,6 +78,8 @@ static int frame(void *user, const float seconds)
         const tide_float2 size = tide_platform_screen_size(), scale = tide_platform_screen_scale();
         window_width = (uint32_t)(size.x * scale.x + 0.5f);
         window_height = (uint32_t)(size.y * scale.y + 0.5f);
+        read_width = (uint32_t)size.x;
+        read_height = (uint32_t)size.y;
         printf("renderer: %s; GPU timing %s\n", tide_platform_renderer(), supported ? "supported" : "unavailable");
         target = tide_render_target_make_scaled(32, 16, 1);
         tide_draw_render_target(&list, target);

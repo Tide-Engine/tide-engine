@@ -9414,6 +9414,26 @@ static int *field_padding(const decl *d)
     return pad;
 }
 
+// How a resource field's marks spell it, in the game header's comment and in the layout's type name: each role
+// ([Linear], [Raw], [Raw(float)], [Raw(int)]...) its own, so a hot reload that changes one resets the field to its
+// new default rather than reading the image it held another way (notes/hot-reload.md). NULL for a field with none.
+static const char *field_role_spelling(const field *f, char *out, const size_t size)
+{
+    const type_kind k = f->type.kind;
+    const char *kind = k == TY_TEXTURE ? "Texture" : k == TY_TEXTURE3D ? "Texture3D" : k == TY_TEXTURE_ARRAY ? "TextureArray"
+                     : k == TY_CUBEMAP ? "Cubemap" : NULL;
+    if (!kind) return NULL;
+    if (k != TY_TEXTURE3D && field_is_linear(f)) {
+        snprintf(out, size, "[Linear] %s", kind);
+        return out;
+    }
+    if (!field_is_raw(f)) return NULL;
+    const type role = raw_sample_type(f);
+    if (role.kind == TY_COLOR) snprintf(out, size, "[Raw] %s", kind);
+    else snprintf(out, size, "[Raw(%s)] %s", type_name(role), kind);
+    return out;
+}
+
 static void gen_fields(const gen *g, sb *o, const decl *d)
 {
     if (d->fields.count == 0) sb_put(o, "    uint8_t tide_empty; // C structs can't be empty.\n");
@@ -9423,15 +9443,10 @@ static void gen_fields(const gen *g, sb *o, const decl *d)
         if (pad[i]) sb_printf(o, "    uint8_t tide_pad%d[%d];\n", pads++, pad[i]);
         if (i == d->fields.count) break;
         const field *f = &d->fields.items[i];
-        sb_printf(o, "    %s %s;%s\n", f->type.kind == TY_STRING ? "tide_text" : c_type(f->type), field_cname(f),
-                  o == &g->h && f->type.kind == TY_TEXTURE && field_is_linear(f) ? " // [Linear] Texture"
-                  : o == &g->h && f->type.kind == TY_TEXTURE_ARRAY && field_is_linear(f) ? " // [Linear] TextureArray"
-                  : o == &g->h && f->type.kind == TY_CUBEMAP && field_is_linear(f) ? " // [Linear] Cubemap"
-                  : o == &g->h && f->type.kind == TY_TEXTURE && field_is_raw(f)             ? " // [Raw] Texture"
-                  : o == &g->h && f->type.kind == TY_TEXTURE3D && field_is_raw(f) ? " // [Raw] Texture3D"
-                  : o == &g->h && f->type.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? " // [Raw] TextureArray"
-                  : o == &g->h && f->type.kind == TY_CUBEMAP && field_is_raw(f)       ? " // [Raw] Cubemap"
-                                                                                        : "");
+        char role[64];
+        const char *spelled = o == &g->h ? field_role_spelling(f, role, sizeof role) : NULL;
+        sb_printf(o, "    %s %s;%s%s\n", f->type.kind == TY_STRING ? "tide_text" : c_type(f->type), field_cname(f),
+                  spelled ? " // " : "", spelled ? spelled : "");
     }
     (void)g;
 }
@@ -26854,13 +26869,9 @@ static void gen_layout(gen *g)
                           : t.kind == TY_ENUM   ? layout_index(&enums, t.decl)
                                                 : -1;
             const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
-            const char *type_name = t.kind == TY_TEXTURE && field_is_linear(f) ? "[Linear] Texture"
-                                  : t.kind == TY_TEXTURE_ARRAY && field_is_linear(f) ? "[Linear] TextureArray"
-                                  : t.kind == TY_CUBEMAP && field_is_linear(f) ? "[Linear] Cubemap"
-                                  : t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture"
-                                  : t.kind == TY_TEXTURE3D && field_is_raw(f) ? "[Raw] Texture3D"
-                                  : t.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? "[Raw] TextureArray"
-                                  : t.kind == TY_CUBEMAP && field_is_raw(f) ? "[Raw] Cubemap" : layout_field_name(t);
+            char role[64];
+            const char *spelled = field_role_spelling(f, role, sizeof role);
+            const char *type_name = spelled ? spelled : layout_field_name(t);
             // Its handles say which heap its blocks are in (decl.heap_id): in a
             // build where that's another, the field starts again rather than
             // carry handles into a heap that hasn't their blocks

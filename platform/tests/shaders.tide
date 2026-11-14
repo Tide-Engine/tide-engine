@@ -5314,6 +5314,14 @@ frag FlatRead(Corner3 vertex, FlatMark mark, out Color color)
     else if (mark.which == -2147483647) color = Color.green;
     else color = Color.blue;
 }
+// A frag reading its vertex's int itself: the triangle's first corner's, flat, as a vert's handed ones are
+frag FlatVertexRead(Corner3 vertex, out Color color)
+{
+    if (vertex.kind == 16777217) color = Color.red;
+    else if (vertex.kind == -2147483647) color = Color.green;
+    else if (vertex.kind == 7) color = Color.blue;
+    else color = Color.white;
+}
 [After(TriangleSides)]
 view FlatCorners(Art art)
 {
@@ -5329,6 +5337,9 @@ view FlatCorners(Art art)
     Draw.Mesh(corners, [0, 1, 2], float4x4.Translate(Cell(0, 0)), FlatMarks, FlatRead);
     Draw.Mesh(corners, [1, 2, 0], float4x4.Translate(Cell(1, 0)), FlatMarks, FlatRead);
     Draw.Mesh(corners, [2, 0, 1], float4x4.Translate(Cell(2, 0)), FlatMarks, FlatRead);
+    Draw.Mesh(corners, [0, 1, 2], float4x4.Translate(Cell(0, 1)), FlatVertexRead);
+    Draw.Mesh(corners, [1, 2, 0], float4x4.Translate(Cell(1, 1)), FlatVertexRead);
+    Draw.Mesh(corners, [2, 0, 1], float4x4.Translate(Cell(2, 1)), FlatVertexRead);
 }
 
 local singleton LevelsState { RenderTarget target; Cubemap cube; Texture image; bool made; float level; bool cubeRead; }
