@@ -9019,6 +9019,7 @@ static type check_parse_call(checker *c, expr *e, const type result)
 }
 
 #include "visibility_check.inc"
+#include "storage_check.inc"
 #include "compute_check.inc"
 
 // A frag's this.Ddx(v), this.Ddy(v) and this.Fwidth(v): how much a float or a
@@ -9126,6 +9127,7 @@ static type check_method(checker *c, expr *e)
     alias_receiver(c, e);
     if (visibility_owner(c, e->object, "Visibility") || visibility_owner(c, e->object, "Audience"))
         return check_visibility_static(c, e);
+    if (storage_call(c, e)) return check_storage_static(c, e);
     if (e->object->kind == E_NAME && str_eq_c(e->object->name, "GPU") && !find_local(c, e->object->name)
         && !find_param(c, e->object->name) && !field_in_scope(c, e->object->name)) return check_gpu_static(c, e);
     if (str_eq_c(e->name, "Count")) {
@@ -11935,7 +11937,10 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_WAIT: what = "wait"; break;
     case CALL_ACTION: what = "run a block"; break;
     case CALL_NEW_GRID: what = "make grids"; break;
-    case CALL_VISIBILITY: if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups"; break;
+    case CALL_VISIBILITY:
+        if (e->visibility_operation & VISIBILITY_STORAGE) what = "use the server's store";
+        else if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups";
+        break;
     default: break;
     }
     if (!what && e->kind == E_AWAIT) what = "wait";
@@ -14258,7 +14263,10 @@ static void check_step_expr(checker *c, const expr *e)
     case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SESSION: case CALL_CLIPBOARD: case CALL_QUIT: what = "make requests of the host"; break;
     case CALL_LOAD: case CALL_UNLOAD: what = "load and unload scenes"; break;
-    case CALL_VISIBILITY: if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups"; break;
+    case CALL_VISIBILITY:
+        if (e->visibility_operation & VISIBILITY_STORAGE) what = "use the server's store";
+        else if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups";
+        break;
     case CALL_SNAP: what = "snap"; break;
     default: break;
     }
@@ -22027,6 +22035,13 @@ static void check_sends(const checker *c)
         diag_error(e->at, "'" STR_FMT "' needs the entity a " STR_FMT " is sent to, and this Send has none",
                    STR_ARG(event->needs_target->name), STR_ARG(event->name));
         diag_note("send it to an entity: 'entity.Send(" STR_FMT " { ... })'", STR_ARG(event->name));
+    }
+    // A load's Loaded goes to the entity the load names, and a handler that takes components needs one
+    const decl *loaded = storage_loaded(c->prog);
+    if (c->prog->bare_load && loaded && loaded->needs_target) {
+        diag_error(c->prog->bare_load_at, "'" STR_FMT "' needs the entity a Loaded is sent to, and this Storage.Load names none",
+                   STR_ARG(loaded->needs_target->name));
+        diag_note("name the entity its answer is for: 'Storage.Load(key, entity)'");
     }
 }
 

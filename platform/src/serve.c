@@ -325,6 +325,8 @@ int tide_serve(const tide_serve_desc *desc)
     }
     if (!serve_load(desc)) return 1;
     host.jobs = tide_platform_jobs();
+    // What its matches save (Storage.Save in match code) is kept in the game's own folder, as a player's saves are
+    if (desc->game->stored && !host.io) host.io = tide_platform_io_init(desc->game->app_id, NULL);
     if (!(udp_only ? tide_platform_udp_open((uint16_t)port, &host.transport)
                    : tide_platform_host_open((uint16_t)port, &host.transport))) {
         fprintf(stderr, "tide: cannot listen on server port %u\n", (unsigned)port);
