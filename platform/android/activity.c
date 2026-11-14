@@ -965,7 +965,8 @@ void tide_window_pixel_size(int *width, int *height)
 
 void tide_window_present(void)
 {
-    if (app.vulkan) tide_gpu_vk_present();
+    // The match goes on while the frame's fence is waited for (tide_platform_update_while_waiting), as on desktop
+    if (app.vulkan) tide_gpu_vk_present_updating(tide_window_update_while_waiting);
     poll_looper(0);
 }
 
