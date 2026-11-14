@@ -1992,8 +1992,11 @@ bool system_gather_check(const program *prog, const decl *sys, bool *little);
 // right.
 bool system_splits(const decl *sys);
 bool system_splits_in_order(const decl *sys);
-// ...of which those that change their rows' text or lists, in runs (tide/heap.h, A heap in runs).
+// ...of which those that change their rows' text, lists or grids, in runs (tide/heap.h, A heap in runs),
+// and of those, the ones whose rows queue nothing: their runs are each entity's own, by its identity, not
+// shares of the order.
 bool system_heap_runs(const decl *sys);
+bool system_heap_runs_scattered(const decl *sys);
 
 // For a per-entity system written in Tide whose entities don't go across
 // threads: the first thing in it that keeps them in order on one, as "it

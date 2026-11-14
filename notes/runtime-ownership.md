@@ -1,3 +1,16 @@
+## Grids in runs (2026-11-14)
+
+Mine, under the grids, heap and jobs maintenance below (schedule-and-threads.md, top section). No new runtime
+function. `tide/grid.h`'s and `engine/src/grid.c`'s functions tell a field's own grid by `tide_handle_in` (any run's
+heap of its owner) where they compared `where`s, change and release it through the heap its handle names, and
+allocate only from a heap this thread may hand blocks out of: a grid in another run's heap is moved whole into this
+run's first (`grid_home`), its old blocks released as another run's are. `tide_par_begin` keeps the grid's own
+`where` in the loop. Generated code for a system in runs whose rows queue nothing defines `tide_entity_run`, a
+`TIDE_HELPER` of its own (the run of an entity, from its identity), and calls the existing `tide_heap_run_enter` for
+each row. A caller of `tide_grid_poke` or `tide_grid_release` that passes a `where` naming another run of the grid's
+owner (C reaching a grid of an owner a system changes in runs) is now its owner's, where before it was taken for
+another world's and left alone.
+
 ## [Linear] image captures (2026-11-14)
 
 The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and

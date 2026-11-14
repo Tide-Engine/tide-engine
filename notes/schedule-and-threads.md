@@ -1,5 +1,173 @@
 # The schedule and the tick on threads
 
+## A system's own rows' grids across threads, and runs by identity (2026-11-14)
+
+A gap an endless voxel world needs (`notes/voxels.md` on `t3/minecraft-scale-world-readiness`, Gaps;
+`bench/voxels` there): a per-entity system that changed a `Grid2`/`Grid3` field of its own row (making each new
+chunk of terrain from its seed, a cellular automaton stepping every loaded chunk) ran its entities in order on one
+thread, as grids weren't in the heap in runs (below, 2026-11-13) that text and lists are. Required: such systems
+across threads, the world bit-identical to one thread's (hash, heaps as packed and hashed, snapshots, deltas).
+Games with hidden state or shards keep one heap (`check.c`: `const bool one = prog->shards ||
+prog->visibility_state`) and were left as they are, so `bench/voxels`' own `Generate` (a game with visibility) still
+runs on one thread; a game without either is what changed.
+
+Built, in two parts; both are internal (nothing a game's code can observe), my picks, written Provisional in
+`docs/spec.md` (Grids):
+
+**1. Grids in runs** (`engine/src/grid.c`, `tide/grid.h`; `compiler/src/parallel.c`).
+
+- **The compiler** lets a grid's owner go in runs: `heap_keeps_order` no longer counts an owner that holds a grid
+  (`holds_a_grid` is gone), so `system_heap_runs` takes such a system as it takes one that changes text and lists,
+  and `system_one_thread` lost its line for grids ("which holds a grid: a grid's chunks go in the order its entities
+  do"). Nothing else in the compiler knew grids weren't in runs: `decl_where` already says `TIDE_WHERE_RUN` for a
+  `heap_runs` owner, a cell write already counts as writing the grid field's lanes (its handle can change), and the
+  flush, join and checks are the owner's whatever it holds.
+- **A grid's directory and its chunks stay in one heap**, its handle's: the heap of the run it was made in. A
+  directory names its chunks by their offsets in that heap (`tide_grid_record.block`), as a list in chunks does.
+- **Any run's rows read and change its cells where they are.** Everywhere grid.c tested a field's own grid by
+  `tide_handle_where(g->at) == where` it tests `tide_handle_in` (same world and owner, any run), and finds the heap
+  from the grid's handle, not from `where`: `tide_grid_poke` (inline) and `tide_grid_poke_slow`,
+  `tide_grid_cached_poke` (its cache holds the grid's own heap, whose `moves` it checks), `tide_grid_clear`,
+  `tide_grid_release` (through its own heap, so another run's blocks go on this run's `away` list and back at the
+  join), `tide_par_begin`. Without that a grid made in another run would have read as another world's: writes
+  dropped, a release leaking every chunk.
+- **New blocks only from this run's heap: `grid_home`.** What adds a chunk (`tide_grid_poke_slow`, `tide_par_end`)
+  asks it for the heap to allocate in: the grid's own, unless this thread is on a run that isn't that heap's
+  (`tide_heap_away`). Then the grid moves into this run's heap whole first: its directory as it is (room and table
+  the same, so the records' indexes hold), then each chunk in its records' order; each old chunk gets its header back
+  and goes, with the old directory, to `tide_heap_release`, which keeps them on this run's `away` list until the
+  join, as it does any of another run's blocks. A directory that grows (`make_room`) does it in the grid's heap,
+  which is then this run's. **Outside runs** a grid adds chunks in its own heap, whichever run's that is: one thread
+  runs then, no heap is any other thread's, so there's no move (a list in chunks moves back to run 0 there; a grid
+  needn't). A new grid (`tide_grid_own`, `tide_grid_set`, a spawn's values, `Grid3()`'s first chunk) is made in
+  `where`'s heap, the run's.
+- **Parallel loops over a row's grid** (`parallel (var at in chunk.kept)` in a per-entity system, and a foreach
+  whose steps run at once): `tide_par_begin` keeps the grid's own `where` for the loop, so its steps on other threads
+  read the grid where it is; `tide_par_end` moves the grid (`grid_home`) when it has a chunk to add, and takes the
+  new `where`. Steps write only their buffers, as before.
+- The cost of a move is a copy of what the grid has, once per entity and run: a grid made outside runs (a spawn's
+  value, owned as the tick's changes apply, is in run 0's heap) moves when a row first adds a chunk to it, which for
+  a fresh `Grid3(16, 16, 16)` is a directory of no chunks.
+
+**2. Runs by identity** (`system_heap_runs_scattered` in `parallel.c`; `gen_system_run` and `gen_rows_function` in
+`codegen.c`).
+
+Measured first with part 1 alone, on a scratch game shaped like `bench/voxels`' streaming (64 chunks spawned a tick,
+each made from its seed by `Generate` with voxels' own `Ground`/`Natural`, unloaded 40 ticks later: about 2,600
+loaded): `Generate` took 2.85 ms a tick on one thread and **2.93 on the pool**. Runs are equal shares of the
+system's entities in the order of their identities, and an identity's first word is the birth clock, so a tick's
+new chunks, the only rows with work, were all in the last run, on one thread. The same is true of text and lists
+in runs, and of any system that splits in order: whatever is costly about new entities is on the last task.
+
+- **A system in runs whose rows queue nothing** (`!queues(sys)`: no spawn, send, add, remove, destroy or function
+  that does) **puts each entity in a run by its identity**: `tide_entity_run(e)`, `((birth ^ lineage) *
+  0x9E3779B97F4A7C15) >> 59`, generated once in a game that has such a system (a helper of the generated C, not a
+  runtime function). Nothing such a system does depends on the order of its rows across runs: a run's heap is that
+  run's rows' alone, in their order, and there's no queue to keep in order. So the heap layout still depends on the
+  world alone, and is the same on one thread, where the one task has every run.
+- **The walk**: a task has runs `[32 * task / pieces, 32 * (task + 1) / pieces)` (none when there are more pieces
+  than runs) and goes through all the system's keys in order, skipping those of other runs (`tide_every_run`: one
+  task with every run skips nothing). Rows that go together (one archetype, consecutive rows of one chunk) stop at a
+  row of another task's run. **Each row enters its own run** (`tide_heap_run_enter(tide_entity_run(tide_ent[i]))` in
+  the rows function, before the call; `g->row_runs`), so on one thread rows still go together a chunk at a time, in
+  key order as before, each in its run. The flush after each row is that run's heap's; the join is as before.
+- **What it gives**: new entities are in every run, and **an entity is in the same run in every such system and
+  tick**, so its grids, lists and text never move between runs again once they're in its run's heap (with shares,
+  any entity past one that came or went changed runs).
+- **A system whose rows queue keeps runs that are shares of the order**: its tasks' queues are joined in task order
+  at the tick's end (`tide_queue_append` in `jobs.c`), which must be one thread's order. An owner changed in runs by
+  systems of both kinds has its entities in two runs: a grid that gets new chunks in both moves back and forth
+  (gaps).
+- The generated C of every game in the tree but 30 is as it was (HEAD's and this tidec over all 548 `.sources`, the
+  simulation identity's two lines left out): those 30 each have a per-entity system in runs whose rows queue nothing,
+  among them grids' owners' for the first time (the gallery's `Stroke`, `tidec_e2e_grids`).
+
+Tests:
+- `tidec_e2e_row_grids` (`compiler/tests/e2e/row_grids.tide`, `row_grids_test.c`): 300 chunks in three archetypes
+  (some left out), each a sized `Grid3<Block>` of one chunk, an open `Grid2<byte>` and a sized `Grid2<byte>` of six,
+  and a list. `Generate` makes blocks from the seed with voxels' functions (new chunks; a chunk of air makes none);
+  `Change` sets blocks and air, cells of the open grid in chunks it hasn't got, zero where it has none, and replaces
+  grids with a copy of another field (`marks.Copy()`), a function's (`Stripes`, `Dots`), a new one (`Grid3(16, 16,
+  16)`, `Grid2()`) and `Clear`s one; `Spread` is a parallel loop over a row's own sized grid whose steps write in
+  chunks it hasn't got; `Bud` adds chunks and spawns chunks holding a grid a function made (its runs are shares of
+  the order, so the grids it and `Change` both add to move between their runs); `Audit` (one thread: it reads a
+  singleton it changes) adds chunks outside runs to grids in runs' heaps; `Churn` destroys and spawns every tick.
+  Fourteen ticks on a pool that's one thread saying it has eight, and five runs of fourteen on the platform's, a
+  snapshot taken every tick: the hash, **the world's packed bytes** and a census of every grid read from outside
+  (how many, how many in a run's heap past the first, cells) equal one thread's every tick. A pack, a delta over an
+  unpacked base, and a snapshot rolled back and run again on one thread give the same world. Every run's heap is
+  in use after four ticks on one thread, more than half the grids are in a run's heap past the first, and nothing a
+  run kept is left. `TIDE_ROW_GRIDS_TIME` times it (below).
+- `heap_runs_move_a_grid_whole` (`tests/test_heap.c`, in `tide_tests`): a grid made in run 1's heap, written in
+  place from run 2 (and through a cache, which holds run 1's heap), zero where it has no chunk making none; a new
+  chunk from run 2 moves it whole (every cell kept, run 1's heap unchanged until the join, which gives its blocks
+  back: the same grid made again in run 1 takes no more of it); a chunk added outside runs stays in its run's heap;
+  a parallel loop from run 3 over a sized grid in run 1's heap whose end adds a chunk moves it to run 3; releases
+  outside runs go through their own heaps.
+- **Without the move** (`grid_home` returning the grid's own heap always), the sanitize build's heap checks end the
+  fixture on its first threaded tick: `a block was asked of run 0's heap by code on run 19`.
+- Schedule goldens: `heaps` (`Dig`, a grid's owner, lost its one-thread line) and `grids` (two per-entity systems
+  over a `Grid3` field, one that spawns: no one-thread line; HEAD's tidec says one for each).
+- Pins moved, as each of those games' systems now puts its entities' blocks in their own runs' heaps:
+  `rows` `0xf265ccfec6132a0b`, `CHARS_HASH` 7239718306326553534, `JSON_HASH` 4274344058269490730,
+  `OPTIONAL_FIELDS_HASH` 9457763508960445269, `bench_gallery` tick 272 `0xc8e6ab383a684a0a` (the same on 1, 4 and
+  12 threads). The three small ones moved for a world of one or a few entities: with shares, `min(32, count)` runs
+  put a lone entity in run 0, whose handles are the bits they were; by identity it's in any run.
+
+Measured (release, Windows, 24 threads; the machine had a game running throughout, so to a tenth of a millisecond at
+best; before is HEAD's tidec building the same game against this runtime, which nothing of it reaches; a tick's
+systems from the jobs' profile):
+
+| | before, 1 thread | before, the pool | after, 1 thread | after, the pool |
+|---|---|---|---|---|
+| Streaming chunks (scratch, above): `Generate` | 2.84-2.87 ms | 2.85-3.08 | 2.89-2.91 | **0.58-0.63** |
+| ...the whole tick | 2.93-2.96 | 3.15-3.56 | 2.98-3.01 | **0.89-0.94** |
+| `row_grids`, its systems | 2.97 | 2.61 | 3.69 | **0.98** |
+| ...`Generate`, `Change`, `Spread` | 1.72, 0.52, 0.56 | 1.69, 0.44, 0.29 | 1.83, 0.95, 0.64 | 0.46, 0.16, 0.14 |
+| ...the tick with a snapshot and the hash on this thread, as `row_heaps_time` does | 8.56-8.75 | 7.7-8.6 | 10.1-10.5 | 5.7-5.9 |
+
+Three rounds each, alternating one thread and the pool; the streaming game's third round after (4.27 and 1.50 ms a
+tick) ran beside a spike of the other load and is left out. The scratch game isn't in the tree: it's the
+`Ground`/`Natural`/`Generate` of `row_grids.tide` over a `Chunk { int3 at; int seed; int born; Grid3<Block> blocks =
+Grid3(16, 16, 16); bool made; }` with a once-a-tick system spawning 64 and one destroying those 40 ticks old.
+
+What it says: a game that makes its chunks from a seed gets them made on every core (5 times here; the tick is
+then mostly `Leave`'s destroys and the hash); `row_grids`' tick on one thread pays for the grids that move: with
+`Bud` changed to write a cell of a chunk there already (so nothing moves back and forth), its systems on one thread
+were 3.03 before and 3.23 after, of which `Change` 0.58 and 0.76, which is the runs' own cost (the first move of
+each spawned chunk's grids, other runs' blocks through the join, 32 heaps' pages); the rest (0.5 ms) is the moves
+between two kinds of system. With a snapshot taken and the world hashed every tick, one thread went from 8.6 to
+10.3 ms: the moves' copies, and more pages written a tick, as a tick's new blocks are in 32 heaps' pages rather than
+one's, each copied from the snapshot's and hashed again. The copy and the hash on the test's own thread are a
+session's work either way (a session hashes on the pool's threads, `hash_world_on`); the pool still went from 8.1 to
+5.8.
+
+Gaps:
+- **A system in runs whose rows queue still has runs that are shares of the order**, so a generator that also
+  spawns, sends or destroys has a tick's new entities on its last task. A merge of the tasks' queues by each
+  command's row (its place in the order) would let every system in runs go by identity.
+- **An owner's grids that get new chunks from systems of both kinds move between their runs' heaps** (0.5 ms a tick
+  in `row_grids` on one thread). A record's `unused` word could say its chunk's run, so chunks stay where they were
+  made and only a directory that grows moves; every reader of a record's block (grid.c, mesh.c, the generated value
+  codec, task trace, embed, worker capture and blend copies) would find the chunk's heap by it.
+- **Games with hidden state or shards keep one heap**, so their grid systems (`bench/voxels`' `Generate`) stay on one
+  thread, as their text and lists do (`client_state_codegen.inc` and `shard_*.inc` pack and read one heap).
+- **A move copies what the grid has**, once each time an entity's grid is first given a chunk in a run its heap isn't
+  (after a spawn, which owns its values outside runs; after a system of the other kind).
+- Windows' debugger views (natvis) don't find a block in a run's heap past the first (debugging.md), grids' chunks
+  now too. LLDB's do.
+- A world of a few entities spreads them over up to 32 runs' heaps, a page each, where shares used the first few.
+- **One thread pays a little more**: 2% on the streaming game, 7% on `row_grids`' systems with nothing moving back
+  and forth, and beside a snapshot more pages are written a tick (above).
+- Not run: `foldline` (the private prototypes, whose generated C changed: it has such a system) and the web, which
+  the coordinator runs; Linux, macOS, MinGW and Android are CI's.
+
+Validation: release, the tests of every game whose generated C changed but `foldline` (28 e2e fixtures with
+`lists_held`, `lists_big`, `lists_resize` and `lists_out`, `tide_platform_jobs`, `tide_platform_alongside`,
+`bench_gallery`), `tide_tests`, the 19 schedule goldens, `tidec_indexed_loops_same`, `tidec_pure_calls_same`,
+`tidec_previous_same`, `tidec_outline_game`, `tidels_tests`; sanitize (Windows ASan, `TIDE_HEAP_CHECKS`), the same
+games with `grid_values`, `parallel`, `worker_grids` and `tidec_safety_grids`/`_grid_values`: 37 of 37.
+
 ## `previous` bindings: a query that reads the tick's start (2026-11-13, evening)
 
 The owner's task, after the day's three threads on the schedule: a system that changes a component and reads
@@ -327,8 +495,8 @@ What it is:
   is grows the table under the same lock. `tide_heap_write` reads the table as `tide_heap_block` does.
 - **The compiler** (`rows_independent`, `system_splits_in_order`, `system_heap_runs` in `parallel.c`): a system
   that changes text or lists splits in order as one that queues does, unless one of its owners (`heap_owners`) is
-  in the match's one heap (C can write it, or the game has shards or hidden state: no runs there), or holds a grid,
-  or it starts tasks. `tide schedule` and the editors say which (`system_one_thread`). `gen_system` wraps the
+  in the match's one heap (C can write it, or the game has shards or hidden state: no runs there), or holds a grid
+  (no longer, 2026-11-14), or it starts tasks. `tide schedule` and the editors say which (`system_one_thread`). `gen_system` wraps the
   ordered walk in the runs' loop, flushes the run's heap after each row, and joins in the task when it had every
   run, else in `tide_done_<System>`, which such a system now always has.
 - **Builds that check** (`TIDE_HEAP_CHECKS`): a block asked of a run's heap by code on another run ends the program.
@@ -339,7 +507,8 @@ What it is:
 Not grids, and why: a grid's directory names its chunks by offset as a list's block does, and its loops, windows
 and caches (grid.c, about 900 lines) take one heap for the grid from a `where`. Moving a grid whole into a run's
 heap when a row first adds a chunk is the same idea as the list's; it wasn't done here, so an owner that holds a
-grid keeps its systems in order.
+grid keeps its systems in order. (Correction, 2026-11-14: built, the top section, with runs by identity for systems
+whose rows queue nothing.)
 
 Tests:
 - `tidec_e2e_row_heaps` (`compiler/tests/e2e/row_heaps.tide`): 900 bags in three archetypes whose system changes a
@@ -378,13 +547,14 @@ by a `mut` singleton or a `Set`. So of the 0.8 ms the chain had in "own rows' te
 and the rest is the `Set` question the owner was asked the same morning (queue it where it's unobservable).
 
 Gaps:
-- **Grids** (above).
+- **Grids** (above; built 2026-11-14, the top section).
 - **Owners in the match's one heap**: what C can write, and every owner of a game with shards or hidden state.
 - **A run's heap costs memory**: a page for each run that ever allocated, for each owner (32 runs: half a
   megabyte an owner at most), and 208 bytes each in a full pack. Blocks freed in one run's heap are only handed
   out again by that run.
 - **Entities change runs** as others come and go before them; a block made in the old run is released through the
-  join, and a list in chunks is copied whole the next time it needs chunks.
+  join, and a list in chunks is copied whole the next time it needs chunks. (2026-11-14: in a system whose rows
+  queue nothing, an entity's run is its identity's and never changes: the top section.)
 - **One thread pays a little**: the fixture's tick on one thread went from 7.5-7.7 ms to 7.9-8.1.
 - **Map lookups about 2% slower** in `versus_lookup` (a handle's `where` takes three more instructions and
   `tide_heaps_of` a test); `versus_buckets` and `versus_churn` within their runs' spread.
@@ -877,7 +1047,7 @@ Gaps, what still keeps code off threads, in the order the measurements above giv
 - **A per-entity system that changes its rows' text or lists stays on one thread** (82 and 18): a heap's blocks go
   in its entities' order. Runs on threads would each need blocks of their own that the join renumbers, or a heap
   for each chunk; not designed. (Built later the same day: the top section. Text, lists, maps and sets; not
-  grids.)
+  grids, which followed 2026-11-14.)
 - **Owners C can write share one heap**, so Box3D's and Box2D's systems wait for every other such system over it
   (they wait for each other over their singleton anyway). C would have to say an owner's `where`
   (`TIDE_WHERE_<Type>` is in the header) and the compiler be told that it does.

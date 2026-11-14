@@ -1,5 +1,13 @@
 # Benchmarks
 
+## Grids in runs, and runs by identity (2026-11-14)
+
+What a per-entity system that changes its rows' grids, or text and lists while queueing nothing, gains on threads:
+schedule-and-threads.md, top section (a streaming-chunks game's `Generate` 2.85-3.08 ms a tick on the pool before,
+0.58-0.63 after; `tidec_e2e_row_grids` with `TIDE_ROW_GRIDS_TIME`). The gallery's quick pin moved, its canvases'
+system now putting each canvas's blocks in its own run's heap: tick 272 `c8e6ab383a684a0a`, the same on 1, 4 and 12
+threads.
+
 ## A flock with `previous` (2026-11-13, evening)
 
 `bench/flock` (`bench_flock`, `bench_flock_now`; each test runs `--quick --expect <hash>`): one component and one

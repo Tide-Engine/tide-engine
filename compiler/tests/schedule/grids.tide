@@ -48,4 +48,23 @@ system Count(Field field, mut Stats stats)
     stats.seen = seen;
 }
 
+// Per entity, each changing its own row's grid: its entities go across threads, in runs (tide/grid.h), whether its
+// rows queue nothing or spawn too
+component Chunk
+{
+    int3 at;
+    Grid3<byte> blocks = Grid3(16, 16, 16);
+}
+
+system Generate(mut Chunk chunk)
+{
+    chunk.blocks[chunk.at] = 1;
+}
+
+system Bud(mut Chunk chunk)
+{
+    chunk.blocks[0, 0, 0] = 2;
+    Spawn(Chunk { at = chunk.at });
+}
+
 scene Main { }

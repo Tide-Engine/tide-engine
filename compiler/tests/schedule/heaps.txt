@@ -31,7 +31,6 @@ stage 1  Native1  (once)
          alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Dig
 stage 1  Dig  (per entity)
          writes Plot
-         on one thread: it changes the text, lists or grids of Plot, which holds a grid: a grid's chunks go in the order its entities do (heaps.tide:62)
          alongside Write, Enlist, Note, Stuff, Walk, StuffMarked, StuffPlain, Haunt, Summon, Tag, Retag, Call, Shout, Native1, Native2, Solder
 
 stage 2  StuffMarked  (per entity)
