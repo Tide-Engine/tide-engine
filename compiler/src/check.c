@@ -8844,6 +8844,60 @@ static type check_font_decode(checker *c, expr *e, bool *handled)
     return result_of(c->prog, (type){TY_FONT, NULL}, (type){TY_ENUM, c->prog->io_error}, false);
 }
 
+// Grid3<T>.FromBytes(bytes): the grid that bytes cells.ToBytes() wrote are
+// (tide_grid_from_bytes), a grid of its own, as Grid3(...) makes one. Pure, so
+// match code reads them too, the same cells on every machine, and so does local
+// code. It fails with IOError.InvalidData, whatever the bytes say. The receiver
+// is the grid type as written, or an alias of one.
+static type check_grid_from_bytes(checker *c, expr *e, bool *handled)
+{
+    *handled = false;
+    expr *receiver = e->object;
+    if (!receiver || receiver->kind != E_NAME) return T_ERR;
+    const bool written = receiver->type_arg_ref && (str_eq_c(receiver->type_arg_ref->name, "Grid2")
+                                                   || str_eq_c(receiver->type_arg_ref->name, "Grid3"));
+    const bool aliased = !receiver->type_arg_ref && receiver->type_alias && receiver->type_alias->alias_type.kind == TY_GRID;
+    const bool bare = !receiver->type_arg_ref && !receiver->type_alias && (str_eq_c(receiver->name, "Grid2") || str_eq_c(receiver->name, "Grid3"))
+                   && !find_local(c, receiver->name) && !find_param(c, receiver->name) && !field_in_scope(c, receiver->name);
+    if (!written && !aliased && !bare) return T_ERR;
+    *handled = true;
+    if (bare) { // Grid3.FromBytes(bytes): which cells, the type says
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(receiver->at, "'" STR_FMT "." STR_FMT "' needs the grid's cell type, as the bytes are cells of one: '" STR_FMT
+                                 "<Block>." STR_FMT "(bytes)'", STR_ARG(receiver->name), STR_ARG(e->name), STR_ARG(receiver->name),
+                   STR_ARG(e->name));
+        return T_ERR;
+    }
+    const type grid = written ? resolve_type(c, receiver->type_arg_ref, PLACE_LOCAL, receiver->at) : receiver->type_alias->alias_type;
+    if (grid.kind != TY_GRID) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if (!str_eq_c(e->name, "FromBytes")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "%s has the static function FromBytes(bytes), not '" STR_FMT "'", type_name(grid), STR_ARG(e->name));
+        diag_note("a grid is made with 'Grid%d(...)' and copied with 'cells.Copy()'; what a grid has is called on the grid",
+                  grid.decl->dims);
+        return T_ERR;
+    }
+    if (gpu_refuses(c, e->at, "read a grid from bytes", "read it in the view or the match, into a grid the shader samples")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1, -1)) return T_ERR;
+    receiver->type = grid;
+    receiver->type_decl = grid.decl;
+    receiver->bind = BIND_TYPE;
+    e->call = CALL_GRID_BYTES;
+    e->type_decl = grid.decl;
+    const type result = result_of(c->prog, grid, (type){TY_ENUM, c->prog->io_error}, false);
+    grid.decl->grid_from_bytes = true;
+    grid.decl->grid_from_bytes_result = result;
+    c->prog->uses_text = true; // What it makes is in the scratch area
+    return result;
+}
+
 static decl *named_enum(const checker *c, const expr *e);
 // Sample's filter and wrap have fixed enum types even though this call's
 // shader binding is checked separately from the ordinary signature table.
@@ -9280,6 +9334,9 @@ static type check_method(checker *c, expr *e)
     bool font_decode_handled = false;
     const type font_decoded = check_font_decode(c, e, &font_decode_handled);
     if (font_decode_handled) return font_decoded;
+    bool grid_bytes_handled = false;
+    const type grid_read = check_grid_from_bytes(c, e, &grid_bytes_handled);
+    if (grid_bytes_handled) return grid_read;
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
         if (!world && str_eq_c(e->object->name, "world") && !field_in_scope(c, e->object->name)
@@ -12271,8 +12328,8 @@ static bool is_new_grid(const expr *e)
 // which it's done with.
 static bool fresh_grid(const expr *e, const bool returning)
 {
-    if (e->kind == E_CONDITIONAL) return fresh_grid(e->lhs, returning) && fresh_grid(e->rhs, returning);
-    if (e->kind == E_AWAIT || e->kind == E_DEFAULTED) return fresh_grid(e->lhs, returning);
+    if (e->kind == E_CONDITIONAL || e->kind == E_COALESCE) return fresh_grid(e->lhs, returning) && fresh_grid(e->rhs, returning);
+    if (e->kind == E_AWAIT || e->kind == E_DEFAULTED || e->kind == E_TRY) return fresh_grid(e->lhs, returning);
     if (e->kind == E_DEFAULT || e->kind == E_CALL || e->kind == E_METHOD) return true;
     return returning && e->kind == E_NAME && e->bind == BIND_LOCAL;
 }
@@ -12896,6 +12953,23 @@ static type check_grid_method(checker *c, expr *e, const type grid)
         return check_grid_sample(c, e, grid);
     }
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (str_eq_c(e->name, "ToBytes")) { // Its cells as bytes, which Grid3<T>.FromBytes reads (docs/spec.md, Grids)
+        if (e->args.count) {
+            diag_error(e->at, "ToBytes takes no arguments: 'cells.ToBytes()'");
+            return T_ERR;
+        }
+        if (gpu_refuses(c, e->at, "make bytes of a grid", "make them in the view or the match")) return T_ERR;
+        e->call = CALL_GRID_BYTES;
+        e->type_decl = grid.decl;
+        grid.decl->grid_to_bytes = true;
+        c->prog->uses_text = true; // Its list is in the scratch area
+        return list_of(c->prog, (type){TY_BYTE, NULL});
+    }
+    if (str_eq_c(e->name, "FromBytes")) {
+        diag_error(e->at, "FromBytes is the grid type's, as it makes a grid: '%s.FromBytes(bytes)'", type_name(grid));
+        diag_note("to change this grid to what bytes say, give it the one they make: 'cells = %s.FromBytes(bytes)!;'", type_name(grid));
+        return T_ERR;
+    }
     if (str_eq_c(e->name, "Copy")) { // A grid of its own, with these cells (docs/spec.md, Grids)
         if (e->args.count) {
             diag_error(e->at, "Copy takes no arguments: 'cells.Copy()'");
@@ -12916,6 +12990,7 @@ static type check_grid_method(checker *c, expr *e, const type grid)
         suggest_consider_c(&sg, "Clear");
         suggest_consider_c(&sg, "Copy");
         suggest_consider_c(&sg, "Decode");
+        suggest_consider_c(&sg, "ToBytes");
         suggest_note(&sg);
         return T_ERR;
     }

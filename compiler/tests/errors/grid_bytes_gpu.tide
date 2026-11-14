@@ -1,0 +1,27 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't make bytes of a grid
+// expect: make them in the view or the match
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    var bytes = models.wood.ToBytes();
+    color = bytes.count > 0 ? Color.white : models.wood[0, 0];
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

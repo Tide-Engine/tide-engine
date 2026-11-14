@@ -1,0 +1,8 @@
+// expect: FromBytes is the grid type's, as it makes a grid: 'Grid2<int>.FromBytes(bytes)'
+// expect: to change this grid to what bytes say, give it the one they make: 'cells = Grid2<int>.FromBytes(bytes)!;'
+singleton Field { Grid2<int> cells; List<byte> saved; }
+system Load(mut Field field)
+{
+    field.cells.FromBytes(field.saved);
+}
+scene Main { }

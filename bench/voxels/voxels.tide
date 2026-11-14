@@ -238,61 +238,23 @@ string SavedAs(int dimension, int3 at)
     return $"chunks/{dimension}/{at.x}_{at.y}_{at.z}";
 }
 
-// A chunk's blocks as bytes, runs of one block as a count and the block: a chunk of one block is two bytes
-List<byte> Pack(Grid3<Block> blocks)
-{
-    mut List<byte> bytes = [];
-    mut var run = 0;
-    mut var last = Block.Air;
-    for (var z = 0; z < SIZE; z++)
-        for (var y = 0; y < SIZE; y++)
-            for (var x = 0; x < SIZE; x++)
-            {
-                var block = blocks[x, y, z];
-                if (run > 0 && (block != last || run == 255))
-                {
-                    bytes.Add(byte(run));
-                    bytes.Add(byte(last));
-                    run = 0;
-                }
-                last = block;
-                run += 1;
-            }
-    bytes.Add(byte(run));
-    bytes.Add(byte(last));
-    return bytes;
-}
-
-void Unpack(mut Grid3<Block> blocks, List<byte> bytes)
-{
-    mut var cell = 0;
-    for (var i = 0; i + 1 < bytes.count; i += 2)
-    {
-        var block = Block(bytes[i + 1]);
-        for (var n = 0; n < bytes[i] && cell < SIZE * SIZE * SIZE; n++)
-        {
-            if (block != Block.Air) blocks[cell % SIZE, cell / SIZE % SIZE, cell / (SIZE * SIZE)] = block;
-            cell += 1;
-        }
-    }
-}
-
-// What the store had for a chunk: its blocks as they were saved, or nothing, and it's made from the seed. One
-// whose bytes couldn't be read waits, and is asked for again (Retry): made afresh, it would be saved over them
+// What the store had for a chunk: its blocks as they were saved (ToBytes), or nothing, or bytes that aren't a
+// chunk's, and it's made from the seed. One whose bytes couldn't be read waits, and is asked for again (Retry):
+// made afresh, it would be saved over them
 event(Loaded loaded) Fill(mut Chunk chunk, mut Seen seen)
 {
     if (chunk.stage != Stage.Asked || loaded.failed) return;
-    if (!loaded.found)
+    if (loaded.found && Grid3<Block>.FromBytes(loaded.bytes) is Grid3<Block> saved)
     {
-        chunk.stage = Stage.Missing;
+        chunk.blocks = saved.Copy();
+        chunk.edits = 1;
+        seen.saved = 1;
+        chunk.stage = Stage.Made;
+        seen.shown = true;
+        Visibility.Set(seen.group, seen.audience);
         return;
     }
-    Unpack(chunk.blocks, loaded.bytes);
-    chunk.edits = 1;
-    seen.saved = 1;
-    chunk.stage = Stage.Made;
-    seen.shown = true;
-    Visibility.Set(seen.group, seen.audience);
+    chunk.stage = Stage.Missing;
 }
 
 // A chunk's blocks, from its dimension's seed alone, and then the players who wait for it have it
@@ -576,7 +538,7 @@ system Idle(Seen seen, Chunk chunk, Worlds worlds, Time time)
 event(Expire) Drop(Seen seen, Chunk chunk, Worlds worlds)
 {
     if (seen.audience != Audience.None) return;
-    if (chunk.edits != seen.saved) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    if (chunk.edits != seen.saved) Storage.Save(SavedAs(chunk.dimension, chunk.at), chunk.blocks.ToBytes());
     Visibility.DestroyGroup(seen.group);
     worlds.dimensions[chunk.dimension].Send(Gone { at = chunk.at, chunk = this });
     this.Destroy();
@@ -593,7 +555,7 @@ event(Gone gone) Forget(mut Streamer streamer)
 system Keep(mut Seen seen, Chunk chunk, Worlds worlds, Time time)
 {
     if (chunk.edits == seen.saved || (time.tick + chunk.at.x * 7 + chunk.at.y * 3 + chunk.at.z * 13) % worlds.keep != 0) return;
-    Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    Storage.Save(SavedAs(chunk.dimension, chunk.at), chunk.blocks.ToBytes());
     seen.saved = chunk.edits;
 }
 

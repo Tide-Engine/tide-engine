@@ -1848,6 +1848,15 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 - Hosts read a world's cells with `tide_grid_read(&w->heap, w->Field.cells, x, y, 0, &tide_shape_Grid2_int)`: the generated header names each grid type's shape.
 - Text can't show a grid.
 - **A per-entity system that changes its own entities' grids splits across threads** (Claude's picks, 2026-11-14; nothing a game's code can observe, as parallelism never changes results), as one that changes their text and lists does: cells set, set to zero, new chunks, a grid replaced (`= Grid3(16, 16, 16)`, `= other.Copy()`, a function's), `Clear`, and a parallel loop over the row's own grid. The world is the same bytes as on one thread on every machine, hashed, packed, in snapshots and deltas. What keeps one on one thread is what keeps text and lists there: an owner C can write, or a game with hidden state or shards. Picks: a grid's directory and chunks stay in one heap, so a row that adds a chunk to a grid made while its entity was in another run moves the grid whole first (a copy of what it has, once); and a system in runs whose rows queue nothing (no spawn, send, add, remove or destroy) puts each entity in a run by its identity rather than by its place in the order, so entities spawned last (new chunks to make) are spread over the threads, and an entity's grids never move between such systems or ticks. One whose rows queue keeps runs that are shares of the order, as its queued changes go in that order.
+- **Grids as bytes** (Claude's picks, 2026-11-14, for the server's store, commands and files: `bench/voxels` wrote loops over every cell for it, slower and its own):
+  - **The calls.** `cells.ToBytes()` is a `List<byte>` of any grid, a world's, a local's or an asset's: its size and its cells. `Grid3<Block>.FromBytes(bytes)` (and `Grid2<T>.FromBytes`), the grid type's own as `string.FromBytes` is text's and `Mesh<V>.Decode` a mesh's, gives `Grid3<Block> fails IOError`: the grid those bytes are, a grid of its own as `Grid3(...)` makes one, which a field takes, a local holds and a function returns, unwrapped as any result is (`??`, `is Grid3<Block> got`, `!`, `try`). An alias of a grid type takes it too (`Blocks.FromBytes(bytes)`). `Grid3.FromBytes` with no cell type, `FromBytes` on a grid value and another name on the type are errors that say what to write. No clash with `grid.Decode(bytes)`, which reads a PNG into a `Grid2<Color>` field where it is.
+  - **Where.** Both are pure: any CPU code calls them, match code (the same bytes and cells on every machine) and local code alike; code the GPU runs can't (an error that says so). What they make is in the scratch area, as any list or grid code makes.
+  - **The bytes** (format 1, `tide/grid.h`): `'G'`, `0x10 | dims`, then varints (unsigned LEB128): a cell's bytes, the size along each axis (0 where it's open), how many chunks follow; then each chunk: its place in chunks less the one before's, a zigzag varint along each axis, chunks in order (by z, then y, then x), and its cells in the order a chunk keeps them (x fastest) as tokens until the chunk's are all there: a varint `t` that says `(t >> 1) + 1` cells, with `t & 1` the one cell that follows that many times, else that many cells as they are. A cell is its bytes as every machine Tide runs on keeps them (little-endian); a chunk's geometry is the one a cell of that size has (Provisional, above).
+  - **Compact.** Only the chunks with a cell that isn't zero are written, a cell outside a sized grid's size as zero, and runs of three cells or more of one byte (two or more of a bigger cell) as one token: a 16-cube of air is 7 bytes (the header), of one block 13, a layered chunk of ground a few hundred, one with no two cells alike for long about its cells.
+  - **The same cells are the same bytes**, however the grid came to have them (in another order, with chunks set and set back to zero), on every machine and thread count: what `ToBytes` writes is a function of the cells alone, each written as `FromBytes` reads it (below), no padding as it was, and no pointer or heap offset. `FromBytes` then `ToBytes` gives the bytes back.
+  - **Any bytes are safe.** `FromBytes` fails with `IOError.InvalidData`, the grid made of them dropped, for bytes that aren't a grid of that type's cells: another tag or dims, a cell of another size, a size past the ints, a varint too long, fewer bytes than they say or more after their end, more chunks than the bytes could hold or a sized grid has, a place outside a sized axis's chunks or past what an int can say, a chunk not after the one before (so no place twice), a run past a chunk's cells, and on an open axis places chosen to collide in the directory's hash (a chunk whose slot would be more than 256 past the one its place's hash gives, in a table at most half full: no other places come near). Nothing reads past the bytes or writes past what it made, and the work is the bytes' and the cells', bounded. A read makes `TIDE_GRID_BYTES_MOST` (256 MiB) of cells at the most, as `grid.Decode`'s limit is: bytes that say more are refused before any chunk is made, and the log names the limit (`tide: Grid3.FromBytes refused bytes: they have ... chunks, ...`). A chunk the bytes give that's all zeros isn't kept, nor a cell outside the size.
+  - **What a cell's bytes say that no value is, is that part's zero**, as an input's NaN is its default: a float or a double that isn't finite, a bool's byte that's neither 0 nor 1, a char that's no character (past U+10FFFF, or half of a UTF-16 pair), an enum's number that's none of its members (a command's rule: an enum that kept such a number, `Block(200)`, is written as its zero too), padding, and a `T?` field whose `ok` is false (all zeros) or neither (taken as false). Everything else is what the bytes say, as any bytes are one of its values: numbers, vectors and matrices of ints, and **entities and players**: an `Entity` is its logical identity, which a lookup compares whole (one that's gone, or never was, is found nowhere), and a `PlayerID` is its number, as a command carries both.
+  - **The bytes say a cell's size, not its type.** A grid's bytes read as another type with cells of the same size are that type's values of those bytes, repaired as above.
 
 ### Open
 
@@ -1856,6 +1865,8 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 - Skipping what's settled: a parallel loop that only runs where something near changed (what `[Sleeps]` did for chunk systems).
 - `for` loops that run at once when nothing a step does depends on the others.
 - Resizing a grid; drawing one.
+- Grids as bytes: reading bytes of another chunk geometry (a future format's), and naming the cell type in the bytes, so a grid's bytes read as another type with cells of the same size fail rather than be reinterpreted. A field given what `FromBytes` read copies its cells a second time (into the scratch area, then the world).
+- An open grid's directory finds chunks by a fixed hash of their places, so places chosen to collide make lookups walk the ones before. `FromBytes` refuses bytes that crowd one chunk's slot (above), but places can still be chosen to sit side by side in the table, each near its own slot, so that a lookup of a place with no chunk walks them all, and a game's own code can make either. A grid read from a player's bytes is best checked for the size the game expects (`got.size`) before it's kept. The places of a sized grid of up to 65,536 chunks are looked up by index.
 
 ## Errors
 
@@ -1999,7 +2010,7 @@ system Idle(Seen seen, Time time)
 event(Expire) Drop(Seen seen, Chunk chunk)
 {
     if (seen.audience != Audience.None) return;
-    if (chunk.edits != seen.saved) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    if (chunk.edits != seen.saved) Storage.Save(SavedAs(chunk.dimension, chunk.at), chunk.blocks.ToBytes());
     this.Destroy();
 }
 
@@ -2010,12 +2021,12 @@ Storage.Load(SavedAs(dimension.number, at), made);
 event(Loaded loaded) Fill(mut Chunk chunk)
 {
     if (loaded.failed) return;          // Kept but unreadable: not made afresh over it
-    if (loaded.found) Unpack(chunk.blocks, loaded.bytes);
+    if (loaded.found) chunk.blocks = Grid3<Block>.FromBytes(loaded.bytes) ?? Grid3(16, 16, 16);
     else chunk.stage = Stage.Missing;   // Never saved: made from the seed
 }
 ```
 
-`Pack` and `Unpack` are the game's own functions, a grid to a `List<byte>` and back (`bench/voxels` writes runs of one block).
+`ToBytes` and `FromBytes` are a grid's as bytes and back (Grids, Provisional, Grids as bytes).
 
 - **In a match that hides state** (State visibility) nothing of a load reaches the players' machines but what its handlers change of what they may have, as with a command: the bytes stay on the server.
 - **Order.** A tick's requests are carried out once it has ended, in the order it made them: a save then a load of one key in one tick finds what was saved. A load asked twice in a tick with one key and one target is answered once. Answers are given to a tick in the order their loads were asked, 64 a tick at the most (more wait for the next), and their `Loaded` handlers run with that tick's other events, after its systems: a system that goes on from what a handler did runs the tick after. Each answer is its own cause: what two answers' handlers spawn in one tick are different entities.
@@ -2033,7 +2044,7 @@ event(Loaded loaded) Fill(mut Chunk chunk)
 ### Open
 
 - Awaiting a load in a match task (`var bytes = await Storage.Load(key);`), where the event is the only way now.
-- Any value as bytes and back (`Pack` and `Unpack` of a component, a grid or a struct), where a game writes its own loops now, and listing the keys under a prefix.
+- Any value as bytes and back (a component or a struct, as a grid has `ToBytes` and `FromBytes`: Grids), where a game writes its own loops or JSON now, and listing the keys under a prefix.
 - A store for each match of a server that hosts several, and the hosting service's (managed matches keep nothing yet).
 - A load asked for and not yet answered when a server stops isn't asked again when its match goes on from a save. A shard's checkpoint doesn't carry the answers it hasn't given a tick yet either: a shard started from one without its journal loses them.
 - Reading and writing off the thread that ends the tick.

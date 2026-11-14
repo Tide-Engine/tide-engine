@@ -5,6 +5,7 @@
 
 #include "tide/entity.h"
 #include "tide/heap.h"
+#include "tide/list.h"
 #include "tide/text.h"
 
 // Tide's `Grid2<T>` and `Grid3<T>`: cells at int2 or int3 positions, in a
@@ -422,3 +423,90 @@ const void *tide_grid_read(const tide_heaps *heaps, tide_grid g, int32_t x, int3
 // name), in `where`'s heap: its size and every chunk it has. An empty grid
 // for one that isn't a world's. Release it as any of that heap's.
 tide_grid tide_grid_copy_from(const tide_heaps *heaps, tide_grid g, const tide_grid_shape *s, uint32_t where);
+
+// ---------------------------------------------------------------------------
+// Grids as bytes: `cells.ToBytes()` and `Grid3<T>.FromBytes(bytes)` (see
+// docs/spec.md, Grids), for the server's store, commands and files. The bytes
+// are the same on every machine for the same cells, and read back as them:
+//
+//   'G', then 0x10 | dims (format 1, a Grid2 or a Grid3)
+//   varint   a cell's bytes, which the reader's cell has to have
+//   varint   the size along each axis, 0 where it's open
+//   varint   how many chunks follow, then each:
+//     zigzag varint  its place in chunks, along each axis, less the one before's (the first's less 0), in order:
+//                    by z, then y, then x, each after the one before
+//     its cells, in the order a chunk keeps them (x fastest), as tokens until the chunk's are all there:
+//       varint t     (t >> 1) + 1 cells: with t & 1, the one cell that follows that many times, else that many cells
+//
+// Varints are unsigned LEB128, 7 bits a byte, the low ones first; cells are
+// their bytes as every machine Tide runs on keeps them (little-endian), and a
+// chunk's geometry is the one tide_grid_shape gives its cell (format 1).
+// ToBytes writes each cell as FromBytes would read it (`repair`, below), only
+// the chunks with a cell that isn't zero, each cell outside a sized grid's
+// size as zero, and runs of three cells or more of one byte (two or more of
+// bigger ones) as one: a chunk of one block is about six bytes, and an empty
+// grid its header alone.
+//
+// `repair` is generated code's, for the grid's cell type (NULL where every
+// byte of every cell is some value of it: ints, bytes, entities, players):
+// over `count` cells side by side, it makes what's no value of its type that
+// type's zero, so whatever bytes come in, the cells are values the language
+// has: a float or a double that isn't finite, a bool's byte that's neither 0
+// nor 1, a char that's no character, an enum that's none of its members, and
+// padding. A T? field whose `ok` is false is all zeros.
+typedef void (*tide_grid_repair_fn)(uint8_t *cells, uint32_t count);
+
+// Bytes of chunks one tide_grid_from_bytes makes at the most: what the chunks
+// it says it has would take, refused before any is made. As
+// TIDE_GRID_DECODE_MAX_PIXELS is for grid.Decode: bytes can come from anyone,
+// and a run packs a chunk of thousands of cells into a few bytes.
+#define TIDE_GRID_BYTES_MOST (256u << 20)
+
+// `cells.ToBytes()`: a List<byte> in the scratch area. Any grid: a world's, a
+// grid code made, or the pack's.
+tide_list tide_grid_to_bytes(tide_grid g, const tide_grid_shape *s, tide_grid_repair_fn repair);
+
+// `Grid3<T>.FromBytes(bytes)`: the grid the bytes are, made in the scratch
+// area as Grid3(...) makes one, which a field then takes as its own; false for
+// bytes that aren't one of `s`'s cells (any byte of them wrong, too few, or
+// more after its last), with `*out` empty. It never reads past the bytes nor
+// writes past what it made, whatever they say: places are checked against the
+// grid's size and the ints, chunks have to come in order, and what they'd make
+// against TIDE_GRID_BYTES_MOST, which the log names when it refuses them. On an
+// open axis, places chosen to collide in the directory's hash are refused too,
+// so the work is the bytes' and the cells'.
+bool tide_grid_from_bytes(tide_list bytes, const tide_grid_shape *s, tide_grid_repair_fn repair, tide_grid *out);
+
+// The same, of `size` bytes at `bytes` in C's memory: for C that has a grid's
+// bytes as a file's or a packet's, and for the tests, whose bytes end where
+// their allocation does.
+bool tide_grid_from_memory(const uint8_t *bytes, size_t size, const tide_grid_shape *s, tide_grid_repair_fn repair,
+                           tide_grid *out);
+
+// For `repair`s: each part of a cell, at `b`, made its type's zero where it's
+// no value of that type.
+static inline void tide_cell_bool(uint8_t *b)
+{
+    if (*b > 1u) *b = 0u;
+}
+
+static inline void tide_cell_float(uint8_t *b)
+{
+    uint32_t v;
+    __builtin_memcpy(&v, b, sizeof v);
+    if ((v & 0x7F800000u) == 0x7F800000u) __builtin_memset(b, 0, sizeof v);
+}
+
+static inline void tide_cell_double(uint8_t *b)
+{
+    uint64_t v;
+    __builtin_memcpy(&v, b, sizeof v);
+    if ((v & 0x7FF0000000000000u) == 0x7FF0000000000000u) __builtin_memset(b, 0, sizeof v);
+}
+
+static inline void tide_cell_char(uint8_t *b)
+{
+    uint32_t v;
+    __builtin_memcpy(&v, b, sizeof v);
+    if (v > 0x10FFFFu || (v >= 0xD800u && v <= 0xDFFFu)) __builtin_memset(b, 0, sizeof v);
+}

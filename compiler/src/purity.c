@@ -220,6 +220,7 @@ static void walk_expr(pctx *c, const expr *e)
     case CALL_LIST:  // A list, a map, a set or a grid it could change is a `mut` local of its own
     case CALL_MAP:
     case CALL_GRID:
+    case CALL_GRID_BYTES: // Cells to bytes and back, worked out from what it's given alone
     case CALL_NEW_GRID:
     case CALL_NEW_MESH:
     case CALL_MESH_DECODE:

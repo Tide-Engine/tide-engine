@@ -92,14 +92,14 @@ Storage.Load(SavedAs(dimension.number, at), made);
 event(Loaded loaded) Fill(mut Chunk chunk, mut Seen seen)
 {
     if (chunk.stage != Stage.Asked || loaded.failed) return;   // Unreadable: asked again later, never made over
-    if (!loaded.found)
+    if (loaded.found && Grid3<Block>.FromBytes(loaded.bytes) is Grid3<Block> saved)
     {
-        chunk.stage = Stage.Missing;                            // Made from the seed by a system
+        chunk.blocks = saved.Copy();
+        chunk.stage = Stage.Made;
+        Visibility.Set(seen.group, seen.audience);
         return;
     }
-    Unpack(chunk.blocks, loaded.bytes);
-    chunk.stage = Stage.Made;
-    Visibility.Set(seen.group, seen.audience);
+    chunk.stage = Stage.Missing;                                // Made from the seed by a system
 }
 ```
 
@@ -114,13 +114,13 @@ system Idle(Seen seen, Chunk chunk, Time time)
 event(Expire) Drop(Seen seen, Chunk chunk)
 {
     if (seen.audience != Audience.None) return;
-    if (chunk.edits > 0) Storage.Save(SavedAs(chunk.dimension, chunk.at), Pack(chunk.blocks));
+    if (chunk.edits > 0) Storage.Save(SavedAs(chunk.dimension, chunk.at), chunk.blocks.ToBytes());
     Visibility.DestroyGroup(seen.group);
     this.Destroy();
 }
 ```
 
-`Pack` and `Unpack` are the game's own here. A system that writes a chunk players changed into the store every while, as well as when it goes, keeps a server that stops from losing more than that while. A load whose answer never comes (the server stopped first) leaves the chunk waiting: ask again after a while, as `bench/voxels` does.
+`ToBytes` writes only a grid's chunks that have something in them, and runs of one block short: a chunk of air is a few bytes ([Grids as bytes](../language/grids.md#grids-as-bytes)). A system that writes a chunk players changed into the store every while, as well as when it goes, keeps a server that stops from losing more than that while. A load whose answer never comes (the server stopped first) leaves the chunk waiting: ask again after a while, as `bench/voxels` does.
 
 `Idle` writes nothing while it waits: `emptied` is a tick, not a counter. A system that counts in every chunk every tick changes every chunk every tick, and the server's checks cost what changes.
 

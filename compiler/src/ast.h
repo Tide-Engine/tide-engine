@@ -680,6 +680,9 @@ typedef struct decl {
     struct decl *asset_ref_of; // Asset<T>: named static/skinned model identity, resolved without ownership on .Value
     bool asset_ref_geometry;   // ...Mesh<V> itself: the identity, or (id < 0) geometry the game made, in two hidden lists
     bool mesh_decoded;         // ...and Mesh<V>.Decode makes one: its adapter goes in the generated C
+    bool grid_to_bytes;        // A grid type: cells.ToBytes() is called, so its helper and its cells' repair go in the generated C
+    bool grid_from_bytes;      // ...Grid3<T>.FromBytes(bytes) is, the same
+    type grid_from_bytes_result; // ...and what that gives: Grid3<T> fails IOError
     bool task_handle; // Task<T>/LocalTask<T>: shared operation identity, not an owned result
     bool task_local;
     type task_value; // The complete result, including optional/failure wrapping
@@ -1148,6 +1151,7 @@ typedef enum builtin_call {
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
     CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
+    CALL_GRID_BYTES, // cells.ToBytes() and Grid3<T>.FromBytes(bytes): `name` says which; type_decl is the grid. They only read
 } builtin_call;
 
 // (VISIBILITY_STORAGE: a call of the server's store, Storage.Save and its kin, which takes the world the same way)

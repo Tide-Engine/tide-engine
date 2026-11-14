@@ -1,0 +1,451 @@
+// Grids as bytes (docs/spec.md, Grids): cells.ToBytes() and Grid3<T>.FromBytes(bytes), in match code and in a view.
+// Round trips of empty, uniform, sparse, dense, open, struct and enum grids, bytes made by hand that say what no
+// value of a cell's type is, and bytes cut short, spoiled or saying too much, each refused as IOError.InvalidData.
+// The C test pins the bytes by their hash, the same on every platform, and measures the built-in against the loops
+// bench/voxels used to write (Pack and Unpack, below).
+
+asset Grid2<Color> hero = "assets/hero.png";
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Dirt,
+    Grass,
+    Water
+}
+
+enum Wide
+{
+    Low = -3,
+    Mid = 7,
+    High = 70000
+}
+
+// 20 bytes: heat 0, block 4, lit 5, padding 6 and 7, mark 8, owner 12 (its value) and 16 (whether there is one), padding
+struct Tile
+{
+    float heat;
+    Block block;
+    bool lit;
+    char mark;
+    int? owner;
+}
+
+struct Thing
+{
+    Entity entity;
+    PlayerID player;
+}
+
+struct Tally
+{
+    int checks;
+    int passed;
+    int firstFailure;
+}
+
+singleton Results
+{
+    Tally tally;
+    int spoiled;   // Of the dense bytes with a byte changed, how many still read as a grid
+    int cut;       // Of those cut short or longer, how many were refused
+}
+
+// What the C test reads: the bytes, pinned by their hash, and grids read back into fields
+singleton Kept
+{
+    List<byte> empty;
+    List<byte> stone;
+    List<byte> sparse;
+    List<byte> dense;
+    List<byte> open;
+    List<byte> tall;
+    List<byte> tiles;
+    List<byte> things;
+    Grid3<Block> blocks = Grid3(16, 16, 16);
+    Grid3<Tile> tiled = Grid3(8, 8, 8);
+    Grid3<Block> ground = Grid3(16, 16, 16); // As a chunk of bench/voxels' ground is: layers, and caves
+    Grid2<int> far;
+}
+
+// The C test's measurements: what Measure runs, and how many times. 1 Pack, 2 Unpack, 3 ToBytes, 4 FromBytes
+singleton Bench
+{
+    int mode;
+    int rounds;
+    int which;      // 0 the dense chunk, 1 the ground
+    int sum;
+}
+
+local singleton Seen
+{
+    int stone;
+    int size;
+    bool same;
+    int ground;     // The ground's bytes, counted here and by a worker
+    int worked;
+    bool started;
+}
+
+scene Main { }
+
+const int LEAST = -2147483647 - 1;
+
+void Expect(mut Tally t, bool ok)
+{
+    t.checks += 1;
+    if (ok) t.passed += 1;
+    else if (t.firstFailure == 0) t.firstFailure = t.checks;
+}
+
+bool SameBytes(List<byte> a, List<byte> b)
+{
+    if (a.count != b.count) return false;
+    mut var same = true;
+    for (var i = 0; i < a.count; i++)
+    {
+        if (a[i] != b[i]) same = false;
+    }
+    return same;
+}
+
+bool SameBlocks(Grid3<Block> a, Grid3<Block> b)
+{
+    if (a.size.x != b.size.x || a.size.y != b.size.y || a.size.z != b.size.z) return false;
+    mut var same = true;
+    foreach (var at in a)
+    {
+        if (a[at] != b[at]) same = false;
+    }
+    foreach (var at in b)
+    {
+        if (a[at] != b[at]) same = false;
+    }
+    return same;
+}
+
+Block Pattern(int x, int y, int z)
+{
+    return Block((x * 7 + y * 13 + z * 31 + x * y * 3 + y * z) % 5);
+}
+
+// A chunk's blocks as bytes, as bench/voxels wrote them before ToBytes: runs of one block, a count and the block
+List<byte> Pack(Grid3<Block> blocks)
+{
+    mut List<byte> bytes = [];
+    mut var run = 0;
+    mut var last = Block.Air;
+    for (var z = 0; z < 16; z++)
+        for (var y = 0; y < 16; y++)
+            for (var x = 0; x < 16; x++)
+            {
+                var block = blocks[x, y, z];
+                if (run > 0 && (block != last || run == 255))
+                {
+                    bytes.Add(byte(run));
+                    bytes.Add(byte(last));
+                    run = 0;
+                }
+                last = block;
+                run += 1;
+            }
+    bytes.Add(byte(run));
+    bytes.Add(byte(last));
+    return bytes;
+}
+
+void Unpack(mut Grid3<Block> blocks, List<byte> bytes)
+{
+    mut var cell = 0;
+    for (var i = 0; i + 1 < bytes.count; i += 2)
+    {
+        var block = Block(bytes[i + 1]);
+        for (var n = 0; n < bytes[i] && cell < 4096; n++)
+        {
+            if (block != Block.Air) blocks[cell % 16, cell / 16 % 16, cell / 256] = block;
+            cell += 1;
+        }
+    }
+}
+
+// Read back through `try`, by a function that fails as FromBytes does
+Grid3<Block> Load(List<byte> bytes) fails IOError
+{
+    var grid = try Grid3<Block>.FromBytes(bytes);
+    return grid;
+}
+
+bool Refused(List<byte> bytes)
+{
+    return Grid3<Block>.FromBytes(bytes) is IOError.InvalidData;
+}
+
+// Every piece of `bytes` short of its end, and the bytes with one more after them: how many are refused
+int RefusedCut(List<byte> bytes)
+{
+    mut var refused = 0;
+    for (var n = 0; n < bytes.count; n++)
+    {
+        mut List<byte> part = [];
+        for (var i = 0; i < n; i++) part.Add(bytes[i]);
+        if (Refused(part)) refused += 1;
+    }
+    mut List<byte> longer = bytes;
+    longer.Add(0);
+    if (Refused(longer)) refused += 1;
+    return refused;
+}
+
+// Each byte of `bytes` changed, one at a time: how many still read as a grid (whatever they read as, nothing reads or
+// writes where it shouldn't)
+int ReadSpoiled(List<byte> bytes)
+{
+    mut var read = 0;
+    for (var i = 0; i < bytes.count; i++)
+    {
+        mut List<byte> spoiled = bytes;
+        spoiled[i] = byte(spoiled[i] ^ 0x55);
+        if (!Refused(spoiled)) read += 1;
+    }
+    return read;
+}
+
+system Check(mut Results results, mut Kept kept, Time time)
+{
+    if (time.tick != 1) return;
+    mut var t = results.tally;
+
+    // An empty 16-cube: its header alone, and back with its size and nothing in it
+    mut Grid3<Block> air = Grid3(16, 16, 16);
+    kept.empty = air.ToBytes();
+    Expect(t, kept.empty.count == 7 && kept.empty[0] == 0x47 && kept.empty[1] == 0x13 && kept.empty[6] == 0);
+    Grid3<Block> airBack = Grid3<Block>.FromBytes(kept.empty) ?? Grid3(1, 1, 1);
+    Expect(t, airBack.size.x == 16 && airBack.size.y == 16 && airBack.size.z == 16 && SameBlocks(air, airBack));
+    // Cells set and set back to zero leave a chunk of zeros, which isn't written
+    air[3, 4, 5] = Block.Dirt;
+    air[3, 4, 5] = Block.Air;
+    Expect(t, SameBytes(air.ToBytes(), kept.empty));
+
+    // A 16-cube of stone: one run, a few bytes
+    mut Grid3<Block> stone = Grid3(16, 16, 16);
+    for (var z = 0; z < 16; z++)
+        for (var y = 0; y < 16; y++)
+            for (var x = 0; x < 16; x++) stone[x, y, z] = Block.Stone;
+    kept.stone = stone.ToBytes();
+    Expect(t, kept.stone.count == 13);
+    Grid3<Block> stoneBack = Grid3<Block>.FromBytes(kept.stone)!;
+    Expect(t, SameBlocks(stone, stoneBack));
+
+    // The ground: stone, dirt and a layer of grass, air above, a cave through it
+    for (var z = 0; z < 16; z++)
+        for (var y = 0; y < 10; y++)
+            for (var x = 0; x < 16; x++)
+            {
+                var cave = (x - 8) * (x - 8) + (y - 4) * (y - 4) < 9 && z > 3;
+                if (!cave) kept.ground[x, y, z] = y < 6 ? Block.Stone : y < 9 ? Block.Dirt : Block.Grass;
+            }
+    Grid3<Block> groundBack = Grid3<Block>.FromBytes(kept.ground.ToBytes())!;
+    Expect(t, SameBlocks(kept.ground, groundBack));
+
+    // Sparse: a few blocks here and there
+    mut Grid3<Block> sparse = Grid3(16, 16, 16);
+    sparse[0, 0, 0] = Block.Grass;
+    sparse[15, 15, 15] = Block.Water;
+    sparse[7, 3, 9] = Block.Dirt;
+    sparse[8, 3, 9] = Block.Dirt;
+    kept.sparse = sparse.ToBytes();
+    Grid3<Block> sparseBack = Grid3<Block>.FromBytes(kept.sparse)!;
+    Expect(t, SameBlocks(sparse, sparseBack) && kept.sparse.count < 60);
+
+    // Dense: no two cells alike for long, into a field, and through `try`
+    mut Grid3<Block> dense = Grid3(16, 16, 16);
+    for (var z = 0; z < 16; z++)
+        for (var y = 0; y < 16; y++)
+            for (var x = 0; x < 16; x++) dense[x, y, z] = Pattern(x, y, z);
+    kept.dense = dense.ToBytes();
+    kept.blocks = Grid3<Block>.FromBytes(kept.dense)!;
+    Expect(t, SameBlocks(dense, kept.blocks));
+    Expect(t, SameBytes(kept.blocks.ToBytes(), kept.dense));
+    Grid3<Block> loaded = Load(kept.dense) ?? Grid3(1, 1, 1);
+    Expect(t, SameBlocks(dense, loaded));
+    mut var bound = 0;
+    if (Grid3<Block>.FromBytes(kept.dense) is Grid3<Block> got) bound = int(got[1, 2, 3]);
+    Expect(t, bound == int(Pattern(1, 2, 3)));
+    // The same cells, however they came to be, are the same bytes: set in another order
+    mut Grid3<Block> backwards = Grid3(16, 16, 16);
+    for (var z = 15; z >= 0; z--)
+        for (var y = 15; y >= 0; y--)
+            for (var x = 15; x >= 0; x--) backwards[x, y, z] = Pattern(x, y, z);
+    Expect(t, SameBytes(backwards.ToBytes(), kept.dense));
+    // A Pack of the loops' reads back as the same cells
+    mut Grid3<Block> unpacked = Grid3(16, 16, 16);
+    Unpack(unpacked, Pack(dense));
+    Expect(t, SameBlocks(dense, unpacked));
+
+    // An enum's number that's none of its members is written as its zero, and read back so
+    mut Grid3<Block> odd = Grid3(16, 16, 16);
+    odd[1, 1, 1] = Block(200);
+    odd[2, 1, 1] = Block.Stone;
+    Grid3<Block> oddBack = Grid3<Block>.FromBytes(odd.ToBytes())!;
+    Expect(t, int(oddBack[1, 1, 1]) == 0 && oddBack[2, 1, 1] == Block.Stone);
+
+    // Open both ways, cells far apart and at the ints' ends
+    mut Grid2<int> open = Grid2();
+    open[0, 0] = 1;
+    open[-1000000, 5] = -2;
+    open[2147483647, LEAST] = 3;
+    open[LEAST, 2147483647] = 4;
+    for (var x = 0; x < 200; x++) open[x, 70] = x * x;
+    kept.open = open.ToBytes();
+    kept.far = Grid2<int>.FromBytes(kept.open)!;
+    Expect(t, kept.far.size.x == 0 && kept.far.size.y == 0);
+    Expect(t, kept.far[0, 0] == 1 && kept.far[-1000000, 5] == -2 && kept.far[2147483647, LEAST] == 3
+              && kept.far[LEAST, 2147483647] == 4 && kept.far[199, 70] == 199 * 199 && kept.far[1, 1] == 0);
+    Expect(t, SameBytes(kept.far.ToBytes(), kept.open));
+
+    // Open sideways and sized up and down, of an enum kept as an int, with members apart
+    mut Grid3<Wide> tall = Grid3(0, 384, 0);
+    tall[-40, 383, 12] = Wide.High;
+    tall[5, 0, -5] = Wide.Low;
+    tall[5, 1, -5] = Wide.Mid;
+    tall[6, 384, 0] = Wide.High; // Past its size: nothing
+    kept.tall = tall.ToBytes();
+    Grid3<Wide> tallBack = Grid3<Wide>.FromBytes(kept.tall)!;
+    Expect(t, tallBack.size.x == 0 && tallBack.size.y == 384 && tallBack.size.z == 0);
+    Expect(t, tallBack[-40, 383, 12] == Wide.High && tallBack[5, 0, -5] == Wide.Low && tallBack[5, 1, -5] == Wide.Mid
+              && int(tallBack[6, 383, 0]) == 0);
+    // An enum's bytes that are none of its members, made by hand: 5, then Low again and again
+    List<byte> oddWide = [0x47, 0x13, 4, 0, 0x80, 0x03, 0, 1, 0, 0, 0, 0x00, 5, 0, 0, 0, 0xFD, 0x3F, 0xFD, 0xFF, 0xFF, 0xFF];
+    Grid3<Wide> oddWideBack = Grid3<Wide>.FromBytes(oddWide)!;
+    Expect(t, oddWideBack.size.y == 384 && int(oddWideBack[0, 0, 0]) == 0 && oddWideBack[1, 0, 0] == Wide.Low
+              && oddWideBack[15, 15, 15] == Wide.Low && int(oddWideBack[0, 16, 0]) == 0);
+
+    // Struct cells: every part round trips
+    mut Grid3<Tile> tiles = Grid3(8, 8, 8);
+    tiles[1, 2, 3] = Tile { heat = -1.5, block = Block.Water, lit = true, mark = 'x', owner = 42 };
+    tiles[7, 7, 7] = Tile { heat = 0.25, block = Block.Stone };
+    kept.tiles = tiles.ToBytes();
+    kept.tiled = Grid3<Tile>.FromBytes(kept.tiles)!;
+    var tile = kept.tiled[1, 2, 3];
+    Expect(t, tile.heat == -1.5 && tile.block == Block.Water && tile.lit && tile.mark == 'x' && (tile.owner ?? 0) == 42);
+    var corner = kept.tiled[7, 7, 7];
+    Expect(t, corner.heat == 0.25 && corner.block == Block.Stone && !corner.lit && corner.mark == '\0' && corner.owner == null);
+    Expect(t, SameBytes(kept.tiled.ToBytes(), kept.tiles));
+    // Bytes made by hand that say what no value is: a NaN, a block of 200, a bool of 7, padding, half of a UTF-16
+    // pair, an owner whose `ok` is 9; then one that's all right but its padding: 1.5, Dirt, true, 'A' and owner 5
+    List<byte> bad = [0x47, 0x13, 20, 2, 1, 1, 1, 0, 0, 0,
+                      0x02, 0x00, 0x00, 0xC0, 0x7F, 200, 7, 0xAA, 0xAA, 0x00, 0xD8, 0x00, 0x00, 5, 0, 0, 0, 9, 0xAA, 0xAA, 0xAA,
+                      0x00, 0x00, 0xC0, 0x3F, 2, 1, 0xAA, 0xAA, 0x41, 0x00, 0x00, 0x00, 5, 0, 0, 0, 1, 0xAA, 0xAA, 0xAA,
+                      0xFB, 0x07, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    Grid3<Tile> repaired = Grid3<Tile>.FromBytes(bad)!;
+    var none = repaired[0, 0, 0];
+    Expect(t, repaired.size.x == 2 && none.heat == 0 && none.block == Block.Air && !none.lit && int(none.mark) == 0 && none.owner == null);
+    var fine = repaired[1, 0, 0];
+    Expect(t, fine.heat == 1.5 && fine.block == Block.Dirt && fine.lit && fine.mark == 'A' && (fine.owner ?? 0) == 5);
+    mut Grid3<Tile> written = Grid3(2, 1, 1);
+    written[1, 0, 0] = Tile { heat = 1.5, block = Block.Dirt, lit = true, mark = 'A', owner = 5 };
+    Expect(t, SameBytes(repaired.ToBytes(), written.ToBytes()));
+
+    // An asset's grid, which is the pack's: its colors back as they are
+    Grid2<Color> heroBack = Grid2<Color>.FromBytes(hero.ToBytes())!;
+    mut var heroSame = heroBack.size.x == hero.size.x && heroBack.size.y == hero.size.y && hero.size.x > 0;
+    foreach (var at in hero)
+    {
+        var a = hero[at];
+        var b = heroBack[at];
+        if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) heroSame = false;
+    }
+    Expect(t, heroSame);
+
+    // Entities and players are what they are, whatever the bytes
+    var made = Spawn();
+    mut Grid2<Thing> things = Grid2(4, 4);
+    things[1, 1] = Thing { entity = made, player = PlayerID(3) };
+    kept.things = things.ToBytes();
+    Grid2<Thing> thingsBack = Grid2<Thing>.FromBytes(kept.things) ?? Grid2(1, 1);
+    var thing = thingsBack[1, 1];
+    Expect(t, thing.entity == made && thing.player == PlayerID(3));
+
+    // Refused: bytes cut short at every length, or with a byte more; and bytes that say what can't be
+    results.cut = RefusedCut(kept.dense) + RefusedCut(kept.sparse);
+    Expect(t, results.cut == kept.dense.count + 1 + kept.sparse.count + 1);
+    results.spoiled = ReadSpoiled(kept.dense);
+    Expect(t, Refused([]) && Refused([0x47]) && Refused([0x47, 0x13]));
+    Expect(t, Refused([0x48, 0x13, 1, 16, 16, 16, 0]));                         // Not a grid's
+    Expect(t, Refused([0x47, 0x12, 1, 16, 16, 0]));                             // A Grid2's
+    Expect(t, Refused([0x47, 0x13, 4, 16, 16, 16, 0]));                         // Cells of four bytes
+    Expect(t, Refused([0x47, 0x13, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 16, 16, 0])); // A size past the ints
+    Expect(t, Refused([0x47, 0x13, 0x81, 0x80, 0x80, 0x80, 0x80, 0x00, 16, 16, 16, 0])); // A varint too long
+    Expect(t, Refused([0x47, 0x13, 1, 16, 16, 16, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F])); // Chunks the bytes can't hold
+    Expect(t, Refused([0x47, 0x13, 1, 16, 16, 16, 2, 0, 0, 0, 0xFF, 0x3F, 1, 0, 0, 0, 0xFF, 0x3F, 1])); // Too many for its size
+    Expect(t, Refused([0x47, 0x13, 1, 16, 16, 16, 1, 2, 0, 0, 0xFF, 0x3F, 1]));   // A chunk past its size
+    Expect(t, Refused([0x47, 0x13, 1, 16, 16, 16, 1, 0, 0, 0, 0x81, 0x40, 1]));   // A run past the chunk
+    Expect(t, Refused([0x47, 0x13, 1, 16, 16, 16, 1, 0, 0, 0, 0x12, 1, 2, 3]));   // Ten cells, three there
+    Expect(t, Refused([0x47, 0x13, 1, 0, 0, 0, 2, 0, 0, 0, 0xFF, 0x3F, 1, 0, 0, 0, 0xFF, 0x3F, 1])); // One place twice
+    Expect(t, Refused([0x47, 0x13, 1, 0, 0, 0, 2, 2, 0, 0, 0xFF, 0x3F, 1, 1, 0, 0, 0xFF, 0x3F, 1])); // Out of order
+    Expect(t, Refused([0x47, 0x13, 1, 0, 0, 0, 1, 0xFE, 0xFF, 0xFF, 0xFF, 0x0F, 0, 0, 0xFF, 0x3F, 1])); // Past the last int
+    // Taken, though ToBytes never writes them: a chunk of zeros, and a run written as two
+    Grid3<Block> zeros = Grid3<Block>.FromBytes([0x47, 0x13, 1, 16, 16, 16, 1, 0, 0, 0, 0xFF, 0x3F, 0])!;
+    Expect(t, SameBytes(zeros.ToBytes(), kept.empty));
+    Grid3<Block> halves = Grid3<Block>.FromBytes([0x47, 0x13, 1, 16, 16, 16, 1, 0, 0, 0, 0xFF, 0x1F, 1, 0xFF, 0x1F, 1])!;
+    Expect(t, SameBytes(halves.ToBytes(), kept.stone));
+
+    results.tally = t;
+}
+
+// The built-in against the loops bench/voxels used to write, a chunk at a time: the grid changes a little each
+// round, so no round's work is another's
+system Measure(mut Bench bench, Kept kept)
+{
+    if (bench.mode == 0) return;
+    mut Grid3<Block> work = bench.which == 1 ? kept.ground.Copy() : kept.blocks.Copy();
+    var bytes = work.ToBytes();
+    var packed = Pack(work);
+    mut var sum = 0;
+    for (var r = 0; r < bench.rounds; r++)
+    {
+        work[r % 16, 0, 0] = Block(r % 4);
+        if (bench.mode == 1) sum += Pack(work).count;
+        else if (bench.mode == 3) sum += work.ToBytes().count;
+        else if (bench.mode == 2)
+        {
+            mut Grid3<Block> into = Grid3(16, 16, 16);
+            Unpack(into, packed);
+            sum += int(into[1, r % 16, 2]);
+        }
+        else
+        {
+            Grid3<Block> back = Grid3<Block>.FromBytes(bytes)!;
+            sum += int(back[1, r % 16, 2]);
+        }
+    }
+    bench.sum = sum;
+    bench.mode = 0;
+}
+
+// Local code: bytes into a grid and out again, in a view
+// A worker makes bytes of the grid it's given, a snapshot of the match's
+local worker int WorkerBytes(Grid3<Block> cells)
+{
+    return cells.ToBytes().count;
+}
+
+async void CountBytes(mut Seen seen, Kept kept)
+{
+    seen.worked = await WorkerBytes(kept.ground);
+}
+
+view Look(mut Seen seen, Kept kept)
+{
+    Grid3<Block> stone = Grid3<Block>.FromBytes(kept.stone) ?? Grid3(1, 1, 1);
+    seen.stone = int(stone[5, 5, 5]);
+    seen.size = stone.size.x;
+    seen.same = SameBytes(stone.ToBytes(), kept.stone);
+    seen.ground = kept.ground.ToBytes().count;
+    if (!seen.started)
+    {
+        seen.started = true;
+        CountBytes(seen, kept);
+    }
+}

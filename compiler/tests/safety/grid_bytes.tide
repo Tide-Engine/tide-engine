@@ -1,0 +1,126 @@
+// expect: round 1 7 9 3 2 16
+// expect: huge 9 5 2000000000
+// expect: cut 0 read
+// expect: spoiled 4096 read
+// expect: tide: Grid3.FromBytes refused bytes: they have 65,537 chunks, 268,439,552 bytes of cells, more than the 268,435,456 it makes (TIDE_GRID_BYTES_MOST)
+// expect: most refused
+// expect: kept Dirt
+// ticks: 3
+
+// Grids as bytes (docs/spec.md, Grids): bytes anyone could have sent read into the world's fields, every tick, under
+// the host's snapshots and packing: cut short at every length, spoiled at every byte, cells at the ints' ends, a grid
+// too big to list its chunks by place, cells whose bytes are no value of their type, and more chunks than a read makes.
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Dirt
+}
+
+struct Cell
+{
+    float heat;
+    bool lit;
+    Block block;
+}
+
+singleton Field
+{
+    Grid3<Block> chunk = Grid3(16, 16, 16);
+    Grid2<int> open;
+    Grid2<int> huge = Grid2(2000000000, 2000000000);
+    Grid3<Cell> cells = Grid3(4, 4, 4);
+    List<byte> kept;
+    int most = 2147483647;
+    int least = 0x80000000;
+    int ticks;
+    int read;
+}
+
+scene Main { }
+
+bool Refused(List<byte> bytes)
+{
+    return Grid3<Block>.FromBytes(bytes) is IOError.InvalidData;
+}
+
+system Run(mut Field f)
+{
+    f.ticks += 1;
+    if (f.ticks == 1)
+    {
+        for (var z = 0; z < 16; z++)
+            for (var y = 0; y < 16; y++)
+                for (var x = 0; x < 16; x++) f.chunk[x, y, z] = Block((x + y * 3 + z * 7) % 3);
+        f.open[f.most, f.most] = 7;
+        f.open[f.least, f.most] = 9;
+        f.open[f.most, f.least] = 3;
+        f.open[f.least, f.least] = 2;
+        f.huge[1999999999, 1999999999] = 9;
+        f.huge[0, 1999999999] = 5;
+        f.cells[3, 3, 3] = Cell { heat = 2.5, lit = true, block = Block.Dirt };
+    }
+
+    // The world's grids as bytes and back into the world, each tick
+    f.chunk = Grid3<Block>.FromBytes(f.chunk.ToBytes())!;
+    f.open = Grid2<int>.FromBytes(f.open.ToBytes())!;
+    f.huge = Grid2<int>.FromBytes(f.huge.ToBytes())!;
+    f.cells = Grid3<Cell>.FromBytes(f.cells.ToBytes())!;
+    f.kept = f.chunk.ToBytes();
+    if (f.ticks == 1)
+    {
+        var c = f.cells[3, 3, 3];
+        Debug.Log($"round {int(f.chunk[1, 0, 0])} {f.open[f.most, f.most]} {f.open[f.least, f.most]} {f.open[f.most, f.least]} "
+            + $"{f.open[f.least, f.least]} {f.chunk.size.x}");
+        Debug.Log($"huge {f.huge[1999999999, 1999999999]} {f.huge[0, 1999999999]} {f.huge.size.x}");
+        if (c.heat != 2.5 || !c.lit || c.block != Block.Dirt) Debug.Log("a cell changed");
+    }
+
+    // Every length short of the whole, and each byte spoiled: never anything but a grid or InvalidData
+    if (f.ticks == 2)
+    {
+        var bytes = f.chunk.ToBytes();
+        mut var cut = 0;
+        for (var n = 0; n < bytes.count; n += 7)
+        {
+            mut List<byte> part = [];
+            for (var i = 0; i < n; i++) part.Add(bytes[i]);
+            if (!Refused(part)) cut += 1;
+        }
+        Debug.Log($"cut {cut} read");
+        for (var i = 0; i < bytes.count; i++)
+        {
+            mut List<byte> spoiled = bytes;
+            spoiled[i] = byte(spoiled[i] ^ (i % 2 == 0 ? 0xFF : 0x81));
+            if (Grid3<Block>.FromBytes(spoiled) is Grid3<Block> got)
+            {
+                f.read += 1;
+                f.chunk = got.Copy(); // Into the world, whatever it read as
+            }
+        }
+        Debug.Log($"spoiled {f.read} read");
+        f.chunk = Grid3<Block>.FromBytes(f.kept)!;
+    }
+
+    // More chunks than a read makes: refused before any is, and the log says why
+    if (f.ticks == 3)
+    {
+        mut List<byte> most = [0x47, 0x13, 1, 0, 0, 0, 0x81, 0x80, 0x04];
+        for (var i = 0; i < 65537; i++)
+        {
+            most.Add(byte(i == 0 ? 0 : 2));
+            most.Add(0);
+            most.Add(0);
+            most.Add(0xFF);
+            most.Add(0x3F);
+            most.Add(1);
+        }
+        if (Refused(most)) Debug.Log("most refused");
+        // Cells whose bytes say what no value is: a NaN, a bool of 9 and a block of 7, read as zeros
+        List<byte> bad = [0x47, 0x13, 8, 1, 1, 1, 1, 0, 0, 0, 0x00, 0x00, 0x00, 0xC0, 0xFF, 9, 7, 0xAA, 0xAA, 0xFD, 0x1F, 0, 0, 0, 0, 0, 0, 0, 0];
+        Grid3<Cell> repaired = Grid3<Cell>.FromBytes(bad)!;
+        var c = repaired[0, 0, 0];
+        if (c.heat == 0 && !c.lit && c.block == Block.Air && repaired.size.x == 1) Debug.Log($"kept {f.chunk[2, 0, 0]}");
+    }
+}
