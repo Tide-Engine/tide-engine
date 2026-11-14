@@ -87,6 +87,31 @@ system Generate(mut Terrain terrain)
 - A function takes a grid to read, or `mut` to change it where it is. Its writes are the caller's, so a system that passes `terrain.heights` as `mut` writes `Terrain`.
 - A local's grid lasts until the system, view or handler that made it is done. A [task](../game/tasks.md) can't keep one while it waits, and a lambda can't capture one.
 
+## Grids as bytes
+
+`cells.ToBytes()` is the grid as a `List<byte>`, its size and its cells, and `Grid3<Block>.FromBytes(bytes)` (or `Grid2<T>.FromBytes`, named by the grid's type) the grid those bytes are, a grid of its own as `Grid3(...)` makes one. That's how a grid goes into the server's store ([Saving the match](../game/files.md#saving-the-match)), a [command](../game/commands.md) or a file.
+
+```csharp
+// A chunk nobody is near is kept...
+system Idle(Chunk chunk, Seen seen)
+{
+    if (seen.audience == Audience.None && chunk.edits > 0) Storage.Save(chunk.key, chunk.blocks.ToBytes());
+}
+
+// ...and comes back as someone next comes near
+event(Loaded loaded) Fill(mut Chunk chunk)
+{
+    if (loaded.found) chunk.blocks = Grid3<Block>.FromBytes(loaded.bytes) ?? Grid3(16, 16, 16);
+}
+```
+
+- **Small.** Only the chunks with something in them are written, and runs of one cell as one: a 16-cube of air is 7 bytes, of stone 13, and a chunk of ground (layers of stone, dirt and grass, air above, a cave through it) about 400.
+- **The same everywhere.** The same cells are the same bytes on every machine, however the grid came to have them, so match code can make and read them, as can views and local code.
+- **Safe on any bytes.** `FromBytes` fails with `IOError.InvalidData` for bytes that aren't a grid of those cells: cut short, spoiled, a size or a place past what a grid can be, chunks out of order, or cells of another size. A part of a cell that's no value of its type is read as its zero: a float that isn't finite, a bool that's neither false nor true, a char that's no character, an enum that's none of its members, a `T?` field that says it has nothing. Entities and players are what the bytes say: one that's gone, or no player's, is simply not found. A read makes 256 MB of cells at the most, refused before any is made (the log says so). The bytes say the grid's size, so check a grid from a player's bytes for the size your game expects (`got.size`) before keeping it.
+- Unwrap the result as any that can fail: `?? fallback`, `is Grid3<Block> got`, `!`, or `try` in a function that fails with `IOError`.
+
+The bytes say a cell's size, not its type: a grid's bytes read as another type with cells of the same size give that type's values of those bytes. Keep one type for one kind of key.
+
 ## What a grid costs
 
 A grid keeps its cells in chunks of 64 by 64 cells, or 16 by 16 by 16 in 3D: 16 KB for four-byte cells, 4 KB for a byte enum (`enum Material : byte`), which makes a big grid a quarter of the memory to keep, hash and send. Cells bigger than four bytes make chunks of fewer cells, 16 KB at most. A chunk only exists once a cell in it is set to something other than zero, so a blank canvas costs nothing, and an open grid costs what's in it rather than the space it spans.

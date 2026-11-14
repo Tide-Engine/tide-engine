@@ -1,3 +1,42 @@
+## Grids from bytes (2026-11-14)
+
+`Grid3<T>.FromBytes(bytes)` reads bytes anyone could have sent (a command, a file, a store's value) into a grid in the
+scratch area, in match code on every machine (notes/language.md, Grids as bytes). What keeps it safe for any bytes:
+
+- **Reads end where the bytes do.** One reader (`bytes_in`: where it is and the end) and every read checks the end first:
+  varints of at most 5 bytes for a 32-bit number (10 for a place's delta, with nothing past 64 bits), a cell's bytes, a
+  literal run's `run * cell` against what's left. A list in chunks is flattened first (`tide_list_flatten`), so the bytes are
+  one span.
+- **Nothing is made for what the bytes only say.** The count of chunks is checked against the bytes left (each takes a
+  place byte an axis, a token and a cell), a sized grid's chunks and `TIDE_GRID_BYTES_MOST` (256 MiB of cells, refused before
+  any is made and named on stderr) before the directory is sized for them; sizes are at most `INT32_MAX`; the cell's bytes
+  and the chunk geometry are the reader's own type's, never the bytes'.
+- **Places are checked in 64 bits** before they're a chunk's: within a sized axis's chunks (so the directory's table by
+  index stays in its room) or what an int can say on an open one (`INT32_MIN >> shift` to `INT32_MAX >> shift`), and each
+  after the one before (`compare_places`), so no place is twice in the directory, whose lookup would find one of them.
+- **A run can't pass its chunk**: a token's cells are checked against the chunk's left before it's written, so a chunk is
+  written only within its block, which is the shape's size, not the bytes'.
+- **The work is bounded too**: chunks are in order, so no lookup finds a place twice, and on an open axis a chunk whose
+  slot in the directory's hashed table would be more than 256 past its hash's (`insert_read`, `BYTES_PROBES_MOST`; the
+  table is at most half full) refuses the bytes, so places chosen to collide cost a few hundred probes each, never a walk of
+  every chunk before them. 65,536 colliding chunks would have been about two billion probes.
+- **Cells are values of their type** before anything reads them as such: the generated repair works on bytes at the
+  compiler's offsets, so a bool's byte of 2, an enum that's none of its members, a char past U+10FFFF and a NaN are never read
+  as C values (a `_Bool` that isn't 0 or 1 is undefined), and padding is zeros, as the world's hash and packing take it.
+  Cells outside a sized grid's size are zeroed in their chunk, so no hidden bytes reach the world's pages.
+- **Failure leaves nothing behind**: the grid made so far is dropped (its blocks are the scratch area's), and `*out` is
+  empty, which the result's `ok` false says.
+- ToBytes reads a grid code or a world has, whose directory is the engine's own; its output grows by `tide_alloc`, its room
+  for a chunk's tokens made once for the worst case (every cell, and a two-byte token for each), and stops the program as
+  running out of memory does past what a `List<byte>` holds (2 GiB), which no grid within the heap's limits reaches.
+
+Tests: `tests/test_grid_bytes.c` reads every input from a `malloc` of exactly its size (`tide_grid_from_memory`), so ASan sees
+a read one byte past: every cut, three flips of every byte, 6,000 random inputs; `tidec_safety_grid_bytes` and
+`tidec_e2e_grid_bytes` in the sanitize preset (Windows ASan here; Linux UBSan is CI's); `grid_bytes_places_chosen_to_collide`
+inverts the directory's hash to make 200 places that share a slot (read) and 300 (refused). Not bounded: places chosen to
+sit side by side in the table, each near its own slot, which make a later lookup of a place with no chunk walk them all
+(spec, Grids, Open): the game's code reading the grid, not FromBytes, pays that.
+
 ## Numeric image sizes and clear payloads (2026-11-14)
 
 Managed target numeric formats occupy unused legacy 16-bit tags; pointers and old adoption/reload values

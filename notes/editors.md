@@ -1,3 +1,13 @@
+## Grids as bytes (2026-11-14)
+
+`grid_calls` (`compiler/lsp/analysis.c`) has `ToBytes` and `FromBytes`; `format_method` writes `GridN<T>` as the grid
+type it's on. A grid value's completion lists `ToBytes` and leaves out `FromBytes` (the type's), and completion after
+`Grid2<...>.` or `Grid3<...>.` offers `FromBytes` alone, outside shaders (`complete_members`, as after `Mesh<...>.`).
+`CALL_GRID_BYTES` is an `OCC_METHOD` occurrence, so hover finds its form through the receiver's type (the grid type the
+checker gave the type name), and signature help is `CALL_MESH_DECODE`'s case. `lsp_grid_bytes_completes_hovers_and_checks`:
+both completions, hover of both calls with no diagnostics, and signature help inside FromBytes' parentheses. No grammar
+change: `Grid3<Block>.FromBytes` is names and punctuation the TextMate grammar already colors.
+
 ## Linear image annotation (2026-11-14)
 
 Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB

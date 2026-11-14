@@ -640,9 +640,10 @@ static expr *parse_primary(parser *p)
         return e;
     }
     case T_IDENT: {
-        // Mesh<V>.Decode(bytes): a static Mesh<V> as a type whose static method is called, where '>' is followed by '.'
-        if ((str_eq_c(t->text, "SkinnedMesh") || (str_eq_c(t->text, "Mesh") && type_then_dot(p))) && peek_at(p, 1)->kind == T_LT) {
-            const type_ref *model = parse_type(p, str_eq_c(t->text, "Mesh") ? "a mesh type" : "a skinned mesh type");
+        // Mesh<V>.Decode(bytes) and Grid3<T>.FromBytes(bytes): a type whose static method is called, where '>' is followed by '.'
+        const bool grid_type = str_eq_c(t->text, "Grid2") || str_eq_c(t->text, "Grid3");
+        if ((str_eq_c(t->text, "SkinnedMesh") || ((str_eq_c(t->text, "Mesh") || grid_type) && type_then_dot(p))) && peek_at(p, 1)->kind == T_LT) {
+            const type_ref *model = parse_type(p, grid_type ? "a grid type" : str_eq_c(t->text, "Mesh") ? "a mesh type" : "a skinned mesh type");
             expr *e = new_expr(E_NAME, t->at);
             e->name = model->text;
             e->type_arg_ref = model;

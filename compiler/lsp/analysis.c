@@ -1011,7 +1011,7 @@ static void walk_value(const expr *e)
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
                    || e->call == CALL_PARENT || e->call == CALL_TRANSFORM
-                   || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
+                   || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_GRID_BYTES || e->call == CALL_SNAP
                    || e->call == CALL_DISCARD || e->call == CALL_NORMAL || e->call == CALL_DERIVATIVE || e->call == CALL_COVER) {
             // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard(), instance.Normal(n)
             o.kind = OCC_METHOD;
@@ -2413,6 +2413,16 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
+    {"ToBytes", "ToBytes() -> List<byte>",
+     "The grid as bytes, its size and its cells, which `FromBytes` reads back: for the server's store (`Storage.Save`), a "
+     "command or a file. Only the chunks with something in them are written, and runs of one cell short, so a chunk of air "
+     "is nothing and a chunk of one block a few bytes. The same cells are the same bytes on every machine, so match code "
+     "can make them."},
+    {"FromBytes", "FromBytes(List<byte> bytes) -> GridN<T> fails IOError",
+     "The type's own, `Grid3<Block>.FromBytes(bytes)`: the grid that bytes `ToBytes` wrote are, a grid of its own. Bytes "
+     "from anywhere are safe: what isn't a grid of these cells (cut short, spoiled, saying more than a grid can be) fails "
+     "with `IOError.InvalidData`, and a part of a cell that's no value of its type (a float that isn't finite, an enum "
+     "that's none of its members, a bool that's neither) reads as its zero."},
     {"Sample", "Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color",
      "Reads the grid as the texture it is, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to "
      "(1, 1) past its last, blended between cells (`Filter.Bilinear`), the nearest cell's (`Filter.Point`), or "
@@ -2986,6 +2996,11 @@ static void format_method(const method_form *form, const type t, sb *out)
         if (t.decl && t.decl->asset_ref_geometry && strncmp(p, "Mesh<V>", 7) == 0) {
             sb_put(out, type_name(t));
             p += 6;
+            continue;
+        }
+        if (t.kind == TY_GRID && strncmp(p, "GridN<T>", 8) == 0) { // FromBytes: the grid type it's called on
+            sb_put(out, type_name(t));
+            p += 7;
             continue;
         }
         const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
@@ -7854,6 +7869,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             if (t.kind == TY_LOCAL_ENTITY && strcmp(forms[i].name, "Snap") == 0) continue; // Local state isn't blended
             if (passed && strcmp(forms[i].name, "Snap") == 0) continue; // A system's or a handler's own to say
             if (t.kind == TY_GRID && strcmp(forms[i].name, "Sample") == 0) continue; // A frag's or vert's, above
+            if (t.kind == TY_GRID && strcmp(forms[i].name, "FromBytes") == 0) continue; // The type's: Grid3<Block>.FromBytes
             sb detail = {0};
             format_method(&forms[i], t, &detail);
             sb snippet = {0};
@@ -7947,6 +7963,13 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         int open = dot - 2;
         while (open >= 1 && (DOC->toks[open].kind == T_IDENT || DOC->toks[open].kind == T_DOT || DOC->toks[open].kind == T_COMMA)) open--;
         const bool skinned = open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh");
+        if (open >= 1 && DOC->toks[open].kind == T_LT
+            && (str_eq_c(DOC->toks[open - 1].text, "Grid2") || str_eq_c(DOC->toks[open - 1].text, "Grid3"))) { // Grid3<Block>.
+            const scope sc = scope_at(at);
+            const method_form *form = find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("FromBytes"));
+            if (!is_shader(sc.decl) && form) item(c, form->name, CK_METHOD, form->form, form->doc, "FromBytes($1)");
+            return;
+        }
         if (skinned || (open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "Mesh"))) {
             const scope sc = scope_at(at);
             if (!is_shader(sc.decl)) {
@@ -12663,7 +12686,8 @@ static int call_param_names(const expr *call, str *names, const int max)
         }
         break;
     case CALL_SKINNED:
-    case CALL_MESH_DECODE: {
+    case CALL_MESH_DECODE:
+    case CALL_GRID_BYTES: {
         size_t forms_count;
         const method_form *forms = methods_of(call->object->type, &forms_count);
         for (size_t i = 0; i < forms_count; i++) {

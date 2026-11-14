@@ -39,18 +39,18 @@ Match code can't touch files: they're this machine's, and the match is the same 
 
 ```csharp
 // As a chunk nobody is near goes
-Storage.Save($"chunks/{chunk.at.x}_{chunk.at.z}", Pack(chunk.blocks));
+Storage.Save($"chunks/{chunk.at.x}_{chunk.at.z}", chunk.blocks.ToBytes());
 
 // As someone next comes near: the answer is an event, a tick later
 Storage.Load($"chunks/{at.x}_{at.z}", chunk);
 
 event(Loaded loaded) Fill(mut Chunk chunk)
 {
-    if (loaded.found) Unpack(chunk.blocks, loaded.bytes);
+    if (loaded.found) chunk.blocks = Grid3<Block>.FromBytes(loaded.bytes) ?? Grid3(16, 16, 16);
 }
 ```
 
-`Pack` and `Unpack` here are the game's own functions, which turn its grid into a `List<byte>` and back: Tide has none yet. `bench/voxels` in the engine's repository writes one, runs of one block as a count and the block.
+A grid's `ToBytes()` and its type's `FromBytes(bytes)` turn it into a `List<byte>` and back, its size and its cells, a chunk of air as nothing and a chunk of one block as a few bytes (see [Grids as bytes](../language/grids.md#grids-as-bytes)). For values of other kinds, a game writes its own bytes, or [JSON](../language/json.md).
 
 `Storage.Save(key, bytes)` keeps a `List<byte>` under a key, replacing what was there. `Storage.Load(key)` asks for it back: the answer is a `Loaded` event in a later tick, with the `key`, the `bytes`, whether it was `found`, and whether reading it `failed` (something is kept there that couldn't be read, which a game shouldn't make afresh and save over), sent to the entity the load names (`Storage.Load(key, entity)`) or to the world. `Storage.Delete(key)` forgets it.
 

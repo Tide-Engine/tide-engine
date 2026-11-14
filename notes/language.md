@@ -1,3 +1,81 @@
+## Grids as bytes (2026-11-14)
+
+`cells.ToBytes()` and `Grid3<T>.FromBytes(bytes)` (`Grid3<T> fails IOError`), for an endless voxel world's chunks in the
+server's store (notes/voxels.md, section 4, with the measurements). Every rule is Provisional, Claude's picks (docs/spec.md,
+Grids, Grids as bytes); the user page is docs/language/grids.md, Grids as bytes.
+
+**Parser.** `Grid2`/`Grid3` then `<...>` then `.` (`type_then_dot`, as `Mesh<V>.Decode`) is an `E_NAME` with
+`type_arg_ref`. Nothing else named a grid changes: `Grid3<A>.B` was two comparisons before, which never checked.
+
+**Checker** (`check.c`). `check_grid_from_bytes`, from `check_method` after `check_font_decode`: the receiver as written
+(`resolve_type`, PLACE_LOCAL, which checks the cell as any grid type), an alias of a grid type (`type_alias`, which
+`alias_receiver` set), or a bare `Grid2`/`Grid3` (the error says to name the cell). Only `FromBytes` (another name says the
+type has that one), refused in GPU code (`gpu_refuses`), one `List<byte>` (`skinned_arguments`). Sets `CALL_GRID_BYTES` (new,
+appended to `builtin_call`), `type_decl` the grid, `grid_from_bytes` and `grid_from_bytes_result` on the grid decl, receiver
+`BIND_TYPE`. `ToBytes` is `check_grid_method`'s, no arguments, the same refusal, `grid_to_bytes`, gives `List<byte>`;
+`FromBytes` on a value says it's the type's. `fresh_grid` takes `??` (both sides) and `try` as `!` already was, so
+`field = Grid3<T>.FromBytes(b) ?? Grid3(16, 16, 16)` and `var g = try Grid3<T>.FromBytes(b);` hold a grid of their own.
+`CALL_GRID_BYTES` only reads: pure (`purity.c`), not a write (`writes` defaults), not an act (`call_acts` defaults), its
+receiver an operand for ToBytes (`call_operands`), a statement's call (`gen_stmt`'s list).
+
+**Codegen** (`gen_grid_bytes`, from `gen_grid_helpers` for a grid decl with either flag). `tide_grid<k>_to_bytes(tide_grid)`
+and `tide_grid<k>_from_bytes(tide_list)` (the result with `IOError_InvalidData`), over the runtime's with the shape and
+`tide_grid<k>_repair(uint8_t *cells, uint32_t count)`, or NULL where every byte of a cell is a value of it (`cell_repairs`:
+ints, bytes, longs, entities, players, structs of those with no padding). The repair works on bytes at offsets the
+compiler's layout gives (`decl_layout_padded`, which `gen_fields` writes the same), never a C bool read that could be 2:
+`tide_cell_float`/`_double`/`_bool`/`_char` (inline, `tide/grid.h`) at each part, an enum's number by its sorted members
+(ranges for up to four runs, a `switch` past that, nothing when every number of its storage is one, comparisons kept off
+the storage's ends so clang sees no tautology), `memset` of padding and `tide_empty`, a loop for an array's elements, and
+a `T?` field's `ok` made 0 or 1 first and the whole field zeros when it's 0. A game that calls neither generates the C it
+did: the flags gate everything, and `bench_voxels` with the old loops gives the hash it was pinned with.
+
+**Runtime** (`engine/src/grid.c`, the grids maintenance exception; notes/runtime-ownership.md): `tide_grid_to_bytes`,
+`tide_grid_from_bytes` and `tide_grid_from_memory` (the raw form, for C and the tests). ToBytes reads any grid (a world's
+through `tide_heap_read`, the pack's and a scratch grid's through the scratch area), orders the records by a merge sort of
+their indices (`order_records`: places come from bytes, and quicksort can be made quadratic), copies a chunk into a buffer
+only where it repairs or the chunk passes the size, leaves out chunks of zeros, and writes tokens with room for the worst
+case made once a chunk (`out_cells`); the chunk count goes before the chunks in five bytes' room, moved back once known.
+FromBytes checks the header (tag, format and dims, the cell's bytes, the geometry format 1 gives that cell, which
+`format_shift` works out as `grid_shape` does), sizes up to `INT32_MAX`, the count against the bytes left (a place byte an
+axis, a token and a cell each), a sized grid's chunks and `TIDE_GRID_BYTES_MOST` (256 MiB, said on stderr), makes the
+scratch grid with the directory's room for them all at once (`scratch_room`), and for each chunk checks its place (a sized
+axis's chunks, or `INT32_MIN >> shift` to `INT32_MAX >> shift` on an open one, in 64 bits), that it's after the one before
+(`compare_places`, so no place twice and no lookup), decodes the tokens into a scratch block (`in_cells`: a run past the
+chunk or past the bytes fails), repairs, zeros what's outside the size and keeps it if anything's left, its record put in
+the table by `insert_read`, which refuses a slot more than 256 past its hash's (places chosen to collide). Any failure drops the
+grid; what was made is the scratch area's, gone at its mark.
+
+**Tests.** `tidec_e2e_grid_bytes` (`e2e/grid_bytes.tide`, `_test.c`): 44 checks: a 16-cube of air (7 bytes, its size back),
+cells set and set back, one of stone (13 bytes), sparse, dense, the dense one into a field and through `try`, `is` and `!`,
+the same cells set backwards are the same bytes, the old loops' `Pack` and `Unpack` (kept as the measurement's baseline)
+agree, `Block(200)` written as Air, an open `Grid2<int>` at the ints' four corners, a `Grid3<Wide>` open sideways (an int
+enum with members apart) and bytes made by hand with a number that's no member, a struct cell (float, byte enum, bool,
+char, `int?`) round trip and bytes made by hand with a NaN, a block of 200, a bool of 7, padding, half a UTF-16 pair and an
+`ok` of 9, entities and players, every cut of two encodings and a byte more refused, each byte of the dense one spoiled
+(3,361 of 3,480 still read), bytes made by hand for each refusal the spec lists, a chunk of zeros and a run written as two
+(taken). In C: two
+encodings whole, all eight by an FNV hash pinned in CMake (`GRID_BYTES_HASH`, `GRID_BYTES_SPOILED`), the fields' cells
+read by a host, a copy and the world as bytes, a view's round trip and a local worker's `ToBytes` of a match grid's
+snapshot (the same count as the view's), and `grid_bytes_measure`. `tidec_safety_grid_bytes`: the
+world's grids through bytes and back every tick under the host's snapshots and packing (a 16-cube, an open grid at the
+ints' corners, a 2-billion-cell grid hashed by place, struct cells), cuts every 7 bytes, every byte spoiled (4,096 read,
+into the world), 65,537 chunks refused with the log's line, a NaN, a bool of 9 and a block of 7 repaired.
+`tests/test_grid_bytes.c` (in `tide_tests`), every read from an allocation the bytes' own size: a round trip of 3,000 cells
+across sized and open axes, every cut and three flips of every byte of 40 chunks at the ints' edges (none cut reads; what
+reads writes bytes that read back as the same bytes), 6,000 random inputs of which 2,000 are made as the format has them
+(each reads) and the rest spoiled or of no format, places at `INT32_MIN >> 6` and `INT32_MAX >> 6` read and one past them
+refused, cells past a 20-wide side zeroed in the chunk, a 20-byte struct's repairs, the two counts past what bytes hold,
+and places made by inverting the directory's hash so they share a slot (200 read, 300 refused).
+Errors: `grid_bytes_on_value`, `_bare`, `_argument`, `_to_bytes_arguments`, `_static_name`, `_gpu`, `_unwrapped`.
+`lsp_grid_bytes_completes_hovers_and_checks` (notes/editors.md). Release: those, `bench_voxels*`, `tidels_tests` (280),
+and the grid, decode, mesh decode, JSON, worker grid, parallel and fails fixtures; sanitize (Windows ASan): `tide_tests grid`,
+`tidec_e2e_grid_bytes`, `tidec_safety_grid_bytes`, `tidec_safety_grid_values`, `tidec_e2e_grid_values`, `bench_voxels`.
+Web wasn't run here: the e2e's hash is meant to be the web's too.
+
+**Gaps.** Bytes of another chunk geometry aren't read (a future format would say so), and the bytes don't name the cell's
+type, only its size. A field given what FromBytes made copies it from the scratch area (a read straight into a world's heap
+would save that). An open grid's hashed directory is slow for places chosen to collide (spec, Grids, Open).
+
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 
 Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is

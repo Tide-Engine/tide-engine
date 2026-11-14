@@ -1,0 +1,8 @@
+// expect: Grid2<int> has the static function FromBytes(bytes), not 'Decode'
+// expect: a grid is made with 'Grid2(...)' and copied with 'cells.Copy()'; what a grid has is called on the grid
+singleton Field { Grid2<int> cells; List<byte> saved; }
+system Load(mut Field field)
+{
+    field.cells = Grid2<int>.Decode(field.saved)!;
+}
+scene Main { }

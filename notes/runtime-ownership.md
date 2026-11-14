@@ -1,3 +1,15 @@
+## Grids as bytes (2026-11-14)
+
+Within the grids maintenance exception (`tide/grid.h`, `engine/src/grid.c`), for an endless voxel world's chunks in the
+server's store: generated code calls two new functions, `tide_grid_to_bytes(g, shape, repair)` (`cells.ToBytes()`, a
+`List<byte>` in the scratch area) and `tide_grid_from_bytes(bytes, shape, repair, &out)` (`Grid3<T>.FromBytes`, a scratch
+grid, false for bytes that aren't one), and the inline `tide_cell_bool`, `_float`, `_double` and `_char` from the `repair`
+functions it generates for a cell type (`tide_grid_repair_fn`). `tide_grid_from_memory` is the raw form for C and the tests;
+`TIDE_GRID_BYTES_MOST` the limit. `grid.h` now includes `tide/list.h`. No layout, snapshot, hash or match-state change: the
+bytes are values code makes, and a game that calls neither generates the C it did. The owner should confirm the new
+generated calls and the format (docs/spec.md, Grids, Grids as bytes). Contracts and tests: notes/language.md, Grids as bytes;
+safety: notes/memory-safety.md, Grids from bytes.
+
 ## [Linear] image captures (2026-11-14)
 
 The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and

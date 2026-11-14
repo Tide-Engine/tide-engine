@@ -12821,6 +12821,27 @@ TIDE_TEST(lsp_mesh_decode_completes_hovers_and_checks)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Decode(List<byte> bytes)"));
 }
 
+TIDE_TEST(lsp_grid_bytes_completes_hovers_and_checks)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    var cells = Grid3<int>.$\n}\n");
+    TIDE_CHECK(offers(completion, "FromBytes") && has(completion, "FromBytes(List<byte> bytes)"));
+    completion = complete("scene Main { }\nsingleton Field { Grid2<int> cells; }\nview V(Field field) { field.cells.$ }\n");
+    TIDE_CHECK(offers(completion, "ToBytes") && !offers(completion, "FromBytes"));
+    open_document("scene Main { }\nsingleton Field { Grid3<int> cells; List<byte> saved; }\n"
+                  "system Read(mut Field field) { field.cells = Grid3<int>.From$Bytes(field.saved)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Grid3<int>.FromBytes(List<byte> bytes) -> Grid3<int> fails IOError") && has(hover, "InvalidData"));
+    open_document("scene Main { }\nsingleton Field { Grid3<int> cells; List<byte> saved; }\n"
+                  "system Save(mut Field field) { field.saved = field.cells.To$Bytes(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Grid3<int>.ToBytes() -> List<byte>"));
+    open_document("scene Main { }\nsingleton Field { Grid2<int> cells; List<byte> saved; }\n"
+                  "system Read(mut Field field) { field.cells = Grid2<int>.FromBytes($field.saved)!; }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "FromBytes(List<byte> bytes)"));
+}
+
 TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
 {
     start();

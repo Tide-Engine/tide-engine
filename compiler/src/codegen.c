@@ -5276,6 +5276,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "), &%s, %s, ", grid_shape_name(e->object->type.decl), place_where(g, e->object));
             gen_as(g, o, e->args.items[0], e->args.items[0]->type);
             sb_put(o, ")");
+        } else if (e->call == CALL_GRID_BYTES && str_eq_c(e->name, "ToBytes")) { // cells.ToBytes(): a List<byte>, in the scratch area
+            sb_printf(o, "tide_grid%d_to_bytes(", e->type_decl->index);
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+        } else if (e->call == CALL_GRID_BYTES) { // Grid3<T>.FromBytes(bytes): a grid of its own, in the scratch area, or IOError.InvalidData
+            sb_printf(o, "tide_grid%d_from_bytes(", e->type_decl->index);
+            gen_as(g, o, e->args.items[0], e->args.items[0]->type);
+            sb_put(o, ")");
         } else if (e->call == CALL_GRID && str_eq_c(e->name, "Copy")) { // cells.Copy(): a grid of its own, in the scratch area
             sb_put(o, "tide_grid_copy(");
             gen_expr(g, o, e->object);
@@ -6968,6 +6976,9 @@ static void call_operands(expr *e, operand_list *ops)
         case CALL_LIST:
         case CALL_GRID:
         case CALL_RANDOM: operand_push(ops, e->object, writes(e) ? PLACE : use_of(e->object)); break;
+        case CALL_GRID_BYTES: // ToBytes reads the grid it's called on; FromBytes is called on its type
+            if (str_eq_c(e->name, "ToBytes")) operand_push(ops, e->object, use_of(e->object));
+            break;
         case CALL_VISIBILITY:
             if (e->visibility_operation & VISIBILITY_RECEIVER) operand_push(ops, e->object,
                 (e->visibility_operation & VISIBILITY_MUT) ? PLACE : use_of(e->object));
@@ -9114,7 +9125,8 @@ static void gen_stmt_now(gen *g, const stmt *s)
                    || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_MAP
                    || s->value->call == CALL_GRID || s->value->call == CALL_WORLD || s->value->call == CALL_AUDIO
                    || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN || s->value->call == CALL_JSON
-                   || s->value->call == CALL_PARENT || s->value->call == CALL_VISIBILITY) { // Debug.Log(...), Debug.Assert(...)
+                   || s->value->call == CALL_PARENT || s->value->call == CALL_VISIBILITY
+                   || s->value->call == CALL_GRID_BYTES) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
             // A result nobody reads: a call that kept its order is its temporary's name by now
             if (s->value->hoisted && s->value->type.kind != TY_VOID) sb_put(o, "(void)");
@@ -10811,6 +10823,190 @@ static void gen_grid_caches(gen *g)
     line(g, &g->c, "(void)tide_gc;");
 }
 
+// ---------------------------------------------------------------------------
+// Grids as bytes (tide/grid.h, tide_grid_to_bytes and tide_grid_from_bytes): a
+// cell from bytes anyone could have written is made a value of its type, each
+// part of it its type's zero where it's none, by its bytes alone, as a bool
+// that's neither 0 nor 1 isn't a C bool to read.
+
+// How many floats or doubles side by side a value of `t` is, for a type made
+// of them; 0 for any other.
+static int float_parts(const type t, bool *wide)
+{
+    *wide = type_is_double_based(t);
+    switch (t.kind) {
+    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: return type_dim(t);
+    case TY_QUATERNION: case TY_COLOR: case TY_RECT: return 4;
+    default: return matrix_dim(t) * matrix_dim(t);
+    }
+}
+
+// Whether bytes can make a value of `t` that's none: a float that isn't
+// finite, a bool, a char, an enum, a T? field, padding.
+static bool cell_repairs(const type t)
+{
+    bool wide;
+    if (t.kind == TY_BOOL || t.kind == TY_CHAR || t.kind == TY_ENUM || float_parts(t, &wide)) return true;
+    if (t.kind == TY_ARRAY) return cell_repairs(t.decl->fields.items[0].type);
+    if (t.kind != TY_STRUCT) return false; // Ints, bytes, longs, entities and players: any bytes are one
+    if (!t.decl->fields.count || is_stored_optional(t)) return true;
+    const int *pad = field_padding(t.decl);
+    for (int i = 0; i <= t.decl->fields.count; i++) {
+        if (pad[i]) return true;
+    }
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (cell_repairs(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+static int compare_numbers(const void *a, const void *b)
+{
+    const int64_t x = *(const int64_t *)a, y = *(const int64_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+// An enum's number at `at`, as wide as it's kept: the enum's zero where it's none of its members.
+static void gen_enum_cell_repair(gen *g, const decl *e, const char *at)
+{
+    sb *o = &g->c;
+    const int width = e->width == 1 || e->width == 2 ? e->width : 4;
+    const int64_t least = width == 4 ? INT32_MIN : 0, most = width == 1 ? 255 : width == 2 ? 65535 : INT32_MAX;
+    int64_t *numbers = arena_alloc(sizeof(int64_t) * (size_t)(e->members.count + 1));
+    int count = 0;
+    for (int i = 0; i < e->members.count; i++) numbers[count++] = e->members.items[i].number;
+    qsort(numbers, (size_t)count, sizeof *numbers, compare_numbers);
+    int unique = 0;
+    for (int i = 0; i < count; i++) {
+        if (!unique || numbers[unique - 1] != numbers[i]) numbers[unique++] = numbers[i];
+    }
+    int ranges = 0; // Runs of numbers one after another
+    for (int i = 0; i < unique; i++) ranges += !i || numbers[i] != numbers[i - 1] + 1;
+    if (ranges == 1 && numbers[0] == least && numbers[unique - 1] == most) return; // Every number is a member
+    const char *held = width == 1 ? "uint8_t" : width == 2 ? "uint16_t" : "int32_t";
+    indent(g, o);
+    sb_printf(o, "{ %s v; memcpy(&v, %s, %d); ", held, at, width);
+    if (!unique) {
+        sb_printf(o, "if (v) memset(%s, 0, %d); }\n", at, width); // No members: zero is its value
+        return;
+    }
+    if (ranges > 4) { // Members here and there
+        sb_put(o, "switch (v) {");
+        for (int i = 0; i < unique; i++) sb_printf(o, " case %lld:", (long long)numbers[i]);
+        sb_printf(o, " break; default: memset(%s, 0, %d); } }\n", at, width);
+        return;
+    }
+    sb_put(o, "if (!(");
+    for (int i = 0, first = 1; i < unique; first = 0) {
+        int j = i;
+        while (j + 1 < unique && numbers[j + 1] == numbers[j] + 1) j++;
+        if (!first) sb_put(o, " || ");
+        if (i == j) sb_printf(o, "v == %lld", (long long)numbers[i]);
+        else if (numbers[i] == least) sb_printf(o, "v <= %lld", (long long)numbers[j]); // Nothing's under the least
+        else if (numbers[j] == most) sb_printf(o, "v >= %lld", (long long)numbers[i]);
+        else sb_printf(o, "(v >= %lld && v <= %lld)", (long long)numbers[i], (long long)numbers[j]);
+        i = j + 1;
+    }
+    sb_printf(o, ")) memset(%s, 0, %d); }\n", at, width);
+}
+
+// Each part of a value of `t` at `at`, a uint8_t * C expression, made its
+// type's zero where it's none, and its padding zeros.
+static void gen_cell_repair(gen *g, const type t, const char *at, const int depth)
+{
+    sb *o = &g->c;
+    bool wide;
+    const int floats = float_parts(t, &wide);
+    if (floats) {
+        for (int i = 0; i < floats; i++) line(g, o, "tide_cell_%s(%s + %d);", wide ? "double" : "float", at, i * (wide ? 8 : 4));
+        return;
+    }
+    char inner[256];
+    if (t.kind == TY_BOOL) line(g, o, "tide_cell_bool(%s);", at);
+    else if (t.kind == TY_CHAR) line(g, o, "tide_cell_char(%s);", at);
+    else if (t.kind == TY_ENUM) gen_enum_cell_repair(g, t.decl, at);
+    else if (t.kind == TY_ARRAY) {
+        const type element = t.decl->fields.items[0].type;
+        if (!cell_repairs(element)) return;
+        line(g, o, "for (uint32_t tide_e%d = 0; tide_e%d < %du; tide_e%d++) {", depth, depth, t.decl->array_length, depth);
+        g->indent++;
+        line(g, o, "uint8_t *tide_p%d = %s + (size_t)tide_e%d * %du;", depth, at, depth, type_layout(element).size);
+        snprintf(inner, sizeof inner, "tide_p%d", depth);
+        gen_cell_repair(g, element, inner, depth + 1);
+        g->indent--;
+        line(g, o, "}");
+    } else if (t.kind == TY_STRUCT && !t.decl->fields.count) {
+        line(g, o, "*(%s) = 0u; // tide_empty", at);
+    } else if (t.kind == TY_STRUCT) {
+        const decl *d = t.decl;
+        const int *pad = field_padding(d);
+        const int size = decl_layout(d).size;
+        int offsets[2] = {0, 0};
+        if (is_stored_optional(t)) { // A T? field: all zeros where it says it has no value
+            int at_byte = 0;
+            for (int i = 0; i < 2; i++) {
+                at_byte += pad[i];
+                offsets[i] = at_byte;
+                at_byte += type_layout(d->fields.items[i].type).size;
+            }
+            line(g, o, "tide_cell_bool(%s + %d);", at, offsets[1]);
+            line(g, o, "if (!(%s)[%d]) memset(%s, 0, %d);", at, offsets[1], at, size);
+            line(g, o, "else {");
+            g->indent++;
+        }
+        int offset = 0;
+        for (int i = 0; i <= d->fields.count; i++) {
+            if (pad[i]) line(g, o, "memset(%s + %d, 0, %d);", at, offset, pad[i]);
+            offset += pad[i];
+            if (i == d->fields.count) break;
+            const field *f = &d->fields.items[i];
+            if (cell_repairs(f->type) && !(is_stored_optional(t) && i == 1)) { // A T?'s `ok`, above
+                snprintf(inner, sizeof inner, "%s + %d", at, offset);
+                gen_cell_repair(g, f->type, inner, depth);
+            }
+            offset += type_layout(f->type).size;
+        }
+        if (is_stored_optional(t)) {
+            g->indent--;
+            line(g, o, "}");
+        }
+    }
+}
+
+// A grid type's bytes, for each grid type code makes bytes of or reads from bytes.
+static void gen_grid_bytes(gen *g, const decl *grid)
+{
+    sb *o = &g->c;
+    const int k = grid->index;
+    const type cell = grid->fields.items[0].type;
+    const char *shape = grid_shape_name(grid);
+    const bool repairs = cell_repairs(cell);
+    char repair[64] = "NULL"; // Every byte of a cell is some value of its type
+    if (repairs) {
+        snprintf(repair, sizeof repair, "tide_grid%d_repair", k);
+        sb_printf(o, "// " STR_FMT "'s cells from bytes: what's no value of a part's type is its zero (tide/grid.h)\n", STR_ARG(grid->name));
+        sb_printf(o, "TIDE_HELPER void %s(uint8_t *cells, const uint32_t count)\n{\n", repair);
+        sb_printf(o, "    for (uint32_t i = 0; i < count; i++) {\n        uint8_t *p = cells + (size_t)i * %du;\n", type_layout(cell).size);
+        const int was = g->indent;
+        g->indent = 2;
+        gen_cell_repair(g, cell, "p", 0);
+        g->indent = was;
+        sb_put(o, "    }\n}\n\n");
+    }
+    if (grid->grid_to_bytes) {
+        sb_printf(o, "TIDE_HELPER tide_list tide_grid%d_to_bytes(const tide_grid g)\n{\n    return tide_grid_to_bytes(g, &%s, %s);\n}\n\n",
+                  k, shape, repair);
+    }
+    if (grid->grid_from_bytes) {
+        const char *result = c_type(grid->grid_from_bytes_result);
+        sb_printf(o, "TIDE_HELPER %s tide_grid%d_from_bytes(const tide_list bytes)\n{\n    %s r = {0};\n"
+                     "    r.ok = tide_grid_from_bytes(bytes, &%s, %s, &r.value);\n"
+                     "    if (!r.ok) r.error = IOError_InvalidData;\n    return r;\n}\n\n",
+                  result, k, result, shape, repair);
+    }
+}
+
 // Each grid type's shape, and its cells read and changed, through its
 // component or singleton. Changing a cell to zero where there's no chunk
 // makes none.
@@ -10848,6 +11044,7 @@ static void gen_grid_helpers(gen *g)
         sb_printf(o, "    *(%s *)tide_par_cell(l, cache, p.x, p.y, %s) = v;\n}\n\n", cell, z);
         sb_printf(o, "TIDE_HELPER %s tide_grid%d_size(const tide_grid g)\n{\n    int32_t s[3];\n    tide_grid_size(g, s);\n", at, k);
         sb_printf(o, "    return (%s){s[0], s[1]%s};\n}\n\n", at, three ? ", s[2]" : "");
+        if (grid->grid_to_bytes || grid->grid_from_bytes) gen_grid_bytes(g, grid);
     }
 }
 
