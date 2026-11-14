@@ -92,7 +92,7 @@ handler, an async handler before and after its wait, a command handler, and a vi
 component; `Self()` on the binding is the edited entity), `e2e/command_ownership` (three counters, player
 0's, player 1's and nobody's; pokes and steals from both players with and without the filter and the
 sender's name: run, dropped, sequence consumed, resend refused, replay equal), `schedule/world_edit`,
-seventeen error fixtures (`world_edit_*`, `command_unnamed_sender`), the warning fixture
+eighteen error fixtures (seventeen `world_edit_*`, `command_unnamed_sender`), the warning fixture
 `world_edit_unused`, LSP `lsp_world_edit`, `lsp_command_ownership`; `world_unknown_method` lists Edit.
 
 Gaps: no `else`; schedule by fields for an Edit's binding (above); Edit of the code's own entity is refused
