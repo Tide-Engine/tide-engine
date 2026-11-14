@@ -26184,6 +26184,7 @@ static void gen_client_event_check(gen *g)
 
 // What sessions (tide/session.h) need: the local state's side, the input
 // packed for the network, and tide_game_api.
+#include "client_spans_codegen.inc"
 #include "client_state_codegen.inc"
 #include "client_changes_codegen.inc"
 

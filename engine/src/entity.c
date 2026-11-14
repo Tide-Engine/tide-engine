@@ -603,6 +603,12 @@ bool tide_entity_destroy(tide_entities *t, tide_entity e)
     return true;
 }
 
+uint64_t tide_entities_slot_page_hash(const tide_entities *t, const uint32_t page)
+{
+    if (page >= t->pages || !t->page[page]) return 0u;
+    return tide_page_hash(t->page[page], used_on(t, page) * (uint32_t)sizeof(tide_entity_slot));
+}
+
 bool tide_entity_erase(tide_entities *t, tide_entity e)
 {
     order_lock(t);

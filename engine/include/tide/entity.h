@@ -202,6 +202,11 @@ static inline tide_location tide_entity_location_at(const tide_entities *t, cons
     return tide_entity_location(t, e);
 }
 
+// The hash of the table's page `page` of slots (a slot's index >> TIDE_ENTITY_PAGE_SHIFT), as the table's own
+// hash takes it and keeps it until the page changes: what says a page's entities are where they were, with the
+// snaps they had. 0 for a page it hasn't got.
+uint64_t tide_entities_slot_page_hash(const tide_entities *t, uint32_t page);
+
 // For snapshots: `to` becomes `from`, sharing its pages (see tide/page.h),
 // including optional presentation metadata. The hash covers private allocation
 // state and the current-clock spawn registry; map capacity and pointers are excluded.
