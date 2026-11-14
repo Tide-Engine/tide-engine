@@ -1,0 +1,4 @@
+// expect: [Linear] cannot read single-channel grid images: this format has no sRGB counterpart
+scene Main { }
+local singleton Art { Grid3<float> values = Grid3(2, 2, 2); [Linear] TextureArray image; }
+view V(mut Art art) { art.image = art.values; }

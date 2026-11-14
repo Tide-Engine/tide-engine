@@ -117,7 +117,10 @@ const char *shader_minify_names(const char *source, sb *map)
     for (const char *p = source; *p;) {
         const char *end = non_code_end(p);
         if (end != p) {
-            if (*p == '/') {
+            if (*p == '/' && strncmp(p, "// tide numeric outputs: ", 24) == 0) {
+                // This is shader metadata consumed by the Unity translator, not an authored comment.
+                sb_putn(&out, p, (size_t)(end - p));
+            } else if (*p == '/') {
                 sb_put(&out, " ");
                 for (const char *c = p; c != end; c++) if (*c == '\n') sb_put(&out, "\n");
             } else sb_putn(&out, p, (size_t)(end - p));

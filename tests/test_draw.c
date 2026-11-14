@@ -755,7 +755,7 @@ TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
     TIDE_CHECK(tide_render_target_format(TIDE_RENDER_WINDOW) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(tide_render_target_format(TIDE_RENDER_INVALID) == TIDE_TARGET_RGBA8 && tide_render_target_format(0) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(tide_render_target_format(1001) == TIDE_TARGET_RGBA8);
-    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, (tide_target_format)9).id) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, (tide_target_format)99).id) == TIDE_TARGET_RGBA8);
 
     // Its state is found whatever it holds: it's live, resized and disposed like any other
     TIDE_CHECK(tide_render_target_live(shadow.id) && tide_render_target_version(shadow.id) == 1);
@@ -847,7 +847,7 @@ TIDE_TEST(draw_targets_hold_several_colors_and_lend_each)
     TIDE_CHECK(tide_render_target_colors(screen.id) == 3 && screen.size.window == 1.0f);
     TIDE_CHECK(tide_render_target_colors(half.id) == 2 && half.size.window == 0.5f);
     // Four at the most, each a color's: among several, depth alone is a color image, and so is a format there's none of
-    const tide_target_format many[] = {TIDE_TARGET_RGBA16F, TIDE_TARGET_DEPTH, (tide_target_format)9, TIDE_TARGET_RGBA16F,
+    const tide_target_format many[] = {TIDE_TARGET_RGBA16F, TIDE_TARGET_DEPTH, (tide_target_format)99, TIDE_TARGET_RGBA16F,
                                        TIDE_TARGET_RGBA16F, TIDE_TARGET_RGBA16F};
     held = tide_render_target_formats(tide_render_target_make_of(4.0f, 4.0f, many, 6).id);
     TIDE_REQUIRE(held.count == TIDE_TARGET_COLORS);
@@ -2340,4 +2340,182 @@ TIDE_TEST(draw_shaded_instances_merge_by_shader_id)
     TIDE_REQUIRE(d.count == 5 && d.run_count == 5 && d.runs[4].count == 1);
     tide_draw_free(&d);
     tide_scratch_reset(mark);
+}
+
+TIDE_TEST(draw_linear_grid_captures_keep_roles_and_alpha)
+{
+    static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
+    tide_heaps heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_grid grid = {0};
+    tide_grid_set(&grid, tide_grid_new(2, 2, 1, 0), &colors, TIDE_IN_LOCAL);
+    *(tide_color *)tide_grid_poke(&grid, 0, 0, 0, &colors, true, TIDE_IN_LOCAL) = (tide_color){1, 1, 1, 0.5f};
+    *(tide_color *)tide_grid_poke(&grid, 1, 0, 0, &colors, true, TIDE_IN_LOCAL) = (tide_color){1, 0, 1, 0.001f};
+    tide_draw_list d = {0};
+    const tide_texture_ref image = tide_texture_of_grid(grid, &colors, 0u);
+    const uint32_t display = tide_draw_texture_source(&d, image);
+    const uint32_t linear = tide_draw_texture_source_linear(&d, image);
+    TIDE_REQUIRE(display && linear && display != linear);
+    TIDE_CHECK(!d.textures[display - 1u].linear && d.textures[linear - 1u].linear);
+    TIDE_CHECK(d.textures[display - 1u].pixels[0] == 128);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[0] == 188);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[3] == 128);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[7] == 0);
+    TIDE_CHECK(d.textures[linear - 1u].pixels[4] == 0 && d.textures[linear - 1u].pixels[6] == 0);
+    TIDE_CHECK(tide_draw_texture_source_linear(&d, image) == linear);
+    tide_draw_free(&d);
+    tide_text_use(NULL, NULL);
+    tide_heaps_free(&heap);
+}
+
+// A [Linear] source's place is found through the list's index (it was a scan of every texture, at each marked
+// texture of each shaded draw): the same place however many textures the list holds and however often it's asked,
+// following its source's pixels, apart from the source's own place, and still found after a frame's pruning.
+TIDE_TEST(draw_linear_twins_are_found_through_the_index)
+{
+    enum { images = 300, marked = 3 };
+    static uint8_t pixels[images][4];
+    tide_draw_list d = {0};
+    uint32_t plain[images], twins[marked];
+    for (uint32_t i = 0; i < images; i++) {
+        memset(pixels[i], (int)(i & 255u), 4);
+        plain[i] = tide_draw_texture_source(&d, (tide_texture_ref){.image = {pixels[i], 1, 1, 7}});
+        TIDE_REQUIRE(plain[i] == i + 1u);
+    }
+    for (uint32_t k = 0; k < marked; k++) {
+        twins[k] = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[k * 100u], 1, 1, 7}});
+        TIDE_REQUIRE(twins[k] == images + k + 1u);
+        const tide_draw_texture *twin = &d.textures[twins[k] - 1u], *source = &d.textures[plain[k * 100u] - 1u];
+        TIDE_CHECK(twin->linear && !source->linear && twin->space == source->space && twin->id == source->id);
+        TIDE_CHECK(twin->pixels == source->pixels && twin->capacity == 0 && !twin->changes); // Borrowed: the source's to free
+    }
+    for (uint32_t draw = 0; draw < 2000u; draw++) { // As many shaded draws of the three: no place more, each its own
+        for (uint32_t k = 0; k < marked; k++) {
+            const tide_texture_ref image = {.image = {pixels[k * 100u], 1, 1, 7}};
+            if (tide_draw_texture_source_linear(&d, image) != twins[k]) TIDE_REQUIRE(false);
+        }
+    }
+    TIDE_CHECK(d.texture_count == images + marked);
+    // The source's pixels at another version: the same two places, and the twin has what the source now has
+    pixels[100][0] = 99;
+    TIDE_CHECK(tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[100], 1, 1, 8}}) == twins[1]);
+    TIDE_CHECK(d.textures[twins[1] - 1u].version == 8 && d.textures[plain[100] - 1u].version == 8);
+    TIDE_CHECK(d.textures[twins[1] - 1u].pixels == d.textures[plain[100] - 1u].pixels && d.textures[twins[1] - 1u].pixels[0] == 39); // 99 under an alpha of 100
+    TIDE_CHECK(d.texture_count == images + marked);
+    // A frame that draws only one marked image keeps its two places, compacted, and finds them again
+    tide_draw_reset(&d);
+    const uint32_t kept = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}});
+    tide_draw_reset(&d);
+    TIDE_REQUIRE(d.texture_count == 2u && kept);
+    const uint32_t again = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}});
+    TIDE_REQUIRE(again == 2u && d.textures[1].linear && !d.textures[0].linear && d.texture_count == 2u);
+    TIDE_CHECK(tide_draw_texture_source(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}}) == 1u);
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_numeric_target_formats_keep_images_samples_and_reload)
+{
+    for (int f = TIDE_TARGET_R8; f <= TIDE_TARGET_R32I; f++) {
+        for (int power = 0; power < 4; power++) {
+            const tide_target_format formats[4] = {TIDE_TARGET_RGBA8, (tide_target_format)f, TIDE_TARGET_RGBA16F, (tide_target_format)f};
+            const tide_render_target target = tide_render_target_make_sampled(8, 8, formats, 4, 1 << power);
+            const tide_target_formats held = tide_render_target_formats(target.id);
+            TIDE_REQUIRE(held.count == 4);
+            for (uint32_t i = 0; i < 4; i++) {
+                TIDE_CHECK(held.color[i] == formats[i]);
+                const tide_texture_ref color = tide_render_target_color_at(target, (int32_t)i);
+                TIDE_CHECK(tide_render_target_image(color.target.id) == i);
+                TIDE_CHECK(tide_render_target_whole(color.target.id) == target.id);
+                TIDE_CHECK(tide_render_target_state_of(color.target.id) == tide_render_target_state_of(target.id));
+            }
+            const uint32_t samples = f >= TIDE_TARGET_R32F ? 1u : 1u << power;
+            TIDE_CHECK(tide_render_target_samples(target.id) == samples);
+            tide_render_target opaque = target;
+            opaque.id = TIDE_RENDER_MANAGED | (UINT64_C(0x745) << 16) | (target.id & TIDE_RENDER_BITS);
+            const tide_render_target restored = tide_render_target_recreate(opaque);
+            TIDE_CHECK(tide_render_target_samples(restored.id) == samples);
+            const tide_target_formats again = tide_render_target_formats(restored.id);
+            TIDE_CHECK(memcmp(&held, &again, sizeof held) == 0);
+            for (uint32_t i = 1; i < 4; i++) {
+                const uint64_t named = tide_render_target_color_at(target, (int32_t)i).target.id;
+                const tide_render_target reference = {.id = (opaque.id & ~TIDE_RENDER_BITS) | (named & TIDE_RENDER_BITS), .size = opaque.size};
+                const tide_render_target alias = tide_render_target_recreate(reference);
+                TIDE_CHECK(tide_render_target_whole(alias.id) == restored.id && tide_render_target_image(alias.id) == i);
+            }
+            tide_render_targets_recreated();
+        }
+    }
+    const tide_texture3d_ref volume = tide_texture3d_make((tide_int3){4, 4, 4}, TIDE_TARGET_RGBA32F);
+    TIDE_CHECK(tide_render_target_format(volume.target.id) == TIDE_TARGET_RGBA32F);
+    tide_texture3d_resize(volume, (tide_int3){512, 512, 64}); // 256 MiB: must keep the old extent.
+    TIDE_CHECK(tide_texture3d_resolve(volume).depth == 4);
+    tide_render_targets_free();
+}
+
+TIDE_TEST(draw_typed_clears_keep_float_and_integer_bits_when_appended)
+{
+    tide_draw_list list = {0}, appended = {0};
+    const tide_target_format formats[4] = {TIDE_TARGET_R32F, TIDE_TARGET_RG16F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
+    const tide_render_target target = tide_render_target_make_of(8, 8, formats, 4);
+    tide_draw_render_target(&list, target);
+    const tide_clear_value values[] = {tide_clear_float(3.5f), tide_clear_float2((tide_float2){-2, 4}),
+        tide_clear_float4((tide_float4){5, -6, 7, 0.25f}), tide_clear_int(-2147483647)};
+    tide_draw_clear_images(&list, values, 4);
+    TIDE_REQUIRE(list.count && list.commands[list.count - 1u].kind == TIDE_DRAW_CLEAR_IMAGES);
+    const uint32_t at = list.commands[list.count - 1u].clear_images.uniforms;
+    TIDE_REQUIRE(at <= list.uniform_used && 64 <= list.uniform_used - at);
+    for (uint32_t i = 0; i < 4; i++) TIDE_CHECK(memcmp(list.uniforms + at + 16u * i, values[i].words, 16) == 0);
+    tide_draw_append(&appended, &list);
+    TIDE_REQUIRE(appended.count && appended.commands[appended.count - 1u].kind == TIDE_DRAW_CLEAR_IMAGES);
+    const uint32_t copied = appended.commands[appended.count - 1u].clear_images.uniforms;
+    TIDE_CHECK(memcmp(appended.uniforms + copied, list.uniforms + at, 64) == 0);
+    const uint32_t count = list.count;
+    tide_draw_clear_images(&list, values, 5);
+    tide_draw_clear_images(&list, values, 1);
+    TIDE_CHECK(list.count == count);
+    tide_draw_free(&list); tide_draw_free(&appended);
+    tide_render_targets_free();
+}
+
+// The number formats every device blends make cube faces and array layers; 32-bit floats and integers make none.
+TIDE_TEST(draw_number_cubes_and_arrays_hold_blendable_formats_only)
+{
+    const tide_target_format held[4] = {TIDE_TARGET_R8, TIDE_TARGET_RG8, TIDE_TARGET_R16F, TIDE_TARGET_RG16F};
+    for (uint32_t i = 0; i < 4; i++) {
+        const tide_cubemap_ref cube = tide_cubemap_make_as(8, held[i]);
+        TIDE_REQUIRE(cube.target.id != 0);
+        TIDE_CHECK(tide_render_target_formats(cube.target.id).count == 1);
+        TIDE_CHECK(tide_render_target_formats(cube.target.id).color[0] == held[i]);
+        TIDE_CHECK(tide_render_target_samples(cube.target.id) == 1);
+        const tide_texture_array_ref array = tide_texture_array_make((tide_target_size){.width = 8, .height = 4, .scale = 1.0f}, 3, held[i]);
+        TIDE_REQUIRE(array.target.id != 0 && array.layers == 3);
+        TIDE_CHECK(tide_render_target_formats(array.target.id).color[0] == held[i]);
+    }
+    const tide_target_format refused[3] = {TIDE_TARGET_R32F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
+    for (uint32_t i = 0; i < 3; i++) {
+        TIDE_CHECK(tide_cubemap_make_as(8, refused[i]).target.id == 0);
+        TIDE_CHECK(tide_texture_array_make((tide_target_size){.width = 8, .height = 4, .scale = 1.0f}, 3, refused[i]).target.id == 0);
+    }
+    TIDE_CHECK(tide_render_target_formats(tide_cubemap_make_as(8, TIDE_TARGET_RGBA16F).target.id).color[0] == TIDE_TARGET_RGBA16F);
+    tide_render_targets_free();
+}
+
+TIDE_TEST(draw_numeric_tags_preserve_all_legacy_ids_without_extra_alignment)
+{
+    TIDE_CHECK(TIDE_RENDER_BITS == UINT64_C(65535));
+    for (uint32_t payload = 0; payload < 12046u * 4u; payload++) {
+        const uint32_t tag = tide_render_numeric_tag(payload);
+        TIDE_CHECK(tag <= TIDE_RENDER_BITS && tide_render_target_numeric(tag));
+        TIDE_CHECK(tide_render_numeric_payload(tag) == payload);
+    }
+    for (uint32_t tag = 0; tag <= TIDE_RENDER_BITS; tag++) {
+        bool legacy;
+        (void)tide_render_legacy_before(tag, &legacy);
+        if (!legacy) continue;
+        const uint64_t id = TIDE_RENDER_MANAGED | (UINT64_C(0x711) << 16) | tag;
+        TIDE_CHECK(!tide_render_target_numeric(id));
+        TIDE_CHECK(tide_render_target_samples(id) == (1u << (tag >> 14)));
+        TIDE_CHECK(tide_render_target_image(id) == ((tag >> 12) & 3u));
+        TIDE_CHECK(tide_render_target_whole(id) == (id & ~TIDE_RENDER_IMAGE));
+    }
 }

@@ -1555,10 +1555,13 @@
     const MAX_STORAGE = 4;      // TIDE_GPU_MAX_STORAGE
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const READ_ARRAY = 6, READ_DEPTH_ARRAY = 7; // TIDE_GPU_READ_ARRAY, _DEPTH_ARRAY: an array's colors, or its depth
+    const READ_NUMBER = 9, READ_INT = 10, READ_NUMBER_VOLUME = 11, READ_INT_VOLUME = 12;
+    const numericVolume = read => read === READ_NUMBER_VOLUME || read === READ_INT_VOLUME;
+    const integerImage = read => read === READ_INT || read === READ_INT_VOLUME;
     const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES || read === READ_DEPTH_ARRAY;
     // A pipeline's samplers where it says none apart (gpu.h's tide_gpu_samplers): texture i that's sampled has sampler i,
     // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
-    const ownSamplers = reads => reads.map(read => read === READ_SAMPLES ? READ_DATA : read === READ_ARRAY ? 0
+    const ownSamplers = reads => reads.map(read => read === READ_SAMPLES || read >= READ_NUMBER ? READ_DATA : read === READ_ARRAY ? 0
         : read === READ_DEPTH_ARRAY ? 1 : read === 8 ? 0 : read);
     // Samplers: the nearest pixel past no edge first, and after the twelve of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, ANISOTROPIC = 3, FILTERS = 4, COMPARED = 12;
@@ -1608,15 +1611,17 @@
                 if (imageWrites >>> i & 1) {
                     const format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'][imageFormats[i]];
                     entries.push({ binding: 1 + 2 * i, visibility: stages, storageTexture: { access: 'write-only', format,
-                        viewDimension: read === 8 ? '3d' : '2d' } });
+                        viewDimension: read === 8 || numericVolume(read) ? '3d' : '2d' } });
                     return;
                 }
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
                     ? { sampleType: 'float', viewDimension: 'cube' }
-                    : read === 8 ? { sampleType: 'float', viewDimension: '3d' }
+                    : read === 8 || numericVolume(read)
+                    ? { sampleType: integerImage(read) ? 'sint' : read === 8 ? 'float' : 'unfilterable-float', viewDimension: '3d' }
                     : read === READ_ARRAY || read === READ_DEPTH_ARRAY
                     ? { sampleType: read === READ_ARRAY ? 'float' : 'depth', viewDimension: '2d-array' }
-                    : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float',
+                    : { sampleType: read === READ_DATA || integerImage(read) ? 'sint'
+                        : read === READ_NUMBER ? 'unfilterable-float' : readsDepth(read) ? 'depth' : 'float',
                         multisampled: read === READ_SAMPLES } });
             });
             // A depth is whole only at its nearest pixel, which a sampler that blends none reads
@@ -1748,6 +1753,7 @@
         { depthWriteEnabled: true, depthCompare: 'always' },
         { depthWriteEnabled: true, depthCompare: 'less-equal' },
         { depthWriteEnabled: false, depthCompare: 'equal' },
+        { depthWriteEnabled: true, depthCompare: 'always' }, // RESET_ALONE: no color writes
     ];
     const DEPTH_ALONE = 4;
     const culls = ['none', 'back', 'front']; // tide_gpu_cull, of a front that goes clockwise
@@ -1757,7 +1763,7 @@
     // which a pipeline is made for too. A change to either enum goes here.
     const samplesOf = into => (into >> 16 & 15) > 1 ? 4 : 1;
     const attachmentFormats = [null, null, 'rgba16float', 'r8unorm', 'rg8unorm', 'r16float', 'rg16float',
-        'r32float', 'rgba32float', 'r32sint']; // tide_gpu_color; slot 1 is the canvas format
+        'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb']; // tide_gpu_color; slot 1 is the canvas format
     const colorFormat = (color, window = false) => color === 1 ? (window ? gpuFormat : 'rgba8unorm') : attachmentFormats[color];
     const colorFormats = into => {
         const formats = [];
@@ -2037,8 +2043,8 @@
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-            const row = width * [4, 1, 2, 16][format];
-            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint'][format];
+            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb'][format];
             const texture = device.createTexture({ size: [width, height], format, usage });
             const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
@@ -2052,10 +2058,12 @@
                 [t.width, t.height]);
         },
         gpu_texture_blocks(width, height, format, levels, ptr) {
+            const srgb = !!(format & 0x100);
+            format &= ~0x100;
             const rgba = format === 4;
             if (!rgba && (config.textureCompression === false || !device.features.has('texture-compression-bc'))) return 0;
             const block = format === 1 ? 8 : 16;
-            format = rgba ? 'rgba8unorm' : format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            format = rgba ? (srgb ? 'rgba8unorm-srgb' : 'rgba8unorm') : format === 1 ? (srgb ? 'bc1-rgba-unorm-srgb' : 'bc1-rgba-unorm') : (srgb ? 'bc3-rgba-unorm-srgb' : 'bc3-rgba-unorm');
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
             const texture = device.createTexture({ size: [width, height], format, mipLevelCount: levels, usage });
             let w = width, h = height, offset = ptr;
@@ -2086,7 +2094,8 @@
             // those from the start: the samplers that read none of them keep to its own pixels. A change to
             // tide_gpu_color goes here
             // One that's drawn into has the canvas's own bytes, as a target's image has: the pipelines into it are made for those
-            const format = color === 2 ? 'rgba16float' : 'rgba8unorm';
+            // ...or one of the number formats every device blends (attachmentFormats: 3 to 6)
+            const format = color === 10 ? 'rgba8unorm-srgb' : color >= 2 && color <= 6 ? attachmentFormats[color] : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(size));
             const texture = device.createTexture({ size: [size, size, 6], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2099,7 +2108,7 @@
                 }
                 faces.push(images);
             }
-            if (facesPtr && color !== 2) {
+            if (facesPtr && (color === 1 || color === 10)) {
                 const at = new Uint32Array(memory.buffer, facesPtr, 6);
                 for (let face = 0; face < 6; face++) {
                     const [data, offset] = memoryBytes(at[face], size * size * 4);
@@ -2109,7 +2118,7 @@
             }
             return gpuAdd('texture', { texture, view: texture.createView({ dimension: 'cube' }),
                 base: texture.createView({ dimension: 'cube', mipLevelCount: 1 }), width: size, height: size,
-                row: size * 4, format, layered: faces, bytes: color !== 2, groups: new Set() });
+                row: size * 4, format, layered: faces, bytes: color === 1 || color === 10, groups: new Set() });
         },
         gpu_array(into, width, height, layers, pixelsPtr) {
             // Layers of one size, with a view of them as an array, which is what's sampled, and of each layer's every
@@ -2125,7 +2134,8 @@
                 return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array', aspect: 'depth-only' }),
                     depthLayers: whole, width, height, row: 0, groups: new Set() });
             }
-            const format = (into & 15) === 2 ? 'rgba16float' : 'rgba8unorm';
+            const kind = into & 15; // tide_gpu_color: 3 to 6 are the number formats every device blends
+            const format = kind === 10 ? 'rgba8unorm-srgb' : kind >= 2 && kind <= 6 ? attachmentFormats[kind] : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2148,17 +2158,20 @@
             }
             const made = { texture, view: texture.createView({ dimension: '2d-array' }),
                 base: texture.createView({ dimension: '2d-array', mipLevelCount: 1 }), width, height, row: width * 4, format,
-                layered: each, bytes: format !== 'rgba16float', groups: new Set(), depthArray: 0 };
+                layered: each, bytes: format === 'rgba8unorm' || format === 'rgba8unorm-srgb', groups: new Set(), depthArray: 0 };
             const id = gpuAdd('texture', made);
-            if (!pixelsPtr) made.depthArray = platform.gpu_array(0, width, height, layers, 0);
+            // ...but a [Linear] read's copy, whose layers are drawn with neither depth nor stencil (gpu.h)
+            if (!pixelsPtr && format !== 'rgba8unorm-srgb') made.depthArray = platform.gpu_array(0, width, height, layers, 0);
             return id;
         },
         // An array of blocks: each layer's whole chain, `bytes` each, one after another (gpu_texture_blocks's, in layers)
         gpu_array_blocks(width, height, layers, format, levels, bytes, ptr) {
+            const srgb = !!(format & 0x100);
+            format &= ~0x100;
             const rgba = format === 4;
             if (!rgba && (config.textureCompression === false || !device.features.has('texture-compression-bc'))) return 0;
             const block = format === 1 ? 8 : 16;
-            const kind = rgba ? 'rgba8unorm' : format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            const kind = rgba ? (srgb ? 'rgba8unorm-srgb' : 'rgba8unorm') : format === 1 ? (srgb ? 'bc1-rgba-unorm-srgb' : 'bc1-rgba-unorm') : (srgb ? 'bc3-rgba-unorm-srgb' : 'bc3-rgba-unorm');
             const texture = device.createTexture({ size: [width, height, layers], format: kind, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
             for (let layer = 0; layer < layers; layer++) {
@@ -2179,8 +2192,8 @@
         },
         // An array of a format (tide_gpu_format's numbers), zeros, with room for its smaller images, written a part at a time
         gpu_array_of(format, width, height, layers) {
-            const pixel = [4, 1, 2, 16][format];
-            const kind = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint'][format];
+            const pixel = [4, 1, 2, 16, 8, 4, 16, 4, 4][format];
+            const kind = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb'][format];
             const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format: kind, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2290,7 +2303,7 @@
                 colors.push(gpuAdd('texture', { texture: of.texture, view, first: view, layer, width: of.width,
                     height: of.height, row: of.width * 4, groups: new Set() }));
             }
-            const depth = gpuAdd('texture', { texture: depthArray.texture, view: depthArray.depthLayers[layer],
+            const depth = !depthArray ? 0 : gpuAdd('texture', { texture: depthArray.texture, view: depthArray.depthLayers[layer],
                 whole: depthArray.depthLayers[layer], width: of.width, height: of.height, row: 0, groups: new Set() });
             return gpuAdd('target', { colors, bytes: !!of.layered && of.bytes, depth, width: of.width, height: of.height,
                 canvas: null, context: null, face: true, layerOf: true });
@@ -2301,8 +2314,9 @@
             const view = of.layered[face < 6 ? face : 0][0];
             const color = gpuAdd('texture', { texture: of.texture, view, first: view, layer: face, width: of.width,
                 height: of.height, row: of.width * 4, groups: new Set() });
-            const texture = depthFor(of.width, of.height, true);
-            const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+            // A depth of its own, but for a [Linear] read's copy, which is drawn with none (gpu.h)
+            const texture = of.format === 'rgba8unorm-srgb' ? null : depthFor(of.width, of.height, true);
+            const depth = !texture ? 0 : gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width: of.width, height: of.height, row: 0, groups: new Set() });
             return gpuAdd('target', { colors: [color], bytes: of.bytes, depth, width: of.width, height: of.height, canvas: null,
                 context: null, face: true });
@@ -2383,7 +2397,7 @@
                 reads: Array.from({ length: textures }, (unused, i) => (i < 8 ? reads >>> 3 * i : readsHigh >>> 3 * (i - 8)) & 7), // Two banks of 3-bit tide_gpu_read values
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
                 into: colorFormats(into), outputs, samples: samplesOf(into), coverage: !!alphaToCoverage,
-                storage: '', compute: false, imageWrites: 0, imageFormats: [] };
+                storage: '', compute: false, imageWrites: 0, imageFormats: [], numericOutputs: 0 };
             building.samplers = ownSamplers(building.reads); // How each sampler reads, unless gpu_pipeline_samplers says
         },
         // Its samplers, apart from its textures (tide_gpu_pipeline_desc.sampler_count): how each reads, 3 bits each
@@ -2402,6 +2416,7 @@
                 (unused, i) => (i < 8 ? low >>> 4 * i : high >>> 4 * (i - 8)) & 15);
             building.samplers = building.samplers.map((read, i) => writes >>> i & 1 ? READ_DATA : read);
         },
+        gpu_pipeline_numbers(outputs) { building.numericOutputs = outputs & 15; },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
         // Its storage buffers, bit i of `writes` set for one it writes, and whether it's a compute pipeline: only
@@ -2441,13 +2456,15 @@
                 // image in its place goes nowhere (into depth alone, that's all of them; the stage still runs,
                 // as it may discard), and an image past them is one the pipeline doesn't write
                 fragment: { module, entryPoint: 'fragment', targets: b.into.map((format, i) =>
-                    i < b.outputs && b.depth !== DEPTH_ALONE ? { format, blend: blends[b.blend] } : { format, writeMask: 0 }) },
+                    i < b.outputs && b.depth !== DEPTH_ALONE && b.depth !== 6
+                        ? { format, blend: b.numericOutputs >>> i & 1 ? undefined : blends[b.blend] } : { format, writeMask: 0 }) },
                 // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
                 primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
                 // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several
                 multisample: { count: b.samples, alphaToCoverageEnabled: b.coverage && b.samples > 1 },
                 // Either side of a triangle tests stencil the same way, against all 8 bits
-                depthStencil: { format: depthFormat(), ...depths[b.depth], depthCompare: depths[b.depth].depthCompare === 'less-equal' && reversedDepth() ? 'greater-equal' : depths[b.depth].depthCompare, stencilFront: b.stencil, stencilBack: b.stencil,
+                // ...and none of either into a [Linear] read's copy, a target with neither (gpu.h)
+                depthStencil: b.into[0] === 'rgba8unorm-srgb' ? undefined : { format: depthFormat(), ...depths[b.depth], depthCompare: depths[b.depth].depthCompare === 'less-equal' && reversedDepth() ? 'greater-equal' : depths[b.depth].depthCompare, stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
             };
             return addPipeline(b, layout, described, false);
@@ -2488,9 +2505,10 @@
                 return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, format, usage,
                     groups: new Set() });
             });
-            // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole
-            const texture = depthFor(width, height, true);
-            const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+            // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole. A [Linear]
+            // read's copy has none (gpu.h)
+            const texture = formats[0] === 'rgba8unorm-srgb' ? null : depthFor(width, height, true);
+            const depth = !texture ? 0 : gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width, height, row: 0, groups: new Set() });
             // Only bytes are read back: the first color image, where it's that
             return gpuAdd('target', { colors, bytes: formats[0] === 'rgba8unorm' || formats[0] === 'bgra8unorm', depth, width, height, canvas: null, context: null });
@@ -2569,6 +2587,8 @@
                     for (const key of gpuTables.texture[t.samples].groups) bindGroups.delete(key);
                     gpuRemove('texture', t.samples);
                 }
+            } else if (!t.depth) {
+                // A [Linear] read's copy: no depth to free
             } else if (t.layerOf) { // An array's layer's depth is that layer of the array's, which stays
                 for (const key of gpuTables.texture[t.depth].groups) bindGroups.delete(key);
                 gpuRemove('texture', t.depth);
@@ -2618,7 +2638,8 @@
                 colorAttachments: views.map((view, i) => ({ view: many ? many[i].view : view,
                     resolveTarget: many ? view : undefined, loadOp: load, storeOp: 'store',
                     clearValue: { r: 0, g: 0, b: 0, a: 1 } })),
-                depthStencilAttachment: { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
+                // None for a [Linear] read's copy, the one target with no depth (gpu.h)
+                depthStencilAttachment: id && !many && !t.depth ? undefined : { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
                     depthLoadOp: load, depthStoreOp: 'store', depthClearValue: reversedDepth() ? 0 : 1,
                     stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 },
             };
@@ -2632,6 +2653,7 @@
             pass = commands.beginRenderPass(descriptor);
             drawing.pipeline = null;
             drawing.bound = false;
+            drawing.bias = null; // A pass starts with none, as Vulkan's does: a bias is the draws' that asked
         },
         gpu_end() {
             pass.end();
@@ -2658,7 +2680,7 @@
             const entry = drawing.pipeline;
             const [constant, slope] = drawing.bias || [0, 0];
             let pipeline = entry.pipeline;
-            if (constant || slope) {
+            if ((constant || slope) && entry.described.depthStencil) {
                 const key = `${constant},${slope}`;
                 entry.biases ||= new Map();
                 pipeline = entry.biases.get(key);
@@ -2714,6 +2736,7 @@
             pass = commands.beginComputePass();
             drawing.pipeline = null;
             drawing.bound = false;
+            drawing.bias = null;
         },
         gpu_compute_end() {
             pass.end();

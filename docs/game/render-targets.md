@@ -117,13 +117,49 @@ lamp.half   = RenderTarget.Window(0.5, Format.Depth);
 glow.light  = RenderTarget.Window(Format.Rgba16f);              // A color image that keeps numbers past 1
 ```
 
-| Format | What an image of it holds | For |
-|---|---|---|
-| `Format.Rgba8` | A color of 4 bytes, each channel from 0 to 1: what's made when nothing is said | Everything that's looked at |
-| `Format.Rgba16f` | A color of four floats, each any number, to three digits or so | Light that adds up past white, and numbers that aren't colors: a normal, a place, a speed |
-| `Format.Depth` | No color image at all | What only a later frag reads: a shadow map, a pass that lays down depth |
+| Format | Frag output | Bytes per pixel | What it keeps |
+|---|---|---|---|
+| `Format.Rgba8` | `Color` | 4 | Four channels from 0 to 1; the default |
+| `Format.Rgba16f` | `Color` or `float4` | 8 | Four 16-bit floats, up to about 65,000 |
+| `Format.R8` | `float` | 1 | One channel from 0 to 1 |
+| `Format.Rg8` | `float2` | 2 | Two channels from 0 to 1 |
+| `Format.R16f` | `float` | 2 | One 16-bit float |
+| `Format.Rg16f` | `float2` | 4 | Two 16-bit floats |
+| `Format.R32f` | `float` | 4 | One 32-bit float |
+| `Format.Rgba32f` | `float4` | 16 | Four 32-bit floats |
+| `Format.R32i` | `int` | 4 | One signed 32-bit integer, exactly |
+| `Format.Depth` | No color image | — | Depth and stencil alone |
 
-A `Format.Rgba16f` image is read as it was written: `Sample` gives the numbers back, blended between its pixels like any texture's, and what's drawn into it is blended and added as into any other, without stopping at 1. It takes twice the memory of a `Format.Rgba8` one. A clear's color is a color, each channel from 0 to 1, whatever the image holds.
+A number output replaces what's in its image whatever blend is set, with no tint or alpha multiplication.
+In a `float4`, all four channels are independent: `float4(2, -1, 0.5, 0.25)` keeps its fourth channel without
+multiplying the first three by it. A `Color` output retains normal tint, alpha and blend behavior, including
+in `Rgba16f`. An output that does not fit the image is a compile error at the draw, naming the type to use.
+
+Read a numeric image through a declared [typed texture field](./shaders.md#number-images):
+`[Raw(float2)] Texture velocity;` then `velocity = target.colors[1];` in local code. Its `Sample` returns a
+`float2`. A typed read that names no filter reads the nearest pixel. Images in `R8`, `Rg8`, `R16f`, `Rg16f`
+and `Rgba16f` also blend (`Filter.Bilinear`, `Filter.Trilinear`, `Filter.Anisotropic`) and have mipmaps, read
+with `SampleLevel` and `SampleGrad`: a blurred mask or a variance shadow map works on every device. `R32f`,
+`Rgba32f` and `R32i` read their nearest pixel everywhere, since no GPU blends integers and only some blend
+32-bit floats; asking one of them to blend is a compile error that names the format to draw into instead.
+
+The same four compact formats make array layers and cube faces: `TextureArray(256, 256, 4, Format.R16f)` and
+`Cubemap(256, Format.R16f)`. Draw numbers into `array.layers[i]` or `cube.faces[i]`, and read them through a
+`[Raw(float)] TextureArray` or `[Raw(float)] Cubemap` field.
+
+### Clearing each image
+
+Supply one value per image, in format order. Values have the same types as frag outputs; floats can be
+negative or greater than one, and an integer image takes an `int`:
+
+```csharp
+render.data = RenderTarget(256, 256, 1, Format.R16f, Format.Rg16f, Format.Rgba32f, Format.R32i);
+render.data.Clear(2.5, float2(-1, 3), float4(2, 4, 8, 0.25), -17);
+```
+
+The clear also resets depth and stencil, within the destination's clip. The existing single-`Color` clear
+continues to fill every image of a target containing ordinary color formats. Number clears preserve their
+channels without tint, blending or alpha multiplication; byte formats clamp and quantize them to 0–1.
 
 A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth, or [stencil](./draw-settings.md#stencil), which it has too:
 
@@ -142,7 +178,7 @@ render.light = RenderTarget.Window(Format.Rgba16f, samples: 4);  // ...after wha
 render.card  = RenderTarget(200, 300, samples: 2);               // ...or after a size of its own
 ```
 
-`samples` is the last argument, and it's written with its name. It's 1, 2, 4 or 8; 1 is a target that says nothing.
+`samples` is the last argument, and it's written with its name. It's 1, 2, 4 or 8; 1 is a target that says nothing. `R32f`, `Rgba32f` and `R32i` require one sample. A target containing any of them cannot use MSAA. The other formats resolve each channel by the mean of the samples, including numeric channels.
 
 The window itself has none. For a frame with smooth edges, draw the scene into a target of the window's size and bring it to the window:
 
@@ -175,7 +211,7 @@ frag Copy(Vertex vertex, out Color color, Texture source)
 
 ## Several colors
 
-A target holds up to four color images, one for each format it's made with, and a frag writes them all at once: each of its `out Color` parameters goes to the image that's its place among them (see [Frags and verts](./shaders.md#several-outputs)).
+A target holds up to four color images, one for each format it's made with, and a frag writes them all at once: each of its `out` parameters goes to the image that's its place among them (see [Frags and verts](./shaders.md#several-outputs)).
 
 ```csharp
 local singleton Deferred
@@ -197,11 +233,11 @@ view Make(mut Deferred deferred)
 ```
 
 - **`target.colors[i]` is the image at that place,** a `Texture` like `target.color`, which is the first. They're counted from 0, in the order of the formats. Which images a target has is said where it's made, so one it hasn't got is only found out as a draw samples it: that draw is passed by, with a line that says so.
-- **A frag's outputs go to them in order.** Its first `out Color` is the first image, its second the second. An output with no image in its place goes nowhere, as a color does in a target of depth alone, so the same frag draws into the window, where its first is the pixel and the rest are dropped. An image past the frag's outputs is left as it was.
+- **A frag's outputs go to them in order.** Its first output is the first image, its second the second; each type must fit that image's format. An output with no image in its place goes nowhere, as a color does in a target of depth alone, so the same frag draws into the window, where its first is the pixel and the rest are dropped. An image past the frag's outputs is left as it was.
 - **What the engine draws itself has one color,** which goes into the first image and leaves the others: shapes, text, and meshes drawn with no frag.
-- **A clear fills every image** with its color, and sets depth back.
+- **A clear supplies each image's value** in order, and sets depth back; a single Color retains its broadcast behavior for ordinary color targets.
 - **`Draw.Blit` replaces as many images as its frag writes,** and leaves the others.
-- **Each output is blended like the pixel's color:** over what's in its own image, as the draw's [blend](./draw-settings.md#blending) says, by its own alpha, after the draw's [tint](./draw-settings.md#tints). `Color(x, y, z)` has an alpha of 1, so it replaces what was there, which is what a normal or a place wants.
+- **Each Color output is blended like the pixel's color:** over what's in its own image, as the draw's [blend](./draw-settings.md#blending) says, by its own alpha, after the draw's [tint](./draw-settings.md#tints). Numeric outputs always replace what's there, with no tint or alpha multiplication; a float4 has four independent channels.
 - `Format.Depth` is said alone: every target has its depth already, and `target.depth` reads it whatever colors are beside it.
 
 The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Rgba8, Format.Rgba16f)`. Only [`samples`](#smooth-edges) comes after them.
@@ -254,5 +290,70 @@ It takes a frame or more and can fail if the device is lost or the image exceeds
 match code. Multisampled targets read their resolved color. Float images retain colors above one, and alpha
 is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership.
 Reads share 64 slots with GPU list reads. An image can contain up to 4,000,000 pixels; outstanding pixel results
-are limited to 128 MiB. Window, depth, cube faces and array layers cannot be read this way. Draw into an
-ordinary RGBA8 or RGBA16f target first.
+are limited to 128 MiB.
+
+### Which image, and as what
+
+A target that holds several images reads any of them, by its number: `await target.Read(1)` reads
+`target.colors[1]`. The number is a constant, as what a read gives depends on the image.
+
+An image of numbers is read as its own type, written in `<>`, with the bits it stores:
+
+| The image's format | The read | What it gives |
+|---|---|---|
+| `Rgba8`, `Rgba16f` | `Read()` | `Grid2<Color>`, alpha not multiplied in |
+| `R8`, `R16f`, `R32f` | `Read<float>()` | `Grid2<float>` |
+| `Rg8`, `Rg16f` | `Read<float2>()` | `Grid2<float2>` |
+| `Rgba32f`, `Rgba16f` | `Read<float4>()` | `Grid2<float4>`, its four numbers as stored |
+| `R32i` | `Read<int>()` | `Grid2<int>` |
+
+```tide
+local singleton Picking { RenderTarget scene; Grid2<int> ids; Grid2<float> depths; }
+
+view Make(mut Picking picking)
+{
+    if (!picking.scene.valid) picking.scene = RenderTarget.Window(Format.Rgba8, Format.R32i);
+}
+
+async void ReadIds(mut Picking picking)
+{
+    if (await picking.scene.Read<int>(1) is Grid2<int> ids) picking.ids = ids.Copy();
+    if (await picking.scene.ReadDepth() is Grid2<float> depths) picking.depths = depths.Copy();
+}
+```
+
+- **Floats and ints come back bit for bit.** `R32f`, `Rgba32f` and `R32i` give what a frag or a clear wrote.
+  `R16f` and `Rg16f` give the 16-bit float that was stored, and `R8` and `Rg8` the stored byte over 255.
+- **The compiler checks the type against the target's format,** so the target has to be made one way wherever
+  it's assigned, with its formats written there: `Read<float>()` of a `RenderTarget` parameter, or of a target
+  made with `R32f` in one place and `Rg16f` in another, is an error that says so. A plain `Read()` of a target
+  whose formats aren't known is checked as it runs, and fails where the image isn't a Color's.
+- **`Read<float4>()` of an `Rgba16f` image** gives its four numbers as they're stored, where `Read()` gives
+  them as a Color, dividing its alpha out again. Use it for an image a frag wrote a `float4` into.
+
+### Depth
+
+`await target.ReadDepth()` returns `Grid2<float> fails IOError`: each pixel's depth, 0 at the near plane and 1
+at the far limit, as [`this.depth` and a depth's `Sample`](#a-target-s-depth) give it, whichever way the device
+stores it. Every target has one, a target of depth alone too. A multisampled target gives one depth a pixel.
+Where depth is stored as floats the depths a frag wrote come back exactly; on a device with 24-bit depth they
+come back to the nearest of its steps.
+
+### Cube faces and array layers
+
+A [cube's face](./meshes-and-textures.md) and an array's layer are targets, and are read the same way, one at
+a time: `await cube.faces[2].Read()`, `await array.layers[1].Read()`, and `ReadDepth()` of either. Each is one
+image, with its rows from the top as it was drawn, of the format its cube or array was made with: a face of a
+`Cubemap(256, Format.R16f)` is read with `Read<float>()`, a layer of a `Format.Rg8` array with `Read<float2>()`,
+by the table above.
+
+### How many images
+
+`target.colors.count` is how many color images a target holds: 0 for a target of depth alone and for one that
+was never made or was disposed.
+
+### The window
+
+`Draw.window` can't be read: its image is the display's own, which the GPU doesn't hand back to a kernel, and
+under Unity it's Unity's. Draw the frame into `RenderTarget.Window()`, read that, and
+[`Draw.Blit`](./shaders.md) it to the window.

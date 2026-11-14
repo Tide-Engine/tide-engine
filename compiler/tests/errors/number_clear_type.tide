@@ -1,0 +1,8 @@
+// expect: an image clear is a Color, float, float2, float4 or int; use the type its format stores
+scene Main { }
+local singleton Images { RenderTarget target; }
+view Clear(mut Images images)
+{
+    images.target = RenderTarget(8, 8, Format.Rgba32f);
+    images.target.Clear(float3(2.5));
+}

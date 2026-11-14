@@ -446,6 +446,13 @@ so neither build's tick goes on threads at these sizes. Before a system's own lo
 once it was found to hold that tick, checking the index's facts under the lock for every entity made the indexed
 build 22 ms a tick at 10,000. Details: notes/indexed-loops.md, Code generation.
 
+Since 2026-11-14 it also has chunks found by their place (`--chunks n --lookers n [--ways 1|2|3]`, none unless
+asked; `--quick` takes 400 and 50): each looker finds one chunk a tick by an `int3` and an `int` (ways 1), by a
+`long` packed from them (2) or both (3), and the run fails unless every lookup found its one chunk both ways. Before
+and after exact keys: indexed-loops.md, Exact keys (10,000 chunks, 1,000 lookups a tick: 6.4-7.1 ms to 0.061 by
+place, 74.5 to 0.055 by the long, which wasn't indexed). `bench_index` times the same at the runtime's level
+(`run_chunks`).
+
 ## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
 
 Numbers, method and why the route couldn't run: drawing.md, Listed runs culled on the GPU. In short, the menu's

@@ -1,3 +1,125 @@
+## Exact keys (2026-11-14)
+
+Found by `bench/voxels` (on its own branch, notes/voxels.md, Gaps): a chunk is found by its place, an `int3`,
+with `if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;`, and
+`choose()` only made a grid of float or double components, so the loop was indexed by `at.x` alone and each lookup
+went through every chunk with that x (320 of 10,000 in the bench below). An equality on a `long`
+(`row.chunk.key != key`, a place packed into one number) was refused as "its guard puts no bound on a number of the
+row": `is_scalar_key` asked `type_dim(t) == 1`, which is 0 for `long` (types.c gives longs no dimension, as there
+are no long vectors). Both are fixed; the spec's Indexed loops has the rules as Provisional (Exact keys, Which keys).
+
+- **The analysis** (`indexing.c`). `long` is a key. A constraint is an **exact equality** (`exact_bound`) when its
+  bounds are one leaf (`lo == hi`, as an equality gives) and both the key and the value are of exact types: `byte`,
+  `int`, `long`, `char`, an enum, a bool, or a component of an int vector (`type_is_int_based` of the value). Then
+  the C comparison is one of `int64_t`s (Tide has no unsigned integer but byte, which promotes exactly), so the
+  equality is the index's. A byte against a float isn't one: C compares them as floats, and `(int64_t)` of the float
+  would miss rows (a long past 2^53 against a double, too). `add_constraint` keeps an exact equality exact: another
+  bound on the same key is dropped (it could only narrow, and dropping a bound takes in more rows), and an exact
+  equality replaces bounds a key had. `choose()`: a grid of 2-3 float/double components bounded both ways, as
+  before; else **every** exact equality (up to `INDEX_EXACT_MOST`, 8, in the guard's order) as one key
+  (`loop_index.exact`), with up to three of the guard's other constraints after them, both-bounded first, as
+  doubles beside it; else as before. `keep_alike` keeps a query's keys to those whose binding is `previous` as the
+  first key's is (one index reads one kind of table), the rest left to the guard. `query_source_still` checks each
+  key's (component, field) once: an exact key can be in several fields of several components (`key_still` is the
+  old one-field check).
+- **The plan's text** (`loop_index_summary`): "indexed by row.chunk.at.x, row.chunk.at.y, row.chunk.at.z and
+  row.chunk.dimension as one exact key", "..., and by row.chunk.heat and row.chunk.at.y" for the doubles, ", as the
+  tick started: ..." for `previous`.
+- **The runtime** (`tide/index.h`, `engine/src/index.c`): `tide_index_begin_exact(ix, exact, dims)`,
+  `tide_index_add_exact(ix, whole, keys, ordinal)`, `tide_index_find_exact(ix, whole, lo, hi, hits)`, with
+  `TIDE_INDEX_EXACT` 8 and 0-3 doubles. Built as the grid is, with a slot for a cell: slots are a power of two, at
+  least the entries; each entry's whole numbers hash (`hash_whole`, multiply-xorshift steps and a splitmix
+  finish) to a slot; a stable counting sort lays the entries out by slot, each slot's in the order added, with
+  their hashes, whole numbers and doubles beside them. A search hashes its numbers, goes through that slot's run,
+  and gives the entries whose hash and every whole number are equal and whose doubles are each within the bounds
+  widened as `tide_index_find` widens them, or no number; a NaN bound leaves its double open. A slot's run is in
+  the order added, so the hits ascend with no sort. Results depend on the entries and the search only; the hash
+  decides cost. Mixing the two kinds is defined and safe: `tide_index_find` of an exact index and
+  `tide_index_find_exact` of one of doubles give every entry, `tide_index_add` on an exact index adds whole numbers
+  of 0, `tide_index_add_exact` on one of doubles adds its doubles.
+- **The code** (`index_codegen.inc`): `gen_ix_bounds` writes an exact key's values as `tide_xeq` (`(int64_t)` of
+  each leaf, a vector's component taken first) and its doubles' bounds in `tide_xlo`/`tide_xhi` (one zero element
+  when there are none: C has no empty arrays); `gen_ix_keys` a row's `tide_xwhole` and `tide_xkey`;
+  `gen_ix_begin`/`gen_ix_add`/`gen_ix_find` call the exact or the double runtime. Every place that wrote
+  `tide_index_begin`/`add`/`find` (a world's query, rows made for views and handlers, lists, a parallel list's
+  marks) goes through them, and `ix_plan_fits` replaced the `count <= 3` checks. A site's plan text and a list
+  site's plan number take in `exact`, so a reload that changes a loop's kind of key builds it again. A borrowed
+  query whose caller takes some of the key's bindings `previous` and some not (the analysis sees the function's own
+  query) goes through every row in that variant, as one with no table does. `schedule_bytes_codegen.inc` takes in
+  every key's lanes, not the first three.
+- **What changes for games**: a guard with integer, enum or bool equalities and no float grid now gets an exact key
+  where it had one key in doubles: `Count`'s `r.u.team != Team.Blue` in the fixture, `fields.tide`'s `row.b.team ==
+  1` (the pinned schedules say so). Bool and small-enum keys put most rows in a slot, and a search finding most rows
+  goes through every row as before (When most rows pass). Results are the plain loop's either way.
+
+Tests:
+- `tests/test_index.c` (`tide_tests index_`): `index_finds_exact_keys_as_a_scan_does` checks every exact count 1-8
+  with 0-3 doubles, 1, 40 and 3,000 entries, against a scan (nothing missing, nothing whose numbers differ or whose
+  doubles are outside a box widened 4 times more, ascending, once each): whole numbers of 3 values, of 41, at both
+  ends of a long, past 2^62 and random; doubles with NaN and -inf, bounds open, NaN, inside out and one-sided.
+  `index_finds_one_chunk_among_many_with_its_x`: 10,240 chunks of a 32 x 5 x 32 box in two dimensions, by place and
+  by a long packed past 2^62, exactly one hit each, none for a place that isn't. `index_of_exact_keys_begins_again_and_mixes_safely`:
+  never built, empty, not yet built (every entry), one slot of 900 equal entries in order, doubles beside them,
+  inside out, begun again with 99 and 7 (taken as 8 and 3), and both kinds mixed.
+- `tidec_e2e_indexed_loops` / `_plain` / `tidec_indexed_loops_same`: `Cell` (an int3 place, a dimension, a long key
+  past 2^60, an enum, a byte, a char, a bool, a float with NaN on some), 512 in a box 8 x 4 x 8 in two dimensions
+  (64 share each x); `Shift` moves every seventh onto another's place each tick (two at a place: `doubled`) and
+  destroys some (holes), `Renew` spawns cells into another table that `Expire` destroys. `Seek` searches 24 places
+  a tick by int3 + int, by the long, by int + int beside a float bound (NaN rows pass) and an int bound, by enum +
+  byte-against-int + int + the body's last bool guard, by char + int, and a byte against a float (no exact key),
+  each summed in the rows' order into `Found.sum`; `CountAt` is a borrowed query from a system and a view
+  (`Glimpse`, whose own loop is a view's rows by int + enum); `Prod` a parallel loop over a query by int + int;
+  `Tiles` a list of a read-only singleton (1,900 tiles, 300 on places that have one) by an int2's components. The
+  test prints them all each tick, checks the place and key searches find the same cells, and that each kind found
+  something on most ticks. `tidec_e2e_previous` / `tidec_previous_same`: `Pair` finds the next boid by its id and
+  team as the tick started, in a system that changes the team, beside a `Rank` bound that isn't (`keep_alike`
+  leaves it to the guard). `schedule/indexed_loops.tide` pins the plan texts (`Chunks`), `schedule/fields.txt` and
+  the `Wrapped` line follow.
+- All of the above pass in release and under Windows ASan (`sanitize`); web and the other platforms are CI's.
+- Every game of the build generated (tidec alone, 542 runs, prototypes included) with no error: no planned loop
+  came out without its index. The two failures of that run are `bench/versus`'s opt-in phase scripts, which look
+  for `void tide_system_Step(` where codegen has written `TIDE_CODE void` since b12f8a6e3 (not this work). Of the
+  games whose generated C now has an exact key, these native tests pass in release: `earth_tests`, `bench_earth`
+  (its three pinned hashes), `bench_forest*`, `bench_render3d`, `towers_tests`, `sumo_tests`, `tide_render2d_pipeline`,
+  the `tide_render3d_*` CPU tests, `tidec_e2e_row_lanes`, `tidec_e2e_view_guard`, `tidec_e2e_query_local_fields`,
+  `tidec_safety_query_local_fields` and the `row_lanes`/`view_guard` codegen checks.
+
+Measurements (release, Windows, this machine, one thread):
+
+`bench_index` (runtime alone; a search and the guard on each candidate, 2,000 searches):
+
+| Chunks | Build exact | Build by x | Search exact | Search by x | Plain loop | Candidates |
+|---|---|---|---|---|---|---|
+| 1,000 | 9.0 µs | 13.4 µs | 15.6 ns | 145 ns | 442 ns | 1 against 100 |
+| 10,000 | 102 µs | 107 µs | 20.3 ns | 407 ns | 4.69 µs | 1 against 312 |
+| 100,000 | 1.33 ms | 1.24 ms | 22.1 ns | 2.19 µs | 42.5 µs | 1 against 1,000 |
+
+`bench_loops --n 0 --chunks 10000 --lookers 1000 --ways <w> --threads 1` (the game, `bench/loops/loops.tide`'s
+`Look`: 10,000 chunks that don't move, 1,000 lookups a tick; a tick's time, before on the compiler as it was):
+
+| Lookup | Before | After | Plain loop |
+|---|---|---|---|
+| By place, `int3` + `int` (`--ways 1`) | 6.4-7.1 ms (by `at.x`: 320 candidates) | 0.061 ms | 77.4 ms |
+| By a `long` key (`--ways 2`) | 74.5-75.1 ms (not indexed) | 0.055 ms | 73.6 ms |
+| Both (`--ways 3`) | 82.1-83.0 ms | 0.110-0.119 ms | 148.5 ms |
+
+About 60 ns a lookup with the system around it. The world hashes after the runs are the ones before
+(`80df2ea6b5754203`, `67796848efb17b51`, `94af1d1ade956c78`), and the bench checks every lookup found its one chunk
+both ways.
+
+Gaps:
+- A float grid still comes first: `row.team == team && Math.Distance(...) < r` is found by the distance, the team
+  left to the guard. A grid with whole numbers beside it (a dimension) would take both.
+- `x == a || x == b` on one key is the range between them, not two exact searches; equalities under `||` of
+  different keys give no bound, as before.
+- `Entity`, `PlayerID` and `LocalEntity` aren't keys: `row.chunk.owner == player` and `row.target == this` go
+  through every row.
+- Two or three integer components bounded both ways (a box of cells, not one) aren't a grid: one of them is the key.
+- A key is rebuilt whole when any page of its lanes changes, as other indexes are; a world whose chunks come and go
+  each tick builds it each tick (102 µs for 10,000 at the runtime's level).
+- Keys made to share a slot (a hash flood) cost a pass over that slot, which is at most the plain loop; never a
+  wrong result.
+
 ## A key of the tick's start (2026-11-13)
 
 A query binding marked `previous` reads its component as the tick started (schedule-and-threads.md, top section;

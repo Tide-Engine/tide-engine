@@ -84,6 +84,197 @@ fn ts_Stars(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     return tide_color;
 }
 
+// Transfer on SkyVertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_SkyVertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_saturate1(a: f32) -> f32 {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
+fn tide_tolinear1(v: f32) -> f32 {
+    var x: f32 = tide_saturate1(v);
+    if (x >= 1.0) { return 1.0; }
+    if (x <= 0.04045) { return x / 12.92; }
+    return pow((x + 0.055) / 1.055, 2.4);
+}
+fn tide_tolinear3(v: vec3f) -> vec3f {
+    return vec3f(tide_tolinear1(v.x), tide_tolinear1(v.y), tide_tolinear1(v.z));
+}
+fn tide_tolinear4(v: vec4f) -> vec4f {
+    return vec4f(tide_tolinear3(v.rgb), v.a);
+}
+fn tide_todisplay1(v: f32) -> f32 {
+    var x: f32 = tide_saturate1(v);
+    if (x >= 1.0) { return 1.0; }
+    if (x <= 0.0031308) { return x * 12.92; }
+    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+}
+fn tide_todisplay3(v: vec3f) -> vec3f {
+    return vec3f(tide_todisplay1(v.x), tide_todisplay1(v.y), tide_todisplay1(v.z));
+}
+fn tide_todisplay4(v: vec4f) -> vec4f {
+    return vec4f(tide_todisplay3(v.rgb), v.a);
+}
+fn ts_Transfer(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
+    var t_scalar: f32 = tide_tolinear1(t_vertex.m_uv.x);
+    var t_rgb: vec3f = tide_todisplay3(vec3f(t_scalar, t_vertex.m_uv.y, tide_f(1.0)));
+    (*t_color) = tide_todisplay4(tide_tolinear4(vec4f(t_rgb, tide_f(0.37))));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
+    var tide_vertex: tt_SkyVertex = tt_SkyVertex(tide_a0, tide_a1);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Transfer(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Towards on SkyVertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_SkyVertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_saturate1(a: f32) -> f32 {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
+fn tide_movetowards1(c: f32, t: f32, s: f32) -> f32 {
+    var d: f32 = t - c;
+    var r: f32 = c + s;
+    if (d < 0.0) { r = c - s; }
+    if (abs(d) <= s) { r = t; }
+    return r;
+}
+fn tide_movetowards2(c: vec2f, t: vec2f, s: f32) -> vec2f {
+    var d: vec2f = t - c;
+    var l: f32 = sqrt(dot(d, d));
+    var r: vec2f = t;
+    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }
+    return r;
+}
+fn tide_movetowards3(c: vec3f, t: vec3f, s: f32) -> vec3f {
+    var d: vec3f = t - c;
+    var l: f32 = sqrt(dot(d, d));
+    var r: vec3f = t;
+    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }
+    return r;
+}
+fn tide_deltaangle(a: f32, b: f32) -> f32 {
+    var d: f32 = b - a;
+    var turn: f32 = d - floor(d / 6.2831855) * 6.2831855;
+    var r: f32 = 0.0;
+    if (turn >= 0.0) {
+        if (turn <= 6.2831855) {
+            r = turn;
+            if (turn > 3.1415927) { r = turn - 6.2831855; }
+        }
+    }
+    return r;
+}
+fn tide_wrapangle(a: f32) -> f32 {
+    return tide_deltaangle(0.0, a);
+}
+fn tide_movetowardsangle(c: f32, t: f32, s: f32) -> f32 {
+    return tide_movetowards1(c, c + tide_deltaangle(c, t), s);
+}
+fn tide_damp_share(rate: f32, dt: f32) -> f32 {
+    return tide_saturate1(1.0 - exp(0.0 - rate * dt));
+}
+fn tide_damp1(c: f32, t: f32, rate: f32, dt: f32) -> f32 {
+    return c + (t - c) * tide_damp_share(rate, dt);
+}
+fn tide_damp2(c: vec2f, t: vec2f, rate: f32, dt: f32) -> vec2f {
+    return c + (t - c) * tide_damp_share(rate, dt);
+}
+fn tide_damp3(c: vec3f, t: vec3f, rate: f32, dt: f32) -> vec3f {
+    return c + (t - c) * tide_damp_share(rate, dt);
+}
+fn ts_Towards(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
+    var t_step: f32 = tide_movetowards1(t_vertex.m_uv.x, tide_f(1.0), tide_f(0.25));
+    var t_walked: vec2f = tide_movetowards2(t_vertex.m_uv, vec2f(tide_f(1.0), tide_f(0.0)), t_step);
+    var t_turn: f32 = ((tide_deltaangle(t_vertex.m_uv.x, t_vertex.m_uv.y) + tide_wrapangle((t_step * tide_f(9.0)))) + tide_movetowardsangle(t_step, tide_f(6.0), tide_f(0.1)));
+    var t_eased: vec3f = tide_damp3(vec3f(t_walked, t_turn), vec3f(tide_f(1.0)), tide_f(4.0), t_vertex.m_uv.y);
+    (*t_color) = vec4f(tide_damp3(t_eased, vec4f(t_eased, tide_f(1.0)).rgb, tide_f(2.0), tide_f(0.5)), tide_damp1(t_step, tide_f(1.0), tide_f(3.0), tide_f(0.1)));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
+    var tide_vertex: tt_SkyVertex = tt_SkyVertex(tide_a0, tide_a1);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Towards(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
 // Blow and Calm on SkyVertex: WGSL
 const tide_reversed_depth = true;
 fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }

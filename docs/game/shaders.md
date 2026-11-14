@@ -84,7 +84,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)
 - **The draw's [settings](./draw-settings.md) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw.Transform` after its vert, and a 3D one's transform goes through `Draw.Transform`. A 3D mesh does with depth what [`Draw.Depth`](./3d.md#depth) says: inside `Draw.Depth(Depth.Read) { ... }` it's hidden behind what's nearer and hides nothing itself, which is how something see-through is drawn. And its triangles are drawn from the side [`Draw.Cull`](./3d.md#which-side-draws) says, their front unless it says otherwise: a vert that mirrors its mesh, or turns it inside out, has them reach the screen the other way round, and is drawn inside `Draw.Cull(Cull.Front)`. Under [`Draw.Stencil`](./draw-settings.md#stencil) it's drawn where its pixels pass the test, and it stores where it's drawn: a pixel the frag leaves out with `this.Discard()` stores nothing, which is how a mask gets the shape of a picture.
 - **Light the color, not its alpha.** A color times a number scales its alpha too, so `box.tint * light` alone leaves a pixel in the shade see-through, and what was drawn behind the mesh shows in it, its own far side too. The frag above sets `color.a` back.
 - **For intentional transparency, set `color.a` to the opacity you want.** A 3D draw also needs depth and ordering: see [Transparent 3D](./draw-settings.md#transparent-3d). For solid pixels with holes, use [cutout holes](./draw-settings.md#cutout-holes) instead.
-- A frag can write more than one color, each an `out Color` of its own: see [Several outputs](#several-outputs). An output of another type than `Color` isn't there yet.
+- A frag can write up to four outputs, each `out Color`, `out float`, `out float2`, `out float4` or `out int`: see [Several outputs](#several-outputs). Number outputs replace the stored value without tint or alpha multiplication.
 
 ::: tip It used to be mut
 A frag's color used to be `mut Color color`, which started white. That spelling is an error now, and the editor offers the change to `out`. A frag that leaned on the white writes it itself, `color = Color.white;`, which the editor offers too where a path is missing it.
@@ -92,7 +92,7 @@ A frag's color used to be `mut Color color`, which started white. That spelling 
 
 ### Several outputs
 
-A frag writes up to four colors at once, each an `out Color` parameter, into a [render target made to hold as many](./render-targets.md#several-colors). They go to the target's color images in the order they're written: the first is the pixel's color, as ever, and each one after it goes to the next image.
+A frag writes up to four images at once, with `out Color`, `out float`, `out float2`, `out float4` and `out int` parameters, into a [render target made to hold as many](./render-targets.md#several-colors). They go to the target's color images in the order they're written: the first is the pixel's color, as ever, and each one after it goes to the next image.
 
 ```csharp
 // One pass over the scene leaves what it looks like, which way it faces and where it is
@@ -125,8 +125,8 @@ view Show(Models models, Deferred deferred)
 
 - **Each is owed on every path,** as the pixel's color is: a frag that can end without writing its second output is an error that names it, and `this.Discard()` owes none of them anything.
 - **They're matched by their order,** not their names: `out Color albedo, out Color normal` writes a target's first image and its second, whatever the frag calls them, and wherever they are among its other parameters.
-- **A `Color` is four floats,** and an output holds any number. What's kept of it is the image's to say: a [`Format.Rgba8`](./render-targets.md#what-a-target-holds) image keeps each channel from 0 to 1, and a `Format.Rgba16f` one keeps it as it is, which is what a normal, a place or light brighter than white needs.
-- **`Color(x, y, z)` has an alpha of 1.** Each output is blended over what's in its image by its own alpha, as the draw's blend says, so an output that's data is written with an alpha of 1, or inside `Draw.Blend(Blend.Replace) { ... }`.
+- **A `Color` is four floats,** with its fourth channel used as alpha. What's kept of it is the image's to say: a [`Format.Rgba8`](./render-targets.md#what-a-target-holds) image keeps each channel from 0 to 1, and a `Format.Rgba16f` one keeps it as it is, which is what a normal, a place or light brighter than white needs.
+- **`Color(x, y, z)` has an alpha of 1.** Each Color output is blended over what's in its image by its own alpha, as the draw's blend says, so an output that's data is written with an alpha of 1, or inside `Draw.Blend(Blend.Replace) { ... }`.
 - **Where there's no image for it, an output goes nowhere.** Drawn into the window, or into a target of one color image, such a frag is its first output alone; into a target of depth alone, none of them. So one frag serves a pass that fills three images and a pass that only casts a shadow.
 - **A target's other images are left alone** by a frag with fewer outputs than the target has images, and by everything the engine draws itself, which has one color.
 - A frag reads the images another draw wrote as it reads any texture, through a `Texture` field of a singleton or a component it takes: `deferred.normals = deferred.scene.colors[1];` in a view, then `deferred.normals.Sample(uv)` in the frag. It can't read an image of the target it's drawn into.
@@ -138,6 +138,97 @@ The scene below is drawn once, by a frag that leaves three images: each pixel's 
 <<< @/examples/outputs.tide
 
 :::
+
+### Number images
+
+Use numeric outputs for masks, IDs, velocity, positions, moments and other data. Their types must fit the
+destination's [formats](./render-targets.md#what-a-target-holds):
+
+```csharp
+frag Data(Vertex vertex, out float mask, out float2 velocity, out float4 channels, out int id)
+{
+    mask = vertex.uv.x;
+    velocity = vertex.uv * 2 - 1;
+    channels = float4(2, -1, 0.5, 0.25);
+    id = 16777217;
+}
+```
+
+Draw this frag into a target made with `Format.R8`, `Format.Rg16f`, `Format.Rgba32f` and `Format.R32i`, in that
+order. A `float` goes into R8, R16f or R32f; a `float2` into Rg8 or Rg16f; a `float4` into Rgba16f or Rgba32f;
+an `int` into R32i. `Color` goes into Rgba8 or Rgba16f. A mismatch is a compile error at the draw, with the
+accepted type in the message. Outputs beyond the target's images are dropped, and later images without an
+output are left alone, as with color outputs.
+
+Numbers always replace what's there, whatever `Draw.Blend` says. `Draw.Tint` does not change them, and no
+channel multiplies any other. In particular, all four channels of a `float4` are free, including in Rgba16f.
+Each output must still be assigned on every path that ends; `this.Discard()` owes none.
+`this.Cutout` and `this.Coverage` require a Color as the first output, whose alpha supplies coverage.
+Use `this.Discard()` to cut holes in a frag with only numeric outputs.
+
+Declare the type of an image when retaining its reference. This is a role on the existing `Texture` type:
+
+```csharp
+local singleton Buffers
+{
+    RenderTarget target;
+    [Raw(float)] Texture mask;
+    [Raw(float2)] Texture velocity;
+    [Raw(float4)] Texture channels;
+    [Raw(int)] Texture ids;
+}
+
+view Keep(mut Buffers buffers)
+{
+    if (!buffers.target.valid)
+        buffers.target = RenderTarget.Window(Format.R8, Format.Rg16f, Format.Rgba32f, Format.R32i);
+    buffers.mask = buffers.target.colors[0];
+    buffers.velocity = buffers.target.colors[1];
+    buffers.channels = buffers.target.colors[2];
+    buffers.ids = buffers.target.colors[3];
+}
+
+frag Show(Vertex vertex, out Color color, Buffers buffers)
+{
+    float2 velocity = buffers.velocity.Sample(vertex.uv);
+    int id = buffers.ids.Sample(vertex.uv, Filter.Point);
+    color = Color(velocity.x, velocity.y, float(id & 255) / 255);
+}
+```
+
+`Sample` returns exactly the role's `float`, `float2`, `float4` or `int`. With no filter named, a typed image
+reads its nearest pixel. Clamp, Repeat and Mirror still control coordinates outside the image.
+
+Float images in `R8`, `Rg8`, `R16f`, `Rg16f` and `Rgba16f` blend too, and have mipmaps made of what was drawn:
+
+```csharp
+float soft = images.mask.Sample(vertex.uv, Filter.Bilinear);          // Between pixels
+float wide = images.mask.SampleLevel(vertex.uv, 3);                   // A smaller image: a cheap blur
+float2 moments = images.velocity.Sample(vertex.uv, Filter.Trilinear); // Between pixels and levels
+```
+
+`Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` read their nearest pixel
+on every device, because a GPU only blends 32-bit floats with an optional feature and the picture would differ
+by device: blending one is a compile error naming `R16f` or `Rgba16f`. `R32i` is always exact: a GPU blends no
+integers. Bare `[Raw]` retains its existing four-channel behavior.
+
+The typed role goes on `Texture` and `Texture3D` fields, on `TextureArray` and `Cubemap` fields (the three
+float roles, for layers and faces made with `R8`, `Rg8`, `R16f`, `Rg16f` or `Rgba16f`), and on read-only image
+parameters of synchronous GPU helpers. A caller supplies an image with the same role:
+
+```csharp
+float Height([Raw(float)] Texture image, float2 uv)
+{
+    return image.Sample(uv);
+}
+```
+
+An ordinary Texture parameter still samples Color; the explicit role keeps numeric types through helper chains.
+A frag's direct image source can carry the role too, such as `[Raw(int)] Texture source`; give that frag a
+matching numeric image in the draw's Texture argument.
+
+R8, Rg8, R16f and Rg16f support multisampling and resolve each channel by its mean. R32f, Rgba32f and R32i
+require a single-sample target. Numeric `float4` into Rgba16f supports that format's ordinary mean resolve.
 
 ## A vert
 
@@ -601,6 +692,46 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 - A `for`'s step can write an element (`for (var k = 0; k < 6; counts[k % 3]++)`), and a `continue` still comes to it.
 
 ## Textures
+
+### Linear-light color
+
+Mark color images used by lighting with `[Linear]`. Their stored RGB is display-encoded sRGB;
+GPU reads decode it to linear light before filtering, including `SampleGrad` and `SampleLevel`.
+Alpha stays coverage. Leave normal maps, masks and other numeric images unmarked or `[Raw]`.
+
+```csharp
+[Linear] asset Texture wood = "art/wood.png";
+
+frag Lit(Vertex vertex, out Color color)
+{
+    Color surface = wood.Sample(vertex.uv);
+    color = surface * Color(0.5, 0.5, 0.5); // Lighting uses linear values
+}
+```
+
+Keep copied references in `[Linear] Texture`, `[Linear] TextureArray` or `[Linear] Cubemap`
+fields. Sample these by their field or asset name. Read-only GPU helpers can borrow their
+source with an ordinary resource parameter. An unmarked local/field/CPU parameter or a
+draw's own texture argument would lose the mark, so the compiler refuses those escapes.
+`[Raw, Linear]` is an error.
+
+A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
+TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
+field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
+The compiler follows where the target comes from, so assign it to its field directly (an
+assignment or a struct's `{ target = RenderTarget(...) }`): a target field that a function
+fills through an `out` or `mut` parameter has no format the compiler can see, and is an
+error. A marked read of an image that turns out not to be RGBA8 draws nothing and says so.
+A rendered image is copied for its marked reads when it has been drawn into, not every frame.
+The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
+and `target.Read()` keep their values. It does not convert a frag's output or the screen.
+For a final display pass, tone-map linear light first and use `Math.ToDisplay`; for an
+unmarked input that needs explicit conversion, use `Math.ToLinear`. Both take `float`,
+`float3` and `Color`; Color alpha is preserved.
+
+In Unity, marked images require **Project Settings > Player > Other Settings > Color Space > Linear**.
+Tide reports a clear error in a Gamma project and leaves its settings and unmarked images alone.
+
 
 `Sample` reads a [texture](./meshes-and-textures.md#textures) at a `uv`, and gives its color there. A frag samples the textures it can name three ways:
 
@@ -1481,7 +1612,7 @@ No `mut` is needed to write through either handle. An out-of-range store does no
 A Color is written as it is, with its alpha: Tide handles premultiplication internally, as it does for a frag.
 
 A kernel that writes an image cannot sample or load that same image. Write into a second image, then alternate
-them between runs. Rgba8 and Rgba16f are writable. Tidec must know the destination's format from its constructor
+them between runs. Rgba8, Rgba16f, R32f, Rgba32f and R32i are writable. R8, Rg8, R16f and Rg16f are not portable storage formats; use R32f for a scalar written by a kernel. Tidec must know the destination's format from its constructor
 assignments; it diagnoses unknown or ambiguous formats and formats that core WebGPU cannot store into.
 A kernel writes at most four images; split larger work into separate runs.
 Written targets use a single sample: make the destination without MSAA, then draw its result into a multisampled target.
@@ -1507,6 +1638,8 @@ helper. Level 0 is the original image, level 1 halves its dimensions, and 1.5 bl
 to the available images. Use Trilinear to read the mip chain; Point and Bilinear read the original image.
 A cubemap takes a direction: `sky.SampleLevel(direction, 2, Filter.Trilinear)`. An array takes its layer first:
 `images.SampleLevel(uv, layer, 2, Filter.Trilinear)`. Texture3D has no mipmaps; use its Sample method.
+Typed number images have no mipmaps and cannot use SampleLevel or SampleGrad. Use `Sample(uv)` to read
+their nearest pixel, with implicit or explicit `Filter.Point`.
 Drawing into a selected mip level is not available.
 
 ## Writing a pixel's depth

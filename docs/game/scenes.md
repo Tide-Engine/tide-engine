@@ -172,10 +172,76 @@ Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`.
 A scene can do heavy preparation before its `Spawned` handlers run, as described
 below. Its entities get `Destroyed` when it unloads.
 
+## Switching scenes
+
+To leave one scene for another, switch:
+
+```csharp
+Scene.Switch(Arena { size = 30 });
+```
+
+`Scene.Switch` unloads every scene loaded in the world and loads this one,
+returning its entity. It takes what `Scene.Load` takes, root components included,
+and needs no handle to the scene being left, so any code can call it: a system of
+the scene, or a button in a view that runs for no entity. A match scene switches
+the match's scenes and a local scene this machine's. Entities in no scene stay.
+
+It happens at the end of the tick, in its turn: scenes loaded earlier in the same
+tick go too, and scenes loaded after it stay. The world is never left without a
+scene, so the startup scene doesn't load in between.
+
+Functions and methods can load, switch and unload scenes, for the code that calls
+them. A function that loads a match scene is for match code to call, and one that
+loads a local scene is for views and local handlers:
+
+```csharp
+local scene Menu;
+local scene Lobby { int seats; }
+
+void OpenLobby(int seats)
+{
+    Scene.Switch(Lobby { seats = seats });
+}
+
+view MenuButtons(with Menu)
+{
+    if (GUILayout.Button("Play")) OpenLobby(4);
+}
+```
+
+A prefab belongs to neither side. In a function it loads into the match; write
+`local Scene.Load(MenuPrefab)` or `local Scene.Switch(MenuPrefab)` to load it on
+this machine instead.
+
+### From a menu into a match
+
+A menu is usually a local scene, and the game a match that `Session.Start` or
+`Session.Join` puts this machine in. Unload the menu as the match starts and it
+stays gone for the whole match:
+
+```csharp
+local scene Main;
+
+view Menu(with Main)
+{
+    if (GUILayout.Button("Play"))
+    {
+        Session.Start(Arena);
+        Scene.Unload(this);
+    }
+}
+```
+
+With a local scene for the match's own interface, switch to it instead:
+`Scene.Switch(Hud)`. The startup scene loads again by itself once this machine is
+offline with no local scene loaded: when the match ends, the player leaves, or
+joining fails. Nothing has to bring the menu back.
+
 The startup scene is also the fallback: the selected scene or prefab, or `Main`
 without a selection. When the last scene of its world unloads, the fallback loads
 again at the end of that tick, initialized as at startup. A match startup returns
-in the match, and a local one in local state. Unloading one scene and loading
+in the match, and a local one in local state, while this machine is offline: in a
+match, or with one asked for, it waits. Unloading one scene and loading
 another in the same tick never brings it back, and entities in no scene don't
 count. It returns at most once a tick: one that unloads itself as it loads leaves
 the world without a scene until the next.

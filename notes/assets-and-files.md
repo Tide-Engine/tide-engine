@@ -1,3 +1,28 @@
+## The pack says which images are [Linear]; marked import without a pow a channel (2026-11-14)
+
+- `TIDE_PACK_LINEAR` (0x80000000 in `tide_pack_entry.extra`) is set in a Texture's, a Cubemap's and a
+  TextureArray's entry when its declaration is `[Linear]` (`build_pack`'s three `tide_pack_name` calls,
+  `codegen.c`). The loader keeps it beside the image, the cube and the array (`packed_texture.linear` and its
+  two siblings, `pack_load.c`), `tide_pack_image_linear(named, &linear)` says it, and the draw list refuses an
+  image stored for the other reading with one message (`pack_reads`, `engine/src/draw.c`). No other bit of
+  `extra` is read for these kinds, the pack's version is unchanged, and a glob's list or map has no mark (the
+  checker refuses `[Linear]` on one). A game's `.simulation` and pack digest move for a game with a marked
+  asset, as they do for any change to its pack.
+- Marked import (`texture_make_linear`, `texture_compress_linear`) finds its bytes through
+  `tide/transfer_bytes.h`: the same bytes as before for every input, about four times faster for a 2048 by 2048
+  image through tidec. The proof, the numbers and the test that guards the tables are in notes/textures.md, top
+  section, finding 5.
+
+## Linear color import (2026-11-14)
+
+Marked Texture/TextureArray/Cubemap assets prepare RGB as encode(decode(straightRGB)*alphaByte/255), with
+coverage rounded to its stored byte first (byte-zero alpha stores no light). Alpha is never transfer-converted. The importer uses Tide's transfer math, linear-filtered BC mip generation and an interpretation
+salt in content/cache identity. Private texture-cache entries carry a Linear bit; pack layout/version is
+unchanged. A marked DDS regenerates mipmaps from its base in linear light; unmarked authored levels are retained.
+Unmarked cache keys/payloads and source file sharing remain unchanged. Tests: texture_compression E2E and
+texture_compress unit (marked premult bytes, opaque role separation, BC1/BC3 and linear midpoint mips), plus
+linear_textures E2E (pack replacement with a retained marked field). Full contracts: textures.md, top section.
+
 # Assets and local files
 
 ## Pack format 5: built in place, a digest of pieces (2026-11-10)

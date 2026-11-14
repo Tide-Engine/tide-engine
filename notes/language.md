@@ -1,3 +1,85 @@
+## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
+
+Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is
+gone sort of thing"); of three proposals he took "just allowing scenes to be more easily dealt with" and
+turned down scene-scoped declarations for now ("i might change my mind"). No repository game called
+Scene.Load before this: each has one `scene Main` and a page enum. Names and rules below are my picks,
+Provisional in spec.md (Scenes; Functions and blocks).
+
+- **Scene.Switch(scene, components...)** is a CALL_LOAD with `expr.switches_scene` (check_scene_call takes
+  "Switch" as a load; messages name the call written). gen_load and gen_spawn's prefab branch wrap the load
+  as `(tide[_local]_cmd_unload_all(w), tide_cmd_loadN(...))`. `cmd_unload_all` pushes TIDE_CMD_UNLOAD with
+  id 1 and a null entity (id was always 0 before); `apply_unload` on a nonzero id walks every scene
+  archetype of its side from its last row and calls `unload` on each root, the same walk `unload` does over
+  a scene's rows. It's apply-time, so a scene loaded earlier in the tick is in its table by then and goes;
+  the switch's own load is later in the queue and stays. Nothing new in the runtime: the command kinds are
+  generated. Owned prediction, parallel.c's queued effects, purity and the GPU's refusal already key on
+  CALL_LOAD.
+- **Sharded matches refuse Scene.Switch** at the call (`prog->shards`): cmd_unload defers by
+  `tide_shard_may(w, scene)`, and an unload of every scene has no entity to ask about. Not worked out, not
+  a decision.
+- **In functions and methods:** the `in_routine` refusal is now only for code that doesn't inherit (GPU
+  code, operators, Interpolate; an operator's and Interpolate's own messages). `passed` (inherits, not
+  `startup_create`) takes the world from the scene's side for a load and from Entity/LocalEntity for an
+  unload, as async functions already did, and calls `note_act` ("loads scenes", "switches scenes",
+  "unloads scenes", their local forms; spawn true for loads so the caller counts as spawning), so
+  check_acts gives the cross-side errors at the call. `loads_scenes` is set on `reading_code(c)`, the
+  method included, and still propagates to callers, so `prepare` reaching a load through a helper gets the
+  prepare error (errors/prepare_nested_load now expects it).
+- **`local Scene.Load/Switch(...)`** for prefabs, which have no side: parse_primary marks `Scene`
+  (`placement_local`), and at_local_decl stops reading `local Scene.` as a declaration.
+  check_prefab_spawn: a function's or a task's load is the match's unless placed; other code keeps its own
+  side. Errors: before a match scene, in match code, before Scene.Unload.
+- **Local startup fallback** (gen_apply's "Every scene unloaded" branch): when local, the condition also
+  needs `Session.state == TIDE_SESSION_OFFLINE && tide_request.kind == TIDE_REQUEST_NONE`. The request
+  check covers the frame a view calls Session.Start and unloads the menu: the host takes the request after
+  the frame, and run.h/host.h report Connecting from the next one. The match's fallback is unchanged.
+- Editors: `scene_calls` has Switch (completion, hover). The grammar needed nothing.
+- Tests: `e2e/scenes_switch` (a function's load, switch and unload; a HUD loaded earlier in the tick going
+  with the rest; an entity in no scene staying; Main not coming back across a switch and coming back after
+  the last unload; the same from a snapshot), `e2e/scenes_switch_local` (a function's local switch; the
+  startup not loading while Connected, Connecting, or offline with a request waiting, then loading),
+  `e2e/prefabs` (a function's `local Scene.Load` of a prefab and its unload), errors
+  `scene_load_function_from_view`, `scene_switch_function_from_match`, `scene_local_load_match_scene`,
+  `scene_switch_in_operator`, LSP `lsp_scenes`. `errors/scene_load_in_function` is gone.
+- Gaps: no test runs a real session through menu, match and back (the fallback's conditions are set by
+  hand in the fixture); nothing unloads every local scene without loading one (a view that runs for no
+  entity and has no HUD scene still needs the menu's handle); a scene's fields are still only read by code
+  that runs for the scene's own entity; Scene.Switch in a sharded match.
+
+## Linear sampled-image roles (2026-11-14)
+
+[Linear] is a static source role for Texture/TextureArray/Cubemap fields and singular assets, preserved by
+GPU helper source specialization. check_linear_uses rejects unannotated CPU escapes; field/default checks
+consume marked sources or permit Color grids/known runtime RGBA8 images. Deferred source-format validation
+follows constructor assignments, including later target changes. Typed references and their sizes are unchanged.
+Header role comments and [Linear] layout field names make role changes migrate to destination defaults.
+Parser diagnostics explicitly reject local/parameter attributes. The shader capture wrapper selects the
+*_source_linear entry point; WGSL itself performs no manual transfer conversion for a marked read.
+Contracts, Provisional picks, importer/cache/alpha details and validation: textures.md top section and spec.md.
+Numeric-role integration retains Color for every Linear source. [Raw(T), Linear] is refused, numeric helper
+parameters cannot borrow a Linear color source, and numeric direct-draw consumption cannot erase its mark.
+All seven numeric target formats have explicit no-sRGB-counterpart diagnostics. Typed numeric SampleLevel
+remains refused; Linear color SampleLevel keeps the ordinary color path.
+
+## Numeric GPU images (2026-11-14)
+
+The approved frag output types, Format members, typed Texture/Texture3D roles, per-image clears and storage
+format connection are implemented. Checker/parser/codegen contracts and exact shader/compiler tests are in
+shaders.md; resource encoding, clears and reload contracts are in render-targets.md. Existing generated C,
+headers and packs retain their identities apart from compiler-source simulation IDs when none of the new
+features is used (the five-fixture plain/layout comparison is recorded with compiler validation).
+
+## Reads of any target image (2026-11-14)
+
+`await target.Read(image)`, `Read<T>(image)` and `ReadDepth()` give `Grid2<Color/float/float2/float4/int>`;
+`target.colors.count` is an int. The cell type is written at the call and checked after every body against the
+target's constructor formats (`check_target_read` beside the numeric output and clear checks, shader_kernel.inc):
+it can't be inferred while a body is checked, as a field's assignments elsewhere aren't known yet. `<T>` on a
+method named Read is decided by its receiver's type. `expr.read_kind`/`read_image` carry the request to codegen,
+which calls `tide_render_target_read_begin_as`. Picks are Provisional in the spec (which image a read is of, and
+as what); contracts and tests are in render-targets.md, Readback of every image.
+
 ## Awaited render-target pixels (2026-11-14)
 
 RenderTarget.Read is local async, failable Grid2<Color>, lowered through the existing GPU ticket frame field.
@@ -5011,7 +5093,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Editors:** completion offers `Spawn` and `Send` in a function or a method, with the events of both worlds, and an entity's `Add`, `Remove`, `Destroy` and `Send` after its dot there (`passed` in `list_members`, and the routine's branch of `complete_expression`, `compiler/lsp/analysis.c`), not in an operator, an `Interpolate` or an `audio` declaration, and never `Snap`. They were hidden in every function, async ones too, which could always send. `lsp_functions_send_and_spawn` checks them, and the diagnostic at a view's call.
   - **A dropped value warns, and `_ = value;` drops one on purpose** (built 2026-10-11, both the owner's, from `request.SetHeader(...)` written as a statement, which gave a request nobody kept). `check_stmt`'s `S_EXPR` notes a function's or method's call whose type isn't void, an error or failable (`checker.dropped`), and `warn_dropped_values`, after `warn_unused_locals`, warns for those `call_acts` says do nothing: it has to wait, as whether a function draws, calls C or acts is known once every body is checked. `_ = value;` is the parser's (`parse_simple`): a `var` named `_dropped_<line>_<column>`, marked `discard` and read, so a value dropped goes through everything a variable's does (a call's order, an `await`, text and lists) and generated C needed nothing. No game in the repository had such a call. Tests: `compiler/tests/warnings/dropped_value.tide`.
   - **Session calls and `Clipboard.Copy` in a function or a method** (built 2026-10-11; the owner, asked whether to lift "functions can't call Session yet": "yes lets improve the session stuff on Tide"). They're this machine's acts: `check_session_call` and the clipboard's check let an inheriting function through and `note_act(c, true, ...)` with "calls Session.Open" or "calls Clipboard.Copy", as a command's send does, so `mark_act_callers` and `check_acts` need no rule for them and the errors are theirs (the match, `Sample`, a frag, a parallel loop's step, a comparison); `check_acts` words the match's as "the match runs the same on every machine" for a `what` that starts with "calls ". An operator and `Interpolate` are refused where written. Generated C needed nothing: `takes_local` is true of `acts[1]`, so the function is handed `tide_l`, which `gen_session_call` and `tide_request_copy` already name. "A statement of its own" still holds in a function. `session.room` (and `session.invite`, 2026-10-21: the same branch of `check_member`, its own message, `singleton_param_session_invite`) and a whole `Session` as text stay refused in functions and methods (`singleton_param_session_room`, `_text`, `_append`): the room is beside the `Session` value, in the local state, and a helper gains no implicit lookup; making the room part of the value is the runtime's side and wasn't done. tidels offers `Session.` and `Clipboard.` there (`decides_session`). Tests: `tidec_e2e_session_main` (a function a function calls, a struct's method, the clipboard, a local handler's function), `compiler/tests/errors/session_in_function`, `clipboard_in_function`, `session_function_in_sample`, `session_in_operator`; `singleton_param_session_operation`, which pinned the refusal, is gone; `lsp_functions_send_and_spawn`.
-  - Not built: `Snap`, `Scene.Load` and `Scene.Unload` in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards. Starting tasks in a function is built since: Functions and methods start tasks, at the top.
+  - Not built: `Snap` in a function (scene loads are built since: Scene.Switch, at the top); operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards. Starting tasks in a function is built since: Functions and methods start tasks, at the top.
   - Provisional, awaiting the owner: everything under Functions and blocks in the spec. The owner's own words cover that it's bare, inherited from the caller, and an error only at a call from a place that can't; that it's all six operations and methods too is my reading of "there are depend on who calls them", said of `Spawn` and `Destroy`.
 - `virtual` and `override` follow C# (agreed 2026-10-05; `docs/spec.md`, Mods: Decided for what's agreed, Provisional for the picks made to build them). `virtual` before a declaration with code says another package can replace it, and `override` before one replaces the virtual declaration of that name and those parameters, while compiling. They're the first step of modding, and for any package. What's built, and what code relies on:
   - **The words** are read where `local` and `async` are (`at_replace_word` in `compiler/src/parser.c`): before a declaration's word or a function's type, and `virtual` before a method in a type's body. Data, constants, `extern` and the settings are refused before the declaration is read (`replace_refusal`), which then goes as it would without the word. After `override` a declaration's name can be qualified (`new_named_decl`, `parser.overriding`): `decl.override_name` is what's written, and `name` and `at` its last part.

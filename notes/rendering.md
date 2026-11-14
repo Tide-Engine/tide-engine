@@ -1,3 +1,75 @@
+## [Linear] copies: made when the source is drawn, with no depth, of bytes alone (2026-11-14)
+
+From a review of the section below (notes/textures.md, top section, has all of it). Three things here replace
+what that section says of "source epoch invalidation":
+
+- **A copy is as fresh as its source's `drawn` and `version`.** `linear_target_copy` kept `stamp ==
+  source_epoch + 1` as its only freshness test, and `checks_begin` and every target switch move the epoch: an
+  image drawn once and read `[Linear]` every frame was copied at full size every frame, and its mips made again.
+  It keeps the source's `version` and `drawn` now (`gpu_target`, `gpu_cube`, `gpu_array`: the counters their own
+  mips go by, which count each pass begun on the target, each kernel that writes it, and its image being made),
+  and is copied again only when one moved or the GPU image is another. `tide_platform_linear_copies()`
+  (`tide/platform.h`) counts the copies drawn, for tests and tools.
+- **The copy has no depth or stencil.** A target whose first color is `TIDE_GPU_COLOR_SRGB` is the renderer's own
+  copy and nothing else (`tide_gpu_target_depthless`, `gpu.h`): Vulkan makes it, a cube's faces and an array's
+  layers of that color with no depth image, begins their passes with no depth attachment and makes the pipelines
+  into them with no depth format; WebGPU the same (no `depthStencilAttachment`, no `depthStencil`). Each had a
+  depth and stencil of its own before, 4 or 8 bytes a pixel (a cube six, an array a depth array) that nothing
+  read. `made_target`, `made_face` and `made_array` count what the backend made (`target_depth`/`array_depth`
+  of 0 is none), so the count is right on the backends that still give one: `gpu_none`, and Unity's recorder,
+  whose packets are as they were.
+- **A source that isn't `TIDE_TARGET_RGBA8` is never bound.** `prepare_linear_target` had no format guard: a
+  float target was clamped with nothing said, and an R32i one bound to the copy's `texture_2d<f32>` is a
+  validation error on WebGPU and an undefined read on Vulkan. `linear_source_bytes` refuses it, by the id's own
+  formats, in `prepare_linear_target` (no copy) and in `texture_unavailable` (the draw passed by, with why).
+
+`check_linear_copies` (`platform/tests/targets.c`, run twice): a target drawn into once and read unmarked for
+frames (no copy), then `[Linear]` for frames (one copy, its bytes decoded, and exactly width by height by 4 bytes
+more held on Vulkan and WebGPU), in several passes of a frame with other targets drawn between (still one), drawn
+into again (one more), drawn and read twice in a frame (two), resized (one), the three refused formats, and
+disposal. Vulkan with the validation layer, WebGPU on the web-debug page, both depth fallbacks. Pass 33 of the
+shader fixture covers the cube's and the array's copies as before. Not run: Unity, Android, Linux, macOS.
+
+## [Linear] sampled images (2026-11-14)
+
+A draw texture carries a static `linear` interpretation independently from its source id. GPU upload cache
+lookups include that bit. Texture references and their layouts are unchanged. `TIDE_GPU_SRGBA8` (8) and
+`TIDE_GPU_COLOR_SRGB` (10) are private GPU formats, not public render-target Format members; RGBA, BC1 and
+BC3 uploads use hardware sRGB formats. `TIDE_BLOCKS_SRGB` (0x100) is added only to the transient GPU upload
+descriptor; pack bytes keep their existing block-format layout. Block sizes and fallback decodes mask it.
+Vulkan uploads use R8G8B8A8_SRGB/BC1_RGBA_SRGB_BLOCK/BC3_SRGB_BLOCK. Its blit mip chain decodes and encodes
+around filtering through the image format. WebGPU uses corresponding unorm-srgb formats and render-pass mips.
+
+Target-backed marked reads use a private sampled copy: point-read existing display-premultiplied bytes,
+unpremultiply, decode RGB, premultiply in linear light, then write to private sRGB attachments. Public target
+storage, frag outputs and Read remain unchanged. Texture, cube-face and array-layer copies retain dimensions
+and have linear-light mips. Source epoch invalidation is conservative (an intervening source change can refresh
+an unchanged image too); copies are made outside the destination pass. Device loss clears handles/pipelines;
+reload and Dispose free private targets before their owning image. Runtime grids write encoded linear-premultiplied
+RGB directly, with distinct draw-cache roles and chunk-change tracking. Alpha is quantized to its stored byte
+before marked RGB premultiplication, so near-zero coverage that rounds to zero cannot leave encoded RGB.
+
+Native strict ASan engine/platform compilation and `draw_linear_grid_captures_keep_roles_and_alpha` pass.
+Integrated pass 33 checks 16 marked-image cases on native ASan Vulkan with validation and web-debug SwiftShader
+WebGPU, including prewarming, device recreation, changed target colors and copied mip chains. Final runtime audit
+confirmed sRGB flags survive unsupported-block RGBA fallback, mixed BC1/BC3 array promotion and GPU-none paths.
+The audit fixed retrying a private copy whose GPU image/face allocation failed, bounded copy-cache growth,
+and quantized grid alpha before marked RGB premultiplication (the grid unit pins alpha 0.001 rounding to clear);
+these changes require the parent's final compilation/unit check. No other-device coverage claimed.
+
+## Numeric image rendering (2026-11-14)
+
+The language feature above the attachment groundwork is complete (render-targets.md, shaders.md). Numeric
+read kinds 9–12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
+2D formats reuse the existing portable storage API. Shader numeric_outputs selects replace blending per
+attachment; output_types guards dynamically supplied incompatible targets before pipeline creation.
+The internal RESET_ALONE depth mode resets depth with every color write disabled. Sixteen static clear
+variants handle every integer-output mask while retaining clips and the selected forward/reversed convention.
+Vulkan begins each pass with zero dynamic depth bias, including direct gpu.h fixtures that bypass draw state.
+Recorder and none accept the same appended read/depth values; no new GPU function or packet is needed.
+Vulkan ASan and software WebGPU exact pixels, storage/volume writes, mixed outputs and clear tests pass;
+Unity's API-specific replay validation is in unity.md. No platform-dependent numeric filtering fallback exists.
+
 ## Reversed float depth (2026-11-14)
 
 Owner approved the investigation's recommendations: "go with recommendations". Production Vulkan prefers

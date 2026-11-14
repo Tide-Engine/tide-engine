@@ -1,4 +1,205 @@
+## Number images blend, have mipmaps, and make array layers and cube faces (2026-11-14)
+
+The owner asked that the first day's conservative refusals go where every backend can do the work ("make sure
+everything we can add or validate we do"). Every rule is a pick, Provisional in docs/spec.md, Views and drawing,
+Portable filtering and Number images as array layers and cube faces. Users: game/render-targets.md, game/shaders.md.
+
+- **What changed for a game.** A typed read that names no filter is still the nearest pixel. `[Raw(float)]`,
+  `[Raw(float2)]` and `[Raw(float4)]` Texture reads of R8/Rg8/R16f/Rg16f/Rgba16f images take Bilinear, Trilinear and
+  Anisotropic, SampleLevel and SampleGrad (unsaid filter there: Trilinear). `TextureArray` and `Cubemap` constructors
+  take R8/Rg8/R16f/Rg16f; their fields and GPU helper parameters take the three float roles; frag outputs and typed
+  Clear into `layers[i]`/`faces[i]` are matched to the format. R32f/Rgba32f/R32i stay nearest 2D images and are refused
+  as layers and faces; `[Raw(int)]` on an array or cube is an error.
+- **Compiler.** `typed_through_sampler` (shader.c) decides by syntax: a typed float Texture's read that blends, names a
+  level or takes gradients is `READ_NUMBER_BLEND`, a color's binding and sampler with no `tide_straight` and a
+  swizzle to the role's channels (`ex_sample` wraps `ex_sample_read`); a typed array's and cube's reads are the
+  existing `READ_ARRAY`/`READ_CUBE` the same way. `sampling_of` makes a typed image's filter and wrap the Sample's
+  alone (never carried by the image). Because the read kind is syntactic, a GPU helper's sampling metadata needs no
+  format; `check_image_sources` then checks each draw: the field's fixed constructor format must fit the role (now for
+  TextureArray and Cubemap fields too) and a `READ_NUMBER_BLEND` texture must not be R32f/Rgba32f, with the fix in
+  the message. `image_target_format` follows `Cubemap(...)`/`TextureArray(...)` constructors and `faces[i]`/`layers[i]`.
+  Generated C says `TIDE_SHADER_READ_NUMBER_BLEND`, `_NUMBER_ARRAY` or `_NUMBER_CUBE` in `texture_reads`; shaders
+  that use none of it are byte for byte what they were (the 67 existing shader goldens are unchanged).
+- **Runtime.** tide_shader_read 13/14/15 map to TIDE_GPU_READ_COLOR/ARRAY/CUBE (`gpu_read_of`), so no backend, recorder
+  packet or embed ABI changed; what differs is what no image reads as: `gpu_state.zero`, `zero_cube`, `zero_array`
+  (zero bytes), made outside a pass where a shader with such a read is first seen. `tide_shader_read_loads` and
+  `tide_shader_read_blends_numbers` (draw.h) replace `>= TIDE_SHADER_READ_NUMBER` tests. Mipmaps use the existing
+  on-demand path (`prepare_mipmaps`, a target's `mipped[image]` against `drawn`).
+- **Guards for what tidec can't follow** (code review, same day). `texture_to_read_as` gives no image to any read
+  through a filtering sampler whose target image or volume is R32f/Rgba32f/R32i (a format picked as the game runs,
+  a `?:` of two targets, a `mut` parameter, C): before, a Color read could bind r32sint/r32float to a filterable
+  float binding (WebGPU validation error each draw, undefined on Vulkan). `image_destination_fits` (compute.inc)
+  sends a kernel's stores to `empty_image_destination` when the held image's format isn't the pipeline's
+  `image_formats[k]` (a `mut Texture3D` parameter re-made as R32i compiles, and did bind an R32_SINT view to an
+  rgba8 storage binding), once with a line on stderr. A written target's image is now bound by its own id.
+- **Backends.** Vulkan: `vk_cube` and the face/layer targets take every `color_format` (`color_of` is its inverse);
+  `vk_mipmaps` already blits any format with linear blit support, which Vulkan requires of these five. WebGPU:
+  `gpu_cube`/`gpu_array` take `attachmentFormats[3..6]`; `mipPipeline(format)` already keys by format. Unity:
+  `TideRender.Target` gives the four compact formats a mip chain (`held <= 6`); cubes and arrays already used
+  `AttachmentFormat`. gpu_none and the recorder carry the values unchanged.
+- **Two compiler fixes met on the way.** `st_steps` re-walked a short-circuit's condition in its other arm, writing
+  that condition's own arms again in a scope without their variables (`a && b && c` with SampleLevel operands failed
+  SPIR-V translation: "isn't declared"). `check_image_clear` checked each Clear argument twice (`expr.args_checked`).
+  A typed Sample's wrap now goes through `sampling_of` like every other (no `[Wrap]` can be beside `[Raw(T)]` on a
+  Texture field today, pinned by errors/number_wrap_role).
+- **Tests.** compiler/tests/shaders/number_filters (WGSL golden, spirv-val, FXC): every filter, level, gradients,
+  helper and direct-source forms, typed arrays and cubes, numeric draws and clears into layers and faces, a
+  three-term chain of level reads. 22 diagnostics in compiler/tests/errors/number_* (new and changed), one a
+  message. `draw_number_cubes_and_arrays_hold_blendable_formats_only` (tests/test_draw.c). LSP:
+  `lsp_numeric_images_and_outputs`, `lsp_numeric_image_helpers`. Pixels: platform/tests/images.tide/.c, 14 new probes
+  (R8/R16f/Rg16f/Rgba16f midpoints, mip level 3 as the mean of what was drawn, level 1 halves, gradients, zeros for
+  no image/array/cube, an R16f array layer cleared, blended and at a level, an Rg8 layer, R16f and Rg16f cube
+  faces, a Color read handed an integer image, a kernel whose volume was re-made as R32i).
+- **Validation** (Windows, Clang 23, Node 24.22.1, hidden): sanitize `tide_platform_images` on Vulkan and web-debug
+  on software WebGPU with device loss pass; sanitize `tide_platform_targets`, `_shaders`, `_compute` pass; all
+  206 shader golden/SPIR-V/FXC checks, the focused diagnostics, `tidec_e2e_number_images`/`_cubemaps`, draw units
+  125/125 and `tidels_tests` pass. Unity: the C# change is one condition and was not compiled or replayed in an
+  editor for this change; Metal, Android and real-GPU web lanes were not run.
+- **Not built, and why.** Blending R32f/Rgba32f (device-dependent without the owner; a four-load shader blend is the
+  alternative weighed in the spec). R32f/Rgba32f/R32i layers and faces (need non-filtering sampler bindings; a cube
+  has no exact load). Blended typed Texture3D reads (typed volumes are storage formats; Rgba16f volumes could
+  blend). Mipmaps of a multisampled target on WebGPU and Unity (their resolved images have no chain, as before
+  this work, for colors too). Left out by the owner: a blend per output, a chosen mip level as a destination,
+  frag-drawn volume slices, an sRGB target format; R8/Rg8/R16f/Rg16f kernel storage isn't portable on WebGPU.
+
+## Numeric image language surface and clears (2026-11-14)
+
+Completes the owner-approved feature recorded in "Numeric attachments: backend foundation" below. The language
+now exposes R8/Rg8/R16f/Rg16f/R32f/Rgba32f/R32i, beside Rgba8/Depth/Rgba16f, in both RenderTarget constructors.
+The output/format table and every implementation pick are Provisional in docs/spec.md, Views and drawing;
+owner decisions retain their 2026-11-13 quote there. User pages: game/render-targets.md and game/shaders.md.
+
+- The old three-bit format-per-image layout remains valid for every legacy-only target. Numeric formats use
+  the unused tags of that same 16-bit space: 31 old format codes times 16 image/sample combinations reserve
+  496 tags. A dense numeric catalogue has 7,381 single-sample format combinations and three banks of 1,555
+  compact-format combinations for 2/4/8 samples, each with four image selectors. Rank/unrank skips the reserved
+  tags. All 48,184 payloads fit without widening pointers, holds, state alignment or public resource values.
+  Exhaustive unit checks pin every payload and every legacy tag; reload tests pin mixed formats, samples,
+  all image aliases and byte limits. Widening four format lanes to four bits would have required 1 MiB alignment;
+  a resource registry or a changed public value would have introduced a broader lifetime/ABI change.
+- R8/Rg8/R16f/Rg16f and numeric float4 in Rgba16f resolve MSAA by mean. R32f/Rgba32f/R32i use one sample:
+  optional float32 resolves and integer sample-zero resolves were rejected in favor of baseline portability.
+- target.Clear(v0, ..., vN) records one value per image in format order, with exact int or float bits. Values
+  are Color/float/float2/float4/int; Color alone preserves the old broadcast on legacy targets. Numeric values
+  neither clamp to one nor premultiply; normalized attachments quantize on storage. Color values premultiply.
+  Tint/blend/transforms do not affect clears, clips do, and depth/stencil reset. Sixteen precompiled WGSL/SPIR-V/
+  HLSL clear variants cover the possible integer attachment masks without runtime shader translation.
+  ClearDepth uses an internal reset-without-color depth mode on numeric targets, retaining every image's bits.
+- Typed numeric reads use declared Raw(T) Texture/Texture3D roles. (Superseded the same day, top of this note: the
+  compact float formats blend, have mipmaps and make array layers and cube faces.) The shader
+  implementation and storage-image/volume connection are in shaders.md and compute.md.
+
+Validation after merging origin/dev's reversed-depth, depth bias, WriteDepth, SampleLevel and Color readback:
+Windows Clang 23.1.2 ASan draw group 134/134 and the corresponding Node 24.22.1 WASI group 134/134 pass.
+Native and WASI E2Es pass for image_clears, number_images, render_colors, render_samples and texture3d.
+Native Vulkan target, generated images, compute (push descriptors and descriptor sets), embed, shaders,
+readback, draw (both descriptor paths) and prewarm checks pass. Software WebGPU targets, images, compute,
+draw, prewarm and readback pass, including device loss; target clears also pass forced forward-depth fallback
+on native and web. The generated mixed MRT witness pins unchanged Color tint/alpha/blend beside untouched
+numeric float4/int replacement. Exact backend probes serialize all 32 stored bits through opaque RGB, so a
+browser canvas's opaque alpha cannot hide the high byte. Typed clear probes compare every float/int bit,
+including -2147483647, values past one, free fourth channels, clips and ClearDepth preservation.
+
+All 198 native WGSL golden/SPIR-V/FXC shader checks pass, along with numeric diagnostics and generated-C
+metadata checks (shaders.md); no pre-existing shader expectation changed for this feature. The web configuration's
+161 shader/SPIR-V/numeric-diagnostic checks and minifier sweep pass. The five added clear diagnostics pass on
+both configurations. Renderer clear variants pass spirv-val and FXC /WX; CLI Unity shader catalogue checks pass.
+Editor LSP 278/278, grammar 383/383 and docs production build pass. Unity actual replay results and the few
+unavailable hardware platforms are recorded in unity.md. No CI was manually dispatched.
+
+# Readback of every image (2026-11-14)
+
+The owner asked for the gaps of "Owned pixel readback" (below) to be closed: "make sure everything we can add or
+validate we do". Rules and the alternatives weighed are Provisional in docs/spec.md (which image a read is of, and
+as what); the user page is docs/game/render-targets.md, Reading pixels in local code. Where this and the section
+below differ (no depth, face, layer or numeric read; one pipeline), this is what's built.
+
+- **Language.** `await target.Read()`, `Read(image)`, `Read<T>()`, `Read<T>(image)` (T: Color, float, float2,
+  float4, int; `image` a constant int 0..3) and `await target.ReadDepth()`, each a failable owned `Grid2` of that
+  cell. `target.colors.count` is an int. Cube faces and array layers are RenderTargets already, so
+  `cube.faces[i].Read()`/`ReadDepth()` and `array.layers[i]...` are the same calls. The window stays a compile error;
+  the spec says why it isn't the same path (its image is an attachment-only swapchain/canvas image, Unity's under
+  Unity).
+- **Checker** (`check.c`, the RenderTarget method branch): sets `expr.read_kind` (tide_target_read: 0 Color, 1
+  float, 2 float2, 3 float4, 4 int, 5 depth) and `expr.read_image`. The `<T>` on a method named Read/ReadDepth is
+  left for the receiver's type (`read_typed`), and refused there for any other receiver. `colors.count` grants the
+  `colors` member its one-at-a-time exemption through `colors_indexed`, which `check_index` now restores instead of
+  clearing (it broke `cube.faces[0].colors...` before).
+- **Format check** (`check_target_read`, shader_kernel.inc, from `plan_shaders`): `image_target_format` of the
+  read's target and image, the provenance numeric frag outputs and typed clears use. Known format: the read's kind
+  must fit (Rgba16f fits Color and float4), else an error naming the format and the read that fits. Unknown format:
+  an error for a number read, with the fix; allowed for a Color read, which the runtime checks. No image there
+  (`Format.Depth`, an image past the constructor's) is an error. A face and a layer are checked the same way
+  against their cube's or array's constructor format (`image_target_format` follows `faces[i]`/`layers[i]` since
+  number images became layers and faces, top of this note), and take no image number.
+  The type can't be inferred in the checker: a field's `image_assignments` are complete only after every body.
+- **Engine** (`draw.h`, `gpu_list.c`): `tide_render_target_read_begin_as(target, image, kind)`;
+  `tide_render_target_read_begin` is image 0 as Color. `tide_gpu_read_request` gained `image` and `kind` in what was
+  padding (its size and the other fields' places are unchanged, so no embed ABI change: nothing but the engine and
+  the renderer reads them). A request is refused as it's asked (`target_read_names`): no target, the window, a
+  volume, a cube or array without a face/layer, a dead target, an image it hasn't got, a kind that isn't the
+  image's (`tide_target_read_fits`), depth of a borrowed target. Poll gives `stride` by kind
+  (`tide_target_read_words`: 4, 1, 2, 4, 1, 1) and `step`, the words from a pixel to the next as the renderer
+  wrote them (what `bytes` holds over the pixel count: `stride`, or 4 for a face's or layer's numbers), and fails
+  a result whose pixels hold fewer than `stride`. `tide_render_target_read_grid` makes a grid only where the
+  shape's cell is `stride * 4` bytes, of two dimensions, `step >= stride` and `count` is `width * height`; it
+  copies each pixel's first `stride` words. `tide_render_target_color_count(id)` is `colors.count`.
+- **Renderer** (`platform.c` `target_read_prepare`, `compute.inc`): eleven kernels in `cull.tide`, a pipeline each
+  made on first use (`pixel_read_pipelines`): ReadTargetPixels (Color, as before), ReadTargetFloat/Float2/Float4
+  and ReadTargetInt (typed `[Raw(T)]` textures: `textureLoad`, no sampler, no alpha), ReadTargetDepth
+  (`DepthTexture.Sample`, so `tide_depth` turns reversed storage forward), ReadTargetFace (the cube, by the
+  direction through each pixel's middle), ReadTargetLayer and ReadTargetLayerDepth (the array and its depth array,
+  by layer), and ReadTargetFaceNumbers and ReadTargetLayerNumbers (`[Raw(float4)]` cube and array, Point: an R8,
+  Rg8, R16f, Rg16f or Rgba16f face's or layer's four channels as stored, of which the grid keeps its type's; one
+  kernel each rather than one a type, for 4 words a pixel while pending). Ints go to a range of the ints pool, everything else the words pool. The request is checked again
+  against what the target holds now. A multisampled target's depth is resolved first by `resolve_target_depth`,
+  factored out of `prepare_source_target` (same bookkeeping and memory accounting). No gpu.h function, recorder
+  opcode or tide.js change: Vulkan, WebGPU, the recorder and none run them through compute, images and buffer reads.
+- **Face directions** (gpu.h's cube convention; `p` is the pixel's middle in -1..1, x right, y down): +x
+  `(1, -p.y, -p.x)`, -x `(-1, -p.y, p.x)`, +y `(p.x, 1, p.y)`, -y `(p.x, -1, -p.y)`, +z `(p.x, -p.y, 1)`, -z
+  `(-p.x, -p.y, -1)`. The fixture pins faces 0, 3 and 5 with an asymmetric top row.
+- **Unity's catalogue.** `platform/src/read_pixels_wgsl.h` now holds all eleven kernels' WGSL, written by
+  `node compiler/tests/read_target_builtin.mjs <tidec> <repo> --write` from `tidec --kernels`, and
+  `tidec_read_target_builtin` compares it byte for byte (it was a substring check, which had let the checked-in
+  ReadTargetPixels go stale when kernels gained the `tide_reversed_depth` preamble: a catalogue entry is found by
+  a key of its exact WGSL on the web and of its SPIR-V elsewhere, so a copy that isn't what the renderer hands the
+  recorder may not be found). Regenerate it whenever a ReadTarget kernel or the
+  kernel preamble changes. shaders.h lists the eleven (`target_pixels` .. `target_layer_numbers`); the CLI's
+  `unity_shaders_written` counts 17 computes.
+- **Limits** are unchanged: 64 slots shared with list reads, 4,000,000 pixels, 128 MiB outstanding (now counted
+  by each kind's words).
+- **Tests.**
+  - `tidec_e2e_target_reads`: every form's request (image, kind, the face/layer in its id), a stand-in renderer's
+    answer, and the typed grid it becomes, word for word; then the engine alone: each kind against each format,
+    images out of range (negative, INT32_MAX), the window, no target, a cube without a face, a face past the
+    sixth, a disposed target, a result shorter than its pixels, sizes that are negative or overflow, a grid of
+    another cell size; an R16f face and an Rg8 layer answered four words a pixel, of which the grids keep one
+    and two.
+  - Errors `read_target_*`, `read_depth_*`, `read_type_other_receiver`, `number_read_cpu`,
+    `render_target_colors_count_frag` (23 new or changed; `render_target_colors_count` is gone, as it compiles).
+  - `tide_platform_readback` and `_depth_fallback`, native Vulkan (sanitize, validation layer) and WebGPU
+    (web-debug): the earlier 4x3 MSAA and HDR reads at frame 5; four images of one target (Rgba8, R32f, Rg16f,
+    R32i) from typed clears, whole and clipped to one pixel, bit for bit, -2147483647 and 16777217 among the ints;
+    R8/Rg8 bytes; R16f; Rgba32f with 1e9 and 1e-6; an Rgba16f image's stored (premultiplied) numbers through
+    `Read<float4>`; depth a frag wrote (0.25, 0.75, 0.125, 0.5, 0.375, 0.625) beside the far limit for a target,
+    a 4-sample target, a target of depth alone, a face, a color array's layer and a depth array's layer (exact
+    under float storage, asserted on Windows); faces and layers by color and orientation; R16f cube faces
+    (`Read<float>`, each face its own height and a clipped pixel), an Rg8 layer (`Read<float2>`) and an Rgba16f
+    layer both as `Read<float4>` and as a Color; a layer past the array's and a disposed target failing;
+    `colors.count`.
+  - `lsp_render_target_formats_and_depth`: completions and signature help for the reads, a clean document.
+- **Not run:** Unity's replay of the ten new kernels (their HLSL compiles under fxc cs_5_0 with Unity's
+  warnings, `tide_hlsl_shaders_valid`, and they use no new packet); Android, where the same fixture is the app
+  `tide_platform_readback_app` on CI's emulator (not run here; its exact-depth assertion is Windows' alone, as a
+  device chooses its depth storage); Metal; the optional real-GPU web lanes.
+
 # Owned pixel readback (2026-11-14)
+
+Correction (review, 2026-11-14): `await target.Read() is Grid2<Color> pixels` names a scratch grid, and a task's
+frame carried it across a wait as a raw handle (`task_value_handles` has no grid case), so a read or write of
+`pixels` after a later `await` went through reused scratch memory. `check_await` now refuses a wait while a grid
+local is in scope (`errors/read_target_kept_across_wait.tide`); the fixture's own shape, copy then wait, is
+unchanged. With no GPU (`gpu_none`) a read still succeeds with zeroes, as a list's read does there.
 
 Owner-approved 2026-11-13: await target.Read gives an owned Grid2<Color> fails IOError in local async code.
 Picks and alternatives are Provisional in spec.md. It shares the 64 bounded read tickets and gpu.h asynchronous
@@ -11,16 +212,23 @@ Grid is-pattern unwrapping and fresh await/default results complete the existing
 
 Pending captures fail before build resources are freed; begun copies own their GPU data. Device reset fails
 captures already begun or prepared. Empty/disposed/depth, window and face/layer targets fail without invalid
-bindings. Numeric Format members were absent on dev: Read explicitly admits RGBA8/RGBA16f; typed numeric reads
-remain to connect with that feature. Unity's generated shader catalogue includes read_pixels_wgsl.h, copied
+bindings. Read explicitly admits Rgba8/Rgba16f as Color; other numeric formats give format-specific guidance
+to typed Sample or a kernel writing a GPU list. Rgba16f Read unpremultiplies as Color even if a numeric frag
+wrote the image; `[Raw(float4)]` GPU sampling preserves all four independent channels. Unity's generated shader catalogue includes read_pixels_wgsl.h, copied
 from --kernels and checked against the actual Tide source by tidec_read_target_builtin. CLI tests pin its
 compute asset. Embed ABI 22 covers the shared read table's target/dimension fields. Recorder and none reuse
 compute and buffer-read operations; no new GPU function or readback opcode.
 
-The absent public numeric connection is specifically Format.R8, Rg8, R16f, Rg16f, R32f, Rgba32f and R32i:
-their typed sampling checker and shader bindings must connect SampleLevel's result and filtering rules, and
-Read must select a typed Grid2 result/conversion kernel or issue the format-specific diagnostic. No numeric
-format is silently interpreted as a Color image here.
+Typed numeric reads return the declaration's numeric type through Sample; blended reads, SampleLevel and
+SampleGrad follow the top of this note. No numeric CPU Grid2 conversion is implied by the Color
+readback API.
+
+Android (correction, 2026-11-14): `tide_platform_readback` was registered there too, as a program started
+through adb. It opens a window, which on Android only an app has, so it waited for good and CTest's timeout
+didn't end it: the Android job hung on every Build run from a5b50cd74 on. On Android the same game and host
+are now an app, `tide_platform_readback_app` (`tide_android_app_test ... GPU`, as the shaders' checks):
+on this machine's emulator (`-gpu lavapipe`) it printed "ok: await target.Read owns the exact drawn 4x3
+colors at frame 5" on Vulkan and ended with 0 in 2 s.
 
 Validation: native ASan Vulkan and web-debug SwiftShader WebGPU readback fixtures pin a 4x3 MSAA-resolved
 image, prior-frame ownership, row order, straight alpha, HDR 2.0 and exact frame-5 completion of sequential reads.
@@ -53,13 +261,12 @@ OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md
 
 Full combined native/web suite results: `notes/rendering.md`, Gap integration validation.
 
-## Numeric attachments: backend foundation (2026-11-14)
+## Numeric attachments: original backend foundation (2026-11-14)
 
 The owner approved numeric frag outputs, seven formats, typed Sample and one clear value per image on
-2026-11-13: "these make sense, lets do all of these". This commit is the backend foundation only. It does
-**not** expose new Tide Format members yet; the compiler and managed-target handle encoding still only
-support the existing formats. The shader/image-writing thread can use the gpu.h catalogue below after
-this commit lands, but must not assume the Tide Format enum has landed.
+2026-11-13: "these make sense, lets do all of these". The original foundation exposed the backend catalogue;
+the language, runtime and editor connections are now built, as described at the top of this note. The
+following records the foundation's original scope and validation.
 
 - `tide_gpu_color` appends R8, RG8, R16F, RG16F, R32F, RGBA32F and R32I as values 3 through 9. Existing
   NONE/BYTES/FLOAT values and four-bit attachment packing stay unchanged. Vulkan and WebGPU map these to
@@ -69,7 +276,7 @@ this commit lands, but must not assume the Tide Format enum has landed.
   attachment kinds yield no storage and cannot index beyond a table.
 - Provisional: R32F, RGBA32F and R32I use one sample. Vulkan, WebGPU's C bridge, recorder and none agree.
   Optional float32 multisampling and integer sample-zero resolve were considered; the baseline portable
-  attachment path is chosen instead. This is not yet a Tide diagnostic or a complete numeric-output contract.
+  attachment path is chosen instead. The language now diagnoses unsupported sample counts too.
 - `check_number_attachments` in the existing platform target fixture checks every appended kind's packed
   round trip, byte count, single-sample restriction, allocation and a draw (negative signed integer or a
   float vector with a fractional fourth component and a component past one). It does not read these numeric
@@ -81,10 +288,8 @@ this commit lands, but must not assume the Tide Format enum has landed.
 - Integration: merged origin/dev's `this.front` work without conflicts. Rebuilt native and web targets and shaders;
   both platform CTests pass on Vulkan ASan and software WebGPU. The new triangle-side golden, spirv-val and
   FXC checks also pass.
-- Outstanding work for the requested feature: managed target format encoding and Tide Format members;
-  typed frag outputs, matching at draws, typed texture roles and Sample; per-image clears; blending and
-  filtering enforcement, mipmap rules, language-server support, compiler/golden and exact readback fixtures,
-  user docs and the complete Decided/Provisional spec update. This foundation does not close those gaps.
+- Follow-up integration adds managed format encoding, language members, typed outputs and matching, typed
+  Sample, per-image clears, storage/volume connections, editor support and exact numeric pixel witnesses.
 
 ## Cached images detect discarded contents (2026-11-02)
 

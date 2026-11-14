@@ -1,3 +1,13 @@
+## Per-image typed clears (2026-11-14)
+
+tide_draw_clear_images records at most four type-checked values into the draw list's uniform bytes, retaining
+float and signed-int bits. Its TIDE_DRAW_CLEAR_IMAGES command stores a checked offset, so list growth and
+append keep payload ownership. The renderer selects a precompiled typed clear, preserving clipping and the
+selected depth convention. Numeric ClearDepth uses RESET_ALONE to retain all attachment values. Legacy
+single-Color clear recording remains unchanged. Shader output_types metadata guards unknown dynamic target
+formats before pipeline creation, including built-in Color draws, with a diagnostic instead of an invalid
+GPU pipeline. The statically known mismatch remains a compiler error. Details/tests: render-targets.md.
+
 ## Depth precision with conservative forward occlusion (2026-11-14)
 
 Reversed float storage changes only the final GPU clip conversion. Public matrices, WorldToClip, screen/depth
@@ -16,6 +26,14 @@ proof. Existing occlusion witnesses pass on both float and forced fallback paths
 depth-precision-production.md.
 
 # Depth bias (2026-11-14)
+
+Corrections (review, 2026-11-14). WebGPU kept the last bias past its pass: a kernel run after a frame whose
+last draw was biased made its compute pipeline again as a render pipeline and threw (TypeError in
+`createRenderPipeline`), and pipelines used directly (hi-z, linear copies) got a biased variant. `tide.js` now
+starts every render and compute pass with none, as Vulkan's dynamic state does; `kernels.tide` ends its frame
+with a biased draw, which failed on web-debug before the fix and passes after. GPU-culled joins
+(`cull_joins_with`) now compare the bias, so two draws of a family that differ only in bias stay two calls;
+that one has no fixture of its own.
 
 Owner-approved 2026-11-13: destination-owned DepthBias/SetDepthBias, block restore and zero-argument reset,
 3D only. Picks and alternatives are Provisional in spec.md. Constant is truncated, bounded precision units;

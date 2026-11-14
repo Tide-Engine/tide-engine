@@ -105,4 +105,4 @@ Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
 
 Loops that skip rows, and whether an index finds the rest:
-         Teams, line 59: indexed by row.b.team
+         Teams, line 59: indexed by row.b.team as one exact key

@@ -1,8 +1,217 @@
+## Read kernels, number images and [Linear] run in Unity: three replay fixes (2026-11-14)
+
+What landed on dev the same day without a Unity run (the ten read kernels, number images' filtering, mips,
+layers and faces, the [Linear] review fixes) was run on Direct3D 11, Direct3D 12, Vulkan and OpenGL Core.
+Three things were wrong, none in the new work's own code, all older and never run where they show:
+
+- **A cube face's depth was never written or tested** (`TideRender.cs`, `MakeCubeFace` and `Record`'s Begin;
+  since cube faces were first replayed). Unity binds no depth beside a cube's face when the depth is a 2D
+  texture, and says nothing: draws into a face ignored depth, and the face's depth image stayed at its clear.
+  A face's passes now draw into a 2D image of the face's own (`Target.faceColor`) with the 2D depth, copied
+  into the cube's face as each pass ends (`CopyTexture`). The same rows as before on every API (the face-read
+  test checks three faces' top left). A 2D image more a face target; a copy a face pass.
+- **A depth-alone array's depth wasn't found** (`MakeArray`; since ABI 15). The recorder gives such an array
+  a depth array id of its own (`array_depth`), which is the id draws and kernels read; the replay kept the
+  array's id alone, so a `TextureArray(..., Format.Depth)` (a shadow array) read the white 2D stand-in, and a
+  kernel refused to run ("mismatching texture dimension"). Both ids name the depth now.
+- **On OpenGL Core a frag with fewer outputs than its target has images wrote its color into the others**
+  (`compiler/src/hlsl.c`, `tide_hlsl_unity_shader`). ShaderLab's first pass now says `ColorMask 0 i` for each
+  image the fragment stage has no `SV_Target<i>` for (none where it writes depth alone, as before). Direct3D
+  and Vulkan left them alone already. Every generated shader's text gains those lines; keys are the SPIR-V's,
+  unchanged. `00000000c0de0011.shader` (the tests' image draw) was written again with it.
+
+Left as it is: `EmptyRead` gives the white 2D image for a missing cube, array or depth array, which Unity
+refuses with the dimension message rather than reading zeros. Nothing reaches it now but a refused sRGB image
+or an image that couldn't be made.
+
+**Replay tests added** (`ComputeReplayTests`, hand-made commands as the recorder writes them; the kernels are
+`platform/src/read_pixels_wgsl.h`'s WGSL through `tide_wgsl_translate --hlsl`, keys `c0de0061` to `c0de0068`:
+Float4, Int, Depth, Face, Layer, LayerNumbers, Float, LayerDepth):
+
+- `ReadKernelsReturnEveryImageOfATarget`: a target of RGBA16F, RGBA32F and R32I: the color through the Color
+  kernel, the second image's four floats and the third's int bit for bit, after a color-only draw that must
+  leave both alone; depth as 1 where cleared and 0.25 in a clipped corner, forward on every API.
+- `ReadKernelsReturnFacesAndLayersFromTheTopLeft`: faces 0, 2 and 5 of a cube and a layer of an array, green
+  clipped into the top left of red; then a face's depth, a layer's, and a depth-alone array's layer by its
+  depth id (0.25 in the corner, 1 elsewhere).
+- `NumberImagesBlendHaveSmallerImagesAndAreLayers`: R16F with 1.5 in its left half: 0.75 blended at the
+  middle and 1.5 nearest; three levels, the smallest 0.75; read exactly by the Float kernel; and an R16F
+  array's layer by LayerNumbers.
+
+**The native fixture in Unity** (scratch only, not checked in): `platform/tests/readback.tide` added to a
+scratch Sample's game with a view saying each of `readback.c`'s checks through Debug.Log, so the real
+recorder, `tide unity`'s own compute assets and all eleven kernels run: colors, each image of a four-image
+target, R8/Rg8 bytes, R16f/Rgba32f/Rgba16f numbers, depth (a frag's 0.25, a multisampled target's, depth
+alone 0.75), faces, a face's depth (0.125), layers, layers' depth (0.5, and a depth array's 0.625), number
+faces and layers, and the two reads that must fail. All true on the four APIs after the fixes; before them
+the face's depth read 1, the depth array's read never ran, and OpenGL Core had the target's number images
+overwritten in its right half.
+
+**[Linear]** in a second scratch copy set to Linear color space (the scratch copy's PlayerSettings alone):
+the three sRGB witnesses that the Gamma Sample skips pass on the four APIs (ComputeReplayTests 24 of 25 there,
+the Gamma-only witness skipped). In the same scratch game: `[Linear] asset Texture` and its unmarked twin out
+of the pack (`TIDE_PACK_LINEAR`) read 0.2158 and 0.5020 for the byte 128; a render target cleared to 0.5 read
+through a `[Linear] Texture` field 0.2130 and unmarked 0.5; after the clear changes to 0.75, 0.5210: the copy
+is made again when its source changes. The same numbers on the four APIs.
+
+**Runs** (Unity 6000.6.0f1, Windows, hidden batch with a GPU, `-noAudio`, tide installed from this checkout's
+trees): all PlayMode tests in the Gamma Sample on Direct3D 11 (`-force-d3d11`), Direct3D 12, Vulkan and OpenGL
+Core, 44 of 47 each with the three sRGB witnesses skipped; ScaleTests quiet (116 to 120 of 120 whole frames).
+EditMode once, 44 of 47: two ignored as before, and the launch-argument test failing only for
+`-tide-command`. Native debug: the hlsl, wgsl, unity and `tide_cli` tests (123) pass. Not run: Metal, a Unity
+WebGPU player, and the kernels for float2 and for faces of numbers as hand-made replay tests (the scratch
+fixture runs both).
+
+## ScaleTests' two objects a frame, clip rects in a target, depth bias's sign (2026-11-14)
+
+**ScaleTests' two whole-frame allocations were a regression** from 8354e85fb (compute images and Texture3D,
+2026-11-14), which the test's way of running shows and a game can hit too. Since that commit a target's pass
+runs as the frame is read while the camera's own draws wait, so `Begin` on a target calls `Written` for each of
+its images: one a kept draw of this Unity frame read (`image.used == Time.frameCount`) is renamed, and the
+rename made `new RenderTexture(texture.descriptor)` every time. ScaleTests calls the runner's `Update` itself in
+the frame Unity already called it in, so the second read of the frame finds the Sample's two sampled target
+images (64x64) read by the first and renames both: two objects, two GPU textures and two copies a frame, in all
+120 measured frames (`showing` made none, as the depth thread saw). A probe counted exactly two renames a frame,
+starting at the test's first own frame. A game does the same with one read a frame whenever it draws into a
+target, or a kernel writes an image, after a camera draw of that frame sampled it. Before 8354e85fb target
+passes waited in the camera's commands with the draws, and nothing was renamed.
+
+- **Fix** (`TideRender.cs`): images a rename lets go of are spares, as buffers have been since 2026-11-10.
+  `Written` dooms the old image marked `again`; `Collect` moves it to `spareImages` once no camera's commands
+  read it (three frames), and `Renamed(RenderTexture)` takes a spare of the same descriptor (size, depth,
+  samples, dimension, both formats, mip count and creation flags, compared a member at a time: a struct's
+  `Equals` boxes) before making one. At most 32 spares, one unused for 600 frames released, all released with
+  the renderer. A frame's renames go round about four images each, which is how many were alive before, each
+  made anew. No assertion changed. The runner's median frame in the test went from 1.47 ms to 0.66 ms (D3D12).
+- **Also found by reading:** a pass on a target of several colors made a `RenderTargetIdentifier[]` each time
+  it began (older than the 2026-11-10 pass, which missed it; no Sample target has several colors). Kept with
+  the target now (`Target.colorIds`).
+- What's left in the whole frame is what the test allows: about once a second the Input Manager's joystick
+  names and the editor's look at `unity.json` (4 of 120 frames on some runs, about 30 objects each).
+
+**A clip rect in a target's pass was upside down** on every API (found making the read-back check below
+asymmetric; older than the rendering work, as no test clipped a target by rows). `Record` turned every clip
+rect to rows from the bottom, which is right for the camera's own target alone. A target's rows are counted as
+stored, from Tide's top everywhere (OpenGL's passes are drawn upside down for that), so its rect's y is Tide's.
+Tide's 2D clips drawn into a render target in Unity were mirrored top to bottom until now.
+
+**Checked, and right as they were:**
+
+- **Read-back row order.** `PixelReadKernelReturnsStraightHdrThroughBufferReads` now reads an image with a
+  green triangle placed at the top left by its corners alone (clip space) and blue clipped into the bottom
+  right 16 by 16; every pixel but the triangle's slanted edge is checked at its place from the top left.
+  The kernel's rows and geometry agreed on all four APIs; only the clip rect was wrong.
+- **Depth bias's sign.** `DepthBiasPushesAwayWherePositive`: two draws on one plane, depth tested and written,
+  in four columns (second +8: the first stays; second -8: it wins; first -8 then none: the first stays; none:
+  the second passes, being equal), in a target's pass and in the camera's own. `SetGlobalDepthBias` takes
+  Tide's sign as it is on all four APIs, Unity turning it for its own depth. Constant bias only: the fixture's
+  shader has no slope.
+- `ClipRectsCountRowsFromTheTop` pins both kinds of pass.
+
+**Runs:** Unity 6000.6.0f1, Windows, hidden batch mode with `-noAudio` and a GPU, a scratch Sample pointing at
+this checkout's package, tide installed from this checkout's mingw-release and debug trees. All PlayMode tests
+on Direct3D 11, Direct3D 12, Vulkan and OpenGL Core: 41 pass of 44 on each, the three sRGB witnesses skipped
+in the Sample's Gamma color space as before. Before the fix ScaleTests failed (0 quiet frames of 120). Not
+run: EditMode (no editor code changed), Metal, a Unity WebGPU player. Note for the next run: without a
+`-force-` flag this machine's editor picks Direct3D 12, not 11.
+
+## [Linear] texture replay: embed ABI 24 (2026-11-14)
+
+The owner approved opt-in sRGB sampling on 2026-11-14. Static compiler roles and importer storage are in
+textures.md. Recorder packets retain their shape: pixel format 8 is SRGBA8, internal attachment color 10 is
+sRGB, and bit 0x100 of an immutable block format selects its sRGB variant. Block support/strides use the base
+format; BC1/BC3/RGBA8 payload bytes and authored levels are retained exactly. TideRender creates
+R8G8B8A8_SRGB, RGBA_DXT1_SRGB and RGBA_DXT5_SRGB resources. Internal sRGB targets are sampling copies;
+no public Format member or ordinary render target, fragment output or presentation behavior changes.
+TIDE_EMBED_ABI and TideLibrary.Abi advance together from 23 to 24 so older replays cannot silently treat the
+new format values as ordinary bytes. The C recorder's embed_render_srgb_images_retain_encoding_formats
+pins unmodified upload bytes, host BC support, marked block descriptors and RGBA-array fallback descriptors.
+
+**Provisional Unity prerequisite:** Player Color Space must be Linear for [Linear] resources. This is a real
+Unity constraint: in a Gamma scratch Sample, explicit GraphicsFormat SRGB Texture2D and Cubemap
+constructors returned UNorm, and marked gray 128 sampled as 128 rather than linear 55. The replay
+refuses marked images/arrays/cubes/internal targets and reports once, naming Project Settings > Player >
+Other Settings > Color Space > Linear. It never changes the project's setting, and unmarked Gamma resources
+continue normally. Refused internal targets and their faces/layers cannot fall through into camera drawing.
+The package README and language/user docs state this prerequisite.
+
+**Mips:** even in a Linear project, Unity Texture.Apply(true) and RenderTexture GenerateMips averaged sRGB
+bytes (gray 128 + white 255 produced 191 rather than the correct encoded linear mean 205). The replay therefore
+uses Resources/TideSrgbMip.shader to sample the previous level through its sRGB format, draw into a separate
+sRGB attachment, and copy the encoded result back. One 2D scratch render texture is retained while its shape
+matches; a shape change defers the old one with other renderer resources, and reset releases scratch/material.
+Arrays are processed by layer, cubes by face. CPU upload mirrors retain the base as stored; GPU mips are
+regenerated after changed uploads. Immutable prepared block chains bypass this operation and keep their levels.
+There is no per-pixel CPU conversion in a frame's mip path. On Unity OpenGL Core, texture-owned sampler
+state can still be Point from an earlier draw. The mip shader uses that texture's named sampler, reads exact
+texel centers and interpolates explicitly there, without changing the earlier draw's state. Other APIs use
+one bilinear SampleLevel. Numeric attachments stay unmipped; private sRGB color 10 retains its chain.
+
+**Actual Unity checks:** hidden/noAudio Unity 6000.6.0f1 scratch Sample, automatic Tide builds disabled.
+After merging numeric image work, Linear D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests each
+pass 18/18 applicable (Gamma-only witness skipped): known marked/unmarked point and midpoint pixels; GPU
+mip bytes for 2D, both array layers and all six cube faces; sRGB block formats and retained authored levels;
+production linear_texture_wgsl replay converting soft-alpha premultiplied target pixels while retaining the
+original byte-for-byte, including the private target's mip chain; all existing and incoming numeric/compute/
+image/order cases. ShaderTests passes 1/1 on each API, explicitly compiling every pass of TideSrgbMip, all
+numeric shader passes, the production-copy fixture and existing renderer/game shaders with no warnings.
+The source of 00000000c0de0015.shader is production linear_texture_wgsl from linear_wgsl.h, translated by
+this checkout's tide_wgsl_translate. Integrated Gamma D3D11 passes 16/16 applicable, including actionable
+refusal and unchanged unmarked/numeric behavior; the three supported-only sRGB witnesses are skipped.
+Metal and a Unity WebGPU player require other machines/build environments and were not run here.
+
+## Numeric images and outputs (2026-11-14)
+
+Numeric attachment formats, typed nearest reads and the three portable numeric storage formats now replay
+through the existing target, pipeline, image and volume packets. No recorder opcode or embed ABI bump is
+needed. HLSL retains the WGSL numeric-output mask and bypasses the Color conversion for a numeric float4 at
+location zero. ShaderLab uses literal `Blend i One Zero` for each numeric output; the other outputs retain
+Tide's selected blend. R8/RG8/R16F/RG16F single-sample targets have a mip chain since the blended typed reads (render-targets.md, top; replayed
+in an editor since: the top section here); R32F/RGBA32F/R32I have none, and their typed reads use the base level.
+R8/RG8/R16F/RG16F retain mean MSAA resolve; R32F/RGBA32F/R32I remain single-sample.
+
+For numeric shaders, ShaderLab has a second pass with literal `ColorMask 0 i` for every attachment. Replay
+selects it for depth-only draws, including the renderer's reset-depth-without-color clear. A dynamic global
+ColorMask left later MRT attachments writable on Unity Vulkan; per-target dynamic ColorMask is not valid
+ShaderLab. Two passes preserve the fragment's discards and depth while keeping every numeric image intact.
+The ShaderTests fixture now compiles every pass. Games without numeric outputs still produce the earlier
+single-pass shader text.
+
+Missing typed numeric images bind all-zero float or integer resources of the correct dimension. Integer zero
+textures are render textures, initialized by clear or the existing integer volume kernel, because Unity's
+filterable Sample capability check rejects an integer Texture2D on D3D11 even though integer loads work.
+Numeric volume allocation checks LoadStore instead. These are nearest integer reads on every replay API.
+
+ComputeReplayTests pins exact scalar/pair/vector/signed outputs in every new attachment format and RGBA16F,
+a free fourth channel, replacement under Alpha, mixed float/integer clears past one with clipping, depth-only
+preservation, and R32F/RGBA32F/R32I storage volumes. Integer readback uses an integer textureLoad kernel and
+the existing buffer-read callback: OpenGL Core does not expose raw integer texture readback through Unity's
+AsyncGPUReadback texture conversion. The kernel checks every integer word without converting it to float.
+The eleven checked-in numeric WGSL fixtures pass spirv-val for Vulkan 1.3 and FXC SM5 `/WX`.
+
+Validation: the complete 14 ComputeReplayTests, a focused mixed Color/float4/int MRT blend test, and the
+shader compilation EditMode test pass on Windows
+D3D11, D3D12, Vulkan and OpenGL Core, Unity 6000.6.0f1, hidden batch mode with no audio, using a scratch Sample
+whose package points at this checkout. The shader compilation run also includes all sixteen actual renderer
+clear shader variants. Metal and a Unity WebGPU player require machines/build environments unavailable here.
+
 ## Depth-write descriptor flag: ABI 23 (2026-11-14)
 
 The follow-up writes_depth flag keeps explicit Draw.Bounds from re-enabling geometric occlusion testing for
 frags that replace depth. Generated C and the renderer rebuild together; TideLibrary.Abi and embed.h are 23.
 No recorder opcode, shader text or replay behavior changed. Details and focused tests: shaders.md.
+
+## Pixel readback kernels for every image (2026-11-14)
+
+`await target.Read<T>(image)` and `ReadDepth()` (render-targets.md, Readback of every image) add ten renderer
+kernels beside ReadTargetPixels: number images by `textureLoad` (float, float2, float4, int), depth, a cube's face,
+an array's layer and its depth, and a face's and a layer's numbers. They record as the first did: a compute pipeline, a sampled image, the pools and
+a buffer read, so there is no new packet and no ABI change. `tide unity` writes a compute asset for each from
+`platform/src/read_pixels_wgsl.h`, which is now generated (`compiler/tests/read_target_builtin.mjs --write`) and
+compared byte for byte with what tidec writes: the first copy was only checked as a substring and had gone stale
+when kernels gained the reversed-depth preamble. Their HLSL compiles with fxc as cs_5_0 under TideWarnings
+(`tide_hlsl_shaders_valid`), and `unity_shaders_written` counts 17 computes. Run in Unity since, with replay
+tests and the native fixture: the top section, Read kernels, number images and [Linear] run in Unity.
 
 ## Pixel readback kernel (2026-11-14)
 

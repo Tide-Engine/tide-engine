@@ -33,6 +33,7 @@ static void none_free(const tide_gpu_id id) { (void)id; }
 
 static tide_gpu_id none_texture(const tide_gpu_format format, const int width, const int height, const void *pixels)
 {
+    // SRGBA8 has the same no-pixel behavior as every other format here.
     (void)format, (void)width, (void)height, (void)pixels;
     return made();
 }

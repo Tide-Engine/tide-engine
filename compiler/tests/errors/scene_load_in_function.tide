@@ -1,4 +1,0 @@
-// expect: functions can't load or unload scenes; systems, views and event handlers do
-scene Arena { }
-scene Main { }
-void Open() { Scene.Load(Arena); }

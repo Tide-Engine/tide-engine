@@ -1,0 +1,22 @@
+// Source of 00000000c0de0015.shader: platform/src/linear_wgsl.h, linear_texture_wgsl.
+struct Uniforms { layer: vec4i }
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(2) var sampled: sampler;
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
+}
+fn linear_channel(v: f32) -> f32 {
+    let x = clamp(v, 0.0, 1.0);
+    if (x <= 0.04045) { return x / 12.92; }
+    return pow((x + 0.055) / 1.055, 2.4);
+}
+fn linear_color(c: vec4f) -> vec4f {
+    if (c.a <= 0.0) { return vec4f(0.0); }
+    let straight = c.rgb / c.a;
+    return vec4f(vec3f(linear_channel(straight.r), linear_channel(straight.g), linear_channel(straight.b)) * c.a, c.a);
+}
+@group(0) @binding(1) var image: texture_2d<f32>;
+@fragment fn fragment(@builtin(position) p: vec4f) -> @location(0) vec4f {
+    return linear_color(textureLoad(image, vec2i(p.xy), 0));
+}

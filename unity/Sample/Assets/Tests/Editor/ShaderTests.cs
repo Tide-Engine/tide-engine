@@ -12,14 +12,17 @@ public class ShaderTests
     public void TideShadersCompileWithNothingSaid()
     {
         if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null) Assert.Ignore("no GPU in this run (-nographics)");
-        var shaders = new List<Shader>(Resources.LoadAll<Shader>("TideShaders")) { Resources.Load<Shader>("TideResolveDepth") };
+        var shaders = new List<Shader>(Resources.LoadAll<Shader>("TideShaders"))
+        {
+            Resources.Load<Shader>("TideResolveDepth"), Resources.Load<Shader>("TideSrgbMip"),
+        };
         Assert.Greater(shaders.Count, 10, "the renderer's shaders and the game's are there");
         var said = new List<string>();
         foreach (var shader in shaders)
         {
             Assert.IsNotNull(shader);
             var material = new Material(shader);
-            ShaderUtil.CompilePass(material, 0, true);
+            for (var pass = 0; pass < material.passCount; pass++) ShaderUtil.CompilePass(material, pass, true);
             foreach (var message in ShaderUtil.GetShaderMessages(shader)) said.Add($"{shader.name}: {message.severity} {message.message} ({message.platform})");
             Object.DestroyImmediate(material);
         }

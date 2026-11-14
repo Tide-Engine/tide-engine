@@ -1,0 +1,3 @@
+// expect: Linear takes no arguments: '[Linear]'
+[Linear(1)] asset Texture image = "../e2e/assets/hero.png";
+scene Main { }

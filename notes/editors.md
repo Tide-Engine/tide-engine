@@ -1,4 +1,40 @@
+## Linear image annotation (2026-11-14)
+
+Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB
+sampling, unchanged alpha, supported image types/formats and source-preserving GPU helpers. Asset hover
+reports its Linear sampling role. Math's ToLinear/ToDisplay signatures expose scalar, float3 and Color
+through the existing builtin table. lsp_linear_textures passes: both completion contexts, attribute hover,
+valid marked fields and an actionable local-placement diagnostic. No new keyword or grammar token is needed:
+Linear is an ordinary attribute identifier, highlighted by the existing brackets rule.
+
 # The language server and the editors
+
+## Reads of any target image (2026-11-14)
+
+A RenderTarget's completion offers `Read` as `Read<T>([int image]) -> Grid2<T> fails IOError` and `ReadDepth() ->
+Grid2<float> fails IOError`, each with what it reads, its exactness and its limits; signature help has both, and
+`colors`' doc names `colors.count`. Diagnostics are the compiler's. No grammar change: `Read<float>(1)` tokenizes as other generic calls. Test: lsp_render_target_formats_and_depth
+(tidels_tests 279/279).
+
+## Numeric images and frag outputs (2026-11-14)
+
+Format completion and hover describe all seven numeric members, accepted output/clear types, storage bytes,
+32-bit single-sample limits and portable kernel formats. Frag headers offer Color, float, float2, float4 and
+int after out; parameter hover explains the image ordinal and numeric replace/no-tint/no-alpha contract.
+Missing-output quick fixes initialize numeric values with 0/float2(0)/float4(0), retaining Color's existing fix.
+Ordinary enum-member typo fixes cover the new format names.
+
+Raw attribute completion/signature help describes the four numeric role arguments. Fields and read-only
+Texture/Texture3D helper parameters carry their role into Sample hover, member completion and signature help;
+they return the numeric type and show Point as the default. Numeric members omit SampleGrad/SampleLevel.
+Volume sampling signatures identify Texture3D and float3 coordinates. Clear completion, hover and signature
+help describe one to four positional image values and float clears past one, alongside the legacy broadcast.
+
+Tests: lsp_numeric_images_and_outputs, lsp_numeric_output_quick_fixes and lsp_numeric_image_helpers. The shared
+TextMate grammar already tokenizes numeric out types and typed Raw fields/parameters; an added grammar probe
+pins their existing primitive/function scopes without changing tokenization for other programs.
+Validation after the overlapping depth/readback merge: Windows Clang 23 ASan tidels_tests lsp_ passes 278/278;
+Node 24.22.1 shared grammar tests pass 383/383. The docs production build passes with the new user pages.
 
 ## Texture3D (2026-11-14)
 

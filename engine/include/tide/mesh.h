@@ -273,3 +273,7 @@ void tide_draw_mesh_shaded_indirect(tide_draw_list *d, const tide_shader *shader
 bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
                                 tide_list items, uint32_t item_size, tide_list_words_fn *write, uint32_t layout,
                                 const void *uniforms, const uint32_t *textures, uint64_t sampling);
+
+// Color-grid image captures in linear-premultiplied sRGB storage.
+uint32_t tide_draw_grid_texture_linear(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape);
+uint32_t tide_draw_grid_array_texture_linear(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape);

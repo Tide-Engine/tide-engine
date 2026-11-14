@@ -1,0 +1,4 @@
+// expect: ReadDepth takes no arguments and finishes later
+scene Main {}
+local singleton State { RenderTarget target; }
+view Show(State state) { state.target.ReadDepth(); }

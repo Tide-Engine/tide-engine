@@ -107,6 +107,20 @@ component Sign
 
 ## Images to draw with
 
+For color images used by lighting, declare `[Linear] asset Texture albedo = "art/albedo.png";`.
+The same mark works on a singular `TextureArray` or `Cubemap` asset. GPU reads then return
+linear light, with filtering and mipmaps in that space, while alpha stays unchanged.
+Unmarked images keep their existing display-number behavior. `[Linear]` does not go on a
+CPU-readable grid or a glob's List/Map; declare each sampled source separately. See
+[Linear-light color](./shaders.md#linear-light-color) for fields and helper functions.
+`[Raw, Linear]` is refused; `[Linear, Lossless]` keeps a color image uncompressed.
+
+Marked DDS images rebuild their mip chain from the base image in linear light, so authored
+levels with an unknown filtering space cannot silently produce display-space mipmaps.
+Compression still uses BC1/BC3, through their sRGB forms on devices that support them.
+A device without BC receives the same mip chain decoded to sRGB RGBA8.
+
+
 Most of a game's images are only ever drawn: sprites, tile sheets, backgrounds, icons. Those are `Texture`s:
 
 ```csharp

@@ -7,6 +7,7 @@
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/pack.h"
+#include "tide/transfer_bytes.h"
 #include "list_data_cache.h"
 #include "mesh_levels.h"
 
@@ -243,7 +244,8 @@ static uint64_t grid_hash(const grid_seen *v, const tide_grid_shape *s)
 typedef struct cells_writer {
     void (*row)(const struct cells_writer *w, const uint8_t *cells, int32_t count, uint8_t *out);
     uint32_t bytes;            // Of the texture, a cell
-    bool raw;                  // Colors: with no alpha worked into them
+    bool raw;                     // Colors: with no alpha worked into them
+    bool linear;                  // Colors: linear premultiplied, then sRGB encoded
     tide_list_words_fn *write; // Numbers: what writes a cell's...
     uint32_t cell;             // ...and the bytes a cell is in the grid
 } cells_writer;
@@ -253,10 +255,14 @@ static void color_cells(const cells_writer *w, const uint8_t *cells, const int32
     const tide_color *row = (const tide_color *)(const void *)cells;
     for (int32_t x = 0; x < count; x++, out += 4) {
         const float alpha = unit(row[x].a), worked = w->raw ? 1.0f : alpha;
-        out[0] = channel(row[x].r, worked);
-        out[1] = channel(row[x].g, worked);
-        out[2] = channel(row[x].b, worked);
         out[3] = channel(1.0f, alpha);
+        // Coverage is stored in a byte too. Premultiplying by that exact value prevents encoded RGB
+        // surviving where a tiny positive alpha rounded to zero. [Linear]'s bytes are
+        // byte(ToDisplay(ToLinear(c) * alpha / 255)), found with no pow for a clear cell or an opaque one and with
+        // one for the rest (tide/transfer_bytes.h), where each channel had two
+        out[0] = w->linear ? tide_transfer_premultiplied_byte(row[x].r, out[3]) : channel(row[x].r, worked);
+        out[1] = w->linear ? tide_transfer_premultiplied_byte(row[x].g, out[3]) : channel(row[x].g, worked);
+        out[2] = w->linear ? tide_transfer_premultiplied_byte(row[x].b, out[3]) : channel(row[x].b, worked);
     }
 }
 
@@ -408,7 +414,7 @@ static void grid_cells(tide_draw_list *d, const uint32_t slot, uint8_t *pixels, 
 #define KIND_FLOATS UINT64_C(0x47464C54)
 #define KIND_RAW UINT64_C(0x47524157)
 
-static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
+static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw, const bool linear)
 {
     const bool colors = s->cell == sizeof(tide_color);
     grid_seen v;
@@ -424,14 +430,18 @@ static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_gr
     if (v.dir.flat && ((uint64_t)v.dir.chunks[0] != across || (uint64_t)v.dir.chunks[1] != down)) return 0;
     // A grid of the pack's has its file's version, in its directory's header, as the builder put it
     uint64_t version = v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g);
+    if (linear) version ^= UINT64_C(0x4c494e454152);
     if (raw) version ^= UINT64_C(0x5241575241575241); // Other bytes than the same cells as colors
-    const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u, .raw = raw};
+    const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u, .raw = raw, .linear = linear};
     const cells_box box = {.dims = 2u, .extent = {width, height, 1}, .across = 1, .wide = (size_t)width * w.bytes};
     uint8_t *pixels;
     bool kept;
-    const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_GRID, g.at, version, width, height,
+    const uint32_t slot = linear ? tide_draw_texture_edit_linear(d, TIDE_PIXELS_GRID, g.at, version, width, height,
+                                                                 KIND_COLORS, &pixels, &kept)
+        : tide_draw_texture_edit(d, TIDE_PIXELS_GRID, g.at, version, width, height,
                                                  colors ? TIDE_TEXELS_BYTES : TIDE_TEXELS_HALF,
                                                  !colors ? KIND_FLOATS : raw ? KIND_RAW : KIND_COLORS, &pixels, &kept);
+    if (slot) d->textures[slot - 1u].linear = linear;
     if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
     return slot;
 }
@@ -463,7 +473,7 @@ tide_int3 tide_grid_array_extent(const tide_grid g, const tide_grid_shape *s)
 
 #define KIND_ARRAY_RAW UINT64_C(0x47415257)
 
-static uint32_t grid_image_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw, const bool volume)
+static uint32_t grid_image_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw, const bool volume, const bool linear)
 {
     grid_seen v;
     if (!see_grid_image(g, s, &v, volume)) return 0;
@@ -471,28 +481,31 @@ static uint32_t grid_image_texture(tide_draw_list *d, const tide_grid g, const t
     const int32_t width = v.dir.size[0], height = v.dir.size[1], depth = v.dir.size[2];
     uint64_t version = (v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g)) ^ UINT64_C(0x4152524159); // Not its Texture's
     if (raw && colors) version ^= UINT64_C(0x5241575241575241); // Other bytes than the same cells as colors
+    if (linear) version ^= UINT64_C(0x4c494e454152);
     if (volume) version ^= UINT64_C(0x564f4c554d45);
-    const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u, .raw = raw};
+    const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u, .raw = raw, .linear = linear};
     // Its layers one under another: a row of the texture is a row of a layer
     const cells_box box = {.dims = 3u, .extent = {width, height, depth}, .across = 1, .wide = (size_t)width * w.bytes};
     uint8_t *pixels;
     bool kept;
-    const uint32_t slot = tide_draw_texture_edit(d, volume ? TIDE_PIXELS_GRID_VOLUME : TIDE_PIXELS_GRID_ARRAY, g.at, version, width, height * depth,
+    const uint32_t slot = linear ? tide_draw_texture_edit_linear(d, TIDE_PIXELS_GRID_ARRAY, g.at, version, width, height * depth,
+                                                                 KIND_ARRAY_COLORS, &pixels, &kept)
+        : tide_draw_texture_edit(d, volume ? TIDE_PIXELS_GRID_VOLUME : TIDE_PIXELS_GRID_ARRAY, g.at, version, width, height * depth,
                                                  colors ? TIDE_TEXELS_BYTES : TIDE_TEXELS_HALF,
                                                  !colors ? KIND_ARRAY_FLOATS : raw ? KIND_ARRAY_RAW : KIND_ARRAY_COLORS, &pixels, &kept);
-    if (slot) d->textures[slot - 1u].layers = (uint32_t)depth;
+    if (slot) { d->textures[slot - 1u].layers = (uint32_t)depth; d->textures[slot - 1u].linear = linear; }
     if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
     return slot;
 }
 
 uint32_t tide_draw_grid_array_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
 {
-    return grid_image_texture(d, g, s, raw, false);
+    return grid_image_texture(d, g, s, raw, false, false);
 }
 
 uint32_t tide_draw_grid_volume_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
 {
-    return grid_image_texture(d, g, s, raw, true);
+    return grid_image_texture(d, g, s, raw, true, false);
 }
 
 tide_int3 tide_grid_volume_extent(const tide_grid g, const tide_grid_shape *s)
@@ -512,12 +525,12 @@ tide_int3 tide_texture3d_size(const tide_texture3d_ref volume)
 
 uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
 {
-    return grid_texture(d, g, s, false);
+    return grid_texture(d, g, s, false, false);
 }
 
 uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
 {
-    return grid_texture(d, g, s, true);
+    return grid_texture(d, g, s, true, false);
 }
 
 static uint64_t take_mesh_key(tide_draw_list *d, tide_list vertices, tide_list indices);
@@ -1789,4 +1802,13 @@ void tide_draw_mesh3_instances_texture(tide_draw_list *d, const tide_list vertic
     if (tide_list_count(transforms) <= 0) return;
     mesh3_instances_lists(d, vertices, indices, transforms, tide_draw_texture_source(d, texture),
                           tide_texture_filter(texture), tide_wrap_of((int32_t)tide_texture_wrap(texture)));
+}
+
+uint32_t tide_draw_grid_texture_linear(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+{
+    return s && s->cell == sizeof(tide_color) ? grid_texture(d, g, s, false, true) : 0;
+}
+uint32_t tide_draw_grid_array_texture_linear(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+{
+    return s && s->cell == sizeof(tide_color) ? grid_image_texture(d, g, s, false, false, true) : 0;
 }

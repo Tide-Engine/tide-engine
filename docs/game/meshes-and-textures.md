@@ -39,6 +39,12 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
+Use [`[Linear]`](./shaders.md#linear-light-color) on Texture, TextureArray and Cubemap assets
+and fields that hold display-encoded color for lighting. The GPU converts RGB to linear
+light before filtering. Unmarked images keep their current behavior; neither the mark nor
+`Math.ToLinear`/`Math.ToDisplay` changes alpha, frag output semantics or screen presentation.
+
+
 ### Volumes
 
 `Texture3D` is a continuous volume, made in local code with a size in texels:
@@ -62,6 +68,14 @@ Coordinates are normalized from 0 to 1; `Filter.Point` picks the nearest cell, a
 `Wrap.Clamp`, `Wrap.Repeat` or `Wrap.Mirror` applies on all axes. The defaults are Bilinear and Clamp.
 There are no volume mipmaps, so Trilinear, Anisotropic and SampleLevel are unavailable.
 `density[int3(x, y, z)]` reads an exact cell, with zeros outside.
+
+Volumes can also store numbers: R32f, Rgba32f and R32i hold a float, four floats or a signed integer per cell,
+respectively. Declare `[Raw(float)] Texture3D density;`, `[Raw(float4)] Texture3D channels;` or
+`[Raw(int)] Texture3D ids;`, and construct the volume with the matching Format. A kernel stores that numeric
+type directly; `Sample` and exact-cell reads return it without alpha conversion. Typed numeric volumes read
+the nearest cell, with implicit or explicit `Filter.Point`, and have no mipmaps (a 2D number image in a compact
+format blends and has them: see Number images). Rgba16f can also be read
+through a `[Raw(float4)]` field when all four channels are data. See [Number images](./shaders.md#number-images).
 
 `Grid3<Color>` and `Grid3<float>` convert to `Texture3D` where one is wanted. A float grid supplies its value
 as red, with green and blue zero and alpha one. Changes upload only the changed regions, as a two-dimensional

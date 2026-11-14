@@ -10,7 +10,7 @@ else()
     set(TIDE_SPIRV_C "${CMAKE_CURRENT_BINARY_DIR}/shaders_spirv.c")
     add_custom_command(OUTPUT "${TIDE_SPIRV_C}"
         COMMAND "${TIDE_SPIRV_SHADERS_PATH}" "${TIDE_SPIRV_C}"
-        DEPENDS ${TIDE_SPIRV_SHADERS_DEPENDS} src/shaders.h
+        DEPENDS ${TIDE_SPIRV_SHADERS_DEPENDS} src/shaders.h src/linear_wgsl.h
         COMMENT "The renderer's shaders as SPIR-V"
         VERBATIM)
     list(APPEND TIDE_PLATFORM_SOURCES "${TIDE_SPIRV_C}")
@@ -1281,15 +1281,28 @@ if(NOT TIDE_ANDROID)
     endforeach()
 endif()
 
-if(TIDE_PLATFORM)
+# On Android a window is an app's (tide_android_app): the same program
+# started through adb waits for one for good, so there it is an app, as the
+# shaders' checks are.
+if(TIDE_PLATFORM AND TIDE_ANDROID)
+    tide_add_game(tide_platform_readback_app SOURCES tests/readback.tide NAME game HOST tests/readback.c WINDOW)
+    target_include_directories(tide_platform_readback_app PRIVATE src)
+    tide_android_app_test(tide_platform_readback_app GPU)
+elseif(TIDE_PLATFORM)
     tide_add_game(tide_platform_readback SOURCES tests/readback.tide NAME game HOST tests/readback.c)
     target_include_directories(tide_platform_readback PRIVATE src)
     target_link_libraries(tide_platform_readback PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_readback SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_readback TARGET tide_platform_readback PIXELS EXPECT "renderer: WebGPU")
+        # ...and where depth is stored forward, in 24 bits: ReadDepth gives the same forward depths
+        tide_add_web_test(tide_platform_readback_depth_fallback TARGET tide_platform_readback PIXELS QUERY "depth-fallback=1"
+            EXPECT "renderer: WebGPU")
     else()
         add_test(NAME tide_platform_readback COMMAND tide_platform_readback)
         tide_gpu_test(tide_platform_readback)
+        add_test(NAME tide_platform_readback_depth_fallback COMMAND tide_platform_readback)
+        tide_gpu_test(tide_platform_readback_depth_fallback)
+        set_property(TEST tide_platform_readback_depth_fallback APPEND PROPERTY ENVIRONMENT "TIDE_TEST_DEPTH_FALLBACK=1")
     endif()
 endif()

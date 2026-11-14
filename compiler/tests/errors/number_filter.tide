@@ -1,0 +1,4 @@
+// expect: an int image reads its nearest pixel: a GPU blends no integers. Use Filter.Point
+scene Main { }
+local singleton Images { [Raw(int)] Texture image; }
+frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.image.Sample(vertex.uv,Filter.Bilinear),0,0); }

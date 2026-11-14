@@ -111,3 +111,27 @@ TIDE_TEST(authored_dds_levels_keep_their_alpha_and_raw_channels_in_the_pack)
     }
     tide_pack_unload();
 }
+
+TIDE_TEST(linear_assets_store_encoded_premultiplied_light_and_distinct_interpretations)
+{
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    const tide_texture_ref exact = tide_pack_texture_of(tide_pack_find("linearExact", TIDE_PACK_TEXTURE));
+    tide_texture pixels;
+    TIDE_REQUIRE(tide_pack_texture_find(exact.image.version & TIDE_TEXTURE_NAME, &pixels));
+    const uint8_t *at = (const uint8_t *)pixels.pixels + (64u * 128u + 32u) * 4u;
+    const float alpha = 96.0f / 255.0f;
+    const uint8_t r = (uint8_t)(tide_todisplay_f(tide_tolinear_f(64.0f / 255.0f) * alpha) * 255.0f + 0.5f);
+    const uint8_t g = (uint8_t)(tide_todisplay_f(tide_tolinear_f(128.0f / 255.0f) * alpha) * 255.0f + 0.5f);
+    TIDE_CHECK(at[0] == r && at[1] == g && at[3] == 96u);
+    const tide_texture_ref plain = tide_pack_texture_of(tide_pack_find("opaque", TIDE_PACK_TEXTURE));
+    const tide_texture_ref linear = tide_pack_texture_of(tide_pack_find("linearOpaque", TIDE_PACK_TEXTURE));
+    TIDE_CHECK((plain.image.version & TIDE_TEXTURE_NAME) != (linear.image.version & TIDE_TEXTURE_NAME));
+    const tide_texture_blocks opaque_blocks = tide_pack_texture_blocks_find(linear.image.version & TIDE_TEXTURE_NAME);
+    TIDE_CHECK(opaque_blocks.format == TIDE_BLOCKS_BC1 && opaque_blocks.levels == 8);
+    const tide_texture_ref alpha_image = tide_pack_texture_of(tide_pack_find("linearAlpha", TIDE_PACK_TEXTURE));
+    TIDE_CHECK(tide_pack_texture_blocks_find(alpha_image.image.version & TIDE_TEXTURE_NAME).format == TIDE_BLOCKS_BC3);
+    // A marked DDS does not retain authored levels whose filtering space is unknown.
+    const tide_texture_ref authored = tide_pack_texture_of(tide_pack_find("linearAuthored", TIDE_PACK_TEXTURE));
+    TIDE_CHECK(tide_pack_texture_blocks_find(authored.image.version & TIDE_TEXTURE_NAME).pixels == NULL);
+    tide_pack_unload();
+}

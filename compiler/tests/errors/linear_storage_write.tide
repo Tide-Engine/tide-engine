@@ -1,0 +1,9 @@
+// expect: a kernel cannot write a [Linear] sampled image: sRGB formats have no storage-write form
+local singleton Images { RenderTarget target; [Linear] Texture image; }
+compute Fill(Images images) { images.image[this.at.xy] = Color.white; }
+view V(mut Images images) {
+    images.target = RenderTarget(2, 2);
+    images.image = images.target.color;
+    GPU.Run(Fill, int2(2));
+}
+scene Main { }

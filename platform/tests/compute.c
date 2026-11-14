@@ -262,12 +262,51 @@ static tide_gpu_id filled_image, written_volume, uploaded_volume, image_output[2
 static tide_gpu_id fill_image, fill_volume, sample_volume, image_draw;
 static float image_values[8][4];
 static tide_gpu_id written_volume16, fill_volume16;
+static tide_gpu_id numeric_targets[3], numeric_volumes[3], fill_numbers[3], sample_numbers, number_result;
+static uint32_t number_values[6][4];
 static tide_gpu_id square, shared, setup, marking, storage_draw, vertex_draw, count_draw;
 static uint32_t indirect_can; // gpu.h's TIDE_GPU_INDIRECT_* bits, as the device has them
 
 // The buffers and pipelines, which a backend that makes pipelines in the background may not have made yet.
 static void make(const tide_gpu *gpu)
 {
+    static const tide_gpu_format formats[] = {TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I};
+    static const tide_gpu_color numeric_colors[] = {TIDE_GPU_COLOR_R32F, TIDE_GPU_COLOR_RGBA32F, TIDE_GPU_COLOR_R32I};
+    static const char *const names[] = {"r32float", "rgba32float", "r32sint"};
+    for (uint32_t i = 0; i < 3; i++) {
+        numeric_targets[i] = gpu->target((tide_gpu_target_format)numeric_colors[i], 2, 2);
+        numeric_volumes[i] = gpu->volume(formats[i], 2, 2, 2);
+        char code[1536];
+        snprintf(code, sizeof code,
+            "@group(0) @binding(0) var<uniform> u: vec4f;\n"
+            "@group(0) @binding(1) var image: texture_storage_2d<%s, write>;\n"
+            "@group(0) @binding(3) var volume: texture_storage_3d<%s, write>;\n"
+            "@compute @workgroup_size(2,2,2) fn compute(@builtin(global_invocation_id) at: vec3u) {\n"
+            "  if (all(at < textureDimensions(volume))) { textureStore(volume, vec3i(at), %s); }\n"
+            "  if (at.z == 0u && all(at.xy < textureDimensions(image))) { textureStore(image, vec2i(at.xy), %s); }\n}\n",
+            names[i], names[i], i == 2 ? "vec4i(-16777217, 0, 0, 1)" : "vec4f(1.5, -0.5, 2, 0.125)",
+            i == 2 ? "vec4i(-16777217, 0, 0, 1)" : "vec4f(1.5, -0.5, 2, 0.125)");
+        fill_numbers[i] = gpu->pipeline(&(tide_gpu_pipeline_desc){.name = "write numeric image and volume", .wgsl = code,
+            .uniform_size = 16, .compute = true, .texture_count = 2,
+            .reads = {i == 2 ? TIDE_GPU_READ_INT : TIDE_GPU_READ_NUMBER, i == 2 ? TIDE_GPU_READ_INT_VOLUME : TIDE_GPU_READ_NUMBER_VOLUME},
+            .image_writes = 3, .image_formats = {formats[i], formats[i]}});
+        if (!numeric_targets[i] || !numeric_volumes[i] || !fill_numbers[i]) fail("numeric resources made", i, 0, 1);
+    }
+    static const char load_numbers[] =
+        "@group(0) @binding(0) var<uniform> u: vec4f;\n"
+        "@group(0) @binding(1) var a: texture_2d<f32>; @group(0) @binding(3) var b: texture_3d<f32>;\n"
+        "@group(0) @binding(5) var c: texture_2d<f32>; @group(0) @binding(7) var d: texture_3d<f32>;\n"
+        "@group(0) @binding(9) var e: texture_2d<i32>; @group(0) @binding(11) var f: texture_3d<i32>;\n"
+        "@group(0) @binding(33) var<storage, read_write> result: array<vec4u>;\n"
+        "@compute @workgroup_size(1) fn compute() {\n"
+        "  result[0] = bitcast<vec4u>(textureLoad(a, vec2i(1), 0)); result[1] = bitcast<vec4u>(textureLoad(b, vec3i(1), 0));\n"
+        "  result[2] = bitcast<vec4u>(textureLoad(c, vec2i(1), 0)); result[3] = bitcast<vec4u>(textureLoad(d, vec3i(1), 0));\n"
+        "  result[4] = bitcast<vec4u>(textureLoad(e, vec2i(1), 0)); result[5] = bitcast<vec4u>(textureLoad(f, vec3i(1), 0));\n}\n";
+    sample_numbers = gpu->pipeline(&(tide_gpu_pipeline_desc){.name = "load numeric images and volumes", .wgsl = load_numbers,
+        .uniform_size = 16, .compute = true, .texture_count = 6,
+        .reads = {TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_NUMBER_VOLUME,
+                  TIDE_GPU_READ_INT, TIDE_GPU_READ_INT_VOLUME}, .storage_count = 1, .storage_writes = {true}});
+    number_result = gpu->buffer(TIDE_GPU_STORAGE, sizeof number_values, NULL);
     filled_image = gpu->target(TIDE_GPU_TARGET_COLOR, SIDE, SIDE);
     for (int i = 0; i < 2; i++) image_output[i] = gpu->target(TIDE_GPU_TARGET_COLOR, SIDE, SIDE);
     written_volume = gpu->volume(TIDE_GPU_RGBA8, 2, 2, 2);
@@ -358,12 +397,19 @@ static void make(const tide_gpu *gpu)
 static bool made(const tide_gpu *gpu)
 {
     if (gpu->texture_status) {
+        for (uint32_t i = 0; i < 3; i++) {
+            const int status = gpu->texture_status(numeric_volumes[i]);
+            if (status < 0) fail("numeric volume allocation", i, 0, 1);
+            if (status != 1) return false;
+        }
         const int written = gpu->texture_status(written_volume), uploaded = gpu->texture_status(uploaded_volume);
         const int floats = gpu->texture_status(written_volume16);
         if (written < 0 || uploaded < 0 || floats < 0) fail("a volume allocation failed", 0, 0, 1);
         if (written != 1 || uploaded != 1 || floats != 1) return false;
     }
     if (!gpu->pipeline_ready) return true;
+    if (!gpu->pipeline_ready(sample_numbers)) return false;
+    for (uint32_t i = 0; i < 3; i++) if (!gpu->pipeline_ready(fill_numbers[i])) return false;
     const tide_gpu_id all[] = {square, shared, setup, marking, storage_draw, vertex_draw, count_draw,
                                 fill_image, fill_volume, sample_volume, image_draw, fill_volume16};
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
@@ -374,6 +420,24 @@ static bool made(const tide_gpu *gpu)
 
 static void record(const tide_gpu *gpu)
 {
+    gpu->compute_begin();
+    for (uint32_t i = 0; i < 3; i++) {
+        gpu->use(fill_numbers[i]);
+        gpu->uniforms((const float[4]){0}, 16);
+        gpu->image(0, gpu->target_texture(numeric_targets[i], 0));
+        gpu->image(1, numeric_volumes[i]);
+        gpu->dispatch(2, 2, 2);
+    }
+    gpu->use(sample_numbers);
+    gpu->uniforms((const float[4]){0}, 16);
+    for (uint32_t i = 0; i < 3; i++) {
+        gpu->image(2 * i, gpu->target_texture(numeric_targets[i], 0));
+        gpu->image(2 * i + 1, numeric_volumes[i]);
+    }
+    gpu->storage(0, number_result);
+    gpu->dispatch(1, 1, 1);
+    gpu->compute_end();
+    read_back(gpu, number_result, sizeof number_values, number_values, "numeric images and volumes");
     gpu->compute_begin();
     gpu->use(fill_volume);
     gpu->uniforms((const float[4]){0}, 16);
@@ -498,6 +562,10 @@ static void record(const tide_gpu *gpu)
     gpu->pipeline_free(marking);
     gpu->pipeline_free(storage_draw);
     gpu->pipeline_free(vertex_draw);
+    for (uint32_t i = 0; i < 3; i++) {
+        gpu->target_free(numeric_targets[i]); gpu->texture_free(numeric_volumes[i]); gpu->pipeline_free(fill_numbers[i]);
+    }
+    gpu->pipeline_free(sample_numbers); gpu->buffer_free(number_result);
     gpu->pipeline_free(count_draw);
 }
 
@@ -514,6 +582,12 @@ static void expect_pixels(const int which, const uint8_t r, const uint8_t g, con
 
 static void check(void)
 {
+    const float f1[4] = {1.5f, 0, 0, 1}, f4[4] = {1.5f, -0.5f, 2, 0.125f};
+    uint32_t expected[3][4];
+    memcpy(expected[0], f1, sizeof f1); memcpy(expected[1], f4, sizeof f4);
+    expected[2][0] = (uint32_t)-16777217; expected[2][1] = expected[2][2] = 0; expected[2][3] = 1;
+    for (uint32_t i = 0; i < 6; i++) for (uint32_t k = 0; k < 4; k++)
+        if (number_values[i][k] != expected[i / 2][k]) fail("numeric image exact bits", i * 4 + k, number_values[i][k], expected[i / 2][k]);
     const float wanted_images[8][4] = {{0.5f, 0, 0, 1}, {0, 0.5f, 0, 1}, {0, 0, 0.5f, 1}, {1, 1, 1, 1},
                                       {0.2f, 0.4f, 0.8f, 1}, {0, 0, 0, 0}, {-0.5f, -0.5f, 0.5f, 1}, {1.5f, 1.5f, 1.5f, 1}};
     for (uint32_t i = 0; i < 8; i++) for (uint32_t k = 0; k < 4; k++) {

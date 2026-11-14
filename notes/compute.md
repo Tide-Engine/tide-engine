@@ -46,11 +46,14 @@ draw, kernels, shaders and prewarm, including device loss; mocked OOM verifies p
 Unity's actual API runs and unavailable Metal/Unity WebGPU coverage are recorded in unity.md. Android, Linux,
 macOS and the optional real-GPU web lanes were not run here.
 
-Connection still waiting on the parallel format task: dev contains the numeric GPU attachment catalogue, but
-the public Format enum still exposes only Rgba8/Depth/Rgba16f. The backend/translators already support writable
-r32float/rgba32float/r32sint; once the public members land, connect their constructor provenance, volume allocation,
-format byte counts and appropriate numeric/point-only sampling (without optional float32 filtering), and add
-public language/GPU witnesses. R8/Rg8/R16f/Rg16f remain non-storage formats and must be refused with their reason.
+The numeric format connection is built: public R32f/Rgba32f/R32i constructors, target provenance, volume
+allocation and byte counts reach portable r32float/rgba32float/r32sint storage bindings. Typed Raw roles on
+Texture/Texture3D fields and read-only GPU helper parameters preserve numeric Sample/exact-cell/store types,
+without alpha conversion. The 32-bit and integer roles use Point only; compact float roles blend (render-targets.md, top).
+A kernel's written image is checked at run time against its pipeline's format (`image_destination_fits`).
+R8/Rg8/R16f/Rg16f remain non-storage formats and are refused with guidance to use a portable writable format.
+Public compiler/golden and platform images fixtures exercise scalar, float4 and signed integer stores and
+reads; backend validation is recorded with the completed format integration in render-targets.md.
 The extra `image_grid_float_write`/`image_grid_color_write` diagnostics pin grid conversions as sampled views:
 they direct writes to owned Texture3D resources, and explain the float grid's non-storage R16f representation.
 

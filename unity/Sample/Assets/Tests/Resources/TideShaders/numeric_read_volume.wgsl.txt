@@ -1,0 +1,7 @@
+@group(0) @binding(0) var<uniform> u: vec4u;
+@group(0) @binding(1) var image: texture_3d<i32>;
+@group(0) @binding(33) var<storage,read_write> result: array<u32>;
+@compute @workgroup_size(2,2,2) fn compute(@builtin(global_invocation_id) at: vec3u) {
+    let n = textureDimensions(image);
+    if (all(at < n)) { result[at.x + n.x * (at.y + n.y * at.z)] = bitcast<u32>(textureLoad(image,vec3i(at),0).x); }
+}

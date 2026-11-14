@@ -248,7 +248,7 @@ typedef struct signature {
     unsigned out;            // A bit per `out` parameter, which the call makes: its bit in `mut` is set too
 } signature;
 
-#define MAX_SIGNATURES 448
+#define MAX_SIGNATURES 512
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -421,6 +421,15 @@ static signature *add_draw(const char *name, const char *c_name, const char *par
 static void build_signatures(void)
 {
     if (signature_count > 0) return;
+
+    const type transfer_types[] = {T_F, T_F3, T_COLOR};
+    for (int i = 0; i < 3; i++) {
+        const type t = transfer_types[i];
+        describe(add("Math", "ToLinear", t, c_function("tolinear", t), 1, t, T_NONE, T_NONE), "value",
+                 "Converts sRGB to linear light. RGB clamps to [0,1], NaN gives zero; Color alpha is unchanged.");
+        describe(add("Math", "ToDisplay", t, c_function("todisplay", t), 1, t, T_NONE, T_NONE), "value",
+                 "Converts linear light to sRGB. RGB clamps to [0,1], NaN gives zero; Color alpha is unchanged.");
+    }
 
     for (int n = 2; n <= 4; n++) {
         const type v = vector_type(true, n);
@@ -1129,6 +1138,35 @@ static void build_signatures(void)
              "`t` from 0 to 1, pulling back a little below 0 before going: an anticipation.");
     describe(add("Math", "EaseOutBack", T_F, "tide_ease_out_back_f", 1, T_F, T_NONE, T_NONE), "t",
              "`t` from 0 to 1, overshooting 1 by about 10% and settling back: a pop.");
+    // A value on its way to another: by a step at the most, and by a share of what's left that's the same
+    // however the seconds are cut into frames or ticks
+    const type towards_types[] = {T_F, T_F2, T_F3};
+    for (int i = 0; i < 3; i++) {
+        const type t = towards_types[i];
+        describe(add("Math", "MoveTowards", t, c_function("movetowards", t), 3, t, t, T_F), "current, target, step",
+                 "`current` moved at most `step` closer to `target`, never past it: `speed = Math.MoveTowards(speed, "
+                 "wanted, 20 * time.dt)`. A point moves along the straight line to the other.");
+        signature *damp = add("Math", "Damp", t, c_function("damp", t), 4, t, t, T_F);
+        damp->params[3] = T_F;
+        describe(damp, "current, target, rate, dt",
+                 "`current` eased towards `target`: closer by the same share every second whatever `dt` is, where "
+                 "`Math.Lerp(a, b, dt * 10)` depends on the frame rate. `rate` is how fast, in shares a second: at 10, "
+                 "about two thirds of the way in a tenth of a second.");
+    }
+    describe(add("Math", "DeltaAngle", T_F, "tide_deltaangle_f", 2, T_F, T_F, T_NONE), "from, to",
+             "The shortest turn from one angle to another, in radians, over -PI and up to PI: 0.2 from 6.2 to 0.1, "
+             "not -6.1.");
+    describe(add("Math", "WrapAngle", T_F, "tide_wrapangle_f", 1, T_F, T_NONE, T_NONE), "angle",
+             "The same angle over -PI and up to PI, like a yaw kept from growing as it turns.");
+    describe(add("Math", "MoveTowardsAngle", T_F, "tide_movetowardsangle_f", 3, T_F, T_F, T_F), "current, target, step",
+             "`current` turned at most `step` radians towards `target`, the short way round: `yaw = "
+             "Math.MoveTowardsAngle(yaw, wanted, turnSpeed * time.dt)`. It isn't wrapped: `Math.WrapAngle` does that.");
+    describe(add("Rect", "Contains", T_BOOL, "tide_rect_contains", 1, T_F2, T_NONE, T_NONE),
+             "point", "Whether the point is in the rect, like the pointer over a slot: its left and top edges are in, "
+             "its right and bottom ones out, so rects side by side share no point.");
+    describe(add("Rect", "Inset", T_RECT, "tide_rect_inset", 1, T_F, T_NONE, T_NONE),
+             "amount", "The rect with every edge moved in by `amount`, or out by one under 0, like a border's inside: "
+             "`Draw.Rect(slot.Inset(1), 4, fill)`. One too small is left with no size at its middle.");
     describe(add("Color", "WithAlpha", T_COLOR, "tide_color_with_alpha", 1, T_F, T_NONE, T_NONE),
              "alpha", "The color with this alpha, its red, green and blue as they are: `glow.WithAlpha(0.5 * fade)`.");
     describe(add("Rect", "MoveInside", T_RECT, "tide_rect_move_inside", 1, T_RECT, T_NONE, T_NONE),

@@ -343,6 +343,12 @@ static const field *field_of(const decl *d, const int i)
     return i < d->fields.count ? &d->fields.items[i] : &d->local_part->fields.items[i - d->fields.count];
 }
 
+static type numeric_role(const str role)
+{
+    return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2
+                  : str_eq_c(role, "float4") ? TY_FLOAT4 : str_eq_c(role, "int") ? TY_INT : TY_COLOR, NULL};
+}
+
 static void add_occ(occurrence o)
 {
     if (o.decl && o.decl->placement_of) o.decl = o.decl->placement_of;
@@ -1195,6 +1201,15 @@ static void walk_stmt(const stmt *s)
 static void walk_param(const param *p, const decl *d)
 {
     if (p->capture_source) return;
+    if (p->sample_role.len) {
+        const int at = token_at(p->at);
+        const afile *f = p->at.file >= 0 && p->at.file < A.file_count ? &A.files[p->at.file] : NULL;
+        if (f && at >= 0 && at + 3 < f->tok_count && f->toks[at].kind == T_LBRACKET) {
+            add_occ((occurrence){.at = f->toks[at + 1].at, .len = 3, .kind = OCC_ATTRIBUTE,
+                                 .name = str_from("Raw"), .param = p, .param_of = d});
+            type_written(f->toks[at + 3].at, f->toks[at + 3].at, p->sample_role, numeric_role(p->sample_role));
+        }
+    }
     if (p->mode == PARAM_QUERY) {
         const int keyword = token_at(p->at);
         if (keyword >= 0) A.files[p->at.file].query_keywords[keyword] = true;
@@ -1796,7 +1811,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_TEXTURE3D: return "A machine-local volume. Create Texture3D(int3 size[, Format format]), Sample(float3 uvw[, Filter[, Wrap]]) in GPU code, or read an exact cell with [int3]. Kernels write cells without mut; writes outside the volume go nowhere. Size is in texels; Resize(int3), Dispose() and contentRevision follow render targets. No mipmaps or slice drawing.";
     case TY_TEXTURE_ARRAY: return "A local reference to layers of images of one size, which a frag or vert reads by a uv and a layer, `Sample(uv, layer)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the array its call names. The layer is an int of any expression, and one past the layers reads the nearest. An asset's is the files a glob matches, in path order, or a list of paths, in its order: `asset TextureArray ground = \"art/ground/*.png\";`. `TextureArray(width, height, layers)` is one a view draws into, a layer at a time: `array.layers[0]` is a RenderTarget, and `array.depth` each layer's depth. On the CPU, `array.size` is a layer's pixels and `array.count` how many layers it has.";
     case TY_DEPTH_TEXTURE_ARRAY: return "A local reference to a TextureArray's depth, `array.depth`, each layer's, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv, layer)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, layer, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow's cascades want. A function they call takes one as a parameter, and reads the depths its call names. On the CPU, `size` is a layer's pixels and `count` how many layers it has.";
-    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's Color, float, float2, float4 or int outputs go to in order. Numeric outputs must fit their Format and replace the stored value without tint or alpha multiplication. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. Fields, lists, arrays, maps, parameters and results keep its stable asset ID; geometry stays shared and resolves on access. `Mesh(vertices, indices)` makes one of the game's own lists, a copy nothing changes after, which goes everywhere an asset's does.";
     case TY_FONT: return "A font text is drawn in, this machine's: `Font.Regular` (the engine's, and a `Font`'s default), `Font.Bold` (its bold weight, a file a game carries only when it says so), an `asset Font` of a TrueType file (`asset Font title = \"fonts/Title.ttf\";`), or one `Font.Decode(bytes)` read from a file's bytes as the game runs. `Draw.Text` and `Draw.MeasureText` take one after their other arguments, and `GUITheme.font` is the GUI's. A character a font has no glyph for is drawn in `Font.Regular`. The match can't use one.";
@@ -1876,8 +1891,29 @@ static const char *decl_what(const decl *d)
     return b.data;
 }
 
+static const char *format_member_doc(const str name)
+{
+    static const struct { const char *name, *doc; } formats[] = {
+        {"Rgba8", "Four unsigned byte channels (4 bytes per pixel). Takes Color outputs and Color clears; the default target format."},
+        {"Depth", "Depth and stencil without a color image. Use this as the target's only format."},
+        {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels, and a [Raw(float4)] read blends and reads mipmaps on every device; Color keeps its alpha and blend behavior."},
+        {"R8", "One unsigned byte channel (1 byte per pixel). Takes float outputs and clears, clamped to 0–1. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"Rg8", "Two unsigned byte channels (2 bytes per pixel). Takes float2 outputs and clears, clamped to 0–1. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"R16f", "One 16-bit float (2 bytes per pixel). Takes float outputs and clears. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"Rg16f", "Two 16-bit floats (4 bytes per pixel). Takes float2 outputs and clears. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"R32f", "One 32-bit float (4 bytes per pixel). Takes float outputs and clears, including values past one. Read through [Raw(float)] Texture at its nearest pixel on every device: no blending or mipmaps, and no array layers or cube faces (use R16f for those). One sample only; kernels can write it."},
+        {"Rgba32f", "Four 32-bit floats (16 bytes per pixel). Takes float4 outputs and clears, with four independent channels. Read through [Raw(float4)] Texture at its nearest pixel on every device: no blending or mipmaps, and no array layers or cube faces (use Rgba16f for those). One sample only; kernels can write it."},
+        {"R32i", "One signed 32-bit integer (4 bytes per pixel). Takes int outputs and clears, exactly. Read through [Raw(int)] Texture with Point sampling. One sample only; kernels can write it."},
+    };
+    for (size_t i = 0; i < sizeof formats / sizeof formats[0]; i++) {
+        if (str_eq_c(name, formats[i].name)) return formats[i].doc;
+    }
+    return NULL;
+}
+
 static void format_param(const param *p, sb *out)
 {
+    if (p->sample_role.len) sb_printf(out, "[Raw(" STR_FMT ")] ", STR_ARG(p->sample_role));
     if (p->mode == PARAM_QUERY) {
         sb_put(out, "query (");
         for (int i = 0; i < p->query.count; i++) {
@@ -2172,6 +2208,8 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
 static const method_form scene_calls[] = {
     {"Load", "Scene.Load(scene, components...)",
      "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
+    {"Switch", "Scene.Switch(scene, components...)",
+     "Unloads every scene loaded in this world, then loads this one and returns its entity, at the end of the tick. Entities in no scene stay."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
     {"IsPrepared", "Scene.IsPrepared(scene[, player]) -> bool",
      "Whether this machine has prepared the scene, or the server has acknowledged a player's readiness. Games choose their own waiting and timeout policy."},
@@ -2442,7 +2480,7 @@ static const method_form cube_calls[] = {
 };
 
 static const method_form volume_calls[] = {
-    {"Sample", "Sample(float3 uvw, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Bilinear blends all three axes. Point reads one cell; volumes have no mipmaps."},
+    {"Sample", "Sample(float3 uvw, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Color volumes blend all three axes. A typed Raw volume returns its declared float, float2, float4 or int and reads the nearest cell; only Filter.Point is accepted. Volumes have no mipmaps."},
     {"Resize", "Resize(int3 size)", "Changes the volume size in texels, discarding contents. Copies share the resource."},
     {"Dispose", "Dispose()", "Releases this volume and leaves all references empty."},
 };
@@ -2482,7 +2520,8 @@ static const method_form depth_array_calls[] = {
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
-    {"Read", "Read() -> Grid2<Color> fails IOError", "Await in local async code for an owned copy of the first resolved color image, a frame or more later. Straight Color values, including HDR. At most 4,000,000 pixels; device loss fails."},
+    {"Read", "Read<T>([int image]) -> Grid2<T> fails IOError", "Await in local async code for an owned copy of one resolved color image, a frame or more later: `await target.Read()` its first, `Read(1)` its second, with a constant int. Without `<T>` it's a `Grid2<Color>` of an Rgba8 or Rgba16f image, straight Color values, including HDR. An image of numbers is read as its own type, bit for bit: `Read<float>()` for R8, R16f and R32f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f (and an Rgba16f image's four numbers as stored), `Read<int>()` for R32i. The target's formats must be fixed where it's made. A cube's face and an array's layer are read the same way: `await cube.faces[0].Read()`. At most 4,000,000 pixels; device loss fails."},
+    {"ReadDepth", "ReadDepth() -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. At most 4,000,000 pixels; device loss fails."},
 };
 
 #define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
@@ -2931,7 +2970,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
                 : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl->asset_ref_geometry || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP
-                  || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY ? type_name(t)
+                  || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2956,6 +2995,12 @@ static void format_method(const method_form *form, const type t, sb *out)
         else if (*p == 'V' && alone) sb_put(out, value);
         else sb_putn(out, p, 1);
     }
+}
+
+static void format_numeric_sample(const type image, const type result, sb *out)
+{
+    sb_printf(out, "%s.Sample(float%d uv, Filter filter = Filter.Point, Wrap wrap = Wrap.Clamp) -> %s",
+              type_name(image), image.kind == TY_TEXTURE3D ? 3 : 2, type_name(result));
 }
 
 static const method_form *find_form(const method_form *forms, const size_t count, const str name)
@@ -3121,7 +3166,7 @@ static void describe_shader(const decl *d, sb *out)
         hands |= p->type.kind == TY_STRUCT && p->is_out;
     }
     sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw.%s(..., "
-                                STR_FMT ")`, a %s one. What it writes to its `out Color` is the pixel."
+                                STR_FMT ")`, a %s one. Its `out` parameters write the target's images in order."
                               : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw.%s(..., "
                                 STR_FMT ")`, a %s one. It changes the vertex in place, before its triangles are drawn.",
               instanced ? "Instanced" : "Mesh", STR_ARG(d->name), three_d ? "3D" : "2D");
@@ -3188,6 +3233,15 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     if (index == 0) {
         sb_put(out, "\n\nThe vertex the vert runs for, which it changes in place: what it leaves in it is what the "
                     "triangle is drawn with, and what a frag reads of it, blended.");
+        return;
+    }
+    if (p->is_out && d->is_frag && p->type.kind != TY_COLOR) {
+        static const char *const which[] = {"first", "second", "third", "fourth"};
+        const int at = p->output < 4 ? p->output : 3;
+        sb_printf(out, "\n\nThe frag's %s output: numbers written into the image at `target.colors[%d]`. "
+                       "Its type must match that image's format. It replaces the stored value, whatever blend is set, "
+                       "with no tint or alpha multiplication. It starts with no value: write it on every path that ends, "
+                       "before reading it. An output with no image in its place goes nowhere.", which[at], at);
         return;
     }
     if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR && d->is_frag && p->output > 0) {
@@ -3697,6 +3751,10 @@ static void describe(const occurrence *o, sb *out)
             for (int a = 0; a < o->decl->attributes.count; a++) {
                 if (str_eq_c(o->decl->attributes.items[a].name, "Retarget")) sb_put(out, "\n\n" RETARGET_ATTRIBUTE_DOC);
             }
+            if (o->decl->sample_linear) {
+                sb_put(out, "\n\nIt's `[Linear]`: sRGB color storage, sampled and filtered in linear light. "
+                            "Alpha is unchanged. Keep it in `[Linear]` fields or borrow its source in a read-only GPU helper.");
+            }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them. It can initialize "
                             "`[Raw] Texture` fields and be borrowed by GPU sampling and metadata helpers, preserving the "
@@ -3744,6 +3802,12 @@ static void describe(const occurrence *o, sb *out)
         format_param(o->param, &code);
         code_block(out, code.data);
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
+        if (o->param->sample_role.len) {
+            sb_put(out, "\n\nA numeric image borrowed from its caller, with the same declared role. Sample returns its "
+                        "declared type with no alpha conversion, and reads the nearest cell unless it names a filter. "
+                        "R8, Rg8, R16f, Rg16f and Rgba16f images blend and read mipmaps (SampleLevel, SampleGrad); "
+                        "32-bit float and int images are nearest only.");
+        }
         if (o->param->mode == PARAM_QUERY) {
             if (o->param->function_param) {
                 sb_put(out, "\n\nA query borrowed from the caller for this call. The caller's selection, "
@@ -4000,6 +4064,12 @@ static void describe(const occurrence *o, sb *out)
         } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Draw") && str_eq_c(o->name, "Blit")) {
             code_block(out, BLIT_FORM);
             sb_put(out, "\n\n" BLIT_DOC);
+        } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Draw") && str_eq_c(o->name, "Clear")
+                   && o->object_type.kind == TY_RENDER_TARGET) {
+            code_block(out, "RenderTarget.Clear(value image0[, value image1, value image2, value image3]) -> void");
+            sb_put(out, "\n\nSupply one Color, float, float2, float4 or int per image, in format order. Floats may exceed one, "
+                        "and numeric values are not tinted or premultiplied. A single Color retains broadcast clearing for "
+                        "ordinary color targets. Also resets depth and stencil within the destination's clip.");
         } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Session")) {
             for (size_t i = 0; i < sizeof session_calls / sizeof session_calls[0]; i++) {
                 if (!str_eq_c(o->name, session_calls[i].name)) continue;
@@ -4101,10 +4171,16 @@ static void describe(const occurrence *o, sb *out)
                 && retarget_bake_catalog_result(o->type))
                 form = &retarget_map_calls[2];
             if (!form) break;
+            const bool numeric = (o->object_type.kind == TY_TEXTURE || o->object_type.kind == TY_TEXTURE3D)
+                              && str_eq_c(o->name, "Sample") && o->type.kind != TY_COLOR && o->type.kind != TY_ERROR;
             if (o->object_type.kind == TY_WORLD) format_world_method(form, o->component, &code);
+            else if (numeric)
+                format_numeric_sample(o->object_type, o->type, &code);
             else format_method(form, o->object_type, &code);
             code_block(out, code.data);
-            sb_printf(out, "\n\n%s", form->doc);
+            sb_printf(out, "\n\n%s", numeric ? "Reads the nearest cell as the declared numeric type, without alpha conversion. "
+                      "The filter is implicit or explicit Filter.Point; other filters and mipmaps are unsupported. "
+                      "Wrap.Clamp, Wrap.Repeat and Wrap.Mirror apply to every axis." : form->doc);
         }
         break;
     case OCC_MEMBER:
@@ -4238,6 +4314,12 @@ static void describe(const occurrence *o, sb *out)
              "This field's key in JSON, where it isn't the field's name: `[Json(\"max_players\")] int maxPlayers;`. "
              "`Json.Read` fills the field from that key and `Json.Write` writes it under it. It goes before a struct's "
              "field, and no two fields of a struct have one key."},
+            {"Linear", "[Linear]",
+             "This Texture, TextureArray or Cubemap stores sRGB color and GPU reads return linear light. Filtering and "
+             "mipmaps operate in linear light; alpha stays coverage. It goes before one asset or a resource field, "
+             "not parameters or locals. Keep values in [Linear] fields, or borrow their source in a read-only GPU "
+             "helper. Color grids and RGBA8 runtime images can initialize marked fields. Float, single-channel, "
+             "depth and numeric formats have no sRGB counterpart. [Raw] and [Linear] cannot be combined."},
             {"Raw", "[Raw]",
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
              "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
@@ -4246,7 +4328,11 @@ static void describe(const occurrence *o, sb *out)
              "fields. `[Raw] Texture` fields accept Raw Texture or Raw Grid2<Color> assets and fields, or `default`, "
              "and keep their Raw role. A frag or a vert samples them directly or through GPU sampling and metadata "
              "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
-             "escape to ordinary Texture storage, CPU arguments or returns, or draws."},
+             "escape to ordinary Texture storage, CPU arguments or returns, or draws. "
+             "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
+             "the image's numeric Sample result; a TextureArray or Cubemap takes the three float roles. Typed images read "
+             "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
+             "every device, 32-bit float and int images are nearest only. The role must fit their format."},
             {"Lossless", "[Lossless]",
              "Keeps this `Texture` asset's pixels exact in the pack, a byte a channel. Without it, an image whose sides are "
              "powers of two and at least 128 pixels is block-compressed as the game is built (BC1, or BC3 with alpha), "
@@ -4274,6 +4360,8 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(&code, STR_FMT "." STR_FMT " = %lld", STR_ARG(o->decl->name), STR_ARG(m->name), (long long)m->number);
             code_block(out, code.data);
             sb_printf(out, "\n\nMember of enum `" STR_FMT "`.", STR_ARG(o->decl->name));
+            if (o->decl == A.prog->format && format_member_doc(m->name))
+                sb_printf(out, " %s", format_member_doc(m->name));
         }
         break;
     case OCC_NAMESPACE: {
@@ -5141,6 +5229,11 @@ static void namespace_actions(const int start_line, const int end_line, jbuf *ou
 static const char *filler(const decl *code, const param *p)
 {
     if (is_shader(code) && p->place) return "this.clip";
+    if (is_shader(code) && code->is_frag) {
+        if (p->type.kind == TY_FLOAT || p->type.kind == TY_INT) return "0";
+        if (p->type.kind == TY_FLOAT2) return "float2(0)";
+        if (p->type.kind == TY_FLOAT4) return "float4(0)";
+    }
     return is_shader(code) && code->is_frag && p->type.kind == TY_COLOR ? "Color.white" : "default";
 }
 
@@ -7200,6 +7293,10 @@ static type member_type(const type t, const str member)
                               || str_eq_c(member, "height"))) {
         return (type){TY_FLOAT, NULL};
     }
+    if (t.kind == TY_COLOR && str_eq_c(member, "rgb")) return (type){TY_FLOAT3, NULL};
+    if (t.kind == TY_RECT && (str_eq_c(member, "position") || str_eq_c(member, "size") || str_eq_c(member, "center"))) {
+        return (type){TY_FLOAT2, NULL};
+    }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
     if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
     if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
@@ -7291,6 +7388,13 @@ static void add_target_member(void *user, const builtin_member *m)
 {
     if (!m->is_function || strcmp(m->name, "Blit") == 0) return;
     completion *c = user;
+    if (strcmp(m->name, "Clear") == 0) {
+        item(c, m->name, CK_METHOD, "void Clear(value image0[, value image1, value image2, value image3])",
+             "Clears one value per target image in format order: Color, float, float2, float4 or int, matching its format. "
+             "Float values may exceed one; integers stay integers. A single Color retains the broadcast clear for ordinary color targets. "
+             "Also resets depth and stencil within the clip.", m->snippet);
+        return;
+    }
     item(c, m->name, CK_METHOD, m->detail, m->doc, m->snippet);
 }
 
@@ -7436,7 +7540,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             item(c, "colors", CK_PROPERTY, "Texture, by its number",
                  "The target's color images, in the order of the formats it was made with: `colors[1]` is its second, "
-                 "as a Texture, and `colors[0]` is `color`. A frag's `out Color` parameters go to them in that order.",
+                 "as a Texture, and `colors[0]` is `color`. A frag's `out Color` parameters go to them in that order. "
+                 "`colors.count` is how many it holds.",
                  "colors[$1]");
         }
         item(c, "depth", CK_PROPERTY, "DepthTexture",
@@ -7445,7 +7550,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             for (size_t i = 0; i < sizeof target_calls / sizeof target_calls[0]; i++)
                 item(c, target_calls[i].name, CK_METHOD, target_calls[i].form, target_calls[i].doc,
-                     i == 0 ? "Resize($1, $2)" : strcmp(target_calls[i].name, "Read") == 0 ? "Read()" : "Dispose()");
+                     i == 0 ? "Resize($1, $2)" : strcmp(target_calls[i].name, "Read") == 0 ? "Read()"
+                     : strcmp(target_calls[i].name, "ReadDepth") == 0 ? "ReadDepth()" : "Dispose()");
         }
         if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) {
             builtin_list_members(str_from("Draw"), add_target_member, c); // The window's, as its own
@@ -7687,6 +7793,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "g", CK_PROPERTY, "float", "Green, 0 to 1.", NULL);
         item(c, "b", CK_PROPERTY, "float", "Blue, 0 to 1.", NULL);
         item(c, "a", CK_PROPERTY, "float", "Alpha, 0 to 1.", NULL);
+        item(c, "rgb", CK_PROPERTY, "float3", "Red, green and blue as a vector, without the alpha. Read only.", NULL);
     }
     if (t.kind == TY_LIST) item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
     if (t.kind == TY_MAP || t.kind == TY_SET) item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
@@ -7703,6 +7810,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "y", CK_PROPERTY, "float", "The top side, from the screen's top.", NULL);
         item(c, "width", CK_PROPERTY, "float", NULL, NULL);
         item(c, "height", CK_PROPERTY, "float", NULL, NULL);
+        item(c, "position", CK_PROPERTY, "float2", "Its top left corner: (x, y). Read only.", NULL);
+        item(c, "size", CK_PROPERTY, "float2", "Its width and height. Read only.", NULL);
+        item(c, "center", CK_PROPERTY, "float2", "Its middle. Read only.", NULL);
     }
     if (t.kind == TY_QUATERNION) item(c, "value", CK_PROPERTY, "float4", "(x, y, z) is the vector part.", NULL);
     const int n = matrix_dim(t);
@@ -7800,6 +7910,35 @@ static bool changes_match(const scope *sc)
     if (sc->decl->kind == DECL_SYSTEM) return !sc->decl->is_view && !sc->decl->is_local;
     return (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD) && !sc->decl->is_operator
         && !sc->decl->is_interpolate && !sc->decl->is_audio;
+}
+
+// A half-written Sample can have no expression tree yet. Recover its declared image role from the
+// receiver's field chain, so signature help and member completion do not turn numeric images into colors.
+static type numeric_receiver(const int dot, const loc at)
+{
+    const type color = {TY_COLOR, NULL};
+    if (dot < 1 || DOC->toks[dot - 1].kind != T_IDENT) return color;
+    const occurrence *o = occurrence_at(DOC->toks[dot - 1].at);
+    if (o && o->field) return raw_sample_type(o->field);
+    if (o && o->param && o->param->sample_role.len) {
+        return numeric_role(o->param->sample_role);
+    }
+    int first = dot - 1;
+    while (first >= 2 && DOC->toks[first - 1].kind == T_DOT && DOC->toks[first - 2].kind == T_IDENT) first -= 2;
+    const scope sc = scope_at(at);
+    const param *p = NULL;
+    type owner = name_type(&sc, DOC->toks[first].text, &p);
+    if (first == dot - 1 && p && p->sample_role.len) return numeric_role(p->sample_role);
+    const field *image = NULL;
+    for (int k = first + 2; k < dot && owner.kind != TY_ERROR; k += 2) {
+        image = NULL;
+        for (int i = 0; owner.decl && i < owner.decl->fields.count + local_field_count(owner.decl); i++) {
+            const field *f = field_of(owner.decl, i);
+            if (str_eq(f->name, DOC->toks[k].text)) { image = f; break; }
+        }
+        owner = member_type(owner, DOC->toks[k].text);
+    }
+    return image ? raw_sample_type(image) : color;
 }
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
@@ -7962,7 +8101,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             for (int m = 0; m < d->members.count; m++) {
                 char value[32];
                 snprintf(value, sizeof value, "%lld", (long long)d->members.items[m].number);
-                item(c, str_to_cstr(d->members.items[m].name), CK_ENUM_MEMBER, value, NULL, NULL);
+                item(c, str_to_cstr(d->members.items[m].name), CK_ENUM_MEMBER, value,
+                     d == A.prog->format ? format_member_doc(d->members.items[m].name) : NULL, NULL);
             }
             if (ids[n - 1] == 0 || DOC->toks[ids[n - 1] - 1].kind != T_CASE) {
                 item(c, "Count()", CK_METHOD, "Count() -> int",
@@ -8058,6 +8198,37 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     }
     // input.jump.down or input.aim.fire.down, including borrowed helper input.
     const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
+    const type numeric = numeric_receiver(dot, at);
+    if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D) && numeric.kind != TY_COLOR) {
+        const bool sample = gpu || (sc.decl && (sc.decl->gpu_only || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD));
+        if (sample) {
+            sb label = {0};
+            format_numeric_sample(t, numeric, &label);
+            item(c, "Sample", CK_METHOD, label.data,
+                 "Reads its declared numeric type, without alpha conversion: the nearest cell, or blended where a filter is named and the format blends on every device (R8, Rg8, R16f, Rg16f, Rgba16f).",
+                 "Sample($1)");
+            if (t.kind == TY_TEXTURE && numeric.kind != TY_INT) { // The formats every device blends have mipmaps too
+                sb level = {0}, grad = {0};
+                sb_printf(&level, "Texture.SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> %s",
+                          type_name(numeric));
+                sb_printf(&grad, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> %s",
+                          type_name(numeric));
+                item(c, "SampleLevel", CK_METHOD, level.data,
+                     "Reads a mip level of an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type: 0 is the image "
+                     "itself, each level after it half the size, made of what was drawn.", "SampleLevel($1)");
+                item(c, "SampleGrad", CK_METHOD, grad.data,
+                     "Reads an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type with the uv's change a pixel "
+                     "across and down, which picks the mip level. In a frag.", "SampleGrad($1)");
+            }
+        }
+        item(c, "size", CK_PROPERTY, t.kind == TY_TEXTURE3D ? "int3" : "int2", "The image's size in texels, or zeros for no image.", NULL);
+        if (!gpu && t.kind == TY_TEXTURE3D) {
+            item(c, "Resize", CK_METHOD, "Texture3D.Resize(int3 size)", volume_calls[1].doc, "Resize($1)");
+            item(c, "Dispose", CK_METHOD, "Texture3D.Dispose()", volume_calls[2].doc, "Dispose()");
+            item(c, "contentRevision", CK_PROPERTY, "long", "Changes when the volume's contents are discarded.", NULL);
+        }
+        return;
+    }
     list_members(c, t, edges, &sc);
     // f.since.: a match field that blends snaps alone, where match code changes it
     if (n >= 2 && (owner.kind == TY_COMPONENT || owner.kind == TY_SINGLETON) && owner.decl && !owner.decl->is_local
@@ -8924,6 +9095,7 @@ static void put_type_here(sb *out, const type t, const str written)
 
 static void put_param_here(sb *out, const param *p)
 {
+    if (p->sample_role.len) sb_printf(out, "[Raw(" STR_FMT ")] ", STR_ARG(p->sample_role));
     if (p->mode == PARAM_QUERY) {
         sb_put(out, "query (");
         for (int i = 0; i < p->query.count; i++) {
@@ -9060,6 +9232,11 @@ static void complete_shader_header(completion *c, const int open, const int last
         if (frag) {
             item(c, "Color", CK_STRUCT,
                  "A color the frag writes: the pixel's, then one for each color image after its target's first", NULL, NULL);
+            static const char *const outputs[] = {"float", "float2", "float4", "int"};
+            for (size_t i = 0; i < sizeof outputs / sizeof outputs[0]; i++) {
+                item(c, outputs[i], CK_STRUCT, "Numbers written into the next target image",
+                     "The output's type must fit its image's Format. Numbers replace what's there, with no tint or alpha multiplication.", NULL);
+            }
             return;
         }
         bool places = false; // It has its `out float4` already
@@ -9086,7 +9263,7 @@ static void complete_shader_header(completion *c, const int open, const int last
     }
     if (frag && !writes) item(c, "out", CK_KEYWORD, "out Color color: the pixel's color, which the frag writes", NULL, NULL);
     if (frag && writes) {
-        item(c, "out", CK_KEYWORD, "out Color glow: one more color the frag writes, into the next color image of its target",
+        item(c, "out", CK_KEYWORD, "out Color glow: one more color the frag writes, into the next color image of its target; float, float2, float4 and int write numbers",
              NULL, NULL);
     }
     if (!frag) {
@@ -10324,6 +10501,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Linear", CK_FUNCTION, "[Linear]",
+                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
+                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "Marks Texture or Grid2<Color> assets and fields as numeric data. [Raw] Texture fields keep their Raw role; "
                  "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
@@ -10363,10 +10543,16 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Linear", CK_FUNCTION, "[Linear]",
+                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
+                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "Marks Texture fields or Grid2<Color> fields as numeric data. [Raw] Texture fields accept Raw Texture or "
                  "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "
-                 "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values.", "Raw");
+                 "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values. "
+                 "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture/Texture3D fields or read-only GPU helper parameters declare "
+                 "numeric Sample results; TextureArray and Cubemap fields take the float roles. Reads are nearest unless a filter is "
+                 "named; 32-bit float and int images are nearest only.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");
@@ -10377,6 +10563,13 @@ void analysis_completion(const int line, const int character, jbuf *out)
         break;
 
     case CTX_FIELD_ATTRIBUTE_ARGS: // Constant bounds, like a default value
+        if (f.open >= 1 && str_eq_c(DOC->toks[f.open - 1].text, "Raw")) {
+            static const char *const types[] = {"float", "float2", "float4", "int"};
+            for (size_t i = 0; i < sizeof types / sizeof types[0]; i++)
+                item(&c, types[i], CK_STRUCT, "The numeric type this image stores and Sample returns",
+                     "Typed numeric images read the nearest cell unless a Sample names a filter. Float images in R8, Rg8, R16f, Rg16f or Rgba16f blend and have mipmaps; int and 32-bit float images are nearest only.", NULL);
+            break;
+        }
         complete_value_types(&c, VT_VALUES);
         item(&c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
         break;
@@ -12078,7 +12271,7 @@ static const struct {
     {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
                       "RenderTarget(float width, float height, Format formats...)",
                       "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"},
-     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Rgba8` is 4 bytes a pixel and `Format.Rgba16f` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.Depth`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Last, by name, its samples: `RenderTarget(width, height, samples: 4)` draws each pixel with 4 samples (1, 2, 4 or 8; a device with fewer draws it with what it has), which smooths the edges of the triangles drawn into it, for that many times the memory; its color is read as any target's, and its depth isn't a frag's to read. Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Window()` is one that's always the window's size."},
+     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Rgba8` is 4 bytes a pixel and `Format.Rgba16f` four floats, which keep any number. A frag's outputs go to them in order, with Color, float, float2, float4 and int matched to the image's format, and `target.colors[1]` reads the second. `Format.Depth`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Last, by name, its samples: `RenderTarget(width, height, samples: 4)` draws each pixel with 4 samples (1, 2, 4 or 8; a device with fewer draws it with what it has), which smooths the edges of the triangles drawn into it, for that many times the memory; its color is read as any target's, and its depth can be read afterwards. Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Window()` is one that's always the window's size."},
     {"Cubemap", {"Cubemap(float size)", "Cubemap(float size, Format format)"},
      "A Cubemap that's drawn into: six square images of `size` pixels a side, each a destination, `cube.faces[0]` "
      "to `cube.faces[5]` in the order +x, -x, +y, -y, +z, -z, with depth of its own, and all six what a frag "
@@ -12086,7 +12279,7 @@ static const struct {
      "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or `Format.Rgba16f`, floats that keep "
      "any number. It starts black; copies share it, and `Dispose()` lets it go."},
     {"Texture3D", {"Texture3D(int3 size)", "Texture3D(int3 size, Format format)"},
-     "Creates a machine-local volume of the given size in texels. Rgba8 by default; no mipmaps. Fill it with a compute kernel."},
+     "Creates a machine-local volume of the given size in texels. Rgba8 by default; Rgba16f, R32f, Rgba32f and R32i are portable writable formats. Typed Raw fields sample numeric values at the nearest cell, without mipmaps. Fill it with a compute kernel."},
     {"TextureArray", {"TextureArray(float width, float height, int layers)",
                       "TextureArray(float width, float height, int layers, float pixelsPerUnit)",
                       "TextureArray(float width, float height, int layers, Format format)",
@@ -12664,6 +12857,8 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
         } else if (str_eq_c(name, "Retarget")) {
             add_signature(&s, RETARGET_ATTRIBUTE_FORM, RETARGET_ATTRIBUTE_DOC);
+        } else if (str_eq_c(name, "Raw")) {
+            add_signature(&s, "Raw(type)", "On Texture/Texture3D fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type; TextureArray and Cubemap fields take the float roles. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps, int and 32-bit float images are nearest only. Bare Raw retains its existing numeric-channel role.");
         }
     } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
         const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];
@@ -12728,6 +12923,18 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             builtin_signatures(str_from("string"), name, visit_signature, &s);
         } else if (t.kind == TY_STRUCT && t.decl == A.prog->random) {
             builtin_signatures(str_from("Random"), name, visit_signature, &s);
+        } else if (t.kind == TY_RENDER_TARGET && str_eq_c(name, "Clear")) {
+            for (int count = 1; count <= 4; count++) {
+                sb label = {0};
+                sb_put(&label, "RenderTarget.Clear(");
+                for (int i = 0; i < count; i++) sb_printf(&label, "%svalue image%d", i ? ", " : "", i);
+                sb_put(&label, ") -> void");
+                s.picked = count == commas + 1;
+                add_signature(&s, label.data,
+                              "One value per image in format order: Color, float, float2, float4 or int, matching the format. "
+                              "Float clears may exceed one. A single Color preserves the broadcast clear for ordinary color targets. "
+                              "Depth and stencil also reset within the clip.");
+            }
         } else if (t.kind == TY_RENDER_TARGET && !form) {
             builtin_signatures(str_from("Draw"), name, visit_signature, &s); // A target has the window's methods
         } else if (form && t.kind == TY_WORLD) {
@@ -12744,6 +12951,11 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
                     s.picked = i == (retarget_bake_catalog_result(called->type) ? 2u : 1u);
                 add_signature(&s, label.data, forms[i].doc);
             }
+        } else if (form && (t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D) && str_eq_c(name, "Sample")
+                   && numeric_receiver(callee - 1, at).kind != TY_COLOR) {
+            sb label = {0};
+            format_numeric_sample(t, numeric_receiver(callee - 1, at), &label);
+            add_signature(&s, label.data, "Reads the declared numeric type with no alpha conversion: the nearest cell, or blended with a named filter where the format blends on every device (R8, Rg8, R16f, Rg16f, Rgba16f). SampleLevel and SampleGrad read those formats' mipmaps.");
         } else if (form) {
             sb label = {0};
             format_method(form, t, &label);

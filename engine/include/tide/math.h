@@ -204,6 +204,63 @@ float tide_log2_f(float x);
 float tide_log10_f(float x);
 float tide_pow_f(float x, float y);
 
+// sRGB transfer functions. RGB is bounded to [0,1]; NaN maps to zero. Both ends are exact: 0 gives 0 and 1 gives
+// 1, said outright for 1, as 1.055f * 1 - 0.055f rounds to the float under it (and a GPU's pow of 1 needn't be 1:
+// the shader helper says the same), so white stays white through either function and through both.
+static inline float tide_tolinear_f(const float value)
+{
+    const float x = tide_saturate_f(value);
+    return x >= 1.0f ? 1.0f : x <= 0.04045f ? x / 12.92f : tide_pow_f((x + 0.055f) / 1.055f, 2.4f);
+}
+static inline float tide_todisplay_f(const float value)
+{
+    const float x = tide_saturate_f(value);
+    return x >= 1.0f ? 1.0f : x <= 0.0031308f ? x * 12.92f : 1.055f * tide_pow_f(x, 1.0f / 2.4f) - 0.055f;
+}
+
+// Math.MoveTowards: `current` a step of at most `step` closer to `target`, never past it. A step that isn't
+// a number, or a `current` that isn't one, gives `target`; a step under 0 moves away, as Unity's does.
+static inline float tide_movetowards_f(const float current, const float target, const float step)
+{
+    const float delta = target - current;
+    const float distance = delta < 0.0f ? -delta : delta;
+    if (!(distance > step)) return target;
+    return current + (delta < 0.0f ? -step : step);
+}
+
+// Math.DeltaAngle: the shortest turn from one angle to another, in radians, over -PI and up to PI. Angles a
+// whole number of turns apart are the same. An angle that isn't a number, or is infinite, gives 0.
+static inline float tide_deltaangle_f(const float from, const float to)
+{
+    const float delta = to - from;
+    float turn = delta - tide_floor_f(delta / TIDE_TAU_F) * TIDE_TAU_F;
+    if (!(turn >= 0.0f && turn <= TIDE_TAU_F)) return 0.0f;
+    if (turn > TIDE_PI_F) turn -= TIDE_TAU_F;
+    return turn;
+}
+
+// Math.WrapAngle: the same angle over -PI and up to PI.
+static inline float tide_wrapangle_f(const float angle) { return tide_deltaangle_f(0.0f, angle); }
+
+// Math.MoveTowardsAngle: MoveTowards the short way round. What it gives isn't wrapped: it's `current` plus
+// or minus the step, or `target`'s direction as `current` plus the turn to it.
+static inline float tide_movetowardsangle_f(const float current, const float target, const float step)
+{
+    return tide_movetowards_f(current, current + tide_deltaangle_f(current, target), step);
+}
+
+// Math.Damp's share of the way to go in `dt` seconds at `rate` a second: 1 - Exp(-rate * dt), from 0 to 1.
+// The same wherever a frame's or a tick's seconds fall. A product under 0, or that isn't a number, is 0.
+static inline float tide_damp_share(const float rate, const float dt)
+{
+    return tide_saturate_f(1.0f - tide_exp_f(-(rate * dt)));
+}
+static inline float tide_damp_f(const float current, const float target, const float rate, const float dt)
+{
+    return current + (target - current) * tide_damp_share(rate, dt);
+}
+
+
 // ---------------------------------------------------------------------------
 // Scalars: double. The same operation order, with IEEE binary64 precision.
 
@@ -941,6 +998,45 @@ static inline tide_float3 tide_rotate_q(const tide_quaternion q, const tide_floa
 static inline tide_float3 tide_forward_q(const tide_quaternion q) { return tide_rotate_q(q, tide_f3(0.0f, 0.0f, 1.0f)); }
 static inline tide_float3 tide_up_q(const tide_quaternion q) { return tide_rotate_q(q, tide_f3(0.0f, 1.0f, 0.0f)); }
 static inline tide_float3 tide_right_q(const tide_quaternion q) { return tide_rotate_q(q, tide_f3(1.0f, 0.0f, 0.0f)); }
+
+
+static inline tide_float3 tide_tolinear_f3(const tide_float3 v)
+{
+    return tide_f3(tide_tolinear_f(v.x), tide_tolinear_f(v.y), tide_tolinear_f(v.z));
+}
+static inline tide_float3 tide_todisplay_f3(const tide_float3 v)
+{
+    return tide_f3(tide_todisplay_f(v.x), tide_todisplay_f(v.y), tide_todisplay_f(v.z));
+}
+
+// Math.MoveTowards and Math.Damp of points: along the straight line between them.
+static inline tide_float2 tide_movetowards_f2(const tide_float2 current, const tide_float2 target, const float step)
+{
+    const tide_float2 delta = tide_f2(target.x - current.x, target.y - current.y);
+    const float distance = tide_sqrt_f(delta.x * delta.x + delta.y * delta.y);
+    if (!(distance > step) || !(distance > 0.0f)) return target;
+    const float share = step / distance;
+    return tide_f2(current.x + delta.x * share, current.y + delta.y * share);
+}
+static inline tide_float3 tide_movetowards_f3(const tide_float3 current, const tide_float3 target, const float step)
+{
+    const tide_float3 delta = tide_f3(target.x - current.x, target.y - current.y, target.z - current.z);
+    const float distance = tide_sqrt_f(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+    if (!(distance > step) || !(distance > 0.0f)) return target;
+    const float share = step / distance;
+    return tide_f3(current.x + delta.x * share, current.y + delta.y * share, current.z + delta.z * share);
+}
+static inline tide_float2 tide_damp_f2(const tide_float2 current, const tide_float2 target, const float rate, const float dt)
+{
+    const float share = tide_damp_share(rate, dt);
+    return tide_f2(current.x + (target.x - current.x) * share, current.y + (target.y - current.y) * share);
+}
+static inline tide_float3 tide_damp_f3(const tide_float3 current, const tide_float3 target, const float rate, const float dt)
+{
+    const float share = tide_damp_share(rate, dt);
+    return tide_f3(current.x + (target.x - current.x) * share, current.y + (target.y - current.y) * share,
+                   current.z + (target.z - current.z) * share);
+}
 
 // Rotation of `angle` radians around a normalized axis.
 static inline tide_quaternion tide_axisangle_q(const tide_float3 axis, const float angle)

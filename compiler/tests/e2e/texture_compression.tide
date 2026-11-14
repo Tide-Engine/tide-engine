@@ -1,3 +1,8 @@
+[Linear] asset Texture linearOpaque = "texture_compression_assets/opaque.png";
+[Linear] asset Texture linearAlpha = "texture_compression_assets/alpha.png";
+[Linear, Lossless] asset Texture linearExact = "texture_compression_assets/alpha.png";
+[Linear] asset Texture linearSmall = "texture_compression_assets/small.png";
+[Linear] asset Texture linearAuthored = "texture_compression_assets/authored.dds";
 asset Texture opaque = "texture_compression_assets/opaque.png";
 asset Texture alpha = "texture_compression_assets/alpha.png";
 [Raw]

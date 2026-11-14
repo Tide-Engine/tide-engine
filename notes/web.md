@@ -1,3 +1,17 @@
+## [Linear] images (2026-11-14)
+
+WebGPU uploads `TIDE_GPU_SRGBA8` as rgba8unorm-srgb; private GPU color 10 is the same sRGB attachment format
+for converted target sources only. Public target formats and screen behavior do not change. BC1/BC3 and
+RGBA authored chains carry a transient `TIDE_BLOCKS_SRGB` bit and select the corresponding unorm-srgb format;
+unsupported BC uses the existing whole-chain decoded RGBA fallback with the bit retained. Mip passes sample
+linear values and write sRGB attachments, so averaging occurs in linear light. Grid arrays use the sRGB
+format in the same partial-write path. The release runtime is regenerated with cmake/web_runtime.mjs.
+Private target-copy lifetimes and static capture roles are in rendering.md. Integrated pass 33's 16 marked-image
+cases pass web-debug SwiftShader WebGPU, including prewarming/device loss, changed target colors and copied
+mips, as well as native ASan Vulkan with validation. Runtime audit confirms that unsupported BC whole-chain
+RGBA fallback retains its sRGB upload flag; GPU-none reaches its existing no-op RGBA fallback safely.
+No hardware-WebGPU or other-device coverage is claimed here.
+
 # Fixed-frame GPU reads (2026-11-14)
 
 Hidden fixed-size canvases (init_canvas resizable=false, used by headless fixtures) defer the next WASM frame

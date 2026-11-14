@@ -37,9 +37,18 @@ typedef struct index_key {
     const bound *hi;  // ...and key <= hi (NULL: no upper bound)
 } index_key;
 
+// The whole numbers of one exact key at most (TIDE_INDEX_EXACT, tide/index.h), and the keys of a plan at most:
+// those, then up to three doubles beside them
+#define INDEX_EXACT_MOST 8
+#define INDEX_KEYS_MOST (INDEX_EXACT_MOST + 3)
+
 typedef struct loop_index {
-    index_key keys[3]; // One to three keys: a grid over a vector's components, or one key sorted
+    // One to three keys: a grid over a vector's components, or one key sorted. With `exact`, the first `exact` are
+    // whole numbers (integers, enums, bools, chars) the guard says are each equal to one value, found as one exact
+    // key (tide_index_find_exact), and up to three more are doubles bounded beside them
+    index_key keys[INDEX_KEYS_MOST];
     int count;
+    int exact;
     const decl *component; // A query's key: the component its field is in
     // A query's key in a binding the system's query takes `previous`: the component as the tick started, which
     // nothing changes, so its index is made at most once a tick whatever the code writes (index_codegen.inc)
@@ -54,8 +63,9 @@ typedef struct loop_index {
 void plan_loop_indexes(program *prog);
 
 // What a loop plan says, for the editor and `tidec --schedule`: "indexed by
-// Body.position (x, y)" or "not indexed: <why>". NULL for loops over anything
-// but a query or a list.
+// o.body.position.x, o.body.position.y", "indexed by r.chunk.at.x and
+// r.chunk.dimension, each one value" or "not indexed: <why>". NULL for loops
+// over anything but a query or a list.
 const char *loop_index_summary(const stmt *loop);
 
 // Calls `fn` for each loop over a query or a list that starts by skipping

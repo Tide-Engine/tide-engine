@@ -429,6 +429,12 @@ uint64_t tide_platform_gpu_memory(void);
 // is what the frame's textures cost to keep up to date.
 uint64_t tide_platform_gpu_written(void);
 
+// How many times the renderer has copied a rendered image for a [Linear] read since the program started: when a
+// marked field first reads an image views draw into, and again only once more has been drawn into it (or it's
+// another image: resized, or made again). An image drawn once and read every frame is copied once. For tools and
+// tests.
+uint64_t tide_platform_linear_copies(void);
+
 // The game's pack of assets (tide/pack.h), as its build left it with the
 // program: beside it as <program>.pack on desktop, in its page on the web and
 // in its APK on Android. malloc'd bytes, the caller's to free, or NULL for

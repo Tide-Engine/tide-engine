@@ -1,0 +1,15 @@
+// expect: a task can't wait while it holds the grid 'pixels': a local's grid lasts until the task waits
+scene Main {}
+local singleton State { RenderTarget target; Grid2<Color> kept; bool started; }
+async void Keep(mut State state)
+{
+    if (await state.target.Read() is Grid2<Color> pixels)
+    {
+        if (await state.target.Read() is Grid2<Color> later) state.kept = later.Copy();
+        else state.kept = pixels.Copy();
+    }
+}
+view Show(mut State state)
+{
+    if (!state.started) { state.started = true; Keep(state); }
+}

@@ -1,0 +1,4 @@
+// expect: this grid is [Raw], its cells numbers and not colors to draw: it's no Texture to draw with or hand on
+scene Main { }
+local singleton Art { [Raw] Grid2<Color> values = Grid2(2, 2); [Linear] Texture image; }
+view V(mut Art art) { art.image = art.values; }

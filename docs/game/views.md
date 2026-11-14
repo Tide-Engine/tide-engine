@@ -131,20 +131,22 @@ Each frame starts black, with the camera at the origin and one world unit per pi
 
 Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`. `Math`'s component-by-component functions take them the same way: `Math.Lerp(a, b, t)` blends two colors, in a view or in a frag.
 
-A color's numbers are the display's own: `Color(0.5, 0.5, 0.5)` is the middle gray a paint program shows for 128, a PNG's pixels are drawn as the file has them, and colors blend and add as those numbers. Nothing is converted on the way in or out, and nothing is sRGB-aware. It's what sprites and UI want. It isn't how light adds up: two lamps of half don't make white's brightness, and a half-clear white over black is darker than half the light. A game that wants that works in light itself, in a float target:
+A color's numbers are the display's own: `Color(0.5, 0.5, 0.5)` is the middle gray a paint program shows for 128, a PNG's pixels are drawn as the file has them, and colors blend and add as those numbers. Nothing is converted on the way in or out, and the screen performs no automatic color-space conversion. It's what sprites and UI want. It isn't how light adds up: two lamps of half don't make white's brightness, and a half-clear white over black is darker than half the light. A game that wants that uses [Linear image sampling](./shaders.md#linear-light-color) for its color textures and works in light in a float target. For unmarked inputs, explicit conversion is also available:
 
 ```csharp
 // Colors and textures to light as they're read, in the frags that draw the scene
 Color paint = models.wood.Sample(vertex.uv);
-float3 light = float3(Math.Pow(paint.r, 2.2), Math.Pow(paint.g, 2.2), Math.Pow(paint.b, 2.2));
+Color light = Math.ToLinear(paint);
 
 // The last pass, from the float target to the window: under 1 first, then back to the display's numbers
 frag Present(Vertex vertex, out Color color, Texture source)
 {
     Color lit = source.Sample(vertex.uv);
-    color = Color(Math.Pow(lit.r / (1 + lit.r), 1 / 2.2), Math.Pow(lit.g / (1 + lit.g), 1 / 2.2), Math.Pow(lit.b / (1 + lit.b), 1 / 2.2));
+    color = Math.ToDisplay(Color(lit.r / (1 + lit.r), lit.g / (1 + lit.g), lit.b / (1 + lit.b)));
 }
 ```
+
+`Math.ToLinear` and `Math.ToDisplay` take `float`, `float3` or `Color` on the CPU and GPU. They use the sRGB transfer curve, clamp RGB to [0, 1], map NaN to zero, and preserve a color's alpha. GPU results have the same rounding limits as other `Math` operations.
 
 The scene is drawn into a [`Format.Rgba16f`](./render-targets.md#what-a-target-holds) target, where light adds up past 1, and `Draw.Blit(scene.color, Draw.window, Present)` shows it. Without the last step the picture is too dark between its lights and flat white where they meet. What's drawn after it, the GUI and text among it, is in the display's numbers as ever.
 
@@ -267,6 +269,10 @@ view Buttons()
 | `Gradient.Radial(inner, outer)` | Its middle out to the middle of its sides, and on to its corners |
 
 `color.WithAlpha(a)` is the color with another alpha, its red, green and blue as they are: a glow of an item's color, `rarity.WithAlpha(0.4)`. It works in a fill, and in any GPU code, too.
+
+`color.rgb` is its red, green and blue as a `float3`, for the math a light or a blend does on them: `Color(tint.rgb * shade, tint.a)`. It's read, never assigned, and works in GPU code.
+
+A `Rect` reads as vectors too: `rect.position` is its top left corner, `rect.size` its width and height and `rect.center` its middle, each a `float2`, so a label goes at `slot.center` with `Anchor.MiddleCenter`. `rect.Contains(point)` says whether a point is in it, like the pointer over a slot (its left and top edges are in, its right and bottom ones out, so slots side by side share no point), and `rect.Inset(amount)` is the rect with every edge moved in by that much, or out by an amount under 0: `Draw.Rect(slot.Inset(1), 4, fill)` inside a border.
 
 Each takes two, three or four colors, spread evenly: `Gradient.Vertical(a, b, c)` is `b` at the middle. Colors blend with their alpha, so a gradient to `Color.clear` fades without darkening.
 

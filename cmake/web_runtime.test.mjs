@@ -297,6 +297,12 @@ test('WebGPU uploads use bounded views of large WASM heaps and only copy when sh
     }
 });
 
+const numericReadBindings = {
+    READ_NUMBER: 9, READ_INT: 10, READ_NUMBER_VOLUME: 11, READ_INT_VOLUME: 12,
+    numericVolume: read => read === 11 || read === 12,
+    integerImage: read => read === 10 || read === 12,
+};
+
 test('WebGPU preserves every read kind in high texture slots and builds matching layouts', async () => {
     const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
     const begin = source.indexOf('        gpu_pipeline_begin(');
@@ -318,7 +324,7 @@ test('WebGPU preserves every read kind in high texture slots and builds matching
             const sandbox = {
                 low, high, string: () => '', stencilTests: ['always'], stencilOps: ['keep'],
                 colorFormats: () => [], samplesOf: () => 1, layouts: new Map(),
-                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, STORAGE_BINDING: 33, MAX_STORAGE: 4,
+                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, ...numericReadBindings, STORAGE_BINDING: 33, MAX_STORAGE: 4,
                 readsDepth: read => read === 1 || read === 2,
                 ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
                 GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
@@ -359,7 +365,7 @@ test('WebGPU samplers apart from textures: one texture read two ways, textures r
     const made = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, STORAGE_BINDING: 33, MAX_STORAGE: 4,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, ...numericReadBindings, STORAGE_BINDING: 33, MAX_STORAGE: 4,
         MAX_TEXTURES: 16, readsDepth: read => read === 1 || read === 2,
         ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
@@ -409,7 +415,7 @@ test('WebGPU storage buffers get explicit layouts at binding 33 on, read-only ou
     const layoutsMade = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, STORAGE_BINDING: 33, MAX_STORAGE: 4,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, ...numericReadBindings, STORAGE_BINDING: 33, MAX_STORAGE: 4,
         readsDepth: read => read === 1 || read === 2, ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
         device: {
@@ -522,7 +528,7 @@ test('WebGPU arrays: a layout reads them as 2d-array textures, through a color\'
     const made = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, ...numericReadBindings,
         STORAGE_BINDING: 33, MAX_STORAGE: 7, MAX_TEXTURES: 16,
         readsDepth: read => read === 1 || read === 2 || read === 5 || read === 7,
         ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
@@ -561,7 +567,7 @@ test('WebGPU volumes and write-only images keep their dimension, format and bind
     const snapshots = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, ...numericReadBindings,
         STORAGE_BINDING: 33, MAX_STORAGE: 4, readsDepth: read => read === 1 || read === 2,
         ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 || read === 8 ? 0 : read === 7 ? 1 : read),
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
@@ -657,4 +663,54 @@ test('WebGPU volume limits, pending uploads and allocation errors stay bounded a
     backend.gpu_volume_write(failed, 64, 0, 0, 0, 1, 1, 1);
     assert.equal(writes.length, 2);
     assert.deepEqual(scopes, ['validation', 'out-of-memory', 'validation', 'out-of-memory']);
+});
+
+test('WebGPU numeric image layouts use loads without optional filtering or samplers', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_pipeline_begin(');
+    const end = source.indexOf('\n        gpu_pipeline_slot:', begin);
+    const layoutBegin = source.indexOf('    function layoutFor(');
+    const layoutEnd = source.indexOf('\n    // A pass', layoutBegin);
+    const ownBegin = source.indexOf('    const ownSamplers =');
+    const ownEnd = source.indexOf(';', ownBegin) + 1;
+    let entries;
+    const sandbox = {
+        string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7,
+        ...numericReadBindings, STORAGE_BINDING: 33, MAX_STORAGE: 4, MAX_TEXTURES: 16,
+        readsDepth: read => read === 1 || read === 2 || read === 5 || read === 7,
+        GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
+        device: { createBindGroupLayout: desc => { entries = desc.entries; return {}; }, createPipelineLayout: () => ({}) },
+    };
+    const result = vm.runInNewContext(`(() => {
+        ${source.slice(ownBegin, ownEnd)}
+        let building;
+        const backend = { ${source.slice(begin, end)} };
+        ${source.slice(layoutBegin, layoutEnd)}
+        backend.gpu_pipeline_begin(0, 0, 16, 4, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+        [9, 10, 11, 12].forEach((read, slot) => backend.gpu_pipeline_image_read(slot, read));
+        backend.gpu_pipeline_numbers(5);
+        layoutFor(building.reads, building.samplers);
+        return building.numericOutputs;
+    })()`, sandbox);
+    assert.equal(result, 5);
+    assert.equal(entries.length, 5, 'one uniform and four images, no sampler');
+    assert.deepEqual(Array.from(entries.filter(e => e.texture), e => [e.texture.sampleType, e.texture.viewDimension]),
+        [['unfilterable-float', undefined], ['sint', undefined], ['unfilterable-float', '3d'], ['sint', '3d']]);
+});
+
+test('WebGPU numeric uploaded textures retain their format and row byte count', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_texture(format,');
+    const end = source.indexOf('        gpu_texture_write(id,', begin);
+    const descriptors = [], images = [];
+    const sandbox = { GPUTextureUsage: { TEXTURE_BINDING: 1, COPY_DST: 2, COPY_SRC: 4 },
+        device: { createTexture: desc => { descriptors.push(desc); return { createView: () => ({}) }; } },
+        gpuAdd: (kind, image) => { images.push(image); return images.length; } };
+    vm.runInNewContext(`(() => {
+        const platform = { ${source.slice(begin, end)} };
+        for (let format = 4; format <= 7; format++) platform.gpu_texture(format, 3, 2, 0);
+    })()`, sandbox);
+    assert.deepEqual(descriptors.map(d => d.format), ['rgba16float', 'r32float', 'rgba32float', 'r32sint']);
+    assert.deepEqual(images.map(t => t.row), [24, 12, 48, 12]);
 });

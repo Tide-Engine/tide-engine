@@ -103,6 +103,18 @@ singleton Marks
     float placed = 48; // Cell(5, 2)'s
     float line = 144;  // A window pixel's y
     Mode mode = Mode.Bright;
+    float transferInput = 0.5;
+    float transferOne = 1; // A number the GPU works with, not one tidec folds
+    float transferLinear = Math.ToLinear(0.5);
+    float3 transferDisplay = Math.ToDisplay(float3(0.0031308, 0.5, 1));
+    Color transferColor = Math.ToLinear(Color(0.04045, 0.5, 1, 0.37));
+    float towardsStep = Math.MoveTowards(0.5, 5, 1.5);
+    float towardsTurn = Math.DeltaAngle(6.2, 0.5 * 0.2);
+    float towardsWrapped = Math.WrapAngle(0.5 * 8);
+    float towardsTurned = Math.MoveTowardsAngle(0.5 * 0.2, 6.2, 0.05);
+    float towardsEased = Math.Damp(0.5, 10, 3, 0.25);
+    float3 towardsWalked = Math.MoveTowards(float3(0.5, 0, 0), float3(3.5, 4, 0), 2.5);
+    float2 towardsSlid = Math.Damp(float2(0.5, 1), float2(4, 8), 2, 0.5);
 }
 
 local singleton Art
@@ -484,6 +496,31 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     if (!Near(Math.Csum(v), 6) || !Near(Math.Cmax(v), 3) || !Near(Math.Cmin(v), 1)) ok = false;
     if (!Near(Math.Normalize(float3(0)).x, 0) || !Near(Math.Normalize(float3(0, 3, 0)).y, 1)) ok = false;
     if (!Near(Math.Log10(100.0), 2) || !Near(Math.Exp(0.0), 1) || !Near(Math.Degrees(Math.PI), 180)) ok = false;
+
+    // sRGB conversions: compare GPU results with CPU-computed singleton defaults.
+    if (!Near(Math.ToLinear(marks.transferInput), marks.transferLinear)) ok = false;
+    if (Math.Length(Math.ToDisplay(float3(0.0031308, marks.transferInput, 1)) - marks.transferDisplay) > 0.00001) ok = false;
+    if (!SameColor(Math.ToLinear(Color(0.04045, marks.transferInput, 1, 0.37)), marks.transferColor)) ok = false;
+    if (!Near(Math.ToDisplay(Math.ToLinear(marks.transferInput)), marks.transferInput)) ok = false;
+    // Both ends exactly, as on the CPU: white is white through either function and through both, whatever a
+    // GPU's pow makes of 1
+    if (Math.ToDisplay(marks.transferOne) != 1 || Math.ToLinear(marks.transferOne) != 1) ok = false;
+    if (Math.ToDisplay(marks.transferOne * 2) != 1 || Math.ToLinear(marks.transferOne * 2) != 1) ok = false;
+    if (Math.ToDisplay(marks.transferOne - 1) != 0 || Math.ToLinear(marks.transferOne - 1) != 0) ok = false;
+    float3 whiteAgain = Math.ToDisplay(Math.ToLinear(float3(marks.transferOne)));
+    if (whiteAgain.x != 1 || whiteAgain.y != 1 || whiteAgain.z != 1) ok = false;
+    Color whiteColor = Math.ToDisplay(Math.ToLinear(Color(marks.transferOne, marks.transferOne, marks.transferOne, 1)));
+    if (whiteColor.r != 1 || whiteColor.g != 1 || whiteColor.b != 1 || whiteColor.a != 1) ok = false;
+
+    // A value on its way to another, and angles: the GPU's against the CPU's, and a color's rgb.
+    float half = marks.transferInput;
+    if (!Near(Math.MoveTowards(half, 5, 1.5), marks.towardsStep) || !Near(Math.MoveTowards(half, 1, 3), 1)) ok = false;
+    if (!Near(Math.DeltaAngle(6.2, half * 0.2), marks.towardsTurn) || !Near(Math.WrapAngle(half * 8), marks.towardsWrapped)) ok = false;
+    if (!Near(Math.MoveTowardsAngle(half * 0.2, 6.2, 0.05), marks.towardsTurned)) ok = false;
+    if (!Near(Math.Damp(half, 10, 3, 0.25), marks.towardsEased) || !Near(Math.Damp(half, 10, 0, 1), half)) ok = false;
+    if (Math.Length(Math.MoveTowards(float3(half, 0, 0), float3(3.5, 4, 0), 2.5) - marks.towardsWalked) > 0.00001) ok = false;
+    if (Math.Length(Math.Damp(float2(half, 1), float2(4, 8), 2, 0.5) - marks.towardsSlid) > 0.00001) ok = false;
+    if (Math.Length(marks.transferColor.rgb - float3(marks.transferColor.r, marks.transferColor.g, marks.transferColor.b)) > 0) ok = false;
 
     // Matrices
     float2x2 m = float2x2(1, 2, 3, 4);
@@ -5367,3 +5404,85 @@ view BiasedDepths(Art art) {
 }
 
 frag BiasColor(Corner3 vertex, out Color color) { color = vertex.color; }
+
+// Display-encoded images, sampled by sRGB hardware (pass 33).
+asset Texture displayPair = "linear/pair.png";
+[Linear] asset Texture lightPair = "linear/pair.png";
+[Linear] asset Texture lightBlocks = "linear/compressed.png";
+[Linear] asset Texture lightAlphaBlocks = "linear/alpha_blocks.png";
+[Linear, Lossless] asset Texture lightLossless = "linear/compressed.png";
+[Linear] asset TextureArray lightBlockLayers = ["linear/compressed.png", "linear/alpha_blocks.png"];
+[Linear] asset TextureArray lightLayers = ["linear/pair.png", "linear/pair.png"];
+[Linear] asset Cubemap lightSky = "linear/cube_??.png";
+local singleton LinearImages
+{
+    int which;
+    bool made;
+    float paint = 0.5;
+    RenderTarget target;
+    Grid2<Color> cells = Grid2(2, 2);
+    Grid3<Color> layers = Grid3(2, 2, 2);
+    [Linear] Texture gridImage;
+    [Linear] Texture targetImage;
+    Texture originalTarget;
+    [Linear] Texture keptAsset = lightPair;
+    [Linear] Cubemap cube;
+    [Linear] TextureArray array;
+    [Linear] TextureArray gridArray;
+}
+Color BorrowLight(Texture image, float2 uv) { return image.Sample(uv, .Point); }
+frag LinearReads(Vertex vertex, out Color color, LinearImages images)
+{
+    mut Color c = Color.black;
+    if (images.which == 0) c = displayPair.Sample(float2(0.75, 0.25), .Point);
+    if (images.which == 1) c = lightPair.Sample(float2(0.75, 0.25), .Point);
+    if (images.which == 2) c = displayPair.Sample(float2(0.5, 0.25), .Bilinear);
+    if (images.which == 3) c = lightPair.Sample(float2(0.5, 0.25), .Bilinear);
+    if (images.which == 4) c = lightPair.Sample(float2(0.5, 0.75), .Bilinear);
+    if (images.which == 5) c = images.gridImage.Sample(float2(0.75, 0.25), .Point);
+    if (images.which == 6) c = images.targetImage.Sample(float2(0.5), .Point);
+    if (images.which == 7) c = images.cube.Sample(float3(1, 0, 0), .Point);
+    if (images.which == 8) c = images.array.Sample(float2(0.5), 1, .Point);
+    if (images.which == 9) c = lightLayers.Sample(float2(0.75, 0.25), 0, .Point);
+    if (images.which == 10) c = lightSky.Sample(float3(1, 0.5, -0.5), .Point);
+    if (images.which == 11) c = lightBlocks.SampleLevel(float2(0.5), 7, .Trilinear);
+    if (images.which == 12) c = images.targetImage.SampleLevel(float2(0.5), 2, .Trilinear);
+    if (images.which == 13) c = lightPair.SampleGrad(float2(0.5, 0.25), float2(0.001, 0), float2(0, 0.001), .Trilinear);
+    if (images.which == 14) c = images.gridArray.Sample(float2(0.75, 0.25), 1, .Point);
+    if (images.which == 15) c = BorrowLight(images.keptAsset, float2(0.75, 0.25));
+    if (images.which == 16) c = lightAlphaBlocks.SampleLevel(float2(0.5), 7, .Trilinear);
+    if (images.which == 17) c = lightBlockLayers.Sample(float2(0.5), 1, .Bilinear);
+    if (images.which == 18) c = lightLossless.SampleLevel(float2(0.5), 7, .Trilinear);
+    if (images.which == 19) c = images.originalTarget.Sample(float2(0.5), .Point);
+    color = Color(c.r, c.g, c.b); // Inspect straight RGB independently of coverage.
+}
+[After(BiasedDepths)]
+view LinearSampling(Art art, mut LinearImages images)
+{
+    if (art.targetPass != 33) return;
+    if (!images.made)
+    {
+        images.target = RenderTarget(4, 4, 1, Format.R32i, Format.Rgba8);
+        images.cube = Cubemap(4);
+        images.array = TextureArray(4, 4, 2, 1);
+        images.cells[0, 0] = Color.black;
+        images.cells[1, 0] = Color(128 / 255.0, 128 / 255.0, 128 / 255.0);
+        images.gridImage = images.cells;
+        images.layers[1, 0, 1] = images.cells[1, 0];
+        images.gridArray = images.layers;
+        images.targetImage = images.target.colors[1];
+        images.originalTarget = images.target.colors[1];
+        images.made = true;
+    }
+    Color paint = Color(images.paint, images.paint, images.paint, 0.5);
+    images.target.SetScreen(); images.target.Clear(-123, paint);
+    for (int i = 0; i < 6; i++) { images.cube.faces[i].SetScreen(); images.cube.faces[i].Clear(paint); }
+    for (int i = 0; i < 2; i++) { images.array.layers[i].SetScreen(); images.array.layers[i].Clear(paint); }
+    Draw.SetScreen(); Draw.SetClip(); Draw.SetDepth(.None); Draw.Clear(Color.black);
+    List<Vertex> quad = [Vertex {}, Vertex { position = float2(16, 0) }, Vertex { position = float2(16) }, Vertex { position = float2(0, 16) }];
+    for (int i = 0; i < 20; i++)
+    {
+        images.which = i;
+        Draw.Transform(float2((i % 8) * 32, (i / 8) * 32)) { Draw.Mesh(quad, art.faces, LinearReads); }
+    }
+}

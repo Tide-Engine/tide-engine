@@ -67,15 +67,17 @@ target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
 # Indexes for indexed loops (tide/index.h): building one, and searching it for
-# about 10 entries near a point, against the plain loop over every entry; the
-# test checks both loops find the same entries.
+# about 10 entries near a point, or for a chunk by its place (an exact key),
+# against the plain loop over every entry; the test checks both loops find the
+# same entries.
 add_executable(bench_index index/index.c)
 target_link_libraries(bench_index PRIVATE tide)
 add_test(NAME bench_index COMMAND bench_index --quick)
 
 # Indexed loops: boids looking at their neighbours through a query, agents at
-# obstacles in a list, with the loops' indexes and without (NO_LOOP_INDEXES):
-# `bench_loops --n 10000` against `bench_loops_plain --n 10000`.
+# obstacles in a list, lookers finding chunks by their place (--chunks), with
+# the loops' indexes and without (NO_LOOP_INDEXES): `bench_loops --n 10000`
+# against `bench_loops_plain --n 10000`.
 if(TIDE_PLATFORM)
     foreach(variant "" _plain)
         set(no_indexes "")

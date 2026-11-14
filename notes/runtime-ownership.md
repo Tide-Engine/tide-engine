@@ -1,8 +1,38 @@
+## [Linear] image captures (2026-11-14)
+
+The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and
+`tide_todisplay_f`, `_f3`, `_c`, used by generated Math calls and image preparation.
+They use the existing deterministic Pow primitive; alpha is copied by the Color wrappers.
+
+Within the owner-approved [Linear] task, agents maintain `tide_draw_texture_source_linear`,
+`tide_draw_array_source_linear`, `tide_draw_cube_source_linear` (same arguments as their ordinary captures),
+`tide_draw_grid_texture_linear`, `tide_draw_grid_array_texture_linear`, and the internal
+`tide_draw_texture_edit_linear` grid writer. Generated shade wrappers call the source capture matching the
+static declaration role. No resource-reference layout changes. `tide_draw_texture.linear` selects upload
+interpretation and a distinct GPU-cache entry, while append preserves the role and pixel ownership.
+Runtime Color-grid captures clamp/decode/premultiply/encode RGB using the quantized stored alpha byte
+as coverage, so coverage rounded to zero cannot leave encoded RGB; arbitrary
+grid shapes remain validated through the existing bounded grid-image path. Backend private target copies,
+formats, lifetimes and validation are recorded in rendering.md and web.md.
+
+## Numeric images and typed clears (2026-11-14)
+
+Within the owner's approved numeric output/image task (2026-11-13, "these make sense, lets do all of these"),
+agents maintain the appended tide_target_format catalogue, compact handle catalogue in draw.h/draw.c,
+tide_draw_clear_images and the tide_clear_value constructors. Generated C calls the typed clear recorder;
+its bounded count is checked against the destination's image count and formats before copying 64 uniform bytes.
+Only Color values premultiply. New draw commands store byte offsets, never borrowed payload pointers; append
+checks both source spans and destination addition. Old target IDs, 16-bit holds and 64 KiB state alignment stay
+unchanged, including native adoption and opaque web reload. Contracts/tests: render-targets.md and shaders.md.
+
 # Pixel readback (2026-11-14)
 
 Within the owner-approved rendering task, agents maintain tide_render_target_read_begin and
 _tide_render_target_read_grid, generated async lowering, shared read request extensions, pool capture and
 internal kernel. No new gpu.h function. Contracts and lifetimes: render-targets.md.
+Since the same day they also maintain tide_render_target_read_begin_as (an image and a kind, tide_target_read),
+tide_target_read_words/_fits, tide_render_target_color_count, the request's `image` and `kind`, the result's
+`step`, and the ten further read kernels in cull.tide (render-targets.md, Readback of every image).
 
 
 # Depth-bias draw state (2026-11-14)
@@ -235,7 +265,9 @@ New and agent-maintained, like `tide/voice.h`: `engine/include/tide/screen_keybo
 
 New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `engine/src/index.c`
 (`tide_index_make`/`free`/`begin`/`add`/`end`/`count`/`ordinals`/`find`, `tide_index_hits_init`/`free`,
-`tide_index_lock`/`unlock`), which generated code calls for every indexed loop. The caches of indexes are
+`tide_index_lock`/`unlock`; since 2026-11-14 exact keys, `tide_index_begin_exact`/`add_exact`/`find_exact` and
+`TIDE_INDEX_EXACT`, within the voxel-world task that asked for them), which generated code calls for every indexed
+loop. The caches of indexes are
 generated helpers (`index_codegen.inc`: `tide_ix_*`, `tide_index_cache_prepare`/`free`), like the rows cache, over
 existing runtime calls (`tide_page_retain`/`release`, `tide_table_*`, `tide_list_*`, `tide_alloc*`); a game with an
 indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `tide_local`, and defines

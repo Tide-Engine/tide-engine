@@ -389,10 +389,14 @@ tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with st
 target_compile_options(tidec_e2e_effects PRIVATE -Wframe-larger-than=65536)
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(texture_compression)
+tide_e2e_test(linear_textures LAYOUT)
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
 tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
+tide_e2e_test(image_clears) # Typed image clear values and argument ordering
+tide_e2e_test(target_reads) # await target.Read<T>(image) and ReadDepth(): what each asks for, and the typed grid it owns
+tide_e2e_test(number_images SOURCES shaders/number_images.tide) # Numeric shader metadata and generated-C paths
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
 tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload
 tide_e2e_test(cubemaps) # Cubemaps: an asset's six files and a cube a view draws into a face at a time, read by a direction
@@ -459,6 +463,8 @@ tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)
 tide_e2e_test(scenes_fallback)
+tide_e2e_test(scenes_switch) # Scene.Switch, and functions that load, switch and unload
+tide_e2e_test(scenes_switch_local) # ...in local code, where the startup scene only comes back offline
 tide_e2e_test(scene_filters) # with scene, without scene: systems, views and handlers by an entity's scene
 tide_e2e_test(gui)
 tide_e2e_test(gui_custom)

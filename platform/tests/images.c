@@ -44,12 +44,16 @@ static int frame(void *user, const float seconds)
     }
 #endif
     tide_draw_reset(&list);
-    tide_gui_begin(&gui, &devices, tide_f2(24, 24), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(24, 112), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
-    const tide_float2 places[9] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20}};
-    uint32_t pixels[9];
-    tide_platform_read_pixels_as(&list, 24, 24, 1, places, 9, pixels);
+    const tide_float2 places[40] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
+        {4,28},{12,28},{20,28},{4,36},{12,36},{20,36},{4,44},{12,44},
+        {4,52},{12,52},{20,52},{4,60},{12,60},{20,60},{4,68},{12,68},{20,68},
+        {4,76},{12,76},{20,76},{4,84},{12,84},{20,84},{4,92},{12,92},{20,92},{4,100},{12,100},{20,100},
+        {4,108},{12,108}};
+    uint32_t pixels[40];
+    tide_platform_read_pixels_as(&list, 24, 112, 1, places, 40, pixels);
     if (++warm < 3) return TIDE_KEEP_RUNNING;
     check(pixels[0], 0, 0, 0, "a draw before the image write sees the earlier black image");
     check(pixels[1], 0, 0, 255, "a draw between writes sees the exact first HDR color with alpha undone");
@@ -60,6 +64,22 @@ static int frame(void *user, const float seconds)
     blended(pixels[6], local.Images.frames % 2 ? 159 : 128, 128, 128, "a changed Grid3 of colors converts to a blended volume");
     check(pixels[7], 255, 0, 0, "a Grid3 of floats converts to a blended numeric volume");
     check(pixels[8], 255, 0, 255, "an exact volume cell read survives out-of-range stores");
+    static const char *const numeric[] = {"R8 scalar", "Rg8 pair", "R16f scalar MSAA", "Rg16f pair MSAA", "R32f scalar",
+        "Rgba16f free fourth channel", "Rgba32f free fourth channel", "R32i exact ID", "R32f image store", "Rgba32f image store",
+        "R32i image store", "R32f volume store", "Rgba32f volume store", "R32i volume store"};
+    for (unsigned i = 0; i < 14; i++) check(pixels[9 + i], 0, 255, 0, numeric[i]);
+    check(pixels[23], 0, 255, 0, "mixed MRT retains ordinary Color tint, alpha and blend");
+    check(pixels[24], 0, 255, 0, "mixed MRT float4 replaces without tint or premultiplication");
+    check(pixels[25], 0, 255, 0, "mixed MRT integer replaces with exact bits");
+    static const char *const filtered[] = {"R8 blends to the midpoint between two pixels", "R16f blends through a helper, and Point stays exact",
+        "R8 and R16f mip levels are means of what was drawn", "R16f gradients choose the smallest image",
+        "Rg16f pair blends and reads a level", "Rgba16f four free channels blend and read a level",
+        "blended reads of no image, no array and no cube are zero", "an R16f array layer: cleared, blended and exact",
+        "an R16f array layer's mip level through a helper", "an Rg8 array layer blends both channels",
+        "an R16f cube face: blended, cleared faces exact", "a cube face's mip level, and an Rg16f cube face"};
+    for (unsigned i = 0; i < 12; i++) check(pixels[26 + i], 0, 255, 0, filtered[i]);
+    check(pixels[38], 255, 255, 255, "a Color read handed an integer image reads as no image");
+    check(pixels[39], 0, 0, 0, "a Color volume read and a kernel's Color store never reach an integer volume");
     if (local.Images.revision <= 0 || (stage == 2 && local.Images.revision == revision)) failures++;
 #ifdef __wasm__
     if (stage == 0 && !failures) {
@@ -78,7 +98,7 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 24, .hidden = true});
+    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 112, .hidden = true});
     printf("renderer: %s\n", tide_platform_renderer());
     tide_platform_run(frame, NULL);
 }

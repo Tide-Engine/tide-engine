@@ -1,0 +1,3 @@
+// expect: field 'image' already has a Linear
+local singleton Art { [Linear, Linear] Texture image; }
+scene Main { }

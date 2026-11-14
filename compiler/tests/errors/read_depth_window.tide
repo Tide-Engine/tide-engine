@@ -1,0 +1,3 @@
+// expect: window cannot be read
+scene Main {}
+async void Read() { var depths = await Draw.window.ReadDepth(); }
