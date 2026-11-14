@@ -1,3 +1,38 @@
+## `==` and `!=` on vectors and colors (2026-11-14)
+
+Owner approved the recommendation ("go with your recommendations"); every rule is a pick, Provisional in spec.md
+(Vector math). Games had ~90 uses of `Same(int2, int2)`/`CellEqual` helpers and `a.x == b.x && a.y == b.y`.
+
+- **Checker** (`binary_result`): `==`/`!=` of two numeric vectors of one size give `bool` (in the switch's T_EQ case
+  for int/float, in the double branch for anything beside a double vector); two Colors in the Color branch. Same
+  widening as `+`: int vector beside float is float, either beside double is double. Refused, each with a note
+  (`note_vector_comparison`, after the error, also from the Color and double branches): vector beside a number (write
+  `float3(...)`), two sizes, `< <= > >=` on vectors or colors (a component or `LengthSq`), matrices (columns),
+  `Rect` (its `position`/`size`), quaternions (no `==`: `a.value == b.value` for the numbers, `Math.Abs(Math.Dot(a, b))`
+  near 1 for the rotation, as q and -q are one). Quaternion `==` was in the first draft and taken out for that
+  ambiguity (Unity's `Quaternion.==` is a dot-product test). `note_missing_operator`'s struct note now says a vector
+  field compares whole. `equatable` (List Contains/IndexOf/Remove) takes vectors and colors.
+- **C** (`gen_binary`, before the vector arithmetic branch): `tide_equal_<suffix>(a, b)` with both sides `gen_as` the
+  widened type, `!` for `!=`; `tide_equal_color` for colors. The helpers are in `tide/math.h` (`TIDE_EQUAL` for
+  f/d/i 2-4, every component's `==` joined with `&`, no branch) and `tide/color.h` (agent-maintained math/color
+  runtime: runtime-ownership.md). List helpers' `index_of` uses the same call for vector/color elements (`whole`).
+- **GPU** (`put_binary`): `all(a == b)` / `any(a != b)`, int vectors converted to float beside a float one. Both
+  translators already had `all`/`any` (spirv.c, hlsl.c).
+- **Constants and folding:** a constant or field default may compare vectors (C works the value out); `fold_bool`
+  doesn't fold them (as it doesn't fold float comparisons), so they're not `case` labels or setting values.
+- **Indexed loops:** indexing.c's `relation` already took `row_vector == fixed` as an equality on each component, and
+  negation (`!=` under `continue`) as no bound; nothing reached it before this. `e2e/vector_equality` runs a 65-cell
+  list through such a guard (planned "indexed by cell.x"; the guard still runs for each candidate).
+- Tests: `tidec_e2e_vector_equality` (int/float/double 2-4, widening, -0 and NaN, colors and alpha, `default`, each
+  side once in order, constants and field defaults, List<int2>/List<Color> Contains/IndexOf/Remove, the indexed guard
+  and an unindexed one), `shaders/vector_equality` (golden, spirv-val, FXC), `platform/tests/shaders.tide` Sink
+  checks against CPU-computed Marks (a mutation of one failed the pixel), errors `vector_compare_scalar`,
+  `vector_compare_sizes`, `vector_order`, `vector_order_double`, `matrix_compare`, `quaternion_compare`,
+  `rect_compare`, `color_order`, `color_compare_vector`, `list_contains_matrix`; `struct_compare` still passes.
+- Generated C changes only for games that compare vectors (new calls) and for games with lists of vectors or colors,
+  which now also get the three unused-unless-called `index_of`/`contains`/`remove` helpers.
+- Gaps: no `==` on arrays or structs (unchanged); no folding of int vector equality for compile-time choices.
+
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 
 Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is

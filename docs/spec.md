@@ -992,7 +992,7 @@ float2 flat = trs.localPosition.xz;
 - An int vector converts to a float vector of the same size implicitly, like `int` to `float`.
 - Matrices support `+` and `-` with the same type, and `*` and `/` by a number. There's no `*` between matrices, or between a matrix and a vector; that's `Math.Mul`.
 - Quaternions have no operators: combine rotations with `Math.Mul` and rotate vectors with `Math.Rotate`.
-- Comparisons and `==` work on scalars only.
+- `<`, `<=`, `>` and `>=` work on scalars only. `==` and `!=` work on scalars, and on two vectors or two colors whole (Provisional, below).
 
 **Functions**
 
@@ -1023,7 +1023,13 @@ Implemented, awaiting approval:
   - `Math.Damp(current, target, rate, dt)`, of the same three: `current + (target - current) * Saturate(1 - Exp(-rate * dt))`, the frame-rate independent form of `Lerp(a, b, dt * rate)`. A `rate * dt` under 0, or that isn't a number, leaves `current`. No quaternion or Color form.
   - `Math.DeltaAngle(from, to)`: the shortest turn, over -PI and up to PI; an angle that isn't a number or is infinite gives 0. `Math.WrapAngle(angle)` is `DeltaAngle(0, angle)`. `Math.MoveTowardsAngle(current, target, step)` is `MoveTowards(current, current + DeltaAngle(current, target), step)`, which isn't wrapped.
   - All are IEEE basic operations and Tide's `Exp`, so they're in the match, and the same arithmetic on the GPU.
-- `Math.Hash` gives an int from 0 to 2147483647, so `%` never goes negative. It's xxHash32 of the value's bytes (little-endian, seed 0) without the top bit: what Unity's `math.hash` gives for a block of memory. Unity's `math.hash` on vectors is a cheaper mix whose low bits follow the input's, so `& 3` of it makes stripes; Tide's differs from it on purpose.
+- **`==` and `!=` on vectors** (2026-11-14; the owner approved the recommendation that day, "go with your recommendations"; every rule below is a pick):
+  - Two vectors of one size (`int`, `float` or `double`, 2 to 4 components) compare whole and give one `bool`: `a == b` is true when every component is equal, `a != b` when any differs. This deliberately differs from Unity.Mathematics, whose vector `==` gives a vector of bools (`bool3`): a condition needs one answer, and games wrote `Same(int2, int2)` helpers and `a.x == b.x && a.y == b.y` for it.
+  - Each component compares as C and IEEE compare floats: `-0` equals `0`, and a NaN equals nothing, itself included, so `v != v` is true for a vector with a NaN in it.
+  - An int vector beside a float vector compares as a float vector, and either beside a double vector as a double vector, as `+` and `-` widen them.
+  - Two `Color`s compare the same way, every channel and alpha. A quaternion has no `==` (an error that names `a.value == b.value` for its four numbers, and `Math.Abs(Math.Dot(a, b))` near 1 for the same rotation, as `q` and `-q` are one), nor does a matrix (compare columns) or a `Rect` (compare its `position` and `size`). A vector beside a number is an error that says to write the vector (`v == float3(0)`); vectors of two sizes are an error. `<`, `<=`, `>` and `>=` on vectors and colors stay errors, which name a component's or a length's comparison.
+  - A list's `Contains`, `IndexOf` and `Remove` take vector and color elements, compared the same way.
+  - It works wherever a scalar's `==` does: in constants and field defaults (as a value C works out, not one tidec folds for a `case` label or a setting), in frags and verts (WGSL's `all(a == b)` and `any(a != b)`), and in loop guards, where the index analysis takes `cell == target` for an equality on each component., so `%` never goes negative. It's xxHash32 of the value's bytes (little-endian, seed 0) without the top bit: what Unity's `math.hash` gives for a block of memory. Unity's `math.hash` on vectors is a cheaper mix whose low bits follow the input's, so `& 3` of it makes stripes; Tide's differs from it on purpose.
 
 ## Random numbers
 
@@ -1737,7 +1743,7 @@ Built 2026-10-06 on that; each point beyond it is a pick, awaiting the owner.
 ### Provisional
 
 - A list starts empty. `[a, b, c]` is a list where one goes, from what it goes into: `List<int> scores = [1, 2, 3];`, `scores = [];`, a field's default, an argument. `var x = [1, 2]` is an error, as it doesn't say the type.
-- `count`, `items[i]` to read, `items[i] = x` and `items[i] += x` to write, and the methods `Add(item)`, `Insert(index, item)` (the index clamped), `RemoveAt(index)`, `Clear()`, and for elements that `==` compares (numbers, bools, chars, enums, text, entities and players) `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
+- `count`, `items[i]` to read, `items[i] = x` and `items[i] += x` to write, and the methods `Add(item)`, `Insert(index, item)` (the index clamped), `RemoveAt(index)`, `Clear()`, and for elements that `==` compares (numbers, bools, chars, enums, text, entities, players, and since 2026-11-14 vectors and colors) `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 - Provisional, awaiting the owner: `Resize(count)` makes the list `count` elements long in one call, as Unity's `NativeList.Resize` does. New elements are the element type's zero: zero bytes, empty text. With fewer, the rest go, and the text they held with them. A count under 0 is 0, and one past what a list holds (see Limits) leaves the list as it is. It changes the list as `Add` and `Clear` do, with their rules: something that can change, not in a parallel loop's step or a `Sort`'s comparison, and not on the GPU. Picked beyond that: its name and its one `int` argument; no `Capacity` or `Reserve` beside it; a list in a world gives back the room it no longer needs, where `Clear` keeps its room for what's added next.
 - An element is a copy, as with C#'s List of structs, when it's taken out: a local, a foreach's variable, an argument. A `mut` parameter or a mut method can't change an element in place. But a plain field of an element that's a struct is changed where it is (below, Changing an element where it is).
 - Changing a list needs it to be something that can change: a `mut` component or singleton, or a `mut` local.

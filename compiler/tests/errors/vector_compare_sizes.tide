@@ -1,0 +1,5 @@
+// expect: operator '!=' can't be used with float2 and float3
+// expect: vectors compare with vectors of the same size: here one has 2 numbers and the other 3
+singleton Marks { float2 flat; float3 at; bool moved; }
+scene Main { }
+system Check(mut Marks marks) { marks.moved = marks.flat != marks.at; }

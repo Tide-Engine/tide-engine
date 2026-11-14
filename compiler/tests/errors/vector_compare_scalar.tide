@@ -1,0 +1,5 @@
+// expect: operator '==' can't be used with float3 and int
+// expect: a vector compares with a vector, never a number spread over it: write 'float3(...)'
+singleton Marks { float3 at; bool still; }
+scene Main { }
+system Check(mut Marks marks) { marks.still = marks.at == 0; }

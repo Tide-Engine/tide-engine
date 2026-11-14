@@ -1,3 +1,10 @@
+## Vector and color equality (2026-11-14)
+
+`put_binary` writes `==`/`!=` of two vectors or two colors as `all(a == b)` / `any(a != b)`, an int vector converted
+to float beside a float one, so a condition gets one bool, as on the CPU. No new helper or binding; the translators'
+existing `all`/`any` carry it. `shaders/vector_equality` pins a vert, a frag and a helper (golden, spirv-val, FXC);
+`platform/tests/shaders.tide` checks it against CPU values. Rules: language.md, same date.
+
 ## Linear-light image sources (2026-11-14)
 
 [Linear] is static source metadata on singular Texture/TextureArray/Cubemap assets and fields, preserved

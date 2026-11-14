@@ -3212,6 +3212,15 @@ static void put_binary(emit *em, const tok_kind op, const expr *l, const expr *r
         ex(em, l);
         sb_printf(em->o, " %s ", op_text(op));
         ex(em, r);
+    } else if ((op == T_EQ || op == T_NE) && (type_dim(lt) >= 2 || lt.kind == TY_COLOR)) {
+        // Two vectors or colors: one bool of every component, where WGSL's == gives a bool for each. An int vector
+        // beside a float one is a float vector, as for + and -
+        const bool floats = type_is_float_based(lt) || type_is_float_based(rt);
+        sb_put(em->o, op == T_EQ ? "all(" : "any(");
+        ex_as(em, l, floats ? as_float(lt) : lt);
+        sb_printf(em->o, " %s ", op_text(op));
+        ex_as(em, r, floats ? as_float(rt) : rt);
+        sb_put(em->o, ")");
     } else if (op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE) {
         // Numbers compare as floats when either is one
         const bool floats = lt.kind == TY_FLOAT || rt.kind == TY_FLOAT;

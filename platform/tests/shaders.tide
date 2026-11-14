@@ -115,6 +115,12 @@ singleton Marks
     float towardsEased = Math.Damp(0.5, 10, 3, 0.25);
     float3 towardsWalked = Math.MoveTowards(float3(0.5, 0, 0), float3(3.5, 4, 0), 2.5);
     float2 towardsSlid = Math.Damp(float2(0.5, 1), float2(4, 8), 2, 0.5);
+    // == and != on vectors and colors, as the CPU works them out
+    int2 cellMark = int2(3, 4);
+    bool cellsSame = int2(3, 4) == float2(3, 4);
+    bool cellsDiffer = int2(3, 4) != int2(3, 5);
+    Color tintMark = Color(1, 0.5, 0.25, 0.5);
+    bool tintsSame = Color(1, 0.5, 0.25, 0.5) == Color(1, 0.5, 0.25);
 }
 
 local singleton Art
@@ -485,6 +491,10 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     if (cell.x != 6 || cell.y != 8) ok = false;
     float2 mixed = float2(cell) * HALF;
     if (!Near(mixed.y, 4)) ok = false;
+    // == and != on vectors and colors: one bool, the CPU's
+    if ((marks.cellMark == float2(3, 4)) != marks.cellsSame || (marks.cellMark != int2(3, 5)) != marks.cellsDiffer) ok = false;
+    if (!marks.cellsSame || cell != int2(6, 8) || !(float3(cell, 1) == float3(6, 8, 1))) ok = false;
+    if ((marks.tintMark == Color(1, 0.5, 0.25)) != marks.tintsSame || marks.tintMark != Color(1, 0.5, 0.25, 0.5)) ok = false;
 
     // Math
     if (!Near(Math.Clamp(5.0, 0, 1), 1) || !Near(Math.Lerp(2.0, 4.0, 0.5), 3) || !Near(Math.Saturate(-1.0), 0)) ok = false;

@@ -225,6 +225,7 @@ tide_e2e_test(unused_locals WARNINGS "local 'fwd' is never used" "local 'spark' 
 tide_e2e_test(defaults)
 tide_e2e_test(default_value)
 tide_e2e_test(math)
+tide_e2e_test(vector_equality) # == and != on vectors and colors, as one bool; lists finding them; an indexed vector guard
 tide_e2e_test(float_bits)
 tide_e2e_test(readonly_aggregates)
 add_test(NAME tidec_readonly_aggregates_codegen

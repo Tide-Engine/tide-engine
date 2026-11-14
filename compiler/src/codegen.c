@@ -3344,6 +3344,22 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         return;
     }
 
+    // Two vectors or colors compared: one bool, of every component. An int vector widens beside a float or a
+    // double one, as it does for + and -.
+    if ((op == T_EQ || op == T_NE) && (type_dim(lt) >= 2 || lt.kind == TY_COLOR)) {
+        type both = lt;
+        if (type_dim(lt) >= 2) {
+            both = type_is_double_based(lt) || type_is_double_based(rt) ? double_vector_type(type_dim(lt))
+                : vector_type(type_is_float_based(lt) || type_is_float_based(rt), type_dim(lt));
+        }
+        sb_printf(o, "%stide_equal_%s(", op == T_NE ? "!" : "", lt.kind == TY_COLOR ? "color" : type_suffix(both));
+        gen_as(g, o, l, both);
+        sb_put(o, ", ");
+        gen_as(g, o, r, both);
+        sb_put(o, ")");
+        return;
+    }
+
     // Vectors: component-wise, with both sides converted to the result type.
     if (type_dim(result) >= 2) {
         const char *name = op == T_PLUS ? "add" : op == T_MINUS ? "sub" : op == T_STAR ? "mul" : op == T_SLASH ? "div" : "mod";
@@ -10342,8 +10358,9 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const bool paths = prog->lists.items[k]->paths; // rows[i].x: read through a pointer at the element
         char held[32] = "";
         if (container) snprintf(held, sizeof held, "tide_%s%d", heap_array ? "array" : e.kind == TY_LIST ? "list" : "map", e.decl->index);
+        const bool whole = (type_dim(e) >= 2 && !matrix_dim(e)) || e.kind == TY_COLOR; // Equal in every component
         const bool compares = e.kind == TY_BYTE || e.kind == TY_CHAR || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_DOUBLE || e.kind == TY_BOOL || e.kind == TY_ENUM
-                           || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING;
+                           || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING || whole;
         if (!bodies) {
             sb_printf(o, "// List<%s>\n", type_name(e));
             sb_printf(o, "TIDE_HELPER %s tide_list%d_get(tide_list l, int32_t i);\n", vc, k);
@@ -10505,9 +10522,12 @@ static void gen_list_helpers(gen *g, const bool bodies)
         sb_printf(o, "TIDE_HELPER void tide_list%d_release(tide_list *l, const uint32_t where)\n{\n%s    tide_list_release(l, where);\n}\n\n",
                   k, drops);
         if (compares) {
+            char equal[64];
+            snprintf(equal, sizeof equal, "tide_equal_%s(tide_list%%d_get(l, i), v)", e.kind == TY_COLOR ? "color" : type_suffix(e));
             const char *eq = e.kind == TY_STRING                                   ? "tide_str_eq(tide_list%d_get(l, i), v)"
                            : e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY      ? "tide_entity_equal(tide_list%d_get(l, i), v)"
                            : e.kind == TY_PLAYER                                   ? "tide_player_equal(tide_list%d_get(l, i), v)"
+                           : whole                                                 ? equal
                                                                                    : "tide_list%d_get(l, i) == v";
             sb_printf(o, "TIDE_HELPER int32_t tide_list%d_index_of(const tide_list l, const %s v)\n{\n"
                          "    for (int32_t i = 0; i < tide_list_count(l); i++) {\n        if (", k, vc);

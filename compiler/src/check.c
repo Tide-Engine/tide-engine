@@ -2753,11 +2753,14 @@ static bool element_path_in_place(const expr *target)
     return false;
 }
 
+// What a list's Contains, IndexOf and Remove compare with '==': what '==' takes two of. A vector or a Color is
+// equal when every component is.
 static bool equatable(const type t)
 {
     switch (t.kind) {
     case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_DOUBLE: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
-    case TY_STRING:
+    case TY_STRING: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
+    case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_COLOR:
         return true;
     default:
         return false;
@@ -10095,11 +10098,50 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
     } else if (unary) {
         diag_note("declare it in the struct, like '%s operator %s(%s value)'", type_name(t), op_symbol(op), type_name(t));
     } else if (op == T_EQ || op == T_NE) {
-        diag_note("compare their fields instead, or declare 'bool operator %s(%s a, %s b)' in %s", op_symbol(op),
-                  type_name(l), type_name(r), type_name(t));
+        diag_note("compare their fields instead (a vector field compares whole, 'a.cell %s b.cell'), or declare "
+                  "'bool operator %s(%s a, %s b)' in %s", op_symbol(op), op_symbol(op), type_name(l), type_name(r),
+                  type_name(t));
     } else {
         diag_note("declare it in %s, like '%s operator %s(%s a, %s b)'", type_name(t), comparison ? "bool" : type_name(t),
                   op_symbol(op), type_name(l), type_name(r));
+    }
+}
+
+// After a comparison's error: what vectors, matrices and rectangles compare by, when that's what was written.
+static void note_vector_comparison(const tok_kind op, const type l, const type r)
+{
+    const bool equality = op == T_EQ || op == T_NE;
+    if (!equality && op != T_LT && op != T_LE && op != T_GT && op != T_GE) return;
+    const bool numbers = (type_is_numeric(l) || l.kind == TY_LONG) && (type_is_numeric(r) || r.kind == TY_LONG);
+    const int dl = type_dim(l), dr = type_dim(r);
+    const type vector = dl > 1 ? l : r;
+    if (matrix_dim(l) || matrix_dim(r)) {
+        if (equality) diag_note("matrices compare column by column: 'a.c0 %s b.c0 %s a.c1 %s b.c1', and so on", op_symbol(op),
+                                op == T_EQ ? "&&" : "||", op_symbol(op));
+        else diag_note("matrices have no order: compare the numbers you mean, like 'a.c0.x %s b.c0.x'", op_symbol(op));
+    } else if (l.kind == TY_RECT || r.kind == TY_RECT) {
+        if (equality) diag_note("compare what the rectangles are made of: 'a.position %s b.position %s a.size %s b.size'",
+                                op_symbol(op), op == T_EQ ? "&&" : "||", op_symbol(op));
+        else diag_note("rectangles have no order: compare the numbers you mean, like 'a.width %s b.width'", op_symbol(op));
+    } else if (l.kind == TY_QUATERNION || r.kind == TY_QUATERNION) {
+        // q and -q are one rotation, so which equality is meant has to be written
+        if (equality) diag_note("say which equality you mean: 'a.value %s b.value' compares the four numbers, and "
+                                "'Math.Abs(Math.Dot(a, b)) > 0.99999' is the same rotation, as q and -q are",
+                                op_symbol(op));
+        else diag_note("a quaternion has no order: compare 'Math.Angle(a, b)', or the numbers of 'a.value'");
+    } else if (l.kind == TY_COLOR || r.kind == TY_COLOR) {
+        if (equality) diag_note("a Color compares with another Color, every channel and alpha: 'a %s b'", op_symbol(op));
+        else diag_note("a Color has no order: compare the channels you mean, like 'a.r %s b.r'", op_symbol(op));
+    } else if (!numbers || (dl <= 1 && dr <= 1)) {
+        return;
+    } else if (!equality) {
+        diag_note("vectors have no order: '==' and '!=' compare two whole, and '%s' compares numbers, like 'a.x %s b.x' or "
+                  "'Math.LengthSq(a) %s Math.LengthSq(b)'", op_symbol(op), op_symbol(op), op_symbol(op));
+    } else if (dl > 1 && dr > 1) {
+        diag_note("vectors compare with vectors of the same size: here one has %d numbers and the other %d", dl, dr);
+    } else {
+        diag_note("a vector compares with a vector, never a number spread over it: write '%s(...)' with the number for each "
+                  "component, or compare one component, like 'v.x %s 0'", type_name(vector), op_symbol(op));
     }
 }
 
@@ -10277,8 +10319,10 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
         if (numbers && (dl == 1 || dr == 1 || dl == dr)) {
             if (op == T_PLUS || op == T_MINUS || op == T_STAR || op == T_SLASH) return double_vector_type(dl > dr ? dl : dr);
             if (dl == 1 && dr == 1 && (op == T_LT || op == T_LE || op == T_GT || op == T_GE || op == T_EQ || op == T_NE)) return T_BOOL_;
+            if (dl > 1 && dl == dr && (op == T_EQ || op == T_NE)) return T_BOOL_; // Every component, as float vectors'
         }
         diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
+        note_vector_comparison(op, l, r);
         return T_ERR;
     }
 
@@ -10318,11 +10362,13 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     // Colors: channel by channel with another, and scaled by a number.
     if (l.kind == TY_COLOR || r.kind == TY_COLOR) {
         const type other = l.kind == TY_COLOR ? r : l;
+        if ((op == T_EQ || op == T_NE) && other.kind == TY_COLOR) return T_BOOL_; // Every channel, alpha too
         if ((op == T_PLUS || op == T_MINUS || op == T_STAR) && other.kind == TY_COLOR) return l;
         if (op == T_STAR && is_scalar_number(other)) return (type){TY_COLOR, NULL};
         if (op == T_SLASH && l.kind == TY_COLOR && is_scalar_number(r)) return l;
         diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
-        diag_note("colors add, subtract and multiply channel by channel, and scale by a number: 'color * tint * 0.5'");
+        if (op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE) note_vector_comparison(op, l, r);
+        else diag_note("colors add, subtract and multiply channel by channel, and scale by a number: 'color * tint * 0.5'");
         return T_ERR;
     }
 
@@ -10387,6 +10433,9 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
         if (l.kind == TY_LOCAL_ENTITY && r.kind == TY_LOCAL_ENTITY) return T_BOOL_;
         if (l.kind == TY_ENUM && same_type(l, r)) return T_BOOL_;
         if (l.kind == TY_PLAYER && r.kind == TY_PLAYER) return T_BOOL_;
+        // Two vectors of a size: one bool, true when every component is equal, false when any differs. An int
+        // vector beside a float one widens, as it does for + and -.
+        if (type_is_numeric(l) && type_is_numeric(r) && type_dim(l) > 1 && type_dim(l) == type_dim(r)) return T_BOOL_;
         break;
     case T_AND:
     case T_OR:
@@ -10397,6 +10446,7 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     }
     diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
     if (l.kind == TY_STRUCT || r.kind == TY_STRUCT) note_missing_operator(op, l, r, false);
+    else note_vector_comparison(op, l, r);
     return T_ERR;
 }
 

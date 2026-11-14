@@ -120,7 +120,17 @@ These builders work in frags and verts too, with the GPU's usual float rounding.
 - `+ - * /` work component by component on vectors, and `%` on int vectors. A scalar widens to the vector's size, and int to float, so `v * 2 + 1` works.
 - Matrices have `+` and `-` with their own type, and `*` and `/` by a number. There's no `*` between matrices, or between a matrix and a vector: that's `Math.Mul`.
 - Quaternions have no operators: combine rotations with `Math.Mul`, and rotate vectors with `Math.Rotate`.
-- Comparisons and `==` work on scalars only.
+- `==` and `!=` compare two vectors of one size, or two colors, whole, and give one `bool`: `a == b` is true when every component is equal, and `a != b` when any differs. An int vector beside a float or a double one is widened first, as for `+`, so `int2(1, 2) == float2(1, 2)` is true. Each component compares as floats do: `-0` equals `0`, and a NaN equals nothing, itself included. A color's alpha counts.
+- `<`, `<=`, `>` and `>=` work on scalars only: a vector has no order. Compare the components you mean (`a.x < b.x`) or a length (`Math.LengthSq(a) < Math.LengthSq(b)`).
+- A vector never compares with a number: write the vector you mean, `v == float3(0)`. Matrices compare column by column (`a.c0 == b.c0 && a.c1 == b.c1`), a `Rect` by its parts (`a.position == b.position && a.size == b.size`), and a quaternion has no `==`, as `q` and `-q` are one rotation: `a.value == b.value` compares its four numbers, and `Math.Abs(Math.Dot(a, b)) > 0.99999` asks for the same rotation.
+
+```csharp
+if (cell == target) found = true;            // int2: both components
+if (body.velocity != float3(0)) Wake(body);  // Any component that isn't 0
+bool spotted = seen.Contains(int2(x, y));    // A list's Contains, IndexOf and Remove compare the same way
+```
+
+This is Tide's own: Unity.Mathematics' `==` on vectors gives a vector of bools, where Tide's gives the one answer a condition needs. It works in frags and verts too, and in constants.
 
 ## Functions
 
