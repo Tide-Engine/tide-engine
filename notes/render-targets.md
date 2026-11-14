@@ -69,9 +69,10 @@ readback API.
 
 Android (correction, 2026-11-14): `tide_platform_readback` was registered there too, as a program started
 through adb. It opens a window, which on Android only an app has, so it waited for good and CTest's timeout
-didn't end it: the Android job hung on every Build run from a5b50cd74 on. The fixture is now left out of
-Android builds, as the other window fixtures are. Readback on Android has no fixture: it would need an app
-(`tide_android_app_test`), not built.
+didn't end it: the Android job hung on every Build run from a5b50cd74 on. On Android the same game and host
+are now an app, `tide_platform_readback_app` (`tide_android_app_test ... GPU`, as the shaders' checks):
+on this machine's emulator (`-gpu lavapipe`) it printed "ok: await target.Read owns the exact drawn 4x3
+colors at frame 5" on Vulkan and ended with 0 in 2 s.
 
 Validation: native ASan Vulkan and web-debug SwiftShader WebGPU readback fixtures pin a 4x3 MSAA-resolved
 image, prior-frame ownership, row order, straight alpha, HDR 2.0 and exact frame-5 completion of sequential reads.
