@@ -475,6 +475,7 @@ tide_e2e_test(gui_entered) # TextField, IntField and FloatField with `out entere
 tide_e2e_test(actions)
 tide_e2e_test(tasks)
 tide_e2e_test(tasks_local)
+tide_e2e_test(tasks_local_fields) # Local tasks that read and write their entity's local fields, after a worker
 tide_e2e_test(local_workers)
 tide_e2e_test(task_handles LAYOUT)
 tide_e2e_test(task_visibility)

@@ -1,0 +1,19 @@
+// expect: 'Rebake' uses local state, on line 11, so the match can't start it
+component Box
+{
+    float3 pos;
+    local int bakes;
+}
+scene Main { }
+
+async void Rebake(mut Box box)
+{
+    box.bakes += 1;
+    await Wait.Frames(1);
+}
+
+// A task that uses local fields is local code, which the match can't start
+system Start(mut Box box)
+{
+    Rebake(box);
+}

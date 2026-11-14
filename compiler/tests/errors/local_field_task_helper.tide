@@ -1,0 +1,19 @@
+// expect: 'Rebake' uses local state here, and changes the match on line 18, but a task runs in one world
+component Box
+{
+    float3 pos;
+    local int bakes;
+}
+scene Main { }
+
+void Bake(mut Box box)
+{
+    box.bakes += 1;
+}
+
+// A match task can't use local fields through a function either
+async void Rebake(mut Box box)
+{
+    Bake(box);
+    await Wait.Ticks(2);
+}

@@ -18,22 +18,6 @@ struct Built
 {
     List<Vertex3> vertices;
     List<int> indices;
-    int version;
-}
-
-// A chunk's faces as a worker made them, until the chunk's own view takes them: a task can't reach a chunk's
-// local fields, so it leaves them here
-struct Ready
-{
-    Entity chunk;
-    Built built;
-    int frame;      // The frame it came in
-}
-
-local singleton Meshing
-{
-    List<Ready> ready;
-    int frame;
 }
 
 local singleton Sight
@@ -87,7 +71,7 @@ void Face(mut List<Vertex3> vertices, mut List<int> indices, float3 corner, floa
 
 // A chunk's faces: each side of a block that has air beside it. Past the chunk's edge reads as air, so the
 // sides on its edge are all there.
-local worker Built Faces(Grid3<Block> blocks, int version)
+local worker Built Faces(Grid3<Block> blocks)
 {
     mut List<Vertex3> vertices = [];
     mut List<int> indices = [];
@@ -106,14 +90,19 @@ local worker Built Faces(Grid3<Block> blocks, int version)
                 if (blocks[int3(x, y, z + 1)] == Block.Air) Face(vertices, indices, at + float3(0, 0, 1), float3(1, 0, 0), float3(0, 1, 0), Shade(tone, 0.65));
                 if (blocks[int3(x, y, z - 1)] == Block.Air) Face(vertices, indices, at, float3(0, 1, 0), float3(1, 0, 0), Shade(tone, 0.65));
             }
-    return Built { vertices = vertices, indices = indices, version = version };
+    return Built { vertices = vertices, indices = indices };
 }
 
-// Makes a chunk's faces, off the frame, from its blocks as they are now
-async void Remesh(mut Meshing meshing, Chunk chunk, Entity self, int version)
+// Makes a chunk's faces, off the frame, from its blocks as they are now, and keeps them in the chunk's local
+// fields: a task that uses them is this machine's, and gets them again with the chunk after its wait. If the
+// chunk goes from this machine while it waits, so does the task, and so do the fields.
+async void Remesh(mut Chunk chunk, int version)
 {
-    var built = await Faces(chunk.blocks, version);
-    meshing.ready.Add(Ready { chunk = self, built = built, frame = meshing.frame });
+    var built = await Faces(chunk.blocks);
+    chunk.blank = built.indices.count == 0;
+    if (!chunk.blank) chunk.mesh = Mesh(built.vertices, built.indices);
+    chunk.drawn = version;
+    chunk.meshing = false;
 }
 
 // The ground from a seed alone, a square every FAR_STEP cells, around a middle
@@ -185,38 +174,14 @@ view Beyond(Dimension dimension, mut Sight sight)
     if (sight.farMade && sight.farDimension == dimension.number) Draw.Mesh(sight.far, float4x4.Translate(sight.farMiddle - float3(0, SUNK, 0)));
 }
 
-// Faces nobody took go: their chunk went while they were made
-view Sweep(mut Meshing meshing)
-{
-    meshing.frame += 1;
-    for (var i = meshing.ready.count - 1; i >= 0; i--)
-    {
-        if (meshing.frame - meshing.ready[i].frame > 4) meshing.ready.RemoveAt(i);
-    }
-}
-
 // Each chunk of the player's dimension, once it has a mesh
-view Chunks(mut Chunk chunk, mut Sight sight, mut Meshing meshing)
+view Chunks(mut Chunk chunk, mut Sight sight)
 {
-    if (chunk.meshing)
-    {
-        for (var i = 0; i < meshing.ready.count; i++)
-        {
-            if (meshing.ready[i].chunk != this) continue;
-            var built = meshing.ready[i].built;
-            chunk.blank = built.indices.count == 0;
-            if (!chunk.blank) chunk.mesh = Mesh(built.vertices, built.indices);
-            chunk.drawn = built.version;
-            chunk.meshing = false;
-            meshing.ready.RemoveAt(i);
-            break;
-        }
-    }
     if (!sight.has || chunk.stage != Stage.Made || chunk.dimension != sight.dimension) return;
     if (!chunk.meshing && chunk.drawn != chunk.edits + 1)
     {
         chunk.meshing = true;
-        Remesh(meshing, chunk, this, chunk.edits + 1);
+        Remesh(chunk, chunk.edits + 1);
     }
     if (chunk.drawn == 0)
     {

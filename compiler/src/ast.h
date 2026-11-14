@@ -387,6 +387,7 @@ typedef struct param {
     loc local_use_at;    // ...where it first does
     bool local_written;  // ...and writes one
     bool local_shared;   // The outer binding shares live attached storage with local-field queries
+    bool task_fields;    // A view's or handler's that starts a task with it, which uses its local fields: both write the entity's row
     bool match_write;    // A helper's: it changes the match's fields of it, itself or through another helper
     loc match_write_at;  // ...where it first does
     VEC(struct param) query; // PARAM_QUERY's read-only bindings and component filters
