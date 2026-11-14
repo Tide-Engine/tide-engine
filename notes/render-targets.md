@@ -47,7 +47,9 @@ language/grids.md. Corrects "Owned pixel readback" below (the refusal of a wait 
   25, Unity's `TideLibrary.Abi`; TIDE_HOST_SHAPE counts the shared table's size), `tide_gpu_read_result.depth`. A
   volume (`TIDE_RENDER_VOLUME`) is named as image 0 of its one format, no depth. `tide_render_target_read_grid` makes
   a Grid3 for a volume's result and fills a row's run of a chunk with one poke and one copy (a `memcpy` of the run where
-  a pixel is its cell's words).
+  a pixel is its cell's words). Measured on this machine (sanitize build, ASan, a 2000x2000 stand-in result, three
+  runs each, a temporary test not kept): `Grid2<float>` 93-98 ms a cell at a time, 6.4-7.2 ms now; `Grid2<Color>`
+  103-119 ms, 26-30 ms now (64 MB of copying). Release builds weren't timed.
 - **Renderer, volumes:** a volume nothing drew with is made for the read (`volume_for` of a description of it), and
   one still being made (`texture_status` 0) is asked again next frame.
 - **Compiler:** `Read`/`ReadDepth` take `int2 from, int2 size` after the image's number (`expr.read_part`), the image
@@ -68,7 +70,8 @@ language/grids.md. Corrects "Owned pixel readback" below (the refusal of a wait 
   pixel of an int image, a part clamped from negative corners, a depth's, a face's and a layer's part, a part outside
   and a part of nothing failing, four Texture3D formats whole and a box, a written depth of 0.1 within 2^-24 (and as
   `1 - (1 - 0.1f)` under float storage), then the device lost with a read on its way back (it fails), and reads on the
-  next device exact. Errors' four argument messages changed.
+  next device exact. Errors' four argument messages changed; `read_target_index_negative` (`Read(-1)` gets the range
+  message).
 - **Not run:** Unity. The Sample's read kernels (`Assets/Tests/Resources/TideShaders/00000000c0de0014` and
   `c0de0061`-`68`.compute) were written again from the new WGSL with `tide_wgsl_translate --hlsl` (the old WGSL
   reproduced the checked-in files byte for byte but for c0de0014, already stale), and ComputeReplayTests' read
