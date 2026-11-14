@@ -30,6 +30,11 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
         add_test(NAME tide_render2d_pixels COMMAND tide_render2d_pixels)
         tide_gpu_test(tide_render2d_pixels)
     endif()
+elseif(TARGET tide_platform)
+    # On Android a window is an app's (tide_android_app_test), as the renderer's checks are
+    tide_add_game(tide_render2d_pixels_app SOURCES render2d/test/pipeline.tide NAME game
+        PACKAGES Render2D ${render2d_sources} HOST render2d/test/pixels.c WINDOW)
+    tide_android_app_test(tide_render2d_pixels_app GPU)
 endif()
 
 # CPU visibility certificates. The package is ordinary Tide, with no engine
@@ -212,6 +217,23 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
         add_test(NAME tide_render3d_pixels COMMAND tide_render3d_pixels)
         tide_gpu_test(tide_render3d_pixels)
     endif()
+elseif(TARGET tide_platform)
+    # On Android, each an app: the test's name, its game's file and its host's, as above
+    foreach(pixels IN ITEMS fog,fog,fog_pixels foliage_pixels,foliage_pixels,foliage_pixels
+            shadows_pixels,shadows,shadows_pixels post_pixels,post_pixels,post_pixels
+            skinning_pixels,skinning,skinning_pixels material_pixels,material_pixels,material_pixels
+            shadow_batches_pixels,shadow_batches,shadow_batches_test pixels,pipeline,pixels)
+        string(REPLACE "," ";" pixels "${pixels}")
+        list(GET pixels 0 name)
+        list(GET pixels 1 game)
+        list(GET pixels 2 host)
+        set(target tide_render3d_${name}_app)
+        tide_add_game(${target} SOURCES render3d/test/${game}.tide NAME game
+            PACKAGES Render3D ${render3d_sources} HOST render3d/test/${host}.c WINDOW)
+        target_link_libraries(${target} PRIVATE tide_render3d)
+        tide_android_app_test(${target} GPU)
+    endforeach()
+    target_compile_definitions(tide_render3d_shadow_batches_pixels_app PRIVATE SHADOW_BATCHES_GPU)
 endif()
 foreach(target IN ITEMS tide_render3d_materials tide_render3d_pipeline tide_render3d_shadow_batches
         tide_render3d_shadow_batches_pixels tide_render3d_pixels)
@@ -690,4 +712,8 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
         add_test(NAME tide_particles_pixels COMMAND tide_particles_pixels)
         tide_gpu_test(tide_particles_pixels)
     endif()
+elseif(TARGET tide_platform)
+    tide_add_game(tide_particles_pixels_app SOURCES particles/test/pixels.tide NAME game
+        PACKAGES Particles particles/particles.tide particles/draw.tide HOST particles/test/pixels.c WINDOW)
+    tide_android_app_test(tide_particles_pixels_app GPU)
 endif()

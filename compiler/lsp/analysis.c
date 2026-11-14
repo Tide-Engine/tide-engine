@@ -2429,7 +2429,7 @@ static const method_form texture_calls[] = {
      "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
      "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
-    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = the texture's, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = the texture's, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, of smaller images made of what was last drawn into the image. Trilinear blends adjacent levels; Point and Bilinear keep to the first image, so name Filter.Trilinear where the image carries Bilinear (a target's color does). Levels clamp to the available images."},
 };
 
 static const method_form depth_calls[] = {
@@ -2458,7 +2458,7 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
-    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Bilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Bilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, of smaller images made of what was last drawn into the image. Trilinear blends adjacent levels; Point and Bilinear keep to the first image, so name Filter.Trilinear where the image carries Bilinear (a target's color does). Levels clamp to the available images."},
 };
 
 static const method_form volume_calls[] = {
@@ -2485,7 +2485,7 @@ static const method_form array_calls[] = {
     {"Dispose", "Dispose()",
      "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
      "it then names no array."},
-    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = the array's, Wrap wrap = the array's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = the array's, Wrap wrap = the array's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, of smaller images made of what was last drawn into the image. Trilinear blends adjacent levels; Point and Bilinear keep to the first image, so name Filter.Trilinear where the image carries Bilinear (a target's color does). Levels clamp to the available images."},
 };
 
 static const method_form depth_array_calls[] = {

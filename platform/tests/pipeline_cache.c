@@ -95,10 +95,10 @@ static int frame(void *user, const float seconds)
         char *file = cache_file();
         size_t size = 0;
         uint8_t *bytes = file ? tide_file_read_whole(file, SIZE_MAX, &size) : NULL;
-        printf("%s: the file left out is one a run would read (%zu bytes)\n", size > 24u + 32u ? "ok" : "FAIL", size);
+        printf("%s: the file left out is one a run would read (%zu bytes)\n", size >= 24u + 32u ? "ok" : "FAIL", size);
         free(bytes);
         free(file);
-        if (size <= 24u + 32u) return 1;
+        if (size < 24u + 32u) return 1;
     }
     const bool drew = got == 0xFF0000FFu;
     printf("%s: a %s run read %zu bytes of pipelines, where it reads %s\n", read > 0 == wants ? "ok" : "FAIL", mode, read,
@@ -116,10 +116,19 @@ int main(const int argc, char **argv)
         printf("FAIL: the game has no temporary cache folder\n");
         return 1;
     }
-    const bool ready = spoil(file);
+    bool ready = spoil(file);
+    if (ready && strcmp(mode, "outgrown") == 0) {
+        // A byte less than the driver's data in the file the last run read: whatever its driver keeps. A desktop's
+        // keeps kilobytes, the Android emulator's no more than the 32 bytes of its header
+        size_t size = 0;
+        uint8_t *bytes = tide_file_read_whole(file, SIZE_MAX, &size);
+        free(bytes);
+        ready = size >= 24u + 32u;
+        if (ready) tide_gpu_vk_pipeline_cache_outgrown(size - 24u - 1u);
+        else printf("FAIL: the last run left no file of pipelines to outgrow (%zu bytes)\n", size);
+    }
     free(file);
     if (!ready) return 1;
-    if (strcmp(mode, "outgrown") == 0) tide_gpu_vk_pipeline_cache_outgrown(64u); // Any real file is bigger
     tide_platform_open(&(tide_window_desc){.title = "pipeline cache", .width = 64, .height = 64, .hidden = true});
     tide_platform_run(frame, NULL);
 }

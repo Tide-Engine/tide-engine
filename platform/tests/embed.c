@@ -883,6 +883,62 @@ TIDE_TEST(embed_render_target_revision_sees_reset_before_render)
     tide_embed_destroy(e);
 }
 
+// A multisampled target read between its smaller images: the renderer asks the other program for the mipmaps of the
+// target's resolved color, an id the TARGET packet that made the target names, with the format that says its samples.
+// That's all the other program needs to make a chain of its own (Unity's multisampled textures have none), which is
+// its replay's to do. An R32f image read so has none asked for, as no sampler blends it; nor has a target's again
+// before more was drawn into it.
+TIDE_TEST(embed_render_multisampled_target_mipmaps)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 1, NULL);
+    const tide_target_format rgba = TIDE_TARGET_RGBA8, r32 = TIDE_TARGET_R32F;
+    const tide_render_target smooth = tide_render_target_make_sampled(8.0f, 8.0f, &rgba, 1, 4);
+    const tide_render_target exact = tide_render_target_make_sampled(8.0f, 8.0f, &r32, 1, 1);
+    tide_draw_list draw = {0};
+    for (int frame = 0; frame < 2; frame++) {
+        tide_draw_reset(&draw);
+        if (frame == 0) {
+            tide_draw_render_target(&draw, smooth);
+            tide_draw_clear(&draw, TIDE_COLOR_RED);
+        }
+        tide_draw_render_target(&draw, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+        const tide_texture_ref a = tide_texture_filtered(tide_render_target_color(smooth), TIDE_FILTER_TRILINEAR);
+        const tide_texture_ref b = tide_texture_filtered(tide_render_target_color(exact), TIDE_FILTER_TRILINEAR);
+        tide_draw_sprite_placed(&draw, &a, tide_f2(4.0f, 4.0f), tide_f2(2.0f, 2.0f), (tide_rect){0, 0, 1, 1}, 0.0f, TIDE_COLOR_WHITE);
+        tide_draw_sprite_placed(&draw, &b, tide_f2(8.0f, 4.0f), tide_f2(2.0f, 2.0f), (tide_rect){0, 0, 1, 1}, 0.0f, TIDE_COLOR_WHITE);
+        uint32_t size = 0;
+        const uint8_t *p = tide_platform_embed_render(&draw, &size);
+        TIDE_REQUIRE(p != NULL || size == 0);
+        static uint32_t sampled_color, exact_color; // Made in the first frame, kept after
+        uint32_t sampled_mips = 0, exact_mips = 0, sampled_format = 0;
+        for (uint32_t at = 0; at + 8u <= size;) {
+            const uint32_t kind = u32_at(p, at), length = u32_at(p, at + 4u);
+            TIDE_REQUIRE(length <= size - at - 8u);
+            if (kind == TIDE_EMBED_RENDER_TARGET && length >= 4u * (4u + TIDE_GPU_MAX_COLORS + 1u)) {
+                const uint32_t format = u32_at(p, at + 12u), color = u32_at(p, at + 24u);
+                if (tide_gpu_target_samples((tide_gpu_target_format)format) > 1u) sampled_color = color, sampled_format = format;
+                else if (tide_gpu_target_color((tide_gpu_target_format)format, 0) == TIDE_GPU_COLOR_R32F) exact_color = color;
+            }
+            if (kind == TIDE_EMBED_RENDER_MIPMAPS && length >= 4u) {
+                sampled_mips += sampled_color && u32_at(p, at + 8u) == sampled_color;
+                exact_mips += exact_color && u32_at(p, at + 8u) == exact_color;
+            }
+            at += 8u + length;
+        }
+        TIDE_CHECK(sampled_color != 0 && exact_color != 0);
+        if (frame == 0) TIDE_CHECK(tide_gpu_target_samples((tide_gpu_target_format)sampled_format) == 4u);
+        TIDE_CHECK(sampled_mips == (frame == 0 ? 1u : 0u)); // Drawn into once: its chain is made once
+        TIDE_CHECK(exact_mips == 0u);
+    }
+    tide_draw_free(&draw);
+    tide_render_target_dispose(smooth);
+    tide_render_target_dispose(exact);
+    tide_embed_destroy(e);
+}
+
 TIDE_TEST(embed_render)
 {
     char *argv[] = {program};

@@ -53,16 +53,16 @@ static int frame(void *user, const float seconds)
         remade = true;
     }
     tide_draw_reset(&list);
-    tide_gui_begin(&gui, &devices, tide_f2(24, 128), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(24, 144), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
-    const tide_float2 places[47] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
+    const tide_float2 places[50] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
         {4,28},{12,28},{20,28},{4,36},{12,36},{20,36},{4,44},{12,44},
         {4,52},{12,52},{20,52},{4,60},{12,60},{20,60},{4,68},{12,68},{20,68},
         {4,76},{12,76},{20,76},{4,84},{12,84},{20,84},{4,92},{12,92},{20,92},{4,100},{12,100},{20,100},
-        {4,108},{12,108},{20,108},{4,116},{12,116},{20,116},{4,124},{12,124},{20,124}};
-    uint32_t pixels[47];
-    tide_platform_read_pixels_as(&list, 24, 128, 1, places, 47, pixels);
+        {4,108},{12,108},{4,116},{12,116},{20,116},{4,124},{4,132},{12,132},{20,132},{4,140},{12,140},{20,140}};
+    uint32_t pixels[50];
+    tide_platform_read_pixels_as(&list, 24, 144, 1, places, 50, pixels);
     if (++warm < 3) return TIDE_KEEP_RUNNING;
     check(pixels[0], 0, 0, 0, "a draw before the image write sees the earlier black image");
     check(pixels[1], 0, 0, 255, "a draw between writes sees the exact first HDR color with alpha undone");
@@ -85,16 +85,19 @@ static int frame(void *user, const float seconds)
         "Rg16f pair blends and reads a level", "Rgba16f four free channels blend and read a level",
         "blended reads of no image, no array and no cube are zero", "an R16f array layer: cleared, blended and exact",
         "an R16f array layer's mip level through a helper", "an Rg8 array layer blends both channels",
-        "an R16f cube face: blended, cleared faces exact", "a cube face's mip level, and an Rg16f cube face"};
-    for (unsigned i = 0; i < 12; i++) check(pixels[26 + i], 0, 255, 0, filtered[i]);
-    check(pixels[38], 255, 255, 255, "a Color read handed an integer image reads as no image");
-    check(pixels[39], 0, 0, 0, "a Color volume read and a kernel's Color store never reach an integer volume");
-    check(pixels[40], 0, 255, 0, "an int read handed a float grid's image reads as no image");
+        "an R16f cube face: blended, cleared faces exact", "a cube face's mip level, and an Rg16f cube face",
+        "a 4-sample R16f target's mip level is the mean of what its samples came to",
+        "a 4-sample Color target's mip level, read Trilinear, is the mean of what its samples came to"};
+    for (unsigned i = 0; i < 14; i++) check(pixels[26 + i], 0, 255, 0, filtered[i]);
+    check(pixels[40], 255, 255, 255, "a Color read handed an integer image reads as no image");
+    check(pixels[41], 0, 0, 0, "a Color volume read and a kernel's Color store never reach an integer volume");
+    check(pixels[42], 0, 255, 0, "an int read handed a float grid's image reads as no image");
+    check(pixels[43], 255, 255, 255, "a Trilinear read handed an integer image reads as no image, and has no smaller images made");
     static const char *const grids[] = {"a Grid2<float2> through a [Raw(float2)] field blends and reads its cells",
         "a Grid2<float4> by its name blends and reads its smaller image", "a Grid2<int> through a helper keeps its ints exact",
         "a Grid2<byte> by its name reads each cell's 0 to 255", "a Grid2<int> cell changed every frame is sent and read",
         "a Grid2<byte> as a frag's source reads its numbers"};
-    for (unsigned i = 0; i < 6; i++) check(pixels[41 + i], 0, 255, 0, grids[i]);
+    for (unsigned i = 0; i < 6; i++) check(pixels[44 + i], 0, 255, 0, grids[i]);
     if (local.Images.revision <= 0 || (stage == 2 && local.Images.revision == revision)) failures++;
 #ifdef __wasm__
     if (stage == 0 && !failures) {
@@ -113,7 +116,7 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 128, .hidden = true});
+    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 144, .hidden = true});
     printf("renderer: %s\n", tide_platform_renderer());
     tide_platform_run(frame, NULL);
 }

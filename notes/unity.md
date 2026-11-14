@@ -1,3 +1,17 @@
+## For the next Unity pass: a multisampled target's smaller images (2026-11-14)
+
+Vulkan and now WebGPU make a chain of a multisampled target's resolved colors when a read needs one
+(render-targets.md, Kernels read every kind of image). `TideRender.cs` was left alone in that work; Unity's replay
+still reads the resolved image alone there, as `MakeTarget` gives a target colors with mips only where `samples ==
+1` and `Mipmaps()` returns for an RT without them. What the recorder hands it is already all it needs:
+`TIDE_EMBED_RENDER_TARGET` carries the target's format with its samples (bit 16 on) and names each resolved color
+id, and `TIDE_EMBED_RENDER_MIPMAPS` names such an id whenever a read (a frag, a vert or now a kernel) needs its
+chain after more was drawn, never for an R32f/Rgba32f/R32i image (`embed_render_multisampled_target_mipmaps` in
+`platform/tests/embed.c` pins both). The replay's part: give each blendable color of a multisampled target a
+one-sample companion RT with `useMipMap` (made once), and on Mipmaps of its id resolve the MSAA surface into it
+(`CommandBuffer.ResolveAntiAliasedSurface` or a blit), `GenerateMips`, and bind the companion for that id's reads.
+No ABI change is needed for it.
+
 ## Read kernels, number images and [Linear] run in Unity: three replay fixes (2026-11-14)
 
 What landed on dev the same day without a Unity run (the ten read kernels, number images' filtering, mips,

@@ -108,7 +108,8 @@ Tried on this machine's emulator (x86_64, API 36), the android-debug build:
   window, closes it and returns 0, on any device; on one without Vulkan 1.3
   after the screen), and, labelled `gpu` (`--vulkan`),
   `tide_platform_draw_app`, `_targets_app` and `_shaders_app`, until then
-  started by hand.
+  started by hand. Since 2026-11-14 every window fixture has one (Every window
+  fixture an app, below).
 - **Checked on this machine's emulator (x86_64, API 36, android-debug):**
   - `-gpu host`: the unfixed draw app aborted at exit as above (reproduced);
     fixed, `tide_platform_app_exit` and `tide_platform_draw_app` (3,399
@@ -203,6 +204,132 @@ Tried on this machine's emulator (x86_64, API 36), the android-debug build:
 - Not tried: `-gpu swangle_indirect` (ANGLE on SwiftShader for GLES, the same
   SwiftShader Vulkan, so 1.2), `-gpu guest`, a newer system image. lavapipe
   made them unnecessary.
+
+## Every window fixture an app (2026-11-14; Claude's picks, Provisional)
+
+Until then five app tests ran on Android (draw, exit, targets, shaders,
+readback), so compute, kernels, image stores, Texture3D, number frag outputs,
+culling, occlusion and the depth fixtures never ran on Android or on any CI
+Vulkan (CI's desktop jobs leave `gpu` out; the emulator's lavapipe is CI's one
+Vulkan). Now every GPU fixture a desktop runs as a window program has an app
+twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
+<host.c> WINDOW)` for a game with a host, `add_library(SHARED)` with
+`tide_android_app` for a C program, and `tide_android_app_test(... GPU)`.
+
+- **The tests** (this machine's emulator, `-gpu lavapipe`, android-debug, each
+  test's own time; all on the device's descriptor sets, as it has no push
+  descriptors):
+  - `platform/`: `tide_platform_gpu_time_app` 4 s, `_draw_app_no_anisotropy`
+    (`TIDE_VULKAN_ANISOTROPY=1`) 11 s, `_compute_app` 3 s, `_kernels_app` 4 s,
+    `_images_app` 4 s, `_occlusion_app` 7 s, `_cull_app` 6 s,
+    `_cull_app_decided` (`TIDE_GPU_CULLING=decide`) 3 s, `_prewarm_app`
+    (prewarm.cmake's ten runs) 19 s, `_texture_capacity_app`,
+    `_gpu_functions_app`, `_fills_app`, `_float_bits_app`,
+    `_camera_precision_app`, `_skinned_app` and `_baked_app` 1.5 to 2.6 s each,
+    `_loading_app` 2 s, `_gpu_wait_app` 2 s, `_pipeline_cache_app`
+    (pipeline_cache.cmake's ten runs) 16 s, `_swapchain_app` (below) 4 s,
+    `_depth_camera_app` (`--frames=1`) 7 s, `_depth_reads_app` and its
+    `_fallback` 3 s each, and with `TIDE_TEST_DEPTH_FALLBACK=1` (24-bit depth,
+    as many phones' is) `_targets_app_depth_fallback` 10 s,
+    `_shaders_app_depth_fallback` 24 s, `_occlusion_app_depth_fallback` 6 s,
+    `_readback_app_depth_fallback` 3 s.
+  - `demo_smoke_app` (`demo.apk --smoke`) 6 s.
+  - `packages/`: `tide_render2d_pixels_app` 5 s, `tide_render3d_fog_app`,
+    `_foliage_pixels_app`, `_shadows_pixels_app`, `_post_pixels_app`,
+    `_skinning_pixels_app`, `_material_pixels_app`,
+    `_shadow_batches_pixels_app` and `_pixels_app` 2 to 6 s each,
+    `tide_particles_pixels_app` 2 s.
+  - 38 tests more, about 200 s of the emulator's; the 43 app tests together
+    took about 250 s with nothing else running (beside builds of four jobs,
+    prewarm's ten runs alone took 57 s). Each printed its checks (the verbose run was read: every one
+    said `renderer: Vulkan` or its own summary, and the variants differ where
+    they should: `anisotropy 1`, `depths: within a 24-bit step`, the culling the
+    CPU decided).
+- **`tide_android_app_test(<target> [BACK] [GPU] [STEPS] [NAME <test>] [ARGS
+  ...] [ENVIRONMENT ...] [RUNS ...])`**: NAME for another test of one app,
+  ARGS for main's arguments (the intent's `tide.args`), ENVIRONMENT for Tide's
+  settings, RUNS for a script's runs in order, STEPS for what a player does.
+  `run_android.mjs --app` takes them as `--env`, `--run` and `--steps`
+  (`tide_android_runner` tests each with adb mocked):
+  - `--env TIDE_NAME=value`, refused for any other name or a value with a space,
+    goes as the intent's `tide.env`, words apart. `activity.c` sets them in the
+    environment before `main` (`intent_env`), for a debuggable app alone
+    (`ApplicationInfo.FLAG_DEBUGGABLE`, through JNI: every app but `tide build
+    --android --distribution`'s), names of `TIDE_` and capitals, digits and
+    underscores alone. Not for an app built to ship: any app on the phone can
+    start another's activity with extras, and `TIDE_RELAY`, `TIDE_RTC_CERT` or
+    `TIDE_LOBBY_PORT` would point its game elsewhere. A test's own settings
+    alone go, not the shell's `TIDE_` variables as a program's do: the
+    caller's `TIDE_HIDDEN` would make an app's runs here and CI's differ.
+    Considered: an extra a setting (`tide.env.TIDE_X`), which needs the
+    intent's keys through JNI for nothing more.
+  - `--run <arguments>`, once or more: the app is installed once, its data
+    cleared (`pm clear`, as the desktop scripts empty their folder first),
+    started for each run in turn with those arguments, printing `--- <arguments>`
+    before each; the first run that doesn't end with 0 ends the test. What
+    the app keeps (its cache folder) stays between runs: prewarm.cmake's and
+    pipeline_cache.cmake's orders run so. With `--run` there may be no
+    arguments after the APK.
+  - `--steps`: as it polls the log for the app's end, the runner does what the
+    app's lines `step: <what>` ask, each once, in order: `turn` (the screen to
+    landscape: `accelerometer_rotation` 0, `user_rotation` 1), `upright`
+    (`user_rotation` 0), `home` (KEYCODE_HOME) and `front` (`am start` again,
+    which a singleTask activity takes as coming back); another word stops the
+    app and fails. The rotation settings as they were are put back as the run
+    ends, whatever happened (`settings delete` for one that was never set).
+- **`tide_platform_swapchain_app`**, `swapchain.c` on Android: GLFW's resizes
+  are the screen turned to landscape and back (the window 2400 by 1080, then
+  1080 by 2400, a swapchain made for each), the device lost as a frame is
+  shown, then the app sent home (`tide_window_unseen`: no window) and brought
+  back, where the new surface's swapchain is the fifth and the device is the
+  one before (`tide_gpu_vk_surface_changed` keeps everything made on it). It
+  passed at once: 116 frames, every one read back.
+- **Found by them, fixed:**
+  - Android's frames never let the match go on while the frame's fence was
+    waited for: `tide_window_present` called `tide_gpu_vk_present()`, not
+    `tide_gpu_vk_present_updating(tide_window_update_while_waiting)` as GLFW's
+    window does, so `tide_platform_update_while_waiting` (the standard host's
+    match work during a GPU wait, `notes/standard-host.md`) did nothing on
+    Android, and the gpu_wait app failed seven of its checks. It's called as on
+    desktop now, and they pass.
+  - Tests that held only on a display of scale 1, a window the test's size,
+    or a fast desktop: `gpu_time.c` took a pass of the window's to be the
+    window's pixels, but the frame it reads back (`tide_platform_read_pixels`)
+    is a pass at the window's logical pixels (411 by 914 here, against 1080 by
+    2400), which it now accepts as that; `loading.c` read the loading screen as
+    a 320 by 180 window where it's laid out on the screen's size, and now reads
+    it at the window's own, in one read of 844 points rather than a read a
+    point. That made a race visible on desktop too: the screen's pipelines are
+    made in the background (the standard host's `background_pipelines`), so
+    its first frames can show the background alone, and the old test only
+    passed by the time its hundreds of one-pixel reads took. It now waits for
+    the bar and the text (600 frames at most) before it lets `assets()` go, and
+    asks for six frames or more where it asked for exactly six.
+  - `pipeline_cache.c`'s `outgrown` run set the read limit to 64 bytes, "any
+    real file is bigger": the emulator's driver (gfxstream over lavapipe) keeps
+    nothing in its pipeline cache but the 32 bytes of its header, so a warm
+    run reads 32 bytes and caching pipelines does nothing there. The limit is
+    now one byte under the driver's data in the file the last run left, and a
+    whole file is one of at least the two headers (24 and 32 bytes).
+- **Not twinned, and why:** runs with no window, which Android refuses ("a
+  game runs without a window on desktop only", `tide_platform_open_headless`):
+  `tide_platform_gpu_wait_headless`, the benchmarks' `--quick` tests
+  (bench_occlusion, bench_skinned's three, bench_render3d, bench_forest's two,
+  bench_prepass: they open headless natively, a hidden window only on the web;
+  tried, each app said so and ended), tide/run.h's `--capture`, `--script`,
+  `--players` and `--interactive` tests (capture, profile, data_directory,
+  stats, first_tick, quit, interactive, players, hidden_runs),
+  `tide_network_hosted` and `tide_voice_host`; the watching host's reload
+  (`tide_platform_reload`, `_reload_reads`: a desktop host that reopens the
+  game's library); `tide_platform_cursor` (GLFW's lock: Android never locks
+  the cursor); `tide_platform_draw_vulkan_sets` and `_compute_vulkan_sets`
+  (the emulator has no push descriptors, so every app writes sets already);
+  the editor's (`tools/tide-editor`, desktop) and `versus_draw` (GLFW's
+  loader). Headless runs on Android would bring the first group: not built,
+  as no one has asked what a run with no window means on a phone.
+- CI: not yet run on a hosted runner; the next Build run's Android job is the
+  check, three or four minutes more of its emulator if it's as fast as this
+  one, and the apps' builds.
 
 CLI modes (2026-10-30): --release is optimized with symbols and debuggable APKs,
 using a default app ID if needed, and links with --gc-sections. --distribution
