@@ -26,6 +26,9 @@ typedef struct bound {
     int comp;
     const struct bound *a;
     const struct bound *b;
+    // What its comparison read went through a conversion the analysis saw past (an int in a float local, a helper's
+    // int returned as a float): C compares it as the converted type, so it's never an exact key's
+    bool inexact;
 } bound;
 
 // One number of each row the index sorts or places rows by.
@@ -64,7 +67,7 @@ void plan_loop_indexes(program *prog);
 
 // What a loop plan says, for the editor and `tidec --schedule`: "indexed by
 // o.body.position.x, o.body.position.y", "indexed by r.chunk.at.x and
-// r.chunk.dimension, each one value" or "not indexed: <why>". NULL for loops
+// r.chunk.dimension as one exact key" or "not indexed: <why>". NULL for loops
 // over anything but a query or a list.
 const char *loop_index_summary(const stmt *loop);
 

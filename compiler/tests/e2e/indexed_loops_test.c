@@ -45,9 +45,11 @@ TIDE_TEST(indexed_loops_give_what_plain_loops_give)
                world.Stats.teams, world.Stats.low, world.Stats.band, world.Stats.tagged, (double)world.Stats.sum,
                world.Stats.around, world.Stats.shifting, world.Sparks.warm, local.Drawn.glanced, local.Drawn.marked,
                world.Stats.swing, (double)world.Stats.swung);
-        printf(" %d %d %d %d %d %d %d %d %d %016" PRIx64 " %d\n", world.Found.places, world.Found.keys, world.Found.ranged,
+        printf(" %d %d %d %d %d %d %d %d %d %d %016" PRIx64 " %d\n", world.Found.places, world.Found.keys, world.Found.ranged,
                world.Found.kinds, world.Found.marks, world.Found.listed, world.Found.helped, world.Found.pinged,
-               world.Found.floats, (uint64_t)world.Found.sum, local.Drawn.cells);
+               world.Found.floats, world.Found.converted, (uint64_t)world.Found.sum, local.Drawn.cells);
+        // Keys compared as doubles and floats find their neighbours too: more than the exact keys do
+        TIDE_CHECK(world.Found.converted > world.Found.keys);
         // A place and a dimension, or the long they pack to: the same cells
         TIDE_CHECK(world.Found.places == world.Found.keys);
         swings += world.Stats.swing > 0;

@@ -141,6 +141,7 @@ singleton Found
     int helped;
     int pinged;
     int floats;
+    int converted;
     int moved;
     long sum;
 }
@@ -233,6 +234,7 @@ system Seek(mut Found found, Time time, query (Cell cell) cells)
     found.kinds = 0;
     found.marks = 0;
     found.floats = 0;
+    found.converted = 0;
     for (var k = 0; k < 24; k++)
     {
         var at = CellPlace((k * 37 + time.tick * 11) % 256);
@@ -284,7 +286,33 @@ system Seek(mut Found found, Time time, query (Cell cell) cells)
             if (row.cell.kind != float(k % 5)) continue;
             found.floats += 1;
         }
+        // Longs C compares as doubles, through typed locals and a helper, and an int as a float: no exact key
+        // either. Past 2^53 a double holds the keys of 128 neighbours alike
+        foreach (var row in cells)
+        {
+            double d = row.cell.key;
+            double near = key;
+            if (d != near) continue;
+            found.converted += 1;
+        }
+        foreach (var row in cells)
+        {
+            float f = row.cell.number;
+            float near = k * 21;
+            if (f != near || row.cell.dimension != dimension) continue;
+            found.converted += 1;
+        }
+        foreach (var row in cells)
+        {
+            if (AsDouble(row.cell.key) != AsDouble(key) || row.cell.at.x != at.x) continue;
+            found.converted += 1;
+        }
     }
+}
+
+double AsDouble(long x)
+{
+    return x;
 }
 
 // A query borrowed by a function, from a system and from a view, found by an exact key

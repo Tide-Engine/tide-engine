@@ -48,6 +48,10 @@ typedef struct ictx {
     int env_count;
     const decl *inlining[MOST_INLINE];
     int inline_depth;
+    // Conversions seen past (a name or an inlined call standing for a value of another type): a count, its value
+    // as the comparison being read began, and how many conditions being read went through one
+    uint32_t converted, converted_mark;
+    int converting;
     const char *why;
     loc why_at;
 } ictx;
@@ -136,12 +140,15 @@ static const void *name_target(const expr *e)
     return NULL;
 }
 
-static const expr *env_find(const ictx *c, const expr *e)
+static const expr *env_find(ictx *c, const expr *e)
 {
     const void *target = name_target(e);
     if (!target) return NULL;
     for (int i = c->env_count - 1; i >= 0; i--) {
-        if (c->env_from[i] == target) return c->env_to[i];
+        if (c->env_from[i] != target) continue;
+        // `float f = row.n;`: the name's a float, what it stands for an int, and C compares f as a float
+        if (!same_kind(e->type, c->env_to[i]->type)) c->converted++;
+        return c->env_to[i];
     }
     return NULL;
 }
@@ -211,6 +218,7 @@ static const expr *inline_call(ictx *c, const expr *call)
     const expr *out = ok && pure(c, value) ? subst(c, value) : NULL;
     c->inline_depth--;
     c->env_count = mark;
+    if (out && !same_kind(call->type, out->type)) c->converted++; // `float AsF(int x) { return x; }`
     return out;
 }
 
@@ -669,6 +677,7 @@ static const bound *leaf(ictx *c, const expr *e, const int comp)
     b->op = BOUND_LEAF;
     b->leaf = value;
     b->comp = comp;
+    b->inexact = c->converting > 0 || c->converted != c->converted_mark;
     return b;
 }
 
@@ -687,7 +696,7 @@ static const bound *op2(const bound_op op, const bound *a, const bound *b)
 // value are both of exact types (a byte against a float isn't: C compares those as floats). An exact key finds it.
 static bool exact_bound(const type t, const bound *lo, const bound *hi)
 {
-    if (!lo || lo != hi || lo->op != BOUND_LEAF || !lo->leaf || !is_exact_type(t)) return false;
+    if (!lo || lo != hi || lo->op != BOUND_LEAF || !lo->leaf || lo->inexact || !is_exact_type(t)) return false;
     // A component of a vector value (an int3's), or the value itself
     return lo->comp >= 0 ? type_is_int_based(lo->leaf->type) : is_exact_type(lo->leaf->type);
 }
@@ -935,16 +944,36 @@ static constraints compare(ictx *c, const expr *a, tok_kind op, const expr *b, c
     constraints out = {0};
     if (!want) op = negated(op); // NaN makes a negated comparison true: rows of NaN keys are candidates always
     if (op == T_NE) return out;
-    if (!relation(c, a, op, b, &out)) relation(c, b, flipped(op), a, &out);
+    // A conversion either side, seen past from here on, makes its bounds inexact (leaf)
+    const uint32_t mark = c->converted_mark;
+    c->converted_mark = c->converted;
+    if (!relation(c, a, op, b, &out)) {
+        c->converted_mark = c->converted; // The other way round reads both sides again, and counts its own
+        relation(c, b, flipped(op), a, &out);
+    }
+    c->converted_mark = mark;
     return out;
 }
 
-// Bounds that hold whenever the condition is `want`.
+static constraints derive_seen(ictx *c, const expr *e, bool want);
+
+// Bounds that hold whenever the condition is `want`. A condition seen through a conversion (an inlined helper
+// whose float local holds an int) makes every bound of it inexact.
 static constraints derive(ictx *c, const expr *e, const bool want)
 {
-    constraints none = {0};
+    const uint32_t before = c->converted;
     e = look(c, e);
-    if (!e) return none;
+    if (!e) return (constraints){0};
+    const bool converted = c->converted != before;
+    c->converting += converted;
+    const constraints out = derive_seen(c, e, want);
+    c->converting -= converted;
+    return out;
+}
+
+static constraints derive_seen(ictx *c, const expr *e, const bool want)
+{
+    constraints none = {0};
     if (e->kind == E_UNARY && e->op == T_NOT) return derive(c, e->lhs, !want);
     if (e->kind == E_BINARY && (e->op == T_AND || e->op == T_OR)) {
         const constraints a = derive(c, e->lhs, want), b = derive(c, e->rhs, want);
@@ -965,6 +994,7 @@ static constraints derive(ictx *c, const expr *e, const bool want)
         b->op = BOUND_LEAF;
         b->leaf = literal;
         b->comp = -1;
+        b->inexact = c->converting > 0;
         constraints out = {0};
         add_constraint(&out, path, comp, t, b, b);
         return out;

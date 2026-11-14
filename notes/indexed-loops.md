@@ -13,7 +13,12 @@ are no long vectors). Both are fixed; the spec's Indexed loops has the rules as 
   `int`, `long`, `char`, an enum, a bool, or a component of an int vector (`type_is_int_based` of the value). Then
   the C comparison is one of `int64_t`s (Tide has no unsigned integer but byte, which promotes exactly), so the
   equality is the index's. A byte against a float isn't one: C compares them as floats, and `(int64_t)` of the float
-  would miss rows (a long past 2^53 against a double, too). `add_constraint` keeps an exact equality exact: another
+  would miss rows (a long past 2^53 against a double, too). The types are the ones the analysis sees after looking
+  through the guard's typed locals and inlined helpers, which can hide a conversion (`double d = row.cell.key;`,
+  `double AsDouble(long x) { return x; }`): `env_find` and `inline_call` count each one they look past (a name or
+  a call standing for a value of another type), and a bound made while its comparison, or the condition around it,
+  went through one is `inexact` (`bound.inexact`, `leaf`), never an exact key's, so it stays a widened double
+  bound. Found by the review: the exact key found one row where C's double comparison passes 128. `add_constraint` keeps an exact equality exact: another
   bound on the same key is dropped (it could only narrow, and dropping a bound takes in more rows), and an exact
   equality replaces bounds a key had. `choose()`: a grid of 2-3 float/double components bounded both ways, as
   before; else **every** exact equality (up to `INDEX_EXACT_MOST`, 8, in the guard's order) as one key
@@ -66,7 +71,9 @@ Tests:
   (64 share each x); `Shift` moves every seventh onto another's place each tick (two at a place: `doubled`) and
   destroys some (holes), `Renew` spawns cells into another table that `Expire` destroys. `Seek` searches 24 places
   a tick by int3 + int, by the long, by int + int beside a float bound (NaN rows pass) and an int bound, by enum +
-  byte-against-int + int + the body's last bool guard, by char + int, and a byte against a float (no exact key),
+  byte-against-int + int + the body's last bool guard, by char + int, a byte against a float (no exact key), and
+  longs compared as doubles through typed locals and a helper beside an int compared as a float (`converted`,
+  which must find more than the exact keys; without `bound.inexact` the indexed and plain builds differ),
   each summed in the rows' order into `Found.sum`; `CountAt` is a borrowed query from a system and a view
   (`Glimpse`, whose own loop is a view's rows by int + enum); `Prod` a parallel loop over a query by int + int;
   `Tiles` a list of a read-only singleton (1,900 tiles, 300 on places that have one) by an int2's components. The
