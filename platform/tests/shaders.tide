@@ -5316,3 +5316,31 @@ view ExplicitLevels(Art art, mut LevelsState state) {
         Draw.Transform(float2(i * 32, 0)) { List<Vertex> quad = [Vertex {}, Vertex { position = float2(16, 0) }, Vertex { position = float2(16) }, Vertex { position = float2(0, 16) }]; Draw.Mesh(quad, art.faces, ReadLevel); }
     }
 }
+
+frag PixelDepth(Corner3 vertex, out Color color) {
+    color = vertex.color;
+    if (vertex.uv.x > 0.5) { this.WriteDepth(1); this.WriteDepth(vertex.uv.y); }
+}
+[After(ExplicitLevels)]
+view FragmentDepths(Art art) {
+    if (art.targetPass != 31) return;
+    Draw.Clear(Color.black); Draw.SetClip(); Draw.SetCull(.None);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(256, 256, 0, 1));
+    mut List<Corner3> card = [Corner3 { position = float3(-12, -12, 0.5), uv = float2(1, 0.25), color = Color.red },
+                         Corner3 { position = float3(12, -12, 0.5), uv = float2(1, 0.25), color = Color.red },
+                         Corner3 { position = float3(12, 12, 0.5), uv = float2(1, 0.25), color = Color.red },
+                         Corner3 { position = float3(-12, 12, 0.5), uv = float2(1, 0.25), color = Color.red }];
+    Draw.SetDepth(.ReadWrite);
+    Draw.Mesh(card, art.faces, float4x4.Translate(float3(-112, 112, 0)), PixelDepth);
+    for (int i = 0; i < 4; i++) { card[i].uv.y = 0.75; card[i].color = Color.blue; }
+    Draw.Mesh(card, art.faces, float4x4.Translate(float3(-112, 112, 0)), PixelDepth);
+    for (int i = 0; i < 4; i++) card[i].uv.x = 0;
+    Draw.Mesh(card, art.faces, float4x4.Translate(float3(-112, 112, 0)), PixelDepth);
+    for (int i = 0; i < 4; i++) { card[i].uv.x = 1; card[i].uv.y = 0.25; }
+    Draw.SetDepth(.Equal);
+    Draw.Mesh(card, art.faces, float4x4.Translate(float3(-80, 112, 0)), PixelDepth);
+    Draw.SetDepth(.Only);
+    Draw.Mesh(card, art.faces, float4x4.Translate(float3(-48, 112, 0)), PixelDepth);
+    Draw.SetDepth(.Equal);
+    Draw.Mesh(card, art.faces, float4x4.Translate(float3(-48, 112, 0)), PixelDepth);
+}

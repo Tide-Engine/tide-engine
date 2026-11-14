@@ -9090,12 +9090,29 @@ static type check_method(checker *c, expr *e)
     if (names_snapped_field(c, e, obj)) return check_field_snap(c, e);
     if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // this.Discard(): the frag's pixel isn't drawn
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (str_eq_c(e->name, "WriteDepth")) {
+            if (e->args.count != 1 || !type_assignable(T_FLOAT_, e->args.items[0]->type)) {
+                diag_error(e->at, "WriteDepth takes one float, forward depth from 0 near to 1 far: 'this.WriteDepth(value)'");
+                return T_ERR;
+            }
+            if (c->statement_call != e || c->short_circuit_depth > 0 || c->branch_depth > 0) {
+                diag_error(e->at, "this.WriteDepth(value) is a statement of its own: write it on its own line in the frag");
+                return T_ERR;
+            }
+            if (!c->method || !c->method->is_frag) {
+                diag_error(e->at, "WriteDepth belongs to the frag itself: return the depth from the helper and write it in the frag");
+                return T_ERR;
+            }
+            c->method->writes_depth = true;
+            e->call = CALL_WRITE_DEPTH;
+            return T_VOID_;
+        }
         const bool derivative = str_eq_c(e->name, "Ddx") || str_eq_c(e->name, "Ddy") || str_eq_c(e->name, "Fwidth");
         const bool cover = str_eq_c(e->name, "Cutout") || str_eq_c(e->name, "Coverage");
         if (derivative || cover) return check_pixel_method(c, e, derivative);
         if (!str_eq_c(e->name, "Discard") || e->args.count) {
             diag_error(e->at, "a frag's pixel has the methods 'Discard()', which leaves it undrawn, 'Cutout(alpha)' and "
-                              "'Coverage(share)', which say how much of it the frag covers, and 'Ddx(v)', 'Ddy(v)' and "
+                              "'Coverage(share)', which say how much of it the frag covers, 'WriteDepth(value)', which replaces depth, and 'Ddx(v)', 'Ddy(v)' and "
                               "'Fwidth(v)', how fast a value changes across it; the rest are its fields");
             return T_ERR;
         }
@@ -14934,7 +14951,7 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_QUIT
         || call == CALL_AUDIO
-        || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_COVER || call == CALL_TASK
+        || call == CALL_SNAP || call == CALL_WRITE_DEPTH || call == CALL_DISCARD || call == CALL_COVER || call == CALL_TASK
         || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
             || skinned_changes_pose(called->skin_operation)))
         || called->io_operation

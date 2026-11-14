@@ -2961,7 +2961,19 @@ mut void Enter(Stance next)
   - Each field that something snaps gets a hidden int counting its snaps, after the type's fields, which `Snap()` increments (wrapping). Views blend the field only between two ticks with the same count. The counter is ordinary match data: snapshots, rollback, packing, the match hash, host migration and hot reload carry it, and it changes the type's layout, and so the match's compatibility, only in a game that snaps that field. It costs nothing for fields never snapped and next to nothing in network bytes, as it rarely changes.
   - `verified` views and view queries follow the same rule over their own endpoints.
 
-#### Provisional: explicit mip level (2026-11-14)
+#### Provisional: a frag writes depth (2026-11-14)
+
+WriteDepth is a statement in the frag itself, following Discard's implicit-this rule. A helper returns its
+computed depth for the frag to write. The last write on the path wins; a path without a write keeps triangle
+depth. Values clamp to [0, 1], with NaN becoming zero. `this.depth` continues to report rasterized depth.
+Depth tests use the replacement: Equal compares it, Only writes it without color, and multisampling applies
+it to each covered sample. The shader makes no early-test promise, allowing the device to test after writing.
+Automatic geometry-bound culling is disabled for these shaders: their triangle bounds cannot predict their
+depth. Actual stored depth still contributes to occlusion of later ordinary draws. A matching prepass must
+run the same depth-writing frag. Chosen over conservative-depth restrictions, which would limit the feature,
+and over an error under Equal/Only, which would prevent useful prepasses.
+
+### Provisional: explicit mip level (2026-11-14)
 
 NaN levels become zero; negative infinity clamps to zero and positive infinity to the last image.
 Level zero is the original image, one halves each dimension, and fractional levels blend with Trilinear or
@@ -3274,6 +3286,11 @@ view Sparks(Spark spark, Hud hud)
 Owner: "these make sense, lets do all of these". A struct a vert hands its frag may
 hold ints and int vectors, carried unblended from the triangle's first corner. A float
 field stays blended, and all read fields count toward the existing 15 carried values.
+
+#### A frag writes depth (decided 2026-11-13)
+
+The owner: "these make sense, lets do all of these". `this.WriteDepth(value)` replaces a pixel's depth,
+with the forward 0-near, 1-far value read by `this.depth` and DepthTexture.Sample.
 
 #### Explicit mip level (decided 2026-11-13)
 

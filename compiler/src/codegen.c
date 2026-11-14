@@ -27501,7 +27501,7 @@ static void gen_shaders(gen *g)
         gen_c_raw_literal(o, diagnostic_name(g, str_from(sh->name), "shader", s));
         // A fragment shader cannot move vertices. Skinning and a user vert can,
         // so only an undeformed 3D mesh advertises automatic geometry bounds.
-        if (sh->dims == 3 && !sh->vert && !sh->skinned && !sh->gpu_vertices) {
+        if (sh->dims == 3 && !sh->vert && !sh->skinned && !sh->gpu_vertices && !(sh->frag && sh->frag->writes_depth)) {
             for (int i = 0; i < sh->vertex->fields.count; i++) {
                 const field *f = &sh->vertex->fields.items[i];
                 if (str_eq_c(f->name, "position"))

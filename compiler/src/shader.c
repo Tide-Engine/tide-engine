@@ -5666,7 +5666,12 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
         st_assign(em, s, true);
         break;
     case S_EXPR:
-        if (s->value->kind == E_METHOD && s->value->call == CALL_COVER) { // How much of the pixel it covers, finished as it ends
+        if (s->value->kind == E_METHOD && s->value->call == CALL_WRITE_DEPTH) {
+            need(em, family_helper(FAMILY_CLAMP, 1));
+            sb_put(em->o, "tide_written_depth = tide_clamp1(");
+            ex_as(em, s->value->args.items[0], (type){TY_FLOAT, NULL});
+            sb_put(em->o, ", 0.0, 1.0);\n");
+        } else if (s->value->kind == E_METHOD && s->value->call == CALL_COVER) { // How much of the pixel it covers, finished as it ends
             sb_put(em->o, "tide_cover = ");
             ex_as(em, s->value->args.items[0], (type){TY_FLOAT, NULL});
             sb_put(em->o, ";\n");
@@ -6353,11 +6358,12 @@ static void put_fragment_main(emit *em, sb *o)
                      "        %s = vec4f(%s.rgb + (1.0 - %s.a), %s.a);\n"
                      "    }\n", color, color, color, color, color, color, color, color, color, color);
     }
-    if (outputs == 1) {
+    if (outputs == 1 && !(sh->frag && sh->frag->writes_depth)) {
         sb_put(o, "    return tide_color;\n");
     } else { // Its struct of them, in order
         sb_put(o, "    return tide_colors(");
         for (int k = 0; k < outputs; k++) sb_printf(o, "%s%s", k ? ", " : "", output_name(k));
+        if (sh->frag && sh->frag->writes_depth) sb_put(o, ", tide_written_depth");
         sb_put(o, ");\n");
     }
 }
@@ -6371,6 +6377,7 @@ static void put_wgsl_inputs(const shader *sh, sb *o)
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(o, "var<private> tide_f%d: vec4f;\n", i);
     for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(o, "var<private> tide_g%d: vec4i;\n", i);
     sb_put(o, "var<private> tide_at: vec4f;\nvar<private> tide_world: vec3f;\n");
+    if (sh->frag && sh->frag->writes_depth) sb_put(o, "var<private> tide_written_depth: f32;\n");
     if (sh->frag_front) sb_put(o, "var<private> tide_front: bool;\n");
     for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(o, "var<private> tide_normals%d: vec3f;\n", i);
 }
@@ -6573,13 +6580,16 @@ static void write_wgsl(program *prog, shader *sh)
     sb entry = {0};
     const int outputs = shader_outputs(sh);
     const char *front = sh->frag_front ? ", @builtin(front_facing) tide_facing: bool" : "";
-    if (outputs == 1) {
+    const bool writes_depth = sh->frag && sh->frag->writes_depth;
+    if (outputs == 1 && !writes_depth) {
         sb_printf(&entry, "@fragment fn fragment(in: tide_corner%s) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n", front);
     } else { // Several colors, each to the color image of a target that's its place
         sb_put(&entry, "struct tide_colors {\n");
         for (int k = 0; k < outputs; k++) sb_printf(&entry, "    @location(%d) %s: vec4f,\n", k, output_name(k));
+        if (writes_depth) sb_put(&entry, "    @builtin(frag_depth) depth: f32,\n");
         sb_printf(&entry, "}\n@fragment fn fragment(in: tide_corner%s) -> tide_colors {\n    tide_at = in.tide_at;\n", front);
     }
+    if (writes_depth) sb_put(&entry, "    tide_written_depth = in.tide_at.z;\n");
     if (sh->frag_front) sb_put(&entry, sh->dims == 3
         ? "    tide_front = tide_facing != ((in.tide_mirror != 0) != (tide_block.tide_screen.z < 0.0));\n"
         : "    tide_front = tide_facing;\n");

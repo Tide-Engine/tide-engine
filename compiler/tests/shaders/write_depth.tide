@@ -1,0 +1,7 @@
+scene Main {}
+local singleton Art { List<Vertex3> corners; }
+frag OwnDepth(Vertex3 vertex, out Color color) {
+    color = vertex.color;
+    if (vertex.uv.x > 0.5) this.WriteDepth(this.depth * 0.5);
+}
+view Show(Art art) { Draw.Mesh(art.corners, [0, 1, 2], float4x4.identity, OwnDepth); }

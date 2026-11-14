@@ -1,3 +1,21 @@
+# Fragment depth output (2026-11-14)
+
+Owner-approved 2026-11-13: this.WriteDepth(value). The checker marks the frag, then WGSL writes a private
+forward depth initialized from the rasterized pixel, and a frag_depth member beside the color outputs.
+SPIR-V already translates that builtin with DepthReplacing; HLSL already emits SV_Depth and the Unity
+reversed-Z boundary conversion. No new GPU operation or recorder packet. Non-users retain the old shader
+and C output. Generated descriptors omit geometry bounds for depth-writing frags, preventing CPU/GPU
+occlusion and frustum depth assumptions. No new runtime function. The forward-depth Vulkan/WebGPU boundary
+must be converted with the parallel reversed-depth work when that arrives.
+
+Validation: native ASan Vulkan and web-debug SwiftShader WebGPU shader fixtures pass explicit-depth overlap,
+unwritten-path triangle fallback, last-write-wins, Equal rejection, and Only/Equal prepass pixels, including
+prewarming and device recreation. All 189 WGSL golden/SPIR-V/FXC checks pass, existing goldens unchanged.
+Argument and vert error fixtures pass. Shader LSP 11/11 and shared grammar 381/381 pass; docs build passes.
+Unity 6000.6.0f1 existing ComputeReplayTests pass 10/10 on D3D11, D3D12, Vulkan and OpenGL Core, hidden batch
+with no audio. The builtin translation itself is checked by the new WriteDepth FXC/SPIR-V fixture.
+Metal runtime needs a Mac. Vulkan/WebGPU reversed storage has not landed on dev at this merge.
+
 ## Writable images and sampled volumes (2026-11-14)
 
 Compiler support for the owner's 2026-11-13 decisions (spec, Compute on the GPU). `Texture3D` uses

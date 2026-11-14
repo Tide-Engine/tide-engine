@@ -1,0 +1,3 @@
+// expect: WriteDepth takes one float
+scene Main {}
+frag Bad(Vertex vertex, out Color color) { this.WriteDepth(); color = vertex.color; }

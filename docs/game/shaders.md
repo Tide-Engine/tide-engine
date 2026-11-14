@@ -1499,3 +1499,11 @@ to the available images. Use Trilinear to read the mip chain; Point and Bilinear
 A cubemap takes a direction: `sky.SampleLevel(direction, 2, Filter.Trilinear)`. An array takes its layer first:
 `images.SampleLevel(uv, layer, 2, Filter.Trilinear)`. Texture3D has no mipmaps; use its Sample method.
 Drawing into a selected mip level is not available.
+
+## Writing a pixel's depth
+
+In a frag, `this.WriteDepth(value);` replaces depth with a forward value from 0 near to 1 far. It can write
+back a DepthTexture.Sample result. Values clamp; NaN becomes zero. A path with no write retains triangle
+depth; the last write wins. Helpers return a value for the frag to write. Equal and Only use that value,
+so a prepass and its lit pass should compute the same depth. These draws skip automatic geometry-bound
+culling, and depth tests may run after the frag.

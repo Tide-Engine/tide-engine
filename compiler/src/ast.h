@@ -985,6 +985,7 @@ typedef struct decl {
     VEC(const field *) gpu_writes; // ...and every one it writes
     bool cutout;                  // A frag that says how much of its pixel it covers (this.Cutout or this.Coverage): drawn with alpha to coverage
     bool raw_coverage;            // ...with this.Coverage(share): the share as given, not sharpened
+    bool writes_depth;            // A frag explicitly replaces its rasterized depth
     bool pixel_front;             // A frag reads this.front
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
     bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
@@ -1119,6 +1120,7 @@ typedef enum builtin_call {
     CALL_NEW_MESH,  // Mesh(vertices, indices): a static mesh of the game's own lists, copied
     CALL_MESH_DECODE, // Mesh<V>.Decode(bytes): a static mesh read from a file's bytes; type_decl is the Mesh<V>
     CALL_FONT_DECODE, // Font.Decode(bytes): a font file's bytes read into this machine's registry
+    CALL_WRITE_DEPTH, // this.WriteDepth(value), a frag statement
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
     CALL_DERIVATIVE, // this.Ddx(v), this.Ddy(v) and this.Fwidth(v), in a frag: how fast v changes across a pixel; `name` says which
     CALL_COVER,     // this.Cutout(alpha) and this.Coverage(share), in a frag: how much of the pixel it covers; `name` says which

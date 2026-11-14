@@ -1,0 +1,3 @@
+// expect: a vert's 'this' has no methods
+scene Main {}
+vert Bad(mut Vertex vertex) { this.WriteDepth(0.5); vertex.color = Color.red; }

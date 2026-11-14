@@ -564,6 +564,7 @@ const cases = {
         ['float both = frag + vert;', [['frag', '!storage'], ['frag', '!entity'], ['vert', '!storage'], ['vert', '!entity']]],
         ['frag = both;', [['frag', '!storage'], ['frag', '!entity'], ['both', '!entity']]],
         ['return vert * both;', [['return', 'keyword.control'], ['vert', '!storage']]],
+        ['this.WriteDepth(0.5);', [['WriteDepth', 'entity.name.function.call'], ['this', 'variable.language.this']]],
         ['color = box.wood.SampleLevel(', [['SampleLevel', 'entity.name.function.call'], ['SampleLevel', '!keyword']]],
         ['color = box.wood.Sample(', [['Sample', 'entity.name.function.call'], ['Sample', '!keyword']]],
         ['if (this.position.x < 10) this.Discard();', [

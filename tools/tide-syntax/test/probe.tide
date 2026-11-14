@@ -254,6 +254,7 @@ void Grant(mut Wish wish) { wish.wished = null; var count = wish.wishes ?? []; i
 frag Shade(BoxVertex vertex, out Color color, Box box)
 {
     color = box.wood.Sample(vertex.uv) * box.tint;
+    this.WriteDepth(0.5);
     color = box.wood.SampleLevel(vertex.uv, 1, Filter.Trilinear);
     if (this.position.x < 10) this.Discard();
 }

@@ -2110,7 +2110,7 @@ static void format_data_decl(const decl *d, sb *out)
         sb_put(out, ";\n");
     }
     if (d == A.prog->pixel) { // Its methods (pixel_calls)
-        sb_put(out, "\n    void Discard();\n    void Cutout(float alpha);\n    void Coverage(float share);\n"
+        sb_put(out, "\n    void Discard();\n    void WriteDepth(float value);\n    void Cutout(float alpha);\n    void Coverage(float share);\n"
                     "    T Ddx<T>(T v);\n    T Ddy<T>(T v);\n    T Fwidth<T>(T v);\n");
     }
     if (d == A.prog->instance) sb_put(out, "\n    float3 Normal(float3 normal);\n"); // ...and an Instance's (instance_calls)
@@ -2509,6 +2509,7 @@ static const method_form pixel_calls[] = {
      "How much `v` changes across this pixel: `Math.Abs(this.Ddx(v)) + Math.Abs(this.Ddy(v))`. A signed distance "
      "over it is a smooth edge one pixel wide at any size, turned, scaled or in 3D: "
      "`Math.Saturate(0.5 - d / this.Fwidth(d))`."},
+    {"WriteDepth", "WriteDepth(float value)", "Writes forward depth from 0 near to 1 far. Values clamp, NaN becomes zero; a path without a write retains triangle depth. Call in the frag itself."},
 };
 
 static const method_form instance_calls[] = {
