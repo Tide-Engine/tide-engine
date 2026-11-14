@@ -80,6 +80,22 @@ TIDE_TEST(fills_gradients_give_their_colors)
     TIDE_CHECK(e[5] == 1.0f);                         // NaN is 0, past the end is the end
     const tide_rect moved = local.Probe.moved;           // MoveInside: moved, not resized
     TIDE_CHECK(moved.x == 80 && moved.y == 0 && moved.width == 20 && moved.height == 20);
+    const tide_float3 rgb = local.Probe.rgb;             // rgb: the color without its alpha
+    TIDE_CHECK(rgb.x == 0.5f && rgb.y == 1.0f && rgb.z == 2.0f);
+    const tide_float2 *parts = local.Probe.parts.at;     // A rect's corner, size and middle
+    TIDE_CHECK(parts[0].x == 10 && parts[0].y == 20 && parts[1].x == 100 && parts[1].y == 40);
+    TIDE_CHECK(parts[2].x == 61 && parts[2].y == 41);
+    const bool *inside = local.Probe.inside.at;
+    TIDE_CHECK(inside[0] && !inside[1] && inside[2]);
+    const tide_rect inset = local.Probe.inset, crushed = local.Probe.crushed;
+    TIDE_CHECK(inset.x == 14 && inset.y == 24 && inset.width == 92 && inset.height == 32);
+    TIDE_CHECK(crushed.x == 40 && crushed.y == 40 && crushed.width == 40 && crushed.height == 0);
+    const float *t = local.Probe.towards.at;
+    TIDE_CHECK(t[0] == 2.5f && t[1] == 2.0f && t[2] == 3.5f);
+    TIDE_CHECK(near(t[3], 0.1831853f) && near(t[4], 4.0f - 6.2831853f) && near(t[5], 0.05f));
+    TIDE_CHECK(t[6] == 2.0f && near(t[7], 10.0f));       // No rate, or one that isn't a number: where it was
+    TIDE_CHECK(near(local.Probe.walked.x, 1.5f) && near(local.Probe.walked.y, 2.0f));
+    TIDE_CHECK(near(local.Probe.eased.x, 1.0f) && near(local.Probe.eased.y, 2.0f) && near(local.Probe.eased.z, 4.0f));
     tide_draw_free(&draw);
     tide_local_free(&local);
     tide_world_free(&world);

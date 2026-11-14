@@ -629,6 +629,46 @@ TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
     TIDE_CHECK(tide_cellular_f2(feature, 0).x < 0.0001f);
 }
 
+TIDE_TEST(math_towards_angles_and_damp)
+{
+    TIDE_CHECK(tide_movetowards_f(1.0f, 5.0f, 1.5f) == 2.5f && tide_movetowards_f(5.0f, 1.0f, 1.5f) == 3.5f);
+    TIDE_CHECK(tide_movetowards_f(1.0f, 2.0f, 3.0f) == 2.0f && tide_movetowards_f(2.0f, 2.0f, 0.0f) == 2.0f);
+    TIDE_CHECK(tide_movetowards_f(1.0f, 5.0f, -1.0f) == 0.0f);  // A step under 0 moves away, as Unity's
+    TIDE_CHECK(tide_movetowards_f(1.0f, 5.0f, NAN) == 5.0f && tide_movetowards_f(NAN, 5.0f, 1.0f) == 5.0f);
+    const tide_float2 walked = tide_movetowards_f2(tide_f2(0.0f, 0.0f), tide_f2(3.0f, 4.0f), 2.5f);
+    TIDE_CHECK(fabsf(walked.x - 1.5f) < 0.000001f && fabsf(walked.y - 2.0f) < 0.000001f);
+    const tide_float3 there = tide_movetowards_f3(tide_f3(1.0f, 2.0f, 3.0f), tide_f3(1.0f, 2.0f, 3.0f), 1.0f);
+    TIDE_CHECK(there.x == 1.0f && there.y == 2.0f && there.z == 3.0f); // Already there: no 0 / 0
+    const tide_float3 past = tide_movetowards_f3(tide_f3(0.0f, 0.0f, 0.0f), tide_f3(0.0f, 0.0f, 2.0f), 9.0f);
+    TIDE_CHECK(past.z == 2.0f);
+
+    TIDE_CHECK(fabsf(tide_deltaangle_f(6.2f, 0.1f) - 0.1831853f) < 0.000002f);
+    TIDE_CHECK(fabsf(tide_deltaangle_f(0.1f, 6.2f) + 0.1831853f) < 0.000002f);
+    TIDE_CHECK(tide_deltaangle_f(1.0f, 1.0f) == 0.0f && fabsf(tide_deltaangle_f(0.0f, 1.0f + 5.0f * TIDE_TAU_F) - 1.0f) < 0.00001f);
+    TIDE_CHECK(tide_deltaangle_f(NAN, 1.0f) == 0.0f && tide_deltaangle_f(0.0f, INFINITY) == 0.0f);
+    for (int i = -2000; i <= 2000; i++) { // Over -PI and up to PI, and the same direction as the angle it was given
+        const float angle = (float)i * 0.0137f;
+        const float wrapped = tide_wrapangle_f(angle);
+        TIDE_CHECK(wrapped > -TIDE_PI_F - 0.00001f && wrapped <= TIDE_PI_F);
+        TIDE_CHECK(fabsf(tide_sin_f(wrapped) - tide_sin_f(angle)) < 0.0001f && fabsf(tide_cos_f(wrapped) - tide_cos_f(angle)) < 0.0001f);
+    }
+    TIDE_CHECK(fabsf(tide_movetowardsangle_f(0.1f, 6.2f, 0.05f) - 0.05f) < 0.000001f); // The short way: down
+    TIDE_CHECK(fabsf(tide_wrapangle_f(tide_movetowardsangle_f(0.1f, 6.2f, 1.0f)) - tide_wrapangle_f(6.2f)) < 0.00001f);
+
+    TIDE_CHECK(tide_damp_f(2.0f, 10.0f, 0.0f, 1.0f) == 2.0f && tide_damp_f(2.0f, 10.0f, -3.0f, 1.0f) == 2.0f);
+    TIDE_CHECK(tide_damp_f(2.0f, 10.0f, NAN, 1.0f) == 2.0f && tide_damp_f(2.0f, 10.0f, 1000.0f, 1.0f) == 10.0f);
+    // The same in one step as in many: that's what it's for
+    float stepped = 0.0f;
+    for (int i = 0; i < 100; i++) stepped = tide_damp_f(stepped, 8.0f, 3.0f, 0.01f);
+    TIDE_CHECK(fabsf(stepped - tide_damp_f(0.0f, 8.0f, 3.0f, 1.0f)) < 0.0001f);
+    const tide_float3 eased = tide_damp_f3(tide_f3(0.0f, 0.0f, 0.0f), tide_f3(2.0f, 4.0f, 8.0f), 0.69314718f, 1.0f);
+    TIDE_CHECK(fabsf(eased.x - 1.0f) < 0.00001f && fabsf(eased.y - 2.0f) < 0.00001f && fabsf(eased.z - 4.0f) < 0.00001f);
+    const tide_float2 slid = tide_damp_f2(tide_f2(1.0f, 1.0f), tide_f2(1.0f, 3.0f), 0.69314718f, 1.0f);
+    TIDE_CHECK(slid.x == 1.0f && fabsf(slid.y - 2.0f) < 0.00001f);
+    const tide_float3 rgb = tide_color_rgb((tide_color){0.25f, 0.5f, 1.0f, 0.37f});
+    TIDE_CHECK(rgb.x == 0.25f && rgb.y == 0.5f && rgb.z == 1.0f);
+}
+
 TIDE_TEST(math_srgb_transfer)
 {
     TIDE_CHECK(tide_tolinear_f(0.0f) == 0.0f);

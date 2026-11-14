@@ -142,6 +142,26 @@ A color goes through them channel by channel, alpha too, with other colors and w
 
 Each is 0 at 0 and 1 at 1; past the ends it's at them, and NaN is 0. They're plain arithmetic, the same on every machine, so they work in match code, in views, and in [GPU code](../game/shaders.md#math). Shape a progress with them and blend by it: `Math.Lerp(from, to, Math.EaseOutBack(t))`. [`GUI.Tween`](../game/gui.md#animation) makes a progress that takes a fixed time.
 
+**On the way to a value**, for a speed that builds up, a camera that follows and a turn that takes the short way:
+
+| Function | Gives |
+|---|---|
+| `Math.MoveTowards(current, target, step)` | `current` at most `step` closer to `target`, never past it. Floats, and `float2` and `float3` points along the straight line between them |
+| `Math.Damp(current, target, rate, dt)` | `current` eased towards `target`: closer by the same share each second, whatever `dt` is. Floats, `float2` and `float3` |
+| `Math.DeltaAngle(from, to)` | The shortest turn from one angle to the other, over -PI and up to PI: 0.18 from 6.2 to 0.1, not -6.1 |
+| `Math.WrapAngle(angle)` | The same angle over -PI and up to PI |
+| `Math.MoveTowardsAngle(current, target, step)` | `current` turned at most `step` towards `target`, the short way round. It isn't wrapped |
+
+```csharp
+body.speed = Math.MoveTowards(body.speed, wanted, ACCELERATION * time.dt);
+body.yaw = Math.WrapAngle(Math.MoveTowardsAngle(body.yaw, aim, TURN_SPEED * time.dt));
+look.eye = Math.Damp(look.eye, target, 12, Frame.dt);
+```
+
+`Math.Damp` is what `Math.Lerp(a, b, dt * 12)` is usually meant to be: the lerp goes further on a slow frame than on two fast ones and overshoots past `dt * 12 = 1`, where `Damp` ends in the same place however the seconds are cut. `rate` is in shares a second: at 12, about 70% of the way in a tenth of a second. A `rate * dt` under 0, or one that isn't a number, leaves `current` as it is.
+
+`MoveTowards` with a step that isn't a number gives `target`, and a step under 0 moves away, as Unity's does. `DeltaAngle` of an angle that isn't a number, or is infinite, is 0. All five are the same on every machine and work in GPU code.
+
 **Vectors:**
 
 `Dot`, `Cross`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize` (zero for a zero vector, never NaN), `Reflect`, `Csum`, `Cmin`, `Cmax`.

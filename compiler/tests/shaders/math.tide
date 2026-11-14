@@ -93,6 +93,7 @@ view Show(Sky sky)
 {
     Draw.Mesh(sky.corners, sky.faces, Stars);
     Draw.Mesh(sky.corners, sky.faces, Transfer);
+    Draw.Mesh(sky.corners, sky.faces, Towards);
     Draw.Mesh(sky.corners, sky.faces, Blow, Calm);
     Draw.Mesh(sky.corners, sky.faces, Ripple, Clouds);
 }
@@ -102,4 +103,14 @@ frag Transfer(SkyVertex vertex, out Color color)
     float scalar = Math.ToLinear(vertex.uv.x);
     float3 rgb = Math.ToDisplay(float3(scalar, vertex.uv.y, 1));
     color = Math.ToDisplay(Math.ToLinear(Color(rgb, 0.37)));
+}
+
+// A value on its way to another, angles kept in a turn, and a color's rgb
+frag Towards(SkyVertex vertex, out Color color)
+{
+    float step = Math.MoveTowards(vertex.uv.x, 1, 0.25);
+    float2 walked = Math.MoveTowards(vertex.uv, float2(1, 0), step);
+    float turn = Math.DeltaAngle(vertex.uv.x, vertex.uv.y) + Math.WrapAngle(step * 9) + Math.MoveTowardsAngle(step, 6, 0.1);
+    float3 eased = Math.Damp(float3(walked, turn), float3(1), 4, vertex.uv.y);
+    color = Color(Math.Damp(eased, Color(eased, 1).rgb, 2, 0.5), Math.Damp(step, 1, 3, 0.1));
 }

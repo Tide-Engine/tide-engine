@@ -11000,7 +11000,8 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->member, "r") || str_eq_c(e->member, "g") || str_eq_c(e->member, "b") || str_eq_c(e->member, "a")) {
             return T_FLOAT_;
         }
-        diag_error(e->at, "Color has r, g, b and a, not '" STR_FMT "'", STR_ARG(e->member));
+        if (str_eq_c(e->member, "rgb")) return (type){TY_FLOAT3, NULL}; // Its color without its alpha: read, never assigned
+        diag_error(e->at, "Color has r, g, b and a, and rgb (a float3), not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
     if (obj.kind == TY_MAP || obj.kind == TY_SET) {
@@ -11065,8 +11066,17 @@ static type check_member(checker *c, expr *e)
             || str_eq_c(e->member, "height")) {
             return T_FLOAT_;
         }
-        diag_error(e->at, "Rect has x, y, width and height, not '" STR_FMT "'", STR_ARG(e->member));
+        // Its corner, its size and its middle, each a float2 worked out of the four: read, never assigned
+        if (str_eq_c(e->member, "position") || str_eq_c(e->member, "size") || str_eq_c(e->member, "center")) {
+            if (gpu_refuses(c, e->at, "read a Rect", "pass its x, y, width and height as a float4")) return T_ERR;
+            return (type){TY_FLOAT2, NULL};
+        }
+        diag_error(e->at, "Rect has x, y, width and height, and position, size and center (each a float2), not '" STR_FMT "'",
+                   STR_ARG(e->member));
         suggestion s = suggest_start(e->member);
+        suggest_consider_c(&s, "position");
+        suggest_consider_c(&s, "size");
+        suggest_consider_c(&s, "center");
         suggest_consider_c(&s, "x");
         suggest_consider_c(&s, "y");
         suggest_consider_c(&s, "width");
@@ -13511,6 +13521,19 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             && part->object->type.decl->asset_ref_of && part->object->type.decl->asset_ref_of->kind == DECL_MESH))) {
             diag_error(target->at, "a Mesh's vertices and indices are read-only: they're the file it names, as the game was built");
             diag_note("copy them into a list of your own to change them, like 'mut var mine = mesh.vertices;'");
+            return false;
+        }
+        // tint.rgb, slot.center: worked out of the value's own numbers, so there's nothing of theirs to write
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_COLOR && str_eq_c(part->member, "rgb")) {
+            diag_error(target->at, "a Color's rgb is read from its r, g and b: it can't be assigned");
+            diag_note("assign the color whole, keeping its alpha: 'tint = Color(rgb, tint.a);'");
+            return false;
+        }
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_RECT && !part->c_constant
+            && (str_eq_c(part->member, "position") || str_eq_c(part->member, "size") || str_eq_c(part->member, "center"))) {
+            diag_error(target->at, "a Rect's " STR_FMT " is read from its x, y, width and height: it can't be assigned",
+                       STR_ARG(part->member));
+            diag_note("assign those, like 'slot.x = at.x;', or the rect whole: 'slot = Rect(at.x, at.y, slot.width, slot.height);'");
             return false;
         }
         if (part->kind == E_INDEX && part->object->type.kind == TY_RECORD && part->object->type.decl->array_of) {

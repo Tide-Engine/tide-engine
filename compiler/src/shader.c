@@ -76,6 +76,7 @@ enum {
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     H_TRANSFER,
+    H_TOWARDS, // Math.MoveTowards, DeltaAngle, WrapAngle, MoveTowardsAngle and Damp, as tide/math.h's
     H_EASE, // tide_ease(t, kind): Math.EaseIn and the rest, as tide/math.h's
     // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
     H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
@@ -934,6 +935,57 @@ static const char *const helper_texts[H_COUNT] = {
                    "vec4 tide_todisplay4(vec4 v) {\n"
                    "    return vec4(tide_todisplay3(v.rgb), v.a);\n"
                    "}\n",
+    [H_TOWARDS] = "float tide_movetowards1(float c, float t, float s) {\n"
+                  "    float d = t - c;\n"
+                  "    float r = c + s;\n"
+                  "    if (d < 0.0) { r = c - s; }\n"
+                  "    if (abs(d) <= s) { r = t; }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "vec2 tide_movetowards2(vec2 c, vec2 t, float s) {\n"
+                  "    vec2 d = t - c;\n"
+                  "    float l = sqrt(dot(d, d));\n"
+                  "    vec2 r = t;\n"
+                  "    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "vec3 tide_movetowards3(vec3 c, vec3 t, float s) {\n"
+                  "    vec3 d = t - c;\n"
+                  "    float l = sqrt(dot(d, d));\n"
+                  "    vec3 r = t;\n"
+                  "    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "float tide_deltaangle(float a, float b) {\n"
+                  "    float d = b - a;\n"
+                  "    float turn = d - floor(d / 6.2831855) * 6.2831855;\n"
+                  "    float r = 0.0;\n"
+                  "    if (turn >= 0.0) {\n"
+                  "        if (turn <= 6.2831855) {\n"
+                  "            r = turn;\n"
+                  "            if (turn > 3.1415927) { r = turn - 6.2831855; }\n"
+                  "        }\n"
+                  "    }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "float tide_wrapangle(float a) {\n"
+                  "    return tide_deltaangle(0.0, a);\n"
+                  "}\n"
+                  "float tide_movetowardsangle(float c, float t, float s) {\n"
+                  "    return tide_movetowards1(c, c + tide_deltaangle(c, t), s);\n"
+                  "}\n"
+                  "float tide_damp_share(float rate, float dt) {\n"
+                  "    return tide_saturate1(1.0 - exp(0.0 - rate * dt));\n"
+                  "}\n"
+                  "float tide_damp1(float c, float t, float rate, float dt) {\n"
+                  "    return c + (t - c) * tide_damp_share(rate, dt);\n"
+                  "}\n"
+                  "vec2 tide_damp2(vec2 c, vec2 t, float rate, float dt) {\n"
+                  "    return c + (t - c) * tide_damp_share(rate, dt);\n"
+                  "}\n"
+                  "vec3 tide_damp3(vec3 c, vec3 t, float rate, float dt) {\n"
+                  "    return c + (t - c) * tide_damp_share(rate, dt);\n"
+                  "}\n",
     [H_EASE] = "float tide_ease(float x, int kind) {\n"
                "    float t = tide_saturate1(x);\n"
                "    float u = 1.0 - t;\n"
@@ -1662,6 +1714,7 @@ static void need(emit *em, const int h)
     }
     switch (h) {
     case H_TRANSFER:
+    case H_TOWARDS:
     case H_EASE:
         need(em, family_helper(FAMILY_SATURATE, 1));
         break;
@@ -3300,6 +3353,13 @@ static void ex_math(emit *em, const expr *e)
         char name[32];
         snprintf(name, sizeof name, "tide_%s%d", str_eq_c(e->name, "ToLinear") ? "tolinear" : "todisplay", dim);
         put_helper_call(em, e, H_TRANSFER, name);
+    } else if (str_eq_c(e->name, "MoveTowards") || str_eq_c(e->name, "Damp")) {
+        char name[32];
+        snprintf(name, sizeof name, "tide_%s%d", str_eq_c(e->name, "Damp") ? "damp" : "movetowards", dim);
+        put_helper_call(em, e, H_TOWARDS, name);
+    } else if (str_eq_c(e->name, "DeltaAngle") || str_eq_c(e->name, "WrapAngle") || str_eq_c(e->name, "MoveTowardsAngle")) {
+        put_helper_call(em, e, H_TOWARDS, str_eq_c(e->name, "DeltaAngle") ? "tide_deltaangle"
+                                          : str_eq_c(e->name, "WrapAngle") ? "tide_wrapangle" : "tide_movetowardsangle");
     } else if ((str_eq_c(e->name, "Min") || str_eq_c(e->name, "Max")) && floats) { // With one NaN, the other, as on the CPU
         put_family_call(em, e, str_eq_c(e->name, "Min") ? FAMILY_MIN : FAMILY_MAX, dim);
     } else if (str_eq_c(e->name, "Clamp") && floats) {

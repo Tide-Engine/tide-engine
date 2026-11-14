@@ -5018,6 +5018,18 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_COLOR && str_eq_c(e->member, "rgb")) { // tint.rgb
+            sb_put(o, "tide_color_rgb(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+            break;
+        }
+        if (e->object->type.kind == TY_RECT && e->type.kind == TY_FLOAT2) { // slot.position, slot.size, slot.center
+            sb_printf(o, "tide_rect_" STR_FMT "(", STR_ARG(e->member));
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->type.kind == TY_STRING) { // name.length
             sb_put(o, "(");
             gen_expr(g, o, e->object);

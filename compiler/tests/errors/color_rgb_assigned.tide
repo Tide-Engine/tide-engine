@@ -1,0 +1,9 @@
+// expect: a Color's rgb is read from its r, g and b: it can't be assigned
+component Tint { Color color; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Tint); }
+system Fade(mut Tint tint)
+{
+    tint.color.rgb = float3(0);
+}
