@@ -219,6 +219,9 @@ int image_target_format(const expr *e, const int color, const int depth)
     if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
         return image_target_format(e->object, 0, depth + 1);
     if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
+        // A cube's face and an array's layer hold the one image their cube or array does
+        if (e->object->object && (e->object->object->type.kind == TY_CUBEMAP || e->object->object->type.kind == TY_TEXTURE_ARRAY))
+            return color == 0 ? image_target_format(e->object->object, 0, depth + 1) : -2;
         if (e->lhs->kind != E_INT || e->lhs->int_value < 0 || e->lhs->int_value > 3) return -1;
         return image_target_format(e->object->object, (int)e->lhs->int_value, depth + 1);
     }
@@ -237,7 +240,8 @@ int image_target_format(const expr *e, const int color, const int depth)
         return found;
     }
     if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
-        && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D)) {
+        && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D || e->type.kind == TY_CUBEMAP
+            || e->type.kind == TY_TEXTURE_ARRAY)) {
         int slot = 0;
         for (int i = 0; i < e->args.count; i++) {
             const expr *f = e->args.items[i];
@@ -279,7 +283,7 @@ static bool numeric_image_origin(const expr *e, const int depth)
         for (int i = 0; i < e->field->image_assignments.count; i++)
             if (numeric_image_origin(e->field->image_assignments.items[i], depth + 1)) return true;
     }
-    if (e->type.kind == TY_RENDER_TARGET && e->resource_operation) {
+    if ((e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_CUBEMAP || e->type.kind == TY_TEXTURE_ARRAY) && e->resource_operation) {
         for (int i = 0; i < e->args.count; i++) {
             const expr *f = e->args.items[i];
             if (f->type.kind == TY_ENUM && f->type.decl && str_eq_c(f->type.decl->name, "Format")
@@ -345,12 +349,14 @@ static void check_target_read(program *prog, const expr *call)
     const expr *target = call->object;
     if (target->kind == E_INDEX && target->object && target->object->kind == E_MEMBER && target->object->target_colors
         && target->object->object && target->object->object->type.kind != TY_RENDER_TARGET) {
-        // cube.faces[i], array.layers[i]: one image, a Color's
-        if (kind == 0 && image == 0) return;
-        const bool cube = target->object->object->type.kind == TY_CUBEMAP;
-        diag_error(call->at, "a %s holds one Color image: read it with 'await %s.Read()', and its depth with 'ReadDepth()'",
-                   cube ? "cube's face" : "TextureArray's layer", cube ? "cube.faces[i]" : "array.layers[i]");
-        return;
+        // cube.faces[i], array.layers[i]: one image, of the format its cube or array was made with
+        if (image != 0) {
+            const bool cube = target->object->object->type.kind == TY_CUBEMAP;
+            diag_error(call->at, "a %s holds one image: read it with 'await %s.Read()', with no number, and its depth with "
+                                 "'ReadDepth()'", cube ? "cube's face" : "TextureArray's layer",
+                       cube ? "cube.faces[i]" : "array.layers[i]");
+            return;
+        }
     }
     const int format = image_target_format(target, image, 0);
     if (format == 1 || format == -2) {

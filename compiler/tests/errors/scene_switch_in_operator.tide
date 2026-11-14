@@ -1,0 +1,12 @@
+// expect: an operator works a value out of its operands, so it can't load or unload scenes
+scene Arena { }
+scene Main { }
+struct Score
+{
+    int value;
+    Score operator +(Score a, Score b)
+    {
+        Scene.Switch(Arena);
+        return Score { value = a.value + b.value };
+    }
+}

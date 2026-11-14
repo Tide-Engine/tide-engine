@@ -290,7 +290,9 @@ static decl *prefab_scene_marker(program *prog, const bool local)
 
 static type check_prefab_spawn(checker *c, expr *e, decl *d, const bool load)
 {
-    const bool local = load ? local_code(c) : e->placement_local;
+    // A load's world is its code's; a function's or a task's is the match's unless it says `local Scene.Load(...)`
+    const bool placed = load && (e->placement_local || (e->object && e->object->placement_local));
+    const bool local = load ? (inherits(c) || in_async_function(c) ? placed : local_code(c)) : e->placement_local;
     if (in_async_function(c)) note_task_side(c, local ? TASK_LOCAL : TASK_MATCH, e->at);
     if (!inherits(c) && !in_async_function(c) && local != local_code(c)) {
         diag_error(e->at, local ? "the match cannot spawn local prefab entities" : "local code cannot change the match; use 'local Spawn(Prefab)' for local entities");
@@ -355,7 +357,10 @@ static type check_prefab_spawn(checker *c, expr *e, decl *d, const bool load)
     }
     e->spawn_mask = root->spawn_mask;
     vec_push(c->spawns, e);
-    if (inherits(c)) note_act(c, local, e->at, local ? "spawns local prefab entities" : "spawns prefab entities", true, text);
+    if (inherits(c)) {
+        note_act(c, local, e->at, load ? (local ? "loads local prefab scenes" : "loads prefab scenes")
+                                       : local ? "spawns local prefab entities" : "spawns prefab entities", true, text);
+    }
     note_spawn(c);
     return local ? (type){TY_LOCAL_ENTITY, NULL} : T_ENTITY_;
 }

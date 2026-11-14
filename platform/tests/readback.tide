@@ -10,6 +10,9 @@ local singleton CopyState
     Cubemap cube;
     TextureArray array;
     TextureArray shadows; // Format.Depth layers
+    Cubemap heights;      // R16f faces
+    TextureArray flows;   // Rg8 layers
+    TextureArray glows;   // Rgba16f layers
     float depth;          // What DepthCard writes
     int images; int none; int windowImages;
 }
@@ -21,6 +24,7 @@ local singleton CopyResult
     Grid2<float> depth; Grid2<float> resolved; Grid2<float> alone;
     Grid2<Color> face0; Grid2<Color> face3; Grid2<Color> face5; Grid2<float> faceDepth;
     Grid2<Color> layer0; Grid2<Color> layer2; Grid2<float> layerDepth; Grid2<float> shadow1;
+    Grid2<float> height1; Grid2<float> height4; Grid2<float2> flow1; Grid2<float4> glow0; Grid2<Color> glowColor;
     bool missingFailed; bool disposedFailed;
 }
 async void ReadImages(CopyState state, mut CopyResult result) {
@@ -52,6 +56,12 @@ async void ReadImages(CopyState state, mut CopyResult result) {
     if (await state.array.layers[2].Read() is Grid2<Color> layer2) result.layer2 = layer2.Copy(); else result.failed = true;
     if (await state.array.layers[1].ReadDepth() is Grid2<float> layerDepth) result.layerDepth = layerDepth.Copy(); else result.failed = true;
     if (await state.shadows.layers[1].ReadDepth() is Grid2<float> shadow1) result.shadow1 = shadow1.Copy(); else result.failed = true;
+    // Faces and layers of numbers, as their own types
+    if (await state.heights.faces[1].Read<float>() is Grid2<float> height1) result.height1 = height1.Copy(); else result.failed = true;
+    if (await state.heights.faces[4].Read<float>() is Grid2<float> height4) result.height4 = height4.Copy(); else result.failed = true;
+    if (await state.flows.layers[1].Read<float2>() is Grid2<float2> flow1) result.flow1 = flow1.Copy(); else result.failed = true;
+    if (await state.glows.layers[0].Read<float4>() is Grid2<float4> glow0) result.glow0 = glow0.Copy(); else result.failed = true;
+    if (await state.glows.layers[0].Read() is Grid2<Color> glowColor) result.glowColor = glowColor.Copy(); else result.failed = true;
     // What isn't there fails, and nothing more: a layer past the array's, and a target disposed before its read
     if (await state.array.layers[7].Read() is Grid2<Color> missing) result.failed = true; else result.missingFailed = true;
     RenderTarget gone = RenderTarget(2, 2, 1);
@@ -75,6 +85,9 @@ view Paint(mut CopyState state, mut CopyResult result) {
         state.cube = Cubemap(2);
         state.array = TextureArray(2, 2, 3, 1);
         state.shadows = TextureArray(2, 2, 2, 1, Format.Depth);
+        state.heights = Cubemap(2, Format.R16f);
+        state.flows = TextureArray(2, 2, 2, 1, Format.Rg8);
+        state.glows = TextureArray(2, 2, 1, 1, Format.Rgba16f);
         state.started = true;
         state.images = state.several.colors.count * 100 + state.bytes.colors.count * 10 + state.deep.colors.count;
         RenderTarget none = default;
@@ -149,6 +162,23 @@ view Paint(mut CopyState state, mut CopyResult result) {
             layer.Mesh(left, [0,1,2,0,2,3], float4x4.identity, DepthCard);
         }
     }
+    // Numbers in faces and layers: each face its own height, the pixel (1, 0) another; a layer of pairs; a layer
+    // of four floats, drawn as a Color (stored times its alpha)
+    for (int i = 0; i < 6; i++)
+    {
+        state.heights.faces[i].SetScreen();
+        state.heights.faces[i].Clear(i + 0.5);
+        state.heights.faces[i].Clip(Rect(1, 0, 1, 1)) { state.heights.faces[i].Clear(-1024.0); }
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        state.flows.layers[i].SetScreen();
+        state.flows.layers[i].Clear(float2(i, 1 - i));
+        state.flows.layers[i].Clip(Rect(0, 1, 1, 1)) { state.flows.layers[i].Clear(float2(0.2, 0.8)); }
+    }
+    state.glows.layers[0].SetScreen(); state.glows.layers[0].SetBlend(.Replace);
+    state.glows.layers[0].Clear(Color.black);
+    state.glows.layers[0].Mesh(quad, [0,1,2,0,2,3], HighColor);
     for (int i = 0; i < 2; i++)
     {
         RenderTarget shadow = state.shadows.layers[i];

@@ -102,7 +102,8 @@ Numeric attachment formats, typed nearest reads and the three portable numeric s
 through the existing target, pipeline, image and volume packets. No recorder opcode or embed ABI bump is
 needed. HLSL retains the WGSL numeric-output mask and bypasses the Color conversion for a numeric float4 at
 location zero. ShaderLab uses literal `Blend i One Zero` for each numeric output; the other outputs retain
-Tide's selected blend. The seven new formats have no mip chain, and typed numeric reads use the base level.
+Tide's selected blend. R8/RG8/R16F/RG16F single-sample targets have a mip chain since the blended typed reads (render-targets.md, top; not
+replayed in an editor for that change); R32F/RGBA32F/R32I have none, and their typed reads use the base level.
 R8/RG8/R16F/RG16F retain mean MSAA resolve; R32F/RGBA32F/R32I remain single-sample.
 
 For numeric shaders, ShaderLab has a second pass with literal `ColorMask 0 i` for every attachment. Replay
@@ -138,15 +139,15 @@ No recorder opcode, shader text or replay behavior changed. Details and focused 
 
 ## Pixel readback kernels for every image (2026-11-14)
 
-`await target.Read<T>(image)` and `ReadDepth()` (render-targets.md, Readback of every image) add eight renderer
+`await target.Read<T>(image)` and `ReadDepth()` (render-targets.md, Readback of every image) add ten renderer
 kernels beside ReadTargetPixels: number images by `textureLoad` (float, float2, float4, int), depth, a cube's face,
-an array's layer and its depth. They record as the first did: a compute pipeline, a sampled image, the pools and
+an array's layer and its depth, and a face's and a layer's numbers. They record as the first did: a compute pipeline, a sampled image, the pools and
 a buffer read, so there is no new packet and no ABI change. `tide unity` writes a compute asset for each from
 `platform/src/read_pixels_wgsl.h`, which is now generated (`compiler/tests/read_target_builtin.mjs --write`) and
 compared byte for byte with what tidec writes: the first copy was only checked as a substring and had gone stale
 when kernels gained the reversed-depth preamble. Their HLSL compiles with fxc as cs_5_0 under TideWarnings
-(`tide_hlsl_shaders_valid`), and `unity_shaders_written` counts 15 computes. **Not run in Unity:** no replay
-test of the eight new kernels was added or run in an editor; the Sample's ComputeReplayTests still cover only
+(`tide_hlsl_shaders_valid`), and `unity_shaders_written` counts 17 computes. **Not run in Unity:** no replay
+test of the ten new kernels was added or run in an editor; the Sample's ComputeReplayTests still cover only
 the Color kernel, through a hand-keyed asset.
 
 ## Pixel readback kernel (2026-11-14)

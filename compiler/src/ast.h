@@ -502,7 +502,10 @@ typedef enum decl_kind {
 // (a compiler-only kind: the runtime's texture read is DEPTH_ARRAY, its sampler's COMPARE).
 typedef enum shader_read {
     READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE, READ_ARRAY, READ_DEPTH_ARRAY, READ_COMPARE_ARRAY,
-    READ_VOLUME, READ_NUMBER, READ_INT, READ_NUMBER_VOLUME, READ_INT_VOLUME
+    READ_VOLUME, READ_NUMBER, READ_INT, READ_NUMBER_VOLUME, READ_INT_VOLUME,
+    // A typed float image read through a filtering sampler (blended, or at a mip level): a color's binding and sampler,
+    // numbers as stored, and zero where no image is given
+    READ_NUMBER_BLEND
 } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
@@ -1316,7 +1319,8 @@ struct expr {
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool world_previous;  // CALL_WORLD: world.GetPrevious, TryGetPrevious, HasPrevious: `name` is Get, TryGet or Has, of the tick's start (previous_codegen.inc)
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
-    bool placement_local; // `local Spawn(...)`: explicit machine-local placement
+    bool placement_local; // `local Spawn(...)`: explicit machine-local placement; on `Scene`, `local Scene.Load(...)`
+    bool switches_scene;  // CALL_LOAD: Scene.Switch, which unloads its world's scenes first
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
     struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
     bool postfix;         // ...written after its variable: the value is what the variable held before
@@ -1341,6 +1345,7 @@ struct expr {
     int mesh_part;
     bool blit;           // Draw.Blit: source texture, destination target and a frag
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
+    bool args_checked;   // A Clear's arguments were checked while telling a typed clear from a Color's: once is enough
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
     int target_formats;      // RenderTarget(...) of several color images: how many of its last arguments are their formats
     bool target_samples;     // ...which `samples: n` comes after: the call's last argument, and its formats go to C as several, however many

@@ -451,18 +451,36 @@ compute ReadTargetDepth(DepthReadSource source) {
 }
 // A face is read through its cube, by the direction through each pixel's middle (gpu.h, cube: the faces' order,
 // each seen from the cube's middle with its rows from the top).
+float3 FaceWay(int face, float2 p)
+{
+    if (face == 1) return float3(-1, -p.y, p.x);
+    if (face == 2) return float3(p.x, 1, p.y);
+    if (face == 3) return float3(p.x, -1, -p.y);
+    if (face == 4) return float3(p.x, -p.y, 1);
+    if (face == 5) return float3(-p.x, -p.y, -1);
+    return float3(1, -p.y, -p.x);
+}
 local singleton FaceReadSource { Cubemap image; GPUList<Color> pixels; int width; int height; int face; }
 [Group(64)]
 compute ReadTargetFace(FaceReadSource source) {
     if (this.at.x >= source.width * source.height) return;
     float2 p = (float2(this.at.x % source.width, this.at.x / source.width) + float2(0.5)) / float2(source.width, source.height) * 2 - float2(1);
-    mut float3 way = float3(1, -p.y, -p.x);
-    if (source.face == 1) way = float3(-1, -p.y, p.x);
-    if (source.face == 2) way = float3(p.x, 1, p.y);
-    if (source.face == 3) way = float3(p.x, -1, -p.y);
-    if (source.face == 4) way = float3(p.x, -p.y, 1);
-    if (source.face == 5) way = float3(-p.x, -p.y, -1);
-    source.pixels[this.at.x] = source.image.SampleLevel(way, 0, Filter.Point);
+    source.pixels[this.at.x] = source.image.SampleLevel(FaceWay(source.face, p), 0, Filter.Point);
+}
+// A face or a layer of numbers (R8, Rg8, R16f, Rg16f, and Rgba16f as its four numbers): all four channels as
+// stored, of which the read keeps as many as its type has.
+local singleton FaceNumbersReadSource { [Raw(float4)] Cubemap image; GPUList<float4> pixels; int width; int height; int face; }
+[Group(64)]
+compute ReadTargetFaceNumbers(FaceNumbersReadSource source) {
+    if (this.at.x >= source.width * source.height) return;
+    float2 p = (float2(this.at.x % source.width, this.at.x / source.width) + float2(0.5)) / float2(source.width, source.height) * 2 - float2(1);
+    source.pixels[this.at.x] = source.image.Sample(FaceWay(source.face, p), Filter.Point);
+}
+local singleton LayerNumbersReadSource { [Raw(float4)] TextureArray image; GPUList<float4> pixels; int width; int height; int layer; }
+[Group(64)]
+compute ReadTargetLayerNumbers(LayerNumbersReadSource source) {
+    if (this.at.x >= source.width * source.height) return;
+    source.pixels[this.at.x] = source.image.Sample((float2(this.at.x % source.width, this.at.x / source.width) + float2(0.5)) / float2(source.width, source.height), source.layer, Filter.Point);
 }
 local singleton LayerReadSource { TextureArray image; GPUList<Color> pixels; int width; int height; int layer; }
 [Group(64)]
@@ -486,4 +504,6 @@ view PixelReadKernels()
     GPU.Run(ReadTargetFace, 64);
     GPU.Run(ReadTargetLayer, 64);
     GPU.Run(ReadTargetLayerDepth, 64);
+    GPU.Run(ReadTargetFaceNumbers, 64);
+    GPU.Run(ReadTargetLayerNumbers, 64);
 }

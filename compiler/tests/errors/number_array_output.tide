@@ -1,0 +1,5 @@
+// expect: frag output 1 is float, but Format.Rg8 takes float2: change the output type or this image's format
+scene Main { }
+local singleton Images { [Raw(float2)] TextureArray layers; }
+frag Paint(Vertex vertex,out float value) { value=1; }
+view Show(mut Images images) { images.layers=TextureArray(8,8,2,Format.Rg8); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; images.layers.layers[1].Mesh(quad,[0,1,2],Paint); }

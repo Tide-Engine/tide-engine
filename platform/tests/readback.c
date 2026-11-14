@@ -136,6 +136,18 @@ static void check_reads(void)
     good = part_is(r->layer0, 0, 0, 1, 128 / 255.0f, false) && part_is(r->layer2, 1, 0, 0, 128 / 255.0f, false);
     check(good, "an array's layers are read one at a time");
     check(all_depth(r->layerDepth, 2, 2, 0.5f, 1.0f) && all_depth(r->shadow1, 2, 2, 0.625f, 0.625f), "a layer's depth is read, of a color array and of a depth array");
+    // Faces and layers of numbers: R16f heights by face, Rg8 pairs, and an Rgba16f layer both ways
+    good = sized(r->height1, 2, 2) && sized(r->height4, 2, 2) && sized(r->flow1, 2, 2) && sized(r->glow0, 2, 2) && sized(r->glowColor, 2, 2);
+    for (int32_t y = 0; good && y < 2; y++) for (int32_t x = 0; good && x < 2; x++) {
+        const bool clipped = x == 1 && y == 0;
+        good = float_is(r->height1, x, y, clipped ? -1024.0f : 1.5f) && float_is(r->height4, x, y, clipped ? -1024.0f : 4.5f);
+        const float *flow = tide_grid_peek(r->flow1, x, y, 0, &tide_shape_Grid2_float2);
+        good = good && flow && (x == 0 && y == 1 ? fabsf(flow[0] - 51.0f / 255.0f) < 1e-6f && fabsf(flow[1] - 204.0f / 255.0f) < 1e-6f
+                                                 : flow[0] == 1.0f && flow[1] == 0.0f);
+        good = good && cell_is(r->glow0, &tide_shape_Grid2_float4, x, y, (const float[4]){1, 0.25f, 0.125f, 0.5f});
+        good = good && color_is(r->glowColor, x, y, 2, 0.5f, 0.25f, 0.5f);
+    }
+    check(good, "faces and layers of numbers are read as their own types: Read<float>, Read<float2>, Read<float4>");
     // Float depth storage holds each of these depths exactly, and so does its read; 24 bits round them. Which a
     // device has is its own to say: asserted where the desktop GPUs these run on are known to store floats
 #ifdef _WIN32

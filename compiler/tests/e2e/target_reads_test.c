@@ -41,23 +41,26 @@ static void frame(void)
     tide_frame(&w, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
 }
 
-// The grid's cell (x, y) is the words a read of `stride` words a pixel, `width` wide, numbered from `first` gave it.
+// The grid's cell (x, y) is the first `stride` words of its pixel, of a read `width` wide that gave `held` words a
+// pixel, numbered from `first`.
 static bool cell(const tide_grid grid, const tide_grid_shape *shape, const int32_t x, const int32_t y, const int32_t width,
-                 const uint32_t stride, const uint32_t first)
+                 const uint32_t stride, const uint32_t held, const uint32_t first)
 {
     uint32_t want[4] = {0};
-    for (uint32_t k = 0; k < stride; k++) want[k] = first + ((uint32_t)(y * width + x)) * stride + k;
+    for (uint32_t k = 0; k < stride; k++) want[k] = first + ((uint32_t)(y * width + x)) * held + k;
     const void *got = tide_grid_read(&local.heap, grid, x, y, 0, shape);
     return got && shape->cell == stride * 4u && memcmp(got, want, shape->cell) == 0;
 }
 
 static bool whole(const tide_grid grid, const tide_grid_shape *shape, const int32_t width, const int32_t height,
-                  const uint32_t stride, const uint32_t first)
+                  const uint32_t stride, const uint32_t held, const uint32_t first)
 {
     int32_t size[3];
     tide_grid_size(grid, size);
     bool good = size[0] == width && size[1] == height;
-    for (int32_t y = 0; y < height; y++) for (int32_t x = 0; x < width; x++) good = good && cell(grid, shape, x, y, width, stride, first);
+    for (int32_t y = 0; y < height; y++) {
+        for (int32_t x = 0; x < width; x++) good = good && cell(grid, shape, x, y, width, stride, held, first);
+    }
     return good;
 }
 
@@ -66,16 +69,18 @@ TIDE_TEST(target_reads_ask_for_their_image_and_kind_and_own_typed_grids)
     tide_world_init(&w, 1.0f / 60.0f);
     tide_world_tick(&w);
     tide_local_init(&local);
+    // Each read in ReadAll's order: what it asks for, and the words a pixel a renderer answers with (a face's
+    // and a layer's numbers come as all four channels, of which the grid keeps its own)
     const struct {
-        uint32_t kind, image, stride;
+        uint32_t kind, image, stride, held;
         int32_t width, height;
     } reads[] = {
-        {TIDE_TARGET_READ_COLOR, 0, 4, 2, 2},  {TIDE_TARGET_READ_COLOR, 0, 4, 3, 2},  {TIDE_TARGET_READ_FLOAT4, 0, 4, 3, 2},
-        {TIDE_TARGET_READ_FLOAT, 1, 1, 3, 2},  {TIDE_TARGET_READ_FLOAT2, 2, 2, 3, 2}, {TIDE_TARGET_READ_INT, 3, 1, 3, 2},
-        {TIDE_TARGET_READ_FLOAT, 0, 1, 2, 1},  {TIDE_TARGET_READ_FLOAT2, 1, 2, 2, 1}, {TIDE_TARGET_READ_FLOAT4, 2, 4, 2, 1},
-        {TIDE_TARGET_READ_DEPTH, 0, 1, 3, 2},  {TIDE_TARGET_READ_DEPTH, 0, 1, 2, 2},  {TIDE_TARGET_READ_COLOR, 0, 4, 2, 2},
-        {TIDE_TARGET_READ_DEPTH, 0, 1, 2, 2},  {TIDE_TARGET_READ_COLOR, 0, 4, 2, 2},  {TIDE_TARGET_READ_DEPTH, 0, 1, 2, 2},
-        {TIDE_TARGET_READ_COLOR, 0, 4, 2, 2},
+        {TIDE_TARGET_READ_COLOR, 0, 4, 4, 2, 2},  {TIDE_TARGET_READ_COLOR, 0, 4, 4, 3, 2},  {TIDE_TARGET_READ_FLOAT4, 0, 4, 4, 3, 2},
+        {TIDE_TARGET_READ_FLOAT, 1, 1, 1, 3, 2},  {TIDE_TARGET_READ_FLOAT2, 2, 2, 2, 3, 2}, {TIDE_TARGET_READ_INT, 3, 1, 1, 3, 2},
+        {TIDE_TARGET_READ_FLOAT, 0, 1, 1, 2, 1},  {TIDE_TARGET_READ_FLOAT2, 1, 2, 2, 2, 1}, {TIDE_TARGET_READ_FLOAT4, 2, 4, 4, 2, 1},
+        {TIDE_TARGET_READ_DEPTH, 0, 1, 1, 3, 2},  {TIDE_TARGET_READ_DEPTH, 0, 1, 1, 2, 2},  {TIDE_TARGET_READ_COLOR, 0, 4, 4, 2, 2},
+        {TIDE_TARGET_READ_DEPTH, 0, 1, 1, 2, 2},  {TIDE_TARGET_READ_COLOR, 0, 4, 4, 2, 2},  {TIDE_TARGET_READ_DEPTH, 0, 1, 1, 2, 2},
+        {TIDE_TARGET_READ_FLOAT, 0, 1, 4, 2, 2},  {TIDE_TARGET_READ_FLOAT2, 0, 2, 4, 2, 2}, {TIDE_TARGET_READ_COLOR, 0, 4, 4, 2, 2},
     };
     const int count = (int)(sizeof reads / sizeof reads[0]);
     frame();
@@ -91,7 +96,9 @@ TIDE_TEST(target_reads_ask_for_their_image_and_kind_and_own_typed_grids)
         if (i == 12) TIDE_CHECK(tide_render_target_face(r->target.id) == 1);
         if (i == 13) TIDE_CHECK(tide_render_target_layer(r->target.id) == 2);
         if (i == 14) TIDE_CHECK(tide_render_target_layer(r->target.id) == 0);
-        answer(r, reads[i].width, reads[i].height, reads[i].stride, 1000u * (uint32_t)(i + 1));
+        if (i == 15) TIDE_CHECK(tide_render_target_face(r->target.id) == 3);
+        if (i == 16) TIDE_CHECK(tide_render_target_layer(r->target.id) == 1);
+        answer(r, reads[i].width, reads[i].height, reads[i].held, 1000u * (uint32_t)(i + 1));
         frame();
         TIDE_CHECK(local.Reads.stage == i + 1);
     }
@@ -99,15 +106,16 @@ TIDE_TEST(target_reads_ask_for_their_image_and_kind_and_own_typed_grids)
     const tide_grid grids[] = {local.Reads.color, local.Reads.hdr, local.Reads.raw, local.Reads.scalar, local.Reads.pair,
                                local.Reads.ids, local.Reads.mask, local.Reads.mask2, local.Reads.full, local.Reads.depth,
                                local.Reads.shadowDepth, local.Reads.face, local.Reads.faceDepth, local.Reads.layer,
-                               local.Reads.layerDepth, local.Reads.given};
+                               local.Reads.layerDepth, local.Reads.height, local.Reads.flow, local.Reads.given};
     const tide_grid_shape *shapes[] = {&tide_shape_Grid2_Color, &tide_shape_Grid2_Color, &tide_shape_Grid2_float4,
                                        &tide_shape_Grid2_float, &tide_shape_Grid2_float2, &tide_shape_Grid2_int,
                                        &tide_shape_Grid2_float, &tide_shape_Grid2_float2, &tide_shape_Grid2_float4,
                                        &tide_shape_Grid2_float, &tide_shape_Grid2_float, &tide_shape_Grid2_Color,
                                        &tide_shape_Grid2_float, &tide_shape_Grid2_Color, &tide_shape_Grid2_float,
-                                       &tide_shape_Grid2_Color};
+                                       &tide_shape_Grid2_float, &tide_shape_Grid2_float2, &tide_shape_Grid2_Color};
     for (int i = 0; i < count; i++) {
-        TIDE_CHECK(whole(grids[i], shapes[i], reads[i].width, reads[i].height, reads[i].stride, 1000u * (uint32_t)(i + 1)));
+        TIDE_CHECK(whole(grids[i], shapes[i], reads[i].width, reads[i].height, reads[i].stride, reads[i].held,
+                         1000u * (uint32_t)(i + 1)));
     }
     tide_draw_free(&draw); tide_local_free(&local); tide_world_free(&w);
     tide_render_targets_free();
@@ -146,6 +154,12 @@ TIDE_TEST(target_reads_refuse_what_a_target_has_not_got)
         TIDE_CHECK(begins(tide_cubemap_face(cube, 5), 0, kind) == (kind == TIDE_TARGET_READ_COLOR));
         TIDE_CHECK(!begins(tide_cubemap_face(cube, 6), 0, kind));
     }
+    // A cube of numbers: its faces as floats, and as nothing else
+    const tide_cubemap_ref heights = tide_cubemap_make_as(4, TIDE_TARGET_R16F);
+    for (uint32_t kind = 0; kind < TIDE_TARGET_READ_DEPTH; kind++) {
+        TIDE_CHECK(begins(tide_cubemap_face(heights, 2), 0, kind) == (kind == TIDE_TARGET_READ_FLOAT));
+    }
+    tide_cubemap_dispose(heights);
     TIDE_CHECK(begins(several, 0, TIDE_TARGET_READ_DEPTH) && begins(depth, 0, TIDE_TARGET_READ_DEPTH));
     TIDE_CHECK(begins(tide_cubemap_face(cube, 0), 0, TIDE_TARGET_READ_DEPTH));
     TIDE_CHECK(!begins(several, 1, TIDE_TARGET_READ_DEPTH)); // A target has one depth

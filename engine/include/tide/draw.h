@@ -1714,7 +1714,27 @@ typedef enum tide_shader_read {
     TIDE_SHADER_READ_INT = 10,
     TIDE_SHADER_READ_NUMBER_VOLUME = 11,
     TIDE_SHADER_READ_INT_VOLUME = 12,
+    // A typed float image (R8, Rg8, R16f, Rg16f, Rgba16f) read through a color's filtering sampler, blended or at
+    // a mip level: its numbers as stored, and zeros where no image is given. The GPU reads it as a color
+    // (TIDE_GPU_READ_COLOR); an image a GPU can't blend on every device (32-bit floats, integers) reads as none
+    TIDE_SHADER_READ_NUMBER_BLEND = 13,
+    // A typed TextureArray's layers and a typed Cubemap's faces: read as an array's and a cube's are
+    // (TIDE_GPU_READ_ARRAY, _CUBE), their numbers as stored, and zeros where none is given
+    TIDE_SHADER_READ_NUMBER_ARRAY = 14,
+    TIDE_SHADER_READ_NUMBER_CUBE = 15,
 } tide_shader_read;
+
+// Whether a shader's read is a typed image's through a sampler: none given reads as zeros, not a color's white.
+static inline bool tide_shader_read_blends_numbers(const uint8_t read)
+{
+    return read >= TIDE_SHADER_READ_NUMBER_BLEND && read <= TIDE_SHADER_READ_NUMBER_CUBE;
+}
+
+// Whether a shader's read loads exact pixels through no sampler: a list's numbers, or a typed image's nearest pixel.
+static inline bool tide_shader_read_loads(const uint8_t read)
+{
+    return read == TIDE_SHADER_READ_DATA || (read >= TIDE_SHADER_READ_NUMBER && read <= TIDE_SHADER_READ_INT_VOLUME);
+}
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's
 // own: with those, 255 float4s (a limit OpenGL ES drivers set, which counted a
@@ -1869,8 +1889,10 @@ static inline uint32_t tide_shader_samplers(const tide_shader *s, uint8_t reads[
     const uint32_t count = s->texture_count < TIDE_SHADER_TEXTURES ? s->texture_count : TIDE_SHADER_TEXTURES;
     for (uint32_t i = 0; i < count; i++) { // An array's is read through a color's or a depth's
         const uint8_t read = s->texture_reads[i];
-        reads[i] = (s->image_writes >> i & 1u) || read >= TIDE_SHADER_READ_NUMBER ? (uint8_t)TIDE_SHADER_READ_DATA
-                 : read == TIDE_SHADER_READ_ARRAY || read == TIDE_SHADER_READ_VOLUME ? (uint8_t)TIDE_SHADER_READ_COLOR
+        reads[i] = (s->image_writes >> i & 1u) || tide_shader_read_loads(read) ? (uint8_t)TIDE_SHADER_READ_DATA
+                 : read == TIDE_SHADER_READ_ARRAY || read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_BLEND
+                   || read == TIDE_SHADER_READ_NUMBER_ARRAY ? (uint8_t)TIDE_SHADER_READ_COLOR
+                 : read == TIDE_SHADER_READ_NUMBER_CUBE ? (uint8_t)TIDE_SHADER_READ_CUBE
                  : read == TIDE_SHADER_READ_DEPTH_ARRAY ? (uint8_t)TIDE_SHADER_READ_DEPTH : read;
     }
     return count;
@@ -1882,7 +1904,7 @@ static inline uint32_t tide_shader_texture_samplers(const tide_shader *s, const 
     if (i >= TIDE_SHADER_TEXTURES || i >= s->texture_count) return 0;
     if (s->image_writes >> i & 1u) return 0;
     if (s->sampler_count) return s->texture_samplers[i];
-    return s->texture_reads[i] == TIDE_SHADER_READ_DATA || s->texture_reads[i] >= TIDE_SHADER_READ_NUMBER ? 0u : 1u << i;
+    return tide_shader_read_loads(s->texture_reads[i]) ? 0u : 1u << i;
 }
 
 // The most a run reads texture `i` of its shader between (by its samplers' filters in `sampling`): what its
@@ -2141,13 +2163,15 @@ typedef struct tide_gpu_read_result {
     int32_t count;
     int32_t width, height; // Pixel reads
     uint32_t stride;
+    uint32_t step; // Pixel reads: the words from one pixel to the next, `stride` or more
     const uint32_t *words;
 } tide_gpu_read_result;
 // `await target.Read...()`: which of a target's images a read is of, and as what. A color image is read as the
 // type its format holds: TIDE_TARGET_READ_COLOR for RGBA8 and RGBA16F (straight alpha), FLOAT for R8, R16F and
 // R32F, FLOAT2 for RG8 and RG16F, FLOAT4 for RGBA16F and RGBA32F (its four numbers, as stored), INT for R32I.
 // DEPTH is the target's depth, 0 near and 1 far whatever the device stores. A cube's face and an array's layer
-// are read as COLOR or DEPTH. A read whose kind isn't its image's, or of an image the target hasn't got, fails.
+// are read the same ways (they hold no integer image). A read whose kind isn't its image's, or of an image the
+// target hasn't got, fails.
 typedef enum tide_target_read {
     TIDE_TARGET_READ_COLOR,
     TIDE_TARGET_READ_FLOAT,

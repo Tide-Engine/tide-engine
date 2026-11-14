@@ -1,4 +1,4 @@
-// expect: a TextureArray's layer holds one Color image: read it with 'await array.layers[i].Read()', and its depth with 'ReadDepth()'
+// expect: a TextureArray's layer holds one image: read it with 'await array.layers[i].Read()', with no number, and its depth with 'ReadDepth()'
 scene Main {}
 local singleton State { TextureArray array; }
 async void Read(State state) { var pixels = await state.array.layers[1].Read(1); }

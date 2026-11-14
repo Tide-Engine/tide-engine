@@ -1,0 +1,5 @@
+// expect: image 'layers' is read as float, but Format.Rgba8 takes Color: use a TextureArray without a typed Raw role
+scene Main { }
+local singleton Images { [Raw(float)] TextureArray layers; }
+frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.layers.Sample(vertex.uv,0),0,0); }
+view Show(mut Images images) { images.layers=TextureArray(8,8,2); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Read); }

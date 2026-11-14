@@ -1,0 +1,77 @@
+scene Main { }
+
+local singleton Images
+{
+    RenderTarget mask;
+    RenderTarget moments;
+    RenderTarget light;
+    RenderTarget bytes;
+    [Raw(float)] Texture coverage;
+    [Raw(float2)] Texture variance;
+    [Raw(float4)] Texture energy;
+    [Raw(float2)] Texture pair;
+    [Raw(float)] TextureArray heights;
+    [Raw(float2)] TextureArray flows;
+    [Raw(float)] Cubemap distance;
+    [Raw(float4)] Cubemap probes;
+}
+
+frag Scalar(Vertex vertex, out float value) { value = vertex.uv.x; }
+frag Pair(Vertex vertex, out float2 value) { value = vertex.uv; }
+frag Full(Vertex vertex, out float4 value) { value = float4(vertex.uv, 3.5, 0.25); }
+float Blurred([Raw(float)] Texture image, float2 uv) { return image.Sample(uv, Filter.Bilinear, Wrap.Repeat); }
+float Level([Raw(float)] Texture image, float2 uv, float level) { return image.SampleLevel(uv, level); }
+float Height([Raw(float)] TextureArray layers, float2 uv, int layer) { return layers.Sample(uv, layer, Filter.Bilinear); }
+float Far([Raw(float)] Cubemap cube, float3 way) { return cube.Sample(way, Filter.Bilinear); }
+frag ReadSource(Vertex vertex, out Color color, [Raw(float)] Texture source)
+{
+    color = Color(source.Sample(vertex.uv, Filter.Bilinear), source.SampleLevel(vertex.uv, 1.5, Filter.Trilinear), 0);
+}
+frag Read(Vertex vertex, out Color color, Images images)
+{
+    mut float value = Blurred(images.coverage, vertex.uv) + Level(images.coverage, vertex.uv, 2);
+    value += images.coverage.Sample(vertex.uv) + images.coverage.Sample(vertex.uv, Filter.Trilinear);
+    value += images.coverage.Sample(vertex.uv, Filter.Anisotropic, Wrap.Mirror);
+    value += images.coverage.SampleGrad(vertex.uv, float2(0.25, 0), float2(0, 0.25));
+    float2 moments = images.variance.Sample(vertex.uv, Filter.Bilinear) + images.variance.SampleLevel(vertex.uv, 1, Filter.Bilinear, Wrap.Repeat);
+    float2 bytes = images.pair.Sample(vertex.uv, Filter.Trilinear);
+    float4 energy = images.energy.Sample(vertex.uv, Filter.Bilinear) + images.energy.SampleGrad(vertex.uv, float2(0.5, 0), float2(0, 0.5), Filter.Anisotropic);
+    value += Height(images.heights, vertex.uv, 1) + images.heights.Sample(vertex.uv, 0);
+    value += images.heights.SampleLevel(vertex.uv, 1, 1.0) + images.heights.SampleGrad(vertex.uv, float2(0.25, 0), float2(0, 0.25), 0, Filter.Trilinear);
+    float2 flow = images.flows.Sample(vertex.uv, 1, Filter.Trilinear, Wrap.Repeat);
+    value += Far(images.distance, float3(vertex.uv, 1)) + images.distance.Sample(float3(vertex.uv, -1));
+    value += images.distance.SampleLevel(float3(1, vertex.uv), 2);
+    float4 probe = images.probes.Sample(float3(vertex.uv, 1), Filter.Trilinear);
+    // Three levels in one chain: each read's operands stay in the arm that runs them
+    bool chain = images.coverage.SampleLevel(vertex.uv, 1) > 0 && images.coverage.SampleLevel(vertex.uv, 2) > 0
+        && images.coverage.SampleLevel(vertex.uv, 3) > 0;
+    color = Color(value + moments.x + bytes.y, energy.w + flow.y, probe.z, chain ? 1 : 0.5);
+}
+view Show(mut Images images)
+{
+    images.mask = RenderTarget(8, 8, 1, Format.R8);
+    images.moments = RenderTarget(8, 8, 1, Format.Rg16f);
+    images.light = RenderTarget(8, 8, 1, Format.Rgba16f);
+    images.bytes = RenderTarget(8, 8, 1, Format.Rg8);
+    images.coverage = images.mask.color;
+    images.variance = images.moments.color;
+    images.energy = images.light.color;
+    images.pair = images.bytes.color;
+    images.heights = TextureArray(8, 8, 2, 1, Format.R16f);
+    images.flows = TextureArray(8, 8, 2, 1, Format.Rg8);
+    images.distance = Cubemap(8, Format.R16f);
+    images.probes = Cubemap(8, Format.Rgba16f);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.mask.Mesh(quad, [0, 1, 2], Scalar);
+    images.moments.Mesh(quad, [0, 1, 2], Pair);
+    images.light.Mesh(quad, [0, 1, 2], Full);
+    images.bytes.Mesh(quad, [0, 1, 2], Pair);
+    images.heights.layers[1].Clear(0.5);
+    images.heights.layers[1].Mesh(quad, [0, 1, 2], Scalar);
+    images.flows.layers[0].Mesh(quad, [0, 1, 2], Pair);
+    images.distance.faces[4].Clear(2.0);
+    images.distance.faces[4].Mesh(quad, [0, 1, 2], Scalar);
+    images.probes.faces[0].Mesh(quad, [0, 1, 2], Full);
+    Draw.Mesh(quad, [0, 1, 2], Read);
+    Draw.Blit(images.coverage, Draw.window, ReadSource);
+}

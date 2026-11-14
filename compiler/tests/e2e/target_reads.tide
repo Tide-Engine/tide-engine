@@ -10,6 +10,10 @@ local singleton Reads
     RenderTarget shadow;  // Depth alone
     Cubemap cube;
     TextureArray array;
+    Cubemap heights;      // R16f faces
+    TextureArray flows;   // Rg8 layers
+    Grid2<float> height;
+    Grid2<float2> flow;
     bool started;
     int stage;
     int failed;
@@ -72,6 +76,11 @@ async void ReadAll(mut Reads reads)
     reads.stage += 1;
     if (await reads.array.layers[0].ReadDepth() is Grid2<float> layerDepth) reads.layerDepth = layerDepth.Copy(); else reads.failed += 1;
     reads.stage += 1;
+    // A face and a layer of numbers, as their own types
+    if (await reads.heights.faces[3].Read<float>() is Grid2<float> height) reads.height = height.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.flows.layers[1].Read<float2>() is Grid2<float2> flow) reads.flow = flow.Copy(); else reads.failed += 1;
+    reads.stage += 1;
     ReadGiven(reads.plain, reads);
 }
 
@@ -85,6 +94,8 @@ view Start(mut Reads reads)
     reads.shadow = RenderTarget(2, 2, 1, Format.Depth);
     reads.cube = Cubemap(2);
     reads.array = TextureArray(2, 2, 3, 1);
+    reads.heights = Cubemap(2, Format.R16f);
+    reads.flows = TextureArray(2, 2, 2, 1, Format.Rg8);
     RenderTarget none = default;
     reads.counts = reads.plain.colors.count * 1000 + reads.several.colors.count * 100 + reads.masks.colors.count * 10
                  + reads.shadow.colors.count + none.colors.count + reads.cube.faces[0].colors.count * 10000;

@@ -2094,7 +2094,8 @@
             // those from the start: the samplers that read none of them keep to its own pixels. A change to
             // tide_gpu_color goes here
             // One that's drawn into has the canvas's own bytes, as a target's image has: the pipelines into it are made for those
-            const format = color === 10 ? 'rgba8unorm-srgb' : color === 2 ? 'rgba16float' : 'rgba8unorm';
+            // ...or one of the number formats every device blends (attachmentFormats: 3 to 6)
+            const format = color === 10 ? 'rgba8unorm-srgb' : color >= 2 && color <= 6 ? attachmentFormats[color] : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(size));
             const texture = device.createTexture({ size: [size, size, 6], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2107,7 +2108,7 @@
                 }
                 faces.push(images);
             }
-            if (facesPtr && color !== 2) {
+            if (facesPtr && (color === 1 || color === 10)) {
                 const at = new Uint32Array(memory.buffer, facesPtr, 6);
                 for (let face = 0; face < 6; face++) {
                     const [data, offset] = memoryBytes(at[face], size * size * 4);
@@ -2117,7 +2118,7 @@
             }
             return gpuAdd('texture', { texture, view: texture.createView({ dimension: 'cube' }),
                 base: texture.createView({ dimension: 'cube', mipLevelCount: 1 }), width: size, height: size,
-                row: size * 4, format, layered: faces, bytes: color !== 2, groups: new Set() });
+                row: size * 4, format, layered: faces, bytes: color === 1 || color === 10, groups: new Set() });
         },
         gpu_array(into, width, height, layers, pixelsPtr) {
             // Layers of one size, with a view of them as an array, which is what's sampled, and of each layer's every
@@ -2133,7 +2134,8 @@
                 return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array', aspect: 'depth-only' }),
                     depthLayers: whole, width, height, row: 0, groups: new Set() });
             }
-            const format = (into & 15) === 10 ? 'rgba8unorm-srgb' : (into & 15) === 2 ? 'rgba16float' : 'rgba8unorm';
+            const kind = into & 15; // tide_gpu_color: 3 to 6 are the number formats every device blends
+            const format = kind === 10 ? 'rgba8unorm-srgb' : kind >= 2 && kind <= 6 ? attachmentFormats[kind] : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2156,7 +2158,7 @@
             }
             const made = { texture, view: texture.createView({ dimension: '2d-array' }),
                 base: texture.createView({ dimension: '2d-array', mipLevelCount: 1 }), width, height, row: width * 4, format,
-                layered: each, bytes: format !== 'rgba16float', groups: new Set(), depthArray: 0 };
+                layered: each, bytes: format === 'rgba8unorm' || format === 'rgba8unorm-srgb', groups: new Set(), depthArray: 0 };
             const id = gpuAdd('texture', made);
             if (!pixelsPtr) made.depthArray = platform.gpu_array(0, width, height, layers, 0);
             return id;

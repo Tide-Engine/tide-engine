@@ -137,8 +137,15 @@ in `Rgba16f`. An output that does not fit the image is a compile error at the dr
 
 Read a numeric image through a declared [typed texture field](./shaders.md#number-images):
 `[Raw(float2)] Texture velocity;` then `velocity = target.colors[1];` in local code. Its `Sample` returns a
-`float2`. Typed numeric images always read the nearest pixel: omit the filter, or write `Filter.Point`.
-They have no numeric mipmaps. This also makes 32-bit float and integer reads portable to every device.
+`float2`. A typed read that names no filter reads the nearest pixel. Images in `R8`, `Rg8`, `R16f`, `Rg16f`
+and `Rgba16f` also blend (`Filter.Bilinear`, `Filter.Trilinear`, `Filter.Anisotropic`) and have mipmaps, read
+with `SampleLevel` and `SampleGrad`: a blurred mask or a variance shadow map works on every device. `R32f`,
+`Rgba32f` and `R32i` read their nearest pixel everywhere, since no GPU blends integers and only some blend
+32-bit floats; asking one of them to blend is a compile error that names the format to draw into instead.
+
+The same four compact formats make array layers and cube faces: `TextureArray(256, 256, 4, Format.R16f)` and
+`Cubemap(256, Format.R16f)`. Draw numbers into `array.layers[i]` or `cube.faces[i]`, and read them through a
+`[Raw(float)] TextureArray` or `[Raw(float)] Cubemap` field.
 
 ### Clearing each image
 
@@ -336,7 +343,9 @@ come back to the nearest of its steps.
 
 A [cube's face](./meshes-and-textures.md) and an array's layer are targets, and are read the same way, one at
 a time: `await cube.faces[2].Read()`, `await array.layers[1].Read()`, and `ReadDepth()` of either. Each is one
-Color image, with its rows from the top as it was drawn.
+image, with its rows from the top as it was drawn, of the format its cube or array was made with: a face of a
+`Cubemap(256, Format.R16f)` is read with `Read<float>()`, a layer of a `Format.Rg8` array with `Read<float2>()`,
+by the table above.
 
 ### How many images
 

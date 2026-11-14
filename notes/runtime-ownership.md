@@ -31,8 +31,8 @@ Within the owner-approved rendering task, agents maintain tide_render_target_rea
 _tide_render_target_read_grid, generated async lowering, shared read request extensions, pool capture and
 internal kernel. No new gpu.h function. Contracts and lifetimes: render-targets.md.
 Since the same day they also maintain tide_render_target_read_begin_as (an image and a kind, tide_target_read),
-tide_target_read_words/_fits, tide_render_target_color_count, the request's `image` and `kind`, and the eight
-further read kernels in cull.tide (render-targets.md, Readback of every image).
+tide_target_read_words/_fits, tide_render_target_color_count, the request's `image` and `kind`, the result's
+`step`, and the ten further read kernels in cull.tide (render-targets.md, Readback of every image).
 
 
 # Depth-bias draw state (2026-11-14)
