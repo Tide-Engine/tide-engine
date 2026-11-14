@@ -1,3 +1,56 @@
+## ScaleTests' two objects a frame, clip rects in a target, depth bias's sign (2026-11-14)
+
+**ScaleTests' two whole-frame allocations were a regression** from 8354e85fb (compute images and Texture3D,
+2026-11-14), which the test's way of running shows and a game can hit too. Since that commit a target's pass
+runs as the frame is read while the camera's own draws wait, so `Begin` on a target calls `Written` for each of
+its images: one a kept draw of this Unity frame read (`image.used == Time.frameCount`) is renamed, and the
+rename made `new RenderTexture(texture.descriptor)` every time. ScaleTests calls the runner's `Update` itself in
+the frame Unity already called it in, so the second read of the frame finds the Sample's two sampled target
+images (64x64) read by the first and renames both: two objects, two GPU textures and two copies a frame, in all
+120 measured frames (`showing` made none, as the depth thread saw). A probe counted exactly two renames a frame,
+starting at the test's first own frame. A game does the same with one read a frame whenever it draws into a
+target, or a kernel writes an image, after a camera draw of that frame sampled it. Before 8354e85fb target
+passes waited in the camera's commands with the draws, and nothing was renamed.
+
+- **Fix** (`TideRender.cs`): images a rename lets go of are spares, as buffers have been since 2026-11-10.
+  `Written` dooms the old image marked `again`; `Collect` moves it to `spareImages` once no camera's commands
+  read it (three frames), and `Renamed(RenderTexture)` takes a spare of the same descriptor (size, depth,
+  samples, dimension, both formats, mip count and creation flags, compared a member at a time: a struct's
+  `Equals` boxes) before making one. At most 32 spares, one unused for 600 frames released, all released with
+  the renderer. A frame's renames go round about four images each, which is how many were alive before, each
+  made anew. No assertion changed. The runner's median frame in the test went from 1.47 ms to 0.66 ms (D3D12).
+- **Also found by reading:** a pass on a target of several colors made a `RenderTargetIdentifier[]` each time
+  it began (older than the 2026-11-10 pass, which missed it; no Sample target has several colors). Kept with
+  the target now (`Target.colorIds`).
+- What's left in the whole frame is what the test allows: about once a second the Input Manager's joystick
+  names and the editor's look at `unity.json` (4 of 120 frames on some runs, about 30 objects each).
+
+**A clip rect in a target's pass was upside down** on every API (found making the read-back check below
+asymmetric; older than the rendering work, as no test clipped a target by rows). `Record` turned every clip
+rect to rows from the bottom, which is right for the camera's own target alone. A target's rows are counted as
+stored, from Tide's top everywhere (OpenGL's passes are drawn upside down for that), so its rect's y is Tide's.
+Tide's 2D clips drawn into a render target in Unity were mirrored top to bottom until now.
+
+**Checked, and right as they were:**
+
+- **Read-back row order.** `PixelReadKernelReturnsStraightHdrThroughBufferReads` now reads an image with a
+  green triangle placed at the top left by its corners alone (clip space) and blue clipped into the bottom
+  right 16 by 16; every pixel but the triangle's slanted edge is checked at its place from the top left.
+  The kernel's rows and geometry agreed on all four APIs; only the clip rect was wrong.
+- **Depth bias's sign.** `DepthBiasPushesAwayWherePositive`: two draws on one plane, depth tested and written,
+  in four columns (second +8: the first stays; second -8: it wins; first -8 then none: the first stays; none:
+  the second passes, being equal), in a target's pass and in the camera's own. `SetGlobalDepthBias` takes
+  Tide's sign as it is on all four APIs, Unity turning it for its own depth. Constant bias only: the fixture's
+  shader has no slope.
+- `ClipRectsCountRowsFromTheTop` pins both kinds of pass.
+
+**Runs:** Unity 6000.6.0f1, Windows, hidden batch mode with `-noAudio` and a GPU, a scratch Sample pointing at
+this checkout's package, tide installed from this checkout's mingw-release and debug trees. All PlayMode tests
+on Direct3D 11, Direct3D 12, Vulkan and OpenGL Core: 41 pass of 44 on each, the three sRGB witnesses skipped
+in the Sample's Gamma color space as before. Before the fix ScaleTests failed (0 quiet frames of 120). Not
+run: EditMode (no editor code changed), Metal, a Unity WebGPU player. Note for the next run: without a
+`-force-` flag this machine's editor picks Direct3D 12, not 11.
+
 ## [Linear] texture replay: embed ABI 24 (2026-11-14)
 
 The owner approved opt-in sRGB sampling on 2026-11-14. Static compiler roles and importer storage are in

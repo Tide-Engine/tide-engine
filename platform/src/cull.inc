@@ -489,12 +489,12 @@ static uint32_t cull_family_of(const tide_draw_list *list, const uint32_t mesh)
 }
 
 // Whether a step culled on the GPU draws in the same call as the one just before it (`a`): the same pipeline,
-// destination, camera, values, textures and tint, levels of the same mesh at the same width, both drawn.
+// destination, camera, depth bias, values, textures and tint, levels of the same mesh at the same width, both drawn.
 static bool cull_joins_with(const tide_draw_list *list, const draw_step *a, const draw_step *s)
 {
     if (a->pipeline != s->pipeline || a->target != s->target || a->stencil != s->stencil || a->camera != s->camera
         || a->camera_data != s->camera_data || a->fit != s->fit || a->blend != s->blend || a->depth != s->depth
-        || a->cull != s->cull) return false;
+        || a->cull != s->cull || a->depth_bias.x != s->depth_bias.x || a->depth_bias.y != s->depth_bias.y) return false;
     const tide_draw_run *x = &list->runs[a->first], *y = &list->runs[s->first];
     const tide_shader *shader = x->shader;
     if (y->shader != shader || x->sampling != y->sampling || memcmp(&x->tint, &y->tint, sizeof x->tint) != 0) return false;

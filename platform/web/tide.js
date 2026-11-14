@@ -2644,6 +2644,7 @@
             pass = commands.beginRenderPass(descriptor);
             drawing.pipeline = null;
             drawing.bound = false;
+            drawing.bias = null; // A pass starts with none, as Vulkan's does: a bias is the draws' that asked
         },
         gpu_end() {
             pass.end();
@@ -2726,6 +2727,7 @@
             pass = commands.beginComputePass();
             drawing.pipeline = null;
             drawing.bound = false;
+            drawing.bias = null;
         },
         gpu_compute_end() {
             pass.end();

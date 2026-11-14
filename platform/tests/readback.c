@@ -136,8 +136,9 @@ static void check_reads(void)
     good = part_is(r->layer0, 0, 0, 1, 128 / 255.0f, false) && part_is(r->layer2, 1, 0, 0, 128 / 255.0f, false);
     check(good, "an array's layers are read one at a time");
     check(all_depth(r->layerDepth, 2, 2, 0.5f, 1.0f) && all_depth(r->shadow1, 2, 2, 0.625f, 0.625f), "a layer's depth is read, of a color array and of a depth array");
-    // Float depth storage holds each of these depths exactly, and so does its read; 24 bits round them
-#ifndef __wasm__
+    // Float depth storage holds each of these depths exactly, and so does its read; 24 bits round them. Which a
+    // device has is its own to say: asserted where the desktop GPUs these run on are known to store floats
+#ifdef _WIN32
     if (!getenv("TIDE_TEST_DEPTH_FALLBACK")) check(depths_exact, "depths stored as floats are read bit for bit");
 #endif
     printf("depths: %s\n", depths_exact ? "bit for bit" : "within a 24-bit step");

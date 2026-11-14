@@ -116,10 +116,17 @@ below differ (no depth, face, layer or numeric read; one pipeline), this is what
     and a disposed target failing; `colors.count`.
   - `lsp_render_target_formats_and_depth`: completions and signature help for the reads, a clean document.
 - **Not run:** Unity's replay of the eight new kernels (their HLSL compiles under fxc cs_5_0 with Unity's
-  warnings, `tide_hlsl_shaders_valid`, and they use no new packet); Android (no window fixture there, as below);
-  Metal; the optional real-GPU web lanes.
+  warnings, `tide_hlsl_shaders_valid`, and they use no new packet); Android, where the same fixture is the app
+  `tide_platform_readback_app` on CI's emulator (not run here; its exact-depth assertion is Windows' alone, as a
+  device chooses its depth storage); Metal; the optional real-GPU web lanes.
 
 # Owned pixel readback (2026-11-14)
+
+Correction (review, 2026-11-14): `await target.Read() is Grid2<Color> pixels` names a scratch grid, and a task's
+frame carried it across a wait as a raw handle (`task_value_handles` has no grid case), so a read or write of
+`pixels` after a later `await` went through reused scratch memory. `check_await` now refuses a wait while a grid
+local is in scope (`errors/read_target_kept_across_wait.tide`); the fixture's own shape, copy then wait, is
+unchanged. With no GPU (`gpu_none`) a read still succeeds with zeroes, as a list's read does there.
 
 Owner-approved 2026-11-13: await target.Read gives an owned Grid2<Color> fails IOError in local async code.
 Picks and alternatives are Provisional in spec.md. It shares the 64 bounded read tickets and gpu.h asynchronous
@@ -145,9 +152,10 @@ readback API.
 
 Android (correction, 2026-11-14): `tide_platform_readback` was registered there too, as a program started
 through adb. It opens a window, which on Android only an app has, so it waited for good and CTest's timeout
-didn't end it: the Android job hung on every Build run from a5b50cd74 on. The fixture is now left out of
-Android builds, as the other window fixtures are. Readback on Android has no fixture: it would need an app
-(`tide_android_app_test`), not built.
+didn't end it: the Android job hung on every Build run from a5b50cd74 on. On Android the same game and host
+are now an app, `tide_platform_readback_app` (`tide_android_app_test ... GPU`, as the shaders' checks):
+on this machine's emulator (`-gpu lavapipe`) it printed "ok: await target.Read owns the exact drawn 4x3
+colors at frame 5" on Vulkan and ended with 0 in 2 s.
 
 Validation: native ASan Vulkan and web-debug SwiftShader WebGPU readback fixtures pin a 4x3 MSAA-resolved
 image, prior-frame ownership, row order, straight alpha, HDR 2.0 and exact frame-5 completion of sequential reads.

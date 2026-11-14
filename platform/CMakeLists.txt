@@ -1281,9 +1281,14 @@ if(NOT TIDE_ANDROID)
     endforeach()
 endif()
 
-# Not on Android: a window there is an app's (tide_android_app), and this
-# program started through adb waits for one for good.
-if(TIDE_PLATFORM AND NOT TIDE_ANDROID)
+# On Android a window is an app's (tide_android_app): the same program
+# started through adb waits for one for good, so there it is an app, as the
+# shaders' checks are.
+if(TIDE_PLATFORM AND TIDE_ANDROID)
+    tide_add_game(tide_platform_readback_app SOURCES tests/readback.tide NAME game HOST tests/readback.c WINDOW)
+    target_include_directories(tide_platform_readback_app PRIVATE src)
+    tide_android_app_test(tide_platform_readback_app GPU)
+elseif(TIDE_PLATFORM)
     tide_add_game(tide_platform_readback SOURCES tests/readback.tide NAME game HOST tests/readback.c)
     target_include_directories(tide_platform_readback PRIVATE src)
     target_link_libraries(tide_platform_readback PRIVATE tide_platform)
